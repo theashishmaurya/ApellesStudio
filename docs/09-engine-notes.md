@@ -1,0 +1,102 @@
+# 09 — Engine notes (RapidRAW code-read)
+
+Living map of `engine/` (RapidRAW), branched from upstream commit `4f6a365` (2026-08-31,
+shallow). Update this whenever we learn more or diverge from upstream.
+
+Read status: **first pass, not built yet.** ~35k LOC Rust in `src-tauri/src/`.
+
+---
+
+## Toolchain (blocker for building)
+
+| Need | Have (2026-09-01) | Action |
+|---|---|---|
+| Rust **1.98+**, edition 2024 (`Cargo.toml`) | rustc **1.72.1** | `rustup update stable` — hard blocker, nothing compiles until then |
+| Node 18+ | v24.13.0 ✅ | — |
+| `cargo-tauri` | not installed | `cargo install tauri-cli` or use `npm run tauri` |
+| wgpu 29.0 backend (Metal) | — | fine on Apple Silicon once Rust is updated |
+
+`wgpu` is pinned to `29.0` with the comment *"Downgraded to prevent P3 color shifts on
+Apple devices."* → upstream cares about colour accuracy on Mac. Do not bump wgpu without
+checking P3 output.
+
+Recorded as **B-001** in `BUGS.md`.
+
+---
+
+## Layout — `src-tauri/src/`
+
+| File | LOC | What it is |
+|---|---:|---|
+| `lib.rs` | 2435 | Tauri app setup, **115 `#[tauri::command]`s** — the app's whole API surface |
+| `gpu_processing.rs` | 2021 | **the wgpu pipeline** — device/queue, textures, the grade compute passes. Core of what we're extending. |
+| `image_processing.rs` | 3439 | adjustment/grade logic — the params → shader-uniform translation, the ordering |
+| `mask_generation.rs` | 1511 | mask model — shape masks, AI mask plumbing, `generate_mask_overlay` |
+| `ai_processing.rs` | 1759 | **ONNX model loading + inference** (see AI section) |
+| `ai_commands.rs` | 430 | the tauri commands that call the AI models |
+| `ai_connector.rs` | — | cloud AI fallback (`check_ai_connector_status`) — optional, off by default |
+| `lut_processing.rs` | 723 | `.cube` parse + apply, LUT previews |
+| `lens_blur.rs` | 1035 | AI depth-of-field / bokeh (uses the depth map) |
+| `export_processing.rs` | 1701 | export/encode |
+| `image_loader.rs` | 1009 | image + RAW decode (`rawler`, `memmap2` for big files) |
+| `app_state.rs`, `app_settings.rs` | — | in-memory state, persisted settings |
+| `cache_utils.rs` | 311 | preview/thumbnail caching |
+| `shaders/*.wgsl` | — | `shader.wgsl` (main grade), `blur.wgsl`, `display.wgsl`, `flare.wgsl` |
+| focus_stacking / panorama / hdr_deghosting / inpainting / denoising / negative_conversion / lens_correction / culling / tagging | ~10k | features we **don't** need for grading — leave alone, may strip later |
+
+## The grade path (what we care about)
+
+- Frontend sends adjustment params → `apply_adjustments` (`lib.rs` command) →
+  `image_processing.rs` builds the pipeline → `gpu_processing.rs` runs wgsl compute passes
+  → rendered image back.
+- Non-destructive: params in, pixels out, source untouched. Exactly the model our
+  `grade.json` needs.
+- **v1 plan:** video = call this path per frame. First spike: decode one frame with
+  ffmpeg, hand it to `apply_adjustments`, confirm we get a graded frame out.
+
+## AI stack — **all ONNX via `ort` (ONNX Runtime), in-process in Rust**
+
+This is the big finding. No Python. `ort = "=2.0.0-rc.10"` with `load-dynamic`.
+
+| Model | File | Purpose | For us |
+|---|---|---|---|
+| **SAM (ViT-B)** — v1 | `sam_vit_b_01ec64_{encoder,decoder}.onnx` | point/box subject mask, **single frame** | **swap/augment with SAM 2** (has ONNX exports incl. video memory) for tracked mattes — D-012 |
+| **Depth Anything V2** (ViT-S) | `depth_anything_v2_vits.onnx` | monocular depth | reuse directly; extend to per-frame video + temporal smoothing |
+| U2-Net / U2-Netp | `u2net.onnx` (320px) | salient foreground mask | maybe a cheap fallback subject mask |
+| Sky seg | `skyseg_u2net.onnx` | sky mask | not needed for talking-head |
+| CLIP | `clip_model.onnx` | auto-tagging | not needed |
+| NIND denoise, LaMa | — | denoise / inpaint | not needed for grading |
+
+Commands already present: `generate_ai_subject_mask`, `precompute_ai_subject_mask`,
+`generate_ai_depth_mask`, `generate_full_image_depth_map`, `generate_ai_foreground_mask`,
+`generate_ai_sky_mask`, `generate_mask_overlay`.
+
+Models auto-download in `build.rs` / on first use, SHA-256 checked, stored in a models dir.
+
+### Consequence for the architecture
+
+**The "Python AI sidecar" (`ai/`, doc 03 component 2) is downgraded.** For v1:
+- SAM 2 + Depth Anything V2 run **in-process via `ort`**, same as RapidRAW does today.
+- No socket boundary, no Python env for the user to manage.
+- The sidecar survives only as: (a) a prototyping shortcut, (b) a home for models with no
+  usable ONNX export (CoTracker/TAPIR — check), (c) `color-matcher` (small pure-Python;
+  could also be reimplemented in Rust with `ndarray`/`nalgebra` — both already deps).
+
+→ Update **D-009**. Update doc 03 architecture diagram. Update `ai/README.md`.
+
+## What RapidRAW does NOT have (our build list, confirmed)
+
+- **No video.** Zero video deps. No decode, no frames, no timeline, no temporal state.
+- **No mask tracking / keyframes.** SAM is per-image; masks are static.
+- **No node graph.** Adjustment stack (fine — D-005).
+- **No MCP / agent surface.** 115 tauri commands but no external protocol.
+- **No scopes** (waveform/vectorscope/parade) — has histogram-ish auto-adjust analysis only.
+- **No shot-match-to-reference.**
+- Depth is per-still; video would flicker without temporal smoothing.
+
+## Divergence log (our changes to `engine/`)
+
+_(none yet — code-read only)_
+
+When we change `engine/`: append here `{date, files, why, upstream commit branched from}`
+so we can still cherry-pick upstream fixes (per CLAUDE.md).

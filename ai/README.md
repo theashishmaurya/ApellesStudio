@@ -1,31 +1,31 @@
-# ai/ — the AI sidecar
+# ai/ — AI models
 
-**Not built yet. Phase 2.**
+**Revised 2026-09-01 after the engine code-read (see `../docs/09-engine-notes.md`, D-009).**
 
-A local Python service (FastAPI) the Rust core talks to over a socket. Runs the models
-that have no good Rust path. Never touches `grade.json` — returns data, the core applies it.
+RapidRAW already runs its AI (Depth Anything V2, SAM v1, U2-Net, CLIP, LaMa) as **ONNX
+via `ort` (ONNX Runtime), in-process in Rust — no Python.** Chroma matches that.
 
-## Planned models (all local, Apple Silicon MPS)
+So **this directory is NOT the v1 critical path.** In-process ONNX is the default. This
+sidecar exists only for:
 
-| Model | Job | Output |
+1. **Prototyping** — try a model in Python before committing to an ONNX + `ort` port.
+2. **Models with no usable ONNX export** — e.g. CoTracker/TAPIR (verify), SAM 2 video
+   memory-attention if the ONNX path proves too painful.
+3. **`color-matcher`** ([hahnec](https://github.com/hahnec/color-matcher)) — small,
+   pure-Python; may reimplement in Rust (`ndarray`/`nalgebra` are already engine deps).
+4. **v3 experiments** — IC-Light relight (diffusion, slow, non-deterministic — bake-step
+   only, D-013).
+
+## In-process (Rust `ort`) — the real plan
+
+| Model | Where | Status |
 |---|---|---|
-| **SAM 2** | subject segmentation + video propagation | per-frame matte (RLE) + preview PNG |
-| **Depth Anything V2** | monocular depth per frame (+ temporal smoothing) | 16-bit depth sequence / packed buffer |
-| **CoTracker / TAPIR** | point + planar tracking (v2) | tracked point/homography per frame → mask keyframes |
-| **color-matcher** ([hahnec](https://github.com/hahnec/color-matcher)) | reference colour transfer | a `grade.json` `adjust` fragment (CDL/curve), not a baked image |
-| RobustVideoMatting / guided filter | matte edge/hair refinement | refined matte |
+| Depth Anything V2 (ViT-S) | `engine/src-tauri/src/ai_processing.rs` | ✅ exists — extend to video |
+| SAM 2 (subject + video track) | new, alongside RapidRAW's SAM 1 | D-012 |
+| U2-Net (fallback foreground) | `ai_processing.rs` | ✅ exists |
+| guided-filter matte refine | pure Rust | to write |
 
-## Contract (draft)
+## If the sidecar is needed (contract draft)
 
-- `POST /segment` `{shot_id, prompt, frame_range, threshold}` → job id
-- `GET /job/{id}` → `{status, progress, result_ref}`
-- `POST /depth` `{shot_id, frame_range}` → depth map ref
-- `POST /match` `{shot_png, reference_png, method}` → `{adjust: {...}, gap_before, gap_after}`
-- results written to the shot's cache dir; refs are paths
-
-## Setup (when it exists)
-
-```
-cd ai && python -m venv .venv && .venv/bin/pip install -r requirements.txt
-# models auto-download to ai/models/ on first use (gitignored)
-```
+FastAPI, local, lifecycle managed by the Rust core. `POST /op {op, shot_id, frame_range,
+params}` → job id → poll. Results written to the shot cache dir; never touches `grade.json`.

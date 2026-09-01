@@ -56,23 +56,27 @@ stack. This is ~70% of the engine and it already runs.
   and the rule that *the doc is authoritative* — the UI and the MCP layer both mutate
   the doc, the renderer reads the doc.
 
-### 2. AI sidecar — Python, local
+### 2. AI models — ONNX in-process in Rust (revised — see D-009)
 
-A separate process (FastAPI + uvicorn, or a raw asyncio socket server) because the
-models are PyTorch and there is no Rust path worth fighting for.
+**Revised after the Phase 0 code-read (doc 09).** RapidRAW already runs Depth Anything V2,
+SAM (v1), U2-Net, CLIP, LaMa **all as ONNX via `ort` (ONNX Runtime), in-process, no
+Python.** We match that.
 
-| Model | Job | Notes |
+| Model | Job | Status |
 |---|---|---|
-| **SAM 2** | subject segmentation + **video propagation** | point/box/text prompt → per-frame matte (RLE). This is the gesture-proof subject mask. |
-| **Depth Anything V2** | monocular depth map per frame | already integrated in RapidRAW for stills; extend to video + temporal smoothing |
-| **CoTracker / TAPIR** | point + planar tracking | v2 — drives shape-mask keyframes |
-| **color-matcher** | reference colour transfer | Reinhard / MKL / MVGD → a CDL or curve delta, not a baked image |
-| matting model | edge/hair refinement on a coarse matte | e.g. `RobustVideoMatting` or guided filter |
+| **Depth Anything V2** (ViT-S) | monocular depth | ✅ in RapidRAW (`depth_anything_v2_vits.onnx`); extend to per-frame video + temporal smoothing |
+| **SAM 2** | subject seg + **video propagation** (gesture-proof matte) | RapidRAW has SAM **1** (per-image). Swap/augment with SAM 2 ONNX (encoder + decoder + memory attention) — D-012 |
+| U2-Net | cheap salient-foreground fallback mask | ✅ in RapidRAW |
+| **color-matcher** logic | reference colour transfer → grade-doc fragment | reimplement in Rust (`ndarray`/`nalgebra`, already deps) or run as sidecar |
+| CoTracker / TAPIR | point/planar tracking (v2) | check for a usable ONNX export; else sidecar |
+| matting (RVM / guided filter) | matte edge/hair refinement | guided filter is trivial in Rust; RVM has ONNX |
 
-Contract: HTTP/socket, requests are `{op, shot_id, frame_range, params}`, responses carry
-mattes as RLE + a preview PNG, depth as a 16-bit PNG sequence or a packed buffer, colour
-suggestions as grade-doc fragments. The sidecar never touches `grade.json` — it returns
-data, the core applies it.
+**The `ai/` Python sidecar is downgraded** to: prototyping, models with no good ONNX
+export, and anything not worth porting. Not on the v1 critical path.
+
+Models: auto-download, SHA-256 checked, cached — reuse RapidRAW's machinery
+(`ai_processing.rs`). They return mattes / depth maps as buffers the Rust core turns into
+`grade.json` mask entries. Nothing outside the core writes `grade.json`.
 
 ### 3. MCP server 🔌
 

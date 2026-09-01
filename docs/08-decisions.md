@@ -85,12 +85,59 @@ Status: `open` · `decided` · `revisit`
 - **Leaning:** (a) if the core exposes a clean lib API by Phase 3; (b) as the quick path.
   Not blocking — the tool *surface* (D-007, doc 07) matters more than the impl language.
 
-## D-009 — AI model runtime: PyTorch/MPS vs ONNX vs candle
-**open — revisit after Phase 0 SAM2 spike**
+## D-009 — AI model runtime: ONNX in-process (was: PyTorch sidecar)
+**decided (2026-09-01), superseded the draft**
 
-- **v1:** PyTorch + MPS in a Python sidecar. Known-good, all models available.
-- **Watch:** ONNX Runtime (portable, could run in-process) and `candle` (Rust, would kill
-  the sidecar) — revisit once we know the models and the fps we actually need.
+- **New info (Phase 0 code-read, doc 09):** RapidRAW already runs Depth Anything V2, SAM
+  (v1), U2-Net, CLIP, LaMa **all as ONNX via `ort` (ONNX Runtime), in-process in Rust.**
+  No Python.
+- **Options:** (a) match RapidRAW — ONNX via `ort`, in-process; (b) Python sidecar
+  (PyTorch/MPS) as originally drafted; (c) `candle` (pure-Rust inference).
+- **Choice:** (a). Depth Anything V2 and SAM 2 both have ONNX exports. Running in-process
+  means no socket boundary, no Python env for the user, and we reuse RapidRAW's model
+  loader / download / cache machinery.
+- **Consequences:**
+  - The `ai/` Python sidecar (doc 03 component 2) is **downgraded** to: a prototyping
+    shortcut, a home for models with no good ONNX export (CoTracker/TAPIR — TBD), and
+    `color-matcher` (or reimplement that in Rust with `ndarray`/`nalgebra`, already deps).
+  - SAM 2 video propagation via ONNX is more involved than SAM 1 (memory-attention module)
+    — validate in the Phase 0 spike.
+  - Doc 03 diagram + `ai/README.md` to be updated.
+
+## D-011 — Rust toolchain floor
+**decided (2026-09-01)**
+
+- RapidRAW `Cargo.toml`: `rust-version = "1.98"`, `edition = "2024"`. We inherit this.
+- Dev machine had 1.72.1 → `rustup update` required before any build (B-001).
+- Consequence: contributors need current stable Rust. Document in a future `CONTRIBUTING`.
+
+## D-012 — SAM 1 → SAM 2 for the subject mask
+**open — Phase 0 / Phase 2**
+
+- **Context:** RapidRAW ships SAM ViT-B (v1) — single-image, no tracking. Our headline
+  need (doc 01 G3) is a subject matte that survives gestures *across a clip* = tracking.
+- **Options:** (a) SAM 2 ONNX (encoder + decoder + memory attention) for native video
+  propagation; (b) SAM 1 per-frame + optical-flow / point-tracker to carry the mask; (c)
+  SAM 1 per-keyframe + interpolate + human corrections.
+- **Leaning:** (a) if the ONNX export + `ort` path is workable; (b) as fallback.
+- **Decide after:** the Phase 0 SAM2-on-`ort` spike.
+
+## D-013 — AI relight (IC-Light) — v3, bake-step only
+**open — v3, not before**
+
+- **Context:** user wants ClipDrop-Relight-style relighting (add a virtual key light,
+  change lighting direction). Genuinely useful for flat talking-head footage.
+- **Options:** (a) IC-Light / IC-Light v2 (lllyasviel, open-source, diffusion) as a
+  **bake step** — run once, cache a relit source, then grade normally; (b) live relight
+  node (not viable — diffusion is seconds/frame + non-deterministic, breaks the render
+  invariant); (c) skip it, rely on depth+mask "relight-ish" (ships v1 anyway).
+- **Leaning:** (a) for v3, image-first. **Not (b) ever** — a diffusion pass cannot live
+  in the deterministic per-frame render path.
+- **Blockers:** video temporal consistency of a relight is an unsolved research problem —
+  expect flicker/crawl. v3 scope is likely "relight a held frame / a slow shot", not
+  "relight any clip."
+- **Meanwhile:** depth + shape masks already fake directional relighting deterministically
+  (doc 02, "relight-ish") — that covers most talking-head needs in v1.
 
 ## D-010 — Project name
 **open**

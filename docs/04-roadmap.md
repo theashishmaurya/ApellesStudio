@@ -8,11 +8,14 @@ not commitments.
 ## Phase 0 — Scaffolding & spikes  ·  ~1 week
 
 - [x] Repo, submodule (RapidRAW → `engine/`), docs
-- [ ] Build RapidRAW locally on Apple Silicon, confirm the wgpu renderer runs
-- [ ] Read `engine/src-tauri` — map the render pipeline, the adjustment model, the mask code, the Depth Anything integration
+- [x] `CLAUDE.md` working rules
+- [x] Read `engine/src-tauri` — first pass (`docs/09-engine-notes.md`): grade path mapped,
+      AI stack is ONNX/`ort` in-process (D-009 revised), toolchain gap found (B-001)
+- [ ] **`rustup update`** (B-001), then build RapidRAW on Apple Silicon, confirm wgpu renders
+- [ ] Deeper read: `gpu_processing.rs` + `shaders/shader.wgsl` (the compute passes), `image_processing.rs` (params→uniforms), `mask_generation.rs`
 - [ ] **Spike D-006**: can wgpu render to a native surface under the Tauri webview? Prototype a video frame on screen with UI chrome over it.
-- [ ] **Spike**: ffmpeg decode → feed one frame into RapidRAW's existing grade graph → render it graded. Proves the "video is just per-frame stills" premise.
-- [ ] **Spike**: SAM 2 on Apple Silicon MPS — segment + propagate one 10s clip, measure fps, look at matte quality on the hands problem.
+- [ ] **Spike**: ffmpeg decode → feed one frame into `apply_adjustments` → render it graded. Proves "video is per-frame stills."
+- [ ] **Spike**: SAM 2 as ONNX via `ort` — segment + propagate one 10s clip, measure fps, matte quality on the hands problem (D-012). Fallback spike: SAM 1 (already in engine) + optical flow.
 - [ ] Decide: fork hard vs. talk to the RapidRAW maintainer (D-003)
 
 **Checkpoint:** a graded video frame on screen, the architecture spikes answered.

@@ -79,11 +79,20 @@ audio · conform/EDL of a full timeline · film-emulation chain · relight · co
 
 - 🔌 A stable public MCP contract others build on
 - 🔨 OFX / plugin export (grade node usable in Resolve/Fusion/After Effects) — the gyroflow model
-- 🧪 Relight (normal estimation + relight), face-region grading
-- 🧪 Auto-balance from a colour chart, auto-shot-detection
+- 🧪 **AI relight** — IC-Light (open-source, diffusion). Add a virtual key/rim light,
+  change lighting direction/colour. **Bake-step, not a live grade node** (diffusion is
+  slow + non-deterministic — conflicts with the deterministic render path; runs once,
+  caches a relit source). Image-first; video temporal consistency is unsolved (D-013).
+- 🧪 face-region grading, auto-balance from a colour chart, auto-shot-detection
 - 🔨 Batch / headless render farm mode
 - 🔨 Web viewer for review + comment
 - Collaboration: shared look library, grade review workflow
+
+### The "relight-ish" you get earlier (v1–v2, no diffusion)
+Depth + shape masks fake a lot of relighting deterministically: darken one side of the
+face, add a warm glow gradient (shape mask + warm exposure lift), lift the shadow side,
+push a rim with a linear mask. Not IC-Light quality, but fast, controllable, and it holds
+on video. Ships in v1 as part of masked grading.
 
 ---
 
