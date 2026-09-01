@@ -368,3 +368,45 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
 
 - Working name **"Chroma"**. Provisional. Rename is cheap while pre-public. Alternatives
   welcome. Decide before first public push.
+
+## D-022 — Video export: one rawvideo pipe through the grade path into one ffmpeg encoder
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** roadmap item 2 — "a colour tool must output." Need the loaded clip,
+  graded, written to a file (ProRes / H.264) + a `.cube` bake of the primary. `render_core`
+  (D-014) is the headless grade seam; this is the I/O around it.
+- **Options for the frame pump:**
+  (a) per-frame temp PNG/TIFF files (`image2` in + `image2` out) — simple, but N×2 file
+      writes + a scratch dir to manage;
+  (b) `image2pipe` (PNG/BMP framing over a pipe) — no scratch files, but per-frame
+      encode/decode of an intra codec for no reason;
+  (c) **one persistent `ffmpeg -f rawvideo -pix_fmt rgb24` decoder pipe → grade →
+      one persistent `ffmpeg -f rawvideo` encoder pipe.** No framing overhead, no temp
+      files, backpressure is just OS pipe flow-control (drain each stderr on a thread,
+      pump decode→grade→encode single-threaded).
+- **Choice:** (c). One `render_core::init_gpu_context()` + one `OwnedRenderCaches` for the
+  whole run (B-002: never re-init per frame). `transform_hash` = frame index so the GPU
+  input-texture cache doesn't hand frame N frame N-1's pixels.
+- **Decoder seek:** pure `-vf select=between(n,FROM,TO)` from frame 0, **no input `-ss`.**
+  Input seek is keyframe-accurate and shifts `n`; tracked-matte PNGs are keyed by absolute
+  source frame (D-019), so an off-by-a-few start would desync the matte. Cost: a late
+  range decodes from 0. Acceptable for a bake; a persistent proxy is the perf answer
+  later (already flagged in D-015).
+- **Per-frame tracked matte:** the export loop calls `chroma::state::set_current_frame(n)`
+  before grading each frame so `generate_ai_subject_bitmap → tracked_full_mask` fetches
+  `<chromaTrackDir>/<n>.png` (D-019). The loop saves + restores the app's `CurrentVideo`.
+- **Codecs:** prores = `prores_ks -profile:v 3 (HQ) -pix_fmt yuv422p10le`; h264 =
+  `libx264 -crf 18 -pix_fmt yuv420p`. `quality` overrides the profile / crf respectively.
+- **`.cube` bake:** a `size³` identity RGB lattice as a `DynamicImage` (x = R, y = B·size+G),
+  run through the **primary grade only** — masks / `lutPath` / geometry stripped — then
+  written red-fastest. 8-bit lattice → ~1/256 quantisation on the input axis; fine for
+  v1's talking-head grades, revisit with an f32 grid path if banding shows. Warns when the
+  grade had masked/local layers a 3D LUT can't carry.
+- **Command shape:** `chroma_export_video` spawns the work on a blocking task and returns
+  `{started, out_path, total}` immediately (a full clip is minutes — can't block the
+  20 s control-server bridge); progress is a module-global polled via
+  `chroma_export_progress`. `chroma_bake_lut` is synchronous (a 33³ lattice is sub-second).
+- **v1 limitations:** no audio passthrough; parametric `color` / `luminance` masks are
+  skipped on video export (they need the GUI-state `resolve_warped_image_for_masks`);
+  crop/ROI on a video errors out (matte-resolution assumption, D-019). Detail:
+  `docs/notes/export.md`.

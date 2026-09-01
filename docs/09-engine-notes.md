@@ -291,5 +291,29 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   3 new tools + scope-first discipline text in the server instructions, the
   mutating tool docstrings, and `mcp/README.md`. Detail: `docs/notes/scopes.md`.
 
+- **2026-09-01 PM** · **video export + `.cube` bake (D-022)** — new
+  `src-tauri/src/chroma/export.rs` (self-contained: `export_video`,
+  `bake_primary_lut`, 3 commands, `ExportProgress` module-global). Rides
+  `render_core::render` + `init_gpu_context` + `OwnedRenderCaches` (D-014) — the
+  first real consumer of that seam. Per-frame grade mirrors
+  `generate_preview_for_path` (JSON → `AllAdjustments` + `generate_mask_bitmap` →
+  `RenderRequest`) with a decoded video frame as the base (no
+  `load_and_composite`). One `ffmpeg -f rawvideo` decode pipe (`select=between(n,…)`,
+  no input `-ss`) → grade → one `ffmpeg` encode pipe (`prores_ks -profile:v 3` /
+  `libx264 -crf 18`). `transform_hash = frame` so the GPU input-texture cache
+  doesn't reuse frame 0.
+  · Upstream-file edits (minimal): `chroma/mod.rs` +2 (`pub mod export;` + doc line),
+  `lib.rs` +3 (`generate_handler!` lines), `chroma/video.rs` +1 (`#[allow(dead_code)]`
+  on the test-only `FramePos::Secs`).
+  · New in `chroma/state.rs`: `set_current_frame(u64)` — no-decode playhead setter so the
+  export loop drives `tracked_full_mask` (D-019) frame by frame; saves/restores
+  `CurrentVideo` around the run.
+  · Frontend: `src/hooks/useChromaControl.ts` — `export` / `export_progress` ops (both
+  READ_ONLY: no settle). `mcp/server.py` — `export(kind, path?, from_frame?, to_frame?,
+  quality?)`, polls progress for video.
+  · v1 limitations: no audio; parametric `color`/`luminance` masks skipped on video
+  export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors;
+  decode is from frame 0 each export (proxy layer = later). Detail: `docs/notes/export.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

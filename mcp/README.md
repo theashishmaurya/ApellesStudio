@@ -59,6 +59,7 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `inspect_color(frame?, reference?)` | measure the frame — parade + vectorscope images + numeric summary (black/white points, per-zone means, warm-cool + green-magenta cast, clip %, hue histogram); with `reference` (abs path) also its scopes + a `gap` of knob hints (D-021) |
 | `sample(x, y)` | RGB + hex + luma of one pixel of the rendered frame |
 | `sample_region(x, y, w, h)` | mean / min / max RGB over a rectangle |
+| `export(kind, path?, from_frame?, to_frame?, quality?)` | render the grade to a file — `prores` (default) / `h264` clip or a `cube` primary-grade LUT. Video export polls to completion; returns the resolved path + frame count. Default `path` = beside the source as `<name>.graded.{mov,mp4,cube}` (D-022) |
 
 Every mutating tool returns the re-rendered frame (as an MCP image when the app
 can supply one) plus the histogram, the full adjustments doc, **and the compact

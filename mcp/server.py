@@ -345,5 +345,76 @@ def sample_region(x: int, y: int, w: int, h: int) -> list:
     return _result(_op("sample_region", x=x, y=y, w=w, h=h))
 
 
+# --------------------------------------------------------------------------- #
+# export — a colour tool must output
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def export(
+    kind: str = "prores",
+    path: str | None = None,
+    from_frame: int | None = None,
+    to_frame: int | None = None,
+    quality: int | None = None,
+) -> str:
+    """Render the current grade to a file.
+
+    kind:
+      - "prores" (default) — ProRes 422 HQ .mov (prores_ks -profile:v 3, 10-bit 422)
+      - "h264"             — .mp4 (libx264 -crf 18)
+      - "cube"             — bake the PRIMARY grade (global only, no masks) to a
+                             33³ .cube 3D LUT for use in another app
+
+    path: output file. Omit to write next to the source clip as
+      <name>.graded.mov / .mp4 / .cube.
+    from_frame / to_frame: video only; default = the whole clip.
+    quality: h264 → -crf (0-51, lower = better); prores → -profile:v (0-5).
+
+    Video export runs in the background; this polls to completion and returns the
+    resolved path, frame count, elapsed time, and any warning (e.g. masked layers
+    dropped from a .cube). It is a local file the user asked for — no confirm.
+    """
+    import json
+    import time
+
+    if kind == "cube":
+        env = _op("export", kind="cube", path=path)
+        res = env.get("result") or {}
+        return json.dumps(
+            {"ok": env.get("ok"), "error": env.get("error"), **res}, indent=2, default=str
+        )
+
+    start = _op(
+        "export",
+        kind=kind,
+        path=path,
+        **{k: v for k, v in (("from", from_frame), ("to", to_frame), ("quality", quality)) if v is not None},
+    )
+    if not start.get("ok"):
+        return json.dumps(start, indent=2, default=str)
+    kicked = start.get("result") or {}
+
+    last = {}
+    while True:
+        time.sleep(1.0)
+        env = _op("export_progress")
+        p = env.get("result") or {}
+        last = p
+        if not p.get("running"):
+            break
+
+    return json.dumps(
+        {
+            "ok": last.get("error") is None,
+            "out_path": last.get("out_path") or kicked.get("out_path"),
+            "frames": last.get("done"),
+            "total": last.get("total"),
+            "error": last.get("error"),
+            "kickoff": kicked,
+        },
+        indent=2,
+        default=str,
+    )
+
+
 if __name__ == "__main__":
     mcp.run()

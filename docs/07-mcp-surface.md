@@ -85,10 +85,12 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 |---|---|---|
 | `request_human` | `reason`, `roi? {frame, box}`, `blocking?` | GUI surfaces it, highlights the ROI; when `blocking`, the call returns after the human marks it done; else the agent can continue and re-check |
 
-### Export
+### Export  — *shipped 2026-09-01, D-022*
 | Tool | Params | Returns |
 |---|---|---|
-| `export` | `kind` (cube\|prores\|h264\|grade_json), `path?`, `range?` | file path; `cube` warns if masked/depth layers were dropped |
+| `export` | `kind` (prores\|h264\|cube), `path?`, `from_frame?`, `to_frame?`, `quality?` | resolved path + frame count + elapsed; `cube` warns when masked/local layers were dropped (3D LUT is global-only). Video export runs in the background — the tool polls to completion. Default `path` = beside the source as `<name>.graded.mov / .mp4 / .cube`. A local file the user asked for → no confirm-before-write, but the resolved path is always returned. |
+
+`grade_json` export waits on the `grade.json` schema (roadmap item 5).
 
 ## v1 subset — shipping now via the control server (D-020)
 
@@ -97,8 +99,10 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 `delete_mask` **[D-020, shipped]**; `inspect_color` (+ `reference`→`gap`),
 `sample`, `sample_region` **[D-021, shipped 2026-09-01]** — computed in JS off the
 captured preview (`engine/src/utils/scopes.ts`), not WGSL; every mutating op
-response also carries the compact `scopes` summary now. `inspect` (frame with
-grid + burned-in frame number) and `screenshot` (native-res crop) are still
+response also carries the compact `scopes` summary now; `export` /
+`export_progress` **[D-022, shipped 2026-09-01]** — ProRes/H.264 clip render +
+`.cube` primary bake, `engine/src-tauri/src/chroma/export.rs`. `inspect` (frame
+with grid + burned-in frame number) and `screenshot` (native-res crop) are still
 follow-ups. The control server's op registry makes each a one-liner to add.
 
 ## The loop, illustrated

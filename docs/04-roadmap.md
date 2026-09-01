@@ -21,9 +21,16 @@ Next, in order:
    hints). MCP `inspect_color(frame?, reference?)` + `sample` / `sample_region`;
    every mutating op response now also carries `scopes`. Scope-first discipline in
    the tool docstrings + `mcp/README.md`. Detail: `docs/notes/scopes.md`.
-2. **Export** — a colour tool must output. `render_core` (D-014) is ready; wire
-   ffmpeg decode → grade path → encode (ProRes / H.264) + a `.cube` bake of the
-   primary. MCP `export` tool.
+2. [x] **Export** (D-022, 2026-09-01) — `engine/src-tauri/src/chroma/export.rs`:
+   one `ffmpeg -f rawvideo` decode pipe → `render_core::render` per frame (one
+   GPU ctx + `OwnedRenderCaches` for the run; `transform_hash = frame`) → one
+   `ffmpeg` encode pipe. ProRes 422 HQ (`prores_ks -profile:v 3`) / H.264
+   (`libx264 -crf 18`). Per-frame tracked matte via `state::set_current_frame`
+   before each grade (D-019). `bake_primary_lut` — `size³` identity lattice
+   through the primary grade only → `.cube` (warns on dropped masked layers).
+   Commands `chroma_export_video` (bg + `chroma_export_progress` poll) /
+   `chroma_bake_lut`; frontend `export` / `export_progress` bridge ops; MCP
+   `export(kind, path?, from?, to?)`. Detail: `docs/notes/export.md`.
 3. **`refine_mask` via MCP** — expose the already-built +/− point support
    (`points: [{x,y,label}]`) as an MCP op. Cheap; the canvas click UI comes later.
 4. **Depth-haze preset** — completes the Phase 2 checkpoint + the original ask.
@@ -62,7 +69,8 @@ tool + `mcp/README.md`.
 - [x] `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015). Tests pass on the real 4K C019 take.
 - [x] **Minimal video-open path** — video loads as frame 0 into the existing pipeline; filmstrip + import filter accept video. Built, tests pass. Needs a visual confirm (open C019 in the app).
 - [x] **D-014: `render_core` seam** — `src-tauri/src/render_core.rs`: `render(ctx, caches, base, req, …) -> DynamicImage` + `init_gpu_context()` (device+queue, no surface). `process_and_get_dynamic_image_inner` now takes `RenderCaches` not `tauri::State`. GUI path unchanged. Headless API unused until the control/MCP server.
-- [ ] Video I/O: proxy cache → per-frame grade → ProRes/H.264 encode
+- [x] Video I/O: per-frame grade → ProRes/H.264 encode (D-022, 2026-09-01). Proxy
+      cache still pending (decode is from-frame-0 per export — a bake, not scrub).
 - [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Naive stepper (~5-10fps), no proxy yet.
 - [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
 - [ ] Smooth playback — persistent decode pipe or pre-rendered proxy
@@ -70,7 +78,7 @@ tool + `mcp/README.md`.
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [ ] Shot strip (selector)
 - [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)
-- [ ] `.cube` bake of the primary grade
+- [x] `.cube` bake of the primary grade (D-022, 2026-09-01 — `bake_primary_lut`)
 - [ ] All inherited adjustment/mask panels working against a video frame, not a still
 
 **Checkpoint:** grade a talking-head clip by hand, scrub it, export a `.cube` that matches in Palmier.
@@ -98,7 +106,7 @@ tool + `mcp/README.md`.
 ## Phase 3 — MCP + the agent loop  ·  ~2–3 weeks
 
 - [x] **Control server + MCP bridge (D-020)** — `src/chroma/control.rs` (in-app HTTP) ⇄ Tauri events ⇄ `useChromaControl` (frontend owns the state). `mcp/` Python stdio server. One shared grade/mask doc: MCP edits move the app's real sliders/history, `get_state` reflects manual edits. v1 ops: primary, curves, wheels, seek, subject mask + track, per-mask grade, invert, delete. Verified with real `curl` + an MCP client against the C019 take.
-- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape/depth), scopes, match_to_reference, apply_haze, export
+- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape/depth), scopes, match_to_reference, apply_haze, ~~export~~ (D-022)
 - [x] Every mutating op returns `{image_b64, histogram, adjustments}` (image is a best-effort `generate_uncropped_preview` re-render — the app renders to a native WGPU surface)
 - [ ] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
 - [ ] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)

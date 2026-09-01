@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **Video export + `.cube` bake (D-022)**. New
+  `engine/src-tauri/src/chroma/export.rs`: `export_video` (one `ffmpeg -f rawvideo`
+  decode pipe → `render_core::render` per frame, one GPU ctx for the run → one `ffmpeg`
+  encode pipe; ProRes 422 HQ / H.264) and `bake_primary_lut` (`size³` identity lattice
+  through the primary grade only → `.cube`, warns on dropped masked layers). Per-frame
+  tracked matte via new `chroma::state::set_current_frame` (D-019). Commands
+  `chroma_export_video` (background + `chroma_export_progress`) / `chroma_bake_lut`;
+  frontend `export` / `export_progress` bridge ops; MCP `export(kind, path?, from?, to?)`.
+  Verified on the 1080×1920 test clip: neutral + `exposure` + tracked-subject exports
+  (`ffprobe` + frame spot-checks) and a warm `.cube` that reddens a grey ramp in ffmpeg.
+  Detail: `docs/notes/export.md`.
 - **2026-09-01** — **Scopes + `inspect_color` (D-021)**. New `engine/src/utils/scopes.ts`
   (pure JS, no deps): `computeScopes` (black/white points, luma + per-channel clip %,
   per-zone means, warm-cool + green-magenta cast, 12-bin saturation-weighted hue
