@@ -8,16 +8,19 @@ not commitments.
 ## Now — the working queue (as of 2026-09-01 EOD)
 
 Done so far: video open/transport, subject tracking end-to-end (SAM 2 propagation +
-ViTMatte, D-016/18/19), `render_core` seam (D-014), control server + MCP v1 (D-020).
+ViTMatte, D-016/18/19), `render_core` seam (D-014), control server + MCP v1 (D-020),
+scopes + `inspect_color` (D-021).
 
 Next, in order:
 
-1. **Scopes + `inspect_color`** — the #1 enabler for AI grading (see
-   `docs/notes/agent-visual-feedback.md` — the agent must grade by the numbers).
-   RapidRAW has histogram + 1-channel waveform; add RGB parade + vectorscope + the
-   numeric summary (black/white points, per-zone means, warm-cool + green-magenta
-   cast, hue histogram), then the MCP `inspect_color(frame?, reference?)` tool with
-   the reference→gap. WGSL compute where possible.
+1. [x] **Scopes + `inspect_color`** (D-021, 2026-09-01) — `engine/src/utils/scopes.ts`,
+   pure JS off the captured preview (not WGSL — the agent path, separate from the
+   UI's Rust waveform). `computeScopes` (black/white points, luma + per-channel
+   clip %, per-zone means, warm-cool + green-magenta cast, 12-bin hue histogram,
+   mean saturation), parade + vectorscope PNGs, `computeGap` (reference→knob
+   hints). MCP `inspect_color(frame?, reference?)` + `sample` / `sample_region`;
+   every mutating op response now also carries `scopes`. Scope-first discipline in
+   the tool docstrings + `mcp/README.md`. Detail: `docs/notes/scopes.md`.
 2. **Export** — a colour tool must output. `render_core` (D-014) is ready; wire
    ffmpeg decode → grade path → encode (ProRes / H.264) + a `.cube` bake of the
    primary. MCP `export` tool.
@@ -29,8 +32,9 @@ Next, in order:
 5. **`grade.json` schema + load/save** — lock "grade is code" (the differentiator).
    Migrate RapidRAW's `adjustments` ⇄ the schema.
 
-Scope-first MCP discipline (rule 0 in doc 07) gets wired into the tool descriptions
-alongside item 1.
+Scope-first MCP discipline (rule 0 in doc 07) is wired into the tool descriptions
+(done alongside item 1): server instructions + `inspect_color` + every mutating
+tool + `mcp/README.md`.
 
 ---
 

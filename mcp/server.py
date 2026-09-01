@@ -28,14 +28,25 @@ from mcp.types import TextContent
 PORT = os.environ.get("CHROMA_CONTROL_PORT", "19788")
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
+SCOPE_DISCIPLINE = (
+    "Grade by the numbers. Call `inspect_color` before and after a change and "
+    "reason from the scope values (black/white points, per-zone means, warm-cool "
+    "and green-magenta cast, clip %, hue histogram) or a named full-res region "
+    "from `sample` / `sample_region`. Never claim a result ('looks balanced', "
+    "'skin is natural', 'the cast is gone') without citing a scope value or a "
+    "sampled region. Defer genuinely creative calls to the human."
+)
+
 mcp = MCPServer(
     "chroma",
     instructions=(
         "Drive the running Chroma color-grading app. Edits move the app's real "
         "UI and re-render its canvas; reads reflect the user's manual edits. "
         "The Chroma desktop app must be open. Call get_state first to see the "
-        "current image/video, adjustments and masks. Mutating tools return the "
-        "rendered frame plus its histogram."
+        "current image/video, adjustments and masks.\n\n"
+        + SCOPE_DISCIPLINE
+        + "\n\nMutating tools return the rendered frame, its histogram, and the "
+        "compact scope summary (the new measurement, for free) after the change."
     ),
 )
 
@@ -74,12 +85,52 @@ def _result(env: dict) -> list:
         "error": env.get("error"),
         "result": env.get("result"),
         "frame": env.get("frame"),
+        "scopes": env.get("scopes"),
         "histogram": env.get("histogram"),
         "adjustments": env.get("adjustments"),
     }
     import json
 
     out.append(TextContent(type="text", text=json.dumps(summary, indent=2, default=str)))
+    return out
+
+
+def _data_url_to_png_bytes(data_url: str | None) -> bytes | None:
+    if not data_url or not data_url.startswith("data:"):
+        return None
+    import base64
+
+    return base64.b64decode(data_url.split(",", 1)[1])
+
+
+def _inspect_result(env: dict) -> list:
+    """inspect_color envelope -> readable scope JSON + parade & vectorscope images."""
+    import base64
+    import json
+
+    if not env.get("ok"):
+        return [TextContent(type="text", text=json.dumps(env, indent=2, default=str))]
+
+    res = env.get("result") or {}
+    out: list = []
+    for key in ("parade", "vectorscope"):
+        raw = _data_url_to_png_bytes(res.get(key))
+        if raw:
+            out.append(Image(data=raw, format="png").to_image_content())
+
+    readable = {
+        "scopes": res.get("scopes"),
+        "histogram": res.get("histogram"),
+        "frameSize": res.get("frameSize"),
+    }
+    if res.get("reference"):
+        readable["reference"] = res["reference"]
+    if res.get("gap"):
+        readable["gap"] = res["gap"]
+        reading = res["gap"].get("reading")
+        if reading:
+            readable["reading"] = reading
+    out.append(TextContent(type="text", text=json.dumps(readable, indent=2, default=str)))
     return out
 
 
@@ -128,7 +179,10 @@ def set_primary(
 ) -> list:
     """Set primary (whole-image) grade knobs. Only the args you pass change;
     the rest are left as-is. Ranges roughly match the app's sliders
-    (exposure ~ -5..5 stops, most others -100..100). Returns the rendered frame."""
+    (exposure ~ -5..5 stops, most others -100..100). Returns the rendered frame
+    plus the new scope summary. Grade by the numbers: call `inspect_color` before
+    and after and reason from the scope values, not the thumbnail. Never claim a
+    result without citing a scope value or a sampled region."""
     patch = {k: v for k, v in locals().items() if v is not None}
     return _result(_op("set_primary", patch=patch))
 
@@ -137,7 +191,9 @@ def set_primary(
 def set_curve(channel: str, points: list[dict]) -> list:
     """Replace a tone-curve channel. channel is one of luma|red|green|blue.
     points is an ordered list of {x, y} in 0..255 (both axes), e.g.
-    [{"x":0,"y":0},{"x":128,"y":140},{"x":255,"y":255}]."""
+    [{"x":0,"y":0},{"x":128,"y":140},{"x":255,"y":255}].
+    Grade by the numbers: verify the move on `inspect_color` (parade / black-white
+    points / per-zone means), not the thumbnail."""
     return _result(_op("set_curve", channel=channel, points=points))
 
 
@@ -152,7 +208,9 @@ def set_color_grade(
 ) -> list:
     """Color-grading wheels. shadows/midtones/highlights/global_ are each
     {hue, saturation, luminance} (hue 0..360, sat/lum ~ -100..100); pass only
-    the wheel(s) you want to move. blending and balance are 0..100 / -100..100."""
+    the wheel(s) you want to move. blending and balance are 0..100 / -100..100.
+    Grade by the numbers: check the per-zone means and the cast on `inspect_color`
+    before and after; don't judge the wheels from the thumbnail."""
     patch: dict = {}
     for name, val in (
         ("shadows", shadows),
@@ -222,7 +280,9 @@ def set_mask_adjust(
     sharpness: float | None = None,
 ) -> list:
     """Grade *through* a mask — same knobs as set_primary, applied only where
-    the mask (mask_id, from list_masks) is. Only passed args change."""
+    the mask (mask_id, from list_masks) is. Only passed args change.
+    Grade by the numbers: sample the masked region (`sample_region`) before and
+    after and cite the values; don't eyeball the matted area."""
     patch = {k: v for k, v in locals().items() if k != "mask_id" and v is not None}
     return _result(_op("set_mask_adjust", mask_id=mask_id, patch=patch))
 
@@ -237,6 +297,52 @@ def invert_mask(sub_mask_id: str) -> list:
 def delete_mask(mask_id: str) -> list:
     """Delete a whole mask container (mask_id from list_masks)."""
     return _result(_op("delete_mask", mask_id=mask_id))
+
+
+# --------------------------------------------------------------------------- #
+# scopes — grade by the numbers
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def inspect_color(frame: int | None = None, reference: str | None = None) -> list:
+    """Measure the current frame. Returns the RGB parade and vectorscope as
+    images, plus a numeric summary: black/white points (1st/99th-pct luma),
+    luma + per-channel clip %, mean RGB, per-zone (shadow/mid/highlight) means,
+    the measured colour cast (warmCool = mid R-B, greenMagenta = mid G-(R+B)/2),
+    mean saturation, and a 12-bin saturation-weighted hue histogram (an orange
+    cluster ~ skin, cyan/blue ~ sky). The histogram is passed through from the app.
+
+    Pass `reference` (an absolute image path) to also get that image's scopes and
+    a `gap` object of HINTS that map onto knobs (not commands): an EV-ish
+    exposure delta, temperature/tint direction + magnitude, contrast spread, and
+    a saturation ratio, with a one-line reading.
+
+    Grade by the numbers. Call this before and after a change and reason from the
+    scope values. Never claim a result ('looks balanced', 'skin is natural', 'the
+    cast is gone') without citing a scope value or a sampled region. Defer
+    genuinely creative calls to the human.
+    """
+    args: dict = {}
+    if frame is not None:
+        args["frame"] = frame
+    if reference is not None:
+        args["reference"] = reference
+    return _inspect_result(_op("inspect_color", **args))
+
+
+@mcp.tool()
+def sample(x: int, y: int) -> list:
+    """Read the RGB (and hex + luma) of one pixel of the current rendered frame.
+    x, y are in the returned frame's pixel space (see `frameSize` from
+    inspect_color). Use it to check a known-neutral wall actually reads neutral."""
+    return _result(_op("sample", x=x, y=y))
+
+
+@mcp.tool()
+def sample_region(x: int, y: int, w: int, h: int) -> list:
+    """Mean / min / max RGB over a rectangle of the current rendered frame
+    (x, y, w, h in the frame's pixel space). Use it to measure skin on a cheek,
+    a grey card, the darkest / brightest patch."""
+    return _result(_op("sample_region", x=x, y=y, w=w, h=h))
 
 
 if __name__ == "__main__":

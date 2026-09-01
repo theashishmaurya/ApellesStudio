@@ -280,5 +280,16 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   must be open); on a fresh app launch the control server is up but `/op` 504s until
   something is loaded.
 
+- **2026-09-01 PM** · **scopes + `inspect_color` (D-021)** — frontend only, **no
+  Rust / no `src-tauri` change**. New `src/utils/scopes.ts` (pure, no deps:
+  `computeScopes`, `computeGap`, `samplePoint`, `sampleRegion`, `renderParade`,
+  `renderVectorscope`). `src/hooks/useChromaControl.ts`: 3 new read-only ops
+  (`inspect_color`, `sample`, `sample_region`) + `settleAndCapture` now folds the
+  compact `computeScopes` output into every mutating op response as `scopes`.
+  Reference images load via the existing `generate_preview_for_path` command
+  (neutral adjustments) — no new command, no assetProtocol scope change. `mcp/`:
+  3 new tools + scope-first discipline text in the server instructions, the
+  mutating tool docstrings, and `mcp/README.md`. Detail: `docs/notes/scopes.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

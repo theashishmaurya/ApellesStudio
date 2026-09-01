@@ -92,10 +92,14 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 
 ## v1 subset — shipping now via the control server (D-020)
 
-`get_state`, `inspect` / `inspect_color`, `set_primary`, `set_curve`, `set_color_grade`,
-`seek`, `list_masks`, `add_subject_mask`, `track_subject`, `set_mask_adjust`,
-`invert_mask`, `delete_mask`. Everything else here is a follow-up — the control
-server's op registry makes each a one-liner to add.
+`get_state`, `set_primary`, `set_curve`, `set_color_grade`, `seek`, `list_masks`,
+`add_subject_mask`, `track_subject`, `set_mask_adjust`, `invert_mask`,
+`delete_mask` **[D-020, shipped]**; `inspect_color` (+ `reference`→`gap`),
+`sample`, `sample_region` **[D-021, shipped 2026-09-01]** — computed in JS off the
+captured preview (`engine/src/utils/scopes.ts`), not WGSL; every mutating op
+response also carries the compact `scopes` summary now. `inspect` (frame with
+grid + burned-in frame number) and `screenshot` (native-res crop) are still
+follow-ups. The control server's op registry makes each a one-liner to add.
 
 ## The loop, illustrated
 

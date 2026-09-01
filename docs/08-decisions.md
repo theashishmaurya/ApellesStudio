@@ -224,6 +224,30 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
   is short on hair/fine detail in real use.
 
+## D-021 — Agent scopes computed in JS from the rendered preview (not WGSL)
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** roadmap item 1 needs scopes + a numeric summary for the AI grading
+  loop (`docs/notes/agent-visual-feedback.md` — grade by the numbers). The
+  roadmap line says "WGSL compute where possible."
+- **Options:** (a) a WGSL compute pass in `gpu_processing.rs` that produces the
+  parade / vectorscope / numeric readout on the GPU, wired into the analytics
+  readback; (b) a pure-JS reader in the frontend that runs on the frame the MCP
+  bridge *already captures* (`generate_uncropped_preview` → JPEG → `ImageData`),
+  downsampled to ≤512 px.
+- **Choice:** (b) for the agent path. The bridge already decodes a preview frame
+  for "the agent's eyes"; computing ~10 numbers + two 256-px scope images off a
+  512-px downsample is sub-100 ms on the CPU and needs **zero** engine Rust
+  changes (fork hygiene — D-003). The agent needs *grounding numbers*, not a
+  60 fps scope. A WGSL pass would touch `gpu_processing.rs`, the shader set, and
+  the readback path for a precision the agent loop doesn't use.
+- **Consequences:** `engine/src/utils/scopes.ts` (new, pure, no deps). The
+  interactive **UI** scopes (real-time, while the user drags) stay RapidRAW's
+  Rust waveform path and can get a WGSL build later, independently — the two
+  don't share code. Histogram is still RapidRAW's (passed through). Sample coords
+  are in preview-resolution space; `frameSize` is returned so the agent can scale.
+- Detail: `docs/notes/scopes.md`.
+
 ## D-020 — AI grading via an in-app control server + event bridge (not headless)
 **decided (2026-09-01) · built (2026-09-01) — v1 shipped**
 

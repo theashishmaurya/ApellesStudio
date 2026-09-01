@@ -56,9 +56,23 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `set_mask_adjust(mask_id, **knobs)` | grade *through* a mask — same knobs as `set_primary` |
 | `invert_mask(sub_mask_id)` | grade the outside instead of the inside |
 | `delete_mask(mask_id)` | delete a whole mask container |
+| `inspect_color(frame?, reference?)` | measure the frame — parade + vectorscope images + numeric summary (black/white points, per-zone means, warm-cool + green-magenta cast, clip %, hue histogram); with `reference` (abs path) also its scopes + a `gap` of knob hints (D-021) |
+| `sample(x, y)` | RGB + hex + luma of one pixel of the rendered frame |
+| `sample_region(x, y, w, h)` | mean / min / max RGB over a rectangle |
 
 Every mutating tool returns the re-rendered frame (as an MCP image when the app
-can supply one) plus the histogram and the full adjustments doc.
+can supply one) plus the histogram, the full adjustments doc, **and the compact
+`scopes` summary** (the new measurement after the change).
+
+## Scope-first discipline
+
+**Grade by the numbers.** Call `inspect_color` before and after a change and
+reason from the scope values (black/white points, per-zone means, warm-cool and
+green-magenta cast, clip %, hue histogram) or a named full-res region from
+`sample` / `sample_region`. Never claim a result ('looks balanced', 'skin is
+natural', 'the cast is gone') without citing a scope value or a sampled region.
+Defer genuinely creative calls to the human. See
+`../docs/notes/agent-visual-feedback.md`.
 
 Adding a capability = one entry in the frontend `OPS` registry
 (`engine/src/hooks/useChromaControl.ts`) + one tool here.

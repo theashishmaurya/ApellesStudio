@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **Scopes + `inspect_color` (D-021)**. New `engine/src/utils/scopes.ts`
+  (pure JS, no deps): `computeScopes` (black/white points, luma + per-channel clip %,
+  per-zone means, warm-cool + green-magenta cast, 12-bin saturation-weighted hue
+  histogram, mean saturation), `renderParade` / `renderVectorscope` PNGs, `computeGap`
+  (subject→reference hints that map onto knobs), `samplePoint` / `sampleRegion`.
+  Wired into `useChromaControl` as read-only ops `inspect_color(frame?, reference?)` /
+  `sample` / `sample_region`; every mutating op response now also carries the compact
+  `scopes`. Reference images load via the existing `generate_preview_for_path` command
+  — **zero engine Rust change**. `mcp/`: 3 new tools + scope-first discipline ("grade by
+  the numbers; cite a scope value or a named region; defer the creative call") in the
+  server instructions, the mutating tool docstrings, and `mcp/README.md`. Pure functions
+  unit-checked on synthetic ImageData (grey / ramp / warm-cast / orange / clip / gap).
+  Detail: `docs/notes/scopes.md`.
 - **2026-09-01** — Repo scaffolded. `engine/` submodule = RapidRAW. Docs written (vision,
   PRD, scope, architecture, roadmap, research, grade-format, MCP surface, decisions).
   `CLAUDE.md` rules.
