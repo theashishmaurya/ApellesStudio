@@ -645,3 +645,31 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   output. `apply_haze` now softens background edges (~10 % std drop) on top of the
   haze, subject untouched. Blur survives to an H.264 export. No wgsl compile error.
   Detail: `docs/notes/mask-blur.md`. Divergence in doc 09.
+
+---
+
+## D-029 — Strip `@clerk/react` instead of wiring it to anything
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-2 item 4. RapidRAW ships `@clerk/react` for a hosted account
+  (community presets + its own cloud generative-AI features). In our fork it did
+  nothing useful but cost us: a hard-coded `pk_test_…` dev key in `App.tsx`, a
+  `<ClerkProvider>` at the tree root, a `<TitleBar>` React error and repeated
+  "Clerk has been loaded with development keys" console warnings on every launch.
+- **Options:** (a) leave it, ignore the noise; (b) register a real Clerk app and
+  wire it up; (c) **remove the dep**, stub the three hook call sites.
+- **Choice:** (c). Chroma has no cloud — every model runs locally (the `ai/`
+  sidecar + in-process ONNX, D-009/D-028), so there is nothing to authenticate
+  against. (b) would add a signup wall for a feature we don't have; (a) leaves a
+  third-party auth SDK loaded on every start for no reason.
+- **Shape:** `useUser` → `{ user: null }`, `useAuth` → `{ getToken: async () =>
+  null }`, `useClerk` → `{ signOut: async () => {} }` as local consts at each of
+  the 3 call sites (`useAiMasking.ts`, `AIPanel.tsx`, `SettingsPanel.tsx`).
+  RapidRAW's cloud paths already treat a null token as "signed out", so they
+  compile and no-op cleanly. The Settings `<SignIn>` / `<CloudDashboard>` block
+  becomes a one-line "Chroma runs all AI locally" note (`CloudDashboard` left in
+  as dead code — small, harmless, easier upstream merges).
+- **Verified:** `npm install` clean (0 `@clerk` in the lockfile), `tsc --noEmit`
+  shows only pre-existing unrelated errors, app rebuilds + launches with no
+  `<TitleBar>` error and no Clerk warnings in `app.log`, control bridge healthy.
+  Frontend-only, no Rust change. Divergence in doc 09.

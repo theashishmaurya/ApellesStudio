@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Stripped `@clerk/react` (D-029, round-2 item 4)**. Removed the
+  community-login dep RapidRAW ships for its hosted account — Chroma has no cloud
+  (all AI is the local `ai/` sidecar + in-process ONNX). Gone: the `ClerkProvider`
+  + hard-coded dev key in `App.tsx`, the `<TitleBar>` React error, the "loaded with
+  development keys" console spam. `useUser`/`useAuth`/`useClerk` → local
+  null-returning stubs at the 3 call sites; the Settings sign-in panel → a
+  one-line "runs all AI locally" note. Frontend-only, no Rust change.
+
 - **2026-09-01** — **Rust-managed AI sidecar (D-028, round-2 item 3)**. The app
   now starts and supervises the `ai/` FastAPI sidecar itself — no more `cd ai &&
   ./run.sh`. New `chroma/sidecar.rs`: resolves python (`CHROMA_AI_PYTHON` →

@@ -166,8 +166,9 @@ geometry OR push a per-frame matte via the base64 path.
 | `components/views/` | app views | add / adapt |
 
 Frontend deps of note: `konva` (2D canvas — the mask editor), `@uiw/react-color-wheel`
-(the wheels), `react-image-crop`, `framer-motion`, `i18next`, `@clerk/react` (auth — for
-a community-presets feature; **strip or ignore for v1**).
+(the wheels), `react-image-crop`, `framer-motion`, `i18next`. (`@clerk/react` — auth for
+RapidRAW's community-presets / hosted-AI feature — **removed** in D-029; the three
+`useUser`/`useAuth`/`useClerk` call sites now use local null-returning stubs.)
 
 ## What RapidRAW does NOT have (our build list, confirmed)
 
@@ -411,6 +412,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   Flagged as a Phase 4 packaging TODO, not fixed here (`CHROMA_AI_DIR` /
   `CHROMA_AI_PYTHON` are the escape hatches meanwhile). Detail:
   `docs/notes/sidecar-lifecycle.md`.
+
+- **2026-09-02** · **Strip `@clerk/react` (D-029)** — frontend only. `package.json`
+  (dep removed) + `package-lock.json`. `App.tsx`: dropped the `ClerkProvider` import,
+  the hard-coded `CLERK_PUBLISHABLE_KEY`, and the `<ClerkProvider>` wrapper around
+  `AppWrapper`. `hooks/useAiMasking.ts`, `components/panel/right/AIPanel.tsx`,
+  `components/panel/SettingsPanel.tsx`: dropped the `@clerk/react` imports, added
+  local null-returning stubs (`useUser` → `{user:null}`, `useAuth` → `{getToken: async
+  ()=>null}`, `useClerk` → `{signOut: async ()=>{}}`) so RapidRAW's cloud-provider
+  code paths compile and behave as "unauthenticated" (which they already handle).
+  `SettingsPanel.tsx`: the `<SignIn>` / `<CloudDashboard>` block replaced with a
+  one-line "Chroma runs all AI locally" note (`CloudDashboard` now dead but left in
+  place). Kills the `<TitleBar>` React error + the Clerk dev-key console warnings.
+  No Rust change. All Chroma AI is local (the `ai/` sidecar + in-process ONNX), so
+  there is no account to sign into.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

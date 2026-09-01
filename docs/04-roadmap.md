@@ -31,8 +31,14 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
    capped backoff → `child.kill()` on app exit. Detects + leaves an already-
    running external sidecar alone. `chroma_ai_status` for a future UI
    indicator. Detail: `docs/notes/sidecar-lifecycle.md`.
-4. **Strip `@clerk/react`** — remove the community-login dep from the frontend
-   (auth stubs, the `<TitleBar>` error, the dev-key warnings). Irrelevant to Chroma.
+4. [x] **Strip `@clerk/react`** (D-029, 2026-09-02) — removed the community-login
+   dep from the frontend. `<ClerkProvider>` + the hard-coded dev publishable key
+   gone from `App.tsx`; `useUser`/`useAuth`/`useClerk` replaced with local
+   null-returning stubs at the 3 call sites (`useAiMasking.ts`, `AIPanel.tsx`,
+   `SettingsPanel.tsx`); the `<SignIn>` / `<CloudDashboard>` block in Settings
+   replaced with a one-line "Chroma runs all AI locally" note. Dep dropped from
+   `package.json` + lockfile. Kills the `<TitleBar>` React error and the Clerk
+   dev-key warnings.
 5. **Smooth playback / proxy** — a persistent ffmpeg decode pipe (or a pre-rendered
    half-res proxy) so scrub + play aren't ~5–10 fps and export doesn't decode from
    frame 0. (D-015 flagged this.)
@@ -100,7 +106,7 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 - [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
 - [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
 - [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
-- [x] App builds (7m18s) + launches — window opens, ONNX runtime loads, no GPU errors. Frontend throws a `<TitleBar>` React error + Clerk auth warnings (the `@clerk/react` community-login dep — strip it early, irrelevant to Chroma).
+- [x] App builds (7m18s) + launches — window opens, ONNX runtime loads, no GPU errors. Frontend throws a `<TitleBar>` React error + Clerk auth warnings (the `@clerk/react` community-login dep — strip it early, irrelevant to Chroma). *(Stripped: D-029, 2026-09-02.)*
 - [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
 - [x] **SAM 2 running** (D-012 revised → Python sidecar via `ultralytics`, MPS): `ai/server.py` `/segment` produces a subject matte on the 4K C019 frame. YOLO auto-person + box + multi-point (+/−) prompts. Solves the hands problem (single frame).
 - [x] **Matte edge refine** (D-016): SAM 2 staircases at 4K → added trimap → **ViTMatte** stage in `/segment` (`refine: true` default). Clean edge, ~2.8s warm. Worklog: `docs/notes/matte-edge-pipeline/`.
@@ -169,7 +175,7 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 
 ## Phase 4 — Harden & release v1  ·  ~2 weeks
 
-- [ ] Strip the `@clerk/react` community-login dep from the frontend (irrelevant to Chroma; noted since Phase 0)
+- [x] Strip the `@clerk/react` community-login dep from the frontend (D-029, 2026-09-02; pulled forward to round-2 item 4)
 - [x] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh` (D-028, 2026-09-01; pulled forward from round-2 item 3)
 - [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
       moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
