@@ -27,3 +27,6 @@ _(none — pre-v1)_
 - **2026-09-01** — Minimal video-open path built: a video loads as frame 0 through the
   existing grade pipeline (`src/chroma/{state,load}.rs` + 3 one-line hooks). Engine on
   branch `chroma`. App rebuilt + running.
+- **2026-09-01** — Video transport bar + timeline view (filmstrip → 48-frame thumbnail
+  strip when a video is loaded, click/drag to seek). Backend: `chroma_seek`,
+  `chroma_video_info`, `chroma_frame_thumbnails` (cached).

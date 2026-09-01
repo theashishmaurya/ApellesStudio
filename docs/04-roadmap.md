@@ -29,7 +29,9 @@ not commitments.
 - [x] **Minimal video-open path** — video loads as frame 0 into the existing pipeline; filmstrip + import filter accept video. Built, tests pass. Needs a visual confirm (open C019 in the app).
 - [ ] **D-014: extract `render_core`** — Tauri-free `render(gpu, base, req) -> DynamicImage` + `init_gpu_context()`; needed for headless render + the MCP server, not for the GUI video path.
 - [ ] Video I/O: proxy cache → per-frame grade → ProRes/H.264 encode
-- [ ] Transport: playhead → `decode_frame(Index)` → grade → display; scrub with a proxy
+- [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Naive stepper (~5-10fps), no proxy yet.
+- [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
+- [ ] Smooth playback — persistent decode pipe or pre-rendered proxy
 - [ ] Shot / session model + `grade.json` load/save/validate
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [ ] Shot strip (selector)
