@@ -305,6 +305,25 @@ def _cache_dir(req: TrackReq) -> str:
     return d
 
 
+def _quality_set(cache: str) -> set[int]:
+    """Frames in this cache dir that carry a ViTMatte edge (not the fast one)."""
+    p = os.path.join(cache, "_quality.json")
+    try:
+        with open(p) as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def _mark_quality(cache: str, frame: int) -> None:
+    s = _quality_set(cache)
+    s.add(int(frame))
+    tmp = os.path.join(cache, "_quality.json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(sorted(s), f)
+    os.replace(tmp, os.path.join(cache, "_quality.json"))
+
+
 def _iou(a, b):
     ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
     ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
@@ -326,12 +345,12 @@ def _track_worker(job_id: str, req: TrackReq):
         job["total"] = len(frames)
         cache = _cache_dir(req)
         prev_box = req.box
-        if req.mode != "quality":
-            # warm ViTMatte in the background so the first on-seek /refine_track is fast
-            try:
-                matte()
-            except Exception:
-                pass
+        quality = req.mode == "quality"
+        hi = _quality_set(cache)
+        try:
+            matte()  # warm ViTMatte (fast pass → for on-seek refine; quality pass → the loop)
+        except Exception:
+            pass
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, req.from_frame)
         next_idx = 0
@@ -350,7 +369,10 @@ def _track_worker(job_id: str, req: TrackReq):
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
             out_path = os.path.join(cache, f"{target:06d}.png")
-            if os.path.exists(out_path) and not req.overwrite:
+            # fast pass: skip any frame we already have.
+            # quality pass: skip only frames already at ViTMatte quality.
+            already = os.path.exists(out_path) and (not quality or target in hi)
+            if already and not req.overwrite:
                 job["done"] = next_idx + 1
                 next_idx += 1
                 continue
@@ -369,11 +391,12 @@ def _track_worker(job_id: str, req: TrackReq):
                     box = prev_box
 
             try:
-                quality = req.mode == "quality"
                 mask, _ = _segment_array(rgb, box, req.points, auto_person=False,
                                          refine=quality, quick=not quality,
                                          trimap_band=req.trimap_band)
                 Image.fromarray((np.clip(mask, 0, 1) * 255).astype(np.uint8), "L").save(out_path)
+                if quality:
+                    _mark_quality(cache, target)
             except ValueError:
                 pass  # leave a gap; engine holds the previous matte
 
@@ -443,4 +466,5 @@ def refine_track(req: RefineTrackReq):
     os.makedirs(req.dir, exist_ok=True)
     Image.fromarray((np.clip(mask, 0, 1) * 255).astype(np.uint8), "L").save(
         os.path.join(req.dir, f"{req.frame:06d}.png"))
+    _mark_quality(req.dir, req.frame)
     return {"matte_b64": _mask_to_b64(mask), **meta}
