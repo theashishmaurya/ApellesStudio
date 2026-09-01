@@ -70,7 +70,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 ### AI-assisted grading
 | Tool | Params | Notes |
 |---|---|---|
-| `match_to_reference` | `reference` (path/id), `method?` (reinhard\|mkl\|mvgd), `strength?` | measures the gap, applies a CDL/curve fragment to `primary`, returns `{frame, scopes, gap_before, gap_after}` |
+| `match_to_reference` ✅ (D-026) | `reference` (absolute image path), `strength?` (1.0), `max_iters?` (4), `tolerance?` (3.0) | measures the scope gap, iterates a **damped** primary correction (exposure / temperature / tint / contrast / saturation) with per-step ceilings + roll-back-on-worse + best-snapshot, re-measuring each step. Merges into `primary` (a match is a balance). Returns `{converged, iterations, gap_before, gap_after, applied, trace:[{iter,damp,gapMag_before,gapMag_after,patch,cumulative}]}` + the final frame + scopes. No colour-science `method` — it's a closed-loop slider nudge. Detail: `docs/notes/match-reference.md` |
 | `apply_haze` ✅ (D-024) | `amount?` (0–3, default 1), `protect_subject?` (v1 no-op) | the depth-atmosphere preset. Adds a "Depth Haze" mask: full-range `ai-depth` sub-mask **inverted** (weight == distance) + negative `dehaze` / `-sat` / `+blacks` / `+shadows` × `amount`. Depth is a **static** bake. Returns `{maskId, subMaskId, amount}` + frame + scopes. `blur` deferred (no per-mask blur field); `cool` / `depth_from` dropped. Detail: `docs/notes/depth-haze.md` |
 | `auto_balance` | `pick {x,y}` or `chart` | solve WB + levels from a neutral/grey pick |
 
@@ -109,7 +109,10 @@ response also carries the compact `scopes` summary now; `export` /
 `.cube` primary bake, `engine/src-tauri/src/chroma/export.rs`. `get_grade` /
 `save_grade` / `load_grade` **[D-025, shipped 2026-09-01]** — the git-committable
 grade document (`engine/src-tauri/src/chroma/grade.rs`), a versioned wrapper
-around `adjustments` with externalized mattes. `inspect` (frame with grid +
+around `adjustments` with externalized mattes. `match_to_reference` **[D-026,
+shipped 2026-09-01]** — the automated measure→adjust→re-measure loop against a
+reference image (`match_reference` op in `useChromaControl.ts`; primary knobs
+only). `inspect` (frame with grid +
 burned-in frame number) and `screenshot` (native-res crop) are still follow-ups.
 The control server's op registry makes each a one-liner to add.
 

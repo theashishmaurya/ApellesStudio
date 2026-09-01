@@ -473,6 +473,50 @@ def sample_region(x: int, y: int, w: int, h: int) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# match to reference — automated grade-by-the-numbers loop
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def match_to_reference(
+    reference: str,
+    strength: float = 1.0,
+    max_iters: int = 4,
+    tolerance: float = 3.0,
+) -> list:
+    """Auto-grade the current shot toward a reference image.
+
+    Measures the scope gap to `reference` (an ABSOLUTE image path) and
+    iteratively applies a DAMPED primary correction — exposure, temperature,
+    tint, contrast, saturation — re-measuring after each step until the combined
+    gap is below `tolerance` or `max_iters` is reached. This automates the
+    measure -> adjust -> re-measure discipline.
+
+    - strength: overall scale on each correction (1.0 default; lower = gentler).
+    - max_iters: cap on iterations (default 4; 1..12).
+    - tolerance: combined-gap magnitude to stop at (default 3.0). The magnitude
+      weights |EV| x8, warm-cool + green-magenta cast (channel-code units),
+      |saturation| x20, and black/white-point deltas.
+
+    Merges into the PRIMARY grade, not a new layer — a reference match is a
+    balance. Creative look, curves, and mask work are separate and untouched.
+
+    Returns {converged, iterations, gap_before, gap_after, applied (cumulative
+    primary delta), trace: [{iter, damp, gapMag_before, gapMag_after, patch,
+    cumulative}]} plus the final rendered frame + scope summary. Scope-first:
+    inspect the result and confirm the cast / black point moved toward the
+    reference; don't declare a match from the thumbnail. Defer the creative call.
+    """
+    return _result(
+        _op(
+            "match_reference",
+            reference=reference,
+            strength=strength,
+            max_iters=max_iters,
+            tolerance=tolerance,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
 # export — a colour tool must output
 # --------------------------------------------------------------------------- #
 @mcp.tool()

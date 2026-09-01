@@ -475,6 +475,53 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   alive in the editor view) + added an `open(path)` op/tool. Detail:
   `docs/notes/depth-haze.md`. Divergence in doc 09.
 
+## D-026 — `match_to_reference` = a damped closed-loop nudge of five primary sliders (not a colour-science transform)
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** round-2 item 1 — close the agent grading loop. `computeGap` (D-021)
+  already turns a subject↔reference scope delta into knob-shaped hints; this makes
+  it act: measure → adjust → re-measure until the gap is small.
+- **Options for the correction:**
+  (a) a colour-science match (Reinhard / MKL / Monge–Kantorovich) → a CDL or curve
+      fragment, as the `docs/07` sketch's `method` param implied;
+  (b) **a closed-loop nudge of the five primary balance sliders** (exposure,
+      temperature, tint, contrast, saturation), re-measuring each step;
+  (c) solve a 3×3 + offset in one shot from the two frames' channel stats.
+- **Choice:** (b). (a)/(c) need pixel access to both frames in a matched colour
+  space and a place to put a matrix/curve the grade doc doesn't model as a
+  first-class thing yet; they're also opaque to the user. (b) reuses the exact
+  knobs a human balances with, every step is a real `setAdjustments` (D-020) the
+  user sees move, and the trace is legible. The `method` param is dropped for v1.
+- **Merges into `primary`, not a new layer.** A reference match is a *balance*
+  pass; the creative look (curves, wheels, film emulation) and mask work are
+  separate. Documented in the tool text and the return `note`.
+- **Gap → knob heuristics (the "why did they pick these numbers"):**
+  - `exposure` ← the mids-luma gap (D-021's EV-ish formula) **plus** the
+    common-mode black/white-point shift (`0.004·(Δbp+Δwp)`) — contrast can't fix a
+    level offset because it pivots on mid-grey.
+  - `temperature` ← `0.9 · ΔwarmCool`; scalar back-derived from the app's WB-picker
+    (`ImageCanvas.tsx`: normalized R−B imbalance ×~125 → temp units) and the
+    measured temp↔warmCool slope on real footage (~1.0–1.2).
+  - `tint` ← `1.3 · ΔgreenMagenta` (same WB-picker basis, ×~400 → tint units).
+  - `contrast` ← `0.45 · (Δwp − Δbp)` (the spread difference only).
+  - `saturation` ← `130 · Δsat` where `Δsat` is the raw mean-HSV-sat **difference**
+    (0–1), never the ratio (a ratio explodes when the subject starts near-grey).
+- **Convergence machinery:** a combined scalar gap magnitude
+  (`|EV|·8 + |ΔwarmCool| + |ΔgreenMagenta| + |Δsat|·20 + |Δbp| + |Δwp|`), damping
+  `≈0.78` (near-constant — a fast per-iter decay double-counts against the already
+  shrinking gap and stalls short), per-knob per-step ceilings (contrast/saturation
+  tight — they amplify cast and clip channels, poisoning the next measurement),
+  **roll-back any step that doesn't improve the magnitude** + halve strength, keep
+  a **best-snapshot** and land on it, stop after 2 stalls / `max_iters` / a 16 s
+  wall-clock budget (the control-server bridge times out at 20 s).
+- **Consequences / limits:** the numbers come off a 512-px JPEG downsample (D-021),
+  so the combined magnitude has a noise floor of roughly 10–20 — `tolerance` (3.0
+  default) is rarely *reached* on a real shot; the tool's value is a monotone,
+  legible reduction of the gap and casts pulled toward the reference, not a
+  numeric bullseye. Zero engine-Rust changes (frontend op + MCP tool only). No
+  `whites`/`blacks`/curve knobs in the loop yet. Detail:
+  `docs/notes/match-reference.md`.
+
 ## D-025 — `grade.json` v1 = a versioned wrapper around `adjustments`, not the ordered `stack`; mattes externalized
 **decided (2026-09-01) · built (2026-09-01)**
 

@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **`match_to_reference` — the automated grade-by-the-numbers loop
+  (D-026, round-2 item 1)**. `match_reference` op in `useChromaControl.ts` + MCP
+  `match_to_reference(reference, strength?, max_iters?, tolerance?)`. Loads a
+  reference image (same neutral-preview path as `inspect_color`), measures the
+  scope gap, and iterates a **damped** primary correction — exposure /
+  temperature / tint / contrast / saturation — re-measuring each step until a
+  combined gap magnitude drops below `tolerance` or `max_iters` (default 4) is
+  hit. Gap→knob scalars: exposure ← mids-luma + common-mode black/white shift;
+  temperature/tint back-derived from the app's WB-picker math; contrast ← spread
+  difference; saturation ← raw HSV-sat difference (never a ratio). Machinery:
+  near-constant damping (~0.78), per-knob per-step ceilings (contrast/saturation
+  tight — they poison the next measurement), **roll-back any non-improving step** +
+  halve strength, best-snapshot land, 2-stall / 16 s-budget stop. **Merges into
+  `primary`** — a match is a balance; creative/curve/mask work is separate.
+  Two-capture averaging on each measure to fight the 512-px-JPEG noise floor
+  (D-021). Zero engine-Rust changes. Verified live on the 1080×1920 talking-head
+  clip: a warm+bright reference vs a cool+dark subject → combined gap **78.3 → 10.0**
+  over 5 iterations, monotone decreasing, `warmCool 12.7 → 56.6` (ref 58.1),
+  `white 230 → 251` (ref 253), `sat 0.25 → 0.44` (ref 0.43); re-run is a no-op
+  (0 accepted steps); an unrelated reference degrades gracefully (130.6 → 86.0
+  then roll-back + stall-stop, all knobs finite + in range). Detail:
+  `docs/notes/match-reference.md`.
+
 - **2026-09-01** — **`grade.json` save/load + versioned schema (D-025)** — "the grade is
   code". New `engine/src-tauri/src/chroma/grade.rs` (pure JSON+fs, no GPU/store):
   `chroma_save_grade` / `chroma_load_grade`. v1 `grade.json` is a **versioned wrapper**

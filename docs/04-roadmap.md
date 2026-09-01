@@ -10,10 +10,14 @@ not commitments.
 Round 1 done (D-021…D-025): scopes/`inspect_color`, export + `.cube`, mask
 composition ops, depth-haze, `grade.json`. Round 2, in order:
 
-1. **`match_to_reference` auto-apply** — the gap already computes (D-021); apply it
-   as a primary grade + iterate (measure → adjust → re-measure until the gap is
-   small). MCP `match_to_reference(reference, strength?, max_iters?)`. Completes the
-   agent grading loop; candidate v1 headline (D-007).
+1. [x] **`match_to_reference` auto-apply** (D-026, 2026-09-01) — the gap already
+   computes (D-021); this closes the loop: measure the scope gap to a reference
+   image, apply a **damped** primary correction (exposure / temperature / tint /
+   contrast / saturation) with per-step ceilings + roll-back-on-worse +
+   best-snapshot, re-measure, iterate. `match_reference` op in
+   `useChromaControl.ts`; MCP `match_to_reference(reference, strength?, max_iters?,
+   tolerance?)`. Primary only (a match is a balance) — creative/curve/mask work is
+   separate. Detail: `docs/notes/match-reference.md`.
 2. **Per-mask blur** — a blur field on `MaskAdjustments` + shader wiring (or drive a
    global lens-blur pass off a mask). Completes depth-haze (background defocus) and
    unblocks "blur the background" as a mask op.
