@@ -268,20 +268,22 @@ def segment(req: SegmentReq):
 
 # ---------------------------------------------------------------------------
 # /track  — precompute a subject matte per frame, cached to disk. The subject
-# is followed frame-to-frame by re-detecting the person (YOLO) nearest the
-# previous box; good enough for a mostly-stationary talking head. True SAM 2
-# memory propagation is a later upgrade.
+# is followed by **SAM 2 memory propagation**: prompt once on the start frame,
+# then feed frames in order — the model carries the object forward in its memory
+# bank (no re-detection, no re-prompting), ~180ms/frame. Edge is then finished
+# fast (guided filter) or hi-res (ViTMatte, "quality" mode / on-seek upgrade).
 # ---------------------------------------------------------------------------
 
 class TrackReq(BaseModel):
     video_path: str
-    from_frame: int = 0
-    to_frame: int = -1          # -1 = end
-    step: int = 1              # segment every Nth frame; engine holds between
+    from_frame: int = 0        # prompt frame; propagation runs forward from here
+    to_frame: int = -1         # -1 = end
+    step: int = 1              # save a matte every Nth frame (every frame is still
+                              # fed to the predictor so memory stays dense)
     box: Optional[list[float]] = None
     points: Optional[list[list[float]]] = None
-    mode: str = "fast"        # "fast" = guided-filter edge (~0.5s/frame),
-                              # "quality" = ViTMatte edge (~3s/frame)
+    mode: str = "fast"        # "fast" = guided-filter edge (~0.25s/frame),
+                              # "quality" = ViTMatte edge (~2.7s/frame)
     trimap_band: int = 22
     overwrite: bool = False
 
@@ -290,10 +292,21 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
 
+def _make_video_predictor(max_obj: int = 1):
+    """A fresh SAM 2 video predictor. conf must be ~0 — SAM 2's object-presence
+    score sits around 0.15-0.20 after the /32 clamp and the default conf would
+    filter every mask out."""
+    from ultralytics.models.sam.predict import SAM2DynamicInteractivePredictor
+
+    ov = {"model": os.path.join(MODELS_DIR, "sam2.1_s.pt"), "device": DEVICE,
+          "verbose": False, "save": False, "conf": 0.001}
+    return SAM2DynamicInteractivePredictor(overrides=ov, max_obj_num=max_obj)
+
+
 def _cache_key(req: TrackReq) -> str:
     h = hashlib.sha1(
         json.dumps([os.path.abspath(req.video_path), req.box, req.points,
-                    req.step, req.trimap_band], sort_keys=True).encode()
+                    req.from_frame, req.trimap_band], sort_keys=True).encode()
     ).hexdigest()[:12]
     return h
 
@@ -303,6 +316,13 @@ def _cache_dir(req: TrackReq) -> str:
                      ".chroma", "mattes", _cache_key(req))
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _mask_bbox(m: np.ndarray):
+    ys, xs = np.where(m > 0.5)
+    if len(xs) == 0:
+        return None
+    return [float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())]
 
 
 def _quality_set(cache: str) -> set[int]:
@@ -324,98 +344,137 @@ def _mark_quality(cache: str, frame: int) -> None:
     os.replace(tmp, os.path.join(cache, "_quality.json"))
 
 
-def _iou(a, b):
+def _all_person_boxes(rgb: np.ndarray) -> list[list[float]]:
+    r = detector().predict(rgb, classes=[0], verbose=False, device=DEVICE)[0]
+    if r.boxes is None:
+        return []
+    return [b.tolist() for b in r.boxes.xyxy.cpu().numpy()]
+
+
+def _box_overlap(a, b) -> float:
+    """Intersection area of a with b, normalised by a's area — 'how much of the
+    YOLO box falls inside the user's box'."""
     ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
     ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
-    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
-    inter = iw * ih
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / ua if ua > 0 else 0.0
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(1e-6, (a[2] - a[0]) * (a[3] - a[1]))
+    return inter / area_a
+
+
+def _finish_edge(rgb, mask, quality, band):
+    box = _mask_bbox(mask)
+    if box is None:
+        return mask
+    if quality:
+        try:
+            return _refine_matte(rgb, mask, box, band=band)
+        except Exception as e:
+            print(f"[refine] {type(e).__name__}: {e}")
+            return mask
+    try:
+        return _quick_finesse(rgb, mask, box, band=band)
+    except Exception as e:
+        print(f"[quick] {type(e).__name__}: {e}")
+        return mask
 
 
 def _track_worker(job_id: str, req: TrackReq):
     job = _jobs[job_id]
+    cap = None
     try:
         cap = cv2.VideoCapture(req.video_path)
         if not cap.isOpened():
             raise RuntimeError(f"cannot open {req.video_path}")
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         end = total - 1 if req.to_frame < 0 else min(req.to_frame, total - 1)
-        frames = list(range(req.from_frame, end + 1, req.step))
-        job["total"] = len(frames)
+        job["total"] = len(range(req.from_frame, end + 1, req.step))
         cache = _cache_dir(req)
-        prev_box = req.box
         quality = req.mode == "quality"
         hi = _quality_set(cache)
         try:
-            matte()  # warm ViTMatte (fast pass → for on-seek refine; quality pass → the loop)
+            matte()  # warm ViTMatte (fast → on-seek refine; quality → the loop)
         except Exception:
             pass
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, req.from_frame)
-        next_idx = 0
+        ok, bgr = cap.read()
+        if not ok:
+            raise RuntimeError(f"cannot read frame {req.from_frame}")
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        H, W = rgb.shape[:2]
+
+        # Prompt the subject on the start frame. SAM 2 is very box-sensitive — a
+        # loose hand-drawn box segments only the head — so refine to a real YOLO
+        # person box (the one best overlapping the user's box) before prompting.
+        box = req.box
+        pts = req.points
+        if pts is None:
+            dets = _all_person_boxes(rgb)
+            if dets:
+                if box is not None:
+                    box = max(dets, key=lambda d: _box_overlap(d, box))
+                else:
+                    W2, H2 = W / 2, H / 2
+                    box = max(dets, key=lambda d: (d[2] - d[0]) * (d[3] - d[1])
+                              - (((d[0] + d[2]) / 2 - W2) / W) ** 2 * (W * H)
+                              - (((d[1] + d[3]) / 2 - H2) / H) ** 2 * (W * H))
+            elif box is None:
+                box = _central_person_box(Image.fromarray(rgb))
+        if box is None and pts is None:
+            raise RuntimeError("no subject to track (no box/points, no person found)")
+
+        pred = _make_video_predictor(max_obj=1)
+        pkw = {"source": rgb, "obj_ids": [0], "update_memory": True}
+        if box is not None:
+            pkw["bboxes"] = [box]
+        if pts is not None:
+            pkw["points"] = [[p[0], p[1]] for p in pts]
+            pkw["labels"] = [int(p[2]) if len(p) > 2 else 1 for p in pts]
+        pred(**pkw)
+
+        # remember the prompt for /refine_track
+        with open(os.path.join(cache, "_track.json"), "w") as f:
+            json.dump({"from_frame": req.from_frame, "box": box, "points": pts,
+                       "video_path": os.path.abspath(req.video_path)}, f)
+
+        done = 0
         cur = req.from_frame
-        while next_idx < len(frames):
-            target = frames[next_idx]
-            # read forward to the target frame
-            while cur <= target:
+        while cur <= end:
+            if cur > req.from_frame:
                 ok, bgr = cap.read()
                 if not ok:
-                    bgr = None
                     break
-                cur += 1
-            if bgr is None:
-                break
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                res = pred(source=rgb)[0]              # <- memory propagation
+                m = (res.masks.data[0].cpu().numpy().astype(np.float32)
+                     if (res.masks is not None and len(res.masks)) else np.zeros((H, W), np.float32))
+            else:
+                res = pred(source=rgb, obj_ids=[0])
+                m = (res[0].masks.data[0].cpu().numpy().astype(np.float32)
+                     if (res[0].masks is not None and len(res[0].masks)) else np.zeros((H, W), np.float32))
 
-            out_path = os.path.join(cache, f"{target:06d}.png")
-            # fast pass: skip any frame we already have.
-            # quality pass: skip only frames already at ViTMatte quality.
-            already = os.path.exists(out_path) and (not quality or target in hi)
-            if already and not req.overwrite:
-                job["done"] = next_idx + 1
-                next_idx += 1
-                continue
+            save_this = (cur - req.from_frame) % req.step == 0
+            if save_this:
+                out_path = os.path.join(cache, f"{cur:06d}.png")
+                already = os.path.exists(out_path) and (not quality or cur in hi)
+                if not (already and not req.overwrite):
+                    if m.any():
+                        edged = _finish_edge(rgb, m, quality, req.trimap_band)
+                        Image.fromarray((np.clip(edged, 0, 1) * 255).astype(np.uint8), "L").save(out_path)
+                        if quality:
+                            _mark_quality(cache, cur)
+                done += 1
+                job["done"] = done
+            cur += 1
 
-            # follow the subject: person box nearest the previous one
-            box = req.box
-            if req.points is None:
-                dets = _all_person_boxes(rgb)
-                if dets:
-                    if prev_box is not None:
-                        box = max(dets, key=lambda d: _iou(d, prev_box))
-                    else:
-                        box = max(dets, key=lambda d: (d[2] - d[0]) * (d[3] - d[1]))
-                    prev_box = box
-                elif prev_box is not None:
-                    box = prev_box
-
-            try:
-                mask, _ = _segment_array(rgb, box, req.points, auto_person=False,
-                                         refine=quality, quick=not quality,
-                                         trimap_band=req.trimap_band)
-                Image.fromarray((np.clip(mask, 0, 1) * 255).astype(np.uint8), "L").save(out_path)
-                if quality:
-                    _mark_quality(cache, target)
-            except ValueError:
-                pass  # leave a gap; engine holds the previous matte
-
-            job["done"] = next_idx + 1
-            next_idx += 1
-
-        cap.release()
         job["state"] = "done"
         job["dir"] = cache
     except Exception as e:  # noqa
         job["state"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
-
-
-def _all_person_boxes(rgb: np.ndarray) -> list[list[float]]:
-    r = detector().predict(rgb, classes=[0], verbose=False, device=DEVICE)[0]
-    if r.boxes is None:
-        return []
-    return [b.tolist() for b in r.boxes.xyxy.cpu().numpy()]
+    finally:
+        if cap is not None:
+            cap.release()
 
 
 @app.post("/track")
@@ -446,7 +505,10 @@ class RefineTrackReq(BaseModel):
 def refine_track(req: RefineTrackReq):
     """Upgrade one cached tracked frame to a ViTMatte edge, overwriting it. The
     engine calls this on seek-settle so the frame you're looking at is hi-res
-    while the rest of the pass stays fast."""
+    while the rest of the pass stays fast.
+
+    Re-segments this one frame with SAM 2 (image mode) seeded by the fast
+    matte's bbox — cheap, and doesn't need to replay propagation to this frame."""
     cap = cv2.VideoCapture(req.video_path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, req.frame)
     ok, bgr = cap.read()
@@ -454,12 +516,22 @@ def refine_track(req: RefineTrackReq):
     if not ok:
         return {"error": f"read frame {req.frame} failed"}
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
     box = req.box
     if box is None:
-        dets = _all_person_boxes(rgb)
-        box = max(dets, key=lambda d: (d[2] - d[0]) * (d[3] - d[1])) if dets else None
+        # seed from the fast matte we already have for this frame
+        fast = os.path.join(req.dir, f"{req.frame:06d}.png")
+        if os.path.exists(fast):
+            box = _mask_bbox(np.asarray(Image.open(fast).convert("L")).astype(np.float32) / 255.0)
+    if box is None:
+        # fall back to the tracked prompt box
+        try:
+            with open(os.path.join(req.dir, "_track.json")) as f:
+                box = json.load(f).get("box")
+        except Exception:
+            pass
     try:
-        mask, meta = _segment_array(rgb, box, None, auto_person=False,
+        mask, meta = _segment_array(rgb, box, None, auto_person=box is None,
                                     refine=True, trimap_band=req.trimap_band)
     except ValueError as e:
         return {"error": str(e)}

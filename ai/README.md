@@ -24,8 +24,10 @@ Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB to
 | `GET /track/{job_id}` | `{state, done, total, dir}` |
 | `POST /refine_track` | `{video_path, dir, frame, box?}` → upgrade one cached frame to a ViTMatte edge, returns `{matte_b64}` |
 
-`mode`: `"fast"` (guided-filter edge, ~0.5s/frame) or `"quality"` (ViTMatte, ~3s/frame).
-Tracking follows one person (YOLO, nearest-to-previous box) — multi-subject is D-017.
+Tracking = **SAM 2 memory propagation** (`SAM2DynamicInteractivePredictor`, D-018):
+prompt once on `from_frame` (the loose box is refined to a YOLO person box first),
+then feed frames in order — the model carries the object forward, ~180ms/frame.
+`mode`: `"fast"` (guided-filter edge) or `"quality"` (ViTMatte). One object per call.
 
 ### `/segment` request
 

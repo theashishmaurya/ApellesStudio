@@ -213,8 +213,29 @@ decision. Lives in a future `CONTRIBUTING`.
   layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
   is short on hair/fine detail in real use.
 
+## D-018 — Tracking = SAM 2 memory propagation (`SAM2DynamicInteractivePredictor`)
+**decided (2026-09-01)**
+
+- **Context:** the first `/track` (2026-09-01 AM) followed the subject by re-detecting
+  the person with YOLO every frame + running image-mode SAM. Works for one stationary
+  person, ~1s/frame, no temporal understanding (occlusion, turn-away, two people all break
+  it).
+- **Choice:** switch to **SAM 2 video mode** via `ultralytics.models.sam.predict.
+  SAM2DynamicInteractivePredictor` — already in the installed `ultralytics 8.4.137`, no
+  Meta `sam2` package, no new checkpoint. Prompt once on the start frame, feed frames in
+  order; the model carries the object in its memory bank. ~180ms/frame for the mask.
+- **Gotchas found:** (1) `conf` must be ~0 — SAM 2's object-presence score sits ~0.15–0.20
+  after the `/32` clamp and the default conf filters every mask out. (2) `obj_ids` are
+  0-indexed and must be `< max_obj_num`. (3) **SAM 2 is very box-sensitive** — a loose
+  hand-drawn prompt box segments only the head; we refine the user's box to the best-
+  overlapping YOLO person box on the prompt frame before prompting.
+- **Consequences:** every frame gets a matte (no more "hold between sampled frames"); the
+  old `_iou` YOLO-follow is gone. `step` now just controls save density. Predictor holds
+  GPU state for the clip — fine for a few thousand frames, chunk later if needed.
+  Propagation is forward-only from the prompt frame (v1: prompt at frame 0).
+
 ## D-017 — Multi-subject / multi-object tracking
-**open — v1 ships single-subject**
+**partially done (2026-09-01) — per-sub-mask tracking works; per-instance follow still single**
 
 - **Context:** `/track` + the engine wiring (2026-09-01) follow **one** subject: the
   sidecar picks "the central person" each frame, the engine keeps a single global
@@ -222,15 +243,19 @@ decision. Lives in a future `CONTRIBUTING`.
   (invert the subject matte). Two people each with their own mask, or several independently
   tracked `ai-subject` components in nested containers, do **not** work — they'd all follow
   the same person. Non-person objects drift (frames 2..N re-detect person only).
-- **The fix (noted for later, ~not huge):**
-  1. **Sidecar** — follow the *specific instance each mask prompted* (SAM 2 memory
-     propagation, or per-frame IoU seeded by *that submask's* frame-0 box), not "central
-     person". Drop `classes=[0]` when a box/points prompt is given.
-  2. **Engine** — `track_dir` → `HashMap<submask_id, PathBuf>`;
-     `chroma_subject_matte_for_frame(frame, sub_mask_id)`.
-  3. **Frontend** — Track button per component; seek-swap loops every tracked `ai-subject`.
-- **Note:** the sidecar cache key already hashes the prompt box, so per-submask cache dirs
-  don't collide — only the engine's single global and the "central person" follow logic do.
+- **Done 2026-09-01 PM:**
+  1. **Sidecar** — each `/track` call = one prompted object, followed by SAM 2 memory
+     propagation from its own prompt box (D-018), not "central person". Own cache dir
+     keyed by prompt box.
+  2. **Engine** — `track_dir` → `HashMap<sub_mask_id, PathBuf>` (`state::TRACK_DIRS`);
+     `chroma_track_subject` / `_subject_matte_for_frame` / `_refine_tracked_frame` all
+     take `sub_mask_id`. Cleared on clip change.
+  3. **Frontend** — Track button is per-component (`activeSubMask.id`); `useChromaStore.
+     trackedSubMaskIds`; seek-swap loops every tracked sub-mask.
+- **Still single-instance:** two `ai-subject` masks each track fine *independently*, but
+  each `/track` runs its own predictor + frame-decode pass (2 subjects = 2× the work) and
+  a non-person object still isn't handled specially. Batch multiple objects into one
+  propagation pass (`max_obj_num > 1`, `obj_ids` per mask) when it matters.
 
 ## D-010 — Project name
 **open**
