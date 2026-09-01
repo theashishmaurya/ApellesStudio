@@ -46,12 +46,12 @@ not commitments.
 
 ## Phase 2 — AI sidecar  ·  ~3–4 weeks
 
-- [ ] Sidecar service (FastAPI), process lifecycle managed by the Rust core
+- [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: run `ai/run.sh` for now; Rust-managed spawn TBD.
 - [ ] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
-- [ ] Engine wiring: `chroma_subject_mask(points/box)` → sidecar → matte → `RenderRequest.mask_bitmaps` as a `subject` mask
-- [ ] Interactive masking UI — click +/− points on the canvas → live matte (SAM-style)
+- [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
+- [ ] Interactive +/− point prompts on the canvas (sidecar already takes `points`; needs konva click UI + a points array in the submask params + re-invoke per click)
+- [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
 - [ ] SAM 2 video propagation (`/track`) → per-frame matte that follows the subject
-- [ ] Matte refinement pass (guided filter / RVM) for edges
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [ ] **Depth haze preset** — one action, depth-weighted desat + black-lift + dehaze + blur
 - [ ] Mask keyframes in the data model + GUI handles

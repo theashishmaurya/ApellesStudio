@@ -37,3 +37,8 @@ _(none — pre-v1)_
   guided-filter finesse (the Resolve approach) failed on the low-contrast test shot; added
   a trimap → **ViTMatte** stage → clean edge. Worklog + before/after in
   `docs/notes/matte-edge-pipeline/`. `transformers` + `opencv-contrib-python` added.
+- **2026-09-01** — Subject mask wired into the engine: `src/chroma/mask.rs` —
+  `chroma_subject_mask` bridges the current frame → sidecar `/segment` → an `ai-subject`
+  mask (RapidRAW's own type, so the grade UI + render are untouched). Box-drag on a loaded
+  video now routes to SAM 2 + ViTMatte instead of ONNX SAM. `chroma_ai_health` for a UI
+  hint. Engine + frontend both compile; app runs.

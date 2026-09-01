@@ -215,6 +215,19 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   · **Minimal video-open path:** a video loads as its frame 0 into `AppState.original_image`,
   same shape as a still — all grade/mask/display paths unchanged. `chroma::state::CurrentVideo`
   holds the clip for the future transport. 4 tests pass (incl. real C019 probe+decode).
+- **2026-09-01** · new: `src/chroma/{commands,state}.rs` grow (transport) + frontend
+  `store/useChromaStore.ts`, `components/panel/editor/ChromaTimeline.tsx`, hooks
+  `useImageLoader.ts` / `useImageProcessing.ts` / `useFileOperations.ts`, `BottomBar.tsx`.
+  · **Transport:** timeline thumbnail strip + play/step/scrub; `chroma_seek`,
+  `chroma_video_info`, `chroma_frame_thumbnails`.
+- **2026-09-01** · new: `src/chroma/mask.rs` · edits: `lib.rs` (+2 handler lines),
+  frontend `hooks/useAiMasking.ts` (route the AI-subject box-drag to `chroma_subject_mask`
+  when a video is loaded; skip the ONNX `precompute_ai_subject_mask` for video).
+  · **Subject matte (D-016):** `chroma_subject_mask` grabs the de-warped frame → POSTs to
+  the `ai/` sidecar `/segment` → returns an `AiSubjectMaskParameters` (same shape as the
+  ONNX SAM path) so the mask decode / grade UI / render are all untouched. `chroma_ai_health`
+  for a UI hint. Uses the existing `reqwest` dep. v1 limitation: click coords not
+  un-rotated → subject mask wrong on a rotated/flipped clip.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
