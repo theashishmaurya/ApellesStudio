@@ -5,13 +5,34 @@ not commitments.
 
 ---
 
-## Now — the working queue (as of 2026-09-01 EOD)
+## Working queue — round 2 (to v1)
 
-Done so far: video open/transport, subject tracking end-to-end (SAM 2 propagation +
-ViTMatte, D-016/18/19), `render_core` seam (D-014), control server + MCP v1 (D-020),
-scopes + `inspect_color` (D-021).
+Round 1 done (D-021…D-025): scopes/`inspect_color`, export + `.cube`, mask
+composition ops, depth-haze, `grade.json`. Round 2, in order:
 
-Next, in order:
+1. **`match_to_reference` auto-apply** — the gap already computes (D-021); apply it
+   as a primary grade + iterate (measure → adjust → re-measure until the gap is
+   small). MCP `match_to_reference(reference, strength?, max_iters?)`. Completes the
+   agent grading loop; candidate v1 headline (D-007).
+2. **Per-mask blur** — a blur field on `MaskAdjustments` + shader wiring (or drive a
+   global lens-blur pass off a mask). Completes depth-haze (background defocus) and
+   unblocks "blur the background" as a mask op.
+3. **Rust-managed sidecar spawn** — the app starts/monitors `ai/` (venv-aware), no
+   manual `ai/run.sh`. `chroma_ai_health` already exists; add spawn + restart-on-crash.
+4. **Strip `@clerk/react`** — remove the community-login dep from the frontend
+   (auth stubs, the `<TitleBar>` error, the dev-key warnings). Irrelevant to Chroma.
+5. **Smooth playback / proxy** — a persistent ffmpeg decode pipe (or a pre-rendered
+   half-res proxy) so scrub + play aren't ~5–10 fps and export doesn't decode from
+   frame 0. (D-015 flagged this.)
+
+Round 3 (after): `request_human` + a GUI "agent activity" feed (per-change diff +
+undo), multi-shot session model + shot strip, multi-subject batch tracking (D-017),
+mask keyframes, agent eval harness. Then Phase 4 release (packaging/signing,
+external-reader docs + README + demo, decide name/license/headline — D-002/D-007/D-010).
+
+---
+
+## Round 1 — done (2026-09-01)
 
 1. [x] **Scopes + `inspect_color`** (D-021, 2026-09-01) — `engine/src/utils/scopes.ts`,
    pure JS off the captured preview (not WGSL — the agent path, separate from the
@@ -55,10 +76,6 @@ Next, in order:
    `chroma_load_grade` + a `chroma.grade/<major>` migration gate. Frontend
    `get_grade` / `save_grade` / `load_grade` ops; MCP 3 tools. One grade per open
    clip — full session/shot model still open. Detail: `docs/notes/grade-json.md`.
-
-Scope-first MCP discipline (rule 0 in doc 07) is wired into the tool descriptions
-(done alongside item 1): server instructions + `inspect_color` + every mutating
-tool + `mcp/README.md`.
 
 ---
 
