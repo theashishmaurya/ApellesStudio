@@ -64,9 +64,9 @@ not commitments.
 
 ## Phase 3 — MCP + the agent loop  ·  ~2–3 weeks
 
-- [ ] MCP server (D-008), wired to the core over the local socket
-- [ ] Tools: shot ops, primary, curves, wheels, LUT, masks (shape/depth/subject), scopes, match_to_reference, apply_haze, export
-- [ ] Every mutating tool returns `{rendered_frame, scopes}`
+- [x] **Control server + MCP bridge (D-020)** — `src/chroma/control.rs` (in-app HTTP) ⇄ Tauri events ⇄ `useChromaControl` (frontend owns the state). `mcp/` Python stdio server. One shared grade/mask doc: MCP edits move the app's real sliders/history, `get_state` reflects manual edits. v1 ops: primary, curves, wheels, seek, subject mask + track, per-mask grade, invert, delete. Verified with real `curl` + an MCP client against the C019 take.
+- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape/depth), scopes, match_to_reference, apply_haze, export
+- [x] Every mutating op returns `{image_b64, histogram, adjustments}` (image is a best-effort `generate_uncropped_preview` re-render — the app renders to a native WGPU surface)
 - [ ] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
 - [ ] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
 

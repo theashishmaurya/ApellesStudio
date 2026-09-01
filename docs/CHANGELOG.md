@@ -67,3 +67,15 @@ _(none — pre-v1)_
   Persists with the project — no re-track on reopen. Also fixed: `ChromaTimeline` root
   capture-phase `stopPropagation` was eating strip clicks. **Mask follows the frame
   perfectly in-app now.**
+- **2026-09-01** — **Control server + MCP bridge (D-020) — v1**. `src/chroma/control.rs`
+  (`tiny_http`, port 19788, spawned in `.setup()`) ⇄ Tauri events ⇄ new
+  `src/hooks/useChromaControl.ts` (mounted in `Editor.tsx`). One shared grade/mask state:
+  every MCP op calls the same store action the GUI buttons do (`setAdjustments`, the
+  `useAiMasking` handlers, `chroma_seek`) — sliders move, history/undo work, `get_state`
+  reflects manual edits. New `mcp/` dir: Python stdio MCP server, 11 tools
+  (`get_state, set_primary, set_curve, set_color_grade, seek, list_masks, add_subject_mask,
+  track_subject, set_mask_adjust, invert_mask, delete_mask`). Mutating ops return the
+  rendered frame (`generate_uncropped_preview`) + histogram + adjustments. Verified end to
+  end with `curl` and an MCP client against the C019 take (exposure moves the slider + the
+  canvas; subject mask created on the video). Engine edits: `Cargo.toml` +1, `mod.rs` +1,
+  `lib.rs` +6. `cargo check` clean.

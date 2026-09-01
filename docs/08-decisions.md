@@ -225,7 +225,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   is short on hair/fine detail in real use.
 
 ## D-020 — AI grading via an in-app control server + event bridge (not headless)
-**decided (2026-09-01)**
+**decided (2026-09-01) · built (2026-09-01) — v1 shipped**
 
 - **Context:** the canonical `adjustments` doc lives in the **frontend** (zustand
   `useEditorStore`); the Rust `apply_adjustments` command receives it fresh each call
@@ -257,6 +257,18 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
     server's HTTP API. Every mutating tool returns `{image_b64, histogram}` (doc 07 rule).
 - **Consequences:** needs the GUI running (fine for v1). Grade logic stays in the
   frontend (no duplication). New Rust dep: a minimal sync HTTP server (`tiny_http`).
+- **As built (2026-09-01):** `src/chroma/control.rs` (~150 lines, `tiny_http`) + one
+  `std::thread::spawn` in `.setup()`; the generic `POST /op {op,args}` endpoint (server
+  doesn't know the op list) + `GET /health`. Response event name is `chroma://response/<id>`
+  (slash, not colon). Frontend `src/hooks/useChromaControl.ts` with an `OPS` registry —
+  every op calls a real store action (`setAdjustments`, `useAiMasking` handlers,
+  `chroma_seek`); mounted in `Editor.tsx`. v1 ops: `get_state, set_primary, set_curve,
+  set_color_grade, seek, list_masks, add_subject_mask, track_subject, set_mask_adjust,
+  invert_mask, delete_mask`. `mcp/` = Python stdio server (`mcp` SDK 2.x), 11 thin tools.
+  The rendered frame comes from `generate_uncropped_preview` (the app renders to a native
+  WGPU surface, so `apply_adjustments` returns no JPEG) — histogram + adjustments are read
+  straight from the store. The bridge only runs while the editor view is mounted (an
+  image/video must be open). Details + divergence in doc 09.
 
 ## D-019 — Tracked matte read at render time, not swapped into `adjustments`
 **decided (2026-09-01)**

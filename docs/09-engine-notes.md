@@ -253,6 +253,32 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   on the sub-mask; `useChromaSubjectTracking` is now just the seek-settle ViTMatte upgrade;
   `Editor.tsx` overlay effect + a single hook mount both key on `frameNonce`;
   `ChromaTimeline` root capture-phase `stopPropagation` removed (was eating strip clicks).
+- **2026-09-01 PM** · **control server + MCP bridge (D-020)** — new
+  `src-tauri/src/chroma/control.rs` (~150 lines): a blocking `tiny_http` server on
+  `127.0.0.1:${CHROMA_CONTROL_PORT:-19788}`, spawned on a thread from `.setup()`. `GET
+  /health` (liveness + a best-effort `get_state`), `POST /op {op,args}` (also `POST /<op>`).
+  Each request → `app.emit("chroma://request", {id,op,args})`, `app.once("chroma://response/<id>")`,
+  20s `mpsc` timeout → 200 / 504. **Zero grade/mask logic** — it just forwards; the op
+  registry lives in the frontend.
+  · Upstream-file edits (minimal): `Cargo.toml` +1 (`tiny_http = "0.12"`), `chroma/mod.rs` +1
+  (`pub mod control;`), `lib.rs` +6 (one `std::thread::spawn` block in `.setup()`).
+  · Frontend: new `src/hooks/useChromaControl.ts` — `listen("chroma://request")`, an `OPS`
+  registry where **every op calls a real store action** (`useEditorActions().setAdjustments`,
+  `useAiMasking()` handlers, `chroma_seek`) so MCP edits move the same sliders/history a drag
+  does. Mounted once in `components/panel/Editor.tsx` (+2 lines, next to
+  `useChromaSubjectTracking()`). Ops: `get_state, set_primary, set_curve, set_color_grade,
+  seek, list_masks, add_subject_mask, track_subject, set_mask_adjust, invert_mask, delete_mask`.
+  · Frame for "the agent's eyes": the app renders to a native WGPU surface (D-006), so
+  `apply_adjustments` returns `WGPU_RENDER` and never fills `finalPreviewUrl`. The bridge
+  instead calls `generate_uncropped_preview` (existing command) and captures its
+  `preview-update-uncropped` JPEG data URL — a real headless re-render of the current
+  adjustments + masks. Histogram + adjustments come straight from the store.
+  · New dir `mcp/` (repo root): Python stdio MCP server (`server.py`, own `.venv`,
+  `requirements.txt`, `README.md`) — 11 thin tools, each `POST /op`. `mcp` SDK 2.x
+  (`MCPServer`). Not part of `engine/`.
+  · v1 limitations: the bridge only runs while the editor view is mounted (an image/video
+  must be open); on a fresh app launch the control server is up but `/op` 504s until
+  something is loaded.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

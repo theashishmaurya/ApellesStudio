@@ -11,8 +11,11 @@ ai/**/__pycache__/
 ai/models/
 *.pyc
 
-# rust mcp
+# mcp server
 mcp/target/
+mcp/.venv/
+mcp/__pycache__/
+mcp/**/__pycache__/
 
 # scratch / media
 scratch/*
