@@ -81,6 +81,31 @@ Rec709 only" implies; D-004 (ACES later) is less urgent than thought.
 mostly *around* it: video I/O, the `grade.json` ↔ uniform bridge, mask texture management
 per frame, scopes, MCP. Not writing grade math.
 
+### `gpu_processing.rs` — more of our plumbing already exists
+
+- **`WgpuDisplay`** — `wgpu::Surface<'static>` + `RenderPipeline` + `DisplayTransform`
+  (`rect`, `clip`, `window`, `image_size`, `bg_primary/secondary`). **This is the
+  render-to-native-surface path — RapidRAW already renders the image straight to a wgpu
+  surface with its own pan/zoom, not as base64 through the webview.** → **D-006 largely
+  answered: yes, and it's built.** For video we feed decoded frames into this same
+  surface path.
+- **`RenderRequest { adjustments: AllAdjustments, mask_bitmaps: &[ImageBuffer<Luma<u8>>],
+  lut, roi }`** — **masks are passed as grayscale (`Luma<u8>`) bitmaps.** An AI matte
+  (SAM / depth) is exactly that. For video, swap `mask_bitmaps` per frame. Clean fit.
+- **`apply_adjustments`** command already takes `js_adjustments: serde_json::Value` (the
+  grade is *already* JSON-driven), `is_interactive` (proxy vs full), `roi`,
+  `request_analytics`, **`compute_waveform` + `active_waveform_channel`.**
+- **Analytics** — `process_and_get_dynamic_image_with_analytics`, `AnalyticsConfig`, async
+  readback buffer; `HistogramData` + `calculate_histogram_from_image`. So **histogram +
+  single-channel waveform already exist.** We add: RGB parade + vectorscope.
+- `process_and_get_dynamic_image` / `_with_analytics` = the headless render entry points
+  (no surface) — what the MCP `render_still` will call.
+
+**Net:** the video surface (D-006), the JSON-driven grade, the grayscale-bitmap mask
+input, and half the scopes are already there. v1 engine work shrinks to: **video decode →
+frame → existing render path**, per-frame mask swap, the `grade.json` schema + bridge,
+2 more scopes, and the MCP server.
+
 ## AI stack — **all ONNX via `ort` (ONNX Runtime), in-process in Rust**
 
 This is the big finding. No Python. `ort = "=2.0.0-rc.10"` with `load-dynamic`.

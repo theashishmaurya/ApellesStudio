@@ -57,14 +57,19 @@ Status: `open` · `decided` · `revisit`
   The stack stays as the simple mode.
 
 ## D-006 — Video presentation through Tauri
-**open — Phase 0 spike, blocks the frontend**
+**decided (2026-09-01) — code-read answered it**
 
 - **Context:** cannot IPC-copy 4K RGBA frames to the webview per scrub.
-- **Options:** (1) wgpu → native surface under the webview (webview = UI chrome only);
-  RapidRAW already has a "direct WGPU renderer" — extend it. (2) shared GPU texture /
-  webview↔native interop. (3) encode graded proxy → `<video>` (playback only, not
-  scrub-grade).
-- **Leaning:** (1). Spike it in Phase 0 before committing frontend work.
+- **Options:** (1) wgpu → native surface under the webview; (2) shared GPU texture interop;
+  (3) encode proxy → `<video>` (playback only).
+- **Finding (doc 09):** RapidRAW **already has option (1) built** — `WgpuDisplay` in
+  `gpu_processing.rs` owns a `wgpu::Surface<'static>` + `RenderPipeline` + a
+  `DisplayTransform` (pan/zoom); the graded image renders straight to that surface, the
+  webview only holds UI chrome.
+- **Choice:** (1) — extend `WgpuDisplay` to present decoded video frames. No spike needed;
+  it's a code path we adapt, not invent. Keep (3) as the fallback for a review-only view.
+- **Consequence:** the frontend work is "add a transport bar + playhead over the existing
+  canvas," not "solve video rendering."
 
 ## D-007 — v1 headline feature
 **open**
