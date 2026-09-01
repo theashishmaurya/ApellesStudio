@@ -6,47 +6,36 @@ Read `docs/` before doing anything. Start every session with `docs/00-vision.md`
 
 ---
 
-## The cardinal rule: nothing is decided silently
+## The cardinal rule: document the decisions that shape the project
 
-**Every architectural decision gets written down before or at the moment it is made** —
-in `docs/08-decisions.md`, as a numbered `D-NNN` entry with:
+**A significant decision gets a `D-NNN` entry in `docs/08-decisions.md` — context, the
+real options, the choice, and *why*.** Keep it short.
 
-- **Context** — what problem forced the decision
-- **Options** — every real alternative that was considered, not just the chosen one
-- **Choice** — what we picked
-- **Rationale** — *why* this one, *why not* the others
-- **Consequences** — what this makes easy, what it makes hard, what it rules out
-- **Status** — `open` / `decided` / `revisit`
+"Significant" = it shapes the architecture, it's hard to reverse, or a future contributor
+would look at the code and ask "why did they do it this way." Examples: fork vs. build,
+process boundaries, the grade-document shape, the MCP contract, colour-management model,
+the render-core / Tauri split.
 
-This applies to: choosing a library or crate, a data format, a protocol, a process
-boundary, a threading model, a caching strategy, a file layout, a naming convention that
-others will follow, anything in the render path, anything in the grade document, anything
-in the MCP surface. If you're about to write code that assumes something a reasonable
-person could do differently — that's a decision. Document it.
-
-**No "I'll just do X"** in a commit without a D-entry. If it's too small for a D-entry,
-it's a one-liner in the relevant doc. Silent assumptions are how this project dies.
+**Not** every library pick, every code-read finding, every setup step. Those are a
+one-liner in the relevant doc if they matter, or nothing if they don't. Don't
+ceremony-document routine choices.
 
 ## Document what things are and what they do
 
-Every non-trivial module, service, or subsystem gets a header comment and an entry in the
-right doc:
+Every non-trivial module or subsystem gets a short header comment: what it is, what it
+does, what it does NOT do, and the `D-NNN` that created it if there is one.
 
-- **What it is** — one sentence
-- **What it does** — its responsibility, its inputs, its outputs
-- **What it does NOT do** — the boundary
-- **Why it exists / why it's separate** — link the `D-NNN` that created it
+`docs/` describes the system *as it actually is*. If code and docs disagree, fix the doc
+in the same commit.
 
-`docs/` must always describe the system *as it actually is*, not as it was planned. If
-code and docs disagree, that's a bug — fix the doc in the same commit.
+## Per-session discipline (light)
 
-## Per-session discipline
-
-1. **Start:** read the docs listed above. Check `docs/BUGS.md` open items.
-2. **During:** any decision → `D-NNN`. Any bug found → `B-NNN` in `BUGS.md` (even if you
-   fix it immediately — record it). Any assumption you couldn't verify → note it.
-3. **End:** update `docs/CHANGELOG.md` with what changed and why. Update the roadmap
-   checkboxes. Commit.
+1. **Start:** skim `docs/00`, `02`, `04`, `08`.
+2. **During:** a real architectural decision → `D-NNN`. A real defect → `B-NNN` in
+   `BUGS.md` (a defect in *our* code or the engine — not "Rust was out of date" or "disk
+   was full", those are setup/housekeeping).
+3. **End:** one or two lines in `docs/CHANGELOG.md` for the session, roadmap checkboxes,
+   commit. Not a paragraph per activity.
 
 ## Project invariants (these are decisions already made — see `docs/08-decisions.md`)
 

@@ -109,12 +109,10 @@ Status: `open` · `decided` · `revisit`
     — validate in the Phase 0 spike.
   - Doc 03 diagram + `ai/README.md` to be updated.
 
-## D-011 — Rust toolchain floor
-**decided (2026-09-01)**
+## D-011 — (retired: not a real decision)
 
-- RapidRAW `Cargo.toml`: `rust-version = "1.98"`, `edition = "2024"`. We inherit this.
-- Dev machine had 1.72.1 → `rustup update` required before any build (B-001).
-- Consequence: contributors need current stable Rust. Document in a future `CONTRIBUTING`.
+Rust 1.98+ / edition 2024 is inherited from RapidRAW's `Cargo.toml`. Setup note, not a
+decision. Lives in a future `CONTRIBUTING`.
 
 ## D-012 — SAM 1 → SAM 2 for the subject mask
 **open — Phase 0 / Phase 2**
