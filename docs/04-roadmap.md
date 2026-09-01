@@ -105,11 +105,19 @@ alongside item 1.
 
 ## Phase 4 — Harden & release v1  ·  ~2 weeks
 
+- [ ] Strip the `@clerk/react` community-login dep from the frontend (irrelevant to Chroma; noted since Phase 0)
+- [ ] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh`
+- [ ] Control-server bridge: mount `useChromaControl` at app level (works before a file is open; today it 504s until the editor view renders)
 - [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut)
 - [ ] ProRes export round-trip verified with `swap_clip_media`
-- [ ] Packaging: signed macOS build, the sidecar bundled, models auto-downloaded
+- [ ] Packaging: signed macOS build, the sidecar + its Python bundled, models auto-downloaded
 - [ ] `docs/` cleaned for external readers; a real README with a 90-second demo
+- [ ] Decide: name (**D-010**), license (**D-002**), v1 headline feature (**D-007**)
 - [ ] Ship. Get one external user. Open the issue tracker.
+
+**v1 = done when:** the Phase 3 checkpoint (full talking-head grade in one Claude
+conversation + <5 min human cleanup) passes on 3 real clips, export round-trips to
+Palmier, and it's a signed installable build.
 
 ---
 
