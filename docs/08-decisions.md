@@ -117,15 +117,21 @@ Status: `open` · `decided` · `revisit`
 Rust 1.98+ / edition 2024 is inherited from RapidRAW's `Cargo.toml`. Setup note, not a
 decision. Lives in a future `CONTRIBUTING`.
 
-## D-012 — SAM 2 for the subject mask
-**decided (2026-09-01)**
+## D-012 — SAM 2 for the subject mask, via a Python sidecar
+**decided (2026-09-01), revised same day**
 
-- Subject mask = **SAM 2** (encoder + decoder + memory attention) via ONNX / `ort`, for
-  native video propagation. RapidRAW's SAM 1 is replaced, not kept as a fallback.
-- The Phase 0 spike is now "make SAM 2 run via `ort`, measure speed + matte quality on
-  C019" — a build task, not a go/no-go.
-- If the memory module is genuinely un-runnable via `ort`: reassess runtime (a small
-  Python subprocess for SAM 2 only), not the model choice.
+- Subject mask = **SAM 2**. Runtime = **Python sidecar** (not ONNX/`ort`).
+- **Why not ONNX:** SAM 2's video propagation needs the memory-attention + memory-encoder
+  modules threaded frame-to-frame with stateful tensors. The community ONNX exports cover
+  the image path but the video-memory loop is fragile to reproduce. Not worth the risk
+  when a sidecar gets a *correct* tracked matte in a fraction of the time.
+- **Package:** `ultralytics` (`from ultralytics import SAM`). It wraps SAM 2.1 incl. the
+  video predictor, auto-downloads checkpoints, runs on MPS. Far less surface than Meta's
+  raw `sam2` package.
+- Consistent with D-009: ONNX in-process is the default; the sidecar is for models where
+  ONNX is "too painful" — this is the first such case.
+- The sidecar (`ai/`) is now on the v1 path (was downgraded). Still local, still free.
+- RapidRAW's SAM 1 stays for its existing click-mask feature; our subject mask is new.
 
 ## D-013 — AI relight (IC-Light) — v3, bake-step only
 **open — v3, not before**

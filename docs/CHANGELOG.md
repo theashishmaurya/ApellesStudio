@@ -30,3 +30,6 @@ _(none — pre-v1)_
 - **2026-09-01** — Video transport bar + timeline view (filmstrip → 48-frame thumbnail
   strip when a video is loaded, click/drag to seek). Backend: `chroma_seek`,
   `chroma_video_info`, `chroma_frame_thumbnails` (cached).
+- **2026-09-01** — SAM 2 subject mask working (D-012 → Python sidecar, `ai/`,
+  `ultralytics` on MPS). Clean silhouette matte on the 4K test frame — the ellipse's
+  hands problem is solved. `/segment` supports box + multi-point (+/−) prompts.

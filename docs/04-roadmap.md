@@ -16,7 +16,7 @@ not commitments.
 - [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
 - [x] App builds (7m18s) + launches — window opens, ONNX runtime loads, no GPU errors. Frontend throws a `<TitleBar>` React error + Clerk auth warnings (the `@clerk/react` community-login dep — strip it early, irrelevant to Chroma).
 - [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
-- [ ] **SAM 2 via `ort`** (D-012 decided — SAM 2, no fallback): get it running, measure fps + matte quality on C019's hands. Moves to Phase 2 if the memory module needs real work.
+- [x] **SAM 2 running** (D-012 revised → Python sidecar via `ultralytics`, MPS): `ai/server.py` `/segment` produces a clean silhouette matte on the 4K C019 frame (~1-2s warm, 7s cold). YOLO auto-person + box + multi-point (+/−) prompts. Solves the hands problem (single frame).
 - [x] Fork model decided (D-003): standalone project, hard fork, no upstream coordination.
 
 **Checkpoint:** a graded video frame on screen, the architecture spikes answered.
@@ -47,7 +47,9 @@ not commitments.
 
 - [ ] Sidecar service (FastAPI), process lifecycle managed by the Rust core
 - [ ] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
-- [ ] SAM 2 subject mask + video propagation → per-frame matte into a `subject` mask type
+- [ ] Engine wiring: `chroma_subject_mask(points/box)` → sidecar → matte → `RenderRequest.mask_bitmaps` as a `subject` mask
+- [ ] Interactive masking UI — click +/− points on the canvas → live matte (SAM-style)
+- [ ] SAM 2 video propagation (`/track`) → per-frame matte that follows the subject
 - [ ] Matte refinement pass (guided filter / RVM) for edges
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [ ] **Depth haze preset** — one action, depth-weighted desat + black-lift + dehaze + blur
