@@ -37,9 +37,15 @@ Next, in order:
    `add_component(mask_id, type, mode)` (add a Subject/Radial/Linear/Brush
    sub-mask to an existing container, default subtractive), `set_submask_mode`.
    No +/− point UI built; the sidecar/engine `points` support stays unused.
-4. **Depth-haze preset** — completes the Phase 2 checkpoint + the original ask.
-   Depth Anything V2 per-frame (RapidRAW has it for stills) + a one-action preset
-   (depth-weighted desat + black-lift + dehaze + blur on the background).
+4. [x] **Depth-haze preset** (D-024, 2026-09-01) — one action → a "Depth Haze"
+   mask: a full-range `ai-depth` sub-mask **inverted** (mask value == distance),
+   graded with negative `dehaze` (adds haze) + `saturation -25` + `blacks +10` +
+   `shadows +8`, all × `amount`. Depth is a **static** bake (per-frame /
+   temporal smoothing deferred); `chroma_seek` busts `ai_state.depth_map` so a
+   re-apply on a new frame is correct. `useAiMasking.handleAddDepthHaze`, an
+   "Add depth haze" button, MCP `apply_haze({amount?, protect_subject?})`. Also
+   landed: `useChromaControl` mounted app-level + `open(path)` op. Detail:
+   `docs/notes/depth-haze.md`.
 5. **`grade.json` schema + load/save** — lock "grade is code" (the differentiator).
    Migrate RapidRAW's `adjustments` ⇄ the schema.
 
@@ -92,7 +98,10 @@ tool + `mcp/README.md`.
 ## Phase 2 — AI sidecar  ·  ~3–4 weeks
 
 - [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: run `ai/run.sh` for now; Rust-managed spawn TBD.
-- [ ] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
+- [~] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
+      — per-frame works: `chroma_seek` busts the depth cache (D-024), so a depth mask
+      re-generated on frame N grades frame N's depth. **Static bake** in the preset;
+      keyframed track + temporal smoothing still open.
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
 - [x] Mask include/exclude refinement — **via RapidRAW's Add/Subtract/Intersect composition, not +/− points** (**D-023**). "Subtract from Mask → Subject" already does edge-aware SAM exclude. MCP: `add_subject_mask(mode)`, `add_component`, `set_submask_mode`. No point UI; `ai/` + engine `points` support stays unused.
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
@@ -100,7 +109,8 @@ tool + `mcp/README.md`.
 - [x] **In-app tracking works end to end** (D-019): "Track subject across clip" → scrub → the matte + red overlay + grade follow the frame in lockstep. Matte read from disk at render time; `chromaTrackDir` persists with the project (no re-track on reopen). "Finalize matte" for the full-quality pre-export pass. Sidecar memory bounded (B-002).
 - [ ] Multi-subject: two `ai-subject` masks each with their own `chromaTrackDir` should already work (untested); batch N objects into one propagation pass (`max_obj_num > 1`) so they don't each cost a full pass (D-017)
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
-- [ ] **Depth haze preset** — one action, depth-weighted desat + black-lift + dehaze + blur
+- [x] **Depth haze preset** (D-024, 2026-09-01) — one action, depth-weighted desat +
+      black-lift + dehaze (blur deferred — no per-mask blur field). `docs/notes/depth-haze.md`
 - [ ] Mask keyframes in the data model + GUI handles
 
 **Checkpoint:** click "isolate subject" → tracked matte that holds through hand gestures; "add haze" → depth-graded background separation.
@@ -110,7 +120,7 @@ tool + `mcp/README.md`.
 ## Phase 3 — MCP + the agent loop  ·  ~2–3 weeks
 
 - [x] **Control server + MCP bridge (D-020)** — `src/chroma/control.rs` (in-app HTTP) ⇄ Tauri events ⇄ `useChromaControl` (frontend owns the state). `mcp/` Python stdio server. One shared grade/mask doc: MCP edits move the app's real sliders/history, `get_state` reflects manual edits. v1 ops: primary, curves, wheels, seek, subject mask + track, per-mask grade, invert, delete. Verified with real `curl` + an MCP client against the C019 take.
-- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape/depth), scopes, match_to_reference, apply_haze, ~~export~~ (D-022)
+- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape / ~~depth (via `apply_haze`)~~), ~~scopes~~, match_to_reference, ~~apply_haze~~ (D-024), ~~export~~ (D-022), ~~open~~
 - [x] Every mutating op returns `{image_b64, histogram, adjustments}` (image is a best-effort `generate_uncropped_preview` re-render — the app renders to a native WGPU surface)
 - [ ] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
 - [ ] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
@@ -123,7 +133,9 @@ tool + `mcp/README.md`.
 
 - [ ] Strip the `@clerk/react` community-login dep from the frontend (irrelevant to Chroma; noted since Phase 0)
 - [ ] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh`
-- [ ] Control-server bridge: mount `useChromaControl` at app level (works before a file is open; today it 504s until the editor view renders)
+- [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
+      moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
+      new `open(path)` op so a clip can be loaded headlessly.
 - [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut)
 - [ ] ProRes export round-trip verified with `swap_clip_media`
 - [ ] Packaging: signed macOS build, the sidecar + its Python bundled, models auto-downloaded

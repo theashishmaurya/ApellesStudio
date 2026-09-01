@@ -315,5 +315,26 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors;
   decode is from frame 0 each export (proxy layer = later). Detail: `docs/notes/export.md`.
 
+- **2026-09-01 PM** · **depth-haze preset (D-024)** — mostly frontend.
+  · Rust (1 upstream file): `chroma/commands.rs::chroma_seek` +5 lines — clears
+  `state.ai_state.depth_map` alongside the other per-frame caches. Reason:
+  `ai_commands::generate_ai_depth_mask` caches the depth map by
+  `hash(path + geometry)`; on a video both are constant across frames, so a depth
+  mask re-generated after a seek would silently use frame 0's depth. `cargo check
+  --no-default-features` clean.
+  · Frontend: `hooks/useAiMasking.ts` — new `handleAddDepthHaze({amount?, protectSubject?})`
+  (builds a "Depth Haze" `MaskContainer` with an inverted full-range `ai-depth` sub-mask
+  + the haze grade, calls the existing `handleGenerateAiDepthMask`). `components/panel/right/MasksPanel.tsx`
+  — one "Add depth haze" button in the empty-state AI area. `hooks/useChromaControl.ts`
+  — `apply_haze` + `open` ops. `mcp/server.py` — `apply_haze` + `open` tools.
+  · **`useChromaControl` moved `Editor.tsx` → `App.tsx`** (app-level mount): the bridge
+  now answers `/op` before a file is open (was a documented v1 limitation; Phase 4 line).
+  Single mount — removed the `Editor` call + import. Paired with the `open(path)` op which
+  sets `selectedImage` and lets `useImageLoader`'s effect do the decode.
+  · No new engine mask code — the preset rides `generate_ai_depth_bitmap` +
+  `MaskDefinition.invert` as-is. `MaskAdjustments` has no blur field → no background blur
+  (deferred). Depth Anything V2 ONNX output is bright=near; full-range + invert makes the
+  matte value track distance. Detail: `docs/notes/depth-haze.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

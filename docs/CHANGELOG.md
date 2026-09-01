@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **Depth-haze preset (D-024)**. `apply_haze({amount?, protect_subject?})`
+  / an "Add depth haze" button / `useAiMasking.handleAddDepthHaze` → a "Depth Haze" mask:
+  a full-range `ai-depth` sub-mask **inverted** so the matte value tracks distance, graded
+  with negative `dehaze` (adds haze) + `saturation -25` + `blacks +10` + `shadows +8`, all
+  × `amount`. Depth is a **static** bake (per-frame / temporal smoothing deferred);
+  `chroma_seek` now busts `ai_state.depth_map` so a re-apply on another frame is correct.
+  No per-mask blur (no such field — deferred). Verified on the 1080×1920 talking-head clip:
+  `inspect_color` blackPoint 17→33, saturation 0.33→0.24; background pixels lift ~10 luma +
+  desaturate while the subject face is untouched; `amount` 0.4/1.0/1.6 scales monotonically.
+  Also landed: `useChromaControl` **mounted at app level** (was `Editor`-only) + a new
+  `open(path)` op/tool. Engine edit: `chroma_seek` +5 lines, `cargo check` clean. Detail:
+  `docs/notes/depth-haze.md`.
 - **2026-09-01** — **Video export + `.cube` bake (D-022)**. New
   `engine/src-tauri/src/chroma/export.rs`: `export_video` (one `ffmpeg -f rawvideo`
   decode pipe → `render_core::render` per frame, one GPU ctx for the run → one `ffmpeg`

@@ -30,7 +30,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | Tool | Params | Returns |
 |---|---|---|
 | `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Chroma vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]` |
-| `open` | `path` | loads a file, `{frame, scopes}` |
+| `open` ✅ (D-024) | `path` (absolute) | loads a still or video into the editor headlessly, `{path, ready, size, video}`. Sets `selectedImage`; `useImageLoader` decodes + populates the transport store |
 | `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` — Phase 1 shot model |
 | `list_shots` / `select_shot` | … | Phase 1 |
 | `seek` | `frame` | `{frame, scopes}` |
@@ -71,7 +71,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | Tool | Params | Notes |
 |---|---|---|
 | `match_to_reference` | `reference` (path/id), `method?` (reinhard\|mkl\|mvgd), `strength?` | measures the gap, applies a CDL/curve fragment to `primary`, returns `{frame, scopes, gap_before, gap_after}` |
-| `apply_haze` | `depth_from?` (a subject mask id to anchor "near"), `amount?`, `blur?`, `cool?` | the depth atmosphere preset (desat + black-lift + dehaze + blur, depth-weighted) |
+| `apply_haze` ✅ (D-024) | `amount?` (0–3, default 1), `protect_subject?` (v1 no-op) | the depth-atmosphere preset. Adds a "Depth Haze" mask: full-range `ai-depth` sub-mask **inverted** (weight == distance) + negative `dehaze` / `-sat` / `+blacks` / `+shadows` × `amount`. Depth is a **static** bake. Returns `{maskId, subMaskId, amount}` + frame + scopes. `blur` deferred (no per-mask blur field); `cool` / `depth_from` dropped. Detail: `docs/notes/depth-haze.md` |
 | `auto_balance` | `pick {x,y}` or `chart` | solve WB + levels from a neutral/grey pick |
 
 ### Consistency / batch (v2)

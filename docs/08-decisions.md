@@ -436,3 +436,41 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   `points` support stays (unused) in case this is revisited.
 - **Consequence:** no menu clutter, one refinement model, less code. The `ai/` `points`
   path is dead code for now — leave it, it's harmless and already tested.
+
+## D-024 — Depth-haze preset: full-range inverted depth mask + static (non-tracked) depth
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** roadmap item 4 / the Phase 2 checkpoint / the original "depth map and do
+  haze" ask. One action → depth-weighted atmospheric haze on the background.
+- **How the matte is built — options:**
+  (a) a depth *band* mask over the far part of the range (what the depth-range picker is
+      for) — but the picker's stored param space is inverted from its UI
+      (`stored.minDepth = 100 - ui.maxDepth`), Depth Anything's ONNX output is bright=near,
+      and `generate_ai_depth_bitmap` additionally weights by `depth_pct/100` (favouring
+      near) — three sign traps stacked, and the near-weighting is backwards for haze;
+  (b) **full range (`0–100`) + `invert: true`** — the mask value becomes `1 - proximity`
+      = **distance**. No band edges to get wrong, and it is the physically correct haze
+      falloff (haze accumulates with distance: subject ≈ 0, far wall ≈ max).
+  (c) a Rust-side dedicated "atmosphere matte" generator.
+- **Choice:** (b). Zero new engine mask code, robust against the sign traps, correct
+  falloff. The container grade is the look: negative `dehaze` (adds haze in-shader) +
+  `saturation -25` + `blacks +10` + `shadows +8`, all × `amount` (default 1.0). No blur
+  (`MaskAdjustments` has no blur field — deferred).
+- **Depth is a STATIC map, not tracked.** `generate_ai_depth_mask` bakes the depth PNG
+  into the sub-mask params at apply time; every frame reuses it. Options were: bake-once
+  (this), re-run per seek (expensive, flickers without temporal smoothing), or a full
+  keyframed depth track (Phase 2 "Depth Anything V2 for video", still open). Bake-once is
+  right for v1's one footage type (static-camera talking head). A moving camera → re-apply
+  per section. To make a *re-apply on a new frame* actually use that frame's depth,
+  `chroma_seek` now busts `state.ai_state.depth_map` (it was cache-keyed by
+  `hash(path + geometry)`, both constant across a video's frames).
+- **`protect_subject` is a v1 no-op flag.** A tracked `ai-subject` mask's own grade
+  composites on top and keeps the subject punchy. Caveat: a subject standing in the
+  far-depth band still gets some haze; the clean fix (an additive-depth + subtractive-
+  subject composite in one container) is deferred — `add_component` (D-023) already
+  exposes the mechanism manually.
+- **Consequences:** `useAiMasking.handleAddDepthHaze`, one UI button, MCP `apply_haze`.
+  Also pulled the Phase 4 "mount `useChromaControl` at app level" line forward (the
+  required Rust rebuild restarts the app and drops the open clip, and the bridge was only
+  alive in the editor view) + added an `open(path)` op/tool. Detail:
+  `docs/notes/depth-haze.md`. Divergence in doc 09.

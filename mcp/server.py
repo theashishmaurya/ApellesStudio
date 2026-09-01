@@ -138,6 +138,14 @@ def _inspect_result(env: dict) -> list:
 # read
 # --------------------------------------------------------------------------- #
 @mcp.tool()
+def open(path: str) -> str:
+    """Load a still or video into the editor by ABSOLUTE path — the headless
+    equivalent of picking it in the library. Returns {path, ready, size, video}.
+    Follow with get_state / inspect_color."""
+    return json.dumps(_op("open", path=path), indent=2, default=str)
+
+
+@mcp.tool()
 def get_state() -> str:
     """Full current state: the loaded image/video, primary adjustments, and a
     summary of every mask (ids, types, per-mask adjustments). Reflects the
@@ -331,6 +339,30 @@ def set_mask_adjust(
     after and cite the values; don't eyeball the matted area."""
     patch = {k: v for k, v in locals().items() if k != "mask_id" and v is not None}
     return _result(_op("set_mask_adjust", mask_id=mask_id, patch=patch))
+
+
+@mcp.tool()
+def apply_haze(amount: float = 1.0, protect_subject: bool = True) -> list:
+    """Depth-weighted atmospheric haze on the background — one action, pushes the
+    subject forward.
+
+    Adds a "Depth Haze" mask: the matte is a full-range depth mask, inverted, so
+    its weight tracks distance (the subject ~0, the far wall ~max); the grade is
+    negative dehaze (adds haze in-shader) + desaturation + a lifted black point
+    and shadows, all scaled by `amount` (1.0 = default, 0.4 subtle, 1.6 heavy).
+
+    protect_subject (default true): a tracked ai-subject mask's own grade
+    composites on top and keeps the subject punchy, so nothing extra is needed.
+    Caveat: a subject physically in the far-depth band still picks up some haze.
+
+    Depth is computed per frame (the seek cache is busted); it is not keyframed —
+    on a moving camera, re-run per section.
+
+    Grade by the numbers: `inspect_color` before and after — whole-frame
+    saturation should drop and the black point lift; `sample` a background pixel
+    vs a subject pixel and confirm the background moved more.
+    Returns {maskId, subMaskId, amount} and the rendered frame."""
+    return _result(_op("apply_haze", amount=amount, protect_subject=protect_subject))
 
 
 @mcp.tool()
