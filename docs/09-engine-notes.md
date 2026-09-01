@@ -54,6 +54,33 @@ Recorded as **B-001** in `BUGS.md`.
 - **v1 plan:** video = call this path per frame. First spike: decode one frame with
   ffmpeg, hand it to `apply_adjustments`, confirm we get a graded frame out.
 
+### `shaders/shader.wgsl` (1910 LOC) — the grade compute shader
+
+More capable than expected. Bindings:
+- `input_texture` → `output_texture` (`rgba8unorm` storage)
+- `adjustments: AllAdjustments` = `{ global: GlobalAdjustments, mask_adjustments:
+  array<MaskAdjustments, 32> }` — **up to 32 masks, each with its own full adjustment set.**
+  Maps 1:1 to our `grade.json` masked entries.
+- `mask_textures: texture_2d_array<f32>` — masks are a texture array. **An AI matte
+  (SAM/depth) is just a slot in this array.** Our SAM2 per-frame matte → mask texture.
+- `lut_texture: texture_3d<f32>` + sampler — standard 3D LUT.
+- 4 pre-blurred input textures (sharpness / tonal / clarity / structure) + a flare texture.
+
+Ops already implemented in-shader: linear + **filmic exposure**, tonal + highlight
+recovery, **color calibration**, white balance (in linear), creative sat/vibrance, **HSL
+panel (8 colours)**, **colour grading wheels (shadows/mids/highs/global + blend + balance)**,
+local contrast, sharpen, **dehaze** (← the "haze" the user wants = `apply_dehaze` with a
+*negative* amount, per-mask), noise reduction, CA correction, **AgX tone-mapping /
+gamut-compress** (modern display transform), 16-point cubic-hermite curves, dither.
+
+Works in **linear light** internally (`srgb_to_linear` / `linear_to_srgb`), has **V-Log**
+support (`linear_to_vlog`). Solid colour-science foundation — better than "display-referred
+Rec709 only" implies; D-004 (ACES later) is less urgent than thought.
+
+**Implication:** most of v1's grading ops already exist in this shader. Our engine work is
+mostly *around* it: video I/O, the `grade.json` ↔ uniform bridge, mask texture management
+per frame, scopes, MCP. Not writing grade math.
+
 ## AI stack — **all ONNX via `ort` (ONNX Runtime), in-process in Rust**
 
 This is the big finding. No Python. `ort = "=2.0.0-rc.10"` with `load-dynamic`.

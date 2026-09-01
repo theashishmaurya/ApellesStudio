@@ -40,6 +40,11 @@ Human-readable history. `Keep a Changelog` style. Dates are ISO.
 - `docs/02-scope.md` — relight added to v3 (IC-Light, bake step); "relight-ish" via
   depth+shape masks noted as shipping in v1.
 - `B-001` filed: Rust 1.72.1 on the machine, engine needs 1.98+.
+- Read `shaders/shader.wgsl` (1910 LOC): 32-mask texture-array model (AI mattes = array
+  slots), 3D LUT, wheels, HSL, curves, **AgX tone-map**, **`apply_dehaze`** (= the "haze"
+  feature, negative amount per-mask), linear-light + V-Log. Most v1 grade ops already
+  exist in-shader → our engine work is video I/O + grade.json↔uniform bridge + per-frame
+  mask textures + scopes + MCP, not grade math. Noted in doc 09; D-004 (ACES) de-prioritised.
 
 ---
 
