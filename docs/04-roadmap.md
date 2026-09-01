@@ -5,6 +5,35 @@ not commitments.
 
 ---
 
+## Now — the working queue (as of 2026-09-01 EOD)
+
+Done so far: video open/transport, subject tracking end-to-end (SAM 2 propagation +
+ViTMatte, D-016/18/19), `render_core` seam (D-014), control server + MCP v1 (D-020).
+
+Next, in order:
+
+1. **Scopes + `inspect_color`** — the #1 enabler for AI grading (see
+   `docs/notes/agent-visual-feedback.md` — the agent must grade by the numbers).
+   RapidRAW has histogram + 1-channel waveform; add RGB parade + vectorscope + the
+   numeric summary (black/white points, per-zone means, warm-cool + green-magenta
+   cast, hue histogram), then the MCP `inspect_color(frame?, reference?)` tool with
+   the reference→gap. WGSL compute where possible.
+2. **Export** — a colour tool must output. `render_core` (D-014) is ready; wire
+   ffmpeg decode → grade path → encode (ProRes / H.264) + a `.cube` bake of the
+   primary. MCP `export` tool.
+3. **`refine_mask` via MCP** — expose the already-built +/− point support
+   (`points: [{x,y,label}]`) as an MCP op. Cheap; the canvas click UI comes later.
+4. **Depth-haze preset** — completes the Phase 2 checkpoint + the original ask.
+   Depth Anything V2 per-frame (RapidRAW has it for stills) + a one-action preset
+   (depth-weighted desat + black-lift + dehaze + blur on the background).
+5. **`grade.json` schema + load/save** — lock "grade is code" (the differentiator).
+   Migrate RapidRAW's `adjustments` ⇄ the schema.
+
+Scope-first MCP discipline (rule 0 in doc 07) gets wired into the tool descriptions
+alongside item 1.
+
+---
+
 ## Phase 0 — Scaffolding & spikes  ·  ~1 week
 
 - [x] Repo, submodule (RapidRAW → `engine/`), docs
@@ -49,7 +78,7 @@ not commitments.
 - [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: run `ai/run.sh` for now; Rust-managed spawn TBD.
 - [ ] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
-- [ ] Interactive +/− point prompts on the canvas (sidecar already takes `points`; needs konva click UI + a points array in the submask params + re-invoke per click)
+- [~] Interactive +/− point prompts. **Backend done** — `/segment` + `/track` (sidecar) and `chroma_subject_mask` + `chroma_track_subject` (engine) all take `points: [{x,y,label}]` (1=include, 0=exclude). **Not done:** the canvas konva click UI + a points array persisted on the sub-mask + re-invoke per click. Quick path: expose via MCP first (`refine_mask(mask_id, points)`) so the agent can refine masks by point before the human UI exists.
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
 - [x] Per-frame subject tracking via **SAM 2 memory propagation** (D-018): prompt once, feed frames, ~180ms/frame mask. Sidecar `/track` (bg job, disk cache) + `/refine_track`.
 - [x] **In-app tracking works end to end** (D-019): "Track subject across clip" → scrub → the matte + red overlay + grade follow the frame in lockstep. Matte read from disk at render time; `chromaTrackDir` persists with the project (no re-track on reopen). "Finalize matte" for the full-quality pre-export pass. Sidecar memory bounded (B-002).
