@@ -31,8 +31,12 @@ Next, in order:
    Commands `chroma_export_video` (bg + `chroma_export_progress` poll) /
    `chroma_bake_lut`; frontend `export` / `export_progress` bridge ops; MCP
    `export(kind, path?, from?, to?)`. Detail: `docs/notes/export.md`.
-3. **`refine_mask` via MCP** — expose the already-built +/− point support
-   (`points: [{x,y,label}]`) as an MCP op. Cheap; the canvas click UI comes later.
+3. [x] **Mask refinement = RapidRAW's composition** (D-023, 2026-09-01) —
+   NOT a +/− point mechanism. "Subtract from Mask → Subject" already does
+   edge-aware SAM exclude. MCP exposes it: `add_subject_mask(mode)`,
+   `add_component(mask_id, type, mode)` (add a Subject/Radial/Linear/Brush
+   sub-mask to an existing container, default subtractive), `set_submask_mode`.
+   No +/− point UI built; the sidecar/engine `points` support stays unused.
 4. **Depth-haze preset** — completes the Phase 2 checkpoint + the original ask.
    Depth Anything V2 per-frame (RapidRAW has it for stills) + a one-action preset
    (depth-weighted desat + black-lift + dehaze + blur on the background).
@@ -90,7 +94,7 @@ tool + `mcp/README.md`.
 - [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: run `ai/run.sh` for now; Rust-managed spawn TBD.
 - [ ] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
-- [~] Interactive +/− point prompts. **Backend done** — `/segment` + `/track` (sidecar) and `chroma_subject_mask` + `chroma_track_subject` (engine) all take `points: [{x,y,label}]` (1=include, 0=exclude). **Not done:** the canvas konva click UI + a points array persisted on the sub-mask + re-invoke per click. Quick path: expose via MCP first (`refine_mask(mask_id, points)`) so the agent can refine masks by point before the human UI exists.
+- [x] Mask include/exclude refinement — **via RapidRAW's Add/Subtract/Intersect composition, not +/− points** (**D-023**). "Subtract from Mask → Subject" already does edge-aware SAM exclude. MCP: `add_subject_mask(mode)`, `add_component`, `set_submask_mode`. No point UI; `ai/` + engine `points` support stays unused.
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
 - [x] Per-frame subject tracking via **SAM 2 memory propagation** (D-018): prompt once, feed frames, ~180ms/frame mask. Sidecar `/track` (bg job, disk cache) + `/refine_track`.
 - [x] **In-app tracking works end to end** (D-019): "Track subject across clip" → scrub → the matte + red overlay + grade follow the frame in lockstep. Matte read from disk at render time; `chromaTrackDir` persists with the project (no re-track on reopen). "Finalize matte" for the full-quality pre-export pass. Sidecar memory bounded (B-002).

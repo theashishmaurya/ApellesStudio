@@ -410,3 +410,29 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   skipped on video export (they need the GUI-state `resolve_warped_image_for_masks`);
   crop/ROI on a video errors out (matte-resolution assumption, D-019). Detail:
   `docs/notes/export.md`.
+
+## D-023 — Mask include/exclude refinement = RapidRAW's Add/Subtract/Intersect composition, not a +/− point mechanism
+**decided (2026-09-01)**
+
+- **Context:** roadmap had "interactive +/− point prompts" (SAM click-to-refine). The
+  sidecar + engine already accept `points: [{x,y,label}]`. A subagent started building a
+  canvas click UI + a menu item + an MCP `refine_mask` points op.
+- **User observation:** RapidRAW already ships **"Subtract from Mask" / "Intersect Mask
+  with"**, and the submenu offers *every* mask type — including **Subject** (SAM). So
+  "exclude this region" = Subtract → Subject (box the region, SAM segments + subtracts it,
+  edge-aware); "include more" = Add → Subject / a shape. Full include/exclude, already
+  there, for the human.
+- **Choice:** do **not** build a +/− point UI or an MCP points op. Expose the *existing*
+  composition to the agent instead:
+  - `add_subject_mask` gains a `mode` (additive | subtractive | intersect).
+  - `add_component(mask_id, type, mode, bbox?/geometry?)` — add a Subject/Radial/Linear/
+    Brush sub-mask to an existing container (default subtractive) — the agent's version of
+    the menu.
+  - `set_submask_mode(sub_mask_id, mode)` — flip a component's mode.
+  All three call the same `createSubMask` / `updateSubMask` a slider drag uses (D-020).
+- **Why not SAM +/− points too:** they *are* slightly different (one segmentation call,
+  both hints condition the same contour). But the marginal quality gain didn't justify a
+  parallel mechanism + UI when composition covers the practical cases. The backend
+  `points` support stays (unused) in case this is revisited.
+- **Consequence:** no menu clutter, one refinement model, less code. The `ai/` `points`
+  path is dead code for now — leave it, it's harmless and already tested.

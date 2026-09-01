@@ -51,7 +51,9 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `set_curve(channel, points)` | replace a tone-curve channel (`luma\|red\|green\|blue`), points `[{x,y}]` 0..255 |
 | `set_color_grade(shadows?, midtones?, highlights?, global_?, blending?, balance?)` | colour-grading wheels |
 | `seek(frame)` | move the video playhead, decode + re-render that frame |
-| `add_subject_mask(bbox?)` | new container + AI subject sub-mask + generate the matte (SAM 2 on video) |
+| `add_subject_mask(bbox?, mode="additive")` | new container + AI subject sub-mask + generate the matte (SAM 2 on video); `mode` = additive/subtractive/intersect |
+| `add_component(mask_id, type, mode="subtractive", bbox?, geometry?)` | add a sub-mask to an existing container — the "Add to / Subtract from / Intersect with Mask" menu. `type` = subject/radial/linear/brush. A subtractive Subject component carves a SAM region out; a subtractive Radial/Linear carves a shape out (D-023) |
+| `set_submask_mode(sub_mask_id, mode)` | flip a component's composition mode (additive/subtractive/intersect) |
 | `track_subject(sub_mask_id, mode="fast")` | propagate a subject sub-mask across the whole clip |
 | `set_mask_adjust(mask_id, **knobs)` | grade *through* a mask — same knobs as `set_primary` |
 | `invert_mask(sub_mask_id)` | grade the outside instead of the inside |

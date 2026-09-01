@@ -103,3 +103,9 @@ _(none — pre-v1)_
   end with `curl` and an MCP client against the C019 take (exposure moves the slider + the
   canvas; subject mask created on the video). Engine edits: `Cargo.toml` +1, `mod.rs` +1,
   `lib.rs` +6. `cargo check` clean.
+- **2026-09-01** — Mask refinement decided (**D-023**): use RapidRAW's existing
+  Add/Subtract/Intersect composition (works with SAM Subject too), NOT a +/− point
+  mechanism. No point UI built. MCP gains `add_subject_mask(mode)`,
+  `add_component(mask_id, type, mode)`, `set_submask_mode` — all through the same
+  `createSubMask`/`updateSubMask` a slider uses. `ai/` + engine `points` support left
+  unused.

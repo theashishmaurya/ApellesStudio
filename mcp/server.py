@@ -241,15 +241,61 @@ def seek(frame: int) -> list:
 # masks
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-def add_subject_mask(bbox: list[float] | None = None) -> list:
+def add_subject_mask(bbox: list[float] | None = None, mode: str = "additive") -> list:
     """Add a new mask container with an AI subject sub-mask and generate the
     matte. bbox is [x0, y0, x1, y1] in source pixels around the subject; omit
     for a near-full-frame prompt. On a video this routes through SAM 2 (sidecar);
-    on a still, ONNX SAM. Returns {maskId, subMaskId} and the rendered frame."""
-    args: dict = {}
+    on a still, ONNX SAM.
+
+    mode is the sub-mask's composition mode: "additive" (default), "subtractive",
+    or "intersect" — the same Add / Subtract / Intersect the app's mask menu uses.
+    Returns {maskId, subMaskId, mode} and the rendered frame."""
+    args: dict = {"mode": mode}
     if bbox is not None:
         args["bbox"] = bbox
     return _result(_op("add_subject_mask", **args))
+
+
+@mcp.tool()
+def add_component(
+    mask_id: str,
+    type: str,
+    mode: str = "subtractive",
+    bbox: list[float] | None = None,
+    geometry: dict | None = None,
+) -> list:
+    """Add a sub-mask (a "component") to an EXISTING mask container — the agent's
+    equivalent of the app's "Add to / Subtract from / Intersect with Mask" menu.
+
+    Use it to refine a mask by composition: a `subtractive` Subject component
+    carves a SAM-segmented region out of the container's matte (edge-aware);
+    a `subtractive` Radial or Linear carves a geometric region. An `additive`
+    component grows the mask.
+
+    type: "subject" | "radial" | "linear" | "brush".
+    mode: "subtractive" (default — the usual reason to add a component),
+          "additive", or "intersect".
+    bbox: [x0,y0,x1,y1] source px — for type "subject" (the SAM prompt box).
+    geometry: for "radial" {cx,cy,rx,ry,rotation?,feather?};
+              for "linear" {startX,startY,endX,endY,range?}.  (source px)
+
+    Returns {maskId, subMaskId, type, mode} and the rendered frame. To change a
+    component's mode later use `set_submask_mode`."""
+    args: dict = {"mask_id": mask_id, "type": type, "mode": mode}
+    if bbox is not None:
+        args["bbox"] = bbox
+    if geometry is not None:
+        args["geometry"] = geometry
+    return _result(_op("add_component", **args))
+
+
+@mcp.tool()
+def set_submask_mode(sub_mask_id: str, mode: str) -> list:
+    """Set a sub-mask's composition mode: "additive", "subtractive", or
+    "intersect" (same as the app's Add / Subtract from / Intersect with Mask).
+    sub_mask_id is from get_state / list_masks. Flipping a component to
+    "subtractive" carves it out of the rest of its mask container."""
+    return _result(_op("set_submask_mode", sub_mask_id=sub_mask_id, mode=mode))
 
 
 @mcp.tool()
