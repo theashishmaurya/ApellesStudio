@@ -55,10 +55,15 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
      14.5 fps at 4K); 50.9 fps at 960 px. Full-res on pause; scrub unchanged.
      Detail: `docs/notes/playback-30fps.md`.
 
-Round 3 (after): `request_human` + a GUI "agent activity" feed (per-change diff +
-undo), multi-shot session model + shot strip, multi-subject batch tracking (D-017),
-mask keyframes, agent eval harness. Then Phase 4 release (packaging/signing,
-external-reader docs + README + demo, decide name/license/headline — D-002/D-007/D-010).
+Round 3 (after): [x] **`request_human` + a GUI "agent activity" feed**
+(per-change diff + undo) (D-032, 2026-09-02) — every mutating bridge op records
+one entry (summary + per-field grade diff + jump-to-here undo) in a new
+`useAgentStore`; `request_human(reason, roi?)` is a non-blocking op/tool that
+posts a banner + optional canvas ROI, cleared by the user, polled via
+`get_state().pendingHumanRequest`. Then: multi-shot session model + shot strip,
+multi-subject batch tracking (D-017), mask keyframes, agent eval harness. Then
+Phase 4 release (packaging/signing, external-reader docs + README + demo, decide
+name/license/headline — D-002/D-007/D-010).
 
 ---
 
@@ -181,7 +186,14 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 - [x] **Control server + MCP bridge (D-020)** — `src/chroma/control.rs` (in-app HTTP) ⇄ Tauri events ⇄ `useChromaControl` (frontend owns the state). `mcp/` Python stdio server. One shared grade/mask doc: MCP edits move the app's real sliders/history, `get_state` reflects manual edits. v1 ops: primary, curves, wheels, seek, subject mask + track, per-mask grade, invert, delete. Verified with real `curl` + an MCP client against the C019 take.
 - [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape / ~~depth (via `apply_haze`)~~), ~~scopes~~, match_to_reference, ~~apply_haze~~ (D-024), ~~export~~ (D-022), ~~open~~
 - [x] Every mutating op returns `{image_b64, histogram, adjustments}` (image is a best-effort `generate_uncropped_preview` re-render — the app renders to a native WGPU surface)
-- [ ] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
+- [x] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
+      (D-032, 2026-09-02) — `useAgentStore` slice + a recording hook in `useChromaControl.ts`'s
+      chokepoint (one entry per mutating op, `debouncedSetHistory.flush()` collapses
+      `match_reference`'s N iters to one), `diffAdjustments` / `summarizeActivity`
+      (`engine/src/utils/agentActivity.ts`), a fixed bottom-left `AgentActivityDock` (feed +
+      `request_human` banner) + `AgentRoiHighlight` on the canvas. `request_human` op/tool is
+      non-blocking; undo is jump-to-here (drops newer feed entries; documented history-cap
+      fallback). Detail: `docs/notes/agent-activity-feed.md`.
 - [ ] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
 
 **Checkpoint:** a full talking-head grade (primary + tracked subject + depth haze + shot match) done in one Claude Code conversation + <5 min human mask cleanup. **This is v1.**

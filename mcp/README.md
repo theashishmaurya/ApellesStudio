@@ -63,10 +63,22 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `sample_region(x, y, w, h)` | mean / min / max RGB over a rectangle |
 | `match_to_reference(reference, strength=1.0, max_iters=4, tolerance=3.0)` | auto-grade toward a reference image — measure the scope gap, iterate a **damped** primary correction (exposure / temperature / tint / contrast / saturation) with roll-back-on-worse until the gap is small. Merges into `primary` (a balance). Returns `{converged, iterations, gap_before, gap_after, applied, trace}` + the final frame + scopes (D-026) |
 | `export(kind, path?, from_frame?, to_frame?, quality?)` | render the grade to a file — `prores` (default) / `h264` clip or a `cube` primary-grade LUT. Video export polls to completion; returns the resolved path + frame count. Default `path` = beside the source as `<name>.graded.{mov,mp4,cube}` (D-022) |
+| `request_human(reason, roi?)` | hand back to the user — a **non-blocking** handoff for genuine uncertainty / a creative call / "please review". Posts a GUI banner (+ an ROI rectangle on the canvas if `roi` = `{x,y,w,h}` normalized 0..1). Returns an ack immediately; poll `get_state().pendingHumanRequest` — it goes null/`cleared` once the user clicks "Resume agent" (D-032) |
 
 Every mutating tool returns the re-rendered frame (as an MCP image when the app
 can supply one) plus the histogram, the full adjustments doc, **and the compact
 `scopes` summary** (the new measurement after the change).
+
+## Agent activity feed (D-032)
+
+Every mutating tool call also shows up in the app's **"Agent activity" dock**
+(fixed, bottom-left): a newest-first list with a one-line summary, an expandable
+per-field grade diff, and a jump-to-here **Undo** the user can hit. `seek` /
+`open` (pure navigation) aren't listed; `match_to_reference`'s internal
+iterations collapse to one entry. You don't need to narrate your edits — the
+user can see them. This is what "one shared state, not two divergent ones"
+(`docs/00-vision.md`) looks like in the GUI. `request_human` is the other half:
+call it when you need the human, not to report routine progress.
 
 ## Scope-first discipline
 

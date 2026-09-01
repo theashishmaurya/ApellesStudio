@@ -500,5 +500,34 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   scaled decode 0.83 ms), vs 14.5 fps on the old 4K path. Detail:
   `docs/notes/playback-30fps.md`.
 
+- **2026-09-02** · **agent activity feed + `request_human` (D-032)** — frontend
+  only, **no `src-tauri` / Rust change** (the op rides the generic `POST /op`
+  bridge path).
+  · New (all Chroma-owned): `src/store/useAgentStore.ts` (the feed + the
+  single-slot `request_human` state), `src/utils/agentActivity.ts` (`diffAdjustments`
+  — structural before/after grade diff, mask containers matched by id, matte
+  blobs collapsed to `<matte>`; `summarizeActivity` — per-op one-liners),
+  `src/components/chroma/AgentActivityDock.tsx` (fixed bottom-left dock: feed
+  with per-entry expandable diff + jump-to-here undo, + the `request_human`
+  banner), `src/components/chroma/AgentRoiHighlight.tsx` (canvas ROI rect).
+  · `src/hooks/useChromaControl.ts` (Chroma-only file, D-020): new `request_human`
+  op (validates `reason`, clamps `roi` to 0..1, `useAgentStore.postHumanRequest`,
+  returns an ack — added to `READ_ONLY` so no settle); `get_state` now returns
+  `pendingHumanRequest`; the `chroma://request` handler records one
+  `AgentActivityEntry` per mutating op (snapshot `{historyIndex, adjustments}`
+  before `fn`; after settle, `debouncedSetHistory.flush()` to force one history
+  entry, then `diffAdjustments` + `recordActivity`; `seek`/`open`/read-only ops
+  skipped). Imports `debouncedSetHistory` from `useEditorActions`.
+  · Upstream-file edits (minimal): `src/App.tsx` +2 (import + `<AgentActivityDock/>`
+  next to the other app-level mounts), `src/components/panel/editor/ImageCanvas.tsx`
+  +2 (import + `<AgentRoiHighlight>` in the existing absolute overlay layer, same
+  coordinate space as the mask overlay).
+  · `mcp/server.py` — `request_human(reason, roi?)` tool (24 tools now).
+  `mcp/README.md` tool count + list updated.
+  · Verified: `npx tsc --noEmit` — 74 pre-existing unrelated errors (baseline
+  unchanged), none in a touched/new file; `python3 -m py_compile mcp/server.py`
+  clean. Bridge listener doesn't hot-reload → running-app behaviour is an open
+  manual smoke test. Detail: `docs/notes/agent-activity-feed.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

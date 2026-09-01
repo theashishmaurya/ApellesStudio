@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Agent activity feed + `request_human` (D-032, round-3 item 1)**.
+  The GUI now shows every grade change the agent made through the MCP/control
+  bridge: a fixed bottom-left "Agent activity" dock, newest-first, each entry a
+  summary ("primary: exposure +0.35, temp −8" / "match to reference: 3 iters,
+  gap 78→10") + an expandable per-field grade diff + a jump-to-here **Undo**.
+  Recorded at the single `chroma://request` chokepoint in `useChromaControl.ts`
+  (one entry per op — `debouncedSetHistory.flush()` collapses `match_reference`'s
+  internal iterations; `seek`/`open` not logged). New `useAgentStore.ts` slice,
+  `utils/agentActivity.ts` (`diffAdjustments` / `summarizeActivity`, pure),
+  `components/chroma/AgentActivityDock.tsx` + `AgentRoiHighlight.tsx`. Undo is
+  jump-to-here on RapidRAW's history stack (drops newer feed entries; documented
+  fallback when the 50-slot stack has evicted the pre-op state). `request_human(
+  reason, roi?)` — a new non-blocking op + MCP tool: posts a banner (+ an amber
+  ROI rectangle on the canvas if `roi` given, normalized 0..1), the user clicks
+  "Resume agent", the agent polls `get_state().pendingHumanRequest`. **No Rust
+  change** (rides the generic `POST /op` path). Upstream edits: `App.tsx` +2,
+  `ImageCanvas.tsx` +2. MCP 23 → 24 tools. `tsc --noEmit` baseline unchanged (74
+  pre-existing unrelated errors, none in a touched file); `py_compile` clean.
+  Manual running-app smoke test still open (bridge listener doesn't hot-reload).
+  Detail: `docs/notes/agent-activity-feed.md`.
+
 - **2026-09-02** — **Real-time playback ≥30 fps (D-031, round-2 item 5 tail)**.
   Closes the "frontend regrade + IPC per frame" ceiling D-030 named. New
   `engine/src-tauri/src/chroma/playback.rs::chroma_play_frame` — one IPC call

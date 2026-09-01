@@ -526,6 +526,42 @@ def match_to_reference(
 
 
 # --------------------------------------------------------------------------- #
+# request_human — hand back to the user
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def request_human(reason: str, roi: dict | None = None) -> str:
+    """Hand back to the user — call this when you are genuinely unsure, when a
+    call is creative rather than technical, or when you are done and want them to
+    review.
+
+    This is NOT a routine step. Use it for: "the skin tone is a judgement call I
+    shouldn't make", "the matte edge on the hair needs manual cleanup here",
+    "I've balanced the shot to the reference — does this look right to you?".
+    Don't use it to narrate ordinary progress.
+
+    reason: a short, specific sentence shown to the user in a banner.
+    roi: optional {x, y, w, h} normalized to 0..1 (top-left origin) — a region
+      drawn as a rectangle on the canvas so the user knows where to look
+      (e.g. a face crop, a matte-edge artifact, the darkest patch).
+
+    Non-blocking: this posts the request and returns immediately with
+    {posted: true, reason, roi}. It does NOT wait for the user. To find out
+    whether they have acted, call `get_state` and read `pendingHumanRequest`:
+    it becomes null / `cleared: true` once they click "Resume agent". Keep going
+    once it's cleared.
+
+    Every change you made is already visible to the user in the GUI "Agent
+    activity" feed, with a per-field diff and an undo button — you don't need to
+    summarise your edits here, just say what you need from them."""
+    import json
+
+    args: dict = {"reason": reason}
+    if roi is not None:
+        args["roi"] = roi
+    return json.dumps(_op("request_human", **args), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
 # export — a colour tool must output
 # --------------------------------------------------------------------------- #
 @mcp.tool()

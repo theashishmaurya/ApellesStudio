@@ -779,3 +779,67 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   App not driven (a `tauri dev` was running); the 5-step scrub/play/tracked-matte
   smoke test is the open human check (listed in the note). Divergence in doc 09.
   Detail: `docs/notes/playback-30fps.md`.
+
+## D-032 — Agent activity feed = a session-only log recorded at the bridge chokepoint, jump-to-here undo; `request_human` = a non-blocking single-slot handoff
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-3 item 1. The vision's core intent
+  (`docs/00-vision.md`): "whatever edit the agent makes I can see and make
+  changes — one shared state", and "hand back to a human when it's unsure".
+  Two deliverables: a GUI feed of every agent change (per-change diff + undo),
+  and `request_human(reason, roi?)`.
+- **Where to record the feed:**
+  (a) **the `chroma://request` handler in `useChromaControl.ts`** — every MCP op
+      already funnels through it; snapshot the grade + `historyIndex` before
+      `fn`, diff after;
+  (b) wrap each `OPS` entry;
+  (c) a Rust-side log in `control.rs`;
+  (d) diff RapidRAW's `history[]` stack directly.
+  → **(a).** One place, ~40 lines, no per-op boilerplate, and it already holds
+  the `before`/`after` render settle. (b) is N edits that drift. (c) can't see
+  the grade (it lives in the frontend — D-020). (d) can't attribute a history
+  entry to *which* op caused it, and the 500 ms `debouncedSetHistory` coalesces
+  agent + human edits together.
+- **One entry per op, not per internal step:** after the op settles, call
+  `debouncedSetHistory.flush()` to force the pending history push *now*, so a
+  mutating op = exactly one history entry. `match_reference`'s ~5 internal
+  `setAdjustments` iterations → one feed entry (`gap 78→10`), one history entry.
+- **Undo model:**
+  (a) **jump-to-here** — revert the grade to `historyIndexBefore`, mark this
+      feed entry + all newer ones `undone` (they built on this op);
+  (b) a branching timeline / per-op selective revert;
+  (c) inverse-patch replay.
+  → **(a)** — it's the history slider's existing semantics, honest, and cheap
+  (D-027/D-030 bias). (b)/(c) are a real subsystem for a v1 feed. **Documented
+  limitations:** middle-undo drops newer feed entries; if >50 mutations pushed
+  the pre-op state off RapidRAW's 50-slot `history[]`, undo falls back to
+  restoring the stored `adjustmentsBefore` snapshot as a new forward edit (the
+  feed entry always keeps the snapshot). `seek` / `open` (pure navigation) are
+  not logged.
+- **`request_human` = non-blocking, single-slot:**
+  (a) **post a request → return an ack immediately;** the user clears it; the
+      agent polls `get_state().pendingHumanRequest`;
+  (b) hold the MCP call open until the user responds (minutes — trips the 20 s
+      bridge timeout, blocks the agent);
+  (c) a separate response channel.
+  → **(a).** `roi` is normalised `{x,y,w,h}` 0..1, clamped on receipt, drawn as
+  an amber rect + outside-dim on the canvas (reusing the mask-overlay coordinate
+  space). Last-write-wins (one slot). Zero Rust — it rides the generic
+  `POST /op` path like every other op.
+- **Store:** a new `engine/src/store/useAgentStore.ts` (not folded into
+  `useEditorStore` / `useChromaStore`) — same fork-hygiene rationale as
+  `useChromaStore` (D-003). Session-only; not in `grade.json`.
+- **Consequences / footprint:** new files `useAgentStore.ts`,
+  `utils/agentActivity.ts` (`diffAdjustments` + `summarizeActivity`, pure),
+  `components/chroma/AgentActivityDock.tsx` + `AgentRoiHighlight.tsx`. Upstream
+  edits: `App.tsx` +2, `ImageCanvas.tsx` +2 (`useChromaControl.ts` is a
+  Chroma-only file). MCP: +1 tool (`request_human`), 23 → 24.
+- **Verified:** frontend `npx tsc --noEmit` — 74 errors, all pre-existing and
+  unrelated (identical to the pre-change baseline), **none** in any touched or
+  new file. `python3 -m py_compile mcp/server.py` clean. **No Rust change** — the
+  op is handled entirely in `useChromaControl.ts`'s `OPS`; `cargo` untouched, so
+  `chroma::` tests are unaffected. The `useEffect([])` bridge listener does not
+  hot-reload (documented gotcha), so the running-app path (feed populates, diff
+  expands, undo reverts, `request_human` banner + ROI) is an open **manual**
+  smoke test — listed in `docs/notes/agent-activity-feed.md`. Divergence in
+  doc 09.
