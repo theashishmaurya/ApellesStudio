@@ -1,0 +1,25 @@
+# --- Chroma ---
+/engine builds
+engine/node_modules/
+engine/dist/
+engine/src-tauri/target/
+
+# python ai sidecar
+ai/.venv/
+ai/__pycache__/
+ai/**/__pycache__/
+ai/models/
+*.pyc
+
+# rust mcp
+mcp/target/
+
+# scratch / media
+scratch/
+*.mp4
+*.mov
+*.exr
+*.dpx
+*.cube
+!docs/**/*.cube
+.DS_Store

@@ -1,0 +1,99 @@
+# 08 — Decision log
+
+ADR-style. Each decision: context, options, choice, status. Newest first for open ones.
+
+Status: `open` · `decided` · `revisit`
+
+---
+
+## D-001 — Engine base: fork RapidRAW
+**decided (2026-09-01)**
+
+- **Context:** need a GPU grading engine. Building from scratch is months.
+- **Options:** (a) fork RapidRAW (Rust/wgpu/Tauri, has depth mask + AI mask + curves +
+  wheels + LUT, photo-only); (b) libplacebo (C) + build own GUI; (c) Natron (C++, node
+  compositor, scriptable, does video, dated); (d) from scratch.
+- **Choice:** (a). ~70% of the engine exists and runs, in the language we want, with the
+  hard bits (wgpu renderer, Depth Anything integration) already done. The gaps (video,
+  tracking, MCP, scopes, shot-match) are exactly the layer we want to own.
+- **Fallbacks if RapidRAW's still-centric arch fights the video model:** Path B
+  (libplacebo + own GUI) or Path C (RapidRAW engine as a crate, new video-first shell).
+
+## D-002 — Chroma's own license
+**open**
+
+- **Context:** `engine/` is AGPL-3.0. Any distributed combined build is AGPL regardless.
+- **Options:** AGPL-3.0 (match engine; SaaS must open-source) · GPL-3.0 · "AGPL because we
+  have to, but state open intent."
+- **Leaning:** AGPL-3.0 for the whole project, stated as deliberate. Blocks a closed SaaS;
+  does not block an open project, sponsorships, or paid support. Revisit only if a
+  compelling reason to relicense appears (won't — engine is AGPL).
+- **Decide before:** first public push.
+
+## D-003 — Fork hard, or collaborate with the RapidRAW maintainer
+**open**
+
+- **Context:** solo dev, 18, ships daily, clearly cares. A hard fork duplicates effort and
+  invites friction; upstream may *want* the video direction.
+- **Action:** open a discussion / issue on RapidRAW describing the video + agent direction
+  before diverging. Worst case: clean AGPL fork, keep upstream as a remote for
+  cherry-picking.
+- **Decide before:** end of Phase 0.
+
+## D-004 — Colour management: display-referred vs ACES
+**decided for v1 (2026-09-01), revisit for v2**
+
+- **v1:** display-referred **Rec709** only. YouTube talking-head doesn't need scene-linear
+  or HDR, and it removes a large surface. RapidRAW is display-referred today.
+- **v2:** OpenColorIO, ACEScg working space, HDR (PQ/HLG) output. This is the "power tool"
+  line and a real chunk of work — its own phase.
+
+## D-005 — Node graph vs adjustment stack
+**decided for v1 (2026-09-01)**
+
+- **v1:** adjustment **stack** (ordered, non-destructive layers) — RapidRAW's model, and
+  enough for grading. `grade.json.stack` is an array.
+- **v2:** optional node graph (parallel + serial + layer mixer) for people who want it.
+  The stack stays as the simple mode.
+
+## D-006 — Video presentation through Tauri
+**open — Phase 0 spike, blocks the frontend**
+
+- **Context:** cannot IPC-copy 4K RGBA frames to the webview per scrub.
+- **Options:** (1) wgpu → native surface under the webview (webview = UI chrome only);
+  RapidRAW already has a "direct WGPU renderer" — extend it. (2) shared GPU texture /
+  webview↔native interop. (3) encode graded proxy → `<video>` (playback only, not
+  scrub-grade).
+- **Leaning:** (1). Spike it in Phase 0 before committing frontend work.
+
+## D-007 — v1 headline feature
+**open**
+
+- **Options:** (a) shot-match-to-reference; (b) subject-isolation (SAM2 tracked) + depth
+  haze.
+- **Context:** (b) is the pain that started this (the hands problem, no depth mask in
+  Palmier). (a) is the bigger long-term differentiator (grade-as-code + consistency).
+- **Leaning:** ship both in v1 (Phase 2 covers both), lead the demo with (b) because it's
+  the visible "wow", lead the *pitch* with (a) + grade-as-code.
+
+## D-008 — MCP server language
+**open — Phase 3**
+
+- **Options:** (a) Rust, shares the core crate, one process, type-safe against the grade
+  doc. (b) Python, separate process, talks to the core over the same local socket the UI
+  uses, fastest to write, matches the AI sidecar's language.
+- **Leaning:** (a) if the core exposes a clean lib API by Phase 3; (b) as the quick path.
+  Not blocking — the tool *surface* (D-007, doc 07) matters more than the impl language.
+
+## D-009 — AI model runtime: PyTorch/MPS vs ONNX vs candle
+**open — revisit after Phase 0 SAM2 spike**
+
+- **v1:** PyTorch + MPS in a Python sidecar. Known-good, all models available.
+- **Watch:** ONNX Runtime (portable, could run in-process) and `candle` (Rust, would kill
+  the sidecar) — revisit once we know the models and the fps we actually need.
+
+## D-010 — Project name
+**open**
+
+- Working name **"Chroma"**. Provisional. Rename is cheap while pre-public. Alternatives
+  welcome. Decide before first public push.
