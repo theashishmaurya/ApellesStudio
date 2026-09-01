@@ -389,5 +389,28 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   variable-radius post-grade defocus is a separate pass (approach b), deferred.
   Detail: `docs/notes/mask-blur.md`.
 
+- **2026-09-01 PM** · **sidecar lifecycle (D-028)** — new
+  `src-tauri/src/chroma/sidecar.rs` (self-contained: `spawn_and_supervise`,
+  `shutdown`, `chroma_ai_status`). Resolves `ai/` + a python interpreter, spawns
+  `uvicorn` (`std::process::Command`, no `tauri-plugin-shell`), pipes its
+  stdout/stderr to `log::info!("[sidecar] …")`, polls `/health` (a raw
+  `TcpStream` HTTP GET — the runtime `reqwest` here has no `blocking` feature),
+  restarts on crash with capped backoff, and is killed on app exit. Detects an
+  already-running external sidecar and only monitors it (never owns/kills it).
+  · Upstream-file edits (minimal): `chroma/mod.rs` +1 (`pub mod sidecar;`),
+  `lib.rs` +1 (`std::thread::spawn` in `.setup()`, after `setup_logging` so
+  `[sidecar]` lines land in `app.log`), +2 (`chroma::sidecar::shutdown()` in the
+  `.run(...)` `ExitRequested`/`Exit` arms, before the existing `libc::_exit(0)` —
+  that call skips destructors, so the kill has to happen first), +1
+  (`generate_handler!` line for `chroma_ai_status`). `chroma/mask.rs`: the two
+  "sidecar unreachable" error strings now mention the auto-start +
+  `CHROMA_AI_NO_SPAWN`. No new crate, no Cargo.toml change.
+  · `cargo check --no-default-features` clean.
+  · **Known gap:** `resolve_ai_dir` keys off `env!("CARGO_MANIFEST_DIR")`, a
+  build-machine path — fine for `npm run tauri dev`, wrong for a packaged `.app`.
+  Flagged as a Phase 4 packaging TODO, not fixed here (`CHROMA_AI_DIR` /
+  `CHROMA_AI_PYTHON` are the escape hatches meanwhile). Detail:
+  `docs/notes/sidecar-lifecycle.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

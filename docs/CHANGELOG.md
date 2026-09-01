@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **Rust-managed AI sidecar (D-028, round-2 item 3)**. The app
+  now starts and supervises the `ai/` FastAPI sidecar itself — no more `cd ai &&
+  ./run.sh`. New `chroma/sidecar.rs`: resolves python (`CHROMA_AI_PYTHON` →
+  `.venv/bin/python` → `python3` on PATH) + the `ai/` dir (`CHROMA_AI_DIR` →
+  `CARGO_MANIFEST_DIR`-relative), spawns `uvicorn`, pipes its logs into
+  `app.log` as `[sidecar] …`, polls `/health` (ready-in-Nms), restarts on crash
+  with 2→30 s capped backoff (60 s slow-retry after 6 fast failures), and is
+  killed on app exit via a `RunEvent::ExitRequested`/`Exit` hook. An already-
+  running external sidecar is detected and only monitored, never killed or
+  respawned. `CHROMA_AI_NO_SPAWN=1` opts out for manual `ai/run.sh` use.
+  `chroma_ai_status` command for a future UI indicator. No new crate — the
+  health check is a raw `TcpStream` HTTP GET, not blocking-`reqwest`. Known gap:
+  packaged-app path resolution (`CARGO_MANIFEST_DIR` is a dev path) — flagged
+  for Phase 4. Detail: `docs/notes/sidecar-lifecycle.md`.
+
 - **2026-09-01** — **Per-mask blur (D-027, round-2 item 2)**. A `blur` field
   (0–100) on every mask's adjustments — defocus the masked region. Shader: renamed
   the dead `_pad_cg1` slot in `MaskAdjustments` → `blur` (Rust + WGSL, zero layout

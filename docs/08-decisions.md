@@ -475,6 +475,47 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   alive in the editor view) + added an `open(path)` op/tool. Detail:
   `docs/notes/depth-haze.md`. Divergence in doc 09.
 
+## D-028 — Sidecar lifecycle: Rust-managed spawn + supervise, not `ai/run.sh` by hand
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** round-2 item 3. Every AI feature (D-012 subject mask, D-016 matte
+  refine, D-018 tracking) needs `ai/` up on `:8765`; until now the user had to
+  remember `cd ai && ./run.sh` before opening the app, and a sidecar crash mid-
+  session just left mask/track calls failing with "unreachable" until a manual
+  restart.
+- **Options:** (a) leave it manual, just document it better; (b) a shell script
+  the app launches once and forgets (no crash recovery, no logs in `app.log`);
+  (c) **Rust-owned spawn + supervise** — resolve python/venv, spawn
+  `uvicorn`, pipe its logs into the app log, poll `/health`, restart on crash
+  with backoff, kill it on quit.
+- **Choice:** (c). It's the only option that survives a sidecar crash mid-
+  session without the user noticing, and it puts uvicorn's own log lines where
+  the rest of the app's diagnostics already live (`app.log`), not a second
+  terminal window. An **already-running external sidecar is detected and left
+  alone** — `ai/run.sh` for standalone testing still works, the app just
+  doesn't fight it.
+- **No new dependency.** The health check is a raw `TcpStream` HTTP/1.1 GET, not
+  `reqwest`'s blocking client — the runtime `reqwest` here is async-only
+  (`default-features = false`, no `blocking` feature; adding it would pull a
+  second HTTP client stack for one GET). The child process comes from
+  `std::process::Command` (already used elsewhere in the fork), not
+  `tauri-plugin-shell` — no sidecar-specific shell-plugin permissions needed.
+- **Backoff:** 2 s → 4 → 8 → 16 → 30 s cap; 6 consecutive failures each under
+  60 s uptime drop to a 60 s slow-retry (assume it's broken, stop hammering);
+  any run ≥ 60 s resets both counters. A missing venv/python re-resolves every
+  30 s rather than erroring out — fixable without an app restart.
+- **Exit-safety:** the owned `Child` lives behind a `Mutex` shared with the
+  `.run(...)` exit hook (`RunEvent::ExitRequested` / `Exit`), which
+  `kill()` + `wait()`s it *before* the existing `libc::_exit(0)` — that call
+  doesn't run destructors, so the kill has to happen first, not via `Drop`.
+- **Consequences:** `engine/src-tauri/src/chroma/sidecar.rs` (new, self-
+  contained). `lib.rs` +1 spawn line, +2 `shutdown()` calls, +1 handler line;
+  `chroma/mod.rs` +1. `chroma::mask`'s "unreachable" error hints now mention the
+  auto-start + `CHROMA_AI_NO_SPAWN`. **Packaged-app path resolution is still
+  open** — `resolve_ai_dir` keys off `CARGO_MANIFEST_DIR` (a dev-only path);
+  Phase 4 packaging needs a resource-dir lookup or a bundled/frozen sidecar.
+  Detail: `docs/notes/sidecar-lifecycle.md`. Divergence in doc 09.
+
 ## D-026 — `match_to_reference` = a damped closed-loop nudge of five primary sliders (not a colour-science transform)
 **decided (2026-09-01) · built (2026-09-01)**
 

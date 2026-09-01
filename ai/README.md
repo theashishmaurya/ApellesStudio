@@ -5,14 +5,27 @@ nothing here touches `grade.json` — it returns mattes, the engine applies them
 
 ## Run
 
+**The app starts this for you now (D-028).** First set up the venv once:
+
 ```
 cd ai && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+Then just launch Chroma — `engine/src-tauri/src/chroma/sidecar.rs` spawns
+`uvicorn` on app start, pipes its logs into `app.log` (grep `[sidecar]`), and
+restarts it if it crashes. Details + env vars (`CHROMA_AI_DIR`,
+`CHROMA_AI_PYTHON`, `CHROMA_AI_PORT`, `CHROMA_AI_NO_SPAWN`) in
+`docs/notes/sidecar-lifecycle.md`.
+
+Manual start still works for standalone testing — the app detects an already-
+running sidecar and leaves it alone instead of spawning a second one:
+
+```
 ./run.sh                 # -> http://127.0.0.1:8765  (CHROMA_AI_PORT to change)
 ```
 
 Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB to
-`ai/models/`; `vitmatte-small` ~100 MB to the HF cache. The engine spawns this process;
-`run.sh` is for standalone testing.
+`ai/models/`; `vitmatte-small` ~100 MB to the HF cache.
 
 ## Endpoints
 

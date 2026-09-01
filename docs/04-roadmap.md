@@ -25,8 +25,12 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
    (`handleAddDepthHaze` += `blur`) and unblocks "blur the background" as a mask
    op. Slider in `Details.tsx`, `set_mask_adjust` whitelist, new `add_mask` op.
    Limit: fixed radius, ungraded blur sample. Detail: `docs/notes/mask-blur.md`.
-3. **Rust-managed sidecar spawn** — the app starts/monitors `ai/` (venv-aware), no
-   manual `ai/run.sh`. `chroma_ai_health` already exists; add spawn + restart-on-crash.
+3. [x] **Rust-managed sidecar spawn** (D-028, 2026-09-01) — the app starts/monitors
+   `ai/` (venv-aware), no manual `ai/run.sh`. Resolve python/venv → spawn
+   `uvicorn` → pipe logs into `app.log` → poll `/health` → restart on crash with
+   capped backoff → `child.kill()` on app exit. Detects + leaves an already-
+   running external sidecar alone. `chroma_ai_status` for a future UI
+   indicator. Detail: `docs/notes/sidecar-lifecycle.md`.
 4. **Strip `@clerk/react`** — remove the community-login dep from the frontend
    (auth stubs, the `<TitleBar>` error, the dev-key warnings). Irrelevant to Chroma.
 5. **Smooth playback / proxy** — a persistent ffmpeg decode pipe (or a pre-rendered
@@ -131,7 +135,7 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 
 ## Phase 2 — AI sidecar  ·  ~3–4 weeks
 
-- [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: run `ai/run.sh` for now; Rust-managed spawn TBD.
+- [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: Rust-managed spawn + supervise (D-028, 2026-09-01) — `ai/run.sh` still works standalone.
 - [~] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
       — per-frame works: `chroma_seek` busts the depth cache (D-024), so a depth mask
       re-generated on frame N grades frame N's depth. **Static bake** in the preset;
@@ -166,7 +170,7 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 ## Phase 4 — Harden & release v1  ·  ~2 weeks
 
 - [ ] Strip the `@clerk/react` community-login dep from the frontend (irrelevant to Chroma; noted since Phase 0)
-- [ ] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh`
+- [x] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh` (D-028, 2026-09-01; pulled forward from round-2 item 3)
 - [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
       moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
       new `open(path)` op so a clip can be loaded headlessly.
