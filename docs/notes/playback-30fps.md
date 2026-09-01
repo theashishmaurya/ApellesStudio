@@ -122,6 +122,19 @@ IPC hop or the native wgpu surface. In a `tauri dev`:
    offset blob), and is still correct after pause.
 5. Scrub the strip — confirm single-frame scrub still works and settles full-res.
 
+## Known gaps
+
+- **Linux.** `chroma_play_frame` returns a JPEG when `use_wgpu_renderer = false`
+  (Linux); the rAF loop ignores the response body, so Linux playback would show a
+  stale frame. Video is macOS-first for v1 (D-006 / D-020 already note the native
+  surface). Fix later: have the loop set `finalPreviewUrl` from a non-`WGPU_RENDER`
+  body.
+- **GPU poll timeout.** `process_preview_job` blocks up to 500 ms on
+  `device.poll(Wait)` after the grade. At 1280 px the grade finishes fast so this
+  rarely waits, but a shorter/zero timeout for the playback job (drop a late frame
+  rather than block) is a possible follow-up — skipped here to avoid editing the
+  shared `process_preview_job` hot path.
+
 ## Files
 
 - new: `engine/src-tauri/src/chroma/playback.rs` — `chroma_play_frame`,
