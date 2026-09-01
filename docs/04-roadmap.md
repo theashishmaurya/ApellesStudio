@@ -11,9 +11,10 @@ not commitments.
 - [x] `CLAUDE.md` working rules
 - [x] Read `engine/src-tauri` — first pass (`docs/09-engine-notes.md`): grade path mapped,
       AI stack is ONNX/`ort` in-process (D-009 revised), toolchain gap found (B-001)
-- [ ] **`rustup update`** (B-001), then build RapidRAW on Apple Silicon, confirm wgpu renders
-- [ ] Deeper read: `gpu_processing.rs` + `shaders/shader.wgsl` (the compute passes), `image_processing.rs` (params→uniforms), `mask_generation.rs`
-- [ ] **Spike D-006**: can wgpu render to a native surface under the Tauri webview? Prototype a video frame on screen with UI chrome over it.
+- [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
+- [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
+- [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
+- [ ] Run the app (`npm run tauri dev`) — confirm the wgpu renderer draws a real image on screen
 - [ ] **Spike**: ffmpeg decode → feed one frame into `apply_adjustments` → render it graded. Proves "video is per-frame stills."
 - [ ] **Spike**: SAM 2 as ONNX via `ort` — segment + propagate one 10s clip, measure fps, matte quality on the hands problem (D-012). Fallback spike: SAM 1 (already in engine) + optical flow.
 - [ ] Decide: fork hard vs. talk to the RapidRAW maintainer (D-003)

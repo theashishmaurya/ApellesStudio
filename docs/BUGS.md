@@ -41,14 +41,14 @@ Phase 0 code-read.
 ## Open bugs
 
 ## B-001 — Rust toolchain too old to build engine
-- **status:** open
+- **status:** fixed (2026-09-01)
 - **severity:** blocker
 - **area:** build
 - **found:** 2026-09-01 (phase 0)
 - **repro:** `cd engine/src-tauri && cargo build`
-- **expected:** compiles
-- **actual:** will fail — `Cargo.toml` requires `rust-version = "1.98"` + `edition 2024`; machine has rustc 1.72.1
-- **fix:** `rustup update stable` (user action). Then `cargo install tauri-cli`. See D-011.
+- **actual:** `Cargo.toml` requires `rust-version = "1.98"` + `edition 2024`; machine had rustc 1.72.1
+- **fix:** `rustup update stable` → rustc 1.98.0. `cargo check` on the engine then passes
+  clean in 4m24s (682 deps, ONNX runtime dylib auto-downloaded + verified). See D-011.
 
 ## Fixed
 

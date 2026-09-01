@@ -56,7 +56,10 @@ Human-readable history. `Keep a Changelog` style. Dates are ISO.
   is the hook for feeding SAM 2 tracked mattes per frame**; all generators → `GrayImage`.
 - Frontend map (`engine/src/`, 114 files): keep `adjustments/`, extend `panel/editor/`
   canvas with transport, replace `panel/library/` with a shot strip, strip `@clerk` auth.
-- `cargo check` on the engine kicked off (large first build — wgpu/tauri/ort/tokio tree).
+- **`cargo check` on the engine PASSES clean** — 4m24s, 682 deps, ONNX runtime dylib
+  auto-downloaded + SHA-verified. **B-001 fixed; the engine builds on this machine.**
+- Phase 0 spikes status: D-006 (video surface) answered by code-read, no spike needed.
+  Remaining: run the app, ffmpeg→grade spike, SAM2-on-`ort` spike, D-003 (fork vs collab).
 
 ---
 
