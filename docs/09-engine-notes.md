@@ -202,7 +202,12 @@ waits on D-014.
 
 ## Divergence log (our changes to `engine/`)
 
-_(none yet — D-014 `render_core` extraction will be the first entry)_
+Branched from upstream `4f6a365`. Append `{date · files · why}`.
 
-When we change `engine/`: append here `{date, files, why, upstream commit branched from}`
-so we can still cherry-pick upstream fixes (per CLAUDE.md).
+- **2026-09-01** · `src/lib.rs` (+1 line: `mod chroma;`) · `src/chroma/{mod,video}.rs` (new)
+  · Video probe + single-frame decode via ffmpeg CLI (D-015). All Chroma code is under
+  `src/chroma/`; the only upstream-file edit is the one `mod` line. 3 tests pass, incl.
+  probe+decode against the real 4K C019 take.
+
+When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
+the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

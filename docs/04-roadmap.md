@@ -14,7 +14,7 @@ not commitments.
 - [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
 - [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
 - [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
-- [ ] Run the app (`npm run tauri dev`) — confirm the wgpu renderer draws a real image on screen *(user action — GUI)*
+- [x] App builds (7m18s) + launches — window opens, ONNX runtime loads, no GPU errors. Frontend throws a `<TitleBar>` React error + Clerk auth warnings (the `@clerk/react` community-login dep — strip it early, irrelevant to Chroma).
 - [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
 - [ ] **SAM 2 via `ort`** (D-012 decided — SAM 2, no fallback): get it running, measure fps + matte quality on C019's hands. Moves to Phase 2 if the memory module needs real work.
 - [x] Fork model decided (D-003): standalone project, hard fork, no upstream coordination.
@@ -25,10 +25,11 @@ not commitments.
 
 ## Phase 1 — Video grading core  ·  ~3–4 weeks
 
-- [ ] **D-014: extract `render_core`** — Tauri-free `render(gpu, base, req) -> DynamicImage`
-      + `init_gpu_context()`; Tauri commands become thin wrappers. First divergence from
-      upstream. Then the ffmpeg→grade spike runs headless.
-- [ ] Video I/O: decode → proxy cache → per-frame grade → ProRes/H.264 encode
+- [x] `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015). Tests pass on the real 4K C019 take.
+- [ ] **Minimal video-open path**: `is_video_file` branch in the frontend picker + `load_image` → decode frame 0 → existing grade/display pipeline. Gets a video frame on screen, graded, no transport yet.
+- [ ] **D-014: extract `render_core`** — Tauri-free `render(gpu, base, req) -> DynamicImage` + `init_gpu_context()`; needed for headless render + the MCP server, not for the GUI video path.
+- [ ] Video I/O: proxy cache → per-frame grade → ProRes/H.264 encode
+- [ ] Transport: playhead → `decode_frame(Index)` → grade → display; scrub with a proxy
 - [ ] Shot / session model + `grade.json` load/save/validate
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [ ] Shot strip (selector)

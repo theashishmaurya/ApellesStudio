@@ -167,6 +167,19 @@ decision. Lives in a future `CONTRIBUTING`.
 - **Sequencing:** this is now the first task of Phase 1, and the ffmpeg→grade spike
   depends on it.
 
+## D-015 — Video I/O via the ffmpeg CLI (not `ffmpeg-next` bindings)
+**decided (2026-09-01)**
+
+- **Choice:** shell out to `ffmpeg` / `ffprobe` (subprocess) for probe + frame decode.
+  Module: `engine/src-tauri/src/chroma/video.rs`.
+- **Why not `ffmpeg-next` / `ffmpeg-sys`:** those need libav + pkg-config + a C toolchain
+  in every build/CI; a constant source of breakage. ffmpeg is already a hard dep of this
+  workflow, it's on every target, the CLI is stable.
+- **Cost:** ~10–30 ms process spawn per frame. Fine for *load* and *proxied scrub*. Smooth
+  playback needs a persistent `-f rawvideo` pipe or a pre-rendered proxy — a later layer,
+  the CLI approach doesn't block it.
+- **Overridable:** `CHROMA_FFMPEG` / `CHROMA_FFPROBE` env vars for a pinned/bundled binary.
+
 ## D-010 — Project name
 **open**
 

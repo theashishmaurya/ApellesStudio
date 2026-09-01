@@ -15,6 +15,10 @@ One or two lines per session. Detail lives in the decision it references.
   (3.6 → 38 GiB free).
 - **2026-09-01** — D-003 decided (standalone hard fork; still keep changes clean for
   upstream cherry-picks), D-012 decided (SAM 2, no fallback).
+- **2026-09-01** — App builds + launches (`tauri dev`, 7m18s). Phase 0 done.
+  Phase 1 started: `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015),
+  first engine divergence (all under `src/chroma/`, +1 line in `lib.rs`). Tests pass
+  against the real C019 4K take.
 
 ## Releases
 
