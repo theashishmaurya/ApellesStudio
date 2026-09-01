@@ -213,6 +213,31 @@ decision. Lives in a future `CONTRIBUTING`.
   layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
   is short on hair/fine detail in real use.
 
+## D-019 — Tracked matte read at render time, not swapped into `adjustments`
+**decided (2026-09-01)**
+
+- **Context:** first cut had the frontend swap `params.maskDataBase64` on every
+  seek. It fought RapidRAW's render pipeline — overlay-regen storm, undo/save churn,
+  and (worst) frame vs matte desync: a drag bumps `frameNonce` faster than
+  `setAdjustments` settles, so the frame-N matte landed on the frame-M image → an
+  offset red blob. The timeline also stopped responding under the render load.
+- **Choice:** the sub-mask stores its `/track` cache dir once
+  (`params.chromaTrackDir`, persists with the project). `generate_ai_subject_bitmap`
+  — the existing bitmap path, called every render — loads
+  `<dir>/<current_video_frame>.png` via `chroma::mask::tracked_full_mask` instead
+  of the static base64. Matte and frame are the *same* render pass, always in
+  lockstep. A seek just bumps `frameNonce` (the existing re-render path); the mask
+  overlay effect also keys on it. No per-frame `setAdjustments`.
+- **Seek-settle ViTMatte upgrade:** `chroma_refine_tracked_frame` overwrites
+  `<dir>/<frame>.png` in place, then bumps `frameNonce` → re-render picks it up.
+  Deduped per `(dir, frame)`.
+- **Consequences:** removed the `TRACK_DIRS` session map + `chroma_subject_matte_for_frame`
+  + `trackedSubMaskIds`. `tracked_full_mask` does a `read_dir` + `image::open` per
+  render (~2–5 ms) — cache later if it shows up. Assumes the matte PNG is at the
+  warped-image resolution (true for v1: no crop/geometry on video).
+- **Also fixed:** `ChromaTimeline`'s root `onPointerDownCapture` stopPropagation was
+  eating the strip's own `onPointerDown` (clicks did nothing) — moved onto the strip.
+
 ## D-018 — Tracking = SAM 2 memory propagation (`SAM2DynamicInteractivePredictor`)
 **decided (2026-09-01)**
 

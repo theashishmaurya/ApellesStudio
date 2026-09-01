@@ -233,12 +233,19 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   the nearest cached PNG ≤ frame; `chroma_refine_tracked_frame` → `/refine_track` upgrades
   one frame to ViTMatte. Frontend `useAiMasking.ts` (Track handler + seek-swap effect +
   debounced refine), `MasksPanel`/`SettingsPanel` (buttons), `useChromaStore.ts`.
-- **2026-09-01 PM** · **SAM 2 propagation (D-018) + per-sub-mask (D-017):** sidecar `/track`
-  rewritten to `SAM2DynamicInteractivePredictor`. `state.rs`: `TRACK_DIR` → `TRACK_DIRS:
-  HashMap<sub_mask_id, PathBuf>` (+`clear_track_dirs`, called from `set_current_video` on
-  clip change). All 4 track commands take `sub_mask_id`. `useChromaStore`: `trackActive` →
-  `trackedSubMaskIds: string[]`. Seek-swap loops every tracked sub-mask; refine targets the
-  active one.
+- **2026-09-01 PM** · **SAM 2 propagation (D-018):** sidecar `/track` rewritten to
+  `SAM2DynamicInteractivePredictor`.
+- **2026-09-01 PM** · **render-time matte (D-019)** — the shipping design.
+  `mask_generation.rs::generate_ai_subject_bitmap` gained a 4-line branch: if
+  `params["chromaTrackDir"]` is set, `mask = crate::chroma::mask::tracked_full_mask(params)`
+  → `generate_ai_bitmap_from_full_mask` (else the old base64 path). `chroma/mask.rs`:
+  `tracked_full_mask` (reads `<dir>/<current_video().frame>.png`), `chroma_refine_tracked_frame(track_dir, frame)`.
+  `chroma_track_subject` dropped its `sub_mask_id` arg (returns `dir`, frontend stores it).
+  Removed from `state.rs`: `TRACK_DIRS` + accessors. Removed command:
+  `chroma_subject_matte_for_frame`. Frontend: `handleTrackSubject` stores `chromaTrackDir`
+  on the sub-mask; `useChromaSubjectTracking` is now just the seek-settle ViTMatte upgrade;
+  `Editor.tsx` overlay effect + a single hook mount both key on `frameNonce`;
+  `ChromaTimeline` root capture-phase `stopPropagation` removed (was eating strip clicks).
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

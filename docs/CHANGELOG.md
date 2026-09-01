@@ -51,6 +51,15 @@ _(none — pre-v1)_
 - **2026-09-01** — Tracking rewritten to **SAM 2 memory propagation** (**D-018**):
   `SAM2DynamicInteractivePredictor` (in the installed ultralytics — no new dep), prompt
   once, ~180ms/frame, every frame gets a matte. Gotchas: `conf≈0`, `obj_ids` 0-indexed,
-  refine the loose prompt box to a YOLO person box first. **Per-sub-mask tracking**
-  (**D-017**): `state::TRACK_DIRS` map, all track commands take `sub_mask_id`, seek-swap
-  loops every tracked sub-mask, per-component buttons.
+  refine the loose prompt box to a YOLO person box first.
+- **2026-09-01** — **B-002 fixed**: sidecar climbed to ~12 GB after repeated Re-track
+  (fresh predictor per pass never returned to the MPS pool + concurrent stacking). `_GPU`
+  lock serialises model calls; one reused predictor; `_free_gpu()` after every op; `/track`
+  cancels a running pass. Plateaus ~1.3 GB now.
+- **2026-09-01** — Tracking display reworked (**D-019**): matte is read from disk **at
+  render time** (`params.chromaTrackDir` → `tracked_full_mask` → `<dir>/<frame>.png`) in
+  `generate_ai_subject_bitmap`, not swapped into `adjustments` per seek. Fixes the
+  overlay-regen storm, the frozen timeline, and the frame/matte desync (offset red blob).
+  Persists with the project — no re-track on reopen. Also fixed: `ChromaTimeline` root
+  capture-phase `stopPropagation` was eating strip clicks. **Mask follows the frame
+  perfectly in-app now.**

@@ -51,8 +51,9 @@ not commitments.
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
 - [ ] Interactive +/− point prompts on the canvas (sidecar already takes `points`; needs konva click UI + a points array in the submask params + re-invoke per click)
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
-- [x] Per-frame subject tracking via **SAM 2 memory propagation** (D-018): prompt once, feed frames, ~180ms/frame mask. Sidecar `/track` (bg job, disk cache) + `/refine_track`; engine `chroma_track_subject` / `_track_status` / `_subject_matte_for_frame` / `_refine_tracked_frame` (all per sub-mask id, D-017); "Track subject across clip" + "Finalize matte" buttons; seek-swaps every tracked sub-mask. **fast/quality** — guided-filter edge on the pass, ViTMatte on the visible frame + the finalize pass.
-- [ ] Batch multiple objects into one propagation pass (`max_obj_num > 1`) so N subjects don't each cost a full pass
+- [x] Per-frame subject tracking via **SAM 2 memory propagation** (D-018): prompt once, feed frames, ~180ms/frame mask. Sidecar `/track` (bg job, disk cache) + `/refine_track`.
+- [x] **In-app tracking works end to end** (D-019): "Track subject across clip" → scrub → the matte + red overlay + grade follow the frame in lockstep. Matte read from disk at render time; `chromaTrackDir` persists with the project (no re-track on reopen). "Finalize matte" for the full-quality pre-export pass. Sidecar memory bounded (B-002).
+- [ ] Multi-subject: two `ai-subject` masks each with their own `chromaTrackDir` should already work (untested); batch N objects into one propagation pass (`max_obj_num > 1`) so they don't each cost a full pass (D-017)
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [ ] **Depth haze preset** — one action, depth-weighted desat + black-lift + dehaze + blur
 - [ ] Mask keyframes in the data model + GUI handles
