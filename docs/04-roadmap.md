@@ -39,9 +39,15 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
    replaced with a one-line "Chroma runs all AI locally" note. Dep dropped from
    `package.json` + lockfile. Kills the `<TitleBar>` React error and the Clerk
    dev-key warnings.
-5. **Smooth playback / proxy** — a persistent ffmpeg decode pipe (or a pre-rendered
-   half-res proxy) so scrub + play aren't ~5–10 fps and export doesn't decode from
-   frame 0. (D-015 flagged this.)
+5. [x] **Smooth playback / proxy** (D-030, 2026-09-02) — one persistent
+   `ffmpeg -f rawvideo` sequential-decode pipe per clip (`src/chroma/decode_pipe.rs`):
+   forward step / short scrub = a single raw-frame read, jump = a keyframe-seek
+   respawn, no per-frame PNG round-trip. Decode throughput ~1.6 → ~39 fps on C019.
+   `chroma_seek` uses it (falls back to `video::decode_frame` on error). Export's
+   `spawn_decoder` also seeks now (`-ss`+`-copyts`+timestamp `select`) so a
+   `from > 0` range no longer decodes from frame 0, matte-safe. Still open: the
+   per-frame frontend regrade + IPC (the remaining fps ceiling); proxy files
+   deferred. Detail: `docs/notes/smooth-playback.md`.
 
 Round 3 (after): `request_human` + a GUI "agent activity" feed (per-change diff +
 undo), multi-shot session model + shot strip, multi-subject batch tracking (D-017),
@@ -121,11 +127,13 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 - [x] `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015). Tests pass on the real 4K C019 take.
 - [x] **Minimal video-open path** — video loads as frame 0 into the existing pipeline; filmstrip + import filter accept video. Built, tests pass. Needs a visual confirm (open C019 in the app).
 - [x] **D-014: `render_core` seam** — `src-tauri/src/render_core.rs`: `render(ctx, caches, base, req, …) -> DynamicImage` + `init_gpu_context()` (device+queue, no surface). `process_and_get_dynamic_image_inner` now takes `RenderCaches` not `tauri::State`. GUI path unchanged. Headless API unused until the control/MCP server.
-- [x] Video I/O: per-frame grade → ProRes/H.264 encode (D-022, 2026-09-01). Proxy
-      cache still pending (decode is from-frame-0 per export — a bake, not scrub).
-- [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Naive stepper (~5-10fps), no proxy yet.
+- [x] Video I/O: per-frame grade → ProRes/H.264 encode (D-022, 2026-09-01);
+      export decoder now seeks instead of walking from frame 0 (D-030, 2026-09-02).
+- [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Decode via the persistent pipe (D-030); frontend stepper + per-frame regrade unchanged.
 - [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
-- [ ] Smooth playback — persistent decode pipe or pre-rendered proxy
+- [x] Smooth playback — persistent sequential-decode pipe (D-030, 2026-09-02;
+      `src/chroma/decode_pipe.rs`). Proxy files deferred; frontend regrade/IPC per
+      frame still the fps ceiling.
 - [~] Shot / session model + `grade.json` load/save/validate — **`grade.json` done**
       (D-025, `chroma/grade.rs`: save/load, versioned schema, matte externalization).
       Full session/shot model (multiple shots, in/out, shot strip) still open.

@@ -314,7 +314,8 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   quality?)`, polls progress for video.
   · v1 limitations: no audio; parametric `color`/`luminance` masks skipped on video
   export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors;
-  decode is from frame 0 each export (proxy layer = later). Detail: `docs/notes/export.md`.
+  ~~decode is from frame 0 each export (proxy layer = later)~~ — fixed in D-030
+  (`spawn_decoder` seeks via `-ss`+`-copyts`+timestamp `select`). Detail: `docs/notes/export.md`.
 
 - **2026-09-01 PM** · **depth-haze preset (D-024)** — mostly frontend.
   · Rust (1 upstream file): `chroma/commands.rs::chroma_seek` +5 lines — clears
@@ -426,6 +427,41 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   place). Kills the `<TitleBar>` React error + the Clerk dev-key console warnings.
   No Rust change. All Chroma AI is local (the `ai/` sidecar + in-process ONNX), so
   there is no account to sign into.
+
+- **2026-09-02** · **persistent decode pipe / smooth playback (D-030)** — new
+  `src-tauri/src/chroma/decode_pipe.rs` (self-contained: `FramePipe` +
+  process-global `playback_frame` / `reset`, 2 unit tests). One long-lived
+  `ffmpeg -ss <(start-0.5)/fps> -i clip -f rawvideo -pix_fmt rgb24 -` per clip;
+  `frame(target)` = one sequential `read_exact` for a step, discard-to-target for
+  a short forward hop (≤48), kill+respawn for a jump / backward. Raw rgb24 out —
+  no per-frame PNG encode/decode. `Drop` kills the child; any pipe error drops the
+  pipe and the caller falls back.
+  · `chroma/commands.rs::chroma_seek` — decodes via `decode_pipe::playback_frame`
+  first, falls back to `video::decode_frame` on error, then
+  `load::install_frame`. Cache-clearing logic unchanged.
+  · `chroma/load.rs` — split the state-writing tail of `load_video_frame` into a
+  new `pub fn install_frame(source, virtual, frame, info, img, state)` so the
+  transport can install a frame it already holds (no re-probe / re-decode).
+  `load_video_frame` now just calls it.
+  · `chroma/state.rs::set_current_video` — reworked the "clip changed" check to
+  compare the outgoing `CurrentVideo.path` (not the thumb-cache path, which is
+  `None` until the strip is built and would have churned the pipe on every early
+  seek). On a real path change it now clears `THUMB_CACHE` **and**
+  `decode_pipe::reset()`.
+  · `chroma/export.rs::spawn_decoder` — now takes `&VideoInfo` and seeks:
+  `-ss <(from/fps)-1s> -copyts` + `select=gte(t,(from-0.5)/fps)` + `-frames:v
+  count`. Selecting by **absolute timestamp `t`** (not decoded-frame index `n`)
+  is what makes an input `-ss` matte-safe — the concern D-022 avoided by walking
+  from frame 0. `from = 0` ⇒ unchanged. Also `decode_pipe::reset()` at export
+  entry (free the idle pipe fd).
+  · Upstream-file edits: `chroma/mod.rs` +2 (`pub mod decode_pipe;` + doc line).
+  No `lib.rs` change (no new command), no Cargo.toml change.
+  · `cargo check --no-default-features` clean; `cargo test chroma::` 14/14
+  (incl. `seeked_decoder_is_frame_aligned`, `pipe_matches_single_frame_decode`).
+  Measured on C019 (3840×2160 HEVC, 24fps): 24 sequential frames decode in
+  **0.61 s (~39 fps)** via the pipe vs **15.3 s (~1.6 fps)** as 24 `-ss`+PNG
+  spawns. Frontend regrade + IPC per frame is now the ceiling — still open.
+  Detail: `docs/notes/smooth-playback.md`.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

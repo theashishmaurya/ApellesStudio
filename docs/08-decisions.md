@@ -673,3 +673,48 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   shows only pre-existing unrelated errors, app rebuilds + launches with no
   `<TitleBar>` error and no Clerk warnings in `app.log`, control bridge healthy.
   Frontend-only, no Rust change. Divergence in doc 09.
+
+## D-030 — Smooth playback = one persistent sequential-decode pipe per clip (not a proxy file)
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-2 item 5 (D-015 / D-022 flagged it). Scrub + play ran
+  ~1–10 fps: every playback frame paid a fresh `ffmpeg` spawn + a keyframe seek +
+  a PNG encode/decode round-trip (`video::decode_frame`). Export had the sibling
+  bug — a `from > 0` range still decoded from frame 0
+  (`select=between(n,FROM,TO)`, chosen in D-022 for matte safety).
+- **Options:** (a) **one long-lived `ffmpeg -f rawvideo` pipe per clip, sequential
+  reads, keyframe-seek respawn on a jump**; (b) a pre-rendered half/quarter-res
+  proxy `.mov`; (c) an in-memory ring buffer of decoded frames; (d) playback that
+  skips the GPU grade or approximates it with a cached LUT. Full table in
+  `docs/notes/smooth-playback.md`.
+- **Choice:** (a). Cheapest thing that materially helps (the D-027/D-028 bias):
+  ~120 lines, isolated to a new `src/chroma/decode_pipe.rs`, no new failure mode
+  (any pipe error falls back to `video::decode_frame`). (b) is a whole subsystem
+  and the grade still runs per frame; (c) needs (a) to fill it and 24 MB/frame at
+  4K; (d) shows the wrong pixels in a grading tool.
+- **Pipe:** `ffmpeg -ss <(start-0.5)/fps> -i clip -an -sn -f rawvideo -pix_fmt
+  rgb24 -`. `-ss` before `-i` is an accurate seek that lands exactly on `start`
+  for CFR footage; the half-frame margin points backward so an `avg_frame_rate`
+  vs `r_frame_rate` rounding wobble can't skip forward. `frame(target)`: one
+  `read_exact` for a step, discard-to-target for a ≤48-frame forward hop,
+  kill+respawn otherwise. Raw rgb24 ⇒ no PNG round-trip. Process-global
+  `Mutex<Option<FramePipe>>`; `state::set_current_video` drops it on a clip-path
+  change; `Drop` kills the child.
+- **Export half:** `spawn_decoder` now seeks — `-ss <(from/fps)-1s> -copyts` +
+  `select=gte(t,(from-0.5)/fps)` + `-frames:v count`. The fix vs D-022's worry is
+  selecting by **absolute timestamp `t`**, not decoded-frame index `n`, so an
+  input `-ss` no longer desyncs the per-frame tracked mattes (D-019). `from = 0`
+  is byte-for-byte unchanged.
+- **Not done (still open, in the roadmap + note):** the frontend re-runs a
+  full-res WGSL grade + an IPC JPEG per seeked frame — that's the remaining fps
+  ceiling for a heavy grade. Proxy files (b) stay deferred.
+- **Verified:** `cargo check --no-default-features` clean; `cargo test chroma::`
+  14/14 — new `pipe_matches_single_frame_decode` / `pipe_forward_skip_and_backward_restart`
+  (pipe frames byte-match `decode_frame`, mean|Δ| < 1) and `seeked_decoder_is_frame_aligned`
+  (export decoder frame-exact vs the old walk-from-0 path); `export_neutral_30_frames`
+  / `export_exposure_brighter` / `export_tracked_range` still green. Measured on
+  C019 (3840×2160 HEVC, 24fps): 24 sequential frames **0.61 s (~39 fps)** via the
+  pipe vs **15.3 s (~1.6 fps)** as 24 spawns; a mid-clip export frame **0.83 s**
+  vs **2.9 s**. App not driven manually (a `tauri dev` was already running) —
+  Rust + ffmpeg paths verified instead; a manual scrub/play smoke test is the one
+  open check. Divergence in doc 09. Detail: `docs/notes/smooth-playback.md`.

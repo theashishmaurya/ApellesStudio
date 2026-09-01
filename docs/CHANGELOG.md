@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Smooth playback: persistent decode pipe (D-030, round-2 item 5)**.
+  New `engine/src-tauri/src/chroma/decode_pipe.rs` — one long-lived
+  `ffmpeg -ss <(start-0.5)/fps> -i clip -f rawvideo -pix_fmt rgb24 -` per clip
+  instead of a fresh spawn + keyframe seek + PNG round-trip per frame. `FramePipe`:
+  a forward step is one raw `read_exact`, a ≤48-frame hop discards to target, a
+  jump / backward kill+respawns. Process-global, dropped by `set_current_video` on
+  a clip change, killed on `Drop`. `chroma_seek` decodes through it and falls back
+  to `video::decode_frame` on any error; `load.rs` gained `install_frame` (the
+  state-writing tail, so the transport doesn't re-probe). Export's `spawn_decoder`
+  now seeks too — `-ss …-1s -copyts` + `select` by absolute timestamp `t` (not
+  frame index `n`, which is why it stays tracked-matte-safe, the thing D-022
+  avoided) — so a `from > 0` range no longer decodes from frame 0. Upstream edits:
+  `chroma/mod.rs` +2 only; no `lib.rs` / Cargo change. `cargo check
+  --no-default-features` clean, `cargo test chroma::` 14/14 (new pipe + seeked-
+  decoder frame-alignment tests). Measured on C019 (4K/24p): 24 sequential frames
+  **0.61 s (~39 fps)** vs **15.3 s (~1.6 fps)**; a mid-clip export frame **0.83 s**
+  vs **2.9 s**. Open: the frontend per-frame regrade + IPC is now the fps ceiling.
+  Detail: `docs/notes/smooth-playback.md`.
+
 - **2026-09-02** — **Stripped `@clerk/react` (D-029, round-2 item 4)**. Removed the
   community-login dep RapidRAW ships for its hosted account — Chroma has no cloud
   (all AI is the local `ai/` sidecar + in-process ONNX). Gone: the `ClerkProvider`
