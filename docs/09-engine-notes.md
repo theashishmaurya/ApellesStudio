@@ -136,6 +136,39 @@ Models auto-download in `build.rs` / on first use, SHA-256 checked, stored in a 
 
 → Update **D-009**. Update doc 03 architecture diagram. Update `ai/README.md`.
 
+## Masks — `mask_generation.rs`
+
+- **`MaskDefinition` + `SubMask`** are `serde` types (parsed from `serde_json::Value` in
+  `generate_mask_overlay`) — masks are **already JSON-serialisable**, maps to `grade.json`.
+- Every generator returns a **`GrayImage` (`Luma<u8>`)**: shapes
+  (`generate_radial_bitmap`, `_linear_`, `_brush_`, `_flow_`), AI
+  (`generate_ai_subject_bitmap`, `_depth_`, `_foreground_`, `_sky_`), plus
+  `color`/`luminance`/`all` range masks.
+- **`generate_ai_bitmap_from_base64(data_url, tf)`** — ingests an *external* matte as a
+  base64 image. **This is the hook for our SAM 2 tracked matte: feed a per-frame matte in
+  through this path** without touching the model code.
+- `TransformParams` — masks live in a crop/rotate-aware transform space.
+- `get_cached_or_generate_mask` — a caching layer we extend to be frame-keyed for video.
+
+Pipeline: `MaskDefinition` (JSON) → `generate_mask_bitmap` → `GrayImage` →
+`RenderRequest.mask_bitmaps`. Video + tracking: per frame, regenerate from keyframed
+geometry OR push a per-frame matte via the base64 path.
+
+## Frontend — `engine/src/` (React/TS, 114 files, ~42k LOC)
+
+| Dir | Role | Our plan |
+|---|---|---|
+| `components/adjustments/` | the grade panels (primary, curves, wheels, HSL, masks) | **keep** — this is the human-control UI |
+| `components/panel/editor/` + `overlays/` | canvas + mask-draw overlays | **extend** — add transport bar + playhead over the existing canvas |
+| `components/panel/right/` | right sidebar | keep / adapt |
+| `components/panel/library/` | file/folder browser | **replace** with a shot strip (clip-oriented, not folder-oriented) |
+| `store/`, `context/`, `hooks/` | state | extend with shot/session + agent-activity state |
+| `components/views/` | app views | add / adapt |
+
+Frontend deps of note: `konva` (2D canvas — the mask editor), `@uiw/react-color-wheel`
+(the wheels), `react-image-crop`, `framer-motion`, `i18next`, `@clerk/react` (auth — for
+a community-presets feature; **strip or ignore for v1**).
+
 ## What RapidRAW does NOT have (our build list, confirmed)
 
 - **No video.** Zero video deps. No decode, no frames, no timeline, no temporal state.

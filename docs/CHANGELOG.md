@@ -46,6 +46,18 @@ Human-readable history. `Keep a Changelog` style. Dates are ISO.
   exist in-shader → our engine work is video I/O + grade.json↔uniform bridge + per-frame
   mask textures + scopes + MCP, not grade math. Noted in doc 09; D-004 (ACES) de-prioritised.
 
+### 2026-09-01 — toolchain + deeper read
+- `rustup update stable` → **rustc 1.98.0** (B-001 resolved). `engine` npm install done (255 pkgs).
+- `gpu_processing.rs`: **`WgpuDisplay` = the render-to-native-surface path, already built**
+  → **D-006 decided** (extend it for video, no spike). `RenderRequest.mask_bitmaps` is
+  `&[Luma<u8>]` — AI mattes drop in, swap per frame. `apply_adjustments` already
+  JSON-driven + has `compute_waveform`. Histogram + 1-ch waveform exist.
+- `mask_generation.rs`: `MaskDefinition` is JSON/serde; **`generate_ai_bitmap_from_base64`
+  is the hook for feeding SAM 2 tracked mattes per frame**; all generators → `GrayImage`.
+- Frontend map (`engine/src/`, 114 files): keep `adjustments/`, extend `panel/editor/`
+  canvas with transport, replace `panel/library/` with a shot strip, strip `@clerk` auth.
+- `cargo check` on the engine kicked off (large first build — wgpu/tauri/ort/tokio tree).
+
 ---
 
 ## Release history
