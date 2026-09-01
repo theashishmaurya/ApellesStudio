@@ -22,4 +22,10 @@ _(none)_
 
 ## Fixed
 
-_(none)_
+## B-002 — AI sidecar climbs to ~12 GB after repeated "Re-track"
+status: fixed (2026-09-01) · severity: high · area: ai/server.py
+- **repro:** load a video, track a subject, hit "Re-track subject across clip" several times (or scrub a lot during a track).
+- **expected:** sidecar RSS bounded — one predictor + models ≈ 1–1.5 GB.
+- **actual:** ~12 GB (mostly compressed under memory pressure; `ps` RSS showed ~330 MB resident, Activity Monitor "Memory" 12 GB). Machine hit 20 GB swap.
+- **cause:** each `/track` built a *fresh* `SAM2DynamicInteractivePredictor` (~1 GB into the MPS pool, which never returns to the OS); track + on-seek `/refine_track` + ViTMatte warm-up ran concurrently, stacking their MPS working sets. The propagation loop itself is flat (verified — `memory_bank` stays at 1).
+- **fix:** `_GPU` lock serialises every model call (per-frame in the track loop so refine interleaves); `_get_video_predictor` reuses one instance with per-track state reset; `_free_gpu()` (`empty_cache` + `gc`) after every `/segment`, `/refine_track`, and track pass; `/track` cancels any still-running track. Measured after: plateaus ~1.3 GB across repeated tracks, refines pull it back toward ~800 MB.
