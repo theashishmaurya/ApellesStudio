@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **Per-mask blur (D-027, round-2 item 2)**. A `blur` field
+  (0–100) on every mask's adjustments — defocus the masked region. Shader: renamed
+  the dead `_pad_cg1` slot in `MaskAdjustments` → `blur` (Rust + WGSL, zero layout
+  change) + a ~20-line loop in `shader.wgsl::main` that blends the masked region
+  toward the shader's existing ~40 px `structure_blur` pre-pass, weighted by
+  `mask · blur/100`, in linear light before tone-mapping (approach (a) — no new
+  texture / pass). Frontend: a mask-only "Blur" slider in `Details.tsx`,
+  `INITIAL_MASK_ADJUSTMENTS.blur = 0`, `set_mask_adjust` whitelist (`MASK_ONLY_KNOBS`,
+  so `set_primary` still rejects it), a new `add_mask(type, geometry)` op for a
+  plain radial/linear container, and `apply_haze` now dials in `blur` too (D-024's
+  deferred background defocus — done). MCP `set_mask_adjust` gains a `blur` param.
+  Verified on C019: `blur 70` under a radial mask drops masked local contrast
+  ~25–35 % with unmasked patches at exactly 0, reversible at `blur 0`, blur present
+  in an H.264 export, no wgsl compile error. Detail: `docs/notes/mask-blur.md`.
+
 - **2026-09-01** — **`match_to_reference` — the automated grade-by-the-numbers loop
   (D-026, round-2 item 1)**. `match_reference` op in `useChromaControl.ts` + MCP
   `match_to_reference(reference, strength?, max_iters?, tolerance?)`. Loads a

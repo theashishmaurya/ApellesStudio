@@ -381,11 +381,19 @@ def set_mask_adjust(
     clarity: float | None = None,
     structure: float | None = None,
     sharpness: float | None = None,
+    blur: float | None = None,
 ) -> list:
     """Grade *through* a mask — same knobs as set_primary, applied only where
     the mask (mask_id, from list_masks) is. Only passed args change.
+
+    `blur` (0–100, mask-only) defocuses the masked region: the shader blends it
+    toward a pre-blurred (~40px) copy of the frame, weighted by mask * blur/100.
+    Use it to soften a background behind a subtractive-subject / depth mask
+    ("blur the background"); `apply_haze` already dials it in.
+
     Grade by the numbers: sample the masked region (`sample_region`) before and
-    after and cite the values; don't eyeball the matted area."""
+    after and cite the values; don't eyeball the matted area. For blur, a
+    high-frequency edge under the mask should lose local contrast."""
     patch = {k: v for k, v in locals().items() if k != "mask_id" and v is not None}
     return _result(_op("set_mask_adjust", mask_id=mask_id, patch=patch))
 
@@ -398,7 +406,8 @@ def apply_haze(amount: float = 1.0, protect_subject: bool = True) -> list:
     Adds a "Depth Haze" mask: the matte is a full-range depth mask, inverted, so
     its weight tracks distance (the subject ~0, the far wall ~max); the grade is
     negative dehaze (adds haze in-shader) + desaturation + a lifted black point
-    and shadows, all scaled by `amount` (1.0 = default, 0.4 subtle, 1.6 heavy).
+    and shadows + a background defocus (per-mask blur, D-027), all scaled by
+    `amount` (1.0 = default, 0.4 subtle, 1.6 heavy).
 
     protect_subject (default true): a tracked ai-subject mask's own grade
     composites on top and keeps the subject punchy, so nothing extra is needed.

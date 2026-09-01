@@ -18,9 +18,13 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
    `useChromaControl.ts`; MCP `match_to_reference(reference, strength?, max_iters?,
    tolerance?)`. Primary only (a match is a balance) — creative/curve/mask work is
    separate. Detail: `docs/notes/match-reference.md`.
-2. **Per-mask blur** — a blur field on `MaskAdjustments` + shader wiring (or drive a
-   global lens-blur pass off a mask). Completes depth-haze (background defocus) and
-   unblocks "blur the background" as a mask op.
+2. [x] **Per-mask blur** (D-027, 2026-09-01) — `blur` (0–100) on every mask's
+   adjustments; the grade shader blends the masked region toward its existing
+   ~40 px `structure_blur` pre-pass, weighted by `mask · blur/100` (approach (a):
+   one struct field, ~20 wgsl lines, no new pass). Completes depth-haze
+   (`handleAddDepthHaze` += `blur`) and unblocks "blur the background" as a mask
+   op. Slider in `Details.tsx`, `set_mask_adjust` whitelist, new `add_mask` op.
+   Limit: fixed radius, ungraded blur sample. Detail: `docs/notes/mask-blur.md`.
 3. **Rust-managed sidecar spawn** — the app starts/monitors `ai/` (venv-aware), no
    manual `ai/run.sh`. `chroma_ai_health` already exists; add spawn + restart-on-crash.
 4. **Strip `@clerk/react`** — remove the community-login dep from the frontend
@@ -140,7 +144,7 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 - [ ] Multi-subject: two `ai-subject` masks each with their own `chromaTrackDir` should already work (untested); batch N objects into one propagation pass (`max_obj_num > 1`) so they don't each cost a full pass (D-017)
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [x] **Depth haze preset** (D-024, 2026-09-01) — one action, depth-weighted desat +
-      black-lift + dehaze (blur deferred — no per-mask blur field). `docs/notes/depth-haze.md`
+      black-lift + dehaze + background defocus (per-mask blur, D-027). `docs/notes/depth-haze.md`
 - [ ] Mask keyframes in the data model + GUI handles
 
 **Checkpoint:** click "isolate subject" → tracked matte that holds through hand gestures; "add haze" → depth-graded background separation.

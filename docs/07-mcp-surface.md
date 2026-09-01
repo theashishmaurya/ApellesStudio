@@ -61,7 +61,8 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | `add_depth_mask` | `range [near,far]` (0–1), `falloff?`, `invert?` | runs Depth Anything V2 on the shot once, caches |
 | `add_subject_mask` | `prompt` ("person"), `threshold?`, `invert?` | runs SAM 2 + video propagation via the sidecar; async — poll `mask_status` |
 | `mask_status` | `mask_id` | `queued\|tracking\|ready\|failed` + progress |
-| `set_mask_adjust` | `mask_id`, `adjust` (a grade-doc `adjust` fragment: primary / effect / compound) | this is how you grade *through* a mask |
+| `set_mask_adjust` | `mask_id`, `adjust` (a grade-doc `adjust` fragment: primary / effect / compound) | this is how you grade *through* a mask. **Shipped:** primary knobs + `blur` (0–100, mask-only — defocus the masked region, D-027) via the in-app bridge |
+| `add_mask` ✅ (D-027) | `type` (radial\|linear), `geometry {cx,cy,rx,ry,feather}` / `{startX,startY,endX,endY,range}` | a new container with one plain shape sub-mask (the AI mattes are `add_subject_mask` / `apply_haze`) |
 | `set_mask_geometry` | `mask_id`, `geometry`, `frame?` | with `frame` ⇒ writes a keyframe |
 | `track_mask` | `mask_id`, `from`, `to` | v2 — CoTracker drives shape-mask keyframes |
 | `refine_matte` | `mask_id`, `feather?`, `edgeAware?`, `shrink?`, `grow?` | |
@@ -112,7 +113,8 @@ grade document (`engine/src-tauri/src/chroma/grade.rs`), a versioned wrapper
 around `adjustments` with externalized mattes. `match_to_reference` **[D-026,
 shipped 2026-09-01]** — the automated measure→adjust→re-measure loop against a
 reference image (`match_reference` op in `useChromaControl.ts`; primary knobs
-only). `inspect` (frame with grid +
+only). `add_mask` (radial/linear container) + `set_mask_adjust`'s `blur` knob
+(0–100, mask-only defocus) **[D-027, shipped 2026-09-01]**. `inspect` (frame with grid +
 burned-in frame number) and `screenshot` (native-res crop) are still follow-ups.
 The control server's op registry makes each a one-liner to add.
 

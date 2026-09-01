@@ -26,9 +26,13 @@ A mask container named **"Depth Haze"** with a single `ai-depth` sub-mask:
   | `saturation` | `-25` | atmosphere desaturates with distance |
   | `blacks` | `+10` | lifts the background black point (no true black through haze) |
   | `shadows` | `+8` | fills the background shadows |
-- no per-mask blur: `MaskAdjustments` has **no blur field** (`lensBlurAmount` is
-  global only). Deferred — a depth-aware background blur would need either a global
-  `lensBlurEnabled` pass driven off the same depth map or a new per-mask knob.
+  | `blur` | `min(40, 12·amount)` | depth-weighted background **defocus** (D-027) |
+- background blur: **shipped** (D-027). The container's per-mask `blur` blends the
+  masked (= far) region toward the shader's shared ~40 px pre-blur, weighted by
+  `mask_weight · blur/100` — so the haze now milks *and* softly defocuses the
+  background while the subject stays sharp. Fixed radius, ungraded blur sample; a
+  variable-radius post-grade defocus would still need its own pass (see
+  `docs/notes/mask-blur.md`).
 
 `amount` 0.4 = subtle, 1.0 = default, 1.6 = heavy. Measured on the 1080×1920 test
 clip (baseline blackPoint 17, saturation 0.33):

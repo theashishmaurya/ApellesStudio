@@ -560,3 +560,47 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
 - **Consequences:** upstream footprint `pub mod grade;` + 2 `generate_handler!` lines.
   Full session/shot model (multiple shots, in/out, a shot strip) is still open — this is
   one grade per open clip. Detail: `docs/notes/grade-json.md`. Divergence in doc 09.
+
+## D-027 — Per-mask blur = one shared large-radius pre-blur, blended per mask (not a per-mask pass or global lens-blur)
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** round-2 item 2. A `blur` on a mask's adjustments — completes the
+  depth-haze preset (background defocus, deferred in D-024: "`MaskAdjustments` has
+  no blur field") and unblocks "blur the background" as a mask op.
+- **Options for the shader:**
+  (a) **reuse `structure_blur_texture`** — a ~40 px·scale separable gaussian of the
+      input that the shader *already* computes every render (for dehaze / glow /
+      structure). Blend `mix(color, blurred, mask_weight·blur/100)` per mask in the
+      grade compute pass. One `f32` on the struct, ~20 lines of WGSL, scales to all
+      32 masks for free, no new texture / pass / bind-group entry.
+  (b) a dedicated separable-gaussian pass per masked ROI, radius from `blur` —
+      variable radius (more correct) but a real GPU pass per mask and new plumbing.
+  (c) drive RapidRAW's **global** `lensBlur*` off the active mask's matte — global
+      only, wires just depth-haze, leaves "blur any mask" unsolved.
+- **Choice:** (a). Cheapest that works and it covers both use cases (depth-haze +
+  generic mask blur). The radius is fixed (not driven by the slider — the slider is
+  the blend amount), which is the accepted trade for v1; (b) is the upgrade path if
+  a real variable defocus is wanted later.
+- **Known limits (documented, `docs/notes/mask-blur.md`):**
+  - the blurred sample is the **ungraded input** (a shared pre-pass), so under a
+    heavy per-mask grade the defocused area carries slightly less of that grade;
+  - **fixed radius** ~40 px at scale 1 (≈ the structure-blur radius);
+  - blended in **linear light before tone-mapping**, right after the per-mask
+    colour-grade loop — the sharp regions are fully graded, bokeh highlights roll
+    off through the same transform as everything else.
+- **Layout:** `blur: f32` **replaces `_pad_cg1`** in `MaskAdjustments` (Rust +
+  WGSL) — struct size and every other field offset unchanged, so `bytemuck` /
+  `AllAdjustments` buffer size are untouched.
+- **Surface:** frontend `INITIAL_MASK_ADJUSTMENTS.blur = 0` + a "Blur" slider
+  (0–100, mask-only) in `Details.tsx`'s Presence group; `set_mask_adjust` whitelist
+  gains `blur` (a new `MASK_ONLY_KNOBS` set, so `set_primary` still rejects it);
+  `handleAddDepthHaze` adds `blur: min(40, 12·amount)`. Also added a small
+  `add_mask(type, geometry)` op (new radial/linear container) — the agent had no
+  way to make a plain shape mask headlessly (`add_subject_mask` / `apply_haze` are
+  AI mattes, `add_component` only carves into an existing container).
+- **Verified** on the C019 talking-head: a radial mask + `blur 70` drops masked
+  local contrast (max−min spread, ΣRGB) ~25–35 % (−42 / −75 / −27 at three edge
+  patches) while unmasked patches move exactly 0; `blur 0` restores byte-identical
+  output. `apply_haze` now softens background edges (~10 % std drop) on top of the
+  haze, subject untouched. Blur survives to an H.264 export. No wgsl compile error.
+  Detail: `docs/notes/mask-blur.md`. Divergence in doc 09.

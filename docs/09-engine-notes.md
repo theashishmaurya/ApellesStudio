@@ -332,9 +332,10 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   Single mount — removed the `Editor` call + import. Paired with the `open(path)` op which
   sets `selectedImage` and lets `useImageLoader`'s effect do the decode.
   · No new engine mask code — the preset rides `generate_ai_depth_bitmap` +
-  `MaskDefinition.invert` as-is. `MaskAdjustments` has no blur field → no background blur
-  (deferred). Depth Anything V2 ONNX output is bright=near; full-range + invert makes the
-  matte value track distance. Detail: `docs/notes/depth-haze.md`.
+  `MaskDefinition.invert` as-is. ~~`MaskAdjustments` has no blur field → no background
+  blur (deferred).~~ Background blur shipped in D-027 (below). Depth Anything V2 ONNX
+  output is bright=near; full-range + invert makes the matte value track distance.
+  Detail: `docs/notes/depth-haze.md`.
 
 - **2026-09-01 PM** · **`grade.json` save/load (D-025)** — new
   `src-tauri/src/chroma/grade.rs` (self-contained: `chroma_save_grade`,
@@ -361,6 +362,32 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   applies anyway; a project move needs the clip's `.chroma/mattes/` dir (the
   `$trackDir` target) alongside `grade.json` + its `.mattes/`. Detail:
   `docs/notes/grade-json.md`.
+
+- **2026-09-01 PM** · **per-mask blur (D-027)** — this one touches **two upstream
+  files' hot paths**, tracked carefully:
+  · `shaders/shader.wgsl` (2 edits): (1) `MaskAdjustments` struct — renamed the dead
+  field `_pad_cg1` → `blur` (no size / offset change); (2) `main()` — a ~20-line loop
+  right after the per-mask `apply_color_grading` loop that blends
+  `composite_rgb_linear` toward the existing `structure_blurred` sample (the ~40 px
+  pre-blur), weight `clamp(mask_influence · blur/100, 0, 1)`, in linear light before
+  tone-mapping. No new binding / texture / pass.
+  · `image_processing.rs` (2 edits): `MaskAdjustments` Rust struct `_pad_cg1: f32` →
+  `pub blur: f32` (mirrors the WGSL rename, `#[repr(C)]` + `bytemuck` layout
+  unchanged); `get_mask_adjustments_from_json` reads
+  `get_val("details", "blur", 1.0).max(0.0)` in place of the `_pad_cg1: 0.0` literal.
+  · **No new `src/chroma/` file** — the change is inherently in the shared shader +
+  the JSON→uniform translation. `cargo check --no-default-features` + `cargo test
+  chroma::` (11/11) clean; `cargo clippy` clean.
+  · Frontend: `utils/adjustments.ts` (`DetailsAdjustment.Blur`, `MaskAdjustments.blur`,
+  `INITIAL_MASK_ADJUSTMENTS.blur = 0`), `components/adjustments/Details.tsx` (a
+  mask-only "Blur" slider in the Presence group), `i18n/locales/en.json` (+1 key),
+  `hooks/useChromaControl.ts` (`MASK_ONLY_KNOBS` set + `blur` accepted by
+  `set_mask_adjust`; new `add_mask` op for a plain radial/linear container),
+  `hooks/useAiMasking.ts` (`handleAddDepthHaze` recipe += `blur`). `mcp/server.py`
+  (`set_mask_adjust` gains a `blur` param; `apply_haze` docstring).
+  · Limits: fixed ~40 px radius, ungraded blur sample (shared pre-pass). A
+  variable-radius post-grade defocus is a separate pass (approach b), deferred.
+  Detail: `docs/notes/mask-blur.md`.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
