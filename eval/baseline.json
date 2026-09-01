@@ -1,0 +1,39 @@
+{
+  "generatedAt": "2026-09-02",
+  "note": "Floor = the unfixed setup grades scored by eval/lib/apply.mjs (approximate operator). Regenerate: node eval/score.mjs --baseline",
+  "rollup": {
+    "mean": 0.452,
+    "pass": 2,
+    "of": 7
+  },
+  "tasks": {
+    "neutralise_cast": {
+      "score": 0,
+      "passed": false
+    },
+    "match_shot_to_ref": {
+      "score": 0.25,
+      "passed": false
+    },
+    "set_black_white_points": {
+      "score": 0.5,
+      "passed": false
+    },
+    "fix_exposure": {
+      "score": 0.333,
+      "passed": false
+    },
+    "dont_overgrade": {
+      "score": 1,
+      "passed": true
+    },
+    "mask_region_only": {
+      "score": 0.75,
+      "passed": true
+    },
+    "tame_highlight_clip": {
+      "score": 0.333,
+      "passed": false
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "exposure": 0.6,
+    "contrast": 25,
+    "temperature": 18,
+    "saturation": 22
+  },
+  "notes": "BAD: confidently \"punches up\" a frame that was already fine"
+}

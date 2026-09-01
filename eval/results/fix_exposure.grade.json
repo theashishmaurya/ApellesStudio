@@ -1,0 +1,12 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "exposure": 1.1
+  },
+  "notes": "+1.1 EV — mids back to the reference"
+}

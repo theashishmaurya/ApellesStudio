@@ -1,0 +1,13 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "exposure": -0.9,
+    "whites": -14
+  },
+  "notes": "pull exposure back ~1 stop, ease whites — recover the clip without crushing"
+}

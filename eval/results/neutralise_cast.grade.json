@@ -1,0 +1,14 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "temperature": -19,
+    "tint": -13,
+    "saturation": -13
+  },
+  "notes": "undo the warm/green cast — temp & tint back, pull the inflated saturation down"
+}

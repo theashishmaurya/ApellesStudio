@@ -1,0 +1,12 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "exposure": 2.4
+  },
+  "notes": "BAD: massive overshoot, blows the highlights"
+}

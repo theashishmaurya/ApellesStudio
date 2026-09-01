@@ -1,0 +1,12 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "saturation": -70
+  },
+  "notes": "BAD: kills the cast by desaturating the whole frame instead of correcting WB"
+}

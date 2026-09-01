@@ -1,0 +1,16 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "exposure": 0.5,
+    "temperature": 42,
+    "contrast": 12,
+    "whites": 62,
+    "saturation": 20
+  },
+  "notes": "primary balance toward the hero ref: warmer, brighter, more contrast/sat"
+}

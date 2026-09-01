@@ -1,0 +1,38 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {
+    "masks": [
+      {
+        "invert": false,
+        "opacity": 100,
+        "visible": true,
+        "adjustments": {
+          "exposure": -0.5,
+          "temperature": -34,
+          "saturation": -12
+        },
+        "subMasks": [
+          {
+            "id": "patch",
+            "type": "radial",
+            "visible": true,
+            "mode": "additive",
+            "parameters": {
+              "centerX": 240,
+              "centerY": 135,
+              "radiusX": 88,
+              "radiusY": 74,
+              "feather": 22
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "notes": "radial over the patch only: cool it, drop exposure & sat; background untouched"
+}

@@ -34,7 +34,9 @@ SCOPE_DISCIPLINE = (
     "and green-magenta cast, clip %, hue histogram) or a named full-res region "
     "from `sample` / `sample_region`. Never claim a result ('looks balanced', "
     "'skin is natural', 'the cast is gone') without citing a scope value or a "
-    "sampled region. Defer genuinely creative calls to the human."
+    "sampled region. Approach each result adversarially: assume the grade is "
+    "still flawed and hunt for the cast, clipping, or crushed detail you have "
+    "not ruled out. Defer genuinely creative calls to the human."
 )
 
 mcp = MCPServer(
@@ -554,8 +556,10 @@ def inspect_color(frame: int | None = None, reference: str | None = None) -> lis
 
     Grade by the numbers. Call this before and after a change and reason from the
     scope values. Never claim a result ('looks balanced', 'skin is natural', 'the
-    cast is gone') without citing a scope value or a sampled region. Defer
-    genuinely creative calls to the human.
+    cast is gone') without citing a scope value or a sampled region. Read the
+    result adversarially — assume a cast, clip or crushed channel is still there
+    and look for the one you have not ruled out. Defer genuinely creative calls
+    to the human.
     """
     args: dict = {}
     if frame is not None:

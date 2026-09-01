@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Agent eval harness (D-035, round-3 tail item)**. New
+  top-level `eval/` — a regression + capability test for the grading agent (does
+  it *grade by the numbers* and converge on a target, or drift?). A 7-task data
+  set (`eval/tasks.json`: neutralise a cast, match a shot to a reference, set
+  black/white points, fix an exposure error, **don't over-grade** an
+  already-correct frame, grade a masked region only, tame highlight clipping) +
+  an **offline** scorer (`eval/score.mjs` — no app, no agent, no network). The
+  scorer ports `computeScopes` / `computeGap` / `gapMagnitude` verbatim from
+  `engine/src/utils/scopes.ts` (`eval/lib/scopes.mjs`, drift-guarded by
+  `scopes.check.mjs`) plus an **approximate** primary-grade operator
+  (`eval/lib/apply.mjs`) that turns a `grade.json` (D-025) into a scoped result
+  frame — so absolute scores are only comparable *within* the harness, and
+  engine-fidelity is the `eval/run.md` closed-loop runbook's job. Score =
+  normalised inverse residual scope gap to the goal, zeroed by hard-fail gates
+  (clipping introduced, mask background moved, `knobEffort` over the cap).
+  Committed `eval/baseline.json` = the setup grades left unfixed (mean **0.452**,
+  2/7 pass); `eval/results/` (7 hand-authored good grades) score **0.975** (7/7,
+  every task up vs baseline); `eval/bad_examples/` score **0.0** with gates
+  firing — the scorer ranks good ≫ bad offline. Fixtures (`eval/fixtures/`,
+  480×270, `_gen.mjs` to rebuild): a downscaled C019 still + synthesised wedge /
+  patch frames. Dependency-free (Node `zlib` PNG codec). **Zero engine changes.**
+  MCP: added the missing **adversarial** framing to the shared `SCOPE_DISCIPLINE`
+  string, `inspect_color`, and `mcp/README.md` — tool count unchanged (**31**),
+  `py_compile` + `import server` clean. Detail: `docs/notes/eval-harness.md`.
+
 - **2026-09-02** — **Mask keyframes (D-034, round-3 item "mask keyframes")**. A
   shape sub-mask (radial / linear / brush) can now be **keyframed** — its
   geometry (centre / radii / rotation / feather, linear endpoints / range, brush

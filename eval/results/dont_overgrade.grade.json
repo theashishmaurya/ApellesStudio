@@ -1,0 +1,10 @@
+{
+  "schema": "chroma.grade/1",
+  "shot": {
+    "source": null,
+    "width": 480,
+    "height": 270
+  },
+  "adjustments": {},
+  "notes": "already balanced within tolerance — no change"
+}

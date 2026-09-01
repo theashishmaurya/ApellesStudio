@@ -87,7 +87,22 @@ shortest-arc rotation, brush points lerp-or-snap. New `chroma/keyframes.rs`
 `add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` /
 `clear_mask_keyframes` (27 → 31). Deferred: grade-adjustment keyframing (separate
 item), easing handles, keyframing mode/invert, a full dope sheet. Detail:
-`docs/notes/mask-keyframes.md`. — then the agent eval harness.
+`docs/notes/mask-keyframes.md`.
+
+[x] **Agent eval harness (D-035, 2026-09-02)** — a new top-level `eval/`: a
+7-task data set (`tasks.json`) + an **offline** scorer (`score.mjs` — ports
+`computeScopes`/`computeGap` from `scopes.ts` + an *approximate* primary-grade
+operator so a `grade.json` scores with no app/agent/network) + a committed
+`baseline.json` floor. Score = normalised inverse residual scope gap to the goal
+with hard-fail gates (clipping introduced, mask background moved, over-grade).
+The unfixed floor scores mean 0.452 (2/7); 7 hand-authored good grades score
+0.975 (7/7, all up vs baseline); `bad_examples/` score 0.0 with gates firing —
+the scorer ranks good ≫ bad offline. The closed loop (drive the agent over MCP →
+`save_grade` → score) is a runbook, `eval/run.md`. MCP: added the adversarial
+"assume the grade is still flawed" framing to `SCOPE_DISCIPLINE` / `inspect_color`
+(tool count unchanged, 31). Zero engine changes. Detail:
+`docs/notes/eval-harness.md`.
+
 Then Phase 4 release (packaging/signing, external-reader docs + README + demo,
 decide name/license/headline — D-002/D-007/D-010).
 
@@ -223,7 +238,9 @@ decide name/license/headline — D-002/D-007/D-010).
       `request_human` banner) + `AgentRoiHighlight` on the canvas. `request_human` op/tool is
       non-blocking; undo is jump-to-here (drops newer feed entries; documented history-cap
       fallback). Detail: `docs/notes/agent-activity-feed.md`.
-- [ ] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
+- [x] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
+      (D-035, 2026-09-02) — `eval/` task set + offline scorer + committed baseline; closed
+      loop is `eval/run.md`. See `docs/notes/eval-harness.md`.
 
 **Checkpoint:** a full talking-head grade (primary + tracked subject + depth haze + shot match) done in one Claude Code conversation + <5 min human mask cleanup. **This is v1.**
 

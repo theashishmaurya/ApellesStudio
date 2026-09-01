@@ -1026,3 +1026,81 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
 - **Deferred:** grade-adjustment keyframing (a separate item); easing / bezier
   handles (linear only); a keyframe on `mode` / `invert`; a full timeline dope
   sheet (the diamond track is deliberately minimal).
+
+## D-035 — Agent eval harness = a task set + an OFFLINE approximate-render scorer + a committed baseline; the closed loop is a runbook, not CI
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-3 tail — "agent eval harness". The thesis
+  (`docs/notes/agent-visual-feedback.md`) is that the grading agent must **grade
+  by the numbers**: measure scopes → adjust → re-measure, toward a target. We
+  need a repeatable check that the agent (its MCP tools + skill + prompt) *does*
+  that and gets **closer** to a target rather than confidently drifting — a
+  regression + capability test for the agent, not a user feature.
+- **What a run needs vs what CI can have.** A true closed-loop run is: open a
+  clip in the app → drive the agent over MCP with the grading skill → agent saves
+  `grade.json` → score it. That needs the running app **and** a live agent —
+  not CI-able. So the harness splits:
+  - **`eval/run.md`** — the manual/CI-with-an-agent runbook for the full closed
+    loop (per task: `open` the fixture, hand the agent the task's `description` +
+    goal, let it work, `save_grade` to `eval/results/<id>.grade.json`, optionally
+    drop the rendered frame as `<id>.result.png`, then score).
+  - **`eval/score.mjs`** — the CI-able part. Scores a directory of
+    `<id>.grade.json` / `<id>.result.png` against `eval/tasks.json`, prints a
+    table + rollup, diffs against `eval/baseline.json`, exits non-zero on a
+    regression. **No app, no agent, no network** — `node eval/score.mjs
+    eval/results`.
+- **The scorer's render problem — options:**
+  (a) **shell out to the engine** — a `render_core` example / `chroma_` command
+      that renders the fixture through the `grade.json` and emits `computeScopes`
+      JSON. Most accurate; needs the engine built; not CI-able without a GPU
+      box; adds an upstream-adjacent binary.
+  (b) **standalone port** — mirror `computeScopes` / `computeGap` /
+      `gapMagnitude` in Node (`eval/lib/scopes.mjs`, constants copied verbatim
+      from `scopes.ts`, drift-guarded by `eval/lib/scopes.check.mjs`) **plus** an
+      *approximate* primary-grade operator (`eval/lib/apply.mjs`: exposure /
+      contrast / temp / tint / saturation / black-white points / hi-lo tone
+      regions + radial & rect masks) that turns a `grade.json` into a scoped
+      result frame offline.
+- **Choice: (b).** The CI-able regression gate is worth more than absolute
+  fidelity. The approximate operator's consequence — **absolute scores are only
+  comparable within the harness** (same operator for baseline, "good", and agent
+  results) — is acceptable because the harness measures *movement toward a
+  target vs a committed floor*, not a colour-science ground truth. Fidelity to
+  the real engine is what `eval/run.md` + `inspect_color` cover: that path scores
+  the app's real render. The operator ignores curves / wheels / LUT / HSL, so
+  **tasks are authored to be solvable with primary knobs** — the same scope as
+  `match_to_reference` (D-026).
+- **Task set (7, `eval/tasks.json`):** neutralise a colour cast toward a neutral
+  reference; match a shot to a hero reference (the D-026 workflow); set
+  black/white points without clipping; fix a −1.1 EV exposure error; **don't
+  over-grade** a frame that is already correct (floor = 1.0, the agent can only
+  hold or lose; a `knobEffort` gate hard-fails a confident over-correction);
+  grade only a masked region (radial sub-mask) with the background provably
+  unmoved; tame blown highlights without crushing the shadows. Fixtures
+  (`eval/fixtures/`, 480×270, regenerable via `_gen.mjs`): a downscaled C019
+  still from `scratch/` for the realistic tasks, synthesised wedge / patch frames
+  for the levels + mask tasks, each derived state baked with the same
+  `apply.mjs` operator.
+- **Score = normalised inverse residual gap.** Per check: `1` when the metric is
+  within tolerance, `0` when no better than the unfixed setup (the baseline
+  value, computed live), linear between. Task score = mean of checks × hard-fail
+  gates (`clipIntroduced`, background moved on a mask task, `knobEffort` blown).
+  `eval/baseline.json` (committed) = every task scored with the setup left
+  unfixed — mean **0.452**, 2/7 pass. The seven hand-authored "good"
+  `grade.json` results in `eval/results/` score mean **0.975**, 7/7, every task
+  up vs baseline; `eval/bad_examples/` (desaturate-to-hide-a-cast,
+  exposure +2.4, punch-up-an-already-fine-frame) score **0.0** with the gates
+  firing — the scorer ranks good ≫ bad in both directions.
+- **MCP discipline (agent-visual-feedback §"What this means for Chroma's MCP").**
+  The measure-first language was already in-band (`inspect_color`, `set_primary`,
+  `match_to_reference`, `set_mask_adjust`, server `instructions`). Added the one
+  missing piece — the **adversarial** framing ("assume the grade is still
+  flawed; hunt for the cast/clip/crushed channel you have not ruled out") — to
+  the shared `SCOPE_DISCIPLINE` string, `inspect_color`, and `mcp/README.md`.
+  Tool count unchanged (**31**).
+- **Consequences / footprint.** New top-level `eval/` (parent repo only). **Zero
+  engine changes**, zero upstream edits, no new deps (Node built-ins: `zlib` for
+  the PNG codec). `eval/score.mjs` is the CI hook. Not done: wiring it into an
+  actual CI workflow file; an engine-backed exact scorer (option (a)) as a later
+  accuracy upgrade; a fixture task that exercises curves/wheels once the operator
+  or an engine scorer can see them. Detail: `docs/notes/eval-harness.md`.

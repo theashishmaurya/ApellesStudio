@@ -1,0 +1,133 @@
+{
+  "$comment": "Chroma agent eval harness — the task set. A task is data. See eval/README.md and docs/notes/eval-harness.md. Frames live in eval/fixtures/ (regenerate with node eval/fixtures/_gen.mjs). goal.type: reference | targetScopes | rubric. Checks use the metric vocabulary in eval/score.mjs. All coords are in the 480x270 fixture pixel space.",
+  "tasks": [
+    {
+      "id": "neutralise_cast",
+      "description": "(a) Neutralise a strong warm + green colour cast. Match the mid-tone balance of the neutral reference frame without moving exposure or contrast much.",
+      "input": { "frame": "fixtures/cast.in.png" },
+      "setup": "baked grade on base.png: temperature +20, tint +14",
+      "goal": {
+        "type": "reference",
+        "reference": "fixtures/base.png",
+        "checks": [
+          { "id": "warmCool", "metric": "castWarmCoolDeltaToRef", "max": 3 },
+          { "id": "greenMag", "metric": "castGreenMagentaDeltaToRef", "max": 2.5 },
+          { "id": "gap", "metric": "gapMagnitudeToRef", "max": 16 }
+        ]
+      },
+      "gates": [
+        { "metric": "clipIntroduced", "max": 1.0 },
+        { "metric": "midsLumaDeltaToRef", "max": 12 }
+      ],
+      "passThreshold": 0.6
+    },
+    {
+      "id": "match_shot_to_ref",
+      "description": "(b) The D-026 match-to-reference workflow: pull this cool, dark, flat shot to the warm, bright hero reference. Primary balance only.",
+      "input": { "frame": "fixtures/match.in.png" },
+      "setup": "baked grade on base.png: temperature -18, exposure -0.3, contrast -6, saturation -6",
+      "goal": {
+        "type": "reference",
+        "reference": "fixtures/match.ref.png",
+        "checks": [
+          { "id": "gap", "metric": "gapMagnitudeToRef", "max": 20 },
+          { "id": "warmCool", "metric": "castWarmCoolDeltaToRef", "max": 5 },
+          { "id": "mids", "metric": "midsLumaDeltaToRef", "max": 6 },
+          { "id": "white", "metric": "whitePointDeltaToRef", "max": 8 }
+        ]
+      },
+      "gates": [ { "metric": "clipIntroduced", "max": 1.5 } ],
+      "passThreshold": 0.55
+    },
+    {
+      "id": "set_black_white_points",
+      "description": "(c) Set the black and white points on a flat, low-contrast wedge so the tonal range fills 0..255 without clipping either end.",
+      "input": { "frame": "fixtures/levels.in.png" },
+      "setup": "neutral (synthetic flat wedge, luma compressed to ~42..196)",
+      "goal": {
+        "type": "rubric",
+        "checks": [
+          { "id": "black", "metric": "blackPoint", "max": 8, "slack": 12 },
+          { "id": "white", "metric": "whitePoint", "min": 240, "slack": 16 },
+          { "id": "noCrush", "metric": "clipLowPct", "max": 1.0, "slack": 2.5 },
+          { "id": "noBlow", "metric": "clipHighPct", "max": 0.6, "slack": 2.0 }
+        ]
+      },
+      "gates": [],
+      "passThreshold": 0.6
+    },
+    {
+      "id": "fix_exposure",
+      "description": "(d) Fix an exposure error: this frame is ~1.1 stops under. Bring the mid-tones back to the correctly-exposed reference without crushing the blacks or clipping.",
+      "input": { "frame": "fixtures/exposure.in.png" },
+      "setup": "baked grade on base.png: exposure -1.1",
+      "goal": {
+        "type": "reference",
+        "reference": "fixtures/base.png",
+        "checks": [
+          { "id": "mids", "metric": "midsLumaDeltaToRef", "max": 4 },
+          { "id": "white", "metric": "whitePointDeltaToRef", "max": 6 },
+          { "id": "black", "metric": "blackPointDeltaToRef", "max": 4 }
+        ]
+      },
+      "gates": [ { "metric": "clipIntroduced", "max": 1.0 } ],
+      "passThreshold": 0.6
+    },
+    {
+      "id": "dont_overgrade",
+      "description": "(e) The frame is already correctly balanced. The agent should measure, confirm it is within tolerance, and barely move anything.",
+      "input": { "frame": "fixtures/neutral.in.png" },
+      "setup": "neutral (base.png, already balanced)",
+      "goal": {
+        "type": "rubric",
+        "checks": [
+          { "id": "effort", "metric": "knobEffort", "max": 6, "slack": 10 },
+          { "id": "warmCool", "metric": "castWarmCoolDeltaToInput", "max": 1.5, "slack": 3 },
+          { "id": "mids", "metric": "midsLumaDeltaToInput", "max": 2, "slack": 4 },
+          { "id": "black", "metric": "blackPointDeltaToInput", "max": 2, "slack": 4 },
+          { "id": "white", "metric": "whitePointDeltaToInput", "max": 2, "slack": 4 }
+        ]
+      },
+      "gates": [ { "metric": "knobEffort", "max": 18 } ],
+      "passThreshold": 0.75
+    },
+    {
+      "id": "mask_region_only",
+      "description": "(f) Grade only a masked region. The bright warm patch (a stand-in face) at [160,70,160,130] must be pulled toward neutral; the background must not move. A radial or brush sub-mask over the patch.",
+      "input": { "frame": "fixtures/mask.in.png" },
+      "setup": "synthetic: neutral ramped background + a bright warm rectangular patch",
+      "maskRects": { "patch": [160, 70, 160, 130] },
+      "goal": {
+        "type": "rubric",
+        "checks": [
+          { "id": "patchNeutral", "metric": "regionWarmCoolAbs", "region": [175, 90, 130, 90], "max": 10 },
+          { "id": "bgTopLeft", "metric": "regionMaxChannelDeltaToInput", "region": [8, 8, 120, 44], "max": 3, "slack": 6 },
+          { "id": "bgTopRight", "metric": "regionMaxChannelDeltaToInput", "region": [352, 8, 120, 44], "max": 3, "slack": 6 },
+          { "id": "bgBottom", "metric": "regionMaxChannelDeltaToInput", "region": [140, 236, 200, 26], "max": 3, "slack": 6 }
+        ]
+      },
+      "gates": [
+        { "metric": "clipIntroduced", "max": 1.0 }
+      ],
+      "passThreshold": 0.65
+    },
+    {
+      "id": "tame_highlight_clip",
+      "description": "Bring blown highlights back under the clip point (recover the white point to ~250) without crushing the shadows to compensate.",
+      "input": { "frame": "fixtures/clip.in.png" },
+      "setup": "baked grade on base.png: exposure +0.95, whites +22",
+      "goal": {
+        "type": "rubric",
+        "checks": [
+          { "id": "noBlow", "metric": "clipHighPct", "max": 0.8, "slack": 3 },
+          { "id": "white", "metric": "whitePoint", "max": 253, "slack": 3 },
+          { "id": "noCrush", "metric": "blackPoint", "max": 10, "slack": 12 }
+        ]
+      },
+      "gates": [
+        { "metric": "blackPointDeltaToInput", "max": 14 }
+      ],
+      "passThreshold": 0.6
+    }
+  ]
+}

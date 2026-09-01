@@ -94,8 +94,14 @@ reason from the scope values (black/white points, per-zone means, warm-cool and
 green-magenta cast, clip %, hue histogram) or a named full-res region from
 `sample` / `sample_region`. Never claim a result ('looks balanced', 'skin is
 natural', 'the cast is gone') without citing a scope value or a sampled region.
-Defer genuinely creative calls to the human. See
-`../docs/notes/agent-visual-feedback.md`.
+Read each result adversarially — assume a cast, clip, or crushed channel is still
+there and look for the one you have not ruled out. Defer genuinely creative calls
+to the human. See `../docs/notes/agent-visual-feedback.md`.
+
+Whether the tools + skill + prompt actually enforce this loop — measure, adjust,
+re-measure, converge on a target rather than drift — is a regression test:
+`eval/` (task set + offline scorer + committed baseline). See `../eval/README.md`
+and `../docs/notes/eval-harness.md` (D-035).
 
 Adding a capability = one entry in the frontend `OPS` registry
 (`engine/src/hooks/useChromaControl.ts`) + one tool here.
