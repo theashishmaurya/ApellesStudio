@@ -235,6 +235,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   debounced refine), `MasksPanel`/`SettingsPanel` (buttons), `useChromaStore.ts`.
 - **2026-09-01 PM** · **SAM 2 propagation (D-018):** sidecar `/track` rewritten to
   `SAM2DynamicInteractivePredictor`.
+- **2026-09-01 PM** · **D-014 render_core seam** — new `src-tauri/src/render_core.rs`
+  (`mod render_core;` in `lib.rs`). `gpu_processing::process_and_get_dynamic_image_inner`
+  sig: `state: &tauri::State<AppState>` → `caches: &render_core::RenderCaches<'_>`
+  (`{ gpu_processor, gpu_image_cache }`), now `pub(crate)`, body unchanged. The two GUI
+  wrappers build `RenderCaches` from `state` inline. `render_core::render` /
+  `init_gpu_context` / `OwnedRenderCaches` are the headless API (unused pending the MCP
+  server). No behaviour change to the GUI render path.
 - **2026-09-01 PM** · **render-time matte (D-019)** — the shipping design.
   `mask_generation.rs::generate_ai_subject_bitmap` gained a 4-line branch: if
   `params["chromaTrackDir"]` is set, `mask = crate::chroma::mask::tracked_full_mask(params)`

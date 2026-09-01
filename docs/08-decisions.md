@@ -153,7 +153,18 @@ decision. Lives in a future `CONTRIBUTING`.
   (doc 02, "relight-ish") — that covers most talking-head needs in v1.
 
 ## D-014 — Decouple the render core from Tauri
-**decided (2026-09-01) — first real fork change**
+**decided (2026-09-01) · done (2026-09-01)**
+
+**Landed:** `src-tauri/src/render_core.rs`. `process_and_get_dynamic_image_inner`
+now takes `&render_core::RenderCaches<'_>` (`{ gpu_processor, gpu_image_cache }` —
+the only two `AppState` fields it touched) instead of `&tauri::State<AppState>`;
+it stays in `gpu_processing.rs`, the GUI wrappers build `RenderCaches` from state
+inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_context()`
+(device+queue, no surface), `OwnedRenderCaches`. Unused until the control/MCP server
+— that's the seam. `GpuContext` was already Tauri-free. Original text below.
+
+---
+
 
 - **Context (doc 09):** the render entry points are Tauri-coupled —
   `process_and_get_dynamic_image(context, state: &tauri::State<AppState>, base_image,

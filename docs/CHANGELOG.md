@@ -56,6 +56,10 @@ _(none — pre-v1)_
   (fresh predictor per pass never returned to the MPS pool + concurrent stacking). `_GPU`
   lock serialises model calls; one reused predictor; `_free_gpu()` after every op; `/track`
   cancels a running pass. Plateaus ~1.3 GB now.
+- **2026-09-01** — **D-014 done**: `render_core.rs` seam — the render fn takes
+  `RenderCaches` (the 2 GPU-cache mutexes) instead of `tauri::State<AppState>`; added
+  `init_gpu_context()` (surface-free). GUI render path byte-identical. Unblocks headless
+  render + the control/MCP server (next).
 - **2026-09-01** — Tracking display reworked (**D-019**): matte is read from disk **at
   render time** (`params.chromaTrackDir` → `tracked_full_mask` → `<dir>/<frame>.png`) in
   `generate_ai_subject_bitmap`, not swapped into `adjustments` per seek. Fixes the
