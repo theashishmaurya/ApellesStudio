@@ -42,3 +42,11 @@ _(none — pre-v1)_
   mask (RapidRAW's own type, so the grade UI + render are untouched). Box-drag on a loaded
   video now routes to SAM 2 + ViTMatte instead of ONNX SAM. `chroma_ai_health` for a UI
   hint. Engine + frontend both compile; app runs.
+- **2026-09-01** — Per-frame subject **tracking**. Sidecar `/track` (background job,
+  YOLO-follows the person, mattes cached to `<video>/.chroma/mattes/<key>/`), `/refine_track`
+  (upgrade one frame to ViTMatte). Engine: `chroma_track_subject`, `chroma_track_status`,
+  `chroma_subject_matte_for_frame`, `chroma_refine_tracked_frame`. Frontend: "Track subject
+  across clip" button (Subject panel, video only) + seek swaps the frame's matte; scrub
+  settles → that frame upgrades to ViTMatte. **fast/quality modes** — the pass uses a
+  guided-filter edge (~0.5s/frame vs ~3s), full ViTMatte only on the visible frame. Single
+  subject only — multi-subject is **D-017**.

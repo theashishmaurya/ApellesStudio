@@ -213,6 +213,25 @@ decision. Lives in a future `CONTRIBUTING`.
   layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
   is short on hair/fine detail in real use.
 
+## D-017 — Multi-subject / multi-object tracking
+**open — v1 ships single-subject**
+
+- **Context:** `/track` + the engine wiring (2026-09-01) follow **one** subject: the
+  sidecar picks "the central person" each frame, the engine keeps a single global
+  `track_dir`, seek-swap patches the first `ai-subject` component. Background grading works
+  (invert the subject matte). Two people each with their own mask, or several independently
+  tracked `ai-subject` components in nested containers, do **not** work — they'd all follow
+  the same person. Non-person objects drift (frames 2..N re-detect person only).
+- **The fix (noted for later, ~not huge):**
+  1. **Sidecar** — follow the *specific instance each mask prompted* (SAM 2 memory
+     propagation, or per-frame IoU seeded by *that submask's* frame-0 box), not "central
+     person". Drop `classes=[0]` when a box/points prompt is given.
+  2. **Engine** — `track_dir` → `HashMap<submask_id, PathBuf>`;
+     `chroma_subject_matte_for_frame(frame, sub_mask_id)`.
+  3. **Frontend** — Track button per component; seek-swap loops every tracked `ai-subject`.
+- **Note:** the sidecar cache key already hashes the prompt box, so per-submask cache dirs
+  don't collide — only the engine's single global and the "central person" follow logic do.
+
 ## D-010 — Project name
 **open**
 

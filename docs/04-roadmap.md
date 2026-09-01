@@ -51,7 +51,8 @@ not commitments.
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
 - [ ] Interactive +/− point prompts on the canvas (sidecar already takes `points`; needs konva click UI + a points array in the submask params + re-invoke per click)
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
-- [ ] SAM 2 video propagation (`/track`) → per-frame matte that follows the subject
+- [x] Per-frame subject tracking: sidecar `/track` (background job, YOLO-follow, disk-cached mattes) + engine `chroma_track_subject` / `chroma_track_status` / `chroma_subject_matte_for_frame`; "Track subject across clip" button + seek-swap. **Fast/quality modes** — `/track` uses a guided-filter edge (~0.5s/frame); the visible frame upgrades to ViTMatte on seek-settle (`/refine_track` + `chroma_refine_tracked_frame`). Single subject only (**D-017** for multi).
+- [ ] True SAM 2 memory propagation (reuse the image encoder across frames — the current pass re-encodes every sampled frame)
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [ ] **Depth haze preset** — one action, depth-weighted desat + black-lift + dehaze + blur
 - [ ] Mask keyframes in the data model + GUI handles

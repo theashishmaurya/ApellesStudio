@@ -228,6 +228,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   ONNX SAM path) so the mask decode / grade UI / render are all untouched. `chroma_ai_health`
   for a UI hint. Uses the existing `reqwest` dep. v1 limitation: click coords not
   un-rotated → subject mask wrong on a rotated/flipped clip.
+- **2026-09-01** · `src/chroma/mask.rs` (+`state.rs` `track_dir`) · **tracking:**
+  `chroma_track_subject` → sidecar `/track` (bg job); `chroma_track_status`;
+  `chroma_subject_matte_for_frame(frame)` reads the nearest cached PNG ≤ frame;
+  `chroma_refine_tracked_frame(frame)` → `/refine_track` upgrades one frame to ViTMatte.
+  Frontend `useAiMasking.ts` (Track button handler + seek-swap effect + debounced refine),
+  `MasksPanel.tsx`/`SettingsPanel` (button), `useChromaStore.ts` (`trackActive`,
+  `trackProgress`). Single global `track_dir` = one tracked subject (**D-017** for multi).
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

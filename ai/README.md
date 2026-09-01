@@ -18,9 +18,14 @@ Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB to
 
 | | |
 |---|---|
-| `GET /health` | `{ok, device, models}` |
-| `POST /segment` | one frame → `{matte_b64, width, height, used_box, ms}` |
-| `POST /track` *(planned)* | video → per-frame mattes (SAM 2 memory propagation) |
+| `GET /health` | `{ok, device, models, vitmatte}` |
+| `POST /segment` | one frame → `{matte_b64, width, height, refined, sam_ms, refine_ms}` |
+| `POST /track` | `{video_path, from_frame, to_frame, step, box?, points?, mode}` → `{job_id, dir, ...}`; bg job, mattes cached to `<video_dir>/.chroma/mattes/<key>/<frame:06d>.png` |
+| `GET /track/{job_id}` | `{state, done, total, dir}` |
+| `POST /refine_track` | `{video_path, dir, frame, box?}` → upgrade one cached frame to a ViTMatte edge, returns `{matte_b64}` |
+
+`mode`: `"fast"` (guided-filter edge, ~0.5s/frame) or `"quality"` (ViTMatte, ~3s/frame).
+Tracking follows one person (YOLO, nearest-to-previous box) — multi-subject is D-017.
 
 ### `/segment` request
 
