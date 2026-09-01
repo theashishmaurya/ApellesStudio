@@ -144,6 +144,29 @@ Status: `open` · `decided` · `revisit`
 - **Meanwhile:** depth + shape masks already fake directional relighting deterministically
   (doc 02, "relight-ish") — that covers most talking-head needs in v1.
 
+## D-014 — Decouple the render core from Tauri
+**decided (2026-09-01) — first real fork change**
+
+- **Context (doc 09):** the render entry points are Tauri-coupled —
+  `process_and_get_dynamic_image(context, state: &tauri::State<AppState>, base_image,
+  transform_hash, request: RenderRequest, caller_id)` takes a `tauri::State`, and
+  `get_or_init_gpu_context` needs a `tauri::AppHandle`. You cannot call the grade path
+  from a plain binary, a test, or an MCP server without a running Tauri app.
+- **Options:** (a) extract a `render_core` crate/module: `fn render(gpu: &GpuContext,
+  base: &DynamicImage, req: &RenderRequest) -> Result<DynamicImage>` + a Tauri-free
+  `init_gpu_context()`, with the Tauri commands becoming thin wrappers; (b) fabricate a
+  fake `tauri::State` (brittle, fights the framework); (c) always drive through the app
+  (kills headless spikes, MCP, batch/CI).
+- **Choice:** (a). This is the seam between "RapidRAW the app" and "Chroma the engine +
+  agent + video." It also isolates our fork surface — most of our work sits in
+  `render_core` + new crates, not scattered through `lib.rs`.
+- **Consequences:** first change *inside* `engine/` — log it in doc 09's divergence
+  section. Keep it a clean extraction (move, don't rewrite) so upstream fixes still
+  cherry-pick. `AppState` fields the core actually needs (gpu_context mutex, caches) move
+  with it or get passed explicitly.
+- **Sequencing:** this is now the first task of Phase 1, and the ffmpeg→grade spike
+  depends on it.
+
 ## D-010 — Project name
 **open**
 

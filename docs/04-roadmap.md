@@ -14,8 +14,8 @@ not commitments.
 - [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
 - [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
 - [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
-- [ ] Run the app (`npm run tauri dev`) — confirm the wgpu renderer draws a real image on screen
-- [ ] **Spike**: ffmpeg decode → feed one frame into `apply_adjustments` → render it graded. Proves "video is per-frame stills."
+- [ ] Run the app (`npm run tauri dev`) — confirm the wgpu renderer draws a real image on screen *(user action — GUI)*
+- [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
 - [ ] **Spike**: SAM 2 as ONNX via `ort` — segment + propagate one 10s clip, measure fps, matte quality on the hands problem (D-012). Fallback spike: SAM 1 (already in engine) + optical flow.
 - [ ] Decide: fork hard vs. talk to the RapidRAW maintainer (D-003)
 
@@ -25,6 +25,9 @@ not commitments.
 
 ## Phase 1 — Video grading core  ·  ~3–4 weeks
 
+- [ ] **D-014: extract `render_core`** — Tauri-free `render(gpu, base, req) -> DynamicImage`
+      + `init_gpu_context()`; Tauri commands become thin wrappers. First divergence from
+      upstream. Then the ffmpeg→grade spike runs headless.
 - [ ] Video I/O: decode → proxy cache → per-frame grade → ProRes/H.264 encode
 - [ ] Shot / session model + `grade.json` load/save/validate
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)

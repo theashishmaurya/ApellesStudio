@@ -51,8 +51,8 @@ Phase 0 code-read.
   clean in 4m24s (682 deps, ONNX runtime dylib auto-downloaded + verified). See D-011.
 
 ## B-002 — disk almost full
-- **status:** open
-- **severity:** blocker
+- **status:** mitigated (2026-09-01) — 3.6 GiB → 38 GiB free after cleanup; not blocking. Ceiling still low.
+- **severity:** was blocker, now low
 - **area:** build
 - **found:** 2026-09-01 (phase 0)
 - **actual:** `~` volume is **100% full — 3.6 GiB free of 460 GiB**. `engine/src-tauri/target`

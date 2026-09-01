@@ -15,7 +15,8 @@ ai/models/
 mcp/target/
 
 # scratch / media
-scratch/
+scratch/*
+!scratch/README.md
 *.mp4
 *.mov
 *.exr

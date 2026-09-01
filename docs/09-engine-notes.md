@@ -179,9 +179,30 @@ a community-presets feature; **strip or ignore for v1**).
 - **No shot-match-to-reference.**
 - Depth is per-still; video would flicker without temporal smoothing.
 
+## Render entry points are Tauri-coupled (→ D-014)
+
+- `process_and_get_dynamic_image(context: &GpuContext, state: &tauri::State<AppState>,
+  base_image: &DynamicImage, transform_hash: u64, request: RenderRequest, caller_id: &str)
+  -> Result<DynamicImage, String>`
+- `get_or_init_gpu_context(state: &tauri::State<AppState>, app_handle: &tauri::AppHandle)`
+- So the grade path can't run from a plain binary / test / MCP server. **D-014**: extract
+  a Tauri-free `render_core` (`render(gpu, base, req) -> DynamicImage` + `init_gpu_context()`);
+  Tauri commands become thin wrappers. First task of Phase 1.
+- Notes: `RenderRequest { adjustments: AllAdjustments, mask_bitmaps: &[GrayImage], lut,
+  roi }`. Image-dimension guard: if `w|h > max_texture_dimension_2d` it bypasses the GPU
+  and returns the source unprocessed (log warning) — watch this at 4K/8K.
+
+## Test asset
+
+`scratch/frame_c019_10s.png` — a 4K frame from `~/Downloads/A001_08302215_C019.MOV` (the
+one raw take kept for testing). Source: HEVC, 3840×2160, 24fps, **Rec709** (space +
+transfer + primaries — matches D-004 v1 assumption), yuv420p, 517s. The same talking-head
+shot used in the Palmier grading trials. ffmpeg decode → frame works; the frame→grade half
+waits on D-014.
+
 ## Divergence log (our changes to `engine/`)
 
-_(none yet — code-read only)_
+_(none yet — D-014 `render_core` extraction will be the first entry)_
 
 When we change `engine/`: append here `{date, files, why, upstream commit branched from}`
 so we can still cherry-pick upstream fixes (per CLAUDE.md).

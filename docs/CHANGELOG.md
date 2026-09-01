@@ -61,6 +61,21 @@ Human-readable history. `Keep a Changelog` style. Dates are ISO.
 - Phase 0 spikes status: D-006 (video surface) answered by code-read, no spike needed.
   Remaining: run the app, ffmpeg→grade spike, SAM2-on-`ort` spike, D-003 (fork vs collab).
 
+### 2026-09-01 — disk cleanup + video-decode spike
+- **Disk: 3.6 GiB → 38 GiB free** (~34 GB). Cleared regenerable caches (Yarn/Chrome/
+  JetBrains/SwiftPM/pip/brew/Cursor/Code/cargo-registry), a 1 GB crash dump, 36 downloaded
+  TV episodes, installer dmgs, shipped video-project folders in Downloads, and dead-project
+  `node_modules`/`venv`. Kept `A001_..._C019.MOV` (2.2 GB) as the color-grade test take.
+  Docker (`Docker.raw`, 20 GB) left in place — user uses it. B-002 downgraded (not a
+  blocker now; note the ceiling).
+- **ffmpeg decode spike ✅** — 4K **Rec709** frame from `C019.MOV` →
+  `scratch/frame_c019_10s.png`. Video-decode half proven.
+- **D-014 (decided):** the render entry points are Tauri-coupled
+  (`process_and_get_dynamic_image` takes `tauri::State`, `get_or_init_gpu_context` needs
+  an `AppHandle`). Extract a Tauri-free `render_core` — **first Phase 1 task, first fork
+  divergence.** The frame→grade spike depends on it.
+- Roadmap updated; `scratch/` gitignored (keeps README).
+
 ---
 
 ## Release history
