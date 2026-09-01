@@ -930,3 +930,99 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   the running app are not driven (a `tauri dev` is running) — the strip
   interaction + MCP round-trip are an open **manual** smoke test, listed in
   `docs/notes/multi-shot.md`. Divergence in doc 09.
+
+## D-034 — Mask keyframes = interpolate the sub-mask's geometry `parameters` at render time (one hook, mirrors D-019); linear scalars, shortest-arc rotation, brush points snap-or-lerp
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-3 item "mask keyframes". A shape sub-mask (radial / linear /
+  brush) is static — its geometry is one value for the whole clip. For a subject
+  that moves but that SAM can't / shouldn't track (a hand, a product, a light, a
+  reflection, a region of sky) the user needs to keyframe the mask's geometry
+  over source frames and have it interpolate per frame on scrub / playback /
+  export. Geometry only — **not** the grade adjustments (a separate future item).
+- **Where the interpolation happens:**
+  (a) frontend swaps `parameters` on every seek (the pattern D-019 explicitly
+      rejected — overlay-regen storm, frame vs matte desync, timeline lockup);
+  (b) a keyframed-mask concept baked into RapidRAW's `MaskDefinition` /
+      `image_processing` (deep upstream surface);
+  (c) **read the keyframes at render time** — `generate_sub_mask_bitmap`
+      interpolates `parameters` for `chroma::state::current_video().frame` (the
+      frame `export.rs` / `playback.rs` / scrub already set for the D-019 tracked
+      matte) and proceeds with the interpolated value. One hook call, exactly
+      like D-019's `tracked_full_mask`.
+- **Choice: (c).** Same rationale as D-019: matte and frame are one render pass,
+  in lockstep; a seek is just the existing re-render; zero per-frame frontend
+  state churn; scrub + playback + export animate **for free** (verified — all
+  three drive `set_current_frame` / `install_frame` per frame). Fork diff is one
+  hook line in `mask_generation.rs` + a new `chroma/keyframes.rs` (D-003).
+- **Data model (extends grade.json, D-025).** `parameters.chromaKeyframes` =
+  an ordered `[{ frame: u64, params: { …geometry subset… } }]`. Geometry subset
+  per type — radial: `centerX/centerY/radiusX/radiusY/rotation/feather`;
+  linear: `startX/startY/endX/endY/range`; brush/flow: `lines`. `mode` / `invert`
+  / `opacity` and the grade stay on the sub-mask. **Absent by default** — a
+  sub-mask with no `chromaKeyframes` is byte-identical to today (the hook returns
+  `None` before any clone). Round-trips through `grade.json` as plain JSON (tiny
+  numbers, kept inline — no matte externalisation). `docs/notes/grade-json.md`
+  updated.
+- **Interpolation rules (deterministic, cheap — a handful of `f64` lerps):**
+  - scalars: linear between the two bracketing keys.
+  - **`rotation`: shortest signed arc** (350° → 10° passes through 0°, not 180°).
+  - before the first key / after the last: **clamp (hold)** that key. One key ⇒
+    that key everywhere.
+  - exact-on-key ⇒ that key's params. A field in only one bracketing key ⇒ held.
+  - **brush `points` / `lines`**: interpolated element-wise **only when the two
+    bracketing keys have identical structure** (same line count, same points per
+    line). Otherwise the field **snaps to the nearer key** (`t < 0.5` → low).
+    Any non-numeric / shape-mismatched field snaps the same way. Documented
+    limitation — a brush mask whose stroke changes point count between keys jumps
+    rather than morphs.
+  - all interpolated numbers rounded to 6 dp (no float dust in `grade.json`).
+- **Tracked and keyframed are mutually exclusive per sub-mask.** If both
+  `chromaTrackDir` (D-019) and `chromaKeyframes` are somehow present, **tracked
+  wins** — `interpolated_parameters` returns `None`. The frontend / MCP block
+  creating one on top of the other.
+- **No video loaded (a still):** `interpolated_parameters` returns `None` — a
+  still renders byte-identical. Keyframes are meaningless without a frame axis.
+- **Frontend.** New `engine/src/utils/maskKeyframes.ts` mirrors the Rust
+  interpolator (same rules, same cases) so the canvas overlay shows the
+  **interpolated** shape at the current frame ("what you see is what renders")
+  and the keyframe button / canvas-drag writer share one code path. New
+  `engine/src/components/chroma/MaskKeyframeBar.tsx` (mounted in the Chroma-owned
+  `ChromaTimeline`): a "◆ Keyframe mask" button that snapshots the active shape
+  sub-mask's geometry at the current frame (re-press = update), a diamond track
+  (click a diamond to seek), delete-this-key, clear-all. **Dragging the mask on
+  the canvas** when keyframes exist writes/updates the key at the current frame
+  (`ImageCanvas.tsx` — a keyframe-aware `updateSubMask` wrapper + the overlay
+  reads interpolated params). Upstream-file edits: `ImageCanvas.tsx` +~4 (import
+  + `chromaFrame` + the wrapper + the overlay param swap). `useChromaControl.ts`
+  (Chroma-only) += `add_mask_keyframe` / `list_mask_keyframes` /
+  `clear_mask_keyframe` / `clear_mask_keyframes` ops.
+- **MCP.** 4 tools: `add_mask_keyframe(mask_id, sub_mask_id, frame?)`,
+  `list_mask_keyframes`, `clear_mask_keyframe(…, frame)`, `clear_mask_keyframes`.
+  27 → 31. The agent workflow: "seek 0, radial over the face, add_mask_keyframe;
+  seek 90, reposition, add_mask_keyframe" — hand-tracking without SAM.
+- **Consequences / footprint.** New: `chroma/keyframes.rs` (pure + 14 unit
+  tests), `src/utils/maskKeyframes.ts`, `src/components/chroma/MaskKeyframeBar.tsx`.
+  Upstream edits: `mask_generation.rs` +1 hook call, `chroma/mod.rs` +2,
+  `ImageCanvas.tsx` +~4. No `lib.rs` / Cargo / `AppState` change (the ops ride
+  the generic `POST /op` bridge — no new tauri command). Cost: the interpolated
+  common path is `None` (zero-cost); a keyframed sub-mask clones its `parameters`
+  `Value` + interpolates once per render (~µs).
+- **Verified (2026-09-02).** `cargo check --no-default-features` clean;
+  `cargo test --no-default-features chroma::` **37/37** (23 baseline + 14
+  keyframe: empty / one key / before-first / after-last / exact-on-key /
+  between-keys per field / rotation shortest-arc both directions / brush points
+  lerp + snap / field-held / sorted / un-keyframed→None / tracked-wins→None).
+  Frontend `npx tsc --noEmit` — **74** pre-existing unrelated errors (baseline
+  unchanged), none in a new / touched file. `python3 -m py_compile mcp/server.py`
+  clean; `import server` OK, **31** tools. Export (D-022) + playback (D-031)
+  confirmed to interpolate for free by reading `export.rs`
+  (`set_current_frame(frame_index)` per frame) + `playback.rs` /
+  `commands::seek_and_install` (`install_frame` → `set_current_video(…frame)`).
+  The `useEffect([])` bridge listener + the running app aren't driven (a
+  `tauri dev` is running) — the keyframe-bar interaction, canvas-drag-writes-key,
+  and interpolated-overlay are an open **manual** smoke test, listed in
+  `docs/notes/mask-keyframes.md`. Divergence in doc 09.
+- **Deferred:** grade-adjustment keyframing (a separate item); easing / bezier
+  handles (linear only); a keyframe on `mode` / `invert`; a full timeline dope
+  sheet (the diamond track is deliberately minimal).

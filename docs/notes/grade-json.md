@@ -61,6 +61,17 @@ Walk `adjustments.masks[].subMasks[].parameters` on save:
 (hundreds of per-frame PNGs) which is **not** copied into the grade — a project
 move must bring `.chroma/mattes/` too, or the tracked mask loads with no frames.
 
+## Mask keyframes (D-034) — inline, no externalisation
+
+A shape sub-mask can carry `parameters.chromaKeyframes` — an ordered
+`[{ frame, params: { …geometry subset… } }]` that the engine interpolates per
+source frame at render time (radial centre/radii/rotation/feather, linear
+endpoints/range, brush `lines`). These are **tiny numbers**, so unlike mattes
+they stay **inline** in `grade.json` — no `$matte` / `$trackDir`-style
+externalisation. `save_grade` / `load_grade` round-trip them verbatim as part of
+`parameters`; the matte-externalisation walk ignores them. A sub-mask with no
+`chromaKeyframes` key is unchanged (static). Detail: `docs/notes/mask-keyframes.md`.
+
 ## Schema migration
 
 `load` parses `schema` as `chroma.grade/<major>`:

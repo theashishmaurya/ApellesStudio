@@ -569,5 +569,47 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   Bridge listener + running app not driven → strip interaction + MCP round-trip
   are an open manual smoke test (`docs/notes/multi-shot.md`).
 
+- **2026-09-02** · **mask keyframes (D-034)** — Rust + frontend, no `lib.rs` /
+  Cargo / `AppState` change (the ops ride the generic `POST /op` bridge).
+  · new `src-tauri/src/chroma/keyframes.rs` (self-contained, pure): `Keyframe`,
+  `parse_keyframes` (frame-sorted; `None` on absent/empty/malformed),
+  `interpolate(&[Keyframe], frame)` (linear scalars, shortest-arc `rotation`,
+  clamp/hold outside the range, brush `points`/`lines` element-wise-lerp when the
+  shape matches else snap-to-nearest), `interpolated_parameters(&Value)` — the
+  hook: `Some(params with geometry overlaid, chromaKeyframes stripped)` for a
+  keyframed shape sub-mask on a video; `None` (zero-cost) for un-keyframed / a
+  tracked sub-mask (`chromaTrackDir` wins) / a still. 14 unit tests.
+  · **Upstream-file edit — `mask_generation.rs`:** ONE hook call at the top of
+  `generate_sub_mask_bitmap` (just after the `visible` check) — mirrors the D-019
+  `tracked_full_mask` precedent in `generate_ai_subject_bitmap`:
+  `if let Some(interp) = crate::chroma::keyframes::interpolated_parameters(&sub_mask.parameters)
+  { let mut sm = sub_mask.clone(); sm.parameters = interp; return
+  generate_sub_mask_bitmap(&sm, …); }`. Recursion terminates — the returned
+  params have `chromaKeyframes` removed. Nothing else in the file changed.
+  · `chroma/mod.rs` +2 (`pub mod keyframes;` + a doc line).
+  · Frontend: new `src/utils/maskKeyframes.ts` (mirror of the Rust interpolator —
+  same rules/cases; drives the interpolated canvas overlay + the keyframe
+  button/drag), new `src/components/chroma/MaskKeyframeBar.tsx` (mounted in the
+  Chroma-owned `ChromaTimeline` — ◆ keyframe button + a diamond track + delete /
+  clear). Chroma-only `src/hooks/useChromaControl.ts` += 4 ops
+  (`add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` /
+  `clear_mask_keyframes`; `list_mask_keyframes` is `READ_ONLY`).
+  · **Upstream-file edit — `src/components/panel/editor/ImageCanvas.tsx` +~4:**
+  imports (`useChromaStore` + `maskKeyframes` helpers); a `chromaFrame`
+  subscription; `updateSubMaskKeyframeAware` (a `useCallback` wrapping the
+  `updateSubMask` prop — when the target shape sub-mask has keyframes, a
+  `{parameters}` update becomes an `upsertKeyframe` at `chromaFrame`, not a new
+  static geometry); the mask-overlay `renderSubMask` swaps in
+  `effectiveParameters(base.parameters, chromaFrame)` so the on-canvas shape is
+  the interpolated one; `onUpdate={updateSubMaskKeyframeAware}` on `<MaskOverlay>`.
+  · `mcp/server.py` +4 tools (27 → 31). `mcp/README.md` tool table updated.
+  · Verified: `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **37/37** (23 + 14). `npx tsc --noEmit` 74
+  pre-existing, none in a touched/new file. `py_compile` clean, 31 tools. Export
+  (D-022) + playback (D-031) interpolate for free — both set
+  `current_video().frame` before the grade (`export.rs` `set_current_frame` per
+  frame; `commands::seek_and_install` → `install_frame` → `set_current_video`).
+  Running-app path is an open manual smoke test (`docs/notes/mask-keyframes.md`).
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

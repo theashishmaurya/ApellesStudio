@@ -397,6 +397,65 @@ def set_submask_mode(sub_mask_id: str, mode: str) -> list:
 
 
 @mcp.tool()
+def add_mask_keyframe(
+    mask_id: str, sub_mask_id: str, frame: int | None = None
+) -> list:
+    """Keyframe a SHAPE sub-mask's geometry (D-034). Snapshots the sub-mask's
+    current geometry — radial: centre / radii / rotation / feather; linear:
+    endpoints / range; brush: stroke points — as a keyframe at `frame` (default:
+    the current frame). The engine interpolates the geometry per source frame on
+    scrub / playback / export, so a mask that can't be SAM-tracked (a hand, a
+    product, a light, a reflection, a patch of sky) follows the subject by hand.
+
+    Workflow: seek(0) -> add_mask (radial over the face) -> add_mask_keyframe;
+    seek(90) -> move the mask (add_mask again with new geometry, or the app's
+    controls) -> add_mask_keyframe. The mask now glides between the keys.
+
+    Geometry ONLY — grade adjustments, mode, invert, opacity are not keyframed.
+    Re-calling at a frame that already has a key updates it. A sub-mask can't be
+    both AI-tracked (chromaTrackDir) and keyframed — tracked wins. mask_id /
+    sub_mask_id are from list_masks / get_state."""
+    args: dict = {"mask_id": mask_id, "sub_mask_id": sub_mask_id}
+    if frame is not None:
+        args["frame"] = frame
+    return _result(_op("add_mask_keyframe", **args))
+
+
+@mcp.tool()
+def list_mask_keyframes(mask_id: str, sub_mask_id: str) -> str:
+    """List a shape sub-mask's geometry keyframes (D-034): the frame index and
+    the snapshotted geometry params for each. Returns {maskId, subMaskId, type,
+    tracked, keyframes: [{frame, params}]}. Empty `keyframes` = a static mask."""
+    import json
+
+    return json.dumps(
+        _op("list_mask_keyframes", mask_id=mask_id, sub_mask_id=sub_mask_id),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def clear_mask_keyframe(mask_id: str, sub_mask_id: str, frame: int) -> list:
+    """Remove ONE geometry keyframe (D-034), the one at `frame` (a frame from
+    list_mask_keyframes). When the last keyframe is removed the sub-mask becomes
+    fully static again."""
+    return _result(
+        _op("clear_mask_keyframe", mask_id=mask_id, sub_mask_id=sub_mask_id, frame=frame)
+    )
+
+
+@mcp.tool()
+def clear_mask_keyframes(mask_id: str, sub_mask_id: str) -> list:
+    """Remove ALL geometry keyframes from a shape sub-mask (D-034) — it goes back
+    to a single static geometry (whatever it currently interpolates to is NOT
+    baked; the sub-mask keeps its base parameters)."""
+    return _result(
+        _op("clear_mask_keyframes", mask_id=mask_id, sub_mask_id=sub_mask_id)
+    )
+
+
+@mcp.tool()
 def track_subject(sub_mask_id: str, mode: str = "fast") -> list:
     """Propagate a subject sub-mask across the whole clip (SAM 2 memory
     propagation). mode: "fast" (guided-filter edge, upgrades to ViTMatte on

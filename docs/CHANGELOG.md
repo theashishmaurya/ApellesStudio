@@ -4,6 +4,34 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Mask keyframes (D-034, round-3 item "mask keyframes")**. A
+  shape sub-mask (radial / linear / brush) can now be **keyframed** — its
+  geometry (centre / radii / rotation / feather, linear endpoints / range, brush
+  points) is snapshotted at chosen source frames and **interpolated per frame**
+  on scrub, playback and export, so a mask can hand-track a subject SAM can't or
+  shouldn't follow (a hand, a product, a light, a reflection, a patch of sky).
+  Geometry only — grade adjustments aren't keyframed. New **◆ Keyframe** button +
+  a diamond track above the timeline (`components/chroma/MaskKeyframeBar.tsx`);
+  the canvas overlay draws the **interpolated** shape at the current frame, and
+  dragging the mask writes/updates the keyframe at that frame. Data model:
+  `parameters.chromaKeyframes = [{frame, params}]`, round-trips through
+  `grade.json` inline. Interpolation: linear scalars, **shortest-arc rotation**
+  (350°→10° through 0°), brush points lerp when the stroke shape matches between
+  keys else snap to the nearer key; clamp/hold outside the keyed range. Tracked
+  (`chromaTrackDir`, D-019) and keyframed are mutually exclusive — tracked wins.
+  Rust: new `chroma/keyframes.rs` (pure, 14 unit tests) + **one** hook call in
+  `mask_generation.rs::generate_sub_mask_bitmap` (mirrors D-019). Frontend:
+  `utils/maskKeyframes.ts` (Rust mirror), `MaskKeyframeBar.tsx`, `ImageCanvas.tsx`
+  +~4, `useChromaControl.ts` +4 ops. MCP: `add_mask_keyframe` /
+  `list_mask_keyframes` / `clear_mask_keyframe` / `clear_mask_keyframes`
+  (27 → 31 tools). No `lib.rs` / Cargo / `AppState` change. `cargo check` clean,
+  `cargo test chroma::` 37/37 (+14); `tsc --noEmit` baseline unchanged (74, none
+  in a touched file); `py_compile` clean, 31 tools. Export + playback interpolate
+  for free (both set `current_video().frame` before the grade). Manual app +
+  canvas-drag smoke test open. Deferred: grade-adjustment keyframing (separate
+  item), easing handles, a full dope sheet, brush strokes that change point
+  count between keys (they snap). Detail: `docs/notes/mask-keyframes.md`.
+
 - **2026-09-02** — **Multi-shot session model + shot strip (D-033, round-3 item 2)**.
   Chroma held one clip; now it holds a **session** — an ordered set of shots from
   one shoot, each with its own grade and its own agent-activity feed. New **shot

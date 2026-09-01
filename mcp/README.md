@@ -57,6 +57,10 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `add_subject_mask(bbox?, mode="additive")` | new container + AI subject sub-mask + generate the matte (SAM 2 on video); `mode` = additive/subtractive/intersect |
 | `add_component(mask_id, type, mode="subtractive", bbox?, geometry?)` | add a sub-mask to an existing container — the "Add to / Subtract from / Intersect with Mask" menu. `type` = subject/radial/linear/brush. A subtractive Subject component carves a SAM region out; a subtractive Radial/Linear carves a shape out (D-023) |
 | `set_submask_mode(sub_mask_id, mode)` | flip a component's composition mode (additive/subtractive/intersect) |
+| `add_mask_keyframe(mask_id, sub_mask_id, frame?)` | snapshot a **shape** sub-mask's geometry (centre/radii/rotation, endpoints, brush points) as a keyframe at `frame` (default: current). The engine interpolates the geometry per frame on scrub/playback/export — hand-track a mask SAM can't follow. Geometry only; tracked sub-masks can't be keyframed (D-034) |
+| `list_mask_keyframes(mask_id, sub_mask_id)` | the sub-mask's geometry keyframes `[{frame, params}]` (D-034) |
+| `clear_mask_keyframe(mask_id, sub_mask_id, frame)` | remove one keyframe; the last one removed → static mask (D-034) |
+| `clear_mask_keyframes(mask_id, sub_mask_id)` | remove all keyframes → static mask (D-034) |
 | `track_subject(sub_mask_id, mode="fast")` | propagate a subject sub-mask across the whole clip |
 | `set_mask_adjust(mask_id, **knobs)` | grade *through* a mask — same knobs as `set_primary` |
 | `invert_mask(sub_mask_id)` | grade the outside instead of the inside |

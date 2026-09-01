@@ -76,7 +76,18 @@ bundle); drag-drop reorder; copy-grade-to-any-shot picker (v1 = to the next
 shot); auto-load each shot's `grade.json` on add; stills as shots. Detail:
 `docs/notes/multi-shot.md`.
 
-Then: multi-subject batch tracking (D-017), mask keyframes, agent eval harness.
+Then: multi-subject batch tracking (D-017), ~~mask keyframes~~ **[x] mask
+keyframes (D-034, 2026-09-02)** — a shape sub-mask carries
+`parameters.chromaKeyframes` (`[{frame, params}]`); the engine interpolates its
+geometry per source frame at render time (one hook in `generate_sub_mask_bitmap`,
+mirroring D-019), so it glides on scrub / playback / export. Linear scalars,
+shortest-arc rotation, brush points lerp-or-snap. New `chroma/keyframes.rs`
+(14 tests) + `utils/maskKeyframes.ts` + `components/chroma/MaskKeyframeBar.tsx`
+(◆ button + diamond track) + interpolated canvas overlay + drag-writes-key. MCP:
+`add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` /
+`clear_mask_keyframes` (27 → 31). Deferred: grade-adjustment keyframing (separate
+item), easing handles, keyframing mode/invert, a full dope sheet. Detail:
+`docs/notes/mask-keyframes.md`. — then the agent eval harness.
 Then Phase 4 release (packaging/signing, external-reader docs + README + demo,
 decide name/license/headline — D-002/D-007/D-010).
 
@@ -190,7 +201,10 @@ decide name/license/headline — D-002/D-007/D-010).
 - [ ] `color-matcher` → reference match returns a CDL/curve fragment
 - [x] **Depth haze preset** (D-024, 2026-09-01) — one action, depth-weighted desat +
       black-lift + dehaze + background defocus (per-mask blur, D-027). `docs/notes/depth-haze.md`
-- [ ] Mask keyframes in the data model + GUI handles
+- [x] Mask keyframes in the data model + GUI handles (D-034, 2026-09-02) —
+      `parameters.chromaKeyframes`, interpolated at render time; `MaskKeyframeBar`
+      (◆ button + diamond track) + interpolated overlay + drag-writes-key + 4 MCP
+      tools. `docs/notes/mask-keyframes.md`
 
 **Checkpoint:** click "isolate subject" → tracked matte that holds through hand gestures; "add haze" → depth-graded background separation.
 
