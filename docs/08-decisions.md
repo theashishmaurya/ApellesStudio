@@ -132,6 +132,8 @@ decision. Lives in a future `CONTRIBUTING`.
   ONNX is "too painful" — this is the first such case.
 - The sidecar (`ai/`) is now on the v1 path (was downgraded). Still local, still free.
 - RapidRAW's SAM 1 stays for its existing click-mask feature; our subject mask is new.
+- **Edge quality** — SAM 2 alone staircases at 4K; the matte is finished with a ViTMatte
+  refine pass. See **D-016**.
 
 ## D-013 — AI relight (IC-Light) — v3, bake-step only
 **open — v3, not before**
@@ -185,6 +187,31 @@ decision. Lives in a future `CONTRIBUTING`.
   playback needs a persistent `-f rawvideo` pipe or a pre-rendered proxy — a later layer,
   the CLI approach doesn't block it.
 - **Overridable:** `CHROMA_FFMPEG` / `CHROMA_FFPROBE` env vars for a pinned/bundled binary.
+
+## D-016 — Subject matte: SAM 2 → trimap → ViTMatte
+**decided (2026-09-01) — worklog in [notes/matte-edge-pipeline](notes/matte-edge-pipeline/README.md)**
+
+- **Context:** SAM 2's mask decoder is 256×256 internally → a ~15 px staircase on the
+  subject edge at 4K. Feather can't fix it (turns steps into blur). This is the core
+  feature (the "hands problem"), so the edge has to be clean.
+- **Options:** (a) accept it / feather; (b) "Matte Finesse" — guided-filter edge refine,
+  the Resolve Magic Mask approach; (c) bigger SAM (base/large) — *rejected, same 256 px
+  decoder, no edge gain*; (d) SAM-HQ / HQ-SAM2; (e) RobustVideoMatting standalone;
+  (f) SAM coarse mask → trimap → **ViTMatte** (the Adobe "Refine Edge" approach).
+- **Choice:** (f). Tested all three viable paths on a worst-case frame (underexposed, low
+  edge contrast). Finesse-only failed — the guided filter can't lock onto a weak luma
+  edge. ViTMatte (`vitmatte-small`, ~100 MB) over the trimap unknown-band produced a true
+  alpha that follows the real garment line. RVM rejected because it's person-only and
+  takes no prompt — SAM + ViTMatte keeps "select anything by box/click" *and* gets the
+  clean edge.
+- **Pipeline:** `YOLO box → SAM 2.1 (~400ms) → erode/dilate trimap → ViTMatte (~2.8s)`,
+  all in the `ai/` sidecar on MPS, local, no network. `/segment` refines by default;
+  `refine: false` returns the raw SAM mask.
+- **Consequences:** `transformers` + `opencv-contrib-python` added to `ai/requirements.txt`.
+  `vitmatte-small` auto-downloads on first `/segment`. Video path (`/track`) will refine
+  per propagated frame — ~3 s/frame is fine for a bake, not for live scrub (proxy/cache
+  layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
+  is short on hair/fine detail in real use.
 
 ## D-010 — Project name
 **open**

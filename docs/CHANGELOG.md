@@ -33,3 +33,7 @@ _(none — pre-v1)_
 - **2026-09-01** — SAM 2 subject mask working (D-012 → Python sidecar, `ai/`,
   `ultralytics` on MPS). Clean silhouette matte on the 4K test frame — the ellipse's
   hands problem is solved. `/segment` supports box + multi-point (+/−) prompts.
+- **2026-09-01** — Matte edge refine (**D-016**): SAM 2's 256px decoder staircases at 4K;
+  guided-filter finesse (the Resolve approach) failed on the low-contrast test shot; added
+  a trimap → **ViTMatte** stage → clean edge. Worklog + before/after in
+  `docs/notes/matte-edge-pipeline/`. `transformers` + `opencv-contrib-python` added.

@@ -3,3 +3,5 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 pillow>=10
 numpy>=1.26
+opencv-contrib-python>=4.10
+transformers>=4.40,<5
