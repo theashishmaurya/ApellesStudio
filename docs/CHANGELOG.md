@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-01** — **`grade.json` save/load + versioned schema (D-025)** — "the grade is
+  code". New `engine/src-tauri/src/chroma/grade.rs` (pure JSON+fs, no GPU/store):
+  `chroma_save_grade` / `chroma_load_grade`. v1 `grade.json` is a **versioned wrapper**
+  around RapidRAW's `adjustments` — `{schema:"chroma.grade/1", shot:{source,width,height,
+  fps,frameCount,colorSpace,reference}, adjustments:{…}, notes}` — NOT `docs/06`'s ordered
+  `stack` (that's the v2 node graph, D-005; `docs/06` rewritten, `stack` kept under "v2").
+  Mask mattes externalized so the JSON stays diff-able: static `maskDataBase64` →
+  `<name>.mattes/<subId>.png` + `{"$matte"}`, `chromaTrackDir` → `{"$trackDir"}`
+  (referenced, not copied — moving a project needs `.chroma/mattes/` too). Load reverses
+  it + a `chroma.grade/<major>` gate (v1 identity migration stub; rejects newer/unknown).
+  Frontend `useChromaControl` ops `get_grade` / `save_grade` / `load_grade` (load →
+  `setAdjustments(() => normalizeLoadedAdjustments(g.adjustments))` + `bumpFrameNonce`;
+  **v1 does not auto-switch clips** — flags a `shot.source` mismatch, applies anyway).
+  MCP: 3 tools. Engine edits: `chroma/mod.rs` +2, `lib.rs` +2; `cargo check` +
+  `cargo test chroma::grade` (3/3) clean. Verified live against the 1080×1920 talking-head
+  clip: `set_primary` + subject mask → `save_grade` → a 25 KB `grade.json` (schema tag,
+  `{"$matte"}`/`{"$trackDir"}` refs, a `.mattes/` dir of 1080×1920 grayscale PNGs);
+  one-knob change → one-line `git diff`; neutralize → `load_grade` → the grade + 3 masks
+  (incl. a tracked one) come back, `inspect_color` deterministic across repeats; tracked
+  `$trackDir` resolved to the clip's 527-frame matte folder. Detail: `docs/notes/grade-json.md`.
 - **2026-09-01** — **Depth-haze preset (D-024)**. `apply_haze({amount?, protect_subject?})`
   / an "Add depth haze" button / `useAiMasking.handleAddDepthHaze` → a "Depth Haze" mask:
   a full-range `ai-depth` sub-mask **inverted** so the matte value tracks distance, graded

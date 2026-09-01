@@ -90,7 +90,12 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 |---|---|---|
 | `export` | `kind` (prores\|h264\|cube), `path?`, `from_frame?`, `to_frame?`, `quality?` | resolved path + frame count + elapsed; `cube` warns when masked/local layers were dropped (3D LUT is global-only). Video export runs in the background — the tool polls to completion. Default `path` = beside the source as `<name>.graded.mov / .mp4 / .cube`. A local file the user asked for → no confirm-before-write, but the resolved path is always returned. |
 
-`grade_json` export waits on the `grade.json` schema (roadmap item 5).
+### `grade.json` — the grade is code  — *shipped 2026-09-01, D-025*
+| Tool | Params | Returns |
+|---|---|---|
+| `get_grade` | — | the full v1 grade document: `{schema:"chroma.grade/1", shot:{source,width,height,fps,frameCount,colorSpace,reference}, adjustments:{…}, notes}`. Reflects the user's manual edits. |
+| `save_grade` | `path?` | writes `grade.json` (default: beside the source clip as `<name>.grade.json`). Static mask mattes → a sibling `<name>.mattes/` dir (`{"$matte":…}` ref); a tracked-matte folder is referenced, not copied. Returns `{path, matteFiles, trackDirs}`. Diff-able — a one-knob change is a one-line diff. Local file the user asked for → no confirm. |
+| `load_grade` | `path` | reads + applies a `grade.json` (mattes inlined, `$trackDir` resolved, schema migrated; a newer major is rejected). **v1 does not auto-switch clips** — a `shot.source` mismatch is returned as `sourceMismatch` and the grade is applied anyway. Returns the rendered frame + scopes + `{applied, shot, sourceMismatch}`. |
 
 ## v1 subset — shipping now via the control server (D-020)
 
@@ -101,9 +106,12 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 captured preview (`engine/src/utils/scopes.ts`), not WGSL; every mutating op
 response also carries the compact `scopes` summary now; `export` /
 `export_progress` **[D-022, shipped 2026-09-01]** — ProRes/H.264 clip render +
-`.cube` primary bake, `engine/src-tauri/src/chroma/export.rs`. `inspect` (frame
-with grid + burned-in frame number) and `screenshot` (native-res crop) are still
-follow-ups. The control server's op registry makes each a one-liner to add.
+`.cube` primary bake, `engine/src-tauri/src/chroma/export.rs`. `get_grade` /
+`save_grade` / `load_grade` **[D-025, shipped 2026-09-01]** — the git-committable
+grade document (`engine/src-tauri/src/chroma/grade.rs`), a versioned wrapper
+around `adjustments` with externalized mattes. `inspect` (frame with grid +
+burned-in frame number) and `screenshot` (native-res crop) are still follow-ups.
+The control server's op registry makes each a one-liner to add.
 
 ## The loop, illustrated
 

@@ -46,8 +46,15 @@ Next, in order:
    "Add depth haze" button, MCP `apply_haze({amount?, protect_subject?})`. Also
    landed: `useChromaControl` mounted app-level + `open(path)` op. Detail:
    `docs/notes/depth-haze.md`.
-5. **`grade.json` schema + load/save** — lock "grade is code" (the differentiator).
-   Migrate RapidRAW's `adjustments` ⇄ the schema.
+5. [x] **`grade.json` schema + load/save** (D-025, 2026-09-01) —
+   `engine/src-tauri/src/chroma/grade.rs`. v1 = a **versioned, documented wrapper**
+   around RapidRAW's `adjustments` (`{schema:"chroma.grade/1", shot, adjustments,
+   notes}`), NOT `docs/06`'s ordered `stack` (that's the v2 node graph, D-005).
+   Mask mattes externalized: static → `<name>.mattes/<subId>.png` (`{"$matte"}`),
+   tracked → `{"$trackDir"}` (referenced, not copied). `chroma_save_grade` /
+   `chroma_load_grade` + a `chroma.grade/<major>` migration gate. Frontend
+   `get_grade` / `save_grade` / `load_grade` ops; MCP 3 tools. One grade per open
+   clip — full session/shot model still open. Detail: `docs/notes/grade-json.md`.
 
 Scope-first MCP discipline (rule 0 in doc 07) is wired into the tool descriptions
 (done alongside item 1): server instructions + `inspect_color` + every mutating
@@ -84,7 +91,9 @@ tool + `mcp/README.md`.
 - [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Naive stepper (~5-10fps), no proxy yet.
 - [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
 - [ ] Smooth playback — persistent decode pipe or pre-rendered proxy
-- [ ] Shot / session model + `grade.json` load/save/validate
+- [~] Shot / session model + `grade.json` load/save/validate — **`grade.json` done**
+      (D-025, `chroma/grade.rs`: save/load, versioned schema, matte externalization).
+      Full session/shot model (multiple shots, in/out, shot strip) still open.
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [ ] Shot strip (selector)
 - [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)

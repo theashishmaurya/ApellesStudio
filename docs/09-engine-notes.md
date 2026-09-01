@@ -336,5 +336,31 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   (deferred). Depth Anything V2 ONNX output is bright=near; full-range + invert makes the
   matte value track distance. Detail: `docs/notes/depth-haze.md`.
 
+- **2026-09-01 PM** · **`grade.json` save/load (D-025)** — new
+  `src-tauri/src/chroma/grade.rs` (self-contained: `chroma_save_grade`,
+  `chroma_load_grade`, `SaveResult`, schema helpers, 3 unit tests). Pure
+  `serde_json` + `std::fs` — **no GPU, no `AppState`, no store**. Save takes the
+  v1 wrapper doc the frontend assembled (`{schema, shot, adjustments, notes}`,
+  `adjustments` = the live grade), walks
+  `adjustments.masks[].subMasks[].parameters`: each static matte
+  (`maskDataBase64` / `mask_data_base64`) → `<gradeName>.mattes/<subMaskId>.png` +
+  `{"$matte": "<rel>"}`; `chromaTrackDir` → `{"$trackDir": "<rel-or-abs>"}`
+  (referenced, not copied — D-019); pretty-print. Load reverses it + a
+  `chroma.grade/<major>` migration gate (v1 identity stub; hard-errors
+  newer/unknown major).
+  · Upstream-file edits (minimal): `chroma/mod.rs` +2 (`pub mod grade;` + doc
+  line), `lib.rs` +2 (`generate_handler!`). `cargo check --no-default-features`
+  clean; `cargo test chroma::grade` 3/3.
+  · Frontend (nothing else in `src-tauri`): `src/hooks/useChromaControl.ts` —
+  `assembleGrade()` + `defaultGradePath()` helpers, ops `get_grade` / `save_grade`
+  / `load_grade` (load → `setAdjustments(() =>
+  normalizeLoadedAdjustments(grade.adjustments))` + `bumpFrameNonce`; `get_grade`
+  + `save_grade` are READ_ONLY). `mcp/server.py` — 3 tools.
+  · v1 limitations: one grade per open clip (no multi-shot session model);
+  `load_grade` does not switch clips — it flags a `shot.source` mismatch and
+  applies anyway; a project move needs the clip's `.chroma/mattes/` dir (the
+  `$trackDir` target) alongside `grade.json` + its `.mattes/`. Detail:
+  `docs/notes/grade-json.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

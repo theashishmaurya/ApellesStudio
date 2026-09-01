@@ -474,3 +474,42 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   required Rust rebuild restarts the app and drops the open clip, and the bridge was only
   alive in the editor view) + added an `open(path)` op/tool. Detail:
   `docs/notes/depth-haze.md`. Divergence in doc 09.
+
+## D-025 — `grade.json` v1 = a versioned wrapper around `adjustments`, not the ordered `stack`; mattes externalized
+**decided (2026-09-01) · built (2026-09-01)**
+
+- **Context:** roadmap "Now" item 5 — lock "the grade is code" (the differentiator):
+  save/load a git-committable grade document. `docs/06` had a DRAFT schema: an ordered
+  `stack[]` of typed entries (`primary` / `curve` / `wheels` / `lut` / `masked` /
+  `compound`) + a `masks{}` map + `meta.history`. But the canonical grade at runtime is
+  RapidRAW's flat `adjustments` blob, owned by the frontend `useEditorStore` (D-020), and
+  the renderer reads *that*.
+- **Options:**
+  (a) build `docs/06`'s ordered `stack` now — a lossy two-way map `stack ⇄ adjustments`
+      maintained on every save/load/edit;
+  (b) **a versioned, documented wrapper** — `{schema, shot, adjustments, notes}` — that
+      embeds `adjustments` verbatim and only adds a schema tag, shot context, and matte
+      externalization;
+  (c) move the grade doc into Rust `AppState` and make *it* canonical (rejected by D-020
+      as too invasive; also re-opens the divergence problem).
+- **Choice:** (b). The `stack` model is real and still the plan, but it is the **v2 node
+  graph's** data model (D-005) — "ordered non-destructive layers" + "parallel/serial/layer
+  mixer". Re-modelling in v1 buys the user nothing and costs a fragile mapping layer +
+  two sources of truth. v1 ships the honest wrapper; `chroma.grade/2` carries the `stack`
+  when the node graph lands. `docs/06` rewritten; the `stack` sketch kept under "## v2".
+- **Matte externalization:** a mask matte is MB of base64 → inlining kills the diff. On
+  save, `subMasks[].parameters.maskDataBase64` (a static PNG) → written to
+  `<gradeName>.mattes/<subMaskId>.png`, replaced by `{"$matte": "<relpath>"}`; a
+  `chromaTrackDir` (per-frame matte folder, D-019) → `{"$trackDir": "<rel-or-abs>"}`,
+  **referenced not copied**. Load reverses it. Caveat: moving a project needs the clip's
+  `.chroma/mattes/` dir too (documented in `docs/06` + the `save_grade` tool text).
+- **Schema gate:** `chroma.grade/<major>`; `load` migrates `major==1|missing` (identity
+  stub), hard-errors a newer or unknown major.
+- **Shape of the impl:** `engine/src-tauri/src/chroma/grade.rs` (new, pure JSON+fs, no
+  GPU, no store) — `chroma_save_grade` / `chroma_load_grade`. Frontend `useChromaControl`
+  ops `get_grade` / `save_grade` / `load_grade` (load → `setAdjustments(() =>
+  normalizeLoadedAdjustments(g.adjustments))` → `bumpFrameNonce`). MCP: 3 tools. **v1 does
+  not auto-switch clips** — `load_grade` flags a `shot.source` mismatch and applies anyway.
+- **Consequences:** upstream footprint `pub mod grade;` + 2 `generate_handler!` lines.
+  Full session/shot model (multiple shots, in/out, a shot strip) is still open — this is
+  one grade per open clip. Detail: `docs/notes/grade-json.md`. Divergence in doc 09.

@@ -156,6 +156,55 @@ def get_state() -> str:
 
 
 @mcp.tool()
+def get_grade() -> str:
+    """The full grade.json document — the git-committable grade ("the grade is
+    code", D-025). A versioned wrapper: {schema: "chroma.grade/1", shot: {source,
+    width, height, fps, frameCount, colorSpace, reference}, adjustments: {...the
+    live RapidRAW grade + masks...}, notes}. Reflects the user's manual edits.
+    Use `save_grade` to write it to disk, `load_grade` to apply one."""
+    import json
+
+    return json.dumps(_op("get_grade"), indent=2, default=str)
+
+
+@mcp.tool()
+def save_grade(path: str | None = None) -> str:
+    """Write the current grade to a grade.json file on disk. Omit `path` to save
+    beside the source clip as <name>.grade.json.
+
+    Static mask mattes are externalised to a sibling <name>.mattes/ folder (the
+    JSON keeps a {"$matte": ...} reference), and a tracked-matte folder is
+    referenced, not copied — so moving the project needs its .chroma/mattes/ dir
+    too. The result is small and diff-able: commit grade.json + its .mattes/ dir
+    to the project repo. A one-knob change is a one-line diff.
+
+    Returns {path, matteFiles, trackDirs}. It is a local file the user asked for
+    — no confirm-before-write; the resolved path is always returned."""
+    import json
+
+    args = {"path": path} if path else {}
+    env = _op("save_grade", **args)
+    res = env.get("result") or {}
+    return json.dumps(
+        {"ok": env.get("ok"), "error": env.get("error"), **res}, indent=2, default=str
+    )
+
+
+@mcp.tool()
+def load_grade(path: str) -> list:
+    """Apply a grade.json (ABSOLUTE path) — externalised mattes are inlined and a
+    tracked-matte folder is resolved. Runs a schema migration; a grade.json from
+    a newer major version is rejected with a clear error.
+
+    v1 does NOT auto-switch clips: if the doc's `shot.source` differs from the
+    open clip you get a `sourceMismatch` warning in the result — open the right
+    clip first (`open`) for the grade to land on the intended footage.
+
+    Returns the rendered frame + scopes + {applied, shot, sourceMismatch}."""
+    return _result(_op("load_grade", path=path))
+
+
+@mcp.tool()
 def list_masks() -> str:
     """Every mask container and its sub-masks: ids, type, mode, visible/invert,
     per-mask adjustments, and whether a sub-mask is tracked across the clip."""
