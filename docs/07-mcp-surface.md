@@ -1,36 +1,48 @@
 # 07 — MCP tool surface
 
-Status: **draft**. Names/params will firm up in Phase 3.
+Status: **draft**. The v1 subset ships via the in-app control server (D-020,
+`docs/notes/control-server/SPEC.md`); the full surface below firms up over Phase 3.
 
 ## Design rules
 
+0. **Grade by the numbers, not the vibe.** The agent's default loop is `render →
+   inspect_color → reason about the measurement → adjust → re-inspect`. Technical
+   calls (balance, black/white point, casts, clipping, matte edges) are scope-driven;
+   the rendered image is for *creative* judgment, which is often deferred to the human.
+   Tool text forbids "looks good" without a cited scope value or a named full-res
+   region. Full rationale + toolkit: `docs/notes/agent-visual-feedback.md`.
 1. **Tools map to `grade.json` fields, not to GUI buttons.**
-2. **Every mutating tool returns `{ rendered_frame_png, scopes }`** at the current
-   playhead (or a named frame) — the agent's eyes. This is the `apply → inspect → adjust`
-   loop proven in the Palmier trials.
-3. **Reads are cheap and side-effect-free.** `render_still`, `read_scopes`, `get_grade`.
+2. **Every mutating tool returns `{ rendered_frame_png, scopes, gap? }`** at the current
+   playhead (or a named frame) — the agent's eyes. `apply → inspect → adjust`, proven
+   in the Palmier trials.
+3. **Reads are cheap and side-effect-free.** `render_still`, `inspect_color`, `get_state`.
 4. **Human handoff is a tool**, not a dead end.
 5. **Deterministic.** Same doc + same frame ⇒ same output.
 6. Merge semantics like Palmier's `apply_color`: pass only the knobs you want to change;
-   the rest are preserved. `reset: true` to start a layer from neutral.
+   the rest are preserved. `reset: true` to start a layer from neutral. Mutating tools
+   echo the resulting grade in Chroma's own vocabulary — pasteable to copy a grade.
+7. **One shared state (D-020).** Every op is a real frontend action; the UI and the
+   agent never diverge. Reads reflect the user's manual edits.
 
 ## Tools
 
-### Session / shots
+### Session / inventory  — *call `get_state` once at session start; re-read after an out-of-band change (the user edited by hand). Modelled on Palmier's `get_media` + `get_timeline`.*
 | Tool | Params | Returns |
 |---|---|---|
-| `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` |
-| `list_shots` | — | shots + grade summary each |
-| `select_shot` | `shot_id` | `{frame, scopes}` |
-| `set_playhead` | `frame` | `{frame, scopes}` |
-| `get_grade` | `shot_id?` | the `grade.json` |
+| `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Chroma vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]` |
+| `open` | `path` | loads a file, `{frame, scopes}` |
+| `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` — Phase 1 shot model |
+| `list_shots` / `select_shot` | … | Phase 1 |
+| `seek` | `frame` | `{frame, scopes}` |
 
-### Render / inspect (read-only)
+### Render / inspect (read-only)  — *the agent's eyes. `inspect_color` is the primary one — grade by the numbers.*
 | Tool | Params | Returns |
 |---|---|---|
-| `render_still` | `frame?`, `res?` (proxy\|full) | PNG |
-| `render_range` | `from`, `to`, `step` | PNG frames (for a transition/motion check) |
-| `read_scopes` | `frame?` | waveform, RGB parade, vectorscope, histogram, clip %, mean/per-channel, hue histogram |
+| `inspect` | `frame?`, `mask_id?` | composited frame as an image — **frame number burned in**, a 0–1 coordinate grid, and which masks are active. (= Palmier `inspect_timeline`) |
+| `inspect_color` | `frame?`, `reference?` | black/white points, clip %, per-channel means, shadow/mid/highlight colour tilt, saturation, warm–cool + green–magenta balance, hue histogram — **plus the rendered frame**. With `reference` (an image id): also its scopes and the **subject − reference gap** + hints that map onto knobs. The match loop: `set_* → inspect_color(reference) → read the gap → adjust → repeat`. (= Palmier `inspect_color`) |
+| `sample` / `sample_region` | `x,y` or `rect`, `frame?` | RGB readout — check a known-neutral wall is neutral |
+| `screenshot` | `crop?`, `zoom?` | the app canvas at native res, croppable — for banding / noise / **matte halo** inspection at 100% |
+| `render_still` / `render_range` | `frame?` / `from,to,step` | PNG(s) — motion / transition / temporal-consistency check |
 | `inspect_mask` | `mask_id`, `frame?` | frame with the mask tinted (non-destructive) |
 
 ### Primary grade
@@ -78,10 +90,17 @@ Status: **draft**. Names/params will firm up in Phase 3.
 |---|---|---|
 | `export` | `kind` (cube\|prores\|h264\|grade_json), `path?`, `range?` | file path; `cube` warns if masked/depth layers were dropped |
 
+## v1 subset — shipping now via the control server (D-020)
+
+`get_state`, `inspect` / `inspect_color`, `set_primary`, `set_curve`, `set_color_grade`,
+`seek`, `list_masks`, `add_subject_mask`, `track_subject`, `set_mask_adjust`,
+`invert_mask`, `delete_mask`. Everything else here is a follow-up — the control
+server's op registry makes each a one-liner to add.
+
 ## The loop, illustrated
 
 ```
-read_scopes()                       → "flat, warm cast, subject and bg same brightness"
+inspect_color()                     → "flat, warm cast, subject and bg same brightness"
 match_to_reference("refs/look.png")  → {frame, scopes, gap: 8.1 → 2.3}
 add_subject_mask("person")           → mask_id=m1 (tracking…)
 mask_status(m1)                      → ready
