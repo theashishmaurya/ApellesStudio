@@ -45,9 +45,15 @@ composition ops, depth-haze, `grade.json`. Round 2, in order:
    respawn, no per-frame PNG round-trip. Decode throughput ~1.6 → ~39 fps on C019.
    `chroma_seek` uses it (falls back to `video::decode_frame` on error). Export's
    `spawn_decoder` also seeks now (`-ss`+`-copyts`+timestamp `select`) so a
-   `from > 0` range no longer decodes from frame 0, matte-safe. Still open: the
-   per-frame frontend regrade + IPC (the remaining fps ceiling); proxy files
+   `from > 0` range no longer decodes from frame 0, matte-safe. Proxy files
    deferred. Detail: `docs/notes/smooth-playback.md`.
+   - [x] **Frontend regrade ceiling closed** (D-031, 2026-09-02) — the "per-frame
+     frontend regrade + IPC" D-030 left open. Fused `chroma_play_frame` command
+     (scaled decode + swap + one preview job = one IPC call), ~1280 px playback
+     grade res (ffmpeg does the downscale, not the CPU), rAF wall-clock loop in
+     `ChromaTimeline`. Headless harness on C019: **36.5 fps** at 1280 px (was
+     14.5 fps at 4K); 50.9 fps at 960 px. Full-res on pause; scrub unchanged.
+     Detail: `docs/notes/playback-30fps.md`.
 
 Round 3 (after): `request_human` + a GUI "agent activity" feed (per-change diff +
 undo), multi-shot session model + shot strip, multi-subject batch tracking (D-017),
@@ -132,8 +138,9 @@ external-reader docs + README + demo, decide name/license/headline — D-002/D-0
 - [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Decode via the persistent pipe (D-030); frontend stepper + per-frame regrade unchanged.
 - [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
 - [x] Smooth playback — persistent sequential-decode pipe (D-030, 2026-09-02;
-      `src/chroma/decode_pipe.rs`). Proxy files deferred; frontend regrade/IPC per
-      frame still the fps ceiling.
+      `src/chroma/decode_pipe.rs`) + fused `chroma_play_frame` command / reduced
+      playback res / rAF wall-clock loop (D-031, 2026-09-02) — **36.5 fps on C019
+      4K** in the headless harness. Proxy files deferred.
 - [~] Shot / session model + `grade.json` load/save/validate — **`grade.json` done**
       (D-025, `chroma/grade.rs`: save/load, versioned schema, matte externalization).
       Full session/shot model (multiple shots, in/out, shot strip) still open.

@@ -463,5 +463,42 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   spawns. Frontend regrade + IPC per frame is now the ceiling — still open.
   Detail: `docs/notes/smooth-playback.md`.
 
+- **2026-09-02** · **real-time playback / fused play-frame command (D-031)** — new
+  `src-tauri/src/chroma/playback.rs` (self-contained: `chroma_play_frame` command,
+  `playback_dim`, `PLAYBACK_LONG_EDGE`, the headless timing harness + a
+  `playback_dim` unit test).
+  · `chroma/decode_pipe.rs` (all new code, no behaviour change to D-030's paths):
+  `scale_target(src_w, src_h, long_edge) -> Option<(w,h)>` (even-dim downscale
+  target), `FramePipe::open_scaled` / `frame_scaled` / module `playback_frame_scaled`
+  — an optional `scale: Option<(u32,u32)>` passed to `ffmpeg -vf
+  scale=W:H:flags=fast_bilinear`; a scale change joins path-change / backward /
+  long-jump as a respawn trigger. D-030's `open` / `frame` / `playback_frame` are
+  now `..._scaled(.., None)` wrappers, `#[allow(dead_code)]` (only the D-030 tests
+  call them). New tests: `scale_target_math`, `scaled_pipe_is_sequential_and_downscaled`.
+  · `chroma/commands.rs` — `chroma_seek`'s body extracted verbatim into
+  `pub async fn seek_and_install(frame, scale_long_edge: Option<u32>, state: &tauri::State<..>)`;
+  `chroma_seek` is now a one-line wrapper (`seek_and_install(frame, None, &state)`).
+  The decode call uses `playback_frame_scaled` (scale derived from
+  `scale_long_edge` via `scale_target`), fallback to `video::decode_frame`
+  unchanged. `install_frame` still gets the native `VideoInfo` (so
+  `chroma_video_info` keeps reporting native dims to the timeline); only
+  `original_image` is the scaled frame, and only during playback.
+  · Upstream-file edits (minimal): `chroma/mod.rs` +2 (`pub mod playback;` + doc
+  line), `lib.rs` +1 (`chroma::playback::chroma_play_frame` in `generate_handler!`).
+  No Cargo change. `chroma_play_frame` reuses the existing `PreviewJob` /
+  `preview_worker_tx` path — it builds one job (`is_interactive: false`,
+  `target_resolution: Some(dim)`) exactly like the `apply_adjustments` command and
+  awaits the oneshot.
+  · Frontend: `src/components/panel/editor/ChromaTimeline.tsx` — the `setInterval`
+  playback effect + `seekInFlight`/`pending` mutex replaced by a
+  `requestAnimationFrame` wall-clock loop calling `chroma_play_frame` (skips
+  missed frames, one in flight at a time); a second effect settles full-res on
+  pause via the existing `goToFrame`. `useEditorStore` imported for the live
+  adjustments. Scrub (`doSeek` → `chroma_seek` + `bumpFrameNonce`) unchanged.
+  · `cargo check --no-default-features` clean; `cargo test --no-default-features
+  chroma::` 18/18. Harness on C019: **36.5 fps** @ 1280 px (grade 26.6 ms +
+  scaled decode 0.83 ms), vs 14.5 fps on the old 4K path. Detail:
+  `docs/notes/playback-30fps.md`.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

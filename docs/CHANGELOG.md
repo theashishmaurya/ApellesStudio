@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Real-time playback ≥30 fps (D-031, round-2 item 5 tail)**.
+  Closes the "frontend regrade + IPC per frame" ceiling D-030 named. New
+  `engine/src-tauri/src/chroma/playback.rs::chroma_play_frame` — one IPC call
+  that decodes (scaled, via the D-030 pipe's new `-vf scale` path), swaps the
+  base frame, and dispatches a single preview job at ~1280 px playback res,
+  replacing per-frame `chroma_seek` + `bumpFrameNonce` + `apply_adjustments`
+  (two IPC calls + a React round-trip + a full-4K grade + a ~40 ms CPU
+  downscale). `ChromaTimeline.tsx` playback is now a `requestAnimationFrame`
+  wall-clock loop (skips missed frames, no `setInterval` drift, no frame-drop
+  mutex); pause settles full-res; scrub unchanged. `decode_pipe.rs` gained
+  `scale_target` / `open_scaled` / `frame_scaled` / `playback_frame_scaled`
+  (D-030's native fns are now `..._scaled(.., None)` wrappers, tests untouched);
+  `chroma_seek`'s body extracted to `commands::seek_and_install`. Upstream
+  edits: `chroma/mod.rs` +2, `lib.rs` +1. `cargo check --no-default-features`
+  clean, `cargo test --no-default-features chroma::` 18/18. Headless timing
+  harness (`playback_throughput_c019`) on C019 4K/24p, real WGSL grade via
+  `render_core::render`: **27.4 ms/frame → 36.5 fps** at 1280 px (was
+  68.8 ms → 14.5 fps at 4K), 19.6 ms → 50.9 fps at 960 px. Manual
+  scrub/play/tracked-matte smoke test still open. Detail:
+  `docs/notes/playback-30fps.md`.
+
 - **2026-09-02** — **Smooth playback: persistent decode pipe (D-030, round-2 item 5)**.
   New `engine/src-tauri/src/chroma/decode_pipe.rs` — one long-lived
   `ffmpeg -ss <(start-0.5)/fps> -i clip -f rawvideo -pix_fmt rgb24 -` per clip

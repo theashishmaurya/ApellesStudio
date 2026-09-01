@@ -86,12 +86,12 @@ ffmpeg -ss <(from/fps)-1.0> -copyts -i <clip>
 
 ## Not done (still open)
 
-- **The frontend regrade + IPC per playback frame.** Each seeked frame still runs
-  a full-res WGSL grade pass and ships a JPEG over IPC. That's the remaining
-  ceiling on fps for a *heavy* grade. Options for later: a lower-res playback
-  proxy render, or a decode-ahead ring buffer feeding the grade. Not in this pass
-  — the decode pipe is the bigger, lower-risk win and it's isolated to
-  `src/chroma/`.
+- ~~**The frontend regrade + IPC per playback frame.**~~ **Closed by D-031** —
+  `docs/notes/playback-30fps.md`. A fused `chroma_play_frame` command (decode
+  *scaled* via this pipe + swap + one preview job, one IPC call), a reduced
+  ~1280 px playback grade res (the ffmpeg scaler does the downscale, not the
+  CPU), and a `requestAnimationFrame` wall-clock loop in `ChromaTimeline`.
+  Headless harness: **36.5 fps** at 1280 px on C019 (was 14.5 fps at 4K).
 - **Proxy files** (option B) — deferred. Only worth it if decode stays the
   bottleneck after the pipe, which it shouldn't for v1's single-clip talking-head
   workflow.

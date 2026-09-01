@@ -718,3 +718,64 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   vs **2.9 s**. App not driven manually (a `tauri dev` was already running) —
   Rust + ffmpeg paths verified instead; a manual scrub/play smoke test is the one
   open check. Divergence in doc 09. Detail: `docs/notes/smooth-playback.md`.
+- **Follow-up:** the "frontend regrade + IPC" ceiling is **closed by D-031**.
+
+## D-031 — Real-time playback = a fused decode+grade command at reduced res, driven by a wall-clock rAF loop (not per-frame `chroma_seek` + `apply_adjustments`)
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-2 item 5 tail. D-030 fixed *decode* (~1.6 → ~39 fps raw) but
+  named the real ceiling: per playback frame the frontend did **two** IPC calls
+  (`chroma_seek` then `apply_adjustments`) with a React `frameNonce` round-trip
+  between them, a frame-dropping `seekInFlight` mutex, a `setInterval` with no
+  wall-clock sync, and — because `calculateTargetRes()` snaps to the source long
+  edge for 4K footage — a **full-4K** WGSL grade *plus* a ~40 ms/frame CPU
+  `downscale_f32_image`. Headless proxy at 4K: **14.5 fps** (39 ms downscale,
+  25 ms grade, 5 ms decode).
+- **Options (per the brief):** (1) grade at ~1280 px during playback; (2) kill
+  the nonce/debounce path for playback; (3) one fused Rust command
+  (decode+swap+grade in one IPC); (4) a decode-ahead worker; (5) a
+  `requestAnimationFrame` + wall-clock frontend loop. Full table:
+  `docs/notes/playback-30fps.md`.
+- **Choice:** **1 + 2 + 3 + 5**, and do the downscale **in ffmpeg, not the CPU.**
+  Measurement drove the last part: after (1) the CPU downscale *becomes* the
+  bottleneck (39 ms > the grade), so the decode pipe grows an optional
+  `-vf scale=` and decodes straight to playback res (~0.8 ms/frame, SIMD) —
+  `AppState.original_image` is then already ≤ playback res and
+  `generate_transformed_preview` does no downscale at all.
+  - `decode_pipe.rs` +`scale_target` / `open_scaled` / `frame_scaled` /
+    `playback_frame_scaled` (an `Option<(w,h)>`; a scale change = one respawn).
+    D-030's native `open` / `frame` / `playback_frame` stay as
+    `..._scaled(.., None)` wrappers — D-030's tests untouched.
+  - new `src/chroma/playback.rs::chroma_play_frame(frame, jsAdjustments,
+    targetResolution)` — `commands::seek_and_install(frame, Some(dim), state)`
+    (the extracted `chroma_seek` body: clear per-frame caches, scaled decode,
+    swap `original_image`, set `CurrentVideo.frame` for the D-019 matte) → **one**
+    `PreviewJob` at `target_resolution = dim` → await → return its bytes. One IPC
+    call, no nonce, no React hop. The loop awaits each job before requesting the
+    next, so frame and tracked matte cannot desync; `seek_and_install` clearing
+    `cached_preview` + `gpu_image_cache` is what stops `process_preview_job`
+    reusing the prior frame's cached base (adjustments hash is constant across a
+    run — same reason `export.rs` keys `transform_hash` by frame).
+  - `ChromaTimeline.tsx` — `setInterval` + `seekInFlight` mutex + the
+    `goToFrame→doSeek→nonce` chain replaced, **for playback only**, by a rAF loop
+    against a wall clock (`want = startFrame + floor(elapsed·fps)`, skip missed
+    frames, one `invoke('chroma_play_frame')` at a time). Pause → one
+    `goToFrame(currentFrame)` re-decodes native + regrades full-res. **Scrub is
+    unchanged** (`chroma_seek` + nonce at `calculateTargetRes()`).
+  - (4) decode-ahead **not needed** — scaled decode is ~3 % of the frame budget.
+- **`PLAYBACK_LONG_EDGE = 1280`** (a `ChromaTimeline.tsx` constant). Quality at
+  rest is unchanged (pause settles full-res); nobody pixel-peeps at 30 fps.
+  Drop toward 960 (50 fps headless) if a low-end GPU can't hold 30.
+- **Verified:** `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **18/18** (new `scale_target_math`,
+  `scaled_pipe_is_sequential_and_downscaled`, `playback_dim_clamps`,
+  `playback_throughput_c019`; D-030 + export tests still green). Frontend `tsc
+  --noEmit` — only the pre-existing unrelated errors, none in `ChromaTimeline`.
+  Headless timing harness on C019 (4K/24p), 60 frames, real grade via
+  `render_core::render` @ 1280 px long edge: **27.4 ms/frame → 36.5 fps** (scaled
+  decode 0.83 ms + grade 26.6 ms), vs **68.8 ms/frame → 14.5 fps** on the old 4K
+  path; **19.6 ms → 50.9 fps** at 960 px. Clears the 30 fps bar the user asked
+  for, with margin for the IPC hop + wgpu surface present that end-to-end adds.
+  App not driven (a `tauri dev` was running); the 5-step scrub/play/tracked-matte
+  smoke test is the open human check (listed in the note). Divergence in doc 09.
+  Detail: `docs/notes/playback-30fps.md`.
