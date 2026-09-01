@@ -239,6 +239,12 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   keeps the GUI open, Claude drives it through the MCP server, both see the same live
   preview. `render_core` (D-014) still stands — it's for headless **export** and batch,
   a later path.
+- **One shared state — no divergence (like Palmier).** There is exactly one grade doc:
+  the frontend `useEditorStore`. MCP edits go through the *same* `setAdjustments` a
+  slider drag uses → the UI sliders move, the canvas re-renders, undo/history/save all
+  work. `get_grade` reads that store live, so it reflects the user's manual edits too.
+  The bridge is pull-based (MCP asks, frontend answers with current state) — same model
+  as Palmier's `inspect_color` / `get_timeline`.
 - **Shape:**
   - Rust `src/chroma/control.rs` — HTTP on `127.0.0.1:${CHROMA_CONTROL_PORT:-19788}`,
     spawned in `lib.rs` `.setup()`. Each request → `emit("chroma://request", {id, op, args})`,
