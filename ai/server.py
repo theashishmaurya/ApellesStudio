@@ -381,6 +381,7 @@ def _finish_edge(rgb, mask, quality, band):
 def _track_worker(job_id: str, req: TrackReq):
     job = _jobs[job_id]
     cap = None
+    pred = None
     try:
         cap = cv2.VideoCapture(req.video_path)
         if not cap.isOpened():
@@ -475,6 +476,18 @@ def _track_worker(job_id: str, req: TrackReq):
     finally:
         if cap is not None:
             cap.release()
+        # the video predictor holds the whole clip's memory bank + MPS tensors —
+        # drop it and hand the cache back so RSS doesn't creep across track runs
+        pred = None
+        try:
+            if DEVICE == "mps":
+                torch.mps.empty_cache()
+            elif DEVICE == "cuda":
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc
+        gc.collect()
 
 
 @app.post("/track")
