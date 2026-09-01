@@ -60,10 +60,25 @@ Round 3 (after): [x] **`request_human` + a GUI "agent activity" feed**
 one entry (summary + per-field grade diff + jump-to-here undo) in a new
 `useAgentStore`; `request_human(reason, roi?)` is a non-blocking op/tool that
 posts a banner + optional canvas ROI, cleared by the user, polled via
-`get_state().pendingHumanRequest`. Then: multi-shot session model + shot strip,
-multi-subject batch tracking (D-017), mask keyframes, agent eval harness. Then
-Phase 4 release (packaging/signing, external-reader docs + README + demo, decide
-name/license/headline — D-002/D-007/D-010).
+`get_state().pendingHumanRequest`.
+
+[x] **Multi-shot session model + shot strip** (D-033, 2026-09-02) — a
+process-global `Session { shots: Vec<Shot>, active }` in `chroma/state.rs`
+(`current_video()` unchanged, returns the active shot; `set_current_video`
+upserts by path), `chroma/session.rs` commands (list / add / set-active / remove
+/ thumbnail), a frontend `useSessionStore` (per-shot grade cache + switch/copy
+thunks) + `components/chroma/ShotStrip.tsx`, per-shot D-032 activity feeds
+(`useAgentStore.scopeToShot`), MCP `list_shots` / `set_active_shot` / `add_shots`
+(24 → 27). **Lightweight by decision** — the per-clip `grade.json` sidecar
+(D-025) is still the on-disk per-shot document; no `.chroma` project bundle.
+Deferred follow-ups: `.chroma/session.json` reopen (shot-path list, not a
+bundle); drag-drop reorder; copy-grade-to-any-shot picker (v1 = to the next
+shot); auto-load each shot's `grade.json` on add; stills as shots. Detail:
+`docs/notes/multi-shot.md`.
+
+Then: multi-subject batch tracking (D-017), mask keyframes, agent eval harness.
+Then Phase 4 release (packaging/signing, external-reader docs + README + demo,
+decide name/license/headline — D-002/D-007/D-010).
 
 ---
 
@@ -146,11 +161,11 @@ name/license/headline — D-002/D-007/D-010).
       `src/chroma/decode_pipe.rs`) + fused `chroma_play_frame` command / reduced
       playback res / rAF wall-clock loop (D-031, 2026-09-02) — **36.5 fps on C019
       4K** in the headless harness. Proxy files deferred.
-- [~] Shot / session model + `grade.json` load/save/validate — **`grade.json` done**
-      (D-025, `chroma/grade.rs`: save/load, versioned schema, matte externalization).
-      Full session/shot model (multiple shots, in/out, shot strip) still open.
+- [x] Shot / session model + `grade.json` load/save/validate — `grade.json`
+      (D-025); multi-shot `Session` + shot strip + per-shot grade/feed (D-033,
+      2026-09-02). Clip in/out points still open.
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
-- [ ] Shot strip (selector)
+- [x] Shot strip (selector) — `components/chroma/ShotStrip.tsx` (D-033, 2026-09-02)
 - [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)
 - [x] `.cube` bake of the primary grade (D-022, 2026-09-01 — `bake_primary_lut`)
 - [ ] All inherited adjustment/mask panels working against a video frame, not a still

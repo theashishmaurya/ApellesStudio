@@ -109,12 +109,21 @@ move must bring `.chroma/mattes/` too, or the tracked mask loads with no frames.
    `/Users/…/Downloads/.chroma/mattes/72ff67e8cafb` (527 frame PNGs); `seek`
    200/400 OK; re-`save_grade` keeps `$trackDir` relative (idempotent).
 
+## Relationship to the multi-shot session (D-033)
+
+`grade.json` is unchanged by the session model. It is still **the** per-shot
+document: one grade per clip, saved to `<clip>.grade.json` beside it. The session
+(D-033) adds an *ordered list of shots* + an in-memory grade cache so switching
+shots keeps each grade live without a disk round-trip — it does **not** bundle
+grades into one file, and there is no `.chroma` project format. `save_grade` /
+`load_grade` act on the **active** shot.
+
 ## Open / follow-ups
 
-- One grade per **open clip** — no multi-shot session model, no shot strip, no
-  in/out. That's the rest of the roadmap "Shot / session model" line.
-- `load_grade` doesn't switch clips (v1) — only warns. Auto-`open` the
-  `shot.source` is a small follow-up once the session model exists.
+- `load_grade` doesn't switch clips (v1) — only warns. Auto-load each shot's
+  `grade.json` on `add_shots` is a small follow-up (D-033 deferred list) now
+  that the session model exists.
+- Clip in/out points — still open (the roadmap "Shot / session model" tail).
 - No `meta.history` audit trail yet (v2 / the node graph — D-025).
 - Save doesn't garbage-collect a stale `.mattes/` PNG whose sub-mask was deleted
   — harmless, but a cleanup pass would be tidy.

@@ -843,3 +843,90 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   expands, undo reverts, `request_human` banner + ROI) is an open **manual**
   smoke test — listed in `docs/notes/agent-activity-feed.md`. Divergence in
   doc 09.
+
+## D-033 — Multi-shot session = an in-memory `Session` + per-clip `grade.json` sidecars; NOT a `.chroma` project bundle
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** round-3 item 2. Chroma loaded exactly one clip — `chroma/state.rs`
+  said so ("There is only ever one clip loaded, so a module global is enough for
+  now"), and D-025 left "full session/shot model" open. A real grading job is N
+  shots from one shoot, each needing its own grade, with the ability to flip
+  between them and copy a grade across.
+- **The question put to the user:** lightweight (N open clips + a strip to
+  switch, each keeps its own `grade.json`, no project file) **vs** a full project
+  model (a saved `.chroma` bundle of all shots + grades + refs + session state).
+  Answer: "do whichever is better."
+- **Options:**
+  (a) **lightweight** — a process-global `Session { shots: Vec<Shot>, active }`,
+      each `Shot = {path, VideoInfo, playhead}`; per-shot grade + activity feed
+      live in the frontend stores keyed by clip path; `grade.json` (D-025) stays
+      the on-disk per-shot serialisation; no session file (a `.chroma/session.json`
+      path list is a later add).
+  (b) **full project bundle** — a `.chroma` file format wrapping every shot ref +
+      its grade + reference images + window/session state, with save/open-project
+      UX and a migrator.
+  (c) a hybrid: `Session` now + `.chroma/session.json` (just the shot-path list,
+      pointing at each clip's `grade.json` sidecar) as the reopen mechanism.
+- **Choice: (a) now, (c)'s `session.json` deferred.** Weighed against this
+  project's established bias — "cheapest thing that works" (D-027/D-030/D-031),
+  minimal fork diff (D-003), docs-as-source-of-truth, one shared state with the
+  agent (D-020/D-032):
+  - (b) is a whole subsystem: a new format + serializer + migrator + a
+    save/open-project surface + conflict rules against the `grade.json` sidecars
+    that *already exist* and are the git-committable differentiator (D-025).
+    Nothing in v1's job (Phase 3 checkpoint — grade a shoot in one conversation)
+    needs a bundle: the shots are on disk, the grades are sidecars.
+  - (a) is ~1 file of new Rust (`chroma/session.rs`) + a `Session` type in
+    `state.rs` + 3 new frontend files. `current_video()` keeps its signature and
+    returns the active shot, so every existing caller (`chroma_seek`, `export`,
+    `mask`, `playback`) is untouched. The blast radius is a module global, not an
+    `AppState` refactor.
+  - reopening a session is the one thing (a) gives up vs (b)/(c). A shot-path
+    list in `.chroma/session.json` recovers it without a bundle — deferred as a
+    follow-up, not designed away.
+- **Data model.** `state.rs`: `Session { shots: Vec<Shot>, active: usize }`
+  (`Shot` = the old `CurrentVideo` — `{path, VideoInfo, frame}` — name kept so
+  D-015…D-032 call sites don't churn). `set_current_video(Some(shot))` **upserts
+  by path**: a fresh clip appends a shot and makes it active; a seek / re-open of
+  a clip already in the session updates it in place. `set_current_video(None)`
+  clears the session. Thumb cache + decode pipe (D-030) reset exactly when the
+  *active clip path* changes — same trigger as before, now driven off the
+  session. Per-shot **grade** + **activity feed** are frontend state
+  (`useSessionStore.grades[path]`, `useAgentStore.shotFeeds[path]`) — switching a
+  shot stashes the live grade under the outgoing path, restores the target's (or
+  neutral) via `setAdjustments` + `resetHistory`, and calls
+  `useAgentStore.scopeToShot`. `grade.json` (D-025) is unchanged — it is still
+  *the* per-shot document; a shot's grade saves to `<clip>.grade.json` beside it.
+- **Consequences / built:**
+  - Rust: new `chroma/session.rs` — `chroma_session_list` / `_add` /
+    `_set_active` / `_remove` / `_thumbnail`. `state.rs` grows the `Session`
+    struct (pure, unit-tested) + module-global wrappers. `video.rs` +1 helper
+    (`extract_thumb`, one small preview per shot). Upstream footprint: `mod.rs`
+    +2, `lib.rs` +5 `generate_handler!` lines. No `AppState` / image-loader
+    change — the file-picker / `open` flow funnels into `load_video_frame` →
+    `set_current_video` → upsert, so opening a second clip *is* adding a shot.
+  - Frontend: new `store/useSessionStore.ts` (shot list + `grades` cache +
+    switch/add/remove/copy thunks), `components/chroma/ShotStrip.tsx` (the strip
+    — replaces the folder browser per doc 09), `useAgentStore` += per-shot feed
+    scoping. `useChromaControl.ts` += `list_shots` / `set_active_shot` /
+    `add_shots` ops; `get_state` += `session`. `BottomBar.tsx` renders the strip
+    + a sync effect. MCP: +3 tools (`list_shots`, `set_active_shot`, `add_shots`)
+    — 24 → 27.
+  - Single-shot behaviour is identical: opening one clip is a session of one
+    shot; `current_video()` returns it; seek / playback / export / tracking /
+    activity feed / `grade.json` all unchanged.
+- **Deferred (roadmap follow-ups, not half-built):** `.chroma/session.json`
+  reopen (shot-path list only, still no bundle); drag-drop shot reorder; a
+  copy-grade-to-any-shot picker (v1 copies to the *next* shot only); per-shot
+  `grade.json` auto-load on `add_shots` (v1 loads neutral, D-025's `load_grade`
+  is manual); still images in the session (video shots only for now).
+- **Verified:** `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **23/23** (18 baseline + 5 new: session
+  add/list/set-active/remove, upsert-by-path switches active, remove clamps
+  active, single-shot path unchanged, active-shot change busts the thumb cache).
+  Frontend `npx tsc --noEmit` — 74 pre-existing unrelated errors (baseline
+  unchanged), none in a new/touched file. `python3 -m py_compile mcp/server.py`
+  clean; `import server` OK, 27 tools. The `useEffect([])` bridge listener +
+  the running app are not driven (a `tauri dev` is running) — the strip
+  interaction + MCP round-trip are an open **manual** smoke test, listed in
+  `docs/notes/multi-shot.md`. Divergence in doc 09.

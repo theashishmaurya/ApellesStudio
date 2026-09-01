@@ -45,8 +45,11 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 
 | tool | what it does |
 |---|---|
-| `get_state` | loaded image/video, primary adjustments, mask summary — reflects manual edits |
+| `get_state` | loaded image/video, primary adjustments, mask summary, **the multi-shot `session`** — reflects manual edits |
 | `list_masks` | every mask container + sub-masks (ids, type, per-mask adjustments, tracked?) |
+| `list_shots` | every shot in the session + which is active — a grading job is N shots, each keeps its own grade + activity feed (D-033) |
+| `set_active_shot(index?, path?)` | switch the active shot — saves the current shot's grade, restores the target's, scopes the activity feed. Grade shot by shot in one session (D-033) |
+| `add_shots(paths)` | add clips to the session by absolute path + switch to the last (D-033) |
 | `set_primary(**knobs)` | exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, vibrance, dehaze, clarity, structure, sharpness, vignetteAmount |
 | `set_curve(channel, points)` | replace a tone-curve channel (`luma\|red\|green\|blue`), points `[{x,y}]` 0..255 |
 | `set_color_grade(shadows?, midtones?, highlights?, global_?, blending?, balance?)` | colour-grading wheels |

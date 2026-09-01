@@ -295,6 +295,47 @@ def seek(frame: int) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# multi-shot session (D-033)
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def list_shots() -> str:
+    """Every shot in the session and which one is active. A grading job is N
+    shots from one shoot; each shot keeps its own grade (grade.json sidecar,
+    D-025) and its own agent-activity feed. Returns {shots: [{path, name,
+    frameCount, frame, width, height, fps, ...}], active, count}. An empty
+    `shots` means a single still / nothing loaded."""
+    import json
+
+    return json.dumps(_op("list_shots"), indent=2, default=str)
+
+
+@mcp.tool()
+def set_active_shot(index: int | None = None, path: str | None = None) -> list:
+    """Switch the active shot by 0-based `index` (from list_shots) or by `path`
+    / filename. Saves the current shot's grade, loads the target, restores its
+    grade (neutral if it has none), and scopes the activity feed to it. Grade
+    each shot in turn: set_active_shot(1) -> grade -> set_active_shot(2) -> grade.
+    Returns the target shot's rendered frame + the updated shot list."""
+    args: dict = {}
+    if index is not None:
+        args["index"] = index
+    if path is not None:
+        args["path"] = path
+    if not args:
+        return _result({"ok": False, "error": "pass index or path", "result": None})
+    return _result(_op("set_active_shot", **args))
+
+
+@mcp.tool()
+def add_shots(paths: list[str]) -> list:
+    """Add one or more clips to the session by ABSOLUTE path and switch to the
+    last one. A clip already in the session is updated in place. Use this to load
+    a whole shoot, then grade shot by shot with set_active_shot. Returns the
+    newly-active shot's frame + the shot list."""
+    return _result(_op("add_shots", paths=paths))
+
+
+# --------------------------------------------------------------------------- #
 # masks
 # --------------------------------------------------------------------------- #
 @mcp.tool()

@@ -4,6 +4,30 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Multi-shot session model + shot strip (D-033, round-3 item 2)**.
+  Chroma held one clip; now it holds a **session** — an ordered set of shots from
+  one shoot, each with its own grade and its own agent-activity feed. New **shot
+  strip** (`components/chroma/ShotStrip.tsx`, bottom bar): thumbnail + filename,
+  an accent dot when the shot has a non-neutral grade, click to switch, `+` to
+  add clips, `×` to remove, `→` to copy the active grade onto the next shot.
+  Switching a shot stashes the live grade under the outgoing clip and restores
+  the target's (the per-clip `grade.json` sidecar, D-025, is still the on-disk
+  per-shot document). **Lightweight by decision** — no `.chroma` project bundle
+  (D-033 weighs it against the project's minimal-fork / cheapest-thing bias).
+  Rust: `chroma/state.rs`'s clip global becomes `Session { shots, active }`
+  (`current_video()` unchanged — returns the active shot; `set_current_video`
+  upserts by path); new `chroma/session.rs` (list / add / set-active / remove /
+  thumbnail); `video.rs` +1 thumb helper. Upstream edits: `mod.rs` +2, `lib.rs`
+  +5, `BottomBar.tsx` +4. Frontend: new `store/useSessionStore.ts`, `useAgentStore`
+  per-shot feed scoping, `useChromaControl.ts` ops + `get_state.session`. MCP:
+  `list_shots` / `set_active_shot` / `add_shots` (24 → 27 tools). Single-shot
+  behaviour identical (one clip = a session of one shot). `cargo check` clean,
+  `cargo test chroma::` 23/23 (+5); `tsc --noEmit` baseline unchanged (74, none
+  in a touched file); `py_compile` clean. Deferred: `.chroma/session.json` reopen
+  (path list, not a bundle), drag-drop reorder, copy-to-any-shot, per-shot
+  `grade.json` auto-load. Manual app + MCP smoke test open. Detail:
+  `docs/notes/multi-shot.md`.
+
 - **2026-09-02** — **Agent activity feed + `request_human` (D-032, round-3 item 1)**.
   The GUI now shows every grade change the agent made through the MCP/control
   bridge: a fixed bottom-left "Agent activity" dock, newest-first, each entry a

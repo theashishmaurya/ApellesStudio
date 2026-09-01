@@ -529,5 +529,45 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   clean. Bridge listener doesn't hot-reload → running-app behaviour is an open
   manual smoke test. Detail: `docs/notes/agent-activity-feed.md`.
 
+- **2026-09-02** · **multi-shot session + shot strip (D-033)** — Rust + frontend,
+  no `AppState` / image-loader change.
+  · `src/chroma/state.rs` — the single `CURRENT_VIDEO: Option<CurrentVideo>`
+  global becomes a `Session { shots: Vec<Shot>, active }` global (`Shot` is a type
+  alias of `CurrentVideo` — the D-015…D-032 call sites are untouched).
+  `current_video()` keeps its signature (returns `shots[active]`);
+  `set_current_video(Some)` now **upserts by path** (fresh clip → append + make
+  active; seek / re-open → update in place), `set_current_video(None)` clears the
+  session; the thumb-cache + `decode_pipe::reset()` fire iff the active clip path
+  changed. `set_current_frame` mutates the active shot. New: `session_shots` /
+  `session_set_active` / `session_remove` wrappers + the pure `Session` struct
+  (5 unit tests).
+  · new `src/chroma/session.rs` (self-contained: `chroma_session_list` /
+  `_add` / `_set_active` / `_remove` / `_thumbnail`, `ShotDto` / `SessionDto`).
+  `_add` funnels through `load::load_video_frame`; `_set_active` / `_remove`
+  decode the newly-active shot's frame via the D-030 pipe (falls back to
+  `video::decode_frame`) and `load::install_frame` it.
+  · `src/chroma/video.rs` — `+ extract_thumb(path, info, frame, height)`: one
+  small preview JPEG (data URL) per shot for the strip.
+  · Upstream-file edits (minimal): `chroma/mod.rs` +2 (`pub mod session;` + doc
+  line), `lib.rs` +5 (`generate_handler!` lines). No Cargo change.
+  · Frontend: new `src/store/useSessionStore.ts` (shot list + `grades` per-shot
+  cache + switch/add/remove/copy thunks — `switchToShot` stashes the live grade,
+  restores the target's via `setAdjustments` + `resetHistory`, calls
+  `useAgentStore.scopeToShot`), new `src/components/chroma/ShotStrip.tsx` (the
+  strip — the doc-09 "replace `components/panel/library/` with a shot strip"
+  line; the library browser is left in place, the strip is additive).
+  `src/store/useAgentStore.ts` +3 (`activeShotKey`, `shotFeeds`, `scopeToShot`)
+  — the D-032 feed is now per-shot. `src/hooks/useChromaControl.ts` (Chroma-only
+  file) — `list_shots` / `set_active_shot` / `add_shots` ops, `get_state` +=
+  `session`. Upstream-file edit: `src/components/panel/BottomBar.tsx` +4 (import
+  + `<ShotStrip/>` + a session-sync effect).
+  · `mcp/server.py` — `list_shots` / `set_active_shot` / `add_shots` (24 → 27).
+  `mcp/README.md` tool list updated.
+  · Verified: `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` 23/23; `npx tsc --noEmit` baseline unchanged
+  (74 pre-existing, none in a touched file); `py_compile` clean, 27 tools.
+  Bridge listener + running app not driven → strip interaction + MCP round-trip
+  are an open manual smoke test (`docs/notes/multi-shot.md`).
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
