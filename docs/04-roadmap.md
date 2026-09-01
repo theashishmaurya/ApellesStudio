@@ -26,7 +26,7 @@ not commitments.
 ## Phase 1 — Video grading core  ·  ~3–4 weeks
 
 - [x] `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015). Tests pass on the real 4K C019 take.
-- [ ] **Minimal video-open path**: `is_video_file` branch in the frontend picker + `load_image` → decode frame 0 → existing grade/display pipeline. Gets a video frame on screen, graded, no transport yet.
+- [x] **Minimal video-open path** — video loads as frame 0 into the existing pipeline; filmstrip + import filter accept video. Built, tests pass. Needs a visual confirm (open C019 in the app).
 - [ ] **D-014: extract `render_core`** — Tauri-free `render(gpu, base, req) -> DynamicImage` + `init_gpu_context()`; needed for headless render + the MCP server, not for the GUI video path.
 - [ ] Video I/O: proxy cache → per-frame grade → ProRes/H.264 encode
 - [ ] Transport: playhead → `decode_frame(Index)` → grade → display; scrub with a proxy

@@ -204,10 +204,17 @@ waits on D-014.
 
 Branched from upstream `4f6a365`. Append `{date · files · why}`.
 
-- **2026-09-01** · `src/lib.rs` (+1 line: `mod chroma;`) · `src/chroma/{mod,video}.rs` (new)
-  · Video probe + single-frame decode via ffmpeg CLI (D-015). All Chroma code is under
-  `src/chroma/`; the only upstream-file edit is the one `mod` line. 3 tests pass, incl.
-  probe+decode against the real 4K C019 take.
+Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live there;
+`origin` still = upstream RapidRAW. User adds a personal GitHub remote later.
+
+- **2026-09-01** · new: `src/chroma/{mod,video,state,load}.rs` · edits: `lib.rs` (+`mod chroma;`),
+  `image_loader.rs::load_image` (+3-line early branch for video), `formats.rs`
+  (`is_supported_image_file` accepts video), `file_management.rs`
+  (`get_supported_file_types` exposes `"video"`), frontend `useFileOperations.ts` (Video
+  filter group).
+  · **Minimal video-open path:** a video loads as its frame 0 into `AppState.original_image`,
+  same shape as a still — all grade/mask/display paths unchanged. `chroma::state::CurrentVideo`
+  holds the clip for the future transport. 4 tests pass (incl. real C019 probe+decode).
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

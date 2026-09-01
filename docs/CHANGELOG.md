@@ -23,3 +23,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## Releases
 
 _(none — pre-v1)_
+
+- **2026-09-01** — Minimal video-open path built: a video loads as frame 0 through the
+  existing grade pipeline (`src/chroma/{state,load}.rs` + 3 one-line hooks). Engine on
+  branch `chroma`. App rebuilt + running.
