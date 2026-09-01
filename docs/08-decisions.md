@@ -224,6 +224,34 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   layer handles that). Revisit model choice (ViTMatte-base, BiRefNet) only if edge quality
   is short on hair/fine detail in real use.
 
+## D-020 — AI grading via an in-app control server + event bridge (not headless)
+**decided (2026-09-01)**
+
+- **Context:** the canonical `adjustments` doc lives in the **frontend** (zustand
+  `useEditorStore`); the Rust `apply_adjustments` command receives it fresh each call
+  and doesn't own it. So "let AI grade" can't just poke Rust state.
+- **Options:** (a) move the grade doc into Rust `AppState` (big, invasive); (b) true
+  headless via `render_core` (D-014) — needs its own grade-doc owner + no live preview
+  for the user; (c) **in-app control server**: a tiny HTTP server inside the running
+  Tauri app bridges HTTP ⇄ Tauri events; the frontend (which owns the grade) applies
+  ops and reports back the rendered frame + scopes.
+- **Choice:** (c) for v1 — "easy, not deep, AI can grade *alongside* you." The user
+  keeps the GUI open, Claude drives it through the MCP server, both see the same live
+  preview. `render_core` (D-014) still stands — it's for headless **export** and batch,
+  a later path.
+- **Shape:**
+  - Rust `src/chroma/control.rs` — HTTP on `127.0.0.1:${CHROMA_CONTROL_PORT:-19788}`,
+    spawned in `lib.rs` `.setup()`. Each request → `emit("chroma://request", {id, op, args})`,
+    await `once("chroma://response:{id}")`, return its payload. Endpoints wrap ops:
+    `/health /state /adjust /curve /wheels /seek /render /scopes`.
+  - Frontend `useChromaControl` hook (mounted once) — `listen("chroma://request")`,
+    apply the op to `useEditorStore` via the existing setters, wait for the render to
+    settle, capture preview PNG + histogram, `emit` the response.
+  - `mcp/` — Python MCP server (matches the sidecar), thin: tools call the control
+    server's HTTP API. Every mutating tool returns `{image_b64, histogram}` (doc 07 rule).
+- **Consequences:** needs the GUI running (fine for v1). Grade logic stays in the
+  frontend (no duplication). New Rust dep: a minimal sync HTTP server (`tiny_http`).
+
 ## D-019 — Tracked matte read at render time, not swapped into `adjustments`
 **decided (2026-09-01)**
 
