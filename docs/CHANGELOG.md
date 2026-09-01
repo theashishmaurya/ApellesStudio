@@ -13,6 +13,8 @@ One or two lines per session. Detail lives in the decision it references.
   `render_core` (**D-014**). Added D-012 (SAM 1→2), D-013 (relight → v3).
 - **2026-09-01** — ffmpeg → 4K Rec709 frame from the C019 test take works. Disk cleaned
   (3.6 → 38 GiB free).
+- **2026-09-01** — D-003 decided (standalone hard fork; still keep changes clean for
+  upstream cherry-picks), D-012 decided (SAM 2, no fallback).
 
 ## Releases
 

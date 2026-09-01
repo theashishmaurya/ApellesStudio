@@ -30,15 +30,18 @@ Status: `open` · `decided` · `revisit`
   compelling reason to relicense appears (won't — engine is AGPL).
 - **Decide before:** first public push.
 
-## D-003 — Fork hard, or collaborate with the RapidRAW maintainer
-**open**
+## D-003 — Hard fork; Chroma is its own project
+**decided (2026-09-01)**
 
-- **Context:** solo dev, 18, ships daily, clearly cares. A hard fork duplicates effort and
-  invites friction; upstream may *want* the video direction.
-- **Action:** open a discussion / issue on RapidRAW describing the video + agent direction
-  before diverging. Worst case: clean AGPL fork, keep upstream as a remote for
-  cherry-picking.
-- **Decide before:** end of Phase 0.
+- Chroma is a standalone project, not an upstream contribution. Hard fork of RapidRAW
+  under AGPL. No coordination issue with the maintainer.
+- Keep `upstream` remote for opportunistic cherry-picks, but assume divergence — the
+  video + agent + MCP direction is a different product.
+- **Still keep changes clean** (CLAUDE.md): new files/modules over scattered edits in
+  `engine/`, a divergence log in doc 09, `render_core` as a clean *extraction* not a
+  rewrite — so upstream bug fixes still cherry-pick with minimal conflict.
+- Consequence: our design choices don't need to fit RapidRAW's roadmap. `render_core`
+  extraction (D-014) and everything after is ours to shape.
 
 ## D-004 — Colour management: display-referred vs ACES
 **decided for v1 (2026-09-01), revisit for v2**
@@ -114,16 +117,15 @@ Status: `open` · `decided` · `revisit`
 Rust 1.98+ / edition 2024 is inherited from RapidRAW's `Cargo.toml`. Setup note, not a
 decision. Lives in a future `CONTRIBUTING`.
 
-## D-012 — SAM 1 → SAM 2 for the subject mask
-**open — Phase 0 / Phase 2**
+## D-012 — SAM 2 for the subject mask
+**decided (2026-09-01)**
 
-- **Context:** RapidRAW ships SAM ViT-B (v1) — single-image, no tracking. Our headline
-  need (doc 01 G3) is a subject matte that survives gestures *across a clip* = tracking.
-- **Options:** (a) SAM 2 ONNX (encoder + decoder + memory attention) for native video
-  propagation; (b) SAM 1 per-frame + optical-flow / point-tracker to carry the mask; (c)
-  SAM 1 per-keyframe + interpolate + human corrections.
-- **Leaning:** (a) if the ONNX export + `ort` path is workable; (b) as fallback.
-- **Decide after:** the Phase 0 SAM2-on-`ort` spike.
+- Subject mask = **SAM 2** (encoder + decoder + memory attention) via ONNX / `ort`, for
+  native video propagation. RapidRAW's SAM 1 is replaced, not kept as a fallback.
+- The Phase 0 spike is now "make SAM 2 run via `ort`, measure speed + matte quality on
+  C019" — a build task, not a go/no-go.
+- If the memory module is genuinely un-runnable via `ort`: reassess runtime (a small
+  Python subprocess for SAM 2 only), not the model choice.
 
 ## D-013 — AI relight (IC-Light) — v3, bake-step only
 **open — v3, not before**

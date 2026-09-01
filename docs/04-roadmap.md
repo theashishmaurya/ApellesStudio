@@ -16,8 +16,8 @@ not commitments.
 - [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
 - [ ] Run the app (`npm run tauri dev`) — confirm the wgpu renderer draws a real image on screen *(user action — GUI)*
 - [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
-- [ ] **Spike**: SAM 2 as ONNX via `ort` — segment + propagate one 10s clip, measure fps, matte quality on the hands problem (D-012). Fallback spike: SAM 1 (already in engine) + optical flow.
-- [ ] Decide: fork hard vs. talk to the RapidRAW maintainer (D-003)
+- [ ] **SAM 2 via `ort`** (D-012 decided — SAM 2, no fallback): get it running, measure fps + matte quality on C019's hands. Moves to Phase 2 if the memory module needs real work.
+- [x] Fork model decided (D-003): standalone project, hard fork, no upstream coordination.
 
 **Checkpoint:** a graded video frame on screen, the architecture spikes answered.
 
