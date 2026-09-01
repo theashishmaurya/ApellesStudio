@@ -43,9 +43,30 @@ VITMATTE_ID = os.environ.get("CHROMA_VITMATTE", "hustvl/vitmatte-small-compositi
 
 app = FastAPI(title="chroma-ai")
 
+# One Apple GPU — serialise every model call so a track pass, an on-seek refine
+# and a segment can't stack their MPS working sets on top of each other. Held
+# per-frame in the track loop (released between frames) so /refine_track can
+# interleave.
+_GPU = threading.Lock()
+
 _sam = None
 _detector = None
 _matte = None  # (processor, model)
+_video_pred = None  # reused SAM 2 video predictor (state reset per track)
+
+
+def _free_gpu():
+    """Return cached MPS/CUDA blocks to the OS and collect Python garbage."""
+    import gc
+
+    try:
+        if DEVICE == "mps":
+            torch.mps.empty_cache()
+        elif DEVICE == "cuda":
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    gc.collect()
 
 
 def sam():
@@ -259,10 +280,13 @@ def segment(req: SegmentReq):
     t0 = time.time()
     rgb = np.asarray(_b64_to_image(req.image_b64))
     try:
-        mask, meta = _segment_array(rgb, req.box, req.points, req.auto_person,
-                                    req.refine, req.trimap_band)
+        with _GPU:
+            mask, meta = _segment_array(rgb, req.box, req.points, req.auto_person,
+                                        req.refine, req.trimap_band)
     except ValueError as e:
         return {"error": str(e)}
+    finally:
+        _free_gpu()
     return {"matte_b64": _mask_to_b64(mask), "ms": round((time.time() - t0) * 1000), **meta}
 
 
@@ -292,15 +316,31 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 
 
-def _make_video_predictor(max_obj: int = 1):
-    """A fresh SAM 2 video predictor. conf must be ~0 — SAM 2's object-presence
-    score sits around 0.15-0.20 after the /32 clamp and the default conf would
-    filter every mask out."""
+def _get_video_predictor(max_obj: int = 1):
+    """The SAM 2 video predictor, reused across tracks with its per-track state
+    reset. One instance ever — a fresh one each track was ~1 GB into the MPS pool
+    that never came back.
+
+    conf must be ~0 — SAM 2's object-presence score sits ~0.15-0.20 after the
+    /32 clamp and the default conf would filter every mask out."""
+    global _video_pred
     from ultralytics.models.sam.predict import SAM2DynamicInteractivePredictor
 
-    ov = {"model": os.path.join(MODELS_DIR, "sam2.1_s.pt"), "device": DEVICE,
-          "verbose": False, "save": False, "conf": 0.001}
-    return SAM2DynamicInteractivePredictor(overrides=ov, max_obj_num=max_obj)
+    if _video_pred is None or _video_pred._max_obj_num < max_obj:
+        _video_pred = None
+        _free_gpu()
+        ov = {"model": os.path.join(MODELS_DIR, "sam2.1_s.pt"), "device": DEVICE,
+              "verbose": False, "save": False, "conf": 0.001}
+        _video_pred = SAM2DynamicInteractivePredictor(overrides=ov, max_obj_num=max_obj)
+    else:
+        # reset per-track state (no clean reset() on this class)
+        _video_pred.memory_bank.clear()
+        _video_pred.obj_idx_set.clear()
+        _video_pred.vision_feats = None
+        _video_pred.high_res_features = None
+        _video_pred.feat_sizes = None
+        _free_gpu()
+    return _video_pred
 
 
 def _cache_key(req: TrackReq) -> str:
@@ -367,12 +407,13 @@ def _finish_edge(rgb, mask, quality, band):
         return mask
     if quality:
         try:
-            return _refine_matte(rgb, mask, box, band=band)
+            with _GPU:                     # ViTMatte is on the GPU
+                return _refine_matte(rgb, mask, box, band=band)
         except Exception as e:
             print(f"[refine] {type(e).__name__}: {e}")
             return mask
     try:
-        return _quick_finesse(rgb, mask, box, band=band)
+        return _quick_finesse(rgb, mask, box, band=band)  # CPU, no lock
     except Exception as e:
         print(f"[quick] {type(e).__name__}: {e}")
         return mask
@@ -381,7 +422,6 @@ def _finish_edge(rgb, mask, quality, band):
 def _track_worker(job_id: str, req: TrackReq):
     job = _jobs[job_id]
     cap = None
-    pred = None
     try:
         cap = cv2.VideoCapture(req.video_path)
         if not cap.isOpened():
@@ -424,14 +464,15 @@ def _track_worker(job_id: str, req: TrackReq):
         if box is None and pts is None:
             raise RuntimeError("no subject to track (no box/points, no person found)")
 
-        pred = _make_video_predictor(max_obj=1)
         pkw = {"source": rgb, "obj_ids": [0], "update_memory": True}
         if box is not None:
             pkw["bboxes"] = [box]
         if pts is not None:
             pkw["points"] = [[p[0], p[1]] for p in pts]
             pkw["labels"] = [int(p[2]) if len(p) > 2 else 1 for p in pts]
-        pred(**pkw)
+        with _GPU:
+            pred = _get_video_predictor(max_obj=1)
+            pred(**pkw)
 
         # remember the prompt for /refine_track
         with open(os.path.join(cache, "_track.json"), "w") as f:
@@ -441,16 +482,21 @@ def _track_worker(job_id: str, req: TrackReq):
         done = 0
         cur = req.from_frame
         while cur <= end:
+            if job.get("cancelled"):
+                job["state"] = "cancelled"
+                return
             if cur > req.from_frame:
                 ok, bgr = cap.read()
                 if not ok:
                     break
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                res = pred(source=rgb)[0]              # <- memory propagation
+                with _GPU:                             # <- memory propagation
+                    res = pred(source=rgb)[0]
                 m = (res.masks.data[0].cpu().numpy().astype(np.float32)
                      if (res.masks is not None and len(res.masks)) else np.zeros((H, W), np.float32))
             else:
-                res = pred(source=rgb, obj_ids=[0])
+                with _GPU:
+                    res = pred(source=rgb, obj_ids=[0])
                 m = (res[0].masks.data[0].cpu().numpy().astype(np.float32)
                      if (res[0].masks is not None and len(res[0].masks)) else np.zeros((H, W), np.float32))
 
@@ -476,24 +522,25 @@ def _track_worker(job_id: str, req: TrackReq):
     finally:
         if cap is not None:
             cap.release()
-        # the video predictor holds the whole clip's memory bank + MPS tensors —
-        # drop it and hand the cache back so RSS doesn't creep across track runs
-        pred = None
-        try:
-            if DEVICE == "mps":
-                torch.mps.empty_cache()
-            elif DEVICE == "cuda":
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-        import gc
-        gc.collect()
+        # release the predictor's memory bank + return the MPS pool (the predictor
+        # object itself is reused — see _get_video_predictor)
+        if _video_pred is not None:
+            with _GPU:
+                _video_pred.memory_bank.clear()
+                _video_pred.obj_idx_set.clear()
+                _video_pred.vision_feats = None
+                _video_pred.high_res_features = None
+        _free_gpu()
 
 
 @app.post("/track")
 def track(req: TrackReq):
     if not os.path.exists(req.video_path):
         return {"error": f"no such file: {req.video_path}"}
+    # one track at a time — cancel any still running so predictors don't stack
+    for j in _jobs.values():
+        if j.get("state") == "running":
+            j["cancelled"] = True
     job_id = uuid.uuid4().hex[:12]
     _jobs[job_id] = {"state": "running", "done": 0, "total": 0,
                      "key": _cache_key(req), "dir": _cache_dir(req)}
@@ -544,10 +591,13 @@ def refine_track(req: RefineTrackReq):
         except Exception:
             pass
     try:
-        mask, meta = _segment_array(rgb, box, None, auto_person=box is None,
-                                    refine=True, trimap_band=req.trimap_band)
+        with _GPU:
+            mask, meta = _segment_array(rgb, box, None, auto_person=box is None,
+                                        refine=True, trimap_band=req.trimap_band)
     except ValueError as e:
         return {"error": str(e)}
+    finally:
+        _free_gpu()
     os.makedirs(req.dir, exist_ok=True)
     Image.fromarray((np.clip(mask, 0, 1) * 255).astype(np.uint8), "L").save(
         os.path.join(req.dir, f"{req.frame:06d}.png"))
