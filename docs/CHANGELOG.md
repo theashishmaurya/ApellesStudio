@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **3-tab shell (D-039 migration)**. `@chroma/shell` (react +
+  zustand only): `<Shell tabs={registry}>` — an h-9 tab bar (Edit / Motion /
+  Colorist) over the active tab, all tabs stay mounted, Cmd/Ctrl+1/2/3, active tab
+  persisted to localStorage. `app/src/main.tsx` mounts it with the Colorist tab =
+  the whole existing app untouched (root `h-screen` → `h-full`); Edit + Motion are
+  placeholder tab components (`@chroma/editor` / `@chroma/motion`). `npm run build`
+  (vite prod) green, tsc baseline 74 unchanged. The 3-tab layout is now live.
+
 - **2026-09-02** — **Monorepo workspace skeleton (D-039 + D-040)**. The RapidRAW
   fork was de-submoduled into `app/` (D-040), then the workspace made real (D-039
   migration step 1): root `Cargo.toml [workspace]` (members `app/src-tauri` +
