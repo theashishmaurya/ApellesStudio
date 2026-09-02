@@ -303,6 +303,18 @@ this is validation the space is real, and a signal the window for "unclaimed" is
 - **Cardboard** (YC W2026, `cardboard.ai`) — describe a cut in plain English, the agent
   assembles a multi-track timeline. **Highest-upvoted HN launch in its whole YC batch.**
   Built on WebCodecs + Claude Sonnet, browser-based, **commercial/paid, not open**.
+- **Eddie AI** (`heyeddie.ai`, owner-flagged 2026-09-02) — the closest shape to Chroma's
+  *ambition* of anyone found: rough-cut assembly, A-roll transcription + soundbite ID +
+  filler removal, **B-roll auto-tagging with visual descriptions** (the exact
+  "find-me-the-moment-where" capability, already shipping as a feature — real demand
+  proof), colour grading, AI music + ducking, multicam sync, captions/titles, voiceover.
+  Surfaces via web/desktop/iPhone/API/CLI **and MCP** (Claude/ChatGPT-callable — same
+  agent-tool instinct as Chroma). But it's a **companion/logging tool, not a standalone
+  NLE** — it preps footage then exports to Premiere/FCP/Resolve to finish. Cloud,
+  pay-as-you-go credits (never expire), 50k+ users — real traction. Closed source. (A
+  page element implied an Anthropic affiliation — **unverified, likely just the MCP
+  integration being misread**; don't repeat that as fact without checking the company's
+  own about page.)
 - **Mobbi AI** (Vega Labs) — "vibe editing," chains Seedance 2.0 / Sora 2 / Kling 3.0 /
   Veo 3.1 generation models into one conversational workflow. Generation-first, not
   grading/editing-craft-first.
