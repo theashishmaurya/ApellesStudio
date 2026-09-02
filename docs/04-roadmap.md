@@ -82,12 +82,28 @@ commit.
     timeline: chroma_timeline::Timeline }>` (was `timeline: Option<Timeline>`), one
     active; create / rename / duplicate / delete; a timeline itself can be a pool item
     ("Timeline 1" nested-sequence, deferred).
-  - **Library panel UI** in the Edit tab — thumbnail grid + Import button + folder tree +
-    smart search + drag-a-pool-item-onto-a-track. `@chroma/ui` components.
+  - **Library / Sources panel UI** — a **global** media-pool panel shared by all tabs
+    (mainly the Editor): thumbnail grid + Import button + folder tree + smart search +
+    drag-a-pool-item-onto-a-track. `@chroma/ui` components. Lives in `@chroma/shell` or a
+    `@chroma/media` fe package so every tab can dock it.
+  - **Remove RapidRAW's "Sources" panel from the Colorist tab** (requested 2026-09-02):
+    the left folder-browser / albums panel (`app/src/App.tsx` → `LibraryView` /
+    `panel/library/*`) goes — the Colorist grades whatever media item is selected in the
+    shared pool. Keep the components unrouted (D-003) but the Colorist layout drops the
+    left panel.
   - MCP: `import_media` / `list_media` / `list_timelines` / `set_active_timeline` so the
     agent can build edits too.
   Schema: additive `chroma.project/1` (like D-038/D-041). **Big — its own decision
   (D-0xx) + likely 2–3 subagent passes (model+import, bins+multi-timeline, UI).**
+- [ ] **Export → a top-right button + an Export window** (requested 2026-09-02). Today
+  RapidRAW's `ExportPanel` is a right-side panel toggled by `isLibraryExportPanelVisible`.
+  Wanted: an **Export** button top-right of the Colorist tab (near undo/redo/eye/
+  fullscreen) that opens a proper **Export dialog/window** with all settings — codec
+  (ProRes / H.264 …), resolution (+ the D-038 project output spec as the default), frame
+  range, `.cube` LUT bake toggle, output path, progress. Backed by the existing
+  `chroma_export_video` / `chroma_bake_lut` (D-022) + the `export` bridge op. Eventually
+  the Export window is shell-level (export the active timeline from the Edit tab too), but
+  Colorist-first. `@chroma/ui` (needs `Dropdown` — extract it, or a local one).
 - [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
   history spanning all tabs. A `@chroma/history` store holding a unified stack of
   `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
