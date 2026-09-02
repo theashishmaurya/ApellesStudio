@@ -22,11 +22,27 @@
 //!   output callback actually wrote — the verification hook (see D-049); it
 //!   is not wired to any meter UI yet.
 //! What it does NOT do: multi-track mixing (single-video-track MVP — see
-//!   `docs/04-roadmap.md`), a visible waveform, audio effects or persisted
-//!   mute/volume (playback only), audio during scrubbing while paused
-//!   (silence is correct there — only real Play produces sound), export audio
-//!   (`export.rs` stays video-only, untouched by this module), or long-session
-//!   drift correction between the audio and video clocks (see below).
+//!   `docs/04-roadmap.md`), audio effects or persisted mute/volume (playback
+//!   only), audio during scrubbing while paused (silence is correct there —
+//!   only real Play produces sound), export audio (`export.rs` stays
+//!   video-only, untouched by this module), or long-session drift correction
+//!   between the audio and video clocks (see below).
+//!
+//! ## Waveform extraction (D-051 — the mature timeline UI pass)
+//!
+//! [`chroma_audio_waveform`] is a second, unrelated-at-runtime feature bolted
+//! onto this module because it shares `symphonia` decode plumbing: given a
+//! source path and a `[start_secs, start_secs + duration_secs)` range, it
+//! decodes just that range, mixes it to mono, and reduces it to a fixed
+//! number of (min, max) peak-per-bucket pairs ([`peaks_from_samples`], pure
+//! and unit tested) for `TimelinePane.tsx`'s `Waveform.tsx` to draw on a
+//! `<canvas>`. It is a **one-shot batch read**, not a streaming session — no
+//! `cpal`, no `rubato` (peak extraction doesn't care what rate the samples
+//! are at, only their relative amplitude), no ring buffer, no `SESSION`
+//! state. [`decode_mono_range`]'s symphonia open/probe/seek setup duplicates
+//! ~20 lines of [`run_session`]'s (open file → probe → find audio track →
+//! make decoder → seek) rather than sharing a helper — see that function's
+//! doc for why.
 //!
 //! ## The sync-model decision (D-049)
 //!
@@ -184,6 +200,39 @@ pub(crate) fn resampled_frame_count(input_frames: usize, in_rate: u32, out_rate:
         return 0;
     }
     ((input_frames as u64 * out_rate as u64) / in_rate as u64) as usize
+}
+
+/// Reduce mono `samples` to `bucket_count` (min, max) peak pairs — the
+/// amplitude envelope [`chroma_audio_waveform`] returns for `Waveform.tsx` to
+/// draw as a canvas waveform (D-051). Splits `samples` into `bucket_count`
+/// contiguous, near-equal-sized chunks (`i * n / bucket_count` boundaries, so
+/// the remainder spreads across the trailing buckets by at most one sample
+/// each rather than dumping it all in the last one) and takes the signed
+/// min/max value in each. `bucket_count == 0` or empty `samples` → an empty
+/// `Vec`; `bucket_count` at or beyond `samples.len()` still returns exactly
+/// `bucket_count` pairs, some singleton buckets. Pure — no I/O.
+pub(crate) fn peaks_from_samples(samples: &[f32], bucket_count: usize) -> Vec<(f32, f32)> {
+    let n = samples.len();
+    if n == 0 || bucket_count == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(bucket_count);
+    for b in 0..bucket_count {
+        let start = b * n / bucket_count;
+        let end = ((b + 1) * n / bucket_count).max(start + 1).min(n);
+        let chunk = &samples[start..end];
+        let (mut lo, mut hi) = (chunk[0], chunk[0]);
+        for &s in &chunk[1..] {
+            if s < lo {
+                lo = s;
+            }
+            if s > hi {
+                hi = s;
+            }
+        }
+        out.push((lo, hi));
+    }
+    out
 }
 
 // --------------------------------------------------------------------------- //
@@ -418,6 +467,146 @@ pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
 #[tauri::command]
 pub fn chroma_audio_level() -> (f32, f32) {
     *LEVEL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Downsampled amplitude envelope for `source_path`'s `[start_secs,
+/// start_secs + duration_secs)` range (D-051) — what `Waveform.tsx` draws
+/// instead of decoding PCM in the browser. `source_path`/`start_secs`/
+/// `duration_secs` are exactly a timeline clip's `source_path`/
+/// `source_start`/`duration` converted to seconds by the caller (the same
+/// frame→seconds convention `timelineFps` already uses elsewhere in
+/// `@chroma/editor` — this command takes seconds, not frames, so it has no
+/// opinion on the project's fps). `buckets` is how many (min, max) pairs to
+/// reduce to — callers pass roughly the clip's on-screen pixel width so one
+/// bucket is about one canvas column.
+///
+/// Returns an empty `Vec` — not an error — for a source with no audio stream
+/// (checked via [`super::edit::probe_cached`], the same cache
+/// `chroma_timeline_frame`/`chroma_audio_play` already share) or a
+/// non-positive `duration_secs`/`buckets`: the same "nothing to draw" shape
+/// `chroma_timeline_frame`'s blank-frame return uses, so a silent clip's
+/// waveform request doesn't have to be treated as failure in the frontend.
+#[tauri::command]
+pub fn chroma_audio_waveform(
+    source_path: String,
+    start_secs: f64,
+    duration_secs: f64,
+    buckets: usize,
+) -> Result<Vec<(f32, f32)>, String> {
+    if duration_secs <= 0.0 || buckets == 0 {
+        return Ok(Vec::new());
+    }
+    let path = PathBuf::from(&source_path);
+    let info = super::edit::probe_cached(&path)?;
+    if !info.has_audio {
+        return Ok(Vec::new());
+    }
+    let samples = decode_mono_range(&path, start_secs.max(0.0), duration_secs)?;
+    Ok(peaks_from_samples(&samples, buckets))
+}
+
+/// Decode `path`'s default audio track from `start_secs` for `duration_secs`,
+/// mixed down to mono `f32` at the source's native sample rate — no
+/// resampling, since [`peaks_from_samples`]'s bucket reduction only needs
+/// enough samples per bucket to be representative, not a fixed output rate.
+/// A one-shot batch read for [`chroma_audio_waveform`]; **not** shared with
+/// [`run_session`] despite overlapping symphonia setup (open → probe → find
+/// audio track → make decoder → seek) — deliberately duplicated rather than
+/// extracted into a common helper, because the two diverge immediately after
+/// that point (this one collects a bounded mono `Vec` and returns; that one
+/// streams indefinitely through `rubato` resampling into a live `cpal`
+/// callback) and factoring the shared prefix out would mean threading a
+/// `Box<dyn FormatReader + 'static>` + `Box<dyn Decoder>` pair back out of a
+/// helper into `run_session`'s already-verified (D-050) playback path for a
+/// ~20-line dedup — judged not worth the risk of touching tested, working
+/// code for this pass.
+fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result<Vec<f32>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let mut format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .map_err(|e| format!("probe: {e}"))?;
+
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or("no audio track")?
+        .clone();
+    let track_id = track.id;
+    let codec_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or("audio track has no codec parameters")?
+        .clone();
+    let src_rate = codec_params
+        .sample_rate
+        .ok_or("audio track has no sample rate")?;
+    let src_channels = codec_params
+        .channels
+        .as_ref()
+        .map(|c| c.count())
+        .unwrap_or(1)
+        .max(1);
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(&codec_params, &Default::default())
+        .map_err(|e| format!("make decoder: {e}"))?;
+
+    if start_secs > 0.0
+        && let Some(time) = Time::try_from_secs_f64(start_secs)
+    {
+        // Same "not fatal" treatment as `run_session`'s seek: worst case, the
+        // extracted range starts a little late in the source.
+        let _ = format.seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time,
+                track_id: Some(track_id),
+            },
+        );
+    }
+
+    let target_frames = (duration_secs * src_rate as f64).ceil() as usize;
+    let mut mono: Vec<f32> = Vec::with_capacity(target_frames.min(8 * 1024 * 1024));
+
+    'decode: while mono.len() < target_frames {
+        let packet = match format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => break 'decode, // source shorter than the requested range — return what we have
+            Err(SymError::ResetRequired) => break 'decode,
+            Err(SymError::IoError(_)) => break 'decode,
+            Err(e) => return Err(format!("next_packet: {e}")),
+        };
+        if packet.track_id != track_id {
+            continue;
+        }
+        let decoded = match decoder.decode(&packet) {
+            Ok(d) => d,
+            Err(SymError::DecodeError(_)) => continue, // skip the bad packet, keep going
+            Err(e) => return Err(format!("decode: {e}")),
+        };
+
+        let mut interleaved = vec![0f32; decoded.samples_interleaved()];
+        decoded.copy_to_slice_interleaved(&mut interleaved);
+        for frame in interleaved.chunks_exact(src_channels) {
+            mono.push(frame.iter().sum::<f32>() / src_channels as f32);
+            if mono.len() >= target_frames {
+                break;
+            }
+        }
+    }
+
+    Ok(mono)
 }
 
 // --------------------------------------------------------------------------- //
@@ -713,6 +902,50 @@ mod tests {
     }
 
     #[test]
+    fn peaks_from_samples_min_max_per_bucket() {
+        // 4 samples, 2 buckets -> [0,1] and [2,3]
+        let samples = [0.2, -0.5, 0.9, -0.1];
+        let peaks = peaks_from_samples(&samples, 2);
+        assert_eq!(peaks, vec![(-0.5, 0.2), (-0.1, 0.9)]);
+    }
+
+    #[test]
+    fn peaks_from_samples_empty_or_zero_buckets_is_empty() {
+        assert_eq!(peaks_from_samples(&[], 10), Vec::new());
+        assert_eq!(peaks_from_samples(&[0.1, 0.2], 0), Vec::new());
+    }
+
+    #[test]
+    fn peaks_from_samples_covers_every_sample_exactly_once() {
+        // an odd sample count that doesn't divide evenly into the bucket
+        // count — every sample must land in exactly one bucket's min/max,
+        // none dropped, none double-counted (the i*n/bucket_count boundary
+        // math is the thing under test here).
+        let samples: Vec<f32> = (0..17).map(|i| i as f32).collect();
+        let peaks = peaks_from_samples(&samples, 5);
+        assert_eq!(peaks.len(), 5);
+        assert_eq!(peaks[0].0, 0.0); // first bucket's min is the first sample
+        assert_eq!(peaks[4].1, 16.0); // last bucket's max is the last sample
+        // monotonically increasing input -> monotonically increasing bucket maxima
+        for w in peaks.windows(2) {
+            assert!(w[1].1 >= w[0].1);
+        }
+    }
+
+    #[test]
+    fn peaks_from_samples_more_buckets_than_samples_still_returns_bucket_count() {
+        let samples = [1.0, -1.0];
+        let peaks = peaks_from_samples(&samples, 5);
+        assert_eq!(peaks.len(), 5);
+    }
+
+    #[test]
+    fn peaks_from_samples_single_sample_bucket_has_equal_min_max() {
+        let peaks = peaks_from_samples(&[0.42], 1);
+        assert_eq!(peaks, vec![(0.42, 0.42)]);
+    }
+
+    #[test]
     fn generation_bump_invalidates_a_session() {
         // stop_and_bump_generation with nothing running just advances the
         // counter and is safe to call repeatedly (mirrors chroma_audio_stop
@@ -834,6 +1067,61 @@ mod tests {
             (rms, peak),
             (0.0, 0.0),
             "a source with no audio stream must not produce any device output"
+        );
+    }
+
+    // Integration test (D-051) — real symphonia decode + bucket reduction,
+    // gated on the same CHROMA_TEST_AUDIO_VIDEO fixture the D-050 playback
+    // test uses (a real file confirmed to have an audio stream).
+    // `chroma_audio_waveform` takes a bare source path — no open project
+    // needed, unlike `chroma_audio_play`.
+    #[test]
+    fn chroma_audio_waveform_returns_nonflat_peaks_for_a_real_file() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        let peaks = chroma_audio_waveform(video_path.clone(), 0.0, 2.0, 100)
+            .expect("chroma_audio_waveform");
+        assert_eq!(peaks.len(), 100, "requested bucket count must be honoured");
+        assert!(
+            peaks.iter().any(|(lo, hi)| *hi > *lo || *hi != 0.0),
+            "expected at least some non-silent peaks decoding 2s of {video_path}"
+        );
+    }
+
+    // A source confirmed to have NO audio stream (CHROMA_TEST_SILENT_VIDEO,
+    // same fixture the D-050 silent-playback test uses) must return an empty
+    // peaks Vec, not an error — mirrors chroma_timeline_frame's blank-frame
+    // "nothing to draw" contract.
+    #[test]
+    fn chroma_audio_waveform_on_a_silent_source_is_an_empty_ok() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_SILENT_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_SILENT_VIDEO to run (a real file confirmed to have no audio stream)"
+            );
+            return;
+        };
+
+        let peaks =
+            chroma_audio_waveform(video_path, 0.0, 2.0, 100).expect("chroma_audio_waveform");
+        assert_eq!(peaks, Vec::new());
+    }
+
+    #[test]
+    fn chroma_audio_waveform_zero_duration_or_buckets_is_an_empty_ok_without_touching_disk() {
+        // a nonexistent path proves this returns early on the duration_secs/
+        // buckets guard rather than attempting to open/probe it.
+        assert_eq!(
+            chroma_audio_waveform("/nonexistent/path.mp4".into(), 0.0, 0.0, 100).unwrap(),
+            Vec::new()
+        );
+        assert_eq!(
+            chroma_audio_waveform("/nonexistent/path.mp4".into(), 0.0, 2.0, 0).unwrap(),
+            Vec::new()
         );
     }
 }

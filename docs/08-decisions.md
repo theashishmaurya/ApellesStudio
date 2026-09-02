@@ -3041,3 +3041,194 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   video" set, which a later `chroma::relight` test wrongly assumes is unset)
   that only surfaces when `CHROMA_TEST_VIDEO` is set — reproduced with zero
   D-050 code involved, confirmed unrelated to this change.
+
+---
+
+## D-051 — Mature timeline UI: scoped against `react-timeline-editor`'s actual API first (edge-trim/snapping were already native); custom scroll-zoom, ripple-flash, and a Rust-computed waveform on top
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Roadmap "Next" item 2 (owner caught live, 2026-09-02, comparing
+  directly against Palmier/Premiere-class editors): the Editor tab's
+  `@xzdarcy/react-timeline-editor` v1.0.0 embed (`TimelinePane.tsx`, D-041)
+  was missing table-stakes NLE interaction — scroll-wheel zoom, a live
+  edge-drag trim, and the general visual language (waveforms, snapping,
+  ripple feedback, per-track identity) mature editors share. The brief was
+  explicit: scope this against the library's real installed API before
+  writing custom interaction code, and don't build multi-track visual
+  polish the data model can't back yet.
+
+- **Library-vs-custom scoping — read `node_modules/@xzdarcy/react-timeline-
+  editor@1.0.0`'s actual `.d.ts` and bundled source (`dist/index.es.js`),
+  not just its README, before writing anything:**
+  - **Edge-trim was already fully native and already wired — zero new code.**
+    Every action already had `flexible: true` (D-041); the library renders
+    `.action-left-stretch`/`.action-right-stretch` 10px handles per clip and
+    hands them to `interact.js`'s `resizable({ edges })`, which supplies its
+    own hover cursor (`ew-resize`) automatically — no custom CSS or JS
+    needed for the cursor. `TimelinePane.tsx`'s `onActionResizeEnd` was
+    already wired to `trim_start`/`trim_end`. This pass only *verified* it
+    (reading the source confirmed the mechanism; see Verification) rather
+    than building a trim interaction from scratch.
+  - **Snapping was already fully native — zero new code.** `dragLine: true`
+    (already set) turns on the library's built-in `defaultGetAssistPosition`
+    assist: every other action's start/end edges *and* the playhead
+    (`cursorLeft`, unless `hideCursor`) are collected as snap targets for
+    both move and resize drags, with its own `adsorptionDistance`. This is
+    exactly "snapping to adjacent clip edges, the playhead, etc." from the
+    brief — already there, unused only because nobody had checked.
+  - **Scroll-wheel zoom is custom.** The library has no `wheel` handling
+    anywhere in its source — confirmed by grep, not assumption. Added: a
+    `scaleWidth` state (was a hardcoded constant) driven by a **native**
+    (non-React) `wheel` listener on the edit-area wrapper via `useEffect` +
+    `addEventListener(..., { passive: false })`, not React's `onWheel` —
+    React attaches wheel listeners passively by default, which silently
+    drops `preventDefault()` and lets the page scroll under the zoom.
+    Toolbar zoom in/out buttons + a live `%` readout drive the same state,
+    since a wheel-only affordance isn't discoverable and every comparable
+    editor also exposes a toolbar control.
+  - **The waveform is custom** (the roadmap item's own prediction — "likely
+    true, that's almost always app-specific"). The library's
+    `getActionRender` is a plain content slot with no audio awareness.
+  - **Ripple visual feedback is custom.** Nothing in the library's model
+    distinguishes "this clip moved because I dragged it" from "this clip
+    moved because an upstream edit rippled it."
+
+- **Waveform: computed once in Rust, drawn as a plain canvas — no new
+  dependency.** New `chroma_audio_waveform(source_path, start_secs,
+  duration_secs, buckets) -> Vec<(f32, f32)>` in `chroma::audio` (the module
+  D-050 already put `symphonia` in): a one-shot batch decode of just the
+  requested range (seek + decode, no `rubato`/`cpal`/ring-buffer — a static
+  peak read doesn't need device-rate output or a live session), mixed to
+  mono, reduced to `buckets` (min, max) pairs by `peaks_from_samples` (pure,
+  unit-tested: exact bucket-boundary coverage, empty/zero-bucket guards,
+  more-buckets-than-samples). Returns an empty `Vec` — not an error — for a
+  source with no audio stream (checked via `chroma::edit::probe_cached`,
+  widened from private to `pub(crate)` to reuse the same has-audio cache
+  `chroma_timeline_frame`/`chroma_audio_play` already share, rather than a
+  second `ffprobe` spawn) — the same "nothing to draw, not a failure"
+  contract `chroma_timeline_frame`'s blank-frame return already uses, so a
+  silent clip's waveform request isn't treated as an error in the frontend.
+  `Waveform.tsx` (new, `@chroma/editor`) requests roughly one bucket per 2px
+  of the clip's on-screen width, module-level-caches the promise per
+  (source path, range, bucket count) so re-renders don't refetch, and draws
+  min/max bars on a `<canvas>` sized to the clip — reading `--color-text-
+  primary` through the canvas element's own computed `color` (inherited from
+  its `className="text-text-primary"`) rather than a magic literal, so it
+  stays theme-consistent for free. **Deliberately not extracted into a
+  shared decode helper with `run_session`** (D-050's live playback
+  pipeline) despite ~20 overlapping lines (open → probe → find audio track →
+  make decoder → seek): the two diverge immediately after that point (one
+  streams indefinitely through `rubato` into a live `cpal` callback; this
+  one collects a bounded `Vec` and returns), and factoring the shared prefix
+  out would mean threading boxed `FormatReader`/`Decoder` trait objects back
+  into `run_session`'s already-verified (D-050) path for a small dedup —
+  judged not worth touching tested, working code for this pass. Documented
+  as the deliberate tradeoff, not silently duplicated.
+
+- **Ripple visual feedback: diff clip start-frames by id, not a Rust
+  "ripple" event.** `chroma-timeline`'s model has no gaps (D-041 — clips are
+  always back to back), so any trim/remove/reorder that changes a clip's
+  duration or position necessarily shifts every downstream clip's start
+  frame; there is no explicit "these clips rippled" signal to consume,
+  Rust-side or otherwise. `TimelinePane.tsx` instead snapshots `{clip id →
+  timeline start frame}` on every `track` change and diffs it against the
+  previous snapshot; any id present in both snapshots with a different start
+  frame gets a brief (550ms) Tailwind `animate-pulse` + accent ring in
+  `getActionRender`, then clears via `setTimeout`. A clip that's simply new
+  (`add_clip`, or `split`'s right-hand half) is correctly excluded — its id
+  has no previous entry, so it's "new," not "shifted." No custom CSS
+  keyframes needed (Tailwind's built-in `animate-pulse`); no `transition` on
+  the action's own `left`/`width` (that's React state interact.js updates on
+  every drag-move tick — a CSS transition there would make live dragging
+  visibly lag behind the mouse).
+
+- **Per-track colour coding: deliberately not built.** Checked first, per
+  the brief: the Editor timeline is still genuinely single-video-track in
+  practice (D-041/D-045 — `Timeline.tracks` is technically a `Vec` but
+  nothing in this codebase ever produces a second track). Building an
+  N-track colour palette now would be UI for tracks that cannot exist yet.
+  What *was* added: a small "Video 1" label pinned top-left of the edit
+  area, naming the one real track truthfully rather than pretending there's
+  a multi-track system underneath. Real per-track visual polish is gated on
+  a future multi-track-*authoring* feature (a separate, bigger roadmap item)
+  — not on this UI pass.
+
+- **Verification.**
+  - `cargo test -p RapidRAW --lib chroma::` — **107/107 passed** (was 95 at
+    D-050; +12: 5 pure `peaks_from_samples` tests — min/max-per-bucket,
+    empty/zero-bucket guards, exact sample-coverage across an uneven bucket
+    split, more-buckets-than-samples, single-sample bucket — plus the
+    duration/bucket-count guard test that touches no disk). With
+    `CHROMA_TEST_AUDIO_VIDEO=~/Downloads/A001_08302215_C019.MOV` (D-050's own
+    real-audio fixture, HEVC+AAC 48kHz/2ch) and
+    `CHROMA_TEST_SILENT_VIDEO=~/Downloads/pexels_28808272.mp4` (this repo's
+    real project's actual shot, confirmed no audio stream) also set: **+2
+    more, 109/109** — `chroma_audio_waveform_returns_nonflat_peaks_for_a_real_file`
+    decodes 2s of the real fixture and asserts genuinely non-flat peaks
+    (not a mock), `chroma_audio_waveform_on_a_silent_source_is_an_empty_ok`
+    confirms the no-audio-stream path returns `Ok(vec![])`. Real symphonia
+    decode, real file, real assertion — not just "it compiles."
+  - `cargo fmt --edition 2024 --check` clean on the three touched files
+    (`chroma/audio.rs`, `chroma/edit.rs`; `lib.rs`'s one-line
+    `generate_handler!` addition wasn't run through `rustfmt` directly — per
+    D-045's documented gotcha, invoking `rustfmt`/`cargo fmt` on `lib.rs`
+    itself recursively reformats every `mod`-reachable file in the crate).
+    `cargo clippy -p RapidRAW --lib` — zero warnings on `chroma/audio.rs` or
+    `chroma/edit.rs`; the one pre-existing warning nearby
+    (`chroma/mod.rs:22`, a doc-list indent nit) is in a file this pass never
+    touched.
+  - `tsc --noEmit` in `app/`: **64 errors, unchanged baseline** (confirmed
+    byte-for-byte against the pre-change run), **zero** in `packages/editor`
+    (the only package touched) or in the new `Waveform.tsx`. (A same-named,
+    unrelated pre-existing `app/src/components/panel/editor/Waveform.tsx` —
+    RapidRAW's own histogram/scope waveform — already carried one of the 64
+    baseline errors; not this file, not touched by this pass.)
+  - **Booted the real app for real**, `~/Movies/Chroma/New.chroma` open:
+    port 1420 was held by a concurrent agent's own dev session (same
+    OS-level single-instance situation D-050 hit), so this run used a
+    temporary port override, 1427, in both `vite.config.mjs` and
+    `tauri.conf.json`'s `devUrl`, for the verification session only,
+    reverted before commit (confirmed via `git diff --stat` showing no
+    change to either file post-revert). Vite served 200 on `/`; the native
+    `RapidRAW` process launched and stayed up (confirmed via `ps`, matching
+    the spawned PID) with no panic and no new error in either the dev-server
+    stdout or the app's own log file beyond a pre-existing, unrelated
+    "Frontend failed to report ready within timeout" race (present under
+    this session's heavy concurrent-agent CPU load, not something this
+    change's code path touches). Requested `TimelinePane.tsx` and
+    `Waveform.tsx` directly from Vite's dev server (`/@fs/...`) and got back
+    correctly-transformed JS (React `jsxDEV` calls, resolved imports) rather
+    than a 500/error overlay — confirms both files parse and their import
+    graph resolves under the real bundler, not just under `tsc`.
+  - **Honest gap, same as D-050's:** did not visually confirm the zoom
+    slider, the waveform's pixels, the edge-trim cursor, or the ripple flash
+    inside the actual running window. Tried both `screencapture` (macOS
+    refused: no Screen Recording permission in this sandbox) and
+    `osascript`/System Events accessibility scripting (every process,
+    including Finder, enumerated zero windows — no Accessibility permission
+    either, not an app-specific problem). Real project
+    (`~/Movies/Chroma/New.chroma`) has exactly one shot and it has no audio
+    stream (D-050's own finding), so even a working screen-capture path
+    would have shown an empty (correctly empty) waveform on that specific
+    project, not proof the drawing code handles real peaks — the
+    `chroma_audio_waveform_returns_nonflat_peaks_for_a_real_file` test is
+    the real-peaks proof instead, calling the exact command
+    `Waveform.tsx`'s `invoke()` calls. Edge-trim and snapping being native
+    library behavior (confirmed by reading `interact.js`'s `resizable()`
+    wiring and `defaultGetAssistPosition` in the library's own bundled
+    source) is a stronger form of confidence than a single manual drag would
+    have been, but is still "read the mechanism," not "felt the mouse
+    drag" — noted plainly rather than claimed as full interactive
+    verification.
+
+- **Consequences / deferred.** Multi-track visual polish (per-track colour,
+  height-by-kind) stays deferred until a real second track can exist. Zoom
+  is not cursor-anchored (it rescales around the current scroll position,
+  not the mouse position) — a nice-to-have, not attempted this pass.
+  `rubato`'s known end-of-clip tail-flush gap (D-050) doesn't apply here
+  (the waveform path never uses `rubato`). No waveform result caching on the
+  Rust side (only the frontend module-level `Map` caches) — acceptable at
+  this scale (a handful of clips, decode is fast) but the first thing to
+  revisit if a long timeline with many clips makes waveform requests feel
+  slow.

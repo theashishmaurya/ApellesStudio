@@ -25,8 +25,10 @@ numbers are actually calibrated).
   persisted in the project. Multiple named timelines per project, switchable via
   `TimelineSwitcher` (D-046). **Real audio during playback** (D-050 —
   `symphonia`→`rubato`→`dasp_sample`→`cpal`, single video track's embedded
-  audio stream, synced-at-start-not-tightly-coupled to the video playhead). No
-  multi-track or transcript cut yet.
+  audio stream, synced-at-start-not-tightly-coupled to the video playhead).
+  **Mature single-track timeline UI** (D-051) — scroll-wheel + toolbar zoom,
+  native edge-drag trim + snap-to-clip-edge/playhead, a Rust-computed waveform
+  on the clip, ripple-shift flash. No multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
@@ -66,17 +68,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    waveform-on-clip UI (item 2), mute/volume controls, audio scrubbing while
    paused, and long-play-session drift correction between the audio/video
    clocks (open-loop by design this pass — see D-050's sync-model note).
-2. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
-   Palmier/Premiere-class editors. Today's `react-timeline-editor` embed (D-041 MVP) is
-   missing table-stakes NLE interaction: zoom in/out on the ruler (scroll-wheel over the
-   timeline, not just the toolbar slider), trim-by-dragging a clip's edge (currently
-   only whole-clip drag/reorder — no edge-hover cursor, no live trim), and the general
-   multi-track visual language mature editors share (per-track height/color, waveform
-   on audio clips, snapping, ripple feedback). Scope this properly against
-   `react-timeline-editor`'s actual API before starting — some of this may already be
-   supported and just not wired (check before assuming a custom timeline is needed).
-   Depends on real multi-track support, not just the current single-video-track
-   assembly (the `shots`/`media` unification item 1 depended on is done — D-046).
+2. ~~**A mature timeline UI**~~ — **done, D-051 (2026-09-03).** Scoped against
+   `react-timeline-editor`'s actual API first, as directed: **edge-drag trim and
+   snapping (to adjacent clip edges + the playhead) turned out to already be fully
+   native** (`flexible: true` + `dragLine: true`, both already set since D-041) — zero
+   new code for either, just verified by reading the library's bundled source.
+   **Custom, built this pass:** scroll-wheel zoom over the timeline (native `wheel`
+   listener + toolbar zoom buttons — the library has no wheel handling at all), a
+   Rust-computed waveform (`chroma_audio_waveform`, `chroma::audio` — one-shot
+   `symphonia` decode → mono → min/max bucket peaks, drawn as a plain `<canvas>` in
+   the new `Waveform.tsx`, no new dependency), and ripple visual feedback (a
+   clip-id→start-frame diff drives a brief `animate-pulse` on whatever shifted).
+   **Per-track colour coding deliberately not built** — the Editor timeline is still
+   genuinely single-video-track in practice (D-041/D-045); a "Video 1" label names
+   the one real track honestly instead. Real multi-track visual polish stays gated on
+   a future multi-track-*authoring* feature, not this UI pass.
 3. **Export → a top-right button + an Export window** — done, 2026-09-03 (**D-049**):
    `ExportDialog`, the right-most button in the Colorist tab's `EditorToolbar`
    (top-right of the tab), backed by the existing `chroma_export_video`/

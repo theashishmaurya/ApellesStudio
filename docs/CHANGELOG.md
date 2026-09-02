@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Mature Editor timeline UI (D-051): closes the roadmap item.**
+  Scoped against `@xzdarcy/react-timeline-editor`'s real API first — edge-drag trim
+  and snap-to-clip-edge/playhead turned out to already be fully native (`flexible`/
+  `dragLine`, both already set since D-041), zero new code for either. Built: native
+  (non-passive) scroll-wheel zoom + toolbar zoom buttons on `TimelinePane.tsx`; a
+  Rust-computed waveform (`chroma_audio_waveform`, `chroma::audio`, one-shot
+  `symphonia` decode → mono → min/max bucket peaks) drawn as a plain `<canvas>` in
+  new `Waveform.tsx`, no new dependency; ripple visual feedback (a clip-id→
+  start-frame diff drives a brief `animate-pulse`); a truthful "Video 1" label
+  instead of speculative multi-track colour-coding (deferred to a future
+  multi-track-authoring feature). `cargo test chroma::` 107/107 (+12), plus 2 more
+  real-file-gated waveform tests (real non-flat peaks from the D-050 audio fixture,
+  empty `Ok` for the known-silent one). `tsc --noEmit` 64, unchanged baseline, zero
+  in touched files. Booted the real app; honest gap noted in D-051 — no Screen
+  Recording/Accessibility permission in this sandbox, same as D-050, so the pixel-
+  level zoom/waveform/trim/ripple interactions weren't visually confirmed, only
+  their backing command surface and the library's own native-support mechanism
+  (read directly from its bundled source).
+
 - **2026-09-03** — **Export dialog, Colorist tab (D-049): a top-right button replaces
   the "buried `ExportPanel` toggle" roadmap item.** New `ExportDialog.tsx`
   (`@chroma/ui` `Dialog`/`Select`, D-042) in `EditorToolbar`'s top-right button group —
