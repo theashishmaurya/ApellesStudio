@@ -442,6 +442,15 @@ Palmier, and it's a signed installable build.
 - Windows/Linux, batch/headless mode
 - OFX plugin export (the gyroflow model — grade node in Resolve/Fusion/AE)
 - Public MCP contract, web review viewer
+- **AI background replacement, believable** (owner asked 2026-09-02) — matte the tracked
+  subject over a still / plate / AI-generated BG, then the integration stack: **light
+  wrap** (new shader pass), **grade match** (`match_to_reference`, D-026, vs the BG),
+  **relight the subject to the BG's light** (depth-driven puck relight, D-013 — the
+  agent auto-places pucks from BG light analysis; biggest believability lever),
+  **defocus match** (per-mask blur D-027 + depth D-036), **grain match** (one pass over
+  the whole comp). The agent does the integration end-to-end — what consumer AI-BG tools
+  skip. Needs `chroma-compositor` + D-013 first. v1 = static-camera only (moving plate
+  needs a camera solve). Detail: `docs/notes/background-replace.md`.
 
 ---
 
