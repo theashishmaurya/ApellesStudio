@@ -1448,3 +1448,95 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   `set_project_settings` + `get_state` are an open **manual** smoke test (the
   `useEffect([])` bridge listener doesn't hot-reload and the running app was not
   driven) — listed in `docs/notes/project-model.md`.
+
+---
+
+## D-039 — Chroma becomes a 3-tab app (Edit / Motion / Colorist) on a Rust workspace + frontend package workspace; thin-shell/fat-core; incremental migration
+
+**decided (2026-09-02) · owner call — build starts now**
+
+- **Context.** Palmier Pro (the NLE the pipeline leaned on for the cut) is going
+  closed-source + commercial. The owner's whole content workflow is script → cut →
+  motion graphics → grade → publish. Decision: Chroma stops being grading-only and
+  becomes **one AI-native local app, three tabs — Editing / Motion / Colorist** —
+  general-purpose (not talking-head-only). Supersedes `docs/00-vision.md`'s
+  "**Not an NLE**" clause (vision/prd/scope rewritten alongside). Research trail:
+  `docs/notes/product-direction.md`, `docs/notes/architecture-lock.md`.
+- **Constraint lock (owner):** Rust-native, performance-first ("can't afford lags"),
+  small binary — **hence Tauri**. This **rejects** JS/WebCodecs/headless-Chrome
+  editing engines (Remotion-as-editor, Diffusion Studio, OpenCut-web) and
+  heavy-runtime C++ (libopenshot — evaluated, rejected: CPU compositing, no Rust
+  bindings, JUCE/Qt weight). Remotion stays **only** as the Motion tab's engine.
+- **Reuse (not build from scratch), perf-safe because the video never flows through
+  the React UI:**
+  - **decode** → `re_video` (Rerun, MIT/Apache) / VideoToolbox on macOS → wgpu texture
+  - **multi-track compositor** → OpenCut's `rust/crates/compositor` (MIT, wgpu, shipping
+    v0.3.0) as reference/vendored dep, else built on Chroma's `render_core` (D-014)
+  - **timeline model** → OpenTimelineIO-shaped serde structs (not the C bindings)
+  - **timeline UI** → `react-timeline-editor` (MIT) — a control surface, zero perf cost
+  - **transcript cut** → whisper `--word-timestamps` (already have) + the CutScript/
+    Rescript edit-model
+  - **audio** → `symphonia` + `cpal` + `rubato` + `dasp`
+  - **UI kit / dnd** → RapidRAW's `components/ui/` + `@dnd-kit/core` (already a dep)
+  - libopenshot's `Timeline`/`Clip`/`Keyframe` (Bezier) headers — **read, don't link**
+
+### The structure (locked)
+
+**Thin-shell / fat-core (the Gyroflow model): the Tauri app is glue; every capability
+is a library. Domain models are pure Rust — no wgpu, no ffmpeg — with GPU + media I/O
+isolated below them. One-directional, compiler-enforced dependency graph.**
+
+**Rust workspace `chroma/crates/`:**
+
+| layer | crate | responsibility | deps |
+|---|---|---|---|
+| L0 | `chroma-types` | `Frame`/`Rational`/`Resolution`/`ColorSpace`/`TimeRange`, IDs, errors — zero heavy deps | — |
+| L0 | `chroma-gpu` | wgpu context (no surface), texture pool, `render_core` (D-014, extracted) | wgpu, types |
+| L1 | `chroma-media` | decode/probe/encode — VideoToolbox→texture, ffmpeg-CLI fallback (D-015), decode pipe (D-030), export encode pipe (D-022) | gpu, types |
+| L1 | `chroma-grade` | the grade **renderer** — wraps `engine/` shader + adjustments↔uniform bridge + masks + scopes (D-021) | gpu, types, engine |
+| L1 | `chroma-compositor` | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — **new, for Edit** | gpu, media, grade, types |
+| L2 | `chroma-timeline` | OTIO-shaped edit model: tracks/clips/gaps/ripple/roll/slip/slide, transcript→EDL. **Pure.** | types |
+| L2 | `chroma-grade-model` | `grade.json` (D-025) — adjustments, mask geometry, keyframes (D-034), matte/track/depth refs. **Pure** (model vs renderer) | types |
+| L2 | `chroma-project` | `.chroma` project (D-037) + settings (D-038) | types, grade-model, timeline |
+| L2 | `chroma-motion` | manifest → Remotion bridge (render / read frames as overlay) | types |
+| L3 | `chroma-ai` | sidecar client (SAM/ViTMatte/YOLO/depth/whisper) + lifecycle (D-028) | types |
+| L3 | `chroma-agent` | control server (D-020) + MCP op registry + scope exposure | project, grade-model, timeline, types |
+| L4 | `chroma-app` (`src-tauri`) | the Tauri binary — `#[tauri::command]` surface per tab, RunEvent hooks, sidecar spawn | all |
+
+`engine/` (RapidRAW submodule) stays vendored; only `chroma-grade` links it. Over time
+Chroma crates absorb more; RapidRAW shrinks to "grade shader + mask raster."
+
+**Frontend workspace `chroma/packages/`:** `@chroma/tokens`, `@chroma/ui`,
+`@chroma/bridge` (typed Tauri bindings + stores + control-bridge hook), `@chroma/colorist`
+(Colorist tab), `@chroma/editor` (Edit tab — new), `@chroma/motion` (Motion tab), plus
+`@chroma/motion-engine` (the `videoAgent/engine/motion/` Remotion project, **moved in**),
+`@chroma/shell` (tab switcher + project launcher D-037 + chrome), `apps/desktop` (the Vite
+entry `src-tauri` serves). **Monorepo — `chroma/` is the home.**
+
+### Migration — incremental, `cargo test` green at every commit
+
+1. Workspace **skeleton** first: `Cargo.toml [workspace]`, `crates/*` + `packages/*`
+   stubs (`lib.rs` + `README.md` each), move the motion engine in. **No code moves; app
+   still builds + runs.**
+2. Extract leaf **pure** crates: `chroma-types`, `chroma-grade-model`, `chroma-timeline`.
+3. `chroma-gpu` (`render_core`), `chroma-media` (decode pipe + `video`), `chroma-project`
+   (`project.rs`/`grade.rs`/`state.rs`).
+4. `chroma-agent` (`control.rs` + op registry), `chroma-ai` (`sidecar.rs` + mask/depth
+   clients).
+5. `chroma-grade` wraps `engine/`; `chroma-app` becomes the thin binary.
+6. Frontend: `@chroma/tokens` + `@chroma/ui` + `@chroma/bridge` out first, then the
+   `@chroma/shell` + 3-tab layout (Colorist wrapped as-is initially), then `@chroma/editor`
+   greenfield.
+7. `chroma-compositor` + `@chroma/editor` are built **into** the structure from day one.
+
+### Consequences
+
+- `docs/00-vision.md` / `01-prd.md` / `02-scope.md` rewritten for the 3-tab product;
+  `04-roadmap.md` restructured (v1 = grade; v2 adds Edit MVP + Motion; the old phases
+  fold in). `03-architecture.md` rewritten from this decision. `BUGS.md` "known
+  constraints" list refreshed (D-034/D-036/D-014 done).
+- D-002 (licence) / D-007 (headline) / D-010 (name) now decided under the 3-tab framing —
+  a **fully-open** (no commercial-feature gate) + local + Rust-fast suite is the unclaimed
+  position (Palmier closed, Diffusion/Gausian = open-core + paid-pro).
+- D-013 (relight) upgraded — see `docs/notes/relight-research.md`: interactive
+  depth-driven puck relight ships early (deterministic), photoreal diffusion bake at v3.
