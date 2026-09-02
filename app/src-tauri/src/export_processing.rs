@@ -571,6 +571,17 @@ fn build_single_mask_adjustments(all: &AllAdjustments, mask_index: usize) -> All
         tile_offset_x: all.tile_offset_x,
         tile_offset_y: all.tile_offset_y,
         mask_atlas_cols: all.mask_atlas_cols,
+        // D-046: this isolates ONE mask's effect for a per-mask preview export
+        // (every other mask is zeroed below) — relight is a global layer, not
+        // scoped to any one mask, so it's left at its `Default` (zeroed /
+        // `relight_light_count: 0`) here too rather than leaking into an
+        // "only this mask" visualization. `..Default::default()` (not named
+        // fields) because `_relight_pad1`/`_relight_pad2` are private to
+        // `image_processing.rs` — `relight_depth_layer`'s default (`0`, not
+        // the render path's usual "-1 = none") is harmless precisely because
+        // `relight_light_count: 0` gates the whole relight pass off in the
+        // shader regardless of what `relight_depth_layer` holds.
+        ..Default::default()
     };
     single.mask_adjustments[0] = all.mask_adjustments[mask_index];
     for i in 1..single.mask_adjustments.len() {

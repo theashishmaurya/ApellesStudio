@@ -16,6 +16,8 @@
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)
 //! - `keyframes` — interpolate a shape sub-mask's geometry across source frames (D-034)
+//! - `relight`  — interactive depth-driven light-puck relight: parse the "Relight"
+//!                grade layer + resolve its depth source (D-046)
 //! - `control`  — in-app HTTP control server bridging MCP ⇄ the frontend (D-020)
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `grade`    — the `grade.json` document: save / load / versioned schema (D-025)
@@ -33,6 +35,7 @@ pub mod load;
 pub mod mask;
 pub mod playback;
 pub mod project;
+pub mod relight;
 pub mod session;
 pub mod sidecar;
 pub mod state;

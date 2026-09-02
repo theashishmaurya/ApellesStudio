@@ -1566,6 +1566,30 @@ pub struct MaskAdjustments {
 
 pub const MAX_MASKS: usize = 32;
 
+/// Interactive relight (D-046). One virtual light, GPU-uniform layout — 8 `f32`s,
+/// two 16-byte rows, no padding needed. `kind` is `0.0` for a positional light
+/// (key/fill/rim — shaded by the depth-derived normal + falloff) or `1.0` for
+/// ambient (uniform tint, no position/normal/falloff). `pos_x`/`pos_y`/`radius`
+/// are 0–1 fractions (UI percentages divided by 100 in
+/// `parse_relight_lights_gpu`); `color_*` are linear-ish 0–1 straight from the
+/// UI hex swatch (not colour-managed — a cheap tint, matching the rest of this
+/// v1's "not photoreal" scope, see D-046). See `shaders/shader.wgsl`'s mirror
+/// struct + `apply_relight`.
+#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable, Default)]
+#[repr(C)]
+pub struct RelightLightGpu {
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub radius: f32,
+    pub intensity: f32,
+    pub color_r: f32,
+    pub color_g: f32,
+    pub color_b: f32,
+    pub kind: f32,
+}
+
+pub const MAX_RELIGHT_LIGHTS: usize = 8;
+
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct AllAdjustments {
@@ -1575,6 +1599,24 @@ pub struct AllAdjustments {
     pub tile_offset_x: u32,
     pub tile_offset_y: u32,
     pub mask_atlas_cols: u32,
+    /// D-046. Populated by `get_all_adjustments_from_json` from
+    /// `adjustments.relightLights`; `relight_depth_layer` defaults to `-1` there
+    /// (no depth bound) and is overwritten by the render call site (currently
+    /// `apply_adjustments` + `chroma_play_frame`, the two live-preview paths)
+    /// once it has appended the resolved depth bitmap to `mask_bitmaps` — see
+    /// `chroma::relight`.
+    pub relight_lights: [RelightLightGpu; MAX_RELIGHT_LIGHTS],
+    pub relight_light_count: u32,
+    pub relight_depth_layer: i32,
+    // `pub(crate)`, not private: `export_processing.rs`'s
+    // `build_single_mask_adjustments` constructs a full `AllAdjustments` via
+    // `..Default::default()` from outside this module — Rust's struct-update
+    // syntax still requires every field be nameable/visible at the
+    // construction site even when using `..base`, so a fully-private pad
+    // field would make that (valid, cross-module) construction a compile
+    // error. Still not `pub` — no meaning outside the crate, purely alignment.
+    pub(crate) _relight_pad1: u32,
+    pub(crate) _relight_pad2: u32,
 }
 
 struct AdjustmentScales {
@@ -2489,6 +2531,9 @@ pub fn get_all_adjustments_from_json(
         mask_count += 1;
     }
 
+    let (relight_lights, relight_light_count) =
+        crate::chroma::relight::parse_relight_lights_gpu(js_adjustments);
+
     AllAdjustments {
         global,
         mask_adjustments,
@@ -2496,6 +2541,16 @@ pub fn get_all_adjustments_from_json(
         tile_offset_x: 0,
         tile_offset_y: 0,
         mask_atlas_cols: 1,
+        relight_lights,
+        relight_light_count,
+        // No depth bitmap bound yet — the render call site sets this once it
+        // has resolved + appended one to `mask_bitmaps` (D-046). Left at -1
+        // (not 0, which is a valid layer index) on every path that never sets
+        // it, so an un-wired path just renders ambient-only relight, never a
+        // wrong depth layer.
+        relight_depth_layer: -1,
+        _relight_pad1: 0,
+        _relight_pad2: 0,
     }
 }
 

@@ -107,6 +107,8 @@ export enum Panel {
   Masks = 'masks',
   Metadata = 'metadata',
   Presets = 'presets',
+  /** Interactive relight (D-046) — draggable light pucks + per-light controls. */
+  Relight = 'relight',
   Tethering = 'tethering',
 }
 

@@ -27,6 +27,7 @@ import Controls from './components/panel/right/ControlsPanel';
 import MetadataPanel from './components/panel/right/MetadataPanel';
 import CropPanel from './components/panel/right/CropPanel';
 import MasksPanel from './components/panel/right/MasksPanel';
+import RelightPanel from './components/chroma/RelightPanel';
 import AIPanel from './components/panel/right/AIPanel';
 import PresetsPanel from './components/panel/right/PresetsPanel';
 import TetheringPanel from './components/panel/right/TetheringPanel';
@@ -559,7 +560,12 @@ function App() {
   const handlePanelSelect = useCallback(
     (panelId: Panel) => {
       setPanel(panelId);
-      setEditor({ activeMaskId: null, activeAiSubMaskId: null, isWbPickerActive: false });
+      setEditor({
+        activeMaskId: null,
+        activeAiSubMaskId: null,
+        isWbPickerActive: false,
+        activeRelightLightId: null, // D-046
+      });
     },
     [setPanel, setEditor],
   );
@@ -589,6 +595,8 @@ function App() {
           return <CropPanel />;
         case Panel.Masks:
           return <MasksPanel />;
+        case Panel.Relight:
+          return <RelightPanel />;
         case Panel.Ai:
           return <AIPanel />;
         case Panel.Presets:

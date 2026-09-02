@@ -1342,6 +1342,41 @@ fn generate_sub_mask_bitmap(
     }
 }
 
+/// Interactive relight (D-046): rasterize the depth track directory the
+/// Relight layer shades against into a full-res `GrayImage`, aligned to the
+/// current frame exactly like an "AI Depth" mask's tracked bitmap
+/// (`generate_ai_depth_bitmap` above) — same `tracked_depth_map` (D-036) +
+/// `generate_ai_bitmap_from_full_mask` warp, no band-pass/feather (relight
+/// wants the raw per-pixel depth value, not a mask opacity). Relight has no
+/// per-layer rotation/flip of its own (unlike a mask sub-mask), so `tf` uses
+/// the image's own orientation only. Returns `None` for an empty dir, no
+/// video loaded, or nothing cached yet at this frame — the caller then renders
+/// ambient-only relight (see `chroma::relight::resolve_depth_dir`).
+pub fn generate_relight_depth_bitmap(
+    depth_dir: &str,
+    width: u32,
+    height: u32,
+    scale: f32,
+    crop_offset: (f32, f32),
+) -> Option<GrayImage> {
+    if depth_dir.is_empty() {
+        return None;
+    }
+    let params = serde_json::json!({ "chromaDepthDir": depth_dir });
+    let full = crate::chroma::depth::tracked_depth_map(&params)?;
+    let tf = TransformParams {
+        rotation: 0.0,
+        flip_horizontal: false,
+        flip_vertical: false,
+        orientation_steps: 0,
+        width,
+        height,
+        scale,
+        crop_offset,
+    };
+    Some(generate_ai_bitmap_from_full_mask(&full, &tf))
+}
+
 pub fn generate_mask_bitmap(
     mask_def: &MaskDefinition,
     width: u32,

@@ -336,6 +336,7 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
 
   const isCropping = activePanel === Panel.Crop;
   const isMasking = activePanel === Panel.Masks;
+  const isRelighting = activePanel === Panel.Relight; // Interactive relight (D-046)
   const isAiEditing = activePanel === Panel.Ai;
 
   const croppedDimensions = useMemo<ImageDimensions | null>(() => {
@@ -2136,6 +2137,7 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
             isCropping={isCropping}
             isMaskControlHovered={isMaskControlHovered}
             isMasking={isMasking}
+            isRelighting={isRelighting}
             isStraightenActive={isStraightenActive}
             isRotationActive={isRotationActive}
             isSliderDragging={isSliderDragging}

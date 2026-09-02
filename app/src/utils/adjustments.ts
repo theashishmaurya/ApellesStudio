@@ -226,6 +226,14 @@ export interface Adjustments {
   lutSize?: number;
   lutIsSceneReferred?: boolean;
   masks: Array<MaskContainer>;
+  /** Interactive relight (D-046). See `RelightLight`. */
+  relightLights: Array<RelightLight>;
+  /** The Video-Depth-Anything track directory (D-036) the Relight layer
+   *  shades against — same tracked-dir shape a mask's `chromaDepthDir` uses,
+   *  but at the top level since Relight isn't a mask. `null` until "Track
+   *  Depth" is run from the Relight panel; positional lights are inert (no
+   *  crash) until then, ambient lights don't need it. */
+  relightDepthDir: string | null;
   orientationSteps: number;
   rotation: number;
   saturation: number;
@@ -344,6 +352,32 @@ export interface MaskAdjustments {
   tint: number;
   vibrance: number;
   whites: number;
+}
+
+/** Interactive relight (D-046) — one virtual light in the "Relight" grade
+ *  layer. A sibling top-level layer, NOT a mask container: it shades every
+ *  pixel via a depth-driven normal, not a rasterized opacity matte.
+ *  `x`/`y`/`radius` are 0–100 percentages (of frame width/height, and of the
+ *  longer frame dimension respectively) — the same convention shape/mask
+ *  geometry already uses. `chromaKeyframes` reuses the D-034 mask-keyframe
+ *  mechanism verbatim (`utils/maskKeyframes.ts`'s `GEOMETRY_KEYS.relight`) —
+ *  it is NOT a new keyframe system. See `docs/notes/relight-research.md`. */
+export interface RelightLight {
+  id: string;
+  /** "key" | "fill" | "rim" | "ambient". Only "ambient" changes the shading
+   *  math (uniform tint, no position/normal/falloff) — the other three are
+   *  UI presets/labels in v1 (same math, different defaults). */
+  kind: 'key' | 'fill' | 'rim' | 'ambient';
+  x: number;
+  y: number;
+  /** 0–100, % of the longer frame dimension. Ignored for kind === 'ambient'. */
+  radius: number;
+  /** 0–200 UI percentage; 100 = the shader's baseline light strength. */
+  intensity: number;
+  /** `#rrggbb`, straight off an `<input type="color">` swatch. */
+  color: string;
+  visible: boolean;
+  chromaKeyframes?: Array<{ frame: number; params: Record<string, any> }>;
 }
 
 export interface MaskContainer {
@@ -565,6 +599,8 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
   lutSize: 0,
   lutIsSceneReferred: false,
   masks: [],
+  relightLights: [],
+  relightDepthDir: null,
   orientationSteps: 0,
   rotation: 0,
   saturation: 0,

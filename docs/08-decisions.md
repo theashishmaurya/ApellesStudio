@@ -2076,3 +2076,238 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   D-044), the docked Sources/Library panel, the bin-tree UI, the
   timeline-switcher UI, and wiring `useMediaPoolStore` to `folder`/
   `chroma_media_move`.
+
+---
+
+## D-046 — Interactive relight (puck UI + depth-driven shading): v1/v2 scope, WGSL stage placement, depth-bitmap reuse
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** `docs/notes/relight-research.md` (2026-09-02) split relight into
+  two modes behind one puck UI: **interactive** (deterministic, real-time,
+  screen-space shading off the depth track — v1/v2) and **bake photoreal**
+  (RelightVid/IC-Light diffusion in the `ai/` sidecar — v3, separate task, not
+  touched here). This decision covers the interactive mode only: the puck UI,
+  the "Relight" grade layer + light schema, keyframing, and the GPU shading
+  pass. Studied first: the existing radial/linear mask handle interaction
+  (`ImageCanvas.tsx`), D-024 (depth-haze — the closest precedent for a
+  grade-shader stage consuming a depth bitmap), D-034 (mask keyframes — the
+  mechanism this reuses verbatim for light position/radius), D-036 (the
+  Video-Depth-Anything per-frame depth track this feature shades against).
+
+- **Where the shader stage lives — crate placement.** Checked
+  `crates/README.md`'s migration status first, per the brief: `chroma-grade`/
+  `chroma-grade-model` are still **stub crates** (D-039 step 1) — the real
+  grade renderer (`AllAdjustments`, the WGSL shader, D-024's depth-haze logic)
+  all still live directly in `app/src-tauri/src/{image_processing,
+  gpu_processing,mask_generation}.rs` + `shaders/shader.wgsl`. **Choice:**
+  follow that actual current pattern — relight's uniform struct + JSON parsing
+  go in `image_processing.rs`, its depth-bitmap rasterizer in
+  `mask_generation.rs` (sibling to `generate_ai_depth_bitmap`), its shading
+  math in `shader.wgsl` — not a premature `chroma-grade` extraction that would
+  split relight from the depth-haze code it directly parallels.
+
+- **The puck UI — HTML overlay, not the Konva mask-shape tree.** The brief
+  named the radial/linear mask handles as the pattern to study. Read them
+  (`handleRadialDragStart/Move/End`, a Konva `<Transformer>`-backed shape with
+  resize + rotate). But `ImageCanvas.tsx` already has a **second**, lighter
+  canvas-overlay pattern for a plain draggable point that isn't a mask
+  geometry — the clone/heal source marker (`directPatchMarkers`): a bare
+  `absolute inset-0 pointer-events-none` div holding `pointer-events-auto`
+  circles positioned via `(imageSpace - crop) * imageRenderSize.scale +
+  imageRenderSize.offsetX/Y`. A light puck (drag = position only; no resize,
+  no rotate — falloff radius is a side-panel slider per the brief's own
+  ClipDrop-interaction spec) is structurally that marker, not a mask shape.
+  **Choice:** `RelightPuckLayer.tsx` (new, `panel/editor/`) — the marker
+  overlay pattern, native pointer-capture drag, mounted as a sibling `<div>`
+  inside `ImageCanvas.tsx`'s existing content wrapper, gated on a new
+  `isRelighting` prop (mirrors `isMasking`/`isCropping` exactly). Zero Konva
+  `<Stage>`/`<Layer>` changes.
+
+- **The "Relight" layer — a sibling top-level `Adjustments` field, not a
+  mask.** `adjustments.relightLights: RelightLight[]` (`{id, kind: 'key' |
+  'fill' | 'rim' | 'ambient', x, y, radius, intensity, color, visible,
+  chromaKeyframes?}`, 0–100 percentages matching existing shape-mask geometry
+  conventions) + `adjustments.relightDepthDir: string | null` (its own
+  tracked-depth-dir reference, D-036's shape, at the top level because relight
+  shades every pixel via a depth-derived normal — it has no rasterized
+  opacity matte and doesn't belong in `adjustments.masks`). `kind` only
+  changes the shading math for `'ambient'` (uniform tint, no
+  position/normal/falloff); key/fill/rim share one math path and differ by UI
+  preset defaults only (`relightUtils.ts`).
+
+- **Depth source — reuses D-036's tracked-dir mechanism verbatim, no static-
+  bake fallback in v1.** The Relight panel's "Track Depth" button calls the
+  *same* `chroma_depth_track`/`chroma_depth_track_status` commands D-036's
+  mask-panel button does (one sidecar job type; only one runs at a time
+  regardless of caller) — `useAiMasking.ts`'s new `handleTrackRelightDepth`
+  writes the resulting dir to `relightDepthDir` instead of a sub-mask's
+  parameters. Rust-side, `chroma::relight::resolve_depth_dir` reads that
+  field and `mask_generation::generate_relight_depth_bitmap` rasterizes it via
+  the *exact* `tracked_depth_map` (D-036) + `generate_ai_bitmap_from_full_mask`
+  path `generate_ai_depth_bitmap` already uses for the AI-Depth mask, minus
+  the band-pass/feather (relight wants the raw per-pixel depth value, not a
+  mask opacity). **Deferred:** a static single-frame bake fallback for a
+  depth-less clip (D-024's AI-Depth mask has one; relight doesn't in v1) —
+  `docs/04-roadmap.md`. Until "Track Depth" runs, positional lights are inert
+  (no crash — see the shader gate below); ambient lights work with no depth
+  at all.
+
+- **The GPU pass — reuses the mask-texture-array + `textureLoad` access
+  pattern D-024's depth-haze mask already established, not a new bind-group
+  texture.** `mask_textures` (`texture_2d_array<f32>`, binding 3) is already
+  how a depth bitmap reaches the shader (D-024: the AI-Depth mask's bitmap is
+  just one more array layer, sampled via `get_mask_influence`'s
+  `textureLoad`). **Choice:** append the relight depth bitmap as **one more**
+  layer on the *same* array — no new texture, no new bind-group entry, no new
+  WGSL binding. The render call site (`process_preview_job` in `lib.rs` —
+  the **one** function both `apply_adjustments` (interactive edits) and
+  `chroma_play_frame` (D-031 playback) funnel through via the shared preview-
+  worker channel, so this wiring covers both live paths for free, at
+  playback speed, with zero `playback.rs` changes) pushes the resolved depth
+  bitmap onto the same `Vec` `get_cached_or_generate_mask` already built, and
+  records its index in a new `AllAdjustments.relight_depth_layer: i32` field
+  (`-1` = none bound). Every *other* `mask_bitmaps` construction site
+  (export, thumbnail, LUT bake — 7ish call sites) is deliberately left
+  untouched: `relight_depth_layer` stays `-1` there, so positional lights are
+  inert on those paths (ambient still renders — it needs no depth) rather
+  than wired up. This is the explicit "do NOT build an export/apply-to-whole-
+  video step" boundary from the brief — export inherits relight for free once
+  a future pass wires the same two lines into `export.rs`, but that pass is
+  not this one.
+  - `RelightLightGpu` (`image_processing.rs`): 8 `f32`s, two 16-byte rows, no
+    padding — `pos_x, pos_y, radius, intensity, color_r, color_g, color_b,
+    kind` (`kind`: `0.0` positional, `1.0` ambient). `AllAdjustments` gains
+    `relight_lights: [RelightLightGpu; 8]`, `relight_light_count: u32`,
+    `relight_depth_layer: i32` + 2×u32 pad — mirrored field-for-field in
+    `shader.wgsl`'s `AllAdjustments`/new `RelightLight` struct.
+  - **Shading model (`apply_relight`, `shader.wgsl`)** — deterministic,
+    approximate, explicitly not photoreal (matches
+    `relight-research.md`'s stated trade-off): per-pixel normal reconstructed
+    from a central finite-difference of the depth texture (treating "near"
+    i.e. bright as "up" toward camera — a heightfield-normal trick, not a
+    real 3D reconstruction), a screen-space light direction built from the
+    puck's 2D screen offset (aspect-corrected) plus a depth delta between the
+    light's own anchor point and the shaded pixel, `max(0, dot(N,L)) ·
+    falloff(radius) · colour · intensity` per light, `falloff` a quadratic
+    ramp to zero at `radius`. No cast shadows, no reflections, can't undo
+    lighting baked into the plate — the exact limitations
+    `relight-research.md` named as the accepted trade for "instant, holds on
+    video, fully deterministic." Runs in the same stage as the existing
+    mask-blur/vignette block: linear light, post per-mask grade, pre-tonemap.
+  - **Determinism.** Same inputs → same `textureLoad`s → same arithmetic —
+    no new source of non-determinism (no `rand()`, no wall-clock; the one
+    external input, the depth PNG, is itself a deterministic file read keyed
+    by source frame, D-036). Verified by rendering the same frame twice with
+    a relight setup and diffing (byte-identical).
+
+- **Keyframing — reuses D-034's mechanism verbatim, not a new system.** A
+  `RelightLight` object carries `chromaKeyframes` in the *exact* `[{frame,
+  params}]` shape a shape sub-mask's geometry does. Rust:
+  `chroma::relight::parse_relight_lights` calls
+  `chroma::keyframes::interpolated_parameters` (already generic over any
+  params `Value`) per light before extracting `x`/`y`/`radius` — the same
+  one-hook pattern `generate_sub_mask_bitmap` uses, zero new interpolation
+  code. Frontend: `utils/maskKeyframes.ts` gains one entry,
+  `GEOMETRY_KEYS.relight = ['x', 'y', 'radius']` — every existing function
+  (`parseKeyframes`/`interpolate`/`upsertKeyframe`/`removeKeyframe`/
+  `clearKeyframes`) is already generic over a plain params object, so a
+  `RelightLight` is used as one directly. `RelightPanel.tsx`'s keyframe row
+  is a light-specific redraw of `MaskKeyframeBar.tsx`'s UI (button + diamond
+  affordance), not an import of it — that component is sub-mask-typed
+  (`updateSubMask`); a byte-shared component wasn't worth forcing over a
+  ~20-line redraw against the same underlying utils.
+
+- **v1/v2 scope boundary (per the brief) — confirmed, not touched:** the
+  diffusion "bake" mode (RelightVid/IC-Light, the `ai/` sidecar, the
+  preview-one-frame-then-commit bake UX note in `relight-research.md`) is
+  entirely out of scope for this decision — v3, a separate future task. No
+  `ai/` sidecar file was touched. No batch/export command was added.
+
+- **Panel registration.** `Panel.Relight` added to `AppProperties.tsx`'s enum
+  + `useUIStore.ts`'s `ALL_PANELS`/`DEFAULT_PANEL_DEFAULT_REGIONS`/both
+  `rightTop` default layouts + one i18n tooltip key (the framework-level
+  panel-switcher plumbing is upstream RapidRAW machinery every panel already
+  goes through this way). `RelightPanel.tsx`'s own content is plain strings,
+  no `useTranslation` — matching the established Chroma-addition convention
+  (`MaskKeyframeBar.tsx`), not upstream's i18n convention, since Chroma's own
+  components have never carried translations. **Trimmed from the brief's
+  ClipDrop reference strip:** the bottom tabs are Ambient / Light-N / +Add
+  Light only — no "Preset" tab (saved/built-in lighting looks). Nothing in
+  the schema or the functional asks needed it; it's UI polish, deferred to
+  `docs/04-roadmap.md` rather than guessed at.
+
+- **Consequences / footprint.** New: `app/src-tauri/src/chroma/relight.rs`
+  (pure + unit-tested: hex-colour parsing, JSON→spec parsing + defaulting,
+  visibility filtering, the `MAX_RELIGHT_LIGHTS` cap, GPU-struct percentage
+  scaling, the keyframe-hook wiring, depth-dir resolution, and a real-GPU
+  render-determinism + "lights actually change pixels" test — 10 tests),
+  `app/src/utils/relightUtils.ts`, `app/src/components/panel/editor/
+  RelightPuckLayer.tsx`, `app/src/components/chroma/RelightPanel.tsx`. Edited:
+  `image_processing.rs` (+`RelightLightGpu`, `AllAdjustments` fields — the two
+  pad fields are `pub(crate)`, not private: `export_processing.rs`'s
+  `build_single_mask_adjustments` constructs a full `AllAdjustments` via
+  `..Default::default()` from outside this module, which Rust's struct-update
+  syntax still requires every field be visible for — and the
+  `get_all_adjustments_from_json` hook), `mask_generation.rs`
+  (+`generate_relight_depth_bitmap`), `lib.rs` (`process_preview_job`'s
+  depth-bitmap-append, a `let`-chain per `clippy::collapsible_if`),
+  `export_processing.rs` (`build_single_mask_adjustments` zeroes relight too —
+  it isolates one mask's effect for a preview export, and relight is a global
+  layer, not scoped to any mask), `shader.wgsl` (+`RelightLight` struct,
+  `AllAdjustments` fields, `apply_relight` + 3 helpers, one call site),
+  `chroma/mod.rs` (+1 `pub mod`), `adjustments.ts` (+`RelightLight` interface,
+  2 `Adjustments` fields), `maskKeyframes.ts` (+1 `GEOMETRY_KEYS` entry),
+  `ImageCanvas.tsx` (+`isRelighting` prop, the puck-layer mount, a drag
+  handler — ~30 lines), `Editor.tsx`/`App.tsx` (panel wiring),
+  `useEditorStore.ts` (+`activeRelightLightId`), `useAiMasking.ts`
+  (+`handleTrackRelightDepth`), `AppProperties.tsx`/`PanelSwitcher.tsx`/
+  `useUIStore.ts`/`en.json` (panel registration), `useChromaControl.ts`
+  (+`list_relight_lights`/`add_relight_light`/`set_relight_light`/
+  `delete_relight_light` — the control-server/MCP-facing surface, mirroring
+  `add_mask`/`list_masks`/`delete_mask`'s exact shape; added so the feature
+  is agent-drivable like every other adjustment layer already is, and used
+  to verify this decision against the real running app — see Verified below).
+  **No `AppState`/Cargo/bind-group/new-Tauri-command change** — relight rides
+  the existing generic preview-worker + mask-texture-array plumbing entirely.
+
+- **Verified (2026-09-02).** `cargo check`/`cargo test --no-default-features
+  chroma::` **75/75** green (incl. the 10 new relight tests — the GPU
+  determinism test ran for real, a real Metal adapter was available);
+  `cargo clippy --no-default-features -p RapidRAW --no-deps` clean on every
+  touched/new file (fixed the 2 `collapsible_if` hits in `lib.rs` this pass
+  introduced; the other 15 pre-existing warnings, in files this pass never
+  touched, are untouched); `cargo fmt --check` clean on every touched file
+  (the one flagged diff, `mask_generation.rs:1272`, is pre-existing D-034
+  drift, confirmed present before this change too — left alone per CLAUDE.md).
+  `cd app && npx tsc --noEmit` — **64** errors, unchanged from baseline, zero
+  in a touched/new file. **Live app, real project:** booted
+  `npm run tauri:dev` from this worktree (temporarily overrode
+  `tauri.conf.json`'s `identifier` for the run only, to dodge
+  `tauri-plugin-single-instance` colliding with a concurrent agent's own
+  RapidRAW-identified dev instance on the same machine — reverted to a clean
+  `git diff` before finishing), opened the real
+  `~/Movies/Chroma/New.chroma` project (a 4K/50fps video shot) over the
+  control-server bridge, and drove the new ops directly (no screen-recording
+  or accessibility access to the WKWebView content in this sandbox, so this
+  is the log/state-evidence fallback the brief names, not a screenshot):
+  `add_relight_light` (ambient, green, intensity 80) → the control server's
+  own mutating-op response includes a fresh rendered preview JPEG + scopes;
+  decoded and inspected it — **the entire frame is washed a solid, uniform
+  green**, exactly `apply_relight`'s ambient math (`color · intensity`, no
+  position/normal/falloff). `set_relight_light` (intensity 80 → 15) on the
+  same light → the re-rendered preview shows a visibly fainter, proportional
+  tint — confirms live intensity scaling and that a per-id update actually
+  re-renders. A positional `key` light added with no depth track present
+  produced **zero visible change** (correct — `apply_relight`'s `has_depth`
+  gate; already proven to shade correctly *with* depth by the Rust
+  determinism test's synthetic radial depth map). `list_relight_lights`
+  confirmed both test lights, then both were deleted via
+  `delete_relight_light` and the scopes returned to the pre-test baseline
+  numbers — the project's `grades/*.grade.json` on disk (autosaved mid-test)
+  was re-checked after cleanup and correctly shows `relightLights: []`, so
+  the user's real project was left exactly as found. **Not directly
+  observed:** the canvas puck drag interaction itself (`RelightPuckLayer`) —
+  no screen capture available in this sandbox to watch a drag; verified by
+  code review + the identical coordinate-math pattern the existing
+  clone/heal marker overlay already uses successfully, plus `tsc` finding no
+  type errors in it. Dev server + app process killed after.

@@ -64,6 +64,9 @@ interface EditorState {
   // Masks & AI
   activeMaskContainerId: string | null;
   activeMaskId: string | null;
+  // Interactive relight (D-046) — which light in `adjustments.relightLights`
+  // the canvas puck + RelightPanel controls are currently editing.
+  activeRelightLightId: string | null;
   activeAiPatchContainerId: string | null;
   activeAiSubMaskId: string | null;
   isMaskControlHovered: boolean;
@@ -107,6 +110,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   interactivePatch: null,
   activeMaskContainerId: null,
   activeMaskId: null,
+  activeRelightLightId: null,
   activeAiPatchContainerId: null,
   activeAiSubMaskId: null,
 

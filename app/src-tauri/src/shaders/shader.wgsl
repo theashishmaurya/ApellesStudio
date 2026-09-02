@@ -169,6 +169,23 @@ struct MaskAdjustments {
     _pad_end7: f32,
 }
 
+// Interactive relight (D-046). Mirrors `RelightLightGpu` in image_processing.rs
+// field-for-field — 8 f32s, no padding needed (two 16-byte rows already).
+// `kind`: 0.0 = positional (key/fill/rim, shaded by depth-normal + falloff),
+// 1.0 = ambient (uniform tint, no position/normal/falloff). See `apply_relight`.
+struct RelightLight {
+    pos_x: f32,
+    pos_y: f32,
+    radius: f32,
+    intensity: f32,
+    color_r: f32,
+    color_g: f32,
+    color_b: f32,
+    kind: f32,
+}
+
+const MAX_RELIGHT_LIGHTS: u32 = 8u;
+
 struct AllAdjustments {
     global: GlobalAdjustments,
     mask_adjustments: array<MaskAdjustments, 32>,
@@ -176,6 +193,11 @@ struct AllAdjustments {
     tile_offset_x: u32,
     tile_offset_y: u32,
     mask_atlas_cols: u32,
+    relight_lights: array<RelightLight, 8>,
+    relight_light_count: u32,
+    relight_depth_layer: i32,
+    _relight_pad1: u32,
+    _relight_pad2: u32,
 }
 
 struct HslRange {
@@ -1418,6 +1440,117 @@ fn get_mask_influence(mask_index: u32, coords: vec2<u32>) -> f32 {
     return textureLoad(mask_textures, vec2<i32>(coords), i32(mask_index), 0).r;
 }
 
+// --- Interactive relight (D-046) ------------------------------------------------
+//
+// Deterministic, real-time screen-space shading driven by the per-frame depth
+// track (D-036). No cast shadows, no reflections, not photoreal — a cheap
+// directional-light approximation good enough for "warm key from screen-left,
+// cool rim from behind, lift the fill" on a talking head. See
+// `docs/notes/relight-research.md` + D-046 for the full design + limitations.
+//
+// The depth bitmap rides the SAME `mask_textures` array + `textureLoad` access
+// pattern `get_mask_influence` above already uses (D-024's depth-haze mask is
+// the precedent this mirrors) — it's just one more array layer, indexed by
+// `adjustments.relight_depth_layer` (-1 when no depth is bound, e.g. a still
+// or an un-tracked clip; ambient lights still work with no depth at all).
+
+/// Depth texel at `coord`, clamped to the image bounds (no wraparound at the
+/// edges when reading a 1px-offset neighbour for the normal finite-difference).
+/// Same "bright = near" orientation D-036's track + D-024's static bake both use.
+fn sample_relight_depth(coord: vec2<i32>, layer: i32, dims: vec2<i32>) -> f32 {
+    let c = clamp(coord, vec2<i32>(0), dims - vec2<i32>(1));
+    return textureLoad(mask_textures, c, layer, 0).r;
+}
+
+/// Per-pixel normal reconstructed from a central finite-difference of the depth
+/// texture, treating "near" (bright) as "up" toward the camera — a standard
+/// heightfield-normal trick, not a real 3D reconstruction. `RELIGHT_NORMAL_STRENGTH`
+/// is a fixed tuning constant (not user-exposed, like D-024's haze falloff
+/// constants) balancing "subtle relief reads as shaded" against "flat backdrop
+/// noise doesn't amplify into visible banding".
+fn relight_normal(coord: vec2<i32>, layer: i32, dims: vec2<i32>) -> vec3<f32> {
+    const RELIGHT_NORMAL_STRENGTH: f32 = 3.0;
+    let dl = sample_relight_depth(coord + vec2<i32>(-1, 0), layer, dims);
+    let dr = sample_relight_depth(coord + vec2<i32>(1, 0), layer, dims);
+    let du = sample_relight_depth(coord + vec2<i32>(0, -1), layer, dims);
+    let dd = sample_relight_depth(coord + vec2<i32>(0, 1), layer, dims);
+    let dx = (dr - dl) * RELIGHT_NORMAL_STRENGTH;
+    let dy = (dd - du) * RELIGHT_NORMAL_STRENGTH;
+    return normalize(vec3<f32>(-dx, -dy, 1.0));
+}
+
+/// Quadratic falloff to zero at `radius` — smoother falloff than a linear
+/// ramp, matching the puck's visual falloff ring.
+fn relight_falloff(dist: f32, radius: f32) -> f32 {
+    let r = max(radius, 0.001);
+    let t = clamp(dist / r, 0.0, 1.0);
+    let f = 1.0 - t;
+    return f * f;
+}
+
+/// Accumulate every active light's contribution onto `base_color` (linear
+/// light). `depth_layer < 0` (no depth bound) still lets ambient lights
+/// through — they need no position/normal/falloff — but positional lights
+/// (key/fill/rim) contribute nothing without a depth source to shade against.
+fn apply_relight(
+    base_color: vec3<f32>,
+    coord: vec2<u32>,
+    dims: vec2<f32>,
+    depth_layer: i32,
+    light_count: u32
+) -> vec3<f32> {
+    let has_depth = depth_layer >= 0;
+    let dims_i = vec2<i32>(dims);
+    let coord_i = vec2<i32>(coord);
+    let uv = vec2<f32>(coord) / dims;
+    let aspect = dims.x / max(dims.y, 1.0);
+
+    var n = vec3<f32>(0.0, 0.0, 1.0);
+    var pixel_depth = 0.0;
+    if (has_depth) {
+        n = relight_normal(coord_i, depth_layer, dims_i);
+        pixel_depth = sample_relight_depth(coord_i, depth_layer, dims_i);
+    }
+
+    var added = vec3<f32>(0.0);
+    let count = min(light_count, MAX_RELIGHT_LIGHTS);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let light = adjustments.relight_lights[i];
+        let light_color = vec3<f32>(light.color_r, light.color_g, light.color_b);
+
+        if (light.kind > 0.5) {
+            // Ambient: uniform tint, no position/normal/falloff, works with no depth.
+            added += light_color * light.intensity;
+            continue;
+        }
+        if (!has_depth) {
+            continue;
+        }
+
+        let light_uv = vec2<f32>(light.pos_x, light.pos_y);
+        let light_depth = sample_relight_depth(vec2<i32>(light_uv * dims), depth_layer, dims_i);
+
+        // Screen-space light direction: xy from the puck's 2D offset
+        // (aspect-corrected so the falloff radius reads as a circle
+        // regardless of frame aspect), z from the depth delta between the
+        // light's own anchor point and this pixel — puts the light "at"
+        // whatever surface depth it was dropped on, same relative-depth
+        // space `relight_normal`'s finite-difference already reads (hence
+        // the matching RELIGHT_NORMAL_STRENGTH-equivalent scale below).
+        let delta_uv = vec2<f32>((light_uv.x - uv.x) * aspect, light_uv.y - uv.y);
+        let delta_z = (light_depth - pixel_depth) * 3.0;
+        let light_dir = normalize(vec3<f32>(delta_uv, delta_z));
+
+        let dist = length(vec2<f32>(coord) - light_uv * dims) / max(dims.x, dims.y);
+        let fall = relight_falloff(dist, light.radius);
+
+        let ndotl = max(0.0, dot(n, light_dir));
+        added += light_color * light.intensity * fall * ndotl;
+    }
+
+    return max(base_color + added, vec3<f32>(0.0));
+}
+
 fn sample_lut_tetrahedral(uv: vec3<f32>) -> vec3<f32> {
     let dims = vec3<f32>(textureDimensions(lut_texture));
     let size = dims - vec3<f32>(1.0);
@@ -1829,6 +1962,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 composite_rgb_linear = mix(composite_rgb_linear, blurred_lin, blur_w);
             }
         }
+    }
+
+    // --- Interactive relight (D-046) --------------------------------------------
+    // Same stage as the mask blur / vignette above: linear light, post-grade,
+    // pre-tonemap. See `apply_relight` for the shading model + its limitations.
+    if (adjustments.relight_light_count > 0u) {
+        composite_rgb_linear = apply_relight(
+            composite_rgb_linear,
+            absolute_coord,
+            full_dims,
+            adjustments.relight_depth_layer,
+            adjustments.relight_light_count
+        );
     }
 
     if (adjustments.global.vignette_amount != 0.0) {
