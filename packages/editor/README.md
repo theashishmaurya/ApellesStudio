@@ -21,6 +21,11 @@ Backed by the `chroma-timeline` crate and the `chroma::edit` Tauri commands
 (`chroma_timeline_get` / `_set` / `_frame`). The preview is a standalone
 decode→jpeg (`chroma_timeline_frame`) — **not** the Colorist's graded wgpu path.
 
+A project can hold several named timelines as of D-045 (2026-09-02), but this
+package still only ever gets/sets **the active one** — same three command
+names, no switcher UI here yet (pass 3). `Timeline` gained an `id` field
+(`timeline.ts`) accordingly.
+
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
-cut, GPU compositing, grade-in-preview, OTIO export, MCP. See
-`docs/notes/editor-mvp.md`.
+cut, GPU compositing, grade-in-preview, OTIO export, MCP, a timeline-switcher
+UI (D-045). See `docs/notes/editor-mvp.md`.

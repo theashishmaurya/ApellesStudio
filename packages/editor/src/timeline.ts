@@ -7,6 +7,13 @@
  * They mirror `chroma-timeline`'s clamp rules; a `chroma_timeline_get` refetch
  * after each save reconciles anything (e.g. a source frame count that only the
  * backend knows).
+ *
+ * D-045 (multiple named timelines): a project can now hold several
+ * `Timeline`s with one active — `Timeline.id` (below) is how they're told
+ * apart. That selection is a Rust-side concept this pass (`ProjectManifest.
+ * active_timeline` in `app/src-tauri/src/chroma/project.rs`): `chroma_timeline_
+ * get`/`_set`/`_frame` are unchanged here, they just transparently target
+ * whichever timeline is active. No timeline-switcher UI yet (pass 3).
  */
 
 export interface Rational {
@@ -31,6 +38,8 @@ export interface Track {
 }
 
 export interface Timeline {
+  /** Stable id (D-045) — distinguishes this timeline among a project's others. */
+  id: string;
   name: string;
   rate?: Rational | null;
   tracks: Track[];

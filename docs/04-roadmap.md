@@ -53,8 +53,18 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      additive alongside `shots`, not yet unified (see D-044 for why + what's owed).
      `chroma_media_import`/`chroma_media_list` commands (probe, dedup, offline
      flagging). `useMediaPoolStore` scaffolding in `@chroma/bridge`, no panel UI.
-   - **Still open (pass 2/3):** the `shots`/`media` unification, bins/folders,
-     multiple named timelines, the docked Sources/Library panel, `set_active_timeline`.
+   - **Pass 2 done (D-045, 2026-09-02):** bins/folders (`MediaItem.folder`, a plain
+     path string, no separate bin entity — Palmier-MCP-folder convention;
+     `chroma_media_import`'s optional `folder` arg + new `chroma_media_move`) and
+     multiple named timelines (`ProjectManifest.timeline: Option<Timeline>` (D-041)
+     → `timelines: Vec<Timeline>` + `active_timeline: usize`, migrated losslessly
+     from the old singular key; `Timeline` gained an `id`; new
+     `chroma_timeline_list`/`_create`/`_set_active`, `_get`/`_set`/`_frame` now
+     target the active timeline). Still model + commands only — no UI, and
+     `set_active_timeline` (roadmap text) shipped as `chroma_timeline_set_active`.
+     `shots`/`media` still not unified.
+   - **Still open (pass 3):** the `shots`/`media` unification, the docked
+     Sources/Library panel, the bin-tree UI, the timeline-switcher UI.
 2. **Export → a top-right button + an Export window** — move Export out of the buried
    `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
    project spec), frame range, `.cube` bake toggle, output path, progress. Backed by

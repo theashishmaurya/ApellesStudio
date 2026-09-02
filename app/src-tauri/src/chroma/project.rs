@@ -30,6 +30,16 @@
 //! does not yet carry a `media_id` back-reference. See the D-044 decision for
 //! why, and what pass 2/3 still owe (bins/folders, multiple named timelines,
 //! the docked Sources panel, and true `shots`/`media` unification).
+//!
+//! **Bins + multiple timelines (D-045, pass 2):** [`MediaItem::folder`] files
+//! a pool item into a bin — a plain path string ("B-roll/Sunset"), created
+//! implicitly the first time an item lands there, same no-entity convention
+//! Palmier Pro's MCP folders use. [`ProjectManifest::timeline`] (D-041,
+//! singular) became [`ProjectManifest::timelines`] + `active_timeline`
+//! (D-045) — multiple independently-editable named timelines, one active,
+//! migrated losslessly from the old singular key by [`load_manifest`]. Still
+//! no bin-tree UI, no timeline-switcher UI, and `shots`/`media` are still
+//! unified — pass 3.
 
 use std::path::{Path, PathBuf};
 
@@ -137,13 +147,27 @@ pub struct ProjectManifest {
     /// ignored, missing keys → `None`); an absent `settings` key → all `None`.
     #[serde(default)]
     pub settings: ProjectSettings,
-    /// The Edit-tab timeline (D-041) — a single-video-track assembly of the
-    /// project's shots plus any edits made in the Edit tab. Additive and
-    /// optional (schema major unchanged, same as D-038's `settings`): an
-    /// absent key → `None`, and the project behaves as it did pre-D-041.
-    /// Built + persisted lazily by `chroma::edit::chroma_timeline_get`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeline: Option<chroma_timeline::Timeline>,
+    /// The Edit-tab timelines (D-041 singular → D-045 plural) — each an
+    /// independently-editable assembly of clips; [`ProjectManifest::active_timeline`]
+    /// picks which one every `chroma_timeline_*` command reads/writes. Additive
+    /// and defaulted (schema major unchanged, same move D-038 made for
+    /// `settings`): an absent key → an empty list, and the project behaves as
+    /// it did pre-D-041. [`load_manifest`] losslessly migrates a legacy
+    /// singular `timeline` key (D-041's shape) into a one-element list here —
+    /// see [`migrate_legacy_timeline`] and the D-045 decision. Built +
+    /// persisted lazily by `chroma::edit::chroma_timeline_get`. **Never
+    /// serialize a `timeline` (singular) key again** — the struct has no such
+    /// field, so a save can't reintroduce it.
+    #[serde(default)]
+    pub timelines: Vec<chroma_timeline::Timeline>,
+    /// Index into `timelines` of the timeline every `chroma_timeline_*`
+    /// command targets (D-045) — same `usize`-index convention as
+    /// [`ProjectManifest::active_shot`]. Clamped into range by
+    /// [`load_manifest`]; `chroma_timeline_set_active` resolves a stable
+    /// timeline **id** to this index rather than taking an index directly, so
+    /// the caller never has to track order.
+    #[serde(default)]
+    pub active_timeline: usize,
     /// The project's media pool (D-044, pass 1) — every file imported via
     /// [`chroma_media_import`], independent of `shots`/`timeline`. Additive,
     /// optional (schema major unchanged, same move as D-038/D-041): an absent
@@ -164,7 +188,8 @@ impl ProjectManifest {
             shots: Vec::new(),
             active_shot: 0,
             settings: ProjectSettings::default(),
-            timeline: None,
+            timelines: Vec::new(),
+            active_timeline: 0,
             media: Vec::new(),
         }
     }
@@ -219,6 +244,14 @@ pub struct MediaItem {
     /// list/import time, not stored here — see [`MediaItemDto`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<MediaVideoInfo>,
+    /// The bin this item is filed in (D-045 pass 2) — a plain path string
+    /// ("B-roll/Sunset"), `None`/empty = the pool root. No separate bin
+    /// entity: a folder exists exactly when some item's `folder` names it,
+    /// same convention Palmier Pro's MCP folders use. Set at import time
+    /// (`chroma_media_import`'s optional `folder` arg) or later via
+    /// `chroma_media_move`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 /// [`MediaItem`] + a live-checked `offline` flag — what `chroma_media_import`
@@ -235,6 +268,9 @@ pub struct MediaItemDto {
     pub video: Option<MediaVideoInfo>,
     /// the source path does not exist right now (or is not a video file)
     pub offline: bool,
+    /// the bin path this item is filed in; `None` = pool root (D-045)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 /// `true` if `path` is a readable video file right now — the same cheap check
@@ -253,13 +289,26 @@ impl From<&MediaItem> for MediaItemDto {
             added: m.added.clone(),
             video: m.video.clone(),
             offline: !media_item_is_online(&m.source_path),
+            folder: m.folder.clone(),
         }
     }
 }
 
-/// Probe `path` and build a [`MediaItem`] for it. Never fails outright — a
-/// probe failure (offline / not decodable) just leaves `video: None`.
-fn probe_media_item(path: &str) -> MediaItem {
+/// Trim `folder` and turn an empty/blank string into the pool-root `None` —
+/// the one normalisation point for the "no separate bin entity" model, used
+/// on both import and move.
+fn normalize_folder(folder: Option<&str>) -> Option<String> {
+    folder
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Probe `path` and build a [`MediaItem`] for it, filed into `folder` (a bin
+/// path, created implicitly by being named here — D-045). Never fails
+/// outright — a probe failure (offline / not decodable) just leaves
+/// `video: None`.
+fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -275,20 +324,30 @@ fn probe_media_item(path: &str) -> MediaItem {
         name,
         added: now_rfc3339(),
         video,
+        folder: normalize_folder(folder),
     }
 }
 
 /// Probe + append the entries of `paths` not already in `manifest.media`
 /// (matched by source path — re-importing the same file is a no-op, not a
-/// duplicate) and return just the items that were added. Pure model logic —
-/// no persistence; callers `save_manifest` themselves.
-fn add_media(manifest: &mut ProjectManifest, paths: &[String]) -> Vec<MediaItem> {
-    let existing: std::collections::HashSet<&str> =
-        manifest.media.iter().map(|m| m.source_path.as_str()).collect();
+/// duplicate, regardless of `folder`; use `chroma_media_move` to re-file an
+/// existing item) and return just the items that were added, all filed into
+/// `folder`. Pure model logic — no persistence; callers `save_manifest`
+/// themselves.
+fn add_media(
+    manifest: &mut ProjectManifest,
+    paths: &[String],
+    folder: Option<&str>,
+) -> Vec<MediaItem> {
+    let existing: std::collections::HashSet<&str> = manifest
+        .media
+        .iter()
+        .map(|m| m.source_path.as_str())
+        .collect();
     let added: Vec<MediaItem> = paths
         .iter()
         .filter(|p| !existing.contains(p.as_str()))
-        .map(|p| probe_media_item(p))
+        .map(|p| probe_media_item(p, folder))
         .collect();
     manifest.media.extend(added.iter().cloned());
     added
@@ -334,8 +393,11 @@ fn set_projects_dir(dir: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     let v = serde_json::json!({ "projectsDir": dir });
-    std::fs::write(&cp, format!("{}\n", serde_json::to_string_pretty(&v).unwrap()))
-        .map_err(|e| format!("write {}: {e}", cp.display()))
+    std::fs::write(
+        &cp,
+        format!("{}\n", serde_json::to_string_pretty(&v).unwrap()),
+    )
+    .map_err(|e| format!("write {}: {e}", cp.display()))
 }
 
 // --------------------------------------------------------------------------- //
@@ -346,12 +408,52 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-/// Read + parse `<project_dir>/project.json`, gate the schema major, and clamp
-/// `active_shot` into range. Untagged files are treated as v1.
+/// D-045: pre-migration `project.json` carried a singular `timeline: Timeline
+/// | null` field (D-041). Migrate the **raw** JSON, before typed deserialize,
+/// into `timelines: [Timeline]` — losslessly (every existing field kept) and
+/// backfilling a fresh id (the legacy shape never had one — see
+/// `chroma_timeline::Timeline::id`'s doc). A project saved after this change
+/// never round-trips the old key again: `ProjectManifest` has no `timeline`
+/// field left to serialize. Safe to call on an already-migrated (or fresh)
+/// manifest — a present `timelines` key is left untouched (a stray legacy
+/// `timeline` key alongside it, which a hand-edited file could in principle
+/// have, is just dropped rather than guessed at).
+fn migrate_legacy_timeline(raw: &mut Value) {
+    let Some(obj) = raw.as_object_mut() else {
+        return;
+    };
+    if obj.contains_key("timelines") {
+        obj.remove("timeline");
+        return;
+    }
+    let Some(mut legacy) = obj.remove("timeline") else {
+        return;
+    };
+    if legacy.is_null() {
+        return;
+    }
+    if let Some(tl_obj) = legacy.as_object_mut() {
+        let has_id = tl_obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+        if !has_id {
+            tl_obj.insert(
+                "id".to_string(),
+                Value::String(uuid::Uuid::new_v4().to_string()),
+            );
+        }
+    }
+    obj.insert("timelines".to_string(), Value::Array(vec![legacy]));
+}
+
+/// Read + parse `<project_dir>/project.json`, gate the schema major, migrate
+/// a legacy singular `timeline` key (D-045), and clamp `active_shot` /
+/// `active_timeline` into range. Untagged files are treated as v1.
 pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     let mp = project_dir.join("project.json");
     let txt = std::fs::read_to_string(&mp).map_err(|e| format!("read {}: {e}", mp.display()))?;
-    let raw: Value =
+    let mut raw: Value =
         serde_json::from_str(&txt).map_err(|e| format!("parse {}: {e}", mp.display()))?;
 
     let schema = raw.get("schema").and_then(|s| s.as_str()).unwrap_or("");
@@ -370,6 +472,8 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
         Some(m) => return Err(format!("unknown project.json schema major: {m}")),
     }
 
+    migrate_legacy_timeline(&mut raw);
+
     let mut manifest: ProjectManifest =
         serde_json::from_value(raw).map_err(|e| format!("project.json shape: {e}"))?;
     if manifest.schema.is_empty() {
@@ -377,6 +481,9 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     }
     if !manifest.shots.is_empty() && manifest.active_shot >= manifest.shots.len() {
         manifest.active_shot = 0;
+    }
+    if !manifest.timelines.is_empty() && manifest.active_timeline >= manifest.timelines.len() {
+        manifest.active_timeline = 0;
     }
     Ok(manifest)
 }
@@ -626,7 +733,10 @@ async fn open_manifest(
             match load::load_video_frame(&src, &shot.source_path, shot.frame, state).await {
                 Ok(_) => online_paths.push(src),
                 Err(e) => {
-                    log::warn!("[chroma::project] shot {} failed to load: {e}", shot.source_path);
+                    log::warn!(
+                        "[chroma::project] shot {} failed to load: {e}",
+                        shot.source_path
+                    );
                     dtos.push(ProjectShotDto {
                         id: shot.id.clone(),
                         source_path: shot.source_path.clone(),
@@ -708,7 +818,10 @@ fn regen_thumb(project_dir: &Path) -> bool {
     };
     match video::extract_thumb(&cv.path, &cv.info, cv.frame, 360) {
         Ok(data_url) => {
-            let b64 = data_url.rsplit_once(',').map(|(_, b)| b).unwrap_or(&data_url);
+            let b64 = data_url
+                .rsplit_once(',')
+                .map(|(_, b)| b)
+                .unwrap_or(&data_url);
             match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
                 Ok(bytes) => std::fs::write(project_dir.join("thumb.jpg"), bytes).is_ok(),
                 Err(_) => false,
@@ -828,9 +941,8 @@ pub async fn chroma_project_save(
 /// Backs `get_state().project` so the agent can see where a save would land.
 #[tauri::command]
 pub fn chroma_project_current() -> Option<Value> {
-    state::current_project().map(|p| {
-        serde_json::json!({ "name": p.name, "path": p.path.to_string_lossy() })
-    })
+    state::current_project()
+        .map(|p| serde_json::json!({ "name": p.name, "path": p.path.to_string_lossy() }))
 }
 
 /// Re-point one shot at a new source path and reopen the project.
@@ -894,19 +1006,25 @@ fn require_open_project() -> Result<PathBuf, String> {
 }
 
 /// Probe + append `paths` to the open project's media pool (referenced in
-/// place, never copied), persist, and return just the newly-added items — a
-/// path already in the pool is skipped, not duplicated. The frontend wires
-/// this to a native multi-select file dialog (`@tauri-apps/plugin-dialog`'s
-/// `open({ multiple: true })`, same pattern as the project launcher's
-/// `pickClips`).
+/// place, never copied), filed into `folder` (D-045 — a bin path such as
+/// `"B-roll/Sunset"`, created implicitly; `None`/omitted = the pool root),
+/// persist, and return just the newly-added items — a path already in the
+/// pool is skipped, not duplicated (its folder is untouched even if a
+/// different `folder` was passed this time; use `chroma_media_move` to
+/// re-file it). The frontend wires this to a native multi-select file dialog
+/// (`@tauri-apps/plugin-dialog`'s `open({ multiple: true })`, same pattern as
+/// the project launcher's `pickClips`).
 #[tauri::command]
-pub fn chroma_media_import(paths: Vec<String>) -> Result<Vec<MediaItemDto>, String> {
+pub fn chroma_media_import(
+    paths: Vec<String>,
+    folder: Option<String>,
+) -> Result<Vec<MediaItemDto>, String> {
     if paths.is_empty() {
         return Err("no paths given".into());
     }
     let dir = require_open_project()?;
     let mut manifest = load_manifest(&dir)?;
-    let added = add_media(&mut manifest, &paths);
+    let added = add_media(&mut manifest, &paths, folder.as_deref());
     if !added.is_empty() {
         manifest.modified = now_rfc3339();
         save_manifest(&dir, &manifest)?;
@@ -914,8 +1032,30 @@ pub fn chroma_media_import(paths: Vec<String>) -> Result<Vec<MediaItemDto>, Stri
     Ok(added.iter().map(MediaItemDto::from).collect())
 }
 
+/// Re-file an existing pool item into a different bin path (D-045) — pass
+/// `folder: None` (or an empty/blank string) to move it back to the pool
+/// root. No separate "create bin" command: naming a not-yet-used path here
+/// creates it implicitly, same as `chroma_media_import`'s `folder` arg.
+#[tauri::command]
+pub fn chroma_media_move(id: String, folder: Option<String>) -> Result<MediaItemDto, String> {
+    let dir = require_open_project()?;
+    let mut manifest = load_manifest(&dir)?;
+    let item = manifest
+        .media
+        .iter_mut()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("no media item with id {id}"))?;
+    item.folder = normalize_folder(folder.as_deref());
+    let dto = MediaItemDto::from(&*item);
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    Ok(dto)
+}
+
 /// The open project's full media pool, offline-checked live. For a future
-/// pass's Sources panel to consume — no UI built against it yet (D-044).
+/// pass's Sources panel to consume — no UI built against it yet (D-044). Each
+/// item carries its `folder` (D-045); the frontend derives the bin tree from
+/// the flat list of folder path strings — no separate bin-hierarchy API.
 #[tauri::command]
 pub fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     let dir = require_open_project()?;
@@ -930,6 +1070,14 @@ pub fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `state::set_project` is process-global (D-033/D-037); `cargo test`
+    /// runs test fns on multiple threads by default, so any test that
+    /// mutates it must hold this for its whole body or it can interleave
+    /// with another such test (see `project_ref_set_and_clear`'s original
+    /// comment, which this formalises rather than just shrugs at).
+    static PROJECT_STATE_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
@@ -1015,7 +1163,11 @@ mod tests {
         // legacy `settings: {}`
         let a = root.join("a.chroma");
         std::fs::create_dir_all(&a).unwrap();
-        std::fs::write(a.join("project.json"), r#"{"name":"a","shots":[],"settings":{}}"#).unwrap();
+        std::fs::write(
+            a.join("project.json"),
+            r#"{"name":"a","shots":[],"settings":{}}"#,
+        )
+        .unwrap();
         // no `settings` key at all
         let b = root.join("b.chroma");
         std::fs::create_dir_all(&b).unwrap();
@@ -1043,7 +1195,9 @@ mod tests {
         assert_eq!(s.fps, Some(24.0));
         assert_eq!(s.color_space.as_deref(), Some("rec2020"));
         // explicit null clears; snake_case key accepted; bad fps rejected
-        s.merge_patch(&serde_json::json!({ "width": null, "height": null, "color_space": null, "fps": 0 }));
+        s.merge_patch(
+            &serde_json::json!({ "width": null, "height": null, "color_space": null, "fps": 0 }),
+        );
         assert_eq!(s.width, None);
         assert_eq!(s.height, None);
         assert_eq!(s.color_space, None);
@@ -1067,7 +1221,10 @@ mod tests {
         assert_eq!(manifest.settings.width, Some(176));
         assert_eq!(manifest.settings.height, Some(144));
         assert_eq!(manifest.settings.fps, Some(25.0));
-        assert_eq!(manifest.settings.color_space, None, "color space is not inferred");
+        assert_eq!(
+            manifest.settings.color_space, None,
+            "color space is not inferred"
+        );
 
         // and it persisted
         let reloaded = load_manifest(&dir).unwrap();
@@ -1080,10 +1237,19 @@ mod tests {
 
     /// synthesise a tiny `testsrc` clip with ffmpeg; `None` if ffmpeg is absent.
     fn make_test_clip(tag: &str, w: u32, h: u32, rate: &str) -> Option<PathBuf> {
-        let out = std::env::temp_dir().join(format!("chroma_infer_{tag}_{}.mp4", std::process::id()));
+        let out =
+            std::env::temp_dir().join(format!("chroma_infer_{tag}_{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
         let status = std::process::Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
             .arg(format!("testsrc=size={w}x{h}:rate={rate}:duration=1"))
             .args(["-pix_fmt", "yuv420p"])
             .arg(&out)
@@ -1170,7 +1336,10 @@ mod tests {
         // extension is a real video ext + the file exists -> "online" by the
         // cheap check (probe/decode failure is handled at open time, not here)
         assert!(shot_is_online(&online));
-        assert!(!shot_is_online(&offline), "a missing path is offline, not an error");
+        assert!(
+            !shot_is_online(&offline),
+            "a missing path is offline, not an error"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1191,15 +1360,22 @@ mod tests {
         assert!(manifest.media.is_empty());
 
         let missing = root.join("gone.mov").to_string_lossy().to_string();
-        let added_first = add_media(&mut manifest, &[missing.clone()]);
+        let added_first = add_media(&mut manifest, &[missing.clone()], None);
         assert_eq!(added_first.len(), 1, "a new path is added");
         assert_eq!(manifest.media.len(), 1);
         assert_eq!(manifest.media[0].source_path, missing);
-        assert!(manifest.media[0].video.is_none(), "an offline path probes to no video info");
+        assert!(
+            manifest.media[0].video.is_none(),
+            "an offline path probes to no video info"
+        );
         assert!(!manifest.media[0].id.is_empty());
+        assert_eq!(
+            manifest.media[0].folder, None,
+            "no folder given -> pool root"
+        );
 
         // re-importing the same path is a no-op, not a duplicate
-        let added_second = add_media(&mut manifest, &[missing.clone()]);
+        let added_second = add_media(&mut manifest, &[missing.clone()], None);
         assert!(added_second.is_empty(), "an already-pooled path is skipped");
         assert_eq!(manifest.media.len(), 1);
 
@@ -1216,9 +1392,12 @@ mod tests {
         let root = tmp("add_media_real");
         let (_dir, mut manifest) = new_project_in(&root, "media-real", &[]).unwrap();
         let path = clip.to_string_lossy().to_string();
-        let added = add_media(&mut manifest, &[path.clone()]);
+        let added = add_media(&mut manifest, &[path.clone()], None);
         assert_eq!(added.len(), 1);
-        let info = added[0].video.as_ref().expect("a real clip probes video info");
+        let info = added[0]
+            .video
+            .as_ref()
+            .expect("a real clip probes video info");
         assert_eq!(info.width, 320);
         assert_eq!(info.height, 240);
         assert_eq!(info.fps, 30.0);
@@ -1241,6 +1420,7 @@ mod tests {
             name: "present.mov".into(),
             added: now_rfc3339(),
             video: None,
+            folder: None,
         };
         let offline = MediaItem {
             id: "b".into(),
@@ -1248,9 +1428,18 @@ mod tests {
             name: "gone.mov".into(),
             added: now_rfc3339(),
             video: None,
+            folder: Some("B-roll/Sunset".into()),
         };
         assert!(!MediaItemDto::from(&online).offline);
-        assert!(MediaItemDto::from(&offline).offline, "a missing path is offline, not an error");
+        assert!(
+            MediaItemDto::from(&offline).offline,
+            "a missing path is offline, not an error"
+        );
+        assert_eq!(MediaItemDto::from(&online).folder, None);
+        assert_eq!(
+            MediaItemDto::from(&offline).folder.as_deref(),
+            Some("B-roll/Sunset")
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1260,7 +1449,11 @@ mod tests {
         // D-044: `media` round-trips through save/load...
         let root = tmp("media_roundtrip");
         let (dir, mut manifest) = new_project_in(&root, "media-roundtrip", &[]).unwrap();
-        add_media(&mut manifest, &[root.join("a.mov").to_string_lossy().to_string()]);
+        add_media(
+            &mut manifest,
+            &[root.join("a.mov").to_string_lossy().to_string()],
+            None,
+        );
         save_manifest(&dir, &manifest).unwrap();
         let reloaded = load_manifest(&dir).unwrap();
         assert_eq!(reloaded.media.len(), 1);
@@ -1277,14 +1470,275 @@ mod tests {
         )
         .unwrap();
         let m = load_manifest(&legacy).unwrap();
-        assert!(m.media.is_empty(), "an absent `media` key loads as an empty pool");
+        assert!(
+            m.media.is_empty(),
+            "an absent `media` key loads as an empty pool"
+        );
         assert_eq!(m.shots.len(), 1, "pre-existing `shots` are untouched");
 
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // --- bins / folders (D-045) --------------------------------------------
+
+    #[test]
+    fn add_media_files_new_items_into_the_given_folder() {
+        let root = tmp("media_folder_import");
+        let (_dir, mut manifest) = new_project_in(&root, "media-folder", &[]).unwrap();
+
+        let a = root.join("a.mov").to_string_lossy().to_string();
+        let added = add_media(
+            &mut manifest,
+            std::slice::from_ref(&a),
+            Some("B-roll/Sunset"),
+        );
+        assert_eq!(added[0].folder.as_deref(), Some("B-roll/Sunset"));
+        assert_eq!(manifest.media[0].folder.as_deref(), Some("B-roll/Sunset"));
+
+        // blank/whitespace folder normalises to the pool root, not a literal
+        // empty-string bin
+        let b = root.join("b.mov").to_string_lossy().to_string();
+        add_media(&mut manifest, &[b], Some("   "));
+        assert_eq!(manifest.media[1].folder, None);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn media_move_refiles_an_existing_item() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("media_move");
+        let (dir, mut manifest) = new_project_in(&root, "media-move", &[]).unwrap();
+        let path = root.join("a.mov").to_string_lossy().to_string();
+        add_media(&mut manifest, &[path], None);
+        let id = manifest.media[0].id.clone();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "media-move".into(),
+        }));
+
+        let moved = chroma_media_move(id.clone(), Some("Interviews".into())).unwrap();
+        assert_eq!(moved.folder.as_deref(), Some("Interviews"));
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.media[0].folder.as_deref(), Some("Interviews"));
+
+        // moving back to the root clears the folder
+        let back = chroma_media_move(id, None).unwrap();
+        assert_eq!(back.folder, None);
+
+        // an unknown id errors rather than silently no-op-ing
+        assert!(chroma_media_move("no-such-id".into(), Some("X".into())).is_err());
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- multiple timelines (D-045) -----------------------------------------
+
+    #[test]
+    fn legacy_singular_timeline_migrates_to_a_one_element_list() {
+        // The exact shape every project.json had under D-041, before D-045 —
+        // including the real `~/Movies/Chroma/New.chroma/project.json` this
+        // was checked against by hand.
+        let root = tmp("timeline_migration");
+        let dir = root.join("legacy.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"New","shots":[
+                {"id":"s1","sourcePath":"/a.mov","frame":0,"name":"a.mov"}],
+                "activeShot":0,"settings":{},
+                "timeline":{"name":"New","rate":null,"tracks":[{"kind":"video","clips":[
+                    {"id":"s1","shot_id":"s1","name":"a.mov","source_path":"/a.mov",
+                     "source_start":0,"duration":1078,"source_len":1078}]}]}}"#,
+        )
+        .unwrap();
+
+        let m = load_manifest(&dir).unwrap();
+        assert_eq!(
+            m.timelines.len(),
+            1,
+            "the singular timeline becomes a one-element list"
+        );
+        assert_eq!(m.active_timeline, 0);
+        let tl = &m.timelines[0];
+        assert_eq!(tl.name, "New", "existing fields carry over losslessly");
+        assert_eq!(tl.tracks[0].clips[0].duration, 1078);
+        assert!(
+            !tl.id.is_empty(),
+            "a fresh id is backfilled — the legacy shape had none"
+        );
+
+        // saving never reintroduces the old singular key
+        save_manifest(&dir, &m).unwrap();
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).unwrap())
+                .unwrap();
+        assert!(
+            raw.get("timeline").is_none(),
+            "the legacy key is never written back"
+        );
+        assert!(raw.get("timelines").is_some());
+
+        // loading the now-migrated file again is idempotent and keeps the id
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.timelines.len(), 1);
+        assert_eq!(reloaded.timelines[0].id, tl.id);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn absent_timeline_key_and_null_legacy_timeline_both_load_empty() {
+        let root = tmp("timeline_absent");
+        // no `timeline` key at all (a pre-D-041 project, or one that never
+        // opened the Edit tab)
+        let a = root.join("a.chroma");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("project.json"), r#"{"name":"a","shots":[]}"#).unwrap();
+        // an explicit `"timeline": null`
+        let b = root.join("b.chroma");
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(
+            b.join("project.json"),
+            r#"{"name":"b","shots":[],"timeline":null}"#,
+        )
+        .unwrap();
+
+        for dir in [&a, &b] {
+            let m = load_manifest(dir).unwrap();
+            assert!(m.timelines.is_empty());
+            assert_eq!(m.active_timeline, 0);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn active_timeline_out_of_range_clamps_to_zero() {
+        let root = tmp("timeline_clamp");
+        let dir = root.join("x.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"name":"x","shots":[],"timelines":[{"id":"t1","name":"Main","rate":null,"tracks":[]}],"activeTimeline":9}"#,
+        )
+        .unwrap();
+        let m = load_manifest(&dir).unwrap();
+        assert_eq!(m.timelines.len(), 1);
+        assert_eq!(
+            m.active_timeline, 0,
+            "out-of-range active_timeline clamps to 0"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn multi_timeline_create_list_and_set_active_round_trip() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("timeline_multi");
+        let (dir, manifest) = new_project_in(&root, "multi-tl", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "multi-tl".into(),
+        }));
+
+        // no timelines yet -> chroma_timeline_list lazily builds one from shots
+        let listed = super::super::edit::chroma_timeline_list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].active);
+        let main_id = listed[0].id.clone();
+
+        let alt = super::super::edit::chroma_timeline_create("Alt cut".into()).unwrap();
+        assert_eq!(alt.name, "Alt cut");
+        assert!(!alt.id.is_empty());
+        assert_ne!(alt.id, main_id);
+
+        // creating makes the new one active
+        let listed2 = super::super::edit::chroma_timeline_list().unwrap();
+        assert_eq!(listed2.len(), 2);
+        let active_now: Vec<_> = listed2
+            .iter()
+            .filter(|t| t.active)
+            .map(|t| t.id.clone())
+            .collect();
+        assert_eq!(active_now, vec![alt.id.clone()]);
+
+        // chroma_timeline_get/_set operate on whichever is active
+        let got = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(got.id, alt.id);
+
+        // switch back to the original by id
+        super::super::edit::chroma_timeline_set_active(main_id.clone()).unwrap();
+        let listed3 = super::super::edit::chroma_timeline_list().unwrap();
+        let active_now2: Vec<_> = listed3
+            .iter()
+            .filter(|t| t.active)
+            .map(|t| t.id.clone())
+            .collect();
+        assert_eq!(active_now2, vec![main_id.clone()]);
+        assert_eq!(
+            super::super::edit::chroma_timeline_get().unwrap().id,
+            main_id
+        );
+
+        // an unknown id errors, active timeline unchanged
+        assert!(super::super::edit::chroma_timeline_set_active("no-such-id".into()).is_err());
+        assert_eq!(
+            super::super::edit::chroma_timeline_get().unwrap().id,
+            main_id
+        );
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn single_timeline_project_round_trips_through_get_and_set_unchanged() {
+        // The existing single-timeline Edit-tab UX (D-041) must not regress:
+        // get -> mutate -> set -> get again returns exactly what was set.
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("timeline_single_roundtrip");
+        let (dir, manifest) = new_project_in(
+            &root,
+            "single-tl",
+            &[root.join("a.mov").to_string_lossy().to_string()],
+        )
+        .unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "single-tl".into(),
+        }));
+
+        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(
+            tl.tracks[0].clips.len(),
+            1,
+            "lazily built from the project's one shot"
+        );
+
+        let mut edited = tl.clone();
+        edited.name = "renamed".into();
+        super::super::edit::chroma_timeline_set(edited.clone()).unwrap();
+
+        let refetched = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(refetched.id, edited.id, "id is preserved across set/get");
+        assert_eq!(refetched.name, "renamed");
+        assert_eq!(refetched.tracks[0].clips.len(), 1);
+
+        // still exactly one timeline — chroma_timeline_set never appends
+        let listed = super::super::edit::chroma_timeline_list().unwrap();
+        assert_eq!(listed.len(), 1);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn project_ref_set_and_clear() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mine = ProjectRef {
             path: PathBuf::from("/tmp/project-ref-test-unique.chroma"),
             name: "project-ref-test-unique".into(),
@@ -1299,4 +1753,3 @@ mod tests {
         assert!(state::current_project().map(|p| p.path) != Some(mine.path));
     }
 }
-

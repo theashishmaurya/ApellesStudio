@@ -1,30 +1,40 @@
-//! Editor tab bridge (D-041) — the `chroma-timeline` model ⇄ the frontend.
+//! Editor tab bridge (D-041, multi-timeline D-045) — the `chroma-timeline`
+//! model ⇄ the frontend.
 //!
-//! What it is: the Tauri command surface for the **Edit tab** MVP — get / set a
-//!   single-video-track [`Timeline`] of the open project's shots, and decode one
+//! What it is: the Tauri command surface for the **Edit tab** — get / set the
+//!   project's **active** [`Timeline`] (D-041 was single-video-track and
+//!   singular; D-045 made a project hold several independently-editable named
+//!   timelines, one active), list/create/switch timelines, and decode one
 //!   timeline frame to a JPEG data-URL for the preview pane.
-//! What it does: `chroma_timeline_get` returns the project's persisted timeline
-//!   or builds a fresh one from its shots (probing each source for a frame
-//!   count here — `chroma-timeline` never touches media) and persists it;
-//!   `chroma_timeline_set` replaces + persists it; `chroma_timeline_frame`
-//!   resolves a timeline position to `(clip, source frame)` via
+//! What it does: `chroma_timeline_get` returns the active timeline (building a
+//!   fresh one from the project's shots the first time — probing each source
+//!   for a frame count here, `chroma-timeline` never touches media — and
+//!   persisting it) or `chroma_timeline_set` replaces it; `chroma_timeline_list`
+//!   /`chroma_timeline_create`/`chroma_timeline_set_active` manage the
+//!   `timelines` list itself; `chroma_timeline_frame` resolves a timeline
+//!   position on the active timeline to `(clip, source frame)` via
 //!   [`chroma_timeline::Track::clip_at`] and decodes that source frame with the
 //!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG).
 //! What it does NOT do: no `wgpu`, no colour grade, no compositing — the editor
 //!   preview is deliberately independent of the Colorist's `AppState` render
 //!   path (grade-in-preview + multi-layer compositing are a later
 //!   `chroma-compositor` step). No multi-track / audio / transitions /
-//!   transcript cut / OTIO export / MCP — MVP only (D-041).
+//!   transcript cut / OTIO export / MCP — MVP only (D-041). No
+//!   timeline-switcher UI yet (D-045 pass 2 is model + commands only; "active
+//!   timeline" is a Rust-side concept the frontend doesn't need to know about
+//!   for the existing single-timeline Edit tab to keep working) — pass 3.
 //!
-//! The timeline is persisted **inside the `.chroma` project**:
-//!   `ProjectManifest.timeline: Option<Timeline>` (additive, `#[serde(default)]`,
-//!   schema major unchanged — same move D-038 made for `settings`). It travels
-//!   through the existing `load_manifest` / `save_manifest`.
+//! The timelines are persisted **inside the `.chroma` project**:
+//!   `ProjectManifest.timelines: Vec<Timeline>` + `active_timeline: usize`
+//!   (additive, `#[serde(default)]`, schema major unchanged — same move D-038
+//!   made for `settings`). `project::load_manifest` losslessly migrates a
+//!   legacy singular `timeline` key (D-041's shape) into a one-element
+//!   `timelines` list — see the D-045 decision.
 //!
 //! Fork hygiene (D-003): all new code here + in `chroma-timeline`; the only
-//!   `project.rs` edit is the `timeline` field. Upstream footprint is
-//!   `pub mod edit;` in `chroma/mod.rs` + the `generate_handler!` lines in
-//!   `lib.rs`. Divergence logged in `docs/09-engine-notes.md`.
+//!   `project.rs` edit is the `timelines`/`active_timeline` fields. Upstream
+//!   footprint is `pub mod edit;` in `chroma/mod.rs` + the `generate_handler!`
+//!   lines in `lib.rs`. Divergence logged in `docs/09-engine-notes.md`.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -34,6 +44,7 @@ use std::sync::Mutex;
 use base64::Engine as _;
 use image::codecs::jpeg::JpegEncoder;
 use once_cell::sync::Lazy;
+use serde::Serialize;
 
 use chroma_timeline::{Timeline, TrackKind};
 
@@ -80,6 +91,7 @@ fn current_project_dir() -> Result<PathBuf, String> {
 
 /// Build a single-video-track timeline from a manifest's shots, probing each
 /// source for its frame count (0 when a source is offline / not probe-able).
+/// Assigns a fresh id (D-045) — `chroma-timeline` itself never generates one.
 fn build_from_shots(manifest: &project::ProjectManifest) -> Timeline {
     let tuples: Vec<(String, String, String, i64)> = manifest
         .shots
@@ -101,46 +113,142 @@ fn build_from_shots(manifest: &project::ProjectManifest) -> Timeline {
         })
         .collect();
     let mut tl = Timeline::from_shots(&tuples);
+    tl.id = uuid::Uuid::new_v4().to_string();
     tl.name = manifest.name.clone();
     tl
 }
 
-/// The open project's timeline: its persisted one, or a fresh build from its
-/// shots. `persist` writes a freshly-built timeline back to `project.json` so a
-/// later save keeps it (get does this; the per-frame decode does not).
-fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
+/// Ensure `manifest.timelines` is non-empty (lazily building one from shots —
+/// the same D-041 fallback `chroma_timeline_get` always had — if it's empty)
+/// and that `active_timeline` points at a valid entry. `persist` controls
+/// whether a freshly-built timeline is written back to `project.json` (get
+/// does this; the per-frame decode does not, matching the old behaviour).
+fn ensure_timeline(
+    dir: &Path,
+    mut manifest: project::ProjectManifest,
+    persist: bool,
+) -> Result<project::ProjectManifest, String> {
+    if manifest.timelines.is_empty() {
+        let tl = build_from_shots(&manifest);
+        manifest.timelines.push(tl);
+        manifest.active_timeline = 0;
+        if persist {
+            manifest.modified = now_rfc3339();
+            project::save_manifest(dir, &manifest)?;
+        }
+    } else if manifest.active_timeline >= manifest.timelines.len() {
+        manifest.active_timeline = 0;
+    }
+    Ok(manifest)
+}
+
+/// Load the open project's manifest with `timelines` guaranteed non-empty and
+/// `active_timeline` valid.
+fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectManifest), String> {
     let dir = current_project_dir()?;
-    let mut manifest = project::load_manifest(&dir)?;
-    if let Some(tl) = manifest.timeline.clone() {
-        return Ok(tl);
-    }
-    let tl = build_from_shots(&manifest);
-    if persist {
-        manifest.timeline = Some(tl.clone());
-        manifest.modified = now_rfc3339();
-        project::save_manifest(&dir, &manifest)?;
-    }
-    Ok(tl)
+    let manifest = project::load_manifest(&dir)?;
+    let manifest = ensure_timeline(&dir, manifest, persist)?;
+    Ok((dir, manifest))
+}
+
+/// The open project's **active** timeline (D-045) — its persisted one, or a
+/// fresh build from its shots the first time.
+fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
+    let (_dir, manifest) = load_and_ensure_timeline(persist)?;
+    Ok(manifest.timelines[manifest.active_timeline].clone())
 }
 
 // --------------------------------------------------------------------------- //
 // tauri commands
 // --------------------------------------------------------------------------- //
 
-/// The open project's edit timeline. Builds one from the project's shots (one
-/// full-length video clip per shot, back to back) the first time, and persists
-/// that so subsequent opens / saves keep it.
+/// The open project's **active** edit timeline. Builds one from the project's
+/// shots (one full-length video clip per shot, back to back) the first time a
+/// project has no timelines at all, and persists that so subsequent opens /
+/// saves keep it. Unchanged signature/behaviour from D-041 for a
+/// single-timeline project — "active timeline" is invisible here unless the
+/// caller has made more than one (`chroma_timeline_create`).
 #[tauri::command]
 pub fn chroma_timeline_get() -> Result<Timeline, String> {
     resolve_timeline(true)
 }
 
-/// Replace the open project's timeline and persist it to `project.json`.
+/// Replace the open project's **active** timeline and persist it to
+/// `project.json`. Stores whatever is sent verbatim (no server-side
+/// clamping) — same contract as D-041, now scoped to whichever timeline is
+/// active rather than assuming there's only one.
 #[tauri::command]
 pub fn chroma_timeline_set(timeline: Timeline) -> Result<(), String> {
-    let dir = current_project_dir()?;
-    let mut manifest = project::load_manifest(&dir)?;
-    manifest.timeline = Some(timeline);
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    manifest.timelines[idx] = timeline;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)
+}
+
+/// One timeline's id/name/duration + whether it's the active one — what
+/// [`chroma_timeline_list`] returns. For a future timeline-switcher UI
+/// (D-045 pass 3); no UI consumes this yet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineSummary {
+    pub id: String,
+    pub name: String,
+    pub duration: i64,
+    pub active: bool,
+}
+
+/// All of the open project's timelines (D-045). Lazily builds the first one
+/// from shots (same fallback [`chroma_timeline_get`] always had) if the
+/// project has none yet, so this never returns an empty list for a project
+/// with at least the implicit shots-derived timeline.
+#[tauri::command]
+pub fn chroma_timeline_list() -> Result<Vec<TimelineSummary>, String> {
+    let (_dir, manifest) = load_and_ensure_timeline(true)?;
+    Ok(manifest
+        .timelines
+        .iter()
+        .enumerate()
+        .map(|(i, tl)| TimelineSummary {
+            id: tl.id.clone(),
+            name: tl.name.clone(),
+            duration: tl.duration(),
+            active: i == manifest.active_timeline,
+        })
+        .collect())
+}
+
+/// Create a new, empty, named timeline, append it to the project, make it the
+/// active timeline, and persist. Returns the full new [`Timeline`] so a
+/// caller can use it immediately without a second `chroma_timeline_get`.
+#[tauri::command]
+pub fn chroma_timeline_create(name: String) -> Result<Timeline, String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let tl = Timeline {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        rate: None,
+        tracks: Vec::new(),
+    };
+    manifest.timelines.push(tl.clone());
+    manifest.active_timeline = manifest.timelines.len() - 1;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)?;
+    Ok(tl)
+}
+
+/// Make the timeline with `id` the active one — every `chroma_timeline_get`/
+/// `_set`/`_frame` call after this targets it. Errors (leaving the active
+/// timeline unchanged) if no timeline in the project has that id.
+#[tauri::command]
+pub fn chroma_timeline_set_active(id: String) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest
+        .timelines
+        .iter()
+        .position(|tl| tl.id == id)
+        .ok_or_else(|| format!("no timeline with id {id}"))?;
+    manifest.active_timeline = idx;
     manifest.modified = now_rfc3339();
     project::save_manifest(&dir, &manifest)
 }

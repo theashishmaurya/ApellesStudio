@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Media pool, pass 2 (D-045): bins + multiple named
+  timelines.** `MediaItem.folder` (a plain path-string bin, no separate
+  entity — Palmier-MCP-folder convention) + `chroma_media_move`.
+  `ProjectManifest.timeline: Option<Timeline>` (D-041) → `timelines:
+  Vec<Timeline>` + `active_timeline: usize`, migrated losslessly from the old
+  singular key on load; `Timeline` gained an `id`; new
+  `chroma_timeline_list`/`_create`/`_set_active`, existing `_get`/`_set`/
+  `_frame` now target the active timeline (unchanged behaviour for a
+  single-timeline project). Model + commands only, still no UI. `cargo test
+  chroma::` 65/65 (+7); `chroma-timeline` 10/10 (+1); the real
+  `~/Movies/Chroma/New.chroma` project migrates cleanly, checked both via a
+  throwaway fixture test and a live app boot.
+
 - **2026-09-02** — **Edit tab stuck on stale "no project open" fixed (B-007);
   tab-default persistence removed.** Opening a project from Colorist never
   told the already-mounted Edit tab to re-check — its timeline store only

@@ -20,7 +20,14 @@
 //! **Status:** D-041 — the MVP edit model: `Timeline::from_shots`, position
 //! helpers (`Track::clip_at`, `Timeline::duration`) and the edit ops
 //! (`reorder` / `trim_start` / `trim_end` / `split` / `remove`), each
-//! unit-tested.
+//! unit-tested. D-045 (pass 2 of the media-pool/timelines roadmap item) added
+//! `Timeline::id` so a project can hold several independently-editable named
+//! timelines (`ProjectManifest.timelines: Vec<Timeline>`) with one active —
+//! this crate itself stays single-timeline-shaped; multi-timeline is purely
+//! a `Vec<Timeline>` one layer up, in `chroma::project` / `chroma::edit`
+//! (`app/src-tauri`). No id generation here (would need a dependency this
+//! pure crate doesn't have, e.g. `uuid`) — callers set `id` on creation, the
+//! same way `build_from_shots` already sets `name`.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +36,14 @@ use chroma_types::Rational;
 /// The whole edit — every track, top to bottom.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Timeline {
+    /// Stable id — how a project's `timelines` list and `active_timeline`
+    /// selection (D-045) reference a specific timeline. Empty string on a
+    /// `Timeline` built directly (e.g. in a test) or deserialized from
+    /// pre-D-045 JSON that never had this field; callers that persist a
+    /// timeline are expected to assign a real one (see
+    /// `chroma::edit::build_from_shots` / `chroma_timeline_create`).
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     /// Output timebase (frame rate) for the assembled edit.
     pub rate: Option<Rational>,
@@ -118,6 +133,7 @@ impl Timeline {
             })
             .collect();
         Timeline {
+            id: String::new(),
             name: String::new(),
             rate: None,
             tracks: vec![Track {
@@ -316,6 +332,19 @@ mod tests {
         assert_eq!(c.id, "");
         assert_eq!(c.source_len, 0);
         assert_eq!(c.duration, 40);
+    }
+
+    /// D-045: a pre-D-045 `Timeline` JSON blob (the shape every project.json
+    /// had under the old singular `timeline` key) never had an `id` field —
+    /// it must still deserialize, defaulting to `""`. `chroma::project`'s
+    /// migration backfills a real id on the raw JSON before this runs; this
+    /// test only pins the crate-level fallback the migration relies on.
+    #[test]
+    fn legacy_timeline_json_without_id_defaults_empty() {
+        let j = r#"{"name":"New","rate":null,"tracks":[{"kind":"video","clips":[]}]}"#;
+        let t: Timeline = serde_json::from_str(j).unwrap();
+        assert_eq!(t.id, "");
+        assert_eq!(t.name, "New");
     }
 
     #[test]

@@ -1971,3 +1971,108 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   multiple named timelines, the docked Sources/Library panel (thumbnails,
   search, drag-to-track), `set_active_timeline`, the `shots`/`media`
   unification above.
+
+## D-045 — Media pool pass 2: bins/folders + multiple named timelines, model + commands only
+
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** D-044 pass 1 shipped `ProjectManifest.media` (import + list, no
+  bins) and left the Edit tab on D-041's singular `timeline: Option<Timeline>`.
+  This is **pass 2**: bins for the media pool, and multiple independently-
+  editable named timelines with one active. Still no UI (pass 3) and still no
+  `shots`/`media` unification (unchanged from D-044's deferral).
+- **Bins — no separate entity, a plain path string.** `MediaItem` gains
+  `folder: Option<String>` (`None`/blank = pool root). A bin is not a row
+  anywhere; it exists exactly when some item's `folder` names it, created
+  implicitly on first use — same convention Palmier Pro's own MCP folders use
+  (`"B-roll/Sunset"`, no id), chosen explicitly to match a mental model
+  already established elsewhere in this codebase's tooling rather than invent
+  a second one. `chroma_media_import` gained an optional `folder` arg (an
+  already-pooled path is skipped on re-import regardless of `folder` — use
+  the new `chroma_media_move(id, folder)` to re-file it); a blank/whitespace
+  folder normalises to `None`. `chroma_media_list` still returns the flat
+  list (each item now carrying `folder`) — no bin-tree endpoint. A future
+  Sources panel derives the tree client-side from the flat path strings, the
+  same way Palmier's own UI does; building a hierarchy API now would be
+  guessing at a shape pass 3's actual UI hasn't asked for yet.
+- **Multiple timelines — `Vec<Timeline>` + an index, migrated losslessly.**
+  `ProjectManifest.timeline: Option<chroma_timeline::Timeline>` (D-041)
+  became `timelines: Vec<Timeline>` + `active_timeline: usize` — the same
+  `usize`-index convention `active_shot` already uses, not a second id-keyed
+  selector, so the two "which one is current" fields in this struct read the
+  same way. `chroma_timeline::Timeline` gained an `id: String` field
+  (`#[serde(default)]`, defaults to `""` for pre-D-045 JSON) so a timeline
+  can be referenced stably from outside the manifest — the crate itself
+  never generates one (it has no `uuid` dependency and shouldn't gain one
+  just for this; `chroma::edit`/`chroma::project`, which already depend on
+  `uuid` for `MediaItem::id`, assign it on creation, same as they already
+  assign `Timeline::name`). **The migration is a raw-JSON rewrite in
+  `project::load_manifest`, before typed deserialize**: a present `timeline`
+  key (and no `timelines` key yet) becomes a one-element `timelines` array,
+  backfilling a fresh id since the legacy shape never had one; a present
+  `timelines` key is left alone (and a stray `timeline` alongside it is just
+  dropped, not merged — that shape shouldn't exist outside a hand-edited
+  file). `ProjectManifest` has no `timeline` field left to serialize, so a
+  save can never reintroduce the old key — the same one-way-door pattern
+  D-038/D-041 used for `settings`/`timeline` themselves. Checked against the
+  real `~/Movies/Chroma/New.chroma/project.json` by hand (a throwaway test,
+  deleted after) before trusting it, then again live: booting the app against
+  that file rewrote it from the singular `timeline` shape to `timelines: [...]`
+  + `activeTimeline: 0` + `media: []` on its first Edit-tab load, exactly as
+  designed.
+- **`chroma_timeline_get`/`_set`/`_frame` now target the active timeline** —
+  same signatures, same behaviour for a project with exactly one (still the
+  lazy build-from-shots fallback D-041 had, now landing in a one-element
+  `timelines` list instead of the singular field). New commands:
+  `chroma_timeline_list()` (id/name/duration/`active` per timeline, lazily
+  building the first one first if the project has none — never returns
+  empty), `chroma_timeline_create(name)` (a new empty timeline, made active,
+  returned in full), `chroma_timeline_set_active(id)` (resolves the given
+  **id** to an index and stores that — the roadmap text named this
+  `set_active_timeline`; shipped as `chroma_timeline_set_active` to match
+  this file's `chroma_timeline_*` naming convention, same reasoning D-044
+  gave for `chroma_media_*` over the roadmap's literal `import_media`/
+  `list_media`). Taking a stable id here rather than a raw index (even
+  though storage is index-based) means a caller never has to track ordering
+  to switch timelines — smallest-footprint way to get both an
+  `active_shot`-consistent storage shape and an ergonomic-for-later-UI
+  command surface without adding a second id space.
+- **Frontend — deliberately untouched beyond one type.** "Active timeline"
+  selection stays a **Rust-side concept** this pass: `@chroma/editor`'s
+  `timelineStore.ts` calls `chroma_timeline_get`/`_set`/`_frame` exactly as
+  before and needs no changes — a single-timeline project's Edit tab behaves
+  identically (verified: `chroma_timeline_get` → mutate → `_set` → `_get`
+  round-trips unchanged, still exactly one timeline). The only frontend touch
+  is `packages/editor/src/timeline.ts`'s `Timeline` interface gaining
+  `id: string` for type accuracy (the field already flowed through at
+  runtime — plain JS objects don't drop untyped keys — this just names it).
+  `@chroma/bridge`'s `useMediaPoolStore` is **not** extended with `folder`/
+  `chroma_media_move` this pass — no panel consumes it yet, and pass 1 set
+  the precedent of landing store scaffolding only once there's a real
+  first consumer; adding it blind here would be guessing at the shape pass
+  3's UI needs.
+- **Verified:** `cargo test chroma::` 65/65 (was 58; +7: bin path assignment
+  + `chroma_media_move`, the legacy-timeline-migration fixture test (the
+  exact shape `~/Movies/Chroma/New.chroma/project.json` had), an
+  absent/null-`timeline` load, an out-of-range `active_timeline` clamp,
+  multi-timeline create/list/set-active, and that a single-timeline project
+  still round-trips `chroma_timeline_get`/`_set` unchanged) + `chroma-timeline`
+  10/10 (+1: a legacy `Timeline` JSON blob with no `id` still loads). `app`
+  `tsc --noEmit` unchanged at 64 (no `app/src` file touched);
+  `packages/bridge` clean (untouched); `packages/editor`/`packages/player`
+  unchanged at their pre-existing baseline (editor's one pre-existing error
+  is an unrelated CSS-import type declaration, not from this change).
+  `cargo fmt --check` / `cargo clippy` clean on the touched files
+  (`project.rs`, `edit.rs`, `crates/chroma-timeline/src/lib.rs`; `lib.rs`'s
+  three-line `generate_handler!` addition needed no reformatting) — verified
+  file-by-file, deliberately never invoking `rustfmt`/`cargo fmt -p` on
+  `lib.rs` itself, which (found the hard way this session) recursively walks
+  every `mod`-reachable file from a crate root and would silently reformat
+  the whole crate; pre-existing drift elsewhere in the crate (confirmed
+  present in this same file before this change too) untouched. Dev server
+  boots clean (`npm run tauri:dev`) and, loading the real project, performs
+  the migration live as designed; server killed after.
+- **Deferred to pass 3:** the `shots`/`media` unification (unchanged from
+  D-044), the docked Sources/Library panel, the bin-tree UI, the
+  timeline-switcher UI, and wiring `useMediaPoolStore` to `folder`/
+  `chroma_media_move`.

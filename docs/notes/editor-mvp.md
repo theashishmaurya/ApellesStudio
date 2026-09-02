@@ -24,6 +24,12 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
     URL. Out-of-range → 1×1 transparent PNG.
   - Persisted **in the `.chroma` project**: `ProjectManifest.timeline:
     Option<Timeline>` (`#[serde(default)]`, additive, schema major unchanged).
+    **Superseded by D-045** (2026-09-02): the field is now `timelines:
+    Vec<Timeline>` + `active_timeline: usize` — multiple named timelines, one
+    active, migrated losslessly from this singular shape. The three commands
+    above kept their names/signatures and now transparently target whichever
+    timeline is active; behaviour for a single-timeline project (still the
+    common case — no UI to make more than one yet) is unchanged.
 - **UI** (`packages/editor`):
   - Preview pane: `<img>` fed by `chroma_timeline_frame`, transport bar
     (play/pause, step ±1, timecode, res note), wall-clock rAF play loop with
