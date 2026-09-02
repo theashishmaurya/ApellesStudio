@@ -451,6 +451,24 @@ Palmier, and it's a signed installable build.
   the whole comp). The agent does the integration end-to-end — what consumer AI-BG tools
   skip. Needs `chroma-compositor` + D-013 first. v1 = static-camera only (moving plate
   needs a camera solve). Detail: `docs/notes/background-replace.md`.
+- **Visual understanding for the Editor tab** (owner asked 2026-09-02) — natural-language
+  footage search ("find where I was driving and said X, bring it to the front") is the
+  first consumer of a broader need: an editor needs **temporal** ("when") + **spatial**
+  ("where") understanding. Spatial is already half-built (SAM2 + YOLO in the `ai/`
+  sidecar, currently only exposed for subject isolation). Temporal/general-scene is the
+  gap — **Qwen3-VL** (Apache-2.0, 2B/4B/8B sized per device, MLX-native, built + benchmarked
+  on temporal grounding) fills it, local default. **Molmo 2 excluded from shipping**
+  (its own model card: "research and educational use," non-commercial training data) —
+  documented as an optional BYO model only, never bundled; also not clearly the better
+  tool for this axis anyway (its edge is spatial pointing/tracking, which SAM2 already
+  covers at higher precision). Cloud opt-in fallback: Gemini 3's agentic video API
+  (primary) / Gemini 2.5 Pro (fallback) — never the default, footage-upload needs
+  explicit permission. Unlocks beyond search: B-roll auto-tagging, shot classification,
+  person-count queries, auto-reframe hints, highlight detection. Needs the media pool
+  first. **First concrete task when picked up: a real local Qwen3-VL throughput
+  benchmark on an hour-long clip** — the current processing-time estimate (5–10 hours
+  of footage → ~30 min–2 hrs at a coarse sample rate) is reasoned extrapolation, not
+  measured. Detail: `docs/notes/video-search.md`.
 
 ---
 
