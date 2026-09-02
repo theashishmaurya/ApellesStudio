@@ -1282,15 +1282,19 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
       const clipH = Math.max((currentRect.height + OVERLAP * 2) * dpr, 1);
       const irs = imageRenderSizeRef.current;
 
-      if (
-        currentRect.width < 10 ||
-        currentRect.height < 10 ||
-        state.useWgpuRenderer === false ||
-        !state.isReady ||
-        !state.hasRenderedFirstFrame ||
-        irs.width === 0 ||
-        irs.height === 0
-      ) {
+      // Two different reasons to hide the native frame, and they need different
+      // retry behaviour. `notLaidOutYet` is a transient DOM-measurement state
+      // (e.g. mid tab-switch the container briefly reports 0×0) that isn't
+      // captured by this effect's dependency array below — nothing else will
+      // ever ask us to re-measure once layout settles, so we must keep polling
+      // every frame until it does. `notReadyToRender` is a real steady state
+      // (no wgpu renderer, no image, no first frame yet) that IS covered by a
+      // dependency-array item, so once-and-wait is correct there — otherwise
+      // this would poll forever on an empty Editor tab with no shot selected.
+      const notLaidOutYet = currentRect.width < 10 || currentRect.height < 10 || irs.width === 0 || irs.height === 0;
+      const notReadyToRender = state.useWgpuRenderer === false || !state.isReady || !state.hasRenderedFirstFrame;
+
+      if (notLaidOutYet || notReadyToRender) {
         const hiddenTransform = `${windowWidth},${windowHeight},-999999,-999999,1,1,${clipX},${clipY},${clipW},${clipH},${state.bgPrimary?.join(',')},${state.bgSecondary?.join(',')}`;
 
         if (lastWgpuTransformRef.current !== hiddenTransform && !isInvoking) {
@@ -1318,6 +1322,11 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
               isInvoking = false;
               scheduleSync();
             });
+        } else if (notLaidOutYet) {
+          // Same hidden transform as last time (deduped, no invoke needed) —
+          // but the DOM may lay out for real on a later frame, so keep polling
+          // regardless of the dedup above.
+          scheduleSync();
         }
         return;
       }

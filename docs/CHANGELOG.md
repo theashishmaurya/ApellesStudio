@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Colorist wgpu-sync stuck-hidden loop fixed (B-005); a
+  second, separate black-preview bug found and logged open (B-006).** After
+  B-004 fixed the IPC corruption, the Colorist preview was still black —
+  traced to a real second bug: the wgpu-position sync effect could get
+  permanently stuck sending an off-screen transform after one transient 0×0
+  layout read (its retry loop only reschedules on a *changed* outgoing value,
+  so a bad read that matches a prior one never gets re-tried). Fixed in
+  `Editor.tsx`'s `syncWgpu` — DOM-layout-not-ready now polls continuously
+  instead of relying on a dependency-array item that can't see pure layout
+  changes. Confirmed via a temporary debug log, removed before commit. The
+  render now genuinely fires at the correct on-screen resolution — but the
+  panel is still visually black, a distinct, still-open native
+  window/GPU-compositing issue, logged as B-006 (not yet root-caused).
 - **2026-09-02** — **Entry module double-mount fixed (B-004) — "No project open" /
   blank Colorist preview.** `app/index.html`'s `<script>` still referenced the
   pre-D-039 `main.jsx` (renamed to `main.tsx`); Vite's dev-server extension

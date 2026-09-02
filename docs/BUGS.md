@@ -18,9 +18,51 @@ repro / expected / actual / cause / fix
 
 ## Open
 
-_(none)_
+## B-006 — Colorist main preview stays black even once the wgpu transform is positioned correctly
+status: open · severity: high · area: gpu_processing.rs (WgpuDisplay / native surface), macOS window compositing
+- **repro:** open a project with a video shot in the Colorist tab; the shot-strip thumbnail
+  renders fine, the main preview viewport never shows anything (solid dark/black).
+- **expected:** the main preview shows the decoded, graded frame — the native wgpu surface,
+  drawn directly onto the window behind a transparent hole in the webview at the preview
+  panel's on-screen position (see `update_wgpu_transform`, `WgpuDisplay::render`).
+- **actual:** after B-005 (below), `apply_adjustments` logs confirm a real WGPU render fires
+  at the *correct* output resolution matching the preview panel's actual on-screen size
+  (e.g. `1920x1080`, then `512x288` on scrub) — the positioning/sync side is provably
+  working now. The panel is still visually black regardless.
+- **not yet found:** whether this is a genuine regression from the D-039 shell (custom
+  `transparent: true` / `decorations: false` window + the new tab-bar/rounded-corner chrome
+  possibly changing macOS NSView/CALayer ordering vs. RapidRAW's original single-view
+  window), or a separate bug in `WgpuDisplay::render`'s scissor/clip math, or something else
+  entirely. Needs live visual verification (a real screenshot loop), not log-reading alone.
+- **cause:** not yet confirmed.
+- **fix:** not yet applied.
 
 ## Fixed
+
+## B-005 — Colorist wgpu-position sync loop permanently stuck hidden after one transient 0×0 layout read
+status: fixed (2026-09-02) · severity: high · area: app/src/components/panel/Editor.tsx (syncWgpu)
+- **repro:** open a project / switch tabs so the preview container's `getBoundingClientRect()`
+  briefly reads `0×0` during a layout transition (e.g. a tab switch) at the same moment
+  `hasRenderedFirstFrame` flips true.
+- **expected:** once the container actually lays out to a real size, the native wgpu frame
+  is positioned there and becomes visible.
+- **actual:** the frame stayed hidden (positioned at `x:-999999,y:-999999`) forever, even
+  after the container had a real, valid size — required an unrelated dependency-array change
+  (e.g. toggling a setting) to ever recover, or never recovered at all.
+- **cause:** `syncWgpu`'s `requestAnimationFrame` self-scheduling loop only reschedules itself
+  when the outgoing "hidden transform" string changes (a dedup guard against redundant
+  `invoke()` calls). A transient `0×0` read produces one specific hidden-transform string;
+  once sent, the loop stops rescheduling — nothing re-measures the container after that,
+  since real DOM layout changes aren't part of the effect's dependency array (only React
+  state is). Confirmed via a temporary debug log: `hasRenderedFirstFrame: true` but
+  `rectW: 0, rectH: 0` at the exact moment the loop went silent.
+- **fix:** split the single hidden-condition check into `notLaidOutYet` (a DOM-measurement
+  state, not covered by any dependency array — must keep polling every frame until it
+  resolves) vs. `notReadyToRender` (real React-state conditions, correctly covered by the
+  existing dependency-array effect). `notLaidOutYet` now unconditionally calls
+  `scheduleSync()` even when the outgoing transform was deduped, so measurement keeps
+  polling until the container genuinely has a size — without spamming `invoke()`, which
+  stays deduped as before.
 
 ## B-004 — entry module double-executes on every cold boot → corrupted Tauri IPC → "No project open" in Edit, blank Colorist preview
 status: fixed (2026-09-02) · severity: blocker · area: app/index.html, frontend↔backend IPC
