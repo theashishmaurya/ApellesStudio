@@ -58,6 +58,19 @@ commit.
   on Base UI primitives, themed to RapidRAW's `--color-*` tokens; rebuild the 5
   hand-extracted components on it (shims stay); keep RapidRAW's domain components
   (ColorWheel / LUT / DepthRangePicker / grading sliders) in `app/`.
+- [ ] **D-043 — Colorist tab = grading editor only; strip RapidRAW's DAM/welcome/library
+  shell** (owner directive 2026-09-02). RapidRAW's photo-manager shell still leaks
+  through the Colorist tab: the "Welcome back / Continue Session / Add Folder" home
+  screen (`MainLibrary.tsx`), the "Sources" folder-tree + "Library" photo grid
+  (`LibraryView.tsx` + `panel/library/*`), albums, culling, the web "Community" presets
+  page, a "Home" button, and RapidRAW branding (name / version 1.6.2 / "Images by Timon
+  Käch" / Ko-Fi + GitHub links) — "a separate app inside our app." **Proper analysis
+  first** → `docs/notes/colorist-strip.md` (every `activeView` branch, every entry into
+  the DAM views, every branding string, every Rust command only the library uses), then
+  remove it: Colorist renders only the editor; `useUIStore.activeView` collapses; media
+  comes from the shared pool / a file picker, not the folder tree; Rust library commands
+  removed. Overrides D-003 for the shell layer (the grading engine stays). **Next after
+  `@chroma/ui` — heavy `App.tsx` overlap.**
 - [ ] **`@chroma/player` — one shared preview component for all 3 tabs** (requested
   2026-09-02, Palmier-viewer-style). A **presentational** package: a canvas viewport +
   a title strip (`‹ ›` nav, name, `…` menu) + a transport bar — timecode

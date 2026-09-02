@@ -1774,3 +1774,40 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   components (esp. `Dropdown`) over time; its grading panels are last / never.
 - **Order:** this lands **before** `@chroma/player` / media-pool / Export-window (all of
   which want dialogs + dropdowns).
+
+---
+
+## D-043 — The Colorist tab is the grading editor ONLY; RapidRAW's DAM / welcome / library shell is removed
+
+**decided (2026-09-02) · owner directive**
+
+- **Context.** RapidRAW is a photo **DAM + RAW editor**. Its app shell — a "Welcome
+  back / Continue Session / Add Folder" home screen (`MainLibrary.tsx`), a folder-tree
+  "Sources" panel + a "Library" photo grid (`LibraryView.tsx` + `panel/library/*`, ~3800
+  LOC), albums, culling, a web "Community" presets page (`CommunityPage.tsx`), a "Home"
+  button, and RapidRAW branding (name, version "1.6.2", "Images by Timon Käch", Ko-Fi /
+  GitHub links) — all still ship inside the Colorist tab. The owner: *"it creates a
+  separate app inside our app."* Screenshots: clicking **Home** in the Library header
+  drops you into RapidRAW's own welcome screen, fully branded.
+- **This overrides D-003's "keep everything cherry-pickable"** *for the shell/DAM layer*.
+  Chroma has diverged so far (3-tab video app vs. photo RAW editor) that the library /
+  welcome / albums / culling / community code will **never** run again — keeping it as
+  dead routed code is noise, and the branding actively misleads. The **grading engine**
+  (wgsl shader, masks, adjustments model, the adjustment panels, the canvas/preview,
+  scopes, LUT, curves, wheels) is what we forked for and stays.
+- **Decision.** The Colorist tab renders **only the editor view**. Remove from the routed
+  UI: the welcome/home screen, `LibraryView` + the `panel/library/*` folder browser,
+  albums, culling, the Community presets page, the "Home"/back-to-library nav, and every
+  RapidRAW branding string / donate link / version line. `useUIStore.activeView`
+  collapses (no more `'library'` / `'community'`). Media to grade comes from the shared
+  media pool (roadmap — "Media pool + global Sources") / a file picker stopgap until
+  that lands — **not** RapidRAW's folder tree.
+- **Method.** A **proper analysis first** (owner asked): map every `activeView` branch,
+  every entry into `LibraryView` / `MainLibrary` / `CommunityPage`, every branding
+  string, every Tauri command only the DAM uses — written into
+  `docs/notes/colorist-strip.md`. Then the surgery: delete the DAM/welcome/community
+  components + their commands (or gut to a stub if a shared util lives inside), collapse
+  the router, drop the branding. Divergence recorded in `docs/09-engine-notes.md`. The
+  Rust side: RapidRAW commands that only served the library (`get_folder_tree`,
+  album CRUD, culling, community fetch…) get removed too — analysis names them.
+- **Order:** right after `@chroma/ui` (D-042). Heavy `app/src/App.tsx` overlap, so serial.
