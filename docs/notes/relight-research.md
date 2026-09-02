@@ -90,6 +90,18 @@ photoreal version is the v3 bake. The pucks and their parameters are identical b
 the two — "Bake photoreal" just replaces the fast approximation with the diffusion
 result for that shot.
 
+**Bake UX (owner, 2026-09-02): preview-one-frame-then-commit, not clip-first.** Diffusion
+relight is slow and non-deterministic (seconds/frame, no cheap way to know the result is
+good before paying for it) — so the bake flow should be two steps, not one: (1) run the
+diffusion model on a **single held frame** (the current playhead frame) with the puck
+setup, show the result fast, let the owner iterate the pucks against that one frame's
+result; (2) only once that single-frame result is approved, a separate explicit action
+("Apply to full clip" / "Lock") runs the same puck setup across every frame of the shot,
+cached. Same two-tier shape as a still-image color-grade preview vs. a full export render
+— cheap iteration on one representative frame, expensive commit once satisfied. Bakes the
+"minutes/clip, run once" cost as a discrete step only after the *look* is already
+validated, not before.
+
 Engine placement: the interactive pass lives in `chroma-grade` (it's a grade-shader
 stage driven by the depth texture); the puck geometry is in `chroma-grade-model`
 (keyframeable via D-034, like any mask geometry). The bake is `chroma-ai` +
