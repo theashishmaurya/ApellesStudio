@@ -1,11 +1,15 @@
 /**
- * @chroma/motion — the Motion tab (D-039).
+ * @chroma/motion — the Motion tab (D-039 roadmap "Motion tab MVP", D-046).
  *
- * Will hold: the `@remotion/player` embed + the JSON scene-manifest editor. The
- * Remotion project it drives (7 primitives + the manifest compiler) is the
- * separate `@chroma/motion-engine` package, moved in from `videoAgent/engine/motion/`.
+ * A `@remotion/player` embed of `@chroma/motion-engine`'s `Video` component
+ * (7 primitives + the manifest compiler, moved in from
+ * `videoAgent/engine/motion/`) + a JSON scene-manifest editor validated
+ * against the engine's own `zod` schema. Manifest persistence and rendering
+ * go through the `chroma_motion_*` Tauri commands
+ * (`app/src-tauri/src/chroma/motion.rs`) → the `chroma-motion` crate.
  *
- * Status: D-039 3-tab-shell step — placeholder tab only.
+ * Status: D-046 — real preview + editor + save + render, one manifest per
+ * project. No visual editor (JSON-in is this pass's scope), no multi-manifest.
  */
 
 export { MotionTab } from './MotionTab';

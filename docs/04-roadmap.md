@@ -22,8 +22,13 @@ numbers are actually calibrated).
   `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
   persisted in the project. Multiple named timelines per project, switchable via
   `TimelineSwitcher` (D-046). No multi-track, audio, or transcript cut yet.
-- **Motion** — placeholder tab. The engine (`packages/motion-engine/`, 7 primitives +
-  manifest compiler) is fully functional, just not wired to a tab UI. **Gap — see Next.**
+- **Motion** — MVP (D-047): a `@remotion/player` live preview of
+  `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
+  (validated against the engine's own `zod` schema — a visual editor is
+  still an open question), Save (project-scoped sidecar
+  `<project>.chroma/motion/manifest.json`) and Render (`chroma-motion`
+  crate → `npx remotion render`). No multi-manifest, render progress/cancel,
+  or packaged-build story for the engine yet.
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
   screen (opens on the launcher, tabs appear once a project is open), a docked
   Sources/Library panel reachable from every tab (thumbnails-less grid, import,
@@ -69,19 +74,14 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
    `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
    later (export the Edit tab's active timeline too).
-4. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
-   ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
-   manifest editor (JSON-in to start — visual editor is an open question, see
-   `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
-   `architecture-lock.md`.
-5. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
+4. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
    timeline ops push before/after snapshots. Ties into the D-032 activity feed.
-6. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
-   full rewrite for the 3-tab world (currently a stale banner over the pre-pivot doc);
-   `00-vision.md`/`01-prd.md`/`02-scope.md` still say "grading only, not an editor";
-   `BUGS.md`'s "Known engine constraints" list still names solved items (D-014/34/36).
+5. **Docs reconciliation** — done, 2026-09-02: `03-architecture.md` fully rewritten for
+   the 3-tab world, `00-vision.md`/`01-prd.md`/`02-scope.md` corrected off "grading
+   only, not an editor," `BUGS.md`'s "Known engine constraints" cleaned of solved items
+   (D-014/D-018/D-034/D-036).
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
@@ -169,6 +169,17 @@ model + commands only; pass 3 (D-046) the actual UI — `shots`/`media` unified
 (`ProjectShot` references a `MediaItem` by id, wire DTOs unchanged), a docked
 Sources/Library panel (import, search, bin tree, drag-to-track) reachable from every
 tab, `TimelineSwitcher`.
+
+**Motion tab MVP (2026-09-02, D-047):** the placeholder tab is real — `@remotion/player`
+live preview of `packages/motion-engine/`'s `Video` composition, a `zod`-validated
+JSON-in manifest editor, Save (project-scoped sidecar
+`<project>.chroma/motion/manifest.json`) and Render (new `chroma-motion` crate, Rust
+orchestrates `npx remotion render` rather than reimplementing the engine). Along the
+way: fixed a latent `@react-three/fiber` × `React.ElementType` typing collision
+(B-008) and a duplicate-Remotion-package runtime crash (B-009, an incomplete root
+`package.json` `overrides` list plus a stale lockfile baking in the wrong resolution).
+Still open: a visual manifest editor, multi-manifest/scene management, render
+progress/cancel, a render-output save dialog, a packaged-build story for the engine.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 

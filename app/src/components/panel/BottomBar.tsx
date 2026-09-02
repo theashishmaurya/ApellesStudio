@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { createElement, useState, useEffect, useRef } from 'react';
 import { Star, Copy, ClipboardPaste, Check, Settings, Filter, PanelLeft, PanelBottom, PanelRight } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -115,7 +115,12 @@ const PanelToggleButton = ({ onClick, Icon, tooltip, disabled = false }: PanelTo
     disabled={disabled}
     data-tooltip={tooltip}
   >
-    <Icon size={18} />
+    {/* `createElement`, not JSX: `Icon`'s type is the broad `React.ElementType`
+        union, which JSX's type-checking collapses to `never` props once
+        `@react-three/fiber`'s global `JSX.IntrinsicElements` augmentation is
+        in the same `tsc` program (via the Motion tab, D-046) — see B-008.
+        No behavior change, same as `@chroma/ui`'s `Text.tsx` fix. */}
+    {createElement(Icon, { size: 18 })}
   </button>
 );
 

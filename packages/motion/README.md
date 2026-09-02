@@ -1,7 +1,49 @@
 # @chroma/motion
 
-**The Motion tab** (D-039). `@remotion/player` embed + the scene-manifest
-editor. Drives `@chroma/motion-engine` (the Remotion project — 7 primitives +
-the manifest compiler).
+**The Motion tab** (D-039, MVP shipped D-046). A `@remotion/player` embed of
+`@chroma/motion-engine`'s `Video` composition (the same component the
+`Animation` composition registers) + a JSON scene-manifest editor validated
+against the engine's own `zod` schema. Manifest persistence and rendering go
+through the `chroma_motion_*` Tauri commands
+(`app/src-tauri/src/chroma/motion.rs`) → the `chroma-motion` crate.
 
-**Status:** D-039 migration step 1 stub — placeholder export only.
+## Files
+
+- `MotionTab.tsx` — the tab: gates on a project being open (same contract
+  `@chroma/editor`'s `EditorTab` uses — manifest persistence is
+  project-scoped), then lays out `MotionPreview` + `ManifestEditor`.
+- `useMotionManifest.ts` — all the state: loads the saved manifest (or the
+  engine's sample for a fresh project), live-parses every edit (debounced)
+  against `@chroma/motion-engine`'s `manifestSchema`, drives save/render.
+  Local component state, not a store — nothing outside this tab needs it.
+- `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
+  `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
+  `totalFrames`/schema defaults (`build.ts`), not reimplemented here.
+- `ManifestEditor.tsx` — the JSON `<textarea>` + inline parse/save/render
+  error surfacing. JSON-in on purpose this pass — see D-046.
+- `manifestIO.ts` — thin wrappers around the three `chroma_motion_*` Tauri
+  commands. Pure I/O, no validation (that's the schema, applied before ever
+  calling save/render).
+- `Button.tsx` — a small local button, not `@chroma/ui`'s. See the comment at
+  the top of the file / B-008: `@chroma/ui`'s barrel also exports `Text`,
+  whose polymorphic typing breaks once `@react-three/fiber`'s global JSX
+  augmentation (pulled in transitively via `@chroma/motion-engine`) is in the
+  same `tsc` program, and `@chroma/ui`'s `exports` map has no subpath for
+  `Button` alone to deep-import around it. Two buttons didn't warrant a
+  shared-package edit.
+
+## Deep-importing `@chroma/motion-engine`
+
+`@chroma/motion-engine`'s `package.json` has no `main`/`exports` field (it's
+a Remotion CLI project, not built as a library, and is treated as read-only
+here) — imports go straight at its source, e.g.
+`@chroma/motion-engine/src/engine/Video`. This resolves fine because there's
+no `exports` map to sandbox subpath imports; it needs zero changes on the
+engine side.
+
+## Status
+
+D-046 — real preview + editor + save + render, one manifest per project. No
+visual editor (JSON-in is this pass's scope, see
+`docs/notes/product-direction.md` §9), no multi-manifest, no render
+progress/cancel/queue.

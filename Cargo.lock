@@ -10,6 +10,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "bytemuck",
+ "chroma-motion",
  "chroma-timeline",
  "chrono",
  "fern",
@@ -925,6 +926,15 @@ dependencies = [
 
 [[package]]
 name = "chroma-grade-model"
+version = "0.0.0"
+dependencies = [
+ "chroma-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "chroma-motion"
 version = "0.0.0"
 dependencies = [
  "chroma-types",

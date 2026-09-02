@@ -8,6 +8,19 @@
     "app",
     "packages/*"
   ],
+  "overrides": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "remotion": "4.0.519",
+    "@remotion/animation-utils": "4.0.519",
+    "@remotion/google-fonts": "4.0.519",
+    "@remotion/motion-blur": "4.0.519",
+    "@remotion/noise": "4.0.519",
+    "@remotion/transitions": "4.0.519",
+    "@remotion/shapes": "4.0.519"
+  },
   "scripts": {
     "dev": "npm run dev --workspace app",
     "build": "npm run build --workspace app",
