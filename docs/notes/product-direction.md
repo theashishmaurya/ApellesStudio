@@ -167,3 +167,46 @@ to `grade.json`.
 "lean editing tab" estimate from ~3–4 months toward **~6–10 weeks** for a
 talking-head-focused MVP. Path B (Rust compositor) is the bigger, later investment
 for a unified engine.
+
+### Path D — Diffusion Studio (`diffusionstudio`, YC F24) — added 2026-09-02
+
+The closest thing to "the thing we want to build, already built." Tagline: *"the
+video editor your agents can drive."* Compositions as code, canvas ↔ JSX
+bidirectional, a `dapi` CLI for agents (works with Claude Code) — nearly identical
+philosophy to Chroma's "the grade is code / MCP-driven," applied to **editing**. So:
+both a reusable building block **and** a competitor/validator.
+
+- **`diffusionstudio/core`** — **MPL-2.0**, TypeScript **WebCodecs** compositing
+  engine built on **Mediabunny** (which `engine/motion/` *already* depends on —
+  `mediabunny 1.55.1`). Provides timeline compositions, layered tracks, clips
+  (video/image/text), transitions, **masks**, keyframe animation, effects, audio,
+  real-time playback **and** render modes. ~1.2k★, active. Hardware decode/encode via
+  WebCodecs — **no headless Chrome** (unlike Remotion render). Browser-only, but
+  Chroma's Tauri frontend *is* a browser/webview. Free tier stamps a *"Made with
+  Diffusion Studio"* watermark on renders; a **one-time** licence key removes it
+  (local crypto check, offline) — cleaner than Remotion's company-size fee.
+- **`diffusionstudio/editor`** — MPL-2.0, full app: **SolidJS** UI + **Electron**
+  shell + Vite, headless runtime engine, JSX authoring, transcript + captions,
+  media inspection (waveform / filmstrip / transcription), generative assets,
+  export. ~2.3k★, very active (~480 commits). **Different UI framework (Solid, not
+  React) and shell (Electron, not Tauri)** — so a *reference* for the transcript /
+  media-inspection UX and the JSX-composition model, not a wholesale lift.
+
+**Where it lands vs the other paths:**
+- vs **Path A (Remotion)**: `core` is an actual *editing* engine (timeline + tracks +
+  playback), not a render framework you bolt a timeline onto. WebCodecs (fast, native
+  HW) beats headless-Chrome export. MPL-2.0 + one-time key beats the company-size
+  licence. **For the editing tab specifically, `core` looks like the better fit.**
+- vs **Path B (OpenCut Rust)**: `core` is TS/WebCodecs — runs in Chroma's existing
+  webview, ships now, more mature. OpenCut is Rust/wgpu — native perf, shares the
+  colorist wgpu world, but pre-release. `core` = faster path; OpenCut = deeper
+  unification later.
+- **Risk:** Diffusion is a funded startup building exactly this. Adopting `core`
+  means "Diffusion's editing engine + our colorist + our motion in one Tauri app" —
+  a legit integration, but track whether their licence / direction stays friendly.
+
+**Revised recommendation:** evaluate `diffusionstudio/core` as the **editing-tab
+engine** first (MPL-2.0, WebCodecs, already shares Mediabunny with the Motion tab,
+has timeline/tracks/masks/keyframes out of the box). Keep OTIO JSON as the portable
+interchange on top. Remotion stays the **Motion** tab. OpenCut's Rust compositor
+stays the "watch for a unified native engine" option.
