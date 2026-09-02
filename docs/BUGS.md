@@ -20,6 +20,32 @@ repro / expected / actual / cause / fix
 
 ## Fixed
 
+## B-007 — Edit tab stuck on stale "no project open" after opening a project in Colorist
+status: fixed (2026-09-02) · severity: medium · area: app/src/main.tsx, @chroma/shell tab persistence
+- **repro:** open the app, open/create a project in the Colorist tab, switch to the Edit tab
+  in the same window (no alt-tab away and back).
+- **expected:** Edit shows the real timeline for the project that was just opened.
+- **actual:** Edit kept showing "No project open" until either the user hit its "Retry"
+  button, or the OS window happened to lose and regain focus (alt-tab) — a real fix
+  eventually arrived, just not from opening the project itself. Owner correctly diagnosed
+  this live as a "state mounted at the Colorist level, not global" question before the fix
+  was found.
+- **cause:** `@chroma/editor`'s `EditorTab` only calls its timeline store's `load()` on its
+  own mount and on the browser `window`'s `focus` event (see its `useEffect`s) — neither
+  fires when a project opens from the Colorist tab, since all 3 tabs stay mounted under
+  `@chroma/shell` (D-039) and switching tabs is not a window focus event.
+- **fix:** `app/src/main.tsx` (the composition root — the one place that legitimately knows
+  about both `useSessionStore`'s real "project is open" signal and `@chroma/editor`'s
+  timeline store, without either package importing the other) now calls
+  `useEditorTimelineStore.getState().load()` in a `useEffect` keyed on the same
+  `projectOpen` boolean that already drives the shell's launcher-vs-tabs routing.
+- **also fixed alongside (same root cause family):** `@chroma/shell`'s `activeTab` was
+  persisted to `localStorage`, which meant the owner's explicit "Edit opens by default, not
+  Colorist" request (2026-09-02, `D-039`/earlier `B-004` commit) only held on a machine that
+  had never clicked another tab — every real session immediately overrode it back to
+  whatever tab was last open, reading as if the default fix never landed. `activeTab` is now
+  session-only (`packages/shell/src/store.ts`); every launch starts on `DEFAULT_TAB` ('edit').
+
 ## B-006 — Colorist main preview stays black even once the wgpu transform is positioned correctly
 status: fixed (2026-09-02) · severity: high · area: `@chroma/shell` root background (`packages/shell/src/Shell.tsx`) — not gpu_processing.rs
 - **repro:** open a project with a video shot in the Colorist tab; the shot-strip thumbnail

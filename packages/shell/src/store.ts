@@ -1,13 +1,21 @@
 /**
  * @chroma/shell — the tab store (D-039).
  *
- * One tiny zustand store holding which of the 3 tabs is active, persisted to
- * localStorage under `chroma.activeTab`. Kept separate from the app's stores on
- * purpose: the shell must not depend on `@chroma/bridge` or the colorist app.
+ * One tiny zustand store holding which of the 3 tabs is active. Kept separate
+ * from the app's stores on purpose: the shell must not depend on
+ * `@chroma/bridge` or the colorist app.
  *
- * `wgpuSurfaceActive` (B-006, 2026-09-02): session-only flag, not persisted. A
- * tab (the Colorist app) that draws its own content directly onto the native
- * window via a wgpu surface — bypassing the webview entirely, see
+ * `activeTab` is deliberately session-only, not persisted (B-007, 2026-09-02).
+ * It was persisted to localStorage at first, but that meant "Edit opens by
+ * default" (explicit owner request) only held on a machine that had never
+ * clicked another tab — every real session immediately overrode it back to
+ * whatever was last open, which read as the default never having taken effect
+ * at all. Every launch now starts on `DEFAULT_TAB`; switching tabs still works
+ * normally within a session, it just doesn't carry across a restart.
+ *
+ * `wgpuSurfaceActive` (B-006, 2026-09-02): also session-only. A tab (the
+ * Colorist app) that draws its own content directly onto the native window
+ * via a wgpu surface — bypassing the webview entirely, see
  * `app/src-tauri/src/gpu_processing.rs`'s `WgpuDisplay` — sets this true while
  * that surface should be visible. The shell root must go transparent in that
  * window too, or its own opaque background blocks the transparent "hole" the
@@ -18,29 +26,7 @@ import { create } from 'zustand';
 
 export type ShellTabId = 'edit' | 'motion' | 'colorist';
 
-const STORAGE_KEY = 'chroma.activeTab';
 const DEFAULT_TAB: ShellTabId = 'edit';
-const VALID: readonly ShellTabId[] = ['edit', 'motion', 'colorist'];
-
-function readPersisted(): ShellTabId {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw && (VALID as readonly string[]).includes(raw)) {
-      return raw as ShellTabId;
-    }
-  } catch {
-    /* localStorage unavailable (private mode, etc.) — fall through */
-  }
-  return DEFAULT_TAB;
-}
-
-function persist(tab: ShellTabId): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, tab);
-  } catch {
-    /* ignore */
-  }
-}
 
 interface ShellStore {
   activeTab: ShellTabId;
@@ -50,11 +36,8 @@ interface ShellStore {
 }
 
 export const useShellStore = create<ShellStore>((set) => ({
-  activeTab: readPersisted(),
-  setActiveTab: (tab) => {
-    persist(tab);
-    set({ activeTab: tab });
-  },
+  activeTab: DEFAULT_TAB,
+  setActiveTab: (tab) => set({ activeTab: tab }),
   wgpuSurfaceActive: false,
   setWgpuSurfaceActive: (active) => set({ wgpuSurfaceActive: active }),
 }));

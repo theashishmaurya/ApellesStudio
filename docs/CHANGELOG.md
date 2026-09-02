@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Edit tab stuck on stale "no project open" fixed (B-007);
+  tab-default persistence removed.** Opening a project from Colorist never
+  told the already-mounted Edit tab to re-check — its timeline store only
+  refetches on its own mount and on OS window focus, neither of which fires
+  on a same-window tab open. `main.tsx` (composition root) now triggers a
+  reload when `useSessionStore`'s project-open signal changes. Also:
+  `@chroma/shell`'s active-tab was persisted to localStorage, silently
+  overriding the "Edit opens by default" fix the moment anyone clicked another
+  tab once — now session-only, every launch starts on Edit.
 - **2026-09-02** — **Media pool, pass 1 (D-044).** `ProjectManifest.media:
   Vec<MediaItem>` — additive alongside `shots`, unification deferred to
   pass 2/3. New `chroma_media_import`/`chroma_media_list` Tauri commands
