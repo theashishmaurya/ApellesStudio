@@ -9,6 +9,15 @@
  * `ChromaTimeline.tsx`). This frame-fetch + play-loop logic is tab-owned and
  * stays here — only the rendered transport JSX (the hand-rolled button row)
  * moved to `<Player>`, which is purely presentational.
+ *
+ * Audio (D-049): `chroma_audio_play(playhead)` / `chroma_audio_stop()` are
+ * fired at exactly the same `playing` transitions that (re)baseline the video
+ * rAF loop below — both start from the same playhead frame at the same
+ * moment and then run independently against real wall-clock time (video via
+ * `performance.now()`, audio via the device's own clock inside Rust). See
+ * `chroma/audio.rs`'s module doc for why that's the deliberate sync model
+ * rather than a tighter per-frame coupling. No audio during scrub (paused) —
+ * only real Play produces sound, per D-049 scope.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -116,6 +125,29 @@ export function PreviewPane() {
       rafRef.current = null;
     };
   }, [playing, timeline, duration, fps, lastFrame, setPlayhead, setPlaying]);
+
+  // audio (D-049): start/stop in lockstep with the same `playing` transitions
+  // that (re)baseline the video rAF loop above — both begin from the same
+  // playhead frame at the same moment, then free-run independently against
+  // real wall-clock time (see chroma/audio.rs's module doc for why). No
+  // audio during scrub (paused) — only real Play produces sound.
+  useEffect(() => {
+    if (!playing || !timeline) {
+      invoke('chroma_audio_stop').catch(() => {});
+      return;
+    }
+    const startFrame = useEditorTimelineStore.getState().playhead;
+    invoke('chroma_audio_play', { startFrame }).catch((e) => {
+      // A clip with no audio stream isn't an error on the Rust side
+      // (chroma_audio_play returns Ok(()) and just plays nothing) — a
+      // rejection here is a real decode/device failure. Not fatal to video
+      // playback, so just log it rather than surfacing a preview error.
+      console.warn('chroma_audio_play failed:', e);
+    });
+    return () => {
+      invoke('chroma_audio_stop').catch(() => {});
+    };
+  }, [playing, timeline]);
 
   const step = (d: number) => {
     if (playing) setPlaying(false);

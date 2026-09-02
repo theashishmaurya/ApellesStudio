@@ -262,6 +262,9 @@ mod tests {
             color_primaries: "bt709".into(),
             color_transfer: "bt709".into(),
             color_space: "bt709".into(),
+            has_audio: false,
+            audio_sample_rate: 0,
+            audio_channels: 0,
         }
     }
 

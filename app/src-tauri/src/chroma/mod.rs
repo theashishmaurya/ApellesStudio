@@ -5,6 +5,8 @@
 //! Ideal upstream footprint: `mod chroma;` in `lib.rs` + a couple of one-line hooks.
 //!
 //! - `video`    — ffmpeg-backed video probe + single-frame decode (D-015)
+//! - `audio`    — Edit-tab audio playback: symphonia decode → rubato resample
+//!   → dasp_sample format-convert → cpal device output (D-049)
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback (D-030)
 //! - `state`    — Chroma's own process state (the multi-shot session, D-033)
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
@@ -24,6 +26,7 @@
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
 //! - `sidecar`  — spawn + supervise the `ai/` FastAPI sidecar, kill it on exit (D-028)
 
+pub mod audio;
 pub mod commands;
 pub mod control;
 pub mod decode_pipe;

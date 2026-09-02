@@ -4,6 +4,38 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Editor timeline audio playback (D-049), closes the roadmap
+  item.** The Edit tab's preview was completely silent (no pipeline at all); now
+  Play produces real device audio via a new `chroma::audio` module: `symphonia`
+  decode → `rubato` resample → `dasp_sample` bit-depth convert → `cpal` device
+  output, reusing the video track's already-embedded audio stream (no separate
+  audio `Track` populated this pass — see the D-049 "why not" note). Sync model:
+  a persistent audio thread free-running against the device's own clock, started
+  from the same playhead frame at the same moment the video `rAF` loop
+  re-baselines — not tightly coupled per-frame; the real design tradeoff is
+  written up in D-049. `video::VideoInfo` gained `has_audio`/`audio_sample_rate`/
+  `audio_channels` (one extra small `ffprobe -select_streams a:0` call, cached).
+  `PreviewPane.tsx` fires `chroma_audio_play`/`chroma_audio_stop` at the same
+  `playing` transitions that drive the existing video loop. `cargo test
+  -p RapidRAW chroma::`: 95/95 passed (was 83; +12: 9 pure-logic + 2 real-file
+  end-to-end + 1 extended). `tsc --noEmit` baseline in this worktree: 64
+  pre-existing errors, unchanged. Verified end-to-end with real files (not just
+  a clean compile): `A001_08302215_C019.MOV` (HEVC+AAC 48kHz/2ch) played through
+  the actual `chroma_audio_play`/`_level`/`_stop` commands produced genuinely
+  non-silent PCM (`rms=0.0013 peak=0.0080`, logged + read back via
+  `chroma_audio_level`) from a real, live `cpal` output stream; this repo's own
+  real `New.chroma` project's one shot (`pexels_28808272.mp4`) was confirmed via
+  `ffprobe` to have **no audio stream at all**, so its silence is correct, not a
+  gap. Booted the real app for real — clean build + launch, no errors.
+  **Honest gap:** did not click Play in the actual GUI on an audio-bearing
+  project — both `screencapture` and `osascript`/System Events were tried and
+  neither had the permission this sandbox needed to observe or drive the
+  window — the command-level integration tests above are the substitute
+  proof; whoever next drives the UI can cross-check against the `chroma
+  audio: rms=… peak=…` log line. Found + logged (not fixed,
+  out of scope) a pre-existing, unrelated test-isolation bug while verifying:
+  `docs/BUGS.md` B-007.
+
 - **2026-09-02** — **Media pool, pass 3 (D-046): `shots`/`media` unified, closes the
   roadmap item.** `ProjectShot` now references a `MediaItem` by id (`resolve_shot`,
   graceful fallback for a dangling reference) instead of duplicating `sourcePath`/

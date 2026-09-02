@@ -23,7 +23,10 @@ numbers are actually calibrated).
   scrub/play preview (independent of the Colorist render path) via the shared
   `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
   persisted in the project. Multiple named timelines per project, switchable via
-  `TimelineSwitcher` (D-046). No multi-track, audio, or transcript cut yet.
+  `TimelineSwitcher` (D-046). **Real audio during playback** (D-049 —
+  `symphonia`→`rubato`→`dasp_sample`→`cpal`, single video track's embedded
+  audio stream, synced-at-start-not-tightly-coupled to the video playhead). No
+  multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
@@ -51,14 +54,18 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
-1. **Editor timeline audio playback** — owner caught live, 2026-09-02: the Edit tab's
-   preview has no sound at all during playback, silent or muted are indistinguishable
-   from "not built yet." Known gap since the Editor MVP (D-041 said "no audio yet"
-   explicitly) but wasn't a tracked queue item until now. `packages/editor`'s preview
-   is a decode→JPEG-per-frame path (`chroma_timeline_frame`, video only, no audio
-   pipe) — needs its own audio decode/playback path (`symphonia`/`cpal`/`dasp`,
-   already named as the intended audio stack in `architecture-lock.md`, not yet built)
-   synced to the same playhead the video preview already tracks.
+1. ~~**Editor timeline audio playback**~~ — **done, D-049 (2026-09-03).** Real
+   `cpal` device audio during Play: `symphonia` decode → `rubato` resample →
+   `dasp_sample` format-convert → `cpal` output, reusing the video track's
+   embedded audio stream (no separate audio `Track` populated — see D-049).
+   A dedicated audio thread free-runs against the device clock, started from
+   the same playhead frame the video `rAF` loop re-baselines from on every
+   Play toggle — not a tight per-frame coupling (the real tradeoff, written
+   up in D-049). **Deferred, tracked separately:** multi-track audio mixing
+   (depends on real multi-track support generally — see item 2 below),
+   waveform-on-clip UI (item 2), mute/volume controls, audio scrubbing while
+   paused, and long-play-session drift correction between the audio/video
+   clocks (open-loop by design this pass — see D-049's sync-model note).
 2. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
    Palmier/Premiere-class editors. Today's `react-timeline-editor` embed (D-041 MVP) is
    missing table-stakes NLE interaction: zoom in/out on the ruler (scroll-wheel over the
