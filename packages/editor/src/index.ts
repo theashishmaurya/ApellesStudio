@@ -2,10 +2,10 @@
  * @chroma/editor — the Editing tab (D-039, new/greenfield).
  *
  * Will hold: the timeline strip (`react-timeline-editor` based), the transcript
- * pane (whisper word-timestamps → EDL), and the trim / ripple / roll UI. Reads
+ * pane (whisper word-timestamps → EDL), and the trim / ripple / roll UI, reading
  * the `chroma-timeline` model over `@chroma/bridge`.
  *
- * Status: D-039 migration step 1 stub — placeholder export only.
+ * Status: D-039 3-tab-shell step — placeholder tab only.
  */
 
-export const CHROMA_EDITOR_STUB = "@chroma/editor" as const;
+export { EditorTab } from './EditorTab';

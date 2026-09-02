@@ -18,11 +18,19 @@ commit.
   `packages/{tokens,ui,bridge,editor,motion,shell}` stubs; the Remotion motion engine
   moved in as `packages/motion-engine/` (`@chroma/motion-engine`); `app` → `@chroma/app`.
   **No real code moved; the whole workspace builds (`cargo build`) + `npm install` hoists.**
+- [x] **3-tab shell (`@chroma/shell`) + placeholder tabs** (2026-09-02): `@chroma/shell`
+  is a real package — `<Shell tabs={...}/>` (tab bar + persisted `useShellStore` +
+  Cmd/Ctrl+1/2/3), tab content injected via a registry prop so the shell stays
+  react+zustand-only. `@chroma/editor` (`<EditorTab/>`) + `@chroma/motion` (`<MotionTab/>`)
+  are placeholder tabs. `app/src/main.tsx` mounts `<Shell>` with the Colorist tab = the
+  whole existing app, untouched (its root `h-screen` → `h-full`). tsc baseline 74
+  unchanged; `vite build` green. Brought forward from step 6.
 - [ ] Migration step 2 — extract leaf pure crates (`chroma-types`, `chroma-grade-model`,
   `chroma-timeline`) for real.
 - [ ] Steps 3–7 — `chroma-gpu` / `chroma-media` / `chroma-project`; `chroma-agent` /
-  `chroma-ai`; `chroma-grade` + thin `chroma-app`; frontend `@chroma/{tokens,ui,bridge}`
-  then `@chroma/shell` + 3-tab layout; `chroma-compositor` + `@chroma/editor` greenfield.
+  `chroma-ai`; `chroma-grade` + thin `chroma-app`; frontend `@chroma/{tokens,ui,bridge}`;
+  the project launcher (D-037) moves from inside the Colorist tab up to `@chroma/shell`
+  (a project spans all 3 tabs); `chroma-compositor` + `@chroma/editor` greenfield.
 
 ---
 

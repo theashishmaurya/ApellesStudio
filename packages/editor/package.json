@@ -4,5 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "description": "Chroma Editing tab (new, D-039) — timeline strip, transcript pane, trim/ripple UI. D-039 stub."
+  "types": "./src/index.ts",
+  "description": "Chroma Editing tab (new, D-039) — timeline strip, transcript cut, multi-track. Placeholder for now.",
+  "dependencies": {
+    "react": "^19.2.8"
+  }
 }

@@ -4,5 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "description": "Chroma app shell (D-039) — tab switcher (Edit/Motion/Colorist), project launcher (D-037), window chrome, routing. D-039 stub."
+  "types": "./src/index.ts",
+  "description": "Chroma app shell (D-039) — the 3-tab layout (Edit/Motion/Colorist): a tab bar + the active tab's content, a persisted tab store, Cmd/Ctrl+1/2/3 switching. Tab content is injected via a registry prop so the shell stays dependency-light (react + zustand only).",
+  "dependencies": {
+    "react": "^19.2.8",
+    "zustand": "^5.0.15"
+  }
 }

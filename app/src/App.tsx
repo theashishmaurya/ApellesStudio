@@ -861,7 +861,9 @@ function App() {
       <ImageLoaderManager cachedEditStateRef={cachedEditStateRef} />
       <div
         className={clsx(
-          'flex flex-col h-screen font-sans text-text-primary overflow-hidden select-none',
+          // h-full (not h-screen): the Colorist app is mounted inside a tab of @chroma/shell (D-039),
+          // so it must fill the tab content area, not the whole viewport.
+          'flex flex-col h-full font-sans text-text-primary overflow-hidden select-none',
           useMacWindowShell && 'macos-window-shell',
           isWgpuActive ? 'bg-transparent' : 'bg-bg-primary',
         )}

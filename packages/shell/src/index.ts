@@ -1,11 +1,16 @@
 /**
- * @chroma/shell — the app shell (D-039).
+ * @chroma/shell — the Chroma app shell (D-039).
  *
- * Will hold: the tab switcher (Edit / Motion / Colorist), the project launcher
- * (D-037), window chrome, and routing. Composes the three tab packages; what
- * `apps/desktop` (the Vite entry `src-tauri` serves) mounts.
+ * The 3-tab layout (Edit / Motion / Colorist): a tab bar + the active tab's
+ * content, a persisted tab store, and Cmd/Ctrl+1/2/3 switching. Tab content is
+ * passed in via the `tabs` registry prop so the shell stays dependency-light
+ * (react + zustand only) — it never imports the colorist app or the tab
+ * packages.
  *
- * Status: D-039 migration step 1 stub — placeholder export only.
+ * Future (later D-039 steps): the project launcher (D-037) moves here from
+ * inside the Colorist tab, since a project spans all three tabs. Window chrome
+ * (TitleBar) may move here too.
  */
 
-export const CHROMA_SHELL_STUB = "@chroma/shell" as const;
+export { Shell, type ShellTab, type ShellProps } from './Shell';
+export { useShellStore, useActiveTab, type ShellTabId } from './store';

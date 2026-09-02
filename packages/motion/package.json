@@ -4,5 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "description": "Chroma Motion tab (D-039) — @remotion/player embed + manifest editor, driving @chroma/motion-engine. D-039 stub."
+  "types": "./src/index.ts",
+  "description": "Chroma Motion tab (D-039) — @remotion/player embed + manifest editor, driving @chroma/motion-engine. Placeholder for now.",
+  "dependencies": {
+    "react": "^19.2.8"
+  }
 }
