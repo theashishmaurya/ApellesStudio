@@ -2849,3 +2849,195 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   correct "grade has 1 masked/local layer(s)…dropped the masks" warning
   for the project's one existing mask. Temp output files removed, dev app
   and ports (1420, 19788) killed after.
+
+## D-050 — Editor timeline audio playback: `symphonia`→`rubato`→`dasp_sample`→`cpal`, a dedicated Rust audio thread that starts in lockstep with the video playhead rather than being driven by it
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Roadmap "Next" item 1 (owner caught live, 2026-09-02): the Edit
+  tab's preview (`PreviewPane.tsx` + `chroma_timeline_frame`, D-041) is a
+  decode→JPEG-per-frame path with **zero audio** — silent and muted look
+  identical. `docs/notes/architecture-lock.md` (D-039) already names the
+  intended stack: `symphonia` + `cpal` + `rubato` + `dasp`. Studied first:
+  `chroma-timeline`'s `Track`/`TrackKind` (confirmed `TrackKind::Audio`
+  already exists as a variant, D-041 — nothing populates or reads one yet),
+  `edit.rs` (the video-preview command surface), `decode_pipe.rs` (the
+  closest precedent for a persistent decode-and-serve loop, though it's a
+  request/response pull model, not a push/streaming one — see below), and
+  `PreviewPane.tsx`'s wall-clock `requestAnimationFrame` play loop (the thing
+  audio has to stay in step with).
+
+- **No separate audio `Track` populated this pass.** `TrackKind::Audio`
+  exists in `chroma-timeline` but nothing writes one. This MVP's one video
+  track's clips already point at the same source files the frame decode
+  reads — for a talking-head/screen-capture shot that source already carries
+  the embedded audio stream, so audio playback reuses the *exact same*
+  `clip_at` resolution the video preview uses (factored out as
+  `edit::resolve_video_position`, shared by both `chroma_timeline_frame` and
+  the new `chroma_audio_play`) rather than requiring a parallel audio-track
+  population step that would immediately need to be kept in sync with the
+  video track until real multi-track lands (a separate, later roadmap item —
+  a genuine, *separate* audio track only earns its keep once there's
+  something audio-only to put on it, e.g. a detached clip or a music bed).
+
+- **The sync-model decision — the one that actually matters here.** Two
+  designs, per the brief:
+  - **(A) poll-and-fill keyed off the displayed frame**, the same
+    request/response shape `decode_pipe.rs` uses for video (`chroma_timeline_
+    frame(pos)` → one JPEG). **Rejected.** `cpal`'s output callback needs
+    samples at device-buffer granularity (single-digit ms) — far finer and
+    completely untied to the 60fps `rAF`/per-frame-IPC cadence the video side
+    runs on. Driving audio from that would either starve the callback
+    (audible underrun) or need an IPC rate the JPEG-per-frame channel was
+    never built for.
+  - **(B) a persistent streaming audio thread with its own buffer.**
+    **Chosen.** `chroma_audio_play(start_frame)` spawns a dedicated OS thread
+    that owns the whole pipeline — `symphonia` decode → `rubato`
+    resample → channel-adapt → `dasp_sample` format-convert → a bounded
+    ring buffer a `cpal` output stream drains — for its entire lifetime,
+    free-running against the **audio device's own hardware clock**, not the
+    frontend's `rAF` tick.
+
+  Having picked (B), the real design question was how the two clocks
+  (video's `performance.now()`-paced `rAF` loop, audio's device-clock-paced
+  `cpal` callback) actually **stay** in sync once both are running, not just
+  how audio decodes. The most robust answer — the audio thread exposes its
+  live playback position, and the video `rAF` loop polls and snaps to it
+  every tick — was **not** built: it needs a new polling round-trip that
+  doesn't exist on the video side today, to correct a drift this tool's
+  actual use pattern (a preview/scrub session, not hours of unbroken
+  transport) won't accumulate enough of to notice. **What was built
+  instead:** both sides start from the *same* `playhead` frame at the *same*
+  "begin playing" moment — the video loop already re-baselines its
+  `performance.now()` start time on every Play toggle (unchanged), and
+  `PreviewPane.tsx`'s new effect fires `chroma_audio_play(playhead)` /
+  `chroma_audio_stop()` at that exact same `playing` transition — and then
+  the two run **open-loop** against real wall-clock time independently.
+  Accurate to within one IPC round-trip's start latency (single-digit ms)
+  plus whatever the two clocks drift from each other over a session — device-
+  clock-vs-OS-wall-clock drift is tens of ppm, imperceptible at preview-
+  session lengths. **Known, deliberate limitation, written down rather than
+  hidden:** no drift correction over a very long continuous play session, and
+  no audio re-seek mid-play (not needed — the video loop always restarts its
+  wall-clock baseline fresh on every Play toggle, so `chroma_audio_play` only
+  ever needs to fire at that same transition, never independently mid-flight).
+  `chroma_audio_play` therefore doubles as "seek and play" — there is no
+  separate seek-while-playing command.
+
+- **The ring buffer is a plain `Mutex<VecDeque<f32>>`, not a lock-free SPSC
+  ring (e.g. the `ringbuf` crate).** Deliberate MVP simplification: the
+  `cpal` callback only holds the lock for a fast pop loop; all real work
+  (decode, resample, format-convert) happens on the audio thread *outside*
+  the lock, so the callback's hold time stays short by construction. Written
+  down as the first thing to revisit if audio glitching is ever observed —
+  not preemptively added because there's nothing yet to observe it against.
+
+- **`cpal::Stream` is never moved across threads or stored in the shared
+  session state**, sidestepping whether it's `Send` (backend-dependent —
+  CoreAudio's does resolve to `Send` via its `Monitor: Send + Sync`
+  supertrait bound, checked in the vendored source, but relying on that
+  wasn't necessary). It's a local variable inside the one function
+  (`audio::run_session`) that runs start-to-finish on the dedicated thread
+  `chroma_audio_play` spawns; a `generation: u64` counter in a small
+  `Mutex`-guarded session struct (mirrors `decode_pipe.rs`'s `PIPE` /
+  `state.rs`'s `THUMB_CACHE` module-global pattern) is the only cross-thread
+  signal — `chroma_audio_stop`/a re-`chroma_audio_play` bumps it, the audio
+  thread notices at its next packet/backpressure check and returns, dropping
+  the stream on its own thread.
+
+- **Resampling: `rubato` pinned at `0.15`, not the newer `5.0.0` cargo
+  resolved by default.** Evaluated both — 5.0.0's `Async`/`FixedAsync`/
+  `Indexing`/`audioadapter`-buffer API is real and more capable, but is a
+  substantially heavier integration surface than 0.15's plain
+  `Vec<Vec<f32>>`-per-channel `SincFixedIn::process()` for the exact same
+  fundamental shape of work (chunked resampling) this MVP needs. 0.15 is
+  still an actively-used, well-documented version of the crate D-039 already
+  named. Fast-pathed: source rate == device rate (the common case — most
+  captured footage and most output devices already agree on 44.1/48 kHz)
+  skips `rubato` entirely rather than paying its chunking machinery for
+  nothing. **Known gap:** `RateConverter` never flushes the final <1-chunk
+  (≤ ~21 ms at the settings used) tail of a resampled clip's audio through
+  `process_partial` — the last fraction of a second can be silently dropped.
+  Cheap to fix later; not done this pass to keep the decode-loop shutdown
+  path simple, and inaudible in practice at that length.
+
+- **`dasp_sample` used directly for the `f32`→device-`SampleFormat` bit-depth
+  conversion** (`T::from_sample` in `audio::build_typed<T>`), not only
+  transitively through `cpal` (which happens to re-export the identical
+  `dasp_sample::{Sample, FromSample}` types as `cpal::{Sample, FromSample}` —
+  confirmed by reading `cpal`'s vendored source). Imported and named
+  explicitly so the dependency is doing visibly real, distinct work (format
+  conversion) separate from `rubato`'s (rate conversion), matching the split
+  the brief asked for.
+
+- **Probing "does this clip have audio" stays `ffprobe`, not a throwaway
+  `symphonia` session.** `video::VideoInfo` gained `has_audio` /
+  `audio_sample_rate` / `audio_channels`, filled by one extra small
+  `ffprobe -select_streams a:0` call inside the existing `probe()` (cached
+  one layer up by `edit::probe_cached`, so it's paid once per clip, not once
+  per frame) — `symphonia` is reserved for the real decode at play time.
+  **Found live while wiring up verification:** the actual open project's
+  (`~/Movies/Chroma/New.chroma`) one real shot,
+  `~/Downloads/pexels_28808272.mp4`, has **no audio stream at all**
+  (confirmed via `ffprobe`) — so on that project, playback is *correctly*
+  silent, not proof of a working pipeline. `A001_08302215_C019.MOV`
+  (HEVC + AAC 48 kHz/2ch, already this repo's `CHROMA_TEST_VIDEO` fixture for
+  the decode-pipe tests) is the file actually used to verify real audio
+  end-to-end — see the verification note below.
+
+- **Verified.** `cargo test -p RapidRAW chroma::` (no env vars — the default,
+  CI-equivalent run): **95/95 passed, 0 failed.** New pure-logic unit tests in
+  `chroma::audio` (channel adaptation mono↔stereo/passthrough, ring-buffer
+  pull-or-silence exact/underrun/empty, the resample frame-count arithmetic,
+  generation-bump invalidation) plus a new
+  `video::probe_detects_a_real_audio_stream` (env-var gated on
+  `CHROMA_TEST_AUDIO_VIDEO`, mirroring the existing `CHROMA_TEST_VIDEO`
+  pattern) and an extended `probe_and_decode_real_file` assertion (`has_audio`
+  must agree with `sample_rate > 0 && channels > 0`).
+  `tsc --noEmit`: baseline in this worktree is **64** pre-existing errors,
+  none touching `PreviewPane.tsx` or anything new — confirmed before and
+  after, zero new regressions.
+
+  **The concrete non-silent-PCM proxy** (a sandboxed agent can't literally
+  listen, per the brief): two more integration tests, gated on
+  `CHROMA_TEST_AUDIO_VIDEO` / `CHROMA_TEST_SILENT_VIDEO`, that build a
+  throwaway `.chroma` project on disk and call the real
+  `chroma_audio_play`/`chroma_audio_level`/`chroma_audio_stop` commands
+  exactly as `PreviewPane.tsx` does (no Tauri runtime needed — none of these
+  commands take a `tauri::State`). Run against real files found on this
+  machine (`ffprobe`-verified first, since the brief specifically flagged not
+  to assume): `CHROMA_TEST_AUDIO_VIDEO=~/Downloads/A001_08302215_C019.MOV`
+  (HEVC + AAC 48 kHz/2ch — already this repo's `CHROMA_TEST_VIDEO` fixture for
+  the decode-pipe tests) played for 1.5s and logged **rms=0.0013 peak=0.0080**
+  — genuinely non-silent PCM, decoded from a real AAC stream and written by a
+  real, live `cpal` output stream on this machine.
+  `CHROMA_TEST_SILENT_VIDEO=~/Downloads/pexels_28808272.mp4` — this repo's own
+  real `New.chroma` project's actual shot, confirmed via `ffprobe` to have no
+  audio stream at all — played back with `(rms, peak) == (0.0, 0.0)` and no
+  error, pinning "silent is correct for this clip, not a bug."
+
+  **Booted the real app for real:** `cd
+  ~/my_projects/chroma-worktrees/editor-audio && npm run tauri:dev` (port
+  1420 free, no conflict with the concurrent export-window agent) — a clean
+  build (43s link) and launch, `app.log` shows normal startup (logger init,
+  sidecar detected) and no errors, confirming the new deps (`symphonia`/
+  `rubato`/`dasp_sample`/`cpal`, the latter linking CoreAudio on macOS) don't
+  break the build or crash on launch. **Honest gap:** did not click Play on a
+  project through the actual running UI — tried both `screencapture` (macOS
+  refused: no Screen Recording permission in this sandbox) and
+  `osascript`/System Events accessibility scripting (the window enumerated
+  as empty — no Accessibility permission either), so, unlike B-004's fix
+  verification in an earlier session (which had access to one or both),
+  neither path was available here to drive or observe the window directly.
+  The equivalent proof is the `chroma_audio_play`/`_level`/`_stop`
+  integration tests above, which call the exact same command surface
+  `PreviewPane.tsx` does, plus `tsc` finding zero new errors in that file.
+  The `chroma audio: rms=… peak=…` log line (throttled to ~1/s of playback)
+  is there for whoever next drives the UI directly to cross-check against
+  what they hear. App process killed after.
+
+  **Found live while wiring up verification, logged, not fixed (out of
+  scope):** `docs/BUGS.md` B-011 — a pre-existing test-isolation gap
+  (`chroma::export`'s real-file-gated tests leave `state::SESSION`'s "loaded
+  video" set, which a later `chroma::relight` test wrongly assumes is unset)
+  that only surfaces when `CHROMA_TEST_VIDEO` is set — reproduced with zero
+  D-050 code involved, confirmed unrelated to this change.

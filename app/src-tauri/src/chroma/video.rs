@@ -1,10 +1,16 @@
 //! Video probe + single-frame decode, via the `ffmpeg` / `ffprobe` CLIs (D-015).
 //!
 //! What it is: the thinnest possible "a video is a source of frames" layer.
-//! What it does: `probe()` reads stream metadata; `decode_frame()` returns one frame
-//!   as an `image::DynamicImage` (8-bit RGB) at a given time or frame index.
-//! What it does NOT do: playback, audio, seeking optimisation, proxy caching,
-//!   colour management. Those are higher layers.
+//! What it does: `probe()` reads stream metadata — video stream facts as before,
+//!   plus (D-049) whether the container has an audio stream and its sample
+//!   rate / channel count, so `audio.rs` can decide whether there is anything
+//!   to play without opening a second (symphonia) decode session just to ask;
+//!   `decode_frame()` returns one video frame as an `image::DynamicImage`
+//!   (8-bit RGB) at a given time or frame index.
+//! What it does NOT do: playback, audio *decode* (that's `audio.rs`, via
+//!   symphonia — this module only reports whether/what audio exists),
+//!   seeking optimisation, proxy caching, colour management. Those are higher
+//!   layers.
 //! Why a subprocess and not `ffmpeg-next` bindings: zero C/pkg-config build surface,
 //!   ffmpeg is already a hard dep of this repo's workflow, deterministic, trivially
 //!   swappable later. Cost: ~10–30 ms spawn per frame — fine for load + proxied scrub;
@@ -34,6 +40,14 @@ pub struct VideoInfo {
     pub color_primaries: String,
     pub color_transfer: String,
     pub color_space: String,
+    /// Whether the container has a decodeable audio stream (D-049). `false`
+    /// for a silent source (e.g. this repo's own `pexels_28808272.mp4` test
+    /// clip) — not an error, `audio.rs` just plays nothing for it.
+    pub has_audio: bool,
+    /// The audio stream's sample rate in Hz, or `0` if `has_audio` is `false`.
+    pub audio_sample_rate: u32,
+    /// The audio stream's channel count, or `0` if `has_audio` is `false`.
+    pub audio_channels: u16,
 }
 
 impl VideoInfo {
@@ -151,6 +165,8 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     let fps = if fps_den == 0 { 0.0 } else { fps_num as f64 / fps_den as f64 };
     let frame_count = nb_frames.unwrap_or_else(|| (duration_secs * fps).round().max(0.0) as u64);
 
+    let (has_audio, audio_sample_rate, audio_channels) = probe_audio_stream(path);
+
     Ok(VideoInfo {
         width,
         height,
@@ -163,7 +179,52 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         color_primaries: get("color_primaries"),
         color_transfer: get("color_transfer"),
         color_space: get("color_space"),
+        has_audio,
+        audio_sample_rate,
+        audio_channels,
     })
+}
+
+/// Whether `path`'s first audio stream exists, and if so its sample rate /
+/// channel count (D-049). A separate, small `ffprobe` call (rather than
+/// folding `a:0` into the video `-select_streams` query above) so the
+/// existing video-field parsing above is untouched — probing is cached one
+/// layer up (`edit::probe_cached`), so this is paid once per clip, not once
+/// per frame. Any failure (no audio stream, unreadable file) is reported as
+/// `(false, 0, 0)`, not an error — a source with no audio is a normal case
+/// `audio.rs` handles by simply not opening a device stream.
+fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
+    let out = Command::new(ffprobe_bin())
+        .args([
+            "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate,channels",
+            "-of", "json",
+        ])
+        .arg(path)
+        .output();
+
+    let Ok(out) = out else { return (false, 0, 0) };
+    if !out.status.success() {
+        return (false, 0, 0);
+    }
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        return (false, 0, 0);
+    };
+    let Some(st) = v.get("streams").and_then(|s| s.get(0)) else {
+        return (false, 0, 0);
+    };
+    let sample_rate = st
+        .get("sample_rate")
+        .and_then(|x| x.as_str())
+        .and_then(|x| x.parse::<u32>().ok())
+        .unwrap_or(0);
+    let channels = st.get("channels").and_then(|x| x.as_u64()).unwrap_or(0) as u16;
+    if sample_rate == 0 || channels == 0 {
+        (false, 0, 0)
+    } else {
+        (true, sample_rate, channels)
+    }
 }
 
 /// Decode exactly one frame to an 8-bit RGB `DynamicImage`.
@@ -361,5 +422,31 @@ mod tests {
         let img = decode_frame(path, FramePos::Secs(1.0), &info).expect("decode");
         assert_eq!(img.width(), info.width);
         assert_eq!(img.height(), info.height);
+        // D-049: the has_audio flag and the sample rate / channel count it
+        // gates must agree — whichever way CHROMA_TEST_VIDEO's audio stream
+        // (or lack of one) happens to go.
+        eprintln!(
+            "probe_and_decode_real_file: has_audio={} sample_rate={} channels={}",
+            info.has_audio, info.audio_sample_rate, info.audio_channels
+        );
+        assert_eq!(
+            info.has_audio,
+            info.audio_sample_rate > 0 && info.audio_channels > 0
+        );
+    }
+
+    // Integration test — only runs if CHROMA_TEST_AUDIO_VIDEO points at a real
+    // file known to have an embedded audio stream (CHROMA_TEST_VIDEO, used
+    // above, is this repo's usual fixture and is silent — see D-049).
+    #[test]
+    fn probe_detects_a_real_audio_stream() {
+        let Ok(p) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!("skip: set CHROMA_TEST_AUDIO_VIDEO to run");
+            return;
+        };
+        let info = probe(Path::new(&p)).expect("probe");
+        assert!(info.has_audio, "{p} was expected to have an audio stream");
+        assert!(info.audio_sample_rate > 0);
+        assert!(info.audio_channels > 0);
     }
 }

@@ -46,7 +46,7 @@ use image::codecs::jpeg::JpegEncoder;
 use once_cell::sync::Lazy;
 use serde::Serialize;
 
-use chroma_timeline::{Timeline, TrackKind};
+use chroma_timeline::{Clip, Timeline, TrackKind};
 
 use super::state;
 use super::video::{self, VideoInfo};
@@ -150,6 +150,32 @@ fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectM
 fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
     let (_dir, manifest) = load_and_ensure_timeline(persist)?;
     Ok(manifest.timelines[manifest.active_timeline].clone())
+}
+
+/// Resolve timeline position `pos` on the **active** timeline's video track
+/// to its clip, the corresponding **source** frame, and that clip's probed
+/// [`VideoInfo`] (D-049) — the shared first half of both the video preview's
+/// [`chroma_timeline_frame`] and the audio path's `audio::chroma_audio_play`:
+/// both read from the same clip at the same position, one for pixels, one for
+/// samples. `Ok(None)` when `pos` is past the end of the video track (or
+/// before it) or the clip's source path is empty/offline — the same "just
+/// show/play nothing" case both callers already handle, not an error.
+pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, VideoInfo)>, String> {
+    let timeline = resolve_timeline(false)?;
+    let track = timeline
+        .tracks
+        .iter()
+        .find(|t| t.kind == TrackKind::Video)
+        .ok_or("timeline has no video track")?;
+
+    let Some((clip, source_frame)) = track.clip_at(pos as i64) else {
+        return Ok(None);
+    };
+    if clip.source_path.is_empty() {
+        return Ok(None);
+    }
+    let info = probe_cached(Path::new(&clip.source_path))?;
+    Ok(Some((clip.clone(), source_frame.max(0) as u64, info)))
 }
 
 // --------------------------------------------------------------------------- //
@@ -263,25 +289,13 @@ fn blank_frame() -> String {
 /// `Err`.
 #[tauri::command]
 pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
-    let timeline = resolve_timeline(false)?;
-    let track = timeline
-        .tracks
-        .iter()
-        .find(|t| t.kind == TrackKind::Video)
-        .ok_or("timeline has no video track")?;
-
-    let Some((clip, source_frame)) = track.clip_at(pos as i64) else {
+    let Some((clip, frame, info)) = resolve_video_position(pos)? else {
         return Ok(blank_frame());
     };
-    if clip.source_path.is_empty() {
-        return Ok(blank_frame());
-    }
 
     let path = PathBuf::from(&clip.source_path);
-    let info = probe_cached(&path)?;
     let scale = max_long_edge.and_then(|le| decode_pipe::scale_target(info.width, info.height, le));
 
-    let frame = source_frame.max(0) as u64;
     let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
         .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
 
