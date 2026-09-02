@@ -63,6 +63,29 @@ commit.
   callbacks to its own transport logic. Editor tab adopts it first (its hand-rolled
   transport moves into the player), Colorist + Motion follow. **Queued after the launcher
   move.**
+- [ ] **Media pool + import + multiple timelines** (requested 2026-09-02, Palmier/Resolve
+  media-pool style). The Editor MVP (D-041) just uses the project's D-037 `shots` as the
+  timeline clips directly — no import, no library, one timeline. Needed:
+  - **`MediaItem` model** — `{ id, kind: video|audio|image|generated, source_path, name,
+    duration, thumbnail, offline }`, project-level (`ProjectManifest.media`). **Unify
+    with `shots`:** the media pool is *all* imported media; a Colorist "shot" is a
+    media item being graded; an Editor "clip" is a windowed reference to a media item on
+    a track. D-037 `shots` migrate into / become a view of the pool.
+  - **Import** — file picker (video/audio/image, multi-select) → probe (duration,
+    thumbnail via `chroma::video::extract_thumb`) → add to pool. Referenced in place,
+    never copied (D-037 rule). Relink for offline items (extend D-037's shot relink).
+  - **Bins / folders** — organise the pool (Palmier's `cards-v4`, `explainers`, `score`
+    folders in the screenshot).
+  - **Multiple timelines per project** — `ProjectManifest.timelines: Vec<{ id, name,
+    timeline: chroma_timeline::Timeline }>` (was `timeline: Option<Timeline>`), one
+    active; create / rename / duplicate / delete; a timeline itself can be a pool item
+    ("Timeline 1" nested-sequence, deferred).
+  - **Library panel UI** in the Edit tab — thumbnail grid + Import button + folder tree +
+    smart search + drag-a-pool-item-onto-a-track. `@chroma/ui` components.
+  - MCP: `import_media` / `list_media` / `list_timelines` / `set_active_timeline` so the
+    agent can build edits too.
+  Schema: additive `chroma.project/1` (like D-038/D-041). **Big — its own decision
+  (D-0xx) + likely 2–3 subagent passes (model+import, bins+multi-timeline, UI).**
 - [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
   history spanning all tabs. A `@chroma/history` store holding a unified stack of
   `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
