@@ -1,8 +1,39 @@
 # Chroma — working rules
 
-AI-native, local, open-source **color grading** tool. Grading only, not an editor.
-Read `docs/` before doing anything. Start every session with `docs/00-vision.md`,
-`docs/02-scope.md`, `docs/04-roadmap.md`, `docs/08-decisions.md`.
+AI-native, local, open-source video tool — **3 tabs: Edit / Motion / Colorist**
+(D-039, 2026-09-02; supersedes the old "grading only, not an editor" framing —
+`docs/00`/`01`/`02` rewrite pending). Read `docs/` before doing anything. Start every
+session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
+`docs/08-decisions.md`, `docs/notes/architecture-lock.md`.
+
+---
+
+## Standards — no shortcuts (owner directive, 2026-09-02)
+
+**Everything is done properly, the standard way, fully organized. No hacks, no
+"just make it compile", no "fix it later" left in committed code.**
+
+- **The D-039 layered architecture is the law.** Dependency direction is one-way:
+  `app → tabs → services → domain → media/gpu → types`. No cross-layer reaching, no
+  cycles. Code goes in the layer its dependencies allow. Shared logic → a package/crate,
+  never copy-pasted; if two places need it, extract it. Every package/crate has a README
+  stating what it is and its boundary.
+- **Use the framework's canonical patterns.** shadcn/Base-UI via `components.json` + the
+  standard structure (D-042) — not ad-hoc copied snippets. Tauri command conventions,
+  Cargo workspace conventions, Remotion's conventions. Don't invent a new pattern when a
+  standard one exists.
+- **One token source.** All theming flows from RapidRAW's existing `--color-*` CSS vars.
+  No second parallel theme, no `text-white` on `bg-accent` (use `text-button-text`), no
+  magic colour literals, no magic numbers without a named constant.
+- **Types are real.** No `any` in new TS unless genuinely unavoidable (comment why); no
+  bare `@ts-ignore`. Rust: no `unwrap()`/`expect()` on anything that can fail at runtime —
+  `Result` + `?`. `tsc` introduces **zero** new errors; `cargo fmt` + `cargo clippy`
+  clean on new code.
+- **No dead code** left "just in case" — except the explicitly-unrouted RapidRAW
+  components kept for upstream cherry-picks (D-003), which are documented as such.
+- **No `TODO` / `FIXME` in committed code** without a matching `docs/04-roadmap.md` line.
+- **Every commit builds, is atomic, one concern, messaged with the why + the `D-NNN`.**
+- If something is structurally wrong, fix the structure — don't monkey-patch around it.
 
 ---
 
@@ -49,9 +80,10 @@ in the same commit.
 - **v1 scope is deliberately tiny** (one footage type, macOS ARM, Rec709, adjustment
   stack not nodes). Do not add v2/v3 features "while I'm here." If it's not in
   `docs/02-scope.md` v1, it goes in a `D-NNN` as a proposal, not in the code.
-- **We fork RapidRAW, we don't rewrite it.** Prefer extending `engine/` over
+- **We vendor RapidRAW at `app/`, we don't rewrite it.** Prefer extending it over
   reimplementing. When you must diverge from upstream, document the divergence in
-  `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes.
+  `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes. (Over time the
+  Chroma `crates/` absorb more and the fork shrinks — D-039.)
 
 ## Monorepo layout (D-039 / D-040)
 
