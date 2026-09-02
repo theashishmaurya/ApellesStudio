@@ -4,6 +4,30 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **UI consistency pass (D-039): window chrome in the shell,
+  `@chroma/ui` kit, editor icons.** (1) The window title bar moved out of the
+  Colorist tab into `@chroma/shell` — new `WindowChrome.tsx` (platform logic
+  ported from RapidRAW's `TitleBar`: macOS traffic lights, Win/Linux controls,
+  drag region), and `Shell.tsx`'s top bar is now the title bar (left = traffic
+  lights + `CHROMA` wordmark, centre = tabs, right = window controls / mac
+  spacer, `h-10`). `.macos-window-shell` (14px rounded corners) moved to the
+  shell root. `app/src/App.tsx` stops rendering `<TitleBar/>` (import + render
+  removed; the file stays unrouted for reference). `@chroma/shell` gains
+  `@tauri-apps/api` + `@tauri-apps/plugin-os` + `lucide-react` — it's the app
+  chrome now, so Tauri coupling is fine. (2) `@chroma/ui` is a real package:
+  `Button`, `Input`, `Text`, `Switch`, `CollapsibleSection` extracted from
+  `app/src/components/ui/`, the app-side files now `export { X as default } from
+  '@chroma/ui'` re-export shims (all `import X from '../ui/X'` sites unchanged).
+  Deps kept to react + clsx + lucide — `Switch` drops `framer-motion` (CSS
+  transform transition), `CollapsibleSection` drops `react-i18next` (inlined
+  strings); `typography.ts` copied into the package. `Slider` + the app-coupled
+  components stay in `app/`. `@source "../../packages/ui/src"` added to
+  `styles.css`. (3) `@chroma/editor` transport + toolbar rebuilt with
+  `lucide-react` icons (`SkipBack` / `Play`–`Pause` / `SkipForward`, `Scissors`
+  split, `Trash2` remove); empty-state action is a `@chroma/ui` `<Button>`.
+  `npm install` clean, `tsc` 74 baseline unchanged, `vite build` green,
+  `cargo check --no-default-features` unchanged (no Rust touched).
+
 - **2026-09-02** — **Editor tab MVP (D-041)**. The Edit tab is a real, working
   single-video-track timeline of the open project's shots. `chroma-timeline` made
   real: `Timeline::from_shots`, `Track::clip_at` / `Timeline::duration`, and

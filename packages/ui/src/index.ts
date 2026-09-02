@@ -1,12 +1,22 @@
 /**
  * @chroma/ui — shared component kit (D-039).
  *
- * Will hold: the reusable primitives (buttons, sliders, dropdowns, modals,
- * panels) adapted from RapidRAW's `app/src/components/ui/`. Depends on
- * `@chroma/tokens`. Consumed by `@chroma/colorist`, `@chroma/editor`,
- * `@chroma/motion`, `@chroma/shell`.
+ * The generic, dependency-light primitives from RapidRAW's
+ * `app/src/components/ui/`, extracted so every tab (`@chroma/editor`,
+ * `@chroma/motion`, `@chroma/shell`) draws from one kit instead of
+ * hand-crafting. Deps are react + clsx + lucide-react only — app-store /
+ * context / heavy-dep components (Dropdown, ColorWheel, LUTControl, Slider,
+ * …) stay in `app/` until a later pass.
  *
- * Status: D-039 migration step 1 stub — placeholder export only.
+ * The app's `app/src/components/ui/<Name>.tsx` files are now thin re-export
+ * shims pointing here, so the existing `import X from '../ui/X'` sites keep
+ * working unchanged.
  */
 
-export const CHROMA_UI_STUB = "@chroma/ui" as const;
+export { default as Button } from './Button';
+export { default as Input } from './Input';
+export { default as Text } from './Text';
+export { default as Switch } from './Switch';
+export { default as CollapsibleSection } from './CollapsibleSection';
+
+export * from './typography';

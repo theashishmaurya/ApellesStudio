@@ -15,7 +15,6 @@ import {
 } from '@dnd-kit/core';
 import clsx from 'clsx';
 
-import TitleBar from './window/TitleBar';
 import FolderTree from './components/panel/right/FolderTree';
 import SettingsPanel from './components/panel/SettingsPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
@@ -791,7 +790,6 @@ function App() {
     appSettings?.useWgpuRenderer !== false &&
     selectedImage?.isReady &&
     hasRenderedFirstFrame;
-  const useMacWindowShell = osPlatform === 'macos' && !appSettings?.decorations && !isWindowFullScreen && !isFullScreen;
 
   const layoutSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const handleDragStart = (e: any) => {
@@ -864,21 +862,14 @@ function App() {
           // h-full (not h-screen): the Colorist app is mounted inside a tab of @chroma/shell (D-039),
           // so it must fill the tab content area, not the whole viewport.
           'flex flex-col h-full font-sans text-text-primary overflow-hidden select-none',
-          useMacWindowShell && 'macos-window-shell',
+          // D-039: `.macos-window-shell` (14px rounded corners) is on the @chroma/shell
+          // root now — the whole window is the shell's, the Colorist app fills a tab.
           isWgpuActive ? 'bg-transparent' : 'bg-bg-primary',
         )}
       >
-        {!isAndroid && (
-          <div
-            className={clsx(
-              'shrink-0 overflow-hidden z-50',
-              !isInstantTransition && 'transition-all duration-300 ease-in-out',
-              isFullScreen ? 'max-h-0 opacity-0 pointer-events-none' : 'max-h-15 opacity-100',
-            )}
-          >
-            {appSettings?.decorations || (!isWindowFullScreen && <TitleBar />)}
-          </div>
-        )}
+        {/* D-039: window chrome (the title bar) moved to @chroma/shell — it now
+            sits above all three tabs, not inside the Colorist tab.
+            `app/src/window/TitleBar.tsx` stays unrouted for reference. */}
         <div
           className={clsx(
             'flex-1 flex flex-col min-h-0',

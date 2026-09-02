@@ -4,5 +4,11 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "description": "Chroma shared component kit — buttons, sliders, dropdowns, modals (from RapidRAW's components/ui/). D-039 stub."
+  "types": "./src/index.ts",
+  "description": "Chroma shared component kit (D-039) — the generic, dependency-light primitives (Button, Input, Text, Switch, CollapsibleSection) extracted from RapidRAW's components/ui/. react + clsx + lucide-react only; the app-coupled / heavy components stay in app/.",
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.33.0",
+    "react": "^19.2.8"
+  }
 }

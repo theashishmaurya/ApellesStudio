@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
@@ -140,29 +141,33 @@ export function PreviewPane() {
         )}
       </div>
 
-      <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-t border-border-color bg-surface text-text-primary">
+      <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-t border-border-color bg-surface text-text-primary">
         <button
           type="button"
-          className="px-2 py-1 rounded text-xs hover:bg-hover-color"
+          className="p-1 rounded hover:bg-hover-color"
           onClick={() => step(-1)}
           title="Step back one frame"
+          aria-label="Step back one frame"
         >
-          ◀
+          <SkipBack size={15} />
         </button>
         <button
           type="button"
-          className="px-3 py-1 rounded text-xs font-medium bg-accent text-button-text hover:opacity-90"
+          className="p-1 rounded hover:bg-hover-color"
           onClick={() => setPlaying(!playing)}
+          title={playing ? 'Pause' : 'Play'}
+          aria-label={playing ? 'Pause' : 'Play'}
         >
-          {playing ? 'Pause' : 'Play'}
+          {playing ? <Pause size={15} /> : <Play size={15} />}
         </button>
         <button
           type="button"
-          className="px-2 py-1 rounded text-xs hover:bg-hover-color"
+          className="p-1 rounded hover:bg-hover-color"
           onClick={() => step(1)}
           title="Step forward one frame"
+          aria-label="Step forward one frame"
         >
-          ▶
+          <SkipForward size={15} />
         </button>
         <span className="ml-2 text-xs tabular-nums text-text-secondary">
           {fmtTimecode(playhead, fps)} / {fmtTimecode(lastFrame, fps)}

@@ -1593,6 +1593,43 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
     unchanged); `python3 -m py_compile mcp/server.py` clean. App run command:
     `npm run tauri:dev` from the repo root. No `cargo clean` needed (fresh root `target/`).
 
+- **Step 6a (2026-09-02) — the 3-tab shell.** `@chroma/shell` `<Shell tabs={registry}>`
+  mounted by `app/src/main.tsx`; Colorist tab = the existing app (`h-screen` → `h-full`),
+  Edit/Motion placeholder tabs. (See CHANGELOG; the Edit tab is fleshed out by D-041.)
+
+- **Step 6b (2026-09-02) — UI consistency: window chrome + `@chroma/ui` started.**
+  - **Window chrome → the shell.** `packages/shell/src/WindowChrome.tsx` ports the
+    platform logic from `app/src/window/TitleBar.tsx` (macOS traffic lights =
+    close/minimize/toggle-fullscreen; Win/Linux window controls; `data-tauri-drag-region`).
+    `Shell.tsx`'s top bar is now the window title bar: left = traffic lights + `CHROMA`
+    wordmark, centre = the tabs (absolutely centred), right = Win/Linux controls or a
+    mac-width spacer; `h-10`, `bg-surface border-b`, whole bar draggable except
+    buttons/tabs. `.macos-window-shell` (14px rounded corners) is applied to the **shell
+    root** now (mac, windowed). `app/src/App.tsx` no longer imports or renders
+    `<TitleBar/>` (the file stays, unrouted, for reference). `@chroma/shell` gains
+    `@tauri-apps/api` + `@tauri-apps/plugin-os` + `lucide-react` — acceptable, the shell
+    is the app chrome now (noted in its README).
+  - **`@chroma/ui` — the shim pattern established with a safe subset.** `Button`, `Input`,
+    `Text`, `Switch`, `CollapsibleSection` moved to `packages/ui/src/` (real source);
+    each `app/src/components/ui/<Name>.tsx` is now `export { <Name> as default } from
+    '@chroma/ui'` so the existing `import X from '../ui/X'` sites are untouched. Kit deps
+    are **react + clsx + lucide-react only**: `Switch` swaps its `framer-motion` spring
+    for a CSS transform transition, `CollapsibleSection` inlines its two `react-i18next`
+    tooltip strings, and `typography.ts` is copied into the package (the app keeps its own
+    copy for the ~40 direct-import call sites — keep in sync). `Slider` (pulls
+    `react-i18next` + `GLOBAL_KEYS` from the app-coupled `AppProperties`) and the heavy /
+    app-coupled components (`Dropdown`, `ColorWheel`, `LUTControl`, …) stay in `app/` for
+    a later pass. `@source "../../packages/ui/src"` added to `app/src/styles.css`.
+  - **`@chroma/editor` icons.** Transport = `SkipBack` / `Play`–`Pause` / `SkipForward`;
+    toolbar = `Scissors` (split) / `Trash2` (remove, disabled with no selection), all
+    `lucide-react` + aria-labels, matching `ChromaTimeline.tsx`'s icon-button style. The
+    "Timeline" header label dropped. Empty-state action is a `@chroma/ui` `<Button>`.
+    New deps on `@chroma/editor`: `@chroma/ui`, `lucide-react`.
+  - **Verified:** `npm install` clean; `cd app && npx tsc --noEmit` = **74** (baseline
+    unchanged); `cd app && npm run build` (vite prod) green — `@chroma/ui` + `@chroma/shell`
+    Tauri imports + `@chroma/editor` icons all bundle; `cargo check --no-default-features`
+    unchanged (no Rust touched).
+
 ---
 
 ## D-041 — Editor tab MVP: single-video-track timeline of the project's shots, lightweight decode→jpeg preview, timeline persisted in the `.chroma` project

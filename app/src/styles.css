@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @source not "../src-tauri";
 /* D-039: the 3-tab shell + placeholder tabs live outside app/ — scan them for classes. */
+@source "../../packages/ui/src";
 @source "../../packages/shell/src";
 @source "../../packages/editor/src";
 @source "../../packages/motion/src";

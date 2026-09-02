@@ -34,11 +34,13 @@ commit.
   `@xzdarcy/react-timeline-editor` timeline + scrub/play preview + `useEditorTimelineStore`.
   Deferred: multi-track / audio / transitions / transcript / compositing / grade-in-preview
   / OTIO export / MCP.
-- [ ] **UI pass** (in progress, 2026-09-02): window chrome → `@chroma/shell` (traffic
-  lights + Win/Linux controls, drag region), tabs centered, RapidRAW `<TitleBar/>`
-  suppressed; `@chroma/ui` package started (Button/Switch/Slider/Input/Text/
-  CollapsibleSection extracted, app-side re-export shims); Editor tab transport + toolbar
-  rebuilt with `lucide-react` icons + `@chroma/ui` instead of hand-crafted text buttons.
+- [x] **UI pass** (2026-09-02): window chrome → `@chroma/shell` (`WindowChrome.tsx` —
+  traffic lights + Win/Linux controls + drag region), tabs centered, RapidRAW
+  `<TitleBar/>` no longer rendered, `.macos-window-shell` on the shell root;
+  `@chroma/ui` package started (Button / Switch / Input / Text / CollapsibleSection
+  extracted with app-side re-export shims — `Slider` + app-coupled components deferred);
+  Editor tab transport + toolbar rebuilt with `lucide-react` icons + a `@chroma/ui`
+  `<Button>` instead of hand-crafted text buttons. See D-039 migration log step 6b.
 - [ ] **Project launcher = the app entry screen** (requested 2026-09-02): right now the
   D-037 launcher lives *inside* the Colorist tab, so you see tabs → click Colorist →
   then the "Welcome to Chroma" screen. Wrong. It should be: **app opens → launcher (no

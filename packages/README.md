@@ -10,11 +10,11 @@ code lives today — the packages below are extracted from it incrementally.
 | package | exists? | what it will hold |
 |---|---|---|
 | `@chroma/tokens` | **yes (stub)** | design tokens + light/dark theme, from RapidRAW's CSS vars |
-| `@chroma/ui` | **yes (stub)** | shared component kit — buttons, sliders, dropdowns, modals (RapidRAW `components/ui/`) |
+| `@chroma/ui` | **yes** — `Button` / `Input` / `Text` / `Switch` / `CollapsibleSection` + `typography` (D-039 step 6b) | shared component kit from RapidRAW `components/ui/`; app-side files are re-export shims. react + clsx + lucide only — `Slider` + app-coupled components still in `app/` |
 | `@chroma/bridge` | **yes (stub)** | typed Tauri command bindings + zustand stores + the control-bridge hook `useChromaControl` (D-020) |
 | `@chroma/editor` | **yes (stub)** | the **Editing tab** (new) — timeline strip (`react-timeline-editor`), transcript pane, trim/ripple UI |
 | `@chroma/motion` | **yes (stub)** | the **Motion tab** — `@remotion/player` embed + manifest editor |
-| `@chroma/shell` | **yes (stub)** | app shell — tab switcher, project launcher (D-037), window chrome, routing |
+| `@chroma/shell` | **yes** — 3-tab layout + window chrome (D-039 steps 6a/6b) | the window title bar (`WindowChrome.tsx` — traffic lights / window controls / drag region) + the tab switcher; project launcher (D-037) still to move here. Owns the app chrome, so it couples to Tauri |
 | `@chroma/motion-engine` | **yes** — moved in from `videoAgent/engine/motion/` (D-039) | the Remotion project itself: 7 primitives + the JSON scene-manifest compiler (`src/engine/build.ts`) |
 | `@chroma/colorist` | future | the **Colorist tab** — adjustment panels, scopes, mask editor (RapidRAW's adjustment UI, adapted). Lives in `app/src/` for now. |
 | `apps/desktop` | future | the Vite entry that composes shell + tabs; what `src-tauri` serves. `app/` plays this role today. |
@@ -29,3 +29,11 @@ code lives today — the packages below are extracted from it incrementally.
 - **Step 6:** `@chroma/tokens` + `@chroma/ui` + `@chroma/bridge` extracted
   first, then `@chroma/shell` + the 3-tab layout (Colorist wrapped as-is), then
   `@chroma/editor` greenfield.
+- **Step 6a (2026-09-02):** `@chroma/shell` + the 3-tab layout live; Colorist =
+  the existing app, Edit built out by D-041.
+- **Step 6b (2026-09-02):** window chrome moved into `@chroma/shell`
+  (`WindowChrome.tsx`); `@chroma/ui` made real with the safe subset (`Button`,
+  `Input`, `Text`, `Switch`, `CollapsibleSection`) + app-side re-export shims;
+  `@chroma/editor` transport/toolbar switched to `lucide-react` icons +
+  `@chroma/ui`. `@chroma/tokens` + `@chroma/bridge` + the rest of the kit are
+  still later passes.

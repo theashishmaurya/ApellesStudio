@@ -12,6 +12,7 @@
  */
 
 import { useEffect } from 'react';
+import { Button } from '@chroma/ui';
 
 import { PreviewPane } from './PreviewPane';
 import { TimelinePane } from './TimelinePane';
@@ -43,13 +44,9 @@ export function EditorTab() {
           Open a project in the Colorist tab — its shots become the Edit timeline.
         </p>
         {error && <p className="text-[11px] text-text-secondary/60 max-w-md">{error}</p>}
-        <button
-          type="button"
-          className="mt-2 px-3 py-1 rounded text-xs bg-accent text-button-text hover:opacity-90"
-          onClick={() => load()}
-        >
+        <Button className="mt-2" onClick={() => load()}>
           Retry
-        </button>
+        </Button>
       </div>
     );
   }

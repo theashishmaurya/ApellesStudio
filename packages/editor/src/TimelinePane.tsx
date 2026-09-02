@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
+import { Scissors, Trash2 } from 'lucide-react';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { clipStartFrame, timelineFps, videoTrackIndex, type Timeline } from './timeline';
@@ -99,24 +100,29 @@ export function TimelinePane() {
         }
       }}
     >
-      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
-        <span className="text-xs font-medium text-text-secondary">Timeline</span>
+      <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
         <button
           type="button"
-          className="px-2 py-1 rounded text-xs bg-accent text-button-text hover:opacity-90"
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:bg-hover-color"
           onClick={doSplit}
+          title="Split at playhead"
+          aria-label="Split at playhead"
         >
-          Split at playhead
+          <Scissors size={14} />
+          Split
         </button>
         <button
           type="button"
-          className="px-2 py-1 rounded text-xs hover:bg-hover-color disabled:opacity-40"
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:bg-hover-color disabled:opacity-40"
           onClick={doRemove}
           disabled={!selected}
+          title="Remove clip"
+          aria-label="Remove clip"
         >
-          Remove clip
+          <Trash2 size={14} />
+          Remove
         </button>
-        {selected && <span className="text-[11px] text-text-secondary/70">selected: {selected}</span>}
+        {selected && <span className="ml-1 text-[11px] text-text-secondary/70">selected: {selected}</span>}
       </div>
 
       <div className="flex-1 min-h-0 overflow-hidden">
