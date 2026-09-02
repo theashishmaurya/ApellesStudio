@@ -1,64 +1,89 @@
 # 00 — Vision
 
+> Rewritten 2026-09-02 alongside `01-prd.md` / `02-scope.md` for the D-039 pivot. This is a
+> correction of the "grading only" framing below, not a rewrite of the underlying thesis —
+> the local-first, agent-native, colour-science-depth argument is unchanged and still the
+> differentiator (`docs/notes/product-direction.md` §7).
+
 ## The one-liner
 
-An AI-native, local, open-source **color grading** tool. Grading only. The agent does the
-colour science and the setup; the human does the judgement and the precision.
+An AI-native, local, open-source **video tool — three tabs, Edit / Motion / Colorist, one
+app** (D-039). The agent does the repetitive craft work — cutting to a transcript, roughing
+in a motion-graphic explainer, colour science and mask setup — the human keeps the
+judgement, the precision, and full manual control on a real GUI, across all three.
 
 ## Why this exists
 
-Three things are all true in 2026 and they don't overlap:
+Four things are true as of 2026-09-02:
 
 1. **The pro tools do the hard parts locally.** DaVinci Resolve (free even) has AI Color
    Match, Magic Mask, Depth Map, Face Refinement — all on-device. Premiere has AI masks.
    The technology is solved and shipping.
-
 2. **They're closed, and un-scriptable where it matters.** Resolve's Python API cannot
    create a power window, run the tracker, or drive Magic Mask — that's GUI-only, and
    external scripting is Studio-only since v19.1. Premiere is closed. You cannot build an
    agent on top of either for the part that counts.
+3. **Open-source is fragmented across the craft.** OpenShot, Kdenlive, Shotcut, OpenCut are
+   editors with grading bolted on as an afterthought. The good grading *components* exist
+   (color-matcher, film-emulation curves, LUT tools, SAM 2, Depth Anything) but nobody had
+   assembled them into a real grading-first tool — and separately, motion graphics live in
+   yet another tool again (Remotion, After Effects).
+4. **The trigger.** This project's own production workflow — script → cut → motion
+   graphics → grade → publish — leaned on Palmier Pro for the cut. On 2026-09-02 Palmier
+   announced it's going closed-source and commercial. Rather than build a grading-only
+   sidecar to someone else's closing editor, the call was to become the editor: one local,
+   agent-native app that owns the whole post-production loop (D-039).
 
-3. **Every open-source project is an editor, not a colorist.** OpenShot, Kdenlive,
-   Shotcut, OpenCut — grading is an afterthought bolted onto a timeline. The good grading
-   *components* exist (color-matcher, film-emulation curves, LUT tools, SAM 2, Depth
-   Anything) but nobody has assembled them into a grading-first tool, and nobody has put
-   an agent in front of it.
-
-**So there is a real, unclaimed space: an AI-native colorist.** Not "AI that auto-grades
-for you" (that's a filter). An agent that works *with* a colorist — proposes a grade,
-matches shots to a reference, sets up depth-based haze, roughs in masks — inside a tool
-where every parameter is still under human control and visible on a real GUI.
+**So there is a real, still-unclaimed space.** 2026 saw "agentic video editing" become a
+funded, named category (a16z's thesis piece, YC's Cardboard, Avid shipping agentic
+features) — editing got its agents. Nobody in that wave takes colour grading seriously as
+a craft (see `docs/notes/product-direction.md` §7 for the full competitive read). Chroma's
+bet: be the one tool that's agent-native across cut, motion, *and* grade, with real colour
+science as the part nobody else has bothered to build.
 
 ## The thesis
 
-- **Grading is the last un-agented craft in post.** Editing has agents. VFX has agents.
-  Grading has "apply this LUT."
-- **The grade should be code.** A serialisable document — nodes, params, keyframes, mask
-  geometry, tracker data, colour config — versioned in git next to the project. That's
-  what an AI-native tool can do that a GUI-first tool structurally can't: diff a grade,
-  review a grade in a PR, generate a grade, replay a grade.
+- **Real colour science is still the unclaimed wedge.** Editing agents are now a crowded
+  field; a grading pipeline this deep — GPU shader stack, scopes, `match_to_reference`,
+  depth-based haze, tracked/keyframed masks — is still Chroma's alone among the local/open
+  competitors surveyed (`docs/notes/product-direction.md` §7). Grading is the part of post
+  that's hardest to fake with a thin AI wrapper.
+- **The grade should be code.** A serialisable document — adjustments, keyframes, mask
+  geometry, tracker/depth-track refs — versioned in git next to the project (`grade.json`,
+  D-025). That's what an AI-native tool can do that a GUI-first tool structurally can't:
+  diff a grade, review a grade in a PR, generate a grade, replay a grade.
 - **The agent is not blind, but it is imprecise.** It can read rendered frames and scopes
-  and iterate (proven — see `docs/05-research.md`, the Palmier trials). It cannot place a
-  bezier on a jawline. The tool's job is to make that division of labour frictionless:
-  agent sets intent, human refines geometry, agent continues.
-- **Local-first, no credits, no cloud.** Everything runs on the machine. The models are
-  small enough (SAM 2, Depth Anything V2) to run on Apple Silicon.
+  and iterate (proven — the Palmier trials, `docs/05-research.md`; the closed-loop
+  `match_to_reference`, D-026). It cannot place a bezier on a jawline or judge a cut's pace
+  by feel. The tool's job is to make that division of labour frictionless: agent sets
+  intent, human refines geometry/timing, agent continues. `request_human(reason, roi?)`
+  (D-032) is the explicit handoff.
+- **Local-first, no credits, no cloud.** Everything runs on the machine — grading, the AI
+  sidecar (SAM 2, ViTMatte, Video Depth Anything, all local), and the motion-graphics
+  render. Every well-funded competitor surveyed is cloud + metered; that's a real,
+  durable difference, not a marketing line.
 
 ## What success looks like (18 months)
 
-- A talking-head shot goes from flat to graded — subject isolated (tracked), background
-  hazed by depth, primary + look applied, matched to the series' reference frame — in
-  one agent conversation plus ~2 minutes of human mask cleanup.
-- The grade exports as a `.cube` (primary) + an OTIO/round-trip doc so it drops back into
-  whatever editor owns the cut.
-- Other people use it. It's the obvious answer when someone asks "is there an open-source
-  AI colorist?"
+- A raw shoot goes from footage to a published cut in one agent conversation plus real
+  human refinement time: cut to the transcript, a motion-graphic explainer roughed in from
+  a script, the talking-head shot graded — subject isolated (tracked), background hazed by
+  depth, matched to a reference — each pass reviewable and undoable, not a black box.
+- The grade exports as a `.cube` (primary) + the project round-trips (OTIO for the edit,
+  `grade.json` per shot) so any piece of it drops back into whatever else owns a later
+  step.
+- Other people use it. It's the obvious answer when someone asks "is there an open-source,
+  local, agent-native video tool that actually takes colour seriously?"
 
 ## What this is NOT
 
-- Not an NLE. No timeline editing, no trimming, no transitions, no audio. It grades clips
-  handed to it.
-- Not an auto-grader. It doesn't hide the controls behind "make it cinematic."
-- Not a Resolve replacement. Resolve wins on breadth (Fusion, Fairlight, conform, HDR
-  mastering). Chroma wins on: agent-native, grade-as-code, open, scriptable end to end.
-- Not a SaaS. See license note (`docs/08-decisions.md` D-002).
+- **Not a generation-first "vibe editing" tool.** It doesn't chain Sora/Veo/Kling calls to
+  conjure footage (contrast: Mobbi AI). It works with real, shot footage.
+- **Not an auto-editor or auto-grader.** No "make it cinematic" one-click filter, on any
+  tab. Every parameter the agent sets is visible and editable in the GUI — cuts, motion
+  primitives, grade adjustments alike.
+- **Not a Resolve/Premiere replacement on breadth.** Resolve still wins on Fusion,
+  Fairlight, conform, HDR mastering, feature-DI-scale tooling. Chroma wins on: agent-native
+  across the whole pipeline, grade-as-code, open, local, Rust-fast, scriptable end to end.
+- **Not a SaaS.** No cloud dependency in the critical path (see the licence note,
+  `docs/08-decisions.md` D-002).

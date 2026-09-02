@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Docs reconciliation pass** (roadmap "Next" item 7, the `CLAUDE.md`
+  hard-rule debt owed since the D-039 pivot). `03-architecture.md` fully rewritten for the
+  3-tab world (crate/package tables, per-tab current state, data model, AI sidecar, the
+  agent bridge) off `docs/notes/architecture-lock.md` + every `D-039`-onward decision;
+  `00-vision.md`/`01-prd.md`/`02-scope.md` corrected from "grading only, not an editor" to
+  the real 3-tab product, keeping what was still true (local-first, grade-as-code, the
+  colour-science wedge) rather than rewriting wholesale; `02-scope.md` keeps the Colorist
+  v1 scope as still-accurate and adds the Edit/Motion tabs' own scope alongside it, and
+  fixes its "Anti-scope" section, which had named editing/motion-graphics as explicitly
+  out-of-scope ("that's Palmier's job") — exactly backwards post-pivot. `BUGS.md`'s "Known
+  engine constraints" list had three stale entries (D-014/D-018+D-034/D-036, all since
+  solved) removed, one still-real item (the `max_texture_dimension_2d` 8K bypass) kept.
+
 - **2026-09-02** — **Media pool, pass 2 (D-045): bins + multiple named
   timelines.** `MediaItem.folder` (a plain path-string bin, no separate
   entity — Palmier-MCP-folder convention) + `chroma_media_move`.

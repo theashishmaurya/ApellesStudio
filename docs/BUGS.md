@@ -11,10 +11,19 @@ repro / expected / actual / cause / fix
 
 ## Known engine constraints (design around these — not bugs)
 
-- Render entry points are Tauri-coupled → **D-014** (extract `render_core`).
-- Masks are static per image — no keyframe/tracking model. We add it.
-- Depth Anything is wired for stills; per-frame video depth needs temporal smoothing or it flickers.
-- `process_and_get_dynamic_image` bypasses the GPU and returns the source unprocessed if `w|h > max_texture_dimension_2d` — watch at 8K.
+Refreshed 2026-09-02 (docs-reconciliation pass) — three items previously listed here are
+solved and removed:
+- ~~Render entry points are Tauri-coupled~~ — fixed by **D-014** (`render_core` extraction,
+  done 2026-09-01); the grade path is callable headless (export, the eval harness).
+- ~~Masks are static per image — no keyframe/tracking model~~ — SAM 2 video tracking shipped
+  (**D-018**) and mask keyframes shipped (**D-034**, done 2026-09-02).
+- ~~Depth Anything is wired for stills only; per-frame video flickers~~ — a real temporal
+  depth track shipped (**D-036**, Video Depth Anything-vits, done 2026-09-02); the
+  single-frame ONNX bake is still used for stills and pre-track, by design, not as a gap.
+
+Still real:
+- `process_and_get_dynamic_image` bypasses the GPU and returns the source unprocessed if
+  `w|h > max_texture_dimension_2d` — watch at 8K.
 
 ## Open
 
