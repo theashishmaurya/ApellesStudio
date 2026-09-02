@@ -21,8 +21,13 @@ numbers are actually calibrated).
   scrub/play preview (independent of the Colorist render path) via the shared
   `@chroma/player` component, reorder/trim/split/remove, persisted in the project. No
   multi-track, audio, transitions, or transcript cut yet.
-- **Motion** — placeholder tab. The engine (`packages/motion-engine/`, 7 primitives +
-  manifest compiler) is fully functional, just not wired to a tab UI. **Gap — see Next.**
+- **Motion** — MVP (D-046): a `@remotion/player` live preview of
+  `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
+  (validated against the engine's own `zod` schema — a visual editor is
+  still an open question), Save (project-scoped sidecar
+  `<project>.chroma/motion/manifest.json`) and Render (`chroma-motion`
+  crate → `npx remotion render`). No multi-manifest, render progress/cancel,
+  or packaged-build story for the engine yet.
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
   screen (opens on the launcher, tabs appear once a project is open), `@chroma/ui`
   (shadcn/Base UI, 18 components, themed).
@@ -91,11 +96,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
    `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
    later (export the Edit tab's active timeline too).
-5. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
-   ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
-   manifest editor (JSON-in to start — visual editor is an open question, see
-   `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
-   `architecture-lock.md`.
+5. **Motion tab MVP — done (D-046, 2026-09-02).** `@remotion/player` embed of
+   `packages/motion-engine/`'s `Video` composition, a JSON-in manifest editor
+   (`zod`-validated — visual editor still an open question, see
+   `product-direction.md` §9), Save (project-scoped sidecar
+   `<project>.chroma/motion/manifest.json`, not a `ProjectManifest` field —
+   see D-046 for why), Render (new `chroma-motion` crate per
+   `architecture-lock.md` → `npx remotion render`, blocking/synchronous, no
+   progress reporting). Along the way: fixed a latent `@react-three/fiber` ×
+   `React.ElementType`-via-JSX typing collision (B-008) and a react/react-dom
+   version-duplication bug (root `package.json` `overrides`).
+   - **Still open:** a visual manifest editor, multi-manifest / scene
+     management, render progress/cancel/queue, a render-output save dialog,
+     a packaged-build story for `packages/motion-engine` (today's engine-dir
+     resolution assumes the dev-time monorepo layout).
 6. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor

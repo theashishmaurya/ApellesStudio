@@ -20,6 +20,92 @@ repro / expected / actual / cause / fix
 
 ## Fixed
 
+## B-009 — duplicate `remotion` packages crash the app at runtime with "Multiple versions of Remotion detected"
+status: fixed (2026-09-02) · severity: blocker (crashed frontend mount entirely, not just the Motion tab) · area: root `package.json` `overrides`, `packages/motion-engine/package.json`'s caret-pinned `@remotion/*` deps
+- **repro:** boot the app (`npm run tauri:dev`) with `packages/motion-engine`'s
+  `@remotion/animation-utils`, `@remotion/google-fonts`, `@remotion/motion-blur`,
+  `@remotion/noise`, and `@remotion/transitions` (+ its own `@remotion/shapes`
+  dependency) pinned with a caret range (`^4.0.519`) while every other
+  `@remotion/*`/`remotion` dependency in the workspace is pinned exactly
+  (`4.0.519`).
+- **expected:** the app boots; the Motion tab (which imports
+  `@remotion/google-fonts` via `Video.tsx`'s top-level `loadFont()` call —
+  evaluated at module-load time, unconditionally, regardless of which tab
+  is visually active, since `@chroma/shell` keeps every tab mounted) loads
+  without error.
+- **actual:** the whole frontend fails to mount. Vite's client logs an
+  unhandled error — `TypeError: 🚨 Multiple versions of Remotion detected:
+  4.0.520 and 4.0.519` — thrown by Remotion's own runtime version-check
+  (`checkMultipleRemotionVersions`), and the Rust side times out waiting
+  for `frontend_ready`, logging "Frontend failed to report ready within
+  timeout. Forcing window visibility" and showing a blank window.
+- **cause:** a caret range lets npm resolve to the newest *published*
+  matching version at install time, not the version every other package in
+  the tree is pinned to. `4.0.520` was published after `4.0.519`, so npm
+  resolved the five caret-pinned `@remotion/*` packages (each an exact
+  dependency on `remotion@4.0.520`, matching their own package version) to
+  a nested `4.0.520` install, while the rest of the tree correctly deduped
+  to the exactly-pinned `4.0.519`. Remotion's runtime hard-errors the
+  instant two `remotion` module instances load in the same page — by
+  design, since mixed-version Remotion internals aren't guaranteed
+  compatible.
+- **fix:** a root `package.json` `overrides` block pins `remotion` and all
+  five caret-pinned `@remotion/*` packages to the exact `4.0.519` used
+  everywhere else. **A newly-added/changed `overrides` key did not reliably
+  take effect via an incremental `npm install`, even after `rm -rf
+  node_modules`** — the existing `package-lock.json`'s already-resolved
+  entries for those packages kept getting replayed. Only a genuinely fresh
+  resolution — `rm -rf node_modules package-lock.json && npm install` —
+  produced a lockfile with exactly one `remotion` install (root, `4.0.519`,
+  confirmed via `find . -path "*/node_modules/remotion/package.json"`).
+- **verification:** a real `npm run tauri:dev` boot, twice, with the dev
+  server stdout and the app's own log file both staying clean for the
+  whole session — no "Multiple versions of Remotion" error, no
+  frontend-ready timeout — versus every prior boot attempt this session
+  hitting the error within seconds of the frontend starting to evaluate.
+
+## B-008 — `@react-three/fiber`'s global JSX augmentation breaks any `React.ElementType`-typed component sharing its `tsc` program
+status: fixed (2026-09-02) · severity: medium · area: `packages/ui/src/Text.tsx`, `app/src/components/panel/BottomBar.tsx`
+- **repro:** in a `tsc` program that includes any file importing
+  `@react-three/fiber` (e.g. `@chroma/motion-engine`'s `Scene3D.tsx`/
+  `ParticleFlow.tsx`, first pulled into `app`'s program by wiring the
+  Motion tab, D-046) alongside a component that renders a
+  `React.ElementType`-typed prop via JSX (`<Component {...props}>` where
+  `Component`'s static type is `React.ElementType`, not a concrete tag).
+- **expected:** unrelated files type-check independently of what else is in
+  the program.
+- **actual:** the unrelated component fails to type-check —
+  `error TS2745: This JSX tag's 'children' prop expects type 'never'…` and
+  similar `never`-typed prop errors — even though nothing about that
+  component changed.
+- **cause:** `@react-three/fiber` augments the **global** `JSX.IntrinsicElements`
+  interface (that's how `<mesh>`, `<group>`, etc. type-check anywhere) — a
+  program-wide effect, not scoped to files that import r3f. Once present,
+  `React.ElementType` (`keyof JSX.IntrinsicElements | ComponentType<any>`)
+  is a much larger union that now includes r3f's custom intrinsics, whose
+  prop shapes don't share a compatible `children` type with DOM elements.
+  TS computing the intersection of props across that whole union for a
+  dynamic `<Component>` JSX call collapses `children` (and other props) to
+  `never`. Two pre-existing components used this "dynamic tag via a
+  `React.ElementType` prop, rendered with JSX" pattern and both broke the
+  moment r3f entered the same program for the first time: `@chroma/ui`'s
+  `Text.tsx` (`as` prop) and `app`'s `BottomBar.tsx`'s `PanelToggleButton`
+  (`Icon` prop).
+- **fix:** `React.createElement(Component, props, children)` /
+  `createElement(Icon, { size: 18 })` in place of JSX for that one call in
+  each file — behaviorally identical (JSX desugars to the same call at
+  runtime; this changes nothing about what renders), but `createElement`'s
+  generic signature doesn't distribute over `JSX.IntrinsicElements` the same
+  way JSX's own type-checking does, so it type-checks correctly whether or
+  not r3f's augmentation is present.
+- **verification:** a strict `tsc --noEmit` diff of `app/` before vs. after
+  the full Motion tab change (file list, not just count) came back
+  byte-identical (64 errors either side) — used specifically to catch every
+  instance of this pattern application-wide, not just the ones exercised by
+  manually clicking through the UI. Any *other* `React.ElementType`-via-JSX
+  component elsewhere in the codebase would show up the same way if r3f's
+  augmentation reaches its program later.
+
 ## B-007 — Edit tab stuck on stale "no project open" after opening a project in Colorist
 status: fixed (2026-09-02) · severity: medium · area: app/src/main.tsx, @chroma/shell tab persistence
 - **repro:** open the app, open/create a project in the Colorist tab, switch to the Edit tab

@@ -2076,3 +2076,193 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   D-044), the docked Sources/Library panel, the bin-tree UI, the
   timeline-switcher UI, and wiring `useMediaPoolStore` to `folder`/
   `chroma_media_move`.
+
+## D-046 — Motion tab MVP: `@remotion/player` embed, JSON-in manifest editor, `chroma-motion` render bridge (Rust orchestrates Node)
+
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** `04-roadmap.md`'s "Next" item 5: `packages/motion-engine/`
+  (7 primitives + the JSON scene-manifest compiler, moved in from
+  `videoAgent/engine/motion/` at the D-039 migration) is fully functional but
+  only reachable via a CLI render — `@chroma/motion`'s `MotionTab` was a
+  static placeholder. This wires it into a real tab: a live preview, an
+  editor, save, and a render action.
+- **`@remotion/player`, not a CLI render, for the preview.** `MotionPreview`
+  renders `<Player component={Video} inputProps={manifest} …>` — `Video` is
+  the engine's own component (the same one the `Animation` `<Composition>`
+  registers in `Root.tsx`), fed `durationInFrames`/`fps`/`compositionWidth`/
+  `compositionHeight` computed from the manifest via the engine's own
+  `totalFrames`/schema defaults (`build.ts`) rather than reimplementing that
+  math. Deep-imports the engine's `src/engine/*` modules directly
+  (`@chroma/motion-engine/src/engine/Video` etc.) — the package ships no
+  `main`/`exports` field (it's a Remotion CLI project, not built as a
+  library), and adding one would mean editing a package this task treats as
+  a read-only reference; a bare subpath import resolves fine with no
+  `exports` map to sandbox it, and needs zero engine-side changes.
+- **JSON-in, not a visual editor — deliberately scoped down.**
+  `product-direction.md` §9 leaves "does the manifest editor become visual"
+  genuinely undecided. Building a node/property editor this pass would be
+  guessing at a shape nobody has picked yet. `ManifestEditor` is a plain
+  `<textarea>` (no code-editor dependency — `@chroma/ui` has none; pulling
+  one in for a first pass wasn't worth it), live-parsed (300ms debounced)
+  against the engine's actual `zod` `manifestSchema` — the schema's single
+  source of truth stays `schema.ts`, nothing is redeclared in Rust or a
+  second TS copy. A parse/validation failure never blanks the preview: the
+  last manifest that parsed clean keeps rendering while the error text shows
+  separately, so a mid-edit typo doesn't read as "it's broken."
+- **`chroma-motion` crate = Rust orchestrates Node, not reimplements it.**
+  Per `architecture-lock.md`'s layer table (`chroma-motion`, L2, depends on
+  `chroma-types`). Its entire job is `npx remotion render Animation
+  <output> --props=<manifest>` inside `packages/motion-engine/` — the exact
+  command `/animate` already documents for a CLI render — via
+  `std::process::Command`. This is the one deliberate exception to "the fat
+  core is Rust" in this otherwise Rust-centric architecture: the Remotion
+  engine (7 primitives, a manifest compiler, React/Three.js rendering) is
+  already real, working, non-trivial code, and reimplementing a Remotion
+  renderer in Rust to satisfy an architectural preference would be pure
+  waste. The crate validates fast before spawning (`engine_dir` exists,
+  `manifest_path` exists and parses as JSON) and otherwise does no schema
+  validation of its own — re-deriving the `zod` schema in Rust would just
+  drift from `schema.ts`. `build_command`/`validate_request` are pure and
+  unit-tested (5 tests); `run_render` blocks the calling thread, so the
+  Tauri command `chroma_motion_render` wraps it in
+  `tauri::async_runtime::spawn_blocking(...).await` — the caller gets a
+  plain success/failure once `npx` exits, no progress polling. Uses
+  `chroma_types::ChromaError` directly as its error type rather than a
+  redundant local enum — a genuine fit for chroma-types' own stated role
+  ("every fallible Chroma API returns `Result<_, ChromaError>`"), not a
+  drive-by dependency to match the layer table.
+- **Manifest persistence = a project-scoped sidecar file, not a
+  `ProjectManifest` field.** `<project>.chroma/motion/manifest.json` (new
+  Tauri commands in a new `app/src-tauri/src/chroma/motion.rs`, resolved via
+  `state::current_project()` — the same source `edit.rs`'s
+  `current_project_dir()` reads), mirroring how `grade.rs` already
+  externalises each shot's `grade.json` as a path-addressed sidecar rather
+  than inlining it into `project.json`. Deliberately **not** a
+  `ProjectManifest.motion: Option<...>` field even though the additive-field
+  pattern (`settings`, `timelines`, `media`) was available and would have
+  been the more "consistent" choice on paper: `project.rs` had a large,
+  actively in-flight concurrent edit (D-044/D-045's media-pool work) at the
+  time this was built, in a separate worktree — touching that file at all
+  would have meant a merge collision for no real benefit, since a sidecar
+  needs no `ProjectManifest` change to work. One manifest per project this
+  pass (matches the roadmap's stated scope); multi-manifest / scene
+  management is deferred, not designed.
+- **Render output defaults to `<project>.chroma/motion/render.mp4`** — a
+  single fixed path (not timestamped), so "Render" is a safe re-run/
+  overwrite by default; `chroma_motion_render` still accepts an explicit
+  `output_path`. A save-dialog / render history / progress UI is future
+  work — out of scope for "does the manifest editor + preview + a basic
+  render action work at all."
+- **A latent `@react-three/fiber` × `@chroma/ui` typing collision, found and
+  fixed (see B-008).** Wiring `Scene3D` (via `Video`) into a shared `tsc`
+  program for the first time exposed that `@react-three/fiber`'s global
+  `JSX.IntrinsicElements` augmentation — inherent to how r3f works, not a
+  bug in r3f — breaks any component elsewhere in the *same* program that
+  renders a `React.ElementType`-typed prop through JSX (TS's prop-type
+  intersection over the now-much-larger `JSX.IntrinsicElements` union
+  collapses `children` to `never`). Two pre-existing instances of that
+  pattern broke: `@chroma/ui`'s `Text.tsx` (`as`-prop polymorphism) and
+  `app/src/components/panel/BottomBar.tsx`'s `PanelToggleButton` (`Icon`
+  prop). Both fixed with `React.createElement`/`createElement` in place of
+  JSX for that one call — behaviorally identical (JSX desugars to the same
+  call), and `createElement`'s generic signature doesn't distribute over the
+  union the same way JSX's does. No other instances found: a strict
+  before/after `tsc --noEmit` diff across `app/` (64 errors either side,
+  identical file list) was used specifically to catch every such instance
+  application-wide, not just the ones exercised by manual testing.
+- **Two real duplicate-package bugs, found and fixed — one a type-checking
+  problem, one an actual runtime crash.** Both share a root cause:
+  `packages/motion-engine`'s dependency versions don't line up with what
+  the rest of the workspace resolves, and npm nests a second copy instead
+  of hoisting one shared instance — invisible until something actually
+  imported motion-engine's components into another package's tree (nothing
+  had, before this).
+  - **react/react-dom/@types (type-checking).** `packages/motion-engine/package.json`
+    pins exact versions (`react@19.2.3`, `@types/react@19.2.7`) that don't
+    satisfy the root workspace's `react@^19.2.8` range, so npm installed a
+    **second, nested** copy under `packages/motion-engine/node_modules/`.
+    Two React instances in one component tree is not just a type-checking
+    nuisance, it's a real runtime bug class (broken hooks, context that
+    can't cross the boundary) — `<Player component={Video} …>` would have
+    hit exactly this at runtime even if `tsc` had stayed quiet.
+  - **remotion (runtime crash, caught live — B-009).** Booting the app for
+    real (see Verified) surfaced what static checks structurally cannot:
+    six `@remotion/*` packages `motion-engine` pins with a caret
+    (`animation-utils`, `google-fonts`, `motion-blur`, `noise`,
+    `transitions`, and transitively `shapes`) each carry their own nested
+    `remotion@4.0.520`, one patch ahead of the `4.0.519` pinned everywhere
+    else — and Remotion's own runtime **hard-errors** on a version mismatch
+    ("Multiple versions of Remotion detected"). Since `Video.tsx`'s
+    `loadFont()` (a `@remotion/google-fonts` call) runs at module-eval
+    time and `@chroma/shell` keeps every tab mounted, this crashed the
+    **whole frontend**, not just the Motion tab — no `tsc` signal at all,
+    since both versions are type-compatible. This is the concrete reason
+    the "boot the app for real" verification step in the brief matters.
+  - **Fixed at the root workspace, not by touching motion-engine's pins**
+    (kept read-only): a root `package.json` `overrides` block pins
+    `react`/`react-dom`/`@types/react`/`@types/react-dom`/`remotion` to the
+    versions already resolved at the workspace root, which a **full clean**
+    `rm -rf node_modules && npm install` (an incremental `npm install` on
+    top of the old lockfile/`node_modules` state did *not* reliably apply a
+    newly-added override — confirmed twice, for both the react and the
+    remotion override) used to collapse both duplicates —
+    `packages/motion-engine/node_modules/{react,react-dom,@types/react}`
+    and `node_modules/@remotion/google-fonts/node_modules/remotion` no
+    longer exist after. Confirmed no regression: `motion-engine`'s own
+    `tsc --noEmit` went from 24 pre-existing errors (all in
+    `Scene3D.tsx`/`ParticleFlow.tsx`, r3f's `JSX.IntrinsicElements`
+    augmentation not resolving consistently under the split-version setup)
+    to **0** — the react dedup fixed a second pre-existing bug as a side
+    effect, not just avoided a new one.
+- **Verified:** `cargo test -p chroma-motion` 5/5. `cargo check -p RapidRAW`
+  clean (pre-existing warnings only, all in `ai_processing.rs`, unrelated).
+  `cargo clippy -p RapidRAW -p chroma-motion --all-targets` — zero warnings
+  in any file this change touched (the warnings clippy does report are all
+  pre-existing, in files untouched by this change). `cargo fmt --check` run
+  only on the files actually written (`crates/chroma-motion/src/lib.rs`,
+  `app/src-tauri/src/chroma/motion.rs`) — never on `mod.rs`/`lib.rs`
+  themselves, which (per D-045's note above) recursively reformat every
+  `mod`-reachable file from a crate root; caught an accidental cascade into
+  12 unrelated `chroma/*.rs` files from one early exploratory `rustfmt
+  mod.rs` call and reverted it via `git checkout` before it went anywhere.
+  `tsc --noEmit` — `packages/motion` 0 errors, `packages/motion-engine` 0
+  (was 24, see above), `packages/ui` 0 (was 3, see B-008), `app` 64 errors
+  before AND after this change, byte-identical file list (diffed, not
+  eyeballed) — so the two real typing fixes above are net-zero on the
+  app's pre-existing debt, not a new regression hiding among it.
+  **`npm run tauri:dev` real boot** (port 1420 was held by a concurrent
+  agent's own dev session in a different worktree — same-bundle-identifier
+  Tauri apps are OS-level single-instance, so this run used a temporary
+  port override, 1425, in both `vite.config.mjs` and `tauri.conf.json`'s
+  `devUrl`, for the verification session only, reverted before commit;
+  confirmed via `osascript`, matching on the launched process's own PID,
+  that a distinct native window opened rather than refocusing the other
+  worktree's): Vite ready, the Tauri binary starts, and — the concrete
+  regression test for the exact bug this session found (the "Multiple
+  versions of Remotion" crash below) — the dev-server stdout and the
+  app's own log file stayed clean for the whole session: no "Multiple
+  versions of Remotion" error, no "Frontend failed to report ready within
+  timeout" warning (both of which fired immediately, every time, before
+  the fix), and no `console.error`/`warn` forwarded through
+  `frontendLogBridge`. Every module in the Motion tab's import chain
+  (`MotionPreview.tsx` → `motion-engine`'s `Video.tsx` →
+  `@remotion/google-fonts`) serves `200` through Vite. **Not verified this
+  pass:** pixel-level confirmation that the `@remotion/player` canvas paints
+  the sample manifest (no screen-recording permission in this environment —
+  `screencapture` fails with "could not create image from
+  display"/"...from rect" — and WKWebView content isn't introspectable via
+  `System Events` accessibility beyond window existence, so this falls back
+  to the log-evidence method the task anticipated for exactly this
+  constraint), and Save/Render were not exercised against a real open
+  project (no `.chroma` project was created for this pass) — both are
+  thin, already-unit-adjacent Tauri commands (`chroma_motion_save_manifest`/
+  `chroma_motion_render`, see `motion.rs`) rather than load-bearing new
+  logic, but they are genuinely unverified end-to-end and should be the
+  first thing a follow-up session checks with a real project open.
+- **Deferred:** a visual manifest editor (open question, see above), multi-
+  manifest / scene management, render progress reporting / cancel / queue,
+  a save-dialog for the render output path, any packaged-build story for
+  `packages/motion-engine` (today's `engine_dir()` resolution assumes the
+  dev-time monorepo layout via `CARGO_MANIFEST_DIR`), and an end-to-end
+  save/render check against a real open project (see Verified, above).

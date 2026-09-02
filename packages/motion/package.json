@@ -5,8 +5,11 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Motion tab (D-039) — @remotion/player embed + manifest editor, driving @chroma/motion-engine. Placeholder for now.",
+  "description": "Chroma Motion tab (D-039 / D-046) — @remotion/player embed of @chroma/motion-engine's Animation composition + a JSON scene-manifest editor, validated against the engine's zod schema.",
   "dependencies": {
+    "@chroma/motion-engine": "*",
+    "@remotion/player": "4.0.519",
+    "@tauri-apps/api": "^2.11.1",
     "react": "^19.2.8"
   }
 }

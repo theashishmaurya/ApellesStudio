@@ -4,6 +4,32 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Motion tab MVP (D-046).** `@chroma/motion`'s `MotionTab`
+  is real: a `@remotion/player` preview of `@chroma/motion-engine`'s `Video`
+  composition, a live-validated JSON manifest editor (`zod`, JSON-in this
+  pass — visual editor still open, see `product-direction.md` §9), Save
+  (project-scoped sidecar `<project>.chroma/motion/manifest.json`) and
+  Render (new `chroma-motion` crate → `npx remotion render`, Rust
+  orchestrates the existing Node engine rather than reimplementing it). New
+  Tauri commands `chroma_motion_get_manifest`/`_save_manifest`/`_render` in
+  `app/src-tauri/src/chroma/motion.rs`. Found + fixed along the way: a
+  latent `@react-three/fiber` × polymorphic-`React.ElementType` typing
+  collision (`@chroma/ui`'s `Text.tsx`, `app`'s `BottomBar.tsx` — see
+  B-008), a react/react-dom version-duplication bug (`motion-engine` pinned
+  exact versions npm couldn't hoist, so two React copies would have landed
+  in one component tree), and a live runtime crash from a duplicate
+  `remotion` package (`@remotion/animation-utils`/`google-fonts`/
+  `motion-blur`/`noise`/`transitions`/`shapes` all caret-pinned in
+  `motion-engine`, so npm floated them to a newer `4.0.520` patch each
+  carrying its own nested `remotion@4.0.520` — Remotion hard-errors on a
+  version mismatch at runtime, which is what actually blocked the first
+  several boot-verification attempts). Both fixed via a root `package.json`
+  `overrides` block (not by touching motion-engine's pins) plus a genuinely
+  clean `rm -rf node_modules package-lock.json && npm install` — an
+  incremental install on top of the pre-override lockfile did not reliably
+  apply a newly-added override. Verified with a real `npm run tauri:dev`
+  boot: dev-server stdout and the app log stayed clean for the session, no
+  "Multiple versions of Remotion" error, no frontend-ready timeout.
 - **2026-09-02** — **Media pool, pass 2 (D-045): bins + multiple named
   timelines.** `MediaItem.folder` (a plain path-string bin, no separate
   entity — Palmier-MCP-folder convention) + `chroma_media_move`.

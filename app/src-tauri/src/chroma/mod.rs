@@ -19,6 +19,7 @@
 //! - `control`  — in-app HTTP control server bridging MCP ⇄ the frontend (D-020)
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `grade`    — the `grade.json` document: save / load / versioned schema (D-025)
+//! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
 //! - `sidecar`  — spawn + supervise the `ai/` FastAPI sidecar, kill it on exit (D-028)
 
 pub mod commands;
@@ -31,6 +32,7 @@ pub mod grade;
 pub mod keyframes;
 pub mod load;
 pub mod mask;
+pub mod motion;
 pub mod playback;
 pub mod project;
 pub mod session;
