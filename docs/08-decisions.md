@@ -1893,3 +1893,81 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   **Net: 51 files, +363/−7823 LOC** (`app/src` + `app/src-tauri/src`) + 13
   locale-file edits. `cargo build`/`cargo test chroma::` (54/54)/`tsc`
   (74→64)/`vite build` all green.
+
+---
+
+## D-044 — Media pool pass 1: `ProjectManifest.media: Vec<MediaItem>`, additive alongside `shots`; import + list only, unification deferred
+
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** Roadmap "Next" item 1, "Media pool + import + multiple
+  timelines," scoped as 2–3 passes. This is **pass 1: model + import only** —
+  no bins/folders, no multiple named timelines, no docked Sources-panel UI.
+  Today "media in a project" only exists as `ProjectShot` — every entry is
+  already assumed to be a graded shot; there's no concept of media sitting in
+  a pool, unused. The target model (per the roadmap item): pool = all media a
+  project references; a Colorist "shot" = a pool item being graded; an Editor
+  "clip" = a windowed reference to a pool item on a timeline track
+  (`chroma-timeline::Clip` already has that shape).
+- **Decision — additive, not unified.** `ProjectManifest` gains `media:
+  Vec<MediaItem>` (`#[serde(default)]`, schema major unchanged — the same
+  additive move D-038 made for `settings` and D-041 made for `timeline`).
+  `MediaItem` is `{ id, source_path, name, added, video: Option<MediaVideoInfo>
+  }` — referenced in place, never copied (the same invariant `ProjectShot`
+  already keeps); `MediaVideoInfo` is a cheap probed subset (`width, height,
+  fps, frame_count, duration_secs`) reusing the existing `video::probe` /
+  `VideoInfo` path (no new prober). `shots` is **untouched** this pass — no
+  `media_id` back-reference yet, no shared id space, two independent lists
+  that both happen to hold "paths this project references." Only
+  `chroma_media_import` writes to `media`; nothing yet reads it into `shots`
+  or the Editor timeline.
+- **Why not unify now.** A real unification (`ProjectShot` becomes a view over
+  `MediaItem`, or a shot carries a `media_id`) touches every shot-related code
+  path at once — `chroma_project_save`, `open_manifest`'s offline handling,
+  `session.rs`, `edit.rs`'s `build_from_shots`, and the frontend
+  `useSessionStore` — which is exactly the "sprawling refactor" the roadmap
+  item explicitly warned pass 1 off of. Keeping `media` purely additive means
+  this pass touches none of those paths and cannot regress the existing
+  Colorist/Editor flows. **Owed to pass 2/3:** decide the real relationship
+  (most likely: a shot gains an optional `media_id`, `ProjectShot` keeps
+  `source_path` for backward compat but the pool becomes the source of truth
+  for probed facts) once bins/folders and the docked Sources panel give a
+  reason to actually read from `media` on the hot paths.
+- **Commands (registered in `lib.rs`):** `chroma_media_import(paths: Vec<String>)
+  -> Vec<MediaItemDto>` — probes each new path (`video::probe`, reusing the
+  same path `build_from_shots` / `infer_settings_from_clip` already use),
+  skips a path already in the pool (dedup by `source_path`, not an error),
+  persists, returns just the newly-added items. `chroma_media_list() ->
+  Vec<MediaItemDto>` — the full pool, `offline` live-checked per item (same
+  cheap `is_file() && is_video_file()` test as `ProjectShotDto`). Named
+  `chroma_media_*` (not the roadmap text's literal `import_media`/
+  `list_media`) to match this file's existing `chroma_project_*` /
+  `chroma_timeline_*` convention. A probe failure at import time doesn't drop
+  the item — same "offline is flagged, not fatal" discipline as
+  `open_manifest`'s shot handling; `video` is just `None` and `offline` comes
+  back `true` on the next list. No MCP tool wiring — none of the existing
+  `chroma_project_*` commands are MCP-exposed either, so there's no
+  established pattern to extend yet.
+- **Frontend scaffolding.** `useMediaPoolStore` (zustand: `items`, `loading`,
+  `error`, `refresh()`, `importPaths()`) lives in `@chroma/bridge`
+  (`src/media.ts`) — not `app/src/store` (would violate the D-039 layer
+  direction: an `app/src` store can't be imported by a future tab package) and
+  not a new package (`@chroma/bridge`'s own README already scopes it as
+  "typed Tauri command bindings + zustand stores"; this is its first real
+  content beyond the D-039 stub). No panel/UI consumes it yet — pass 3's job.
+- **Verified:** `cargo test chroma::` 58/58 (was 54; +4 new: dedup-on-reimport,
+  a real-clip probe via the existing `make_test_clip` ffmpeg helper,
+  `offline` flagging, and a legacy-`project.json`-with-no-`media`-key load).
+  The real `~/Movies/Chroma/New.chroma/project.json` (one shot, written before
+  this change, no `media` key) still loads through `load_manifest` — checked
+  with a temporary throwaway test against the live file, not just reasoned
+  about. `app` `tsc --noEmit` unchanged at 64 (no `app/src` touched);
+  `packages/bridge` `tsc --noEmit` clean. `cargo fmt --check` /
+  `cargo clippy` clean on the touched files (`project.rs`, `lib.rs`) —
+  pre-existing warnings/diffs elsewhere in the crate untouched, no broad
+  `cargo fmt` run (`CLAUDE.md` hard rule). Dev server boots clean
+  (`npm run tauri:dev`, no new errors in the log).
+- **Deferred to pass 2/3** (per the roadmap item, unchanged): bins/folders,
+  multiple named timelines, the docked Sources/Library panel (thumbnails,
+  search, drag-to-track), `set_active_timeline`, the `shots`/`media`
+  unification above.

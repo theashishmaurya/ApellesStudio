@@ -49,6 +49,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    search + drag-to-track) docked in the shell so every tab reaches it. MCP:
    `import_media`/`list_media`/`list_timelines`/`set_active_timeline`. Big — likely
    2–3 subagent passes (model+import / bins+multi-timeline / UI).
+   - **Pass 1 done (D-044, 2026-09-02):** `ProjectManifest.media: Vec<MediaItem>` —
+     additive alongside `shots`, not yet unified (see D-044 for why + what's owed).
+     `chroma_media_import`/`chroma_media_list` commands (probe, dedup, offline
+     flagging). `useMediaPoolStore` scaffolding in `@chroma/bridge`, no panel UI.
+   - **Still open (pass 2/3):** the `shots`/`media` unification, bins/folders,
+     multiple named timelines, the docked Sources/Library panel, `set_active_timeline`.
 2. **Export → a top-right button + an Export window** — move Export out of the buried
    `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
    project spec), frame range, `.cube` bake toggle, output path, progress. Backed by

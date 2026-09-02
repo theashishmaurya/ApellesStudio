@@ -2098,6 +2098,8 @@ pub fn run() {
             chroma::project::chroma_project_settings_dir,
             chroma::project::chroma_project_set_dir,
             chroma::project::chroma_project_set_settings,
+            chroma::project::chroma_media_import,
+            chroma::project::chroma_media_list,
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
             chroma::edit::chroma_timeline_frame,

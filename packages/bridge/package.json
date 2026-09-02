@@ -4,5 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "description": "Chroma typed Tauri command bindings + zustand stores + the control-bridge hook (D-020). D-039 stub."
+  "types": "./src/index.ts",
+  "description": "Chroma typed Tauri command bindings + zustand stores + the control-bridge hook (D-020). First real content: the D-044 media-pool store.",
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "zustand": "^5.0.15"
+  }
 }

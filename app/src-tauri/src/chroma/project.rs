@@ -20,6 +20,16 @@
 //!
 //! Supersedes D-033's deferred `.chroma/session.json` — the multi-shot
 //! `Session` (D-033) is now the *loaded form* of a saved project.
+//!
+//! **Media pool (D-044, pass 1 of the roadmap's "media pool + import +
+//! multiple timelines" item):** [`ProjectManifest::media`] is a project-wide
+//! `Vec<MediaItem>` — every file the project references, whether or not it is
+//! currently a graded shot or cut into the Edit-tab timeline. This pass is
+//! **additive only**: `media` and `shots` are two independent lists for now
+//! (`shots` unchanged, only [`chroma_media_import`] writes to `media`); a shot
+//! does not yet carry a `media_id` back-reference. See the D-044 decision for
+//! why, and what pass 2/3 still owe (bins/folders, multiple named timelines,
+//! the docked Sources panel, and true `shots`/`media` unification).
 
 use std::path::{Path, PathBuf};
 
@@ -134,6 +144,13 @@ pub struct ProjectManifest {
     /// Built + persisted lazily by `chroma::edit::chroma_timeline_get`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<chroma_timeline::Timeline>,
+    /// The project's media pool (D-044, pass 1) — every file imported via
+    /// [`chroma_media_import`], independent of `shots`/`timeline`. Additive,
+    /// optional (schema major unchanged, same move as D-038/D-041): an absent
+    /// `media` key → an empty pool, and the project behaves exactly as it did
+    /// pre-D-044.
+    #[serde(default)]
+    pub media: Vec<MediaItem>,
 }
 
 impl ProjectManifest {
@@ -148,8 +165,133 @@ impl ProjectManifest {
             active_shot: 0,
             settings: ProjectSettings::default(),
             timeline: None,
+            media: Vec::new(),
         }
     }
+}
+
+// --------------------------------------------------------------------------- //
+// media pool (D-044) — MediaItem: media referenced by the project, whether or
+// not it is currently a graded shot or cut into a timeline. See the module
+// doc + the D-044 decision for how this relates to `shots` in this pass.
+// --------------------------------------------------------------------------- //
+
+/// Probed video facts cheap to keep on a [`MediaItem`] up front — a subset of
+/// `video::VideoInfo` (no codec / pix_fmt / colour tags; add them if a later
+/// pass needs them). Reuses the existing `video::probe` path — no new prober.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaVideoInfo {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub frame_count: u64,
+    pub duration_secs: f64,
+}
+
+impl From<&video::VideoInfo> for MediaVideoInfo {
+    fn from(info: &video::VideoInfo) -> Self {
+        MediaVideoInfo {
+            width: info.width,
+            height: info.height,
+            fps: info.fps(),
+            frame_count: info.frame_count,
+            duration_secs: info.duration_secs,
+        }
+    }
+}
+
+/// One item in the project's media pool — referenced in place by absolute
+/// path, **never copied** (the same invariant [`ProjectShot`] already keeps).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaItem {
+    pub id: String,
+    pub source_path: String,
+    pub name: String,
+    /// RFC-3339 import time.
+    #[serde(default)]
+    pub added: String,
+    /// Probed at import time; `None` when the source failed to probe (not a
+    /// video / unreadable at that moment) — the item is still added rather
+    /// than dropped, same "offline is flagged, not fatal" discipline
+    /// `ProjectShot` uses. Live online/offline status is re-checked at
+    /// list/import time, not stored here — see [`MediaItemDto`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<MediaVideoInfo>,
+}
+
+/// [`MediaItem`] + a live-checked `offline` flag — what `chroma_media_import`
+/// / `chroma_media_list` actually return. Mirrors the `ProjectShot` /
+/// `ProjectShotDto` split.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaItemDto {
+    pub id: String,
+    pub source_path: String,
+    pub name: String,
+    pub added: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<MediaVideoInfo>,
+    /// the source path does not exist right now (or is not a video file)
+    pub offline: bool,
+}
+
+/// `true` if `path` is a readable video file right now — the same cheap check
+/// [`shot_is_online`] uses for shots.
+fn media_item_is_online(path: &str) -> bool {
+    let p = Path::new(path);
+    p.is_file() && video::is_video_file(p)
+}
+
+impl From<&MediaItem> for MediaItemDto {
+    fn from(m: &MediaItem) -> Self {
+        MediaItemDto {
+            id: m.id.clone(),
+            source_path: m.source_path.clone(),
+            name: m.name.clone(),
+            added: m.added.clone(),
+            video: m.video.clone(),
+            offline: !media_item_is_online(&m.source_path),
+        }
+    }
+}
+
+/// Probe `path` and build a [`MediaItem`] for it. Never fails outright — a
+/// probe failure (offline / not decodable) just leaves `video: None`.
+fn probe_media_item(path: &str) -> MediaItem {
+    let name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string());
+    let video = media_item_is_online(path)
+        .then(|| video::probe(Path::new(path)).ok())
+        .flatten()
+        .as_ref()
+        .map(MediaVideoInfo::from);
+    MediaItem {
+        id: uuid::Uuid::new_v4().to_string(),
+        source_path: path.to_string(),
+        name,
+        added: now_rfc3339(),
+        video,
+    }
+}
+
+/// Probe + append the entries of `paths` not already in `manifest.media`
+/// (matched by source path — re-importing the same file is a no-op, not a
+/// duplicate) and return just the items that were added. Pure model logic —
+/// no persistence; callers `save_manifest` themselves.
+fn add_media(manifest: &mut ProjectManifest, paths: &[String]) -> Vec<MediaItem> {
+    let existing: std::collections::HashSet<&str> =
+        manifest.media.iter().map(|m| m.source_path.as_str()).collect();
+    let added: Vec<MediaItem> = paths
+        .iter()
+        .filter(|p| !existing.contains(p.as_str()))
+        .map(|p| probe_media_item(p))
+        .collect();
+    manifest.media.extend(added.iter().cloned());
+    added
 }
 
 // --------------------------------------------------------------------------- //
@@ -742,6 +884,46 @@ pub fn chroma_project_set_settings(
 }
 
 // --------------------------------------------------------------------------- //
+// media pool tauri commands (D-044)
+// --------------------------------------------------------------------------- //
+
+fn require_open_project() -> Result<PathBuf, String> {
+    state::current_project()
+        .map(|p| p.path)
+        .ok_or_else(|| "no project open — create or open one first".to_string())
+}
+
+/// Probe + append `paths` to the open project's media pool (referenced in
+/// place, never copied), persist, and return just the newly-added items — a
+/// path already in the pool is skipped, not duplicated. The frontend wires
+/// this to a native multi-select file dialog (`@tauri-apps/plugin-dialog`'s
+/// `open({ multiple: true })`, same pattern as the project launcher's
+/// `pickClips`).
+#[tauri::command]
+pub fn chroma_media_import(paths: Vec<String>) -> Result<Vec<MediaItemDto>, String> {
+    if paths.is_empty() {
+        return Err("no paths given".into());
+    }
+    let dir = require_open_project()?;
+    let mut manifest = load_manifest(&dir)?;
+    let added = add_media(&mut manifest, &paths);
+    if !added.is_empty() {
+        manifest.modified = now_rfc3339();
+        save_manifest(&dir, &manifest)?;
+    }
+    Ok(added.iter().map(MediaItemDto::from).collect())
+}
+
+/// The open project's full media pool, offline-checked live. For a future
+/// pass's Sources panel to consume — no UI built against it yet (D-044).
+#[tauri::command]
+pub fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
+    let dir = require_open_project()?;
+    let manifest = load_manifest(&dir)?;
+    Ok(manifest.media.iter().map(MediaItemDto::from).collect())
+}
+
+// --------------------------------------------------------------------------- //
 // tests — pure model (no decode, no tauri State)
 // --------------------------------------------------------------------------- //
 
@@ -1000,6 +1182,107 @@ mod tests {
         assert_eq!(sanitize_name("north<>shoot"), "north--shoot");
     }
 
+    // --- media pool (D-044) ------------------------------------------------
+
+    #[test]
+    fn add_media_probes_new_paths_and_dedupes_existing() {
+        let root = tmp("add_media");
+        let (_dir, mut manifest) = new_project_in(&root, "media-test", &[]).unwrap();
+        assert!(manifest.media.is_empty());
+
+        let missing = root.join("gone.mov").to_string_lossy().to_string();
+        let added_first = add_media(&mut manifest, &[missing.clone()]);
+        assert_eq!(added_first.len(), 1, "a new path is added");
+        assert_eq!(manifest.media.len(), 1);
+        assert_eq!(manifest.media[0].source_path, missing);
+        assert!(manifest.media[0].video.is_none(), "an offline path probes to no video info");
+        assert!(!manifest.media[0].id.is_empty());
+
+        // re-importing the same path is a no-op, not a duplicate
+        let added_second = add_media(&mut manifest, &[missing.clone()]);
+        assert!(added_second.is_empty(), "an already-pooled path is skipped");
+        assert_eq!(manifest.media.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn add_media_probes_a_real_clip() {
+        // needs ffmpeg to synthesise a probe-able clip; skip cleanly without it.
+        let Some(clip) = make_test_clip("media_probe", 320, 240, "30") else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("add_media_real");
+        let (_dir, mut manifest) = new_project_in(&root, "media-real", &[]).unwrap();
+        let path = clip.to_string_lossy().to_string();
+        let added = add_media(&mut manifest, &[path.clone()]);
+        assert_eq!(added.len(), 1);
+        let info = added[0].video.as_ref().expect("a real clip probes video info");
+        assert_eq!(info.width, 320);
+        assert_eq!(info.height, 240);
+        assert_eq!(info.fps, 30.0);
+        assert_eq!(added[0].name, clip.file_name().unwrap().to_string_lossy());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip);
+    }
+
+    #[test]
+    fn media_item_dto_flags_offline_live() {
+        let root = tmp("media_offline_dto");
+        let present = root.join("present.mov");
+        std::fs::write(&present, b"not really a video").unwrap();
+        let missing = root.join("gone.mov");
+
+        let online = MediaItem {
+            id: "a".into(),
+            source_path: present.to_string_lossy().to_string(),
+            name: "present.mov".into(),
+            added: now_rfc3339(),
+            video: None,
+        };
+        let offline = MediaItem {
+            id: "b".into(),
+            source_path: missing.to_string_lossy().to_string(),
+            name: "gone.mov".into(),
+            added: now_rfc3339(),
+            video: None,
+        };
+        assert!(!MediaItemDto::from(&online).offline);
+        assert!(MediaItemDto::from(&offline).offline, "a missing path is offline, not an error");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_media_round_trips_and_legacy_project_still_loads() {
+        // D-044: `media` round-trips through save/load...
+        let root = tmp("media_roundtrip");
+        let (dir, mut manifest) = new_project_in(&root, "media-roundtrip", &[]).unwrap();
+        add_media(&mut manifest, &[root.join("a.mov").to_string_lossy().to_string()]);
+        save_manifest(&dir, &manifest).unwrap();
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.media.len(), 1);
+        assert_eq!(reloaded.media[0].source_path, manifest.media[0].source_path);
+
+        // ...and a pre-D-044 project.json with no `media` key at all (the real
+        // shape on disk before this change, e.g. `~/Movies/Chroma/*.chroma`)
+        // still loads, with an empty pool.
+        let legacy = root.join("legacy.chroma");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(
+            legacy.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"legacy","shots":[{"id":"s1","sourcePath":"/a.mov"}],"activeShot":0,"settings":{}}"#,
+        )
+        .unwrap();
+        let m = load_manifest(&legacy).unwrap();
+        assert!(m.media.is_empty(), "an absent `media` key loads as an empty pool");
+        assert_eq!(m.shots.len(), 1, "pre-existing `shots` are untouched");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn project_ref_set_and_clear() {
         let mine = ProjectRef {
@@ -1016,3 +1299,4 @@ mod tests {
         assert!(state::current_project().map(|p| p.path) != Some(mine.path));
     }
 }
+

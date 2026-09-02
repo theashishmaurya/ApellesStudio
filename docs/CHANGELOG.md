@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Media pool, pass 1 (D-044).** `ProjectManifest.media:
+  Vec<MediaItem>` — additive alongside `shots`, unification deferred to
+  pass 2/3. New `chroma_media_import`/`chroma_media_list` Tauri commands
+  (probe via the existing `video::probe`, dedup by source path, live offline
+  flagging). `useMediaPoolStore` scaffolding in `@chroma/bridge` (no panel UI
+  yet). `cargo test chroma::` 58/58 (+4); the real `~/Movies/Chroma/New.chroma`
+  project still loads.
+
 - **2026-09-02** — **Colorist black preview fixed for real (B-006).** Root
   cause was never the wgpu render pipeline — a temporary off-screen-texture
   dump proved the render pass, scissor math, and bound frame texture were
