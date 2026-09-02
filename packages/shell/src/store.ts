@@ -11,7 +11,7 @@ import { create } from 'zustand';
 export type ShellTabId = 'edit' | 'motion' | 'colorist';
 
 const STORAGE_KEY = 'chroma.activeTab';
-const DEFAULT_TAB: ShellTabId = 'colorist';
+const DEFAULT_TAB: ShellTabId = 'edit';
 const VALID: readonly ShellTabId[] = ['edit', 'motion', 'colorist'];
 
 function readPersisted(): ShellTabId {

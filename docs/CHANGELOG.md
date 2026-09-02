@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Entry module double-mount fixed (B-004) — "No project open" /
+  blank Colorist preview.** `app/index.html`'s `<script>` still referenced the
+  pre-D-039 `main.jsx` (renamed to `main.tsx`); Vite's dev-server extension
+  fallback served `main.tsx`'s content under that stale URL *and* something
+  separately fetched the correct `/src/main.tsx`, executing the entry twice —
+  two `createRoot()` calls on `#root` and a corrupted `@tauri-apps/api/event.js`
+  listener map (confirmed via a temporary `import.meta.url` probe: two
+  executions → after the one-line fix, exactly one). This is what broke
+  `invoke`/`listen` round-trips app-wide, producing the Edit tab's stuck "No
+  project open" and Colorist's blank main preview despite successful backend
+  WGPU renders. Fixed by pointing `index.html` at `main.tsx`; both symptoms
+  re-verified against the real running app. Also: `packages/shell/src/store.ts`
+  `DEFAULT_TAB` → `'edit'` (owner request — Edit opens first, not Colorist).
 - **2026-09-02** — **`@chroma/player` — shared preview component, Editor tab
   migrated (roadmap "Next" item 1, built).** New package: `<Player>` (viewport +
   title strip + transport bar), fully controlled and presentational — no
