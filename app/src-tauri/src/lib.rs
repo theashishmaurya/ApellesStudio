@@ -2130,6 +2130,7 @@ pub fn run() {
             chroma::audio::chroma_audio_play,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_level,
+            chroma::audio::chroma_audio_waveform,
             chroma::mask::chroma_subject_mask,
             chroma::mask::chroma_ai_health,
             chroma::mask::chroma_track_subject,

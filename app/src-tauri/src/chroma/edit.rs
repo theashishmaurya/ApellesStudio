@@ -54,13 +54,15 @@ use super::{decode_pipe, project};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache (edit-tab local — the preview decodes many frames of a
-// handful of clip paths; a probe is a subprocess spawn we don't want per frame)
+// handful of clip paths; a probe is a subprocess spawn we don't want per frame).
+// `pub(crate)` (D-051): also the has-audio lookup `chroma::audio`'s waveform
+// command reuses rather than probing a second time.
 // --------------------------------------------------------------------------- //
 
 static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, VideoInfo>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
+pub(crate) fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
     {
         let cache = PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(info) = cache.get(path) {
