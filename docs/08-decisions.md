@@ -2695,3 +2695,157 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   code review + the identical coordinate-math pattern the existing
   clone/heal marker overlay already uses successfully, plus `tsc` finding no
   type errors in it. Dev server + app process killed after.
+
+## D-049 — Export moves to a top-right dialog in the Colorist tab, `ExportDialog`; the old `Panel.Export` toggle stays routed (different, unrelated feature)
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** `04-roadmap.md` "Next" item 3: move Export out of "the buried
+  `ExportPanel` toggle" into a proper dialog. Before touching anything: read
+  what `Panel.Export`/`ExportPanel.tsx` (`app/src/components/panel/right/`)
+  actually does. **Finding: it is not, and never was, a video exporter.**
+  It's the unmodified RapidRAW still-image export panel — JPEG/PNG/TIFF/
+  WebP/JXL/Cube format buttons, resize/watermark/metadata options, calling
+  `Invokes.ExportImages` → `export_processing.rs`'s `export_images_impl`,
+  which `image::open()`s each path as a still. `selectedImage` (the panel's
+  input) is non-null and points at the real clip path for a loaded *video*
+  shot too (`useSessionStore`'s `applyLoaded` sets it alongside
+  `useChromaStore.videoInfo` — no video/still branch anywhere), so the panel
+  is fully reachable and shows "Export" as a live option while grading a
+  clip — it would just feed the video file into the still-image pipeline and
+  fail. The actual video-export backend (`chroma_export_video`/
+  `chroma_bake_lut`/`chroma_export_progress`, D-022) had **zero** GUI caller
+  before this decision — the only place invoking them was
+  `useChromaControl.ts`'s agent-facing `OPS.export` (the MCP control
+  surface). `BottomBar.tsx` even carries a long-dead `onExportClick`/
+  `isExportDisabled` prop pair, declared but never read in its body and
+  never passed from `App.tsx` — a leftover stub from some earlier,
+  abandoned wiring attempt.
+- **Built: a new self-contained `ExportDialog.tsx`** (`app/src/components/
+  chroma/`, same "reads its own stores, no prop drilling" pattern as
+  `ShotStrip`/`RelightPanel`/`ProjectSettingsModal`), mounted as the
+  right-most icon button in `EditorToolbar`'s top-right button group
+  (undo/redo/show-original/fullscreen already live there — literally the
+  Colorist tab's top-right corner, since the canvas fills the rest of the
+  screen). `@chroma/ui`'s `Dialog` + `Select` (D-042) per the roadmap
+  item's explicit ask; the rest (resolution/range chips, number inputs,
+  progress bar) are plain elements + app colour tokens, matching
+  `ProjectSettingsModal`'s pre-existing convention — no `@chroma/ui`
+  `Progress` primitive exists yet and adding one for a single caller wasn't
+  worth it.
+  - **Fields:** codec (ProRes profile 0–5 / H.264 CRF 0–51), resolution
+    (chip choice: **Project** spec if `ProjectSettings.width`/`height` are
+    set (D-038) — the stated default — else **Clip** (the loaded clip's own
+    dimensions, selected by default when no project spec exists) — or
+    **Custom** w×h), frame range (**Full clip** default, or a **Custom**
+    from/to pair validated client-side against `[0, frameCount-1]`), a
+    "**also bake a .cube LUT**" toggle, an output path via
+    `@tauri-apps/plugin-dialog`'s `save()` (same convention as `ShotStrip`/
+    the old `ExportPanel`) defaulting to `<stem>.graded.<ext>` next to the
+    source clip when left unset (mirrors `export.rs`'s own
+    `default_out_path`), and a progress bar.
+  - **Progress: wired to the real thing, not faked.** `chroma_export_video`
+    already exposes `chroma_export_progress` (a poll-only `{running, done,
+    total, out_path, error}` snapshot of a module-global `Mutex`, no push
+    events) — the dialog polls it every 350 ms while exporting and turns
+    `done/total` into a real percentage bar. No Rust change was needed for
+    this part; it was already there, just never polled from a GUI.
+  - **The `.cube` bake is a second, sequential call**, not folded into
+    `chroma_export_video` — `chroma_bake_lut` is a different, already-fast
+    (sub-second, no progress needed) synchronous operation on the *primary
+    grade only* (D-022's existing scope/limits: masks dropped, no LUT-on-LUT
+    — unchanged, this dialog doesn't touch that logic). Runs after the video
+    export finishes; a bake failure toasts a warning but doesn't roll back
+    or re-flag the (successful) video export.
+- **One real Rust change, and it's a parameter, not new logic: `out_width`/
+  `out_height` on `chroma_export_video`.** The command already had
+  `ExportOpts.out_width/out_height` (D-038) — it just always derived them
+  itself from the *project's* settings, with no way for a caller to pass an
+  explicit override or force "clip-derived" back on when a project spec
+  exists. The dialog's resolution chips need exactly that (its "Clip" choice
+  must be selectable — and win — even when a project spec is set). Added the
+  two `Option<u32>` params plus a small pure `resolve_export_resolution`
+  helper (`chroma/export.rs`) encoding the precedence explicit-arg > project
+  spec > `None` (`export_video`'s own clip-derived fallback) — 4 unit tests
+  (explicit wins, falls back to project, falls back to clip-derived when
+  neither set, a partial/zero explicit pair is treated as absent, matching
+  `ExportOpts`'s own `(Some(w), Some(h)) if w>0 && h>0` guard elsewhere in
+  the same file). No change to `export_video`/`bake_primary_lut` themselves,
+  no new Tauri command, no new progress mechanism — this is the one
+  "minimal, safe addition" the brief allowed for, not new export logic.
+- **`ExportPanel`/`Panel.Export` stays routed — a real reason, not
+  inertia.** The brief's default was "remove or fold in… unless there's a
+  real reason to keep both." There is one: **they are not the same
+  functionality.** `ExportDialog` exports the graded *video* (or a `.cube`
+  of the primary grade); `ExportPanel` exports a *still image* — a RapidRAW
+  feature this repo has never removed generally (unlike the DAM/library
+  shell, D-043) and that a still-image project would still need. Fully
+  unrouting `Panel.Export` (dropping it from `ALL_PANELS`/
+  `DEFAULT_PANEL_DEFAULT_REGIONS`/the default workspace layout in
+  `useUIStore.ts`) touches a keyboard shortcut (`useKeyboardShortcuts.ts`)
+  and a context-menu action (`useAppContextMenus.ts`, two call sites) that
+  are otherwise unrelated to this task and not verified safe to cut in this
+  pass — real blast radius for a "purely UI/UX move + wiring" brief that
+  explicitly scoped out reimplementing anything. Left it exactly as-is.
+  **The pre-existing bug this surfaced — `ExportPanel` silently attempting
+  a still-image export against a loaded video's path — is real and is
+  logged separately as B-010,** not fixed here (out of scope: fixing it
+  means either gating the panel on `!videoInfo?.isVideo` or teaching
+  `export_images_impl` about video paths, both real changes this task's
+  brief didn't ask for). Practically: now that a working, prominent Export
+  button exists, a user has little reason to ever reach the broken one, but
+  the dead path itself remains until B-010 is picked up.
+- **Colorist-first, per the roadmap.** No Edit-tab timeline export in this
+  pass (deferred, unchanged from before); `ExportDialog` reads the
+  Colorist-only `useChromaStore.videoInfo`, disabled (button greyed,
+  tooltipped "Load a clip to export") when nothing is loaded.
+- **Consequences / footprint.** New: `app/src/components/chroma/
+  ExportDialog.tsx`. Edited: `app/src-tauri/src/chroma/export.rs`
+  (`out_width`/`out_height` params + `resolve_export_resolution` + 4 tests +
+  header comment), `app/src/components/panel/editor/EditorToolbar.tsx`
+  (+import, +one button in the existing top-right group). No other file
+  touched — `Panel.Export`/`ExportPanel.tsx`/`useUIStore.ts`/
+  `useKeyboardShortcuts.ts`/`useAppContextMenus.ts` are all unchanged.
+- **Verified (2026-09-03).** `cargo test --no-default-features -p RapidRAW
+  chroma::` — **87/87** (+4, the new `resolve_export_resolution` tests);
+  `cargo clippy --no-default-features -p RapidRAW --no-deps` clean on
+  `export.rs`. `cargo fmt --check` on `export.rs`: pre-existing drift (80
+  diff hunks against the file *before* this change too, confirmed by
+  stashing it and re-checking — the D-034/`mask_generation.rs` precedent,
+  left alone per CLAUDE.md) plus 2 more from my own additions, isolated with
+  a standalone `rustfmt --edition 2024 --check` on just the new code and
+  fixed (one test's `assert_eq!` needed multi-lining) — my new code is
+  fmt-clean. `cd app && npx tsc --noEmit`: **64** errors both before and
+  after this change (confirmed by stashing the TS changes and re-running,
+  not just trusting the brief's number) — this worktree's real baseline
+  matched the brief exactly, and the error sets are byte-identical
+  (`diff` of the two runs is empty), zero new errors anywhere, none in
+  `ExportDialog.tsx`/`EditorToolbar.tsx`.
+  **Live app, real backend, real file — the honest scope of what this
+  covers:** booted `npm run tauri:dev` from this worktree, confirmed the
+  control server (D-020, port 19788) responds, opened the real
+  `~/Movies/Chroma/New.chroma` project (a genuine 4K/50fps h264 clip) over
+  that bridge. This sandbox has no screen-recording/accessibility access to
+  the WKWebView (the standing constraint every agent hit tonight), so the
+  dialog's own on-screen rendering and click-through were **not** directly
+  observed — `tsc` finding zero type errors in the new component is the
+  evidence for the wiring being well-typed, not a substitute for seeing it
+  rendered. What *was* driven for real, end to end, over the control
+  server — the identical `chroma_export_video`/`chroma_export_progress`/
+  `chroma_bake_lut` calls `ExportDialog` itself makes, not a simulation of
+  them: a 16-frame H.264 export (`{kind:"h264", from:0, to:15}`) returned
+  `{started:true, out_path, from:0, to:15, total:16}` immediately, then
+  `chroma_export_progress` polled every ~1-2s showed `done` climb 1→16 with
+  `running` flipping to `false` and `error:null` on completion — real
+  incremental progress, not a canned response. `ffprobe` on the resulting
+  file confirmed a genuine H.264 MP4, 3840×2160, 50 fps, 16 frames — the
+  clip's own native dimensions, i.e. the "no explicit override" default
+  path (this run didn't exercise the dialog's new `out_width`/`out_height`
+  params, which only `ExportDialog` itself passes — those are covered
+  instead by the 4 `resolve_export_resolution` unit tests plus the
+  pre-existing `export_resolution_override` test proving `export_video`
+  actually resizes when given explicit dims). A `.cube` bake
+  (`{kind:"cube", size:17}`) produced a real 17³ `.cube` file with the
+  correct "grade has 1 masked/local layer(s)…dropped the masks" warning
+  for the project's one existing mask. Temp output files removed, dev app
+  and ports (1420, 19788) killed after.

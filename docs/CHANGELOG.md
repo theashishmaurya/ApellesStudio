@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Export dialog, Colorist tab (D-049): a top-right button replaces
+  the "buried `ExportPanel` toggle" roadmap item.** New `ExportDialog.tsx`
+  (`@chroma/ui` `Dialog`/`Select`, D-042) in `EditorToolbar`'s top-right button group —
+  codec, resolution (Project spec / Clip / Custom), frame range (full/custom), a
+  `.cube` bake toggle, a native save-dialog output path, and a real progress bar
+  polled from `chroma_export_progress`. Backed by the existing `chroma_export_video`/
+  `chroma_bake_lut` (D-022) — the only backend change is two new optional params,
+  `out_width`/`out_height`, plus a 4-test pure `resolve_export_resolution` helper
+  encoding "explicit > D-038 project spec > clip-derived." `Panel.Export`/
+  `ExportPanel` (RapidRAW's still-image exporter) stays routed — it's a different
+  feature, not a duplicate (see D-049); the pre-existing bug where it's reachable but
+  broken against a loaded video is now tracked as **B-010**. `cargo test chroma::`
+  87/87 (+4). `tsc --noEmit`: 64 errors, unchanged baseline, zero in touched/new
+  files. Booted the real app, opened `~/Movies/Chroma/New.chroma` (a real 4K/50fps
+  clip) over the control-server bridge (no screen-recording access in this sandbox),
+  and drove the exact same `chroma_export_video`/`chroma_export_progress`/
+  `chroma_bake_lut` calls the dialog makes: a 16-frame H.264 export ran to completion
+  with real incrementing progress (`done` climbing 1→16, `running` flipping to
+  `false`), producing a genuine 3840×2160/50fps/16-frame MP4 (verified via `ffprobe`,
+  not just "no error"); a `.cube` bake produced a valid 17³ LUT file with the correct
+  "masks dropped" warning for the project's one mask. Not directly observed: the
+  dialog's own on-screen rendering/click-through (no screen capture available) —
+  covered instead by `tsc` type-checking the wiring and this identical backend path
+  proven live.
+
 - **2026-09-02** — **Media pool, pass 3 (D-046): `shots`/`media` unified, closes the
   roadmap item.** `ProjectShot` now references a `MediaItem` by id (`resolve_shot`,
   graceful fallback for a dangling reference) instead of duplicating `sourcePath`/
