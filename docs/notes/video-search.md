@@ -82,6 +82,27 @@ Runs in the `ai/` sidecar (D-009's "stateful/complex model → Python sidecar" p
   invariant: *"Any cloud call is an explicit opt-in fallback, never a default, and is
   documented as such."* This qualifies — opt-in only, never the default search path.
 
+#### vs. Gemini 2.5 Pro (owner asked 2026-09-02)
+
+Both accept video as native multimodal input and can answer "find the moment where X"
+as a normal prompt — 2.5 Pro isn't obsolete for this. The differences:
+
+| | Gemini 2.5 Pro | Gemini 3.1 Pro |
+|---|---|---|
+| Video-specific tooling | general multimodal Q&A over video | the dedicated **agentic video understanding** path (sub-second moment retrieval, long-form multi-hour search, anomaly detection, counting) — **~88% fewer tokens, ~7% better accuracy** than plain video prompting, per Google's own numbers |
+| Token price | **~40% cheaper** — $1.25/$10 per 1M in/out (≤200K ctx) vs 3.1 Pro's $2.00/$12 | higher sticker price |
+| Maturity | established, paid-only since April 2026, no free tier | brand new — the video API went live **2026-09-01**, one day before this note; availability/rate limits less proven |
+
+Net: because Gemini 3's agentic path is specifically optimised for *this exact task*
+(the token reduction is on video-understanding calls), it likely comes out **cheaper in
+practice per query** despite the higher headline rate, and it's purpose-built rather
+than a generic prompt. **Recommendation: Gemini 3's agentic video API as the primary
+opt-in cloud option; Gemini 2.5 Pro as the fallback** if 3's new endpoint has
+availability hiccups (freshly launched) or a user's account only has 2.5 access — same
+prompt, works on either, no design lock-in. (One pricing figure surfaced during research
+— "$0.15/sec of video" — looked like a bad unit conversion from the search tool, not
+trusted; get real numbers from Google's pricing page before wiring billing logic.)
+
 ## The pipeline (once built)
 
 1. Index each media item in the pool (background job, like `/track` or `/depth_track`):
