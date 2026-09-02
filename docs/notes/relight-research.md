@@ -54,3 +54,43 @@ A relight bake is a `chroma-ai` service producing a relit source clip; `chroma-p
 references it (`.chroma/relight/<key>/`), the Colorist tab grades on top. It is **not** a
 compositor or timeline concern. No change to the crate plan in
 `architecture-lock.md`.
+
+## Interactive control — the ClipDrop draggable light-puck UI (owner asked 2026-09-02)
+
+The ClipDrop Relight UI: draggable coloured circles on the canvas, one per virtual
+light — drag = direction, resize = falloff/intensity, colour picker per light.
+**"Can we control like that *while editing*?"**
+
+Separate the **interaction** from the **engine**:
+
+- **The puck UI itself: yes, straightforward.** Canvas overlay + state, same as the
+  existing radial/linear mask handles. A "Relight" grade layer holding N light nodes
+  `{ x, y, color, intensity, radius, kind: key|fill|rim|ambient }`.
+- **Real-time *photoreal diffusion* relight as you drag: no.** IC-Light / RelightVid /
+  Light-A-Video are seconds–minutes per frame and non-deterministic — this part of D-013
+  is physics, not tooling.
+- **Real-time *deterministic* relight as you drag: yes** — screen-space shading off the
+  **depth track (D-036)**. Derive per-pixel normals from depth, then each puck contributes
+  `max(0, dot(N, lightDir)) · falloff(radius) · colour · intensity` in a grade-shader
+  pass. Runs at playback speed, holds on video, fully deterministic. Not photoreal — no
+  cast shadows, no reflection relighting, can't undo hard lighting baked into the plate —
+  but "warm key from screen-left, cool rim from behind, lift the fill" on a talking head
+  is 90% of what relight is used for, and this delivers it *instantly* with the ClipDrop
+  interaction.
+
+**Product answer — two modes behind one puck UI:**
+
+| mode | engine | when | ships |
+|---|---|---|---|
+| **Interactive relight** | depth→normal screen-space shading pass (deterministic, real-time) | while dragging pucks, playback, scrub, export | **v1–v2** — upgrades D-013's manual "relight-ish" shape-mask recipe into a real draggable-light tool |
+| **Bake photoreal** | RelightVid / IC-Light in the `ai/` sidecar, seeded from the same puck setup (→ env-map / light-condition image) | an explicit "Bake" button, per shot, cached | **v3** (D-013) |
+
+So the interaction the owner wants is achievable *now* (deterministic mode); the
+photoreal version is the v3 bake. The pucks and their parameters are identical between
+the two — "Bake photoreal" just replaces the fast approximation with the diffusion
+result for that shot.
+
+Engine placement: the interactive pass lives in `chroma-grade` (it's a grade-shader
+stage driven by the depth texture); the puck geometry is in `chroma-grade-model`
+(keyframeable via D-034, like any mask geometry). The bake is `chroma-ai` +
+`chroma-project` as above.
