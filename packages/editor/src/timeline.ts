@@ -47,6 +47,41 @@ export interface Timeline {
 
 export const DEFAULT_FPS = 24;
 
+/**
+ * D-046 pass 3 — the `dataTransfer` MIME type a Sources-panel pool item drag
+ * carries (`DraggedMedia` JSON), and `TimelinePane`'s drop handler reads. A
+ * plain string constant rather than a shared type-only contract because HTML5
+ * drag/drop crosses a package boundary the D-039 layer direction forbids a
+ * shared `DndContext`/store from crossing (see `TimelinePane`'s doc).
+ */
+export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
+
+/** What a Sources-panel drag carries — just enough to build a full-length
+ *  `Clip` on drop; `frameCount`/`fps` absent (unprobed or offline media)
+ *  means the drop is rejected rather than adding a zero-length clip. */
+export interface DraggedMedia {
+  id: string;
+  sourcePath: string;
+  name: string;
+  frameCount?: number | null;
+}
+
+/** Build a full-length `Clip` referencing a dropped pool item, or `null` if
+ *  it has no known frame count (unprobed / offline — nothing to place). */
+export function clipFromDraggedMedia(media: DraggedMedia): Clip | null {
+  const frames = media.frameCount ?? 0;
+  if (!frames || frames <= 0) return null;
+  return {
+    id: `${media.id}-${Date.now().toString(36)}`,
+    shot_id: null,
+    name: media.name,
+    source_path: media.sourcePath,
+    source_start: 0,
+    duration: frames,
+    source_len: frames,
+  };
+}
+
 export function timelineFps(tl: Timeline | null): number {
   const r = tl?.rate;
   if (r && r.num > 0 && r.den > 0) return r.num / r.den;
@@ -102,9 +137,24 @@ export type EditOp =
   | { kind: 'trim_start'; track: number; clip: number; delta: number }
   | { kind: 'trim_end'; track: number; clip: number; delta: number }
   | { kind: 'split'; track: number; clip: number; atFrame: number }
-  | { kind: 'remove'; track: number; clip: number };
+  | { kind: 'remove'; track: number; clip: number }
+  /** D-046 pass 3 — drag a Sources-panel pool item onto the timeline. Appends
+   *  a full-length clip referencing the media (or inserts at `atIndex`). If
+   *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
+   *  `chroma_timeline_create`), a video track is created to hold it. */
+  | { kind: 'add_clip'; track: number; clip: Clip; atIndex?: number };
 
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
+  if (op.kind === 'add_clip') {
+    const next = clone(tl);
+    if (next.tracks.length === 0) next.tracks.push({ kind: 'video', clips: [] });
+    const trackIdx = op.track < next.tracks.length ? op.track : 0;
+    const clips = next.tracks[trackIdx].clips;
+    const at = Math.min(Math.max(op.atIndex ?? clips.length, 0), clips.length);
+    clips.splice(at, 0, op.clip);
+    return next;
+  }
+
   const tr = tl.tracks[op.track];
   if (!tr) return tl;
 

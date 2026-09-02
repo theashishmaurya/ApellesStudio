@@ -2076,3 +2076,199 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   D-044), the docked Sources/Library panel, the bin-tree UI, the
   timeline-switcher UI, and wiring `useMediaPoolStore` to `folder`/
   `chroma_media_move`.
+
+## D-046 — Media pool pass 3: `shots`/`media` unification, docked Sources panel, bin tree, timeline switcher — closes the roadmap item
+
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** Pass 1 (D-044) and pass 2 (D-045) shipped the model + commands
+  (`media: Vec<MediaItem>`, bins, multiple `timelines`) with zero UI. This is
+  **pass 3**, the last of the roadmap's "media pool + import + multiple
+  timelines" item: unify `shots`/`media` for real, then build the actual
+  panel/tree/switcher UI on top of it.
+- **`shots`/`media` unification — `ProjectShot` references a `MediaItem` by
+  id, wire DTOs unchanged.** `ProjectShot` becomes `{ id, mediaId, frame }` —
+  `sourcePath`/`name` are gone; `project::resolve_shot(manifest, shot)` does
+  the `media_id → (source_path, name)` lookup, with a graceful "dangling
+  reference" fallback (`("", "(missing media)")`, flagged offline downstream
+  — no `chroma_media_remove` command exists yet, but the reference can still
+  go dangling from a hand-edited file or a future removal feature, so this
+  had to be a real, tested case, not an assumption). `find_or_create_media`
+  is the one choke point that attaches a shot's path to the pool
+  (find-by-`source_path` or probe + create) — `new_project_in`,
+  `chroma_project_save`, and `chroma_project_relink` all go through it
+  instead of duplicating find-or-create logic. A brand new
+  `chroma_project_add_shot(media_id)` command is the Sources panel's
+  explicit "add to grading" action on an existing pool item (distinct from
+  `chroma_media_import`, which stays pool-only).
+  - **The wire DTOs (`ProjectShotDto`, `ProjectShotInput`, `ProjectOpenDto`)
+    did not need to change shape.** D-044 flagged this unification as the
+    pass likely to "touch every shot-related code path at once" including
+    `useSessionStore` on the frontend. It turned out not to: `ProjectShotDto`
+    (`chroma_project_open`'s output) and `ProjectShotInput`
+    (`chroma_project_save`'s input) both already carried
+    `id`/`sourcePath`/`name`/`frame` as a flat, self-contained shape with no
+    hint of the backing model — so the media-id indirection could move
+    entirely inside `project.rs`'s translation to/from those DTOs, invisible
+    to the frontend. `chroma_project_save` now does find-or-create-media per
+    incoming shot before building `ProjectShot`; `chroma_project_open`
+    resolves each shot's path/name via `resolve_shot` before building the
+    DTO. Net frontend cost for the *unification itself*: zero — `app/src/
+    store/useSessionStore.ts` is unchanged (only exporting `ProjectOpenDto`,
+    already an internal type, for `SourcesPanel`'s reuse). This is also why
+    the existing Colorist "add shot via file picker" flow keeps working
+    unmodified: it was always going through `chroma_project_save`, which now
+    routes through the same find-or-create-media path pool imports do,
+    without the frontend knowing anything changed.
+  - **Migration — raw JSON, before typed deserialize, same move as D-045's
+    timeline migration.** `migrate_legacy_shots` runs alongside
+    `migrate_legacy_timeline` in `load_manifest`: every shot lacking a
+    non-empty `mediaId` gets one, reusing a `media` entry with a matching
+    `sourcePath` if one exists (dedup, same rule `add_media` uses) or
+    synthesizing an unprobed one otherwise (no ffprobe shell-out on every
+    project load — cheap and correct; a later `chroma_media_list` re-checks
+    it). Checked against the real `~/Movies/Chroma/New.chroma/project.json`
+    (1 shot, `media: []`) via a throwaway test, then deleted — it migrated
+    to a real `mediaId` pointing at a synthesized pool entry with the
+    correct `sourcePath`/`name`, exactly as designed.
+  - **Probing cost note.** `new_project_in` now probes every seed clip up
+    front (via `find_or_create_media` → the existing `probe_media_item`),
+    not just the first one (previously only `infer_settings_from_clip`
+    probed the first clip for the project's output spec). A minor behaviour
+    change, not a regression — every shot's `MediaVideoInfo` is now
+    available immediately instead of lazily via `edit.rs`'s probe cache on
+    first Edit-tab open.
+- **The docked Sources panel — lives in `app/`, injected into `@chroma/shell`
+  by prop, same pattern as `ProjectLauncher`.** `Shell` gained a
+  `sourcesPanel?: ReactNode` prop rendered as a fixed-width (288px) column
+  sibling to the tab content (never layered over it), toggled by a
+  chrome-bar button, state in `useShellStore.sourcesPanelOpen` (session-only,
+  same reasoning as `activeTab`/`wgpuSurfaceActive`). The shell still never
+  imports the panel component directly — `app/src/main.tsx` wires
+  `<SourcesPanel />` in, exactly how `launcher` already worked. This keeps
+  the D-039 layer direction intact: the panel needs `useSessionStore`
+  (`_hydrateOpenDto`, for "add to grading") and `@chroma/editor`'s
+  drag-to-track contract, neither of which `@chroma/shell` may depend on.
+  `app/src/components/chroma/SourcesPanel.tsx`: Import (reuses
+  `ProjectLauncher`'s `pickClips` native multi-select dialog, now exported),
+  a client-side name filter (no search index — not asked for this pass), the
+  bin tree, and a plain (no-thumbnail-image) grid of the pool, draggable.
+  Importing through the panel is **pool-only** — it does not auto-create a
+  shot; "add to grading" is a separate, explicit "+" on each item
+  (`chroma_project_add_shot`). The existing Colorist file-picker "add shot"
+  flow is untouched and still works standalone.
+- **Bin tree.** A small recursive component (`FolderRow` in
+  `SourcesPanel.tsx`) derived client-side from the flat `MediaItem.folder`
+  path strings by splitting on `/` — no bin-hierarchy Rust endpoint, per
+  D-045's call. Dragging a grid item onto a folder row calls
+  `chroma_media_move` (`useMediaPoolStore.moveToFolder`, added this pass).
+- **Timeline switcher.** `TimelineSwitcher.tsx` in `@chroma/editor` — a
+  `Select` of `chroma_timeline_list` (D-045) with the active one checked,
+  switching via `chroma_timeline_set_active`, plus inline "+ New" →
+  `chroma_timeline_create`. Deliberately minimal: no rename/delete UI (no
+  backing commands exist, and it wasn't asked for). `useEditorTimelineStore`
+  gained `timelines`/`loadList`/`createTimeline`/`setActiveTimeline` wrapping
+  those three D-045 commands, which had no UI consumer until now.
+- **Drag-to-track — scoped to "the Edit tab is active," by construction, not
+  by extra code.** The roadmap item pre-approved narrowing this scope if
+  cross-tab drag was awkward under D-039's tab-mounting model, and it was:
+  the Sources panel is shell-level, `TimelinePane` is inside the Edit tab's
+  content, and D-039 forbids a shell-level component from depending on a tab
+  package to share a `DndContext`. The fix is plain HTML5 `dataTransfer`
+  drag/drop (`CHROMA_MEDIA_DRAG_MIME`, exported from `@chroma/editor`) —
+  browser-native drag events cross the package boundary for free, no shared
+  store or context needed. This *also* delivers the scoping requirement for
+  free: `Shell` keeps every tab mounted but `hidden` (`display:none`) when
+  inactive (pre-existing D-039 behaviour), and a `display:none` element is
+  never a valid drop target — so a drop only ever lands on `TimelinePane`
+  while the Edit tab is actually visible, with no explicit "is this tab
+  active" check anywhere in the drop handler. `packages/editor/src/
+  timeline.ts` gained an `add_clip` `EditOp` (append/insert a full-length
+  `Clip` built from the dragged media's known frame count; a drop with no
+  known frame count — unprobed/offline media — is rejected rather than
+  adding a zero-length clip) and `clipFromDraggedMedia`. `TimelinePane` also
+  gained a guard for a *track-less* timeline (`chroma_timeline_create` makes
+  one with `tracks: []`, a state the pre-pass-3 UI could never actually
+  reach since nothing created empty timelines yet) — an empty-state drop
+  zone that creates the first video track on first drop.
+- **Verified.** `cargo test chroma::` 73/73 (was 65; +8: shot↔media
+  reference/rename/dangling-id/migration/save/add-shot round trips — real
+  edge cases, not just happy path, per the ask). `chroma-timeline` untouched
+  (no crate change needed — timeline edits still flow through
+  `chroma_timeline_set`'s "store what's sent verbatim" contract, so
+  `add_clip` is pure-TS, no Rust op needed). `cargo clippy`/`cargo fmt`
+  clean on touched files only (`project.rs`, `edit.rs`, `lib.rs`) — verified
+  file-by-file per the hard rule, no crate-wide `cargo fmt` run; the
+  pre-existing `project.rs` `if`-collapse/`sort_by_key` clippy hints predate
+  this change and were left alone. `app` `tsc --noEmit` unchanged at 64;
+  `packages/bridge` and `packages/shell` clean; `packages/editor` at its
+  pre-existing 1 (the unrelated CSS-import declaration).
+  - **A `--no-default-features` full build (what `npm run tauri:dev` actually
+    invokes) hit a flaky macOS `ld` "symbol(s) not found" error mid-session**
+    (duplicate-anonymous-LLVM-constant class of bug, in `image-webp`/
+    `av-scenechange`/`rav1e` — codecs this change never touches). Confirmed
+    via `git stash` that the pre-D-046 tree built clean under the same flags,
+    then confirmed a `CARGO_INCREMENTAL=0` full rebuild of the **D-046** tree
+    also built clean — isolating it to stale/corrupted incremental-cache
+    state from this session's many mixed-feature-flag `cargo` invocations,
+    not a defect in this change. Not logged as a `B-NNN` (housekeeping, same
+    exclusion `CLAUDE.md` names for "disk was full").
+  - **Booted the real app** (`npm run tauri:dev`) and drove it via macOS
+    Accessibility (`osascript`/System Events) — no screen-recording access.
+    Created a real project from a real file, confirmed the Sources panel
+    toggle, grid, and "add to grading" all work by reading `project.json`
+    before/after each interaction (not just AX-tree presence): a fresh
+    project's seed clip lands in `media` **and** gets a `shot` referencing
+    it; `Import`ing a second real file adds it to `media` only, confirmed
+    zero new shots (import is pool-only, by design); clicking a pool item's
+    "+" fires the real `chroma_project_add_shot` command end-to-end
+    (`tauri::State` and all — untestable as a unit test, verified live
+    instead) and the shot count goes to 2. `TimelineSwitcher`'s "+ New"
+    creates a second, empty (`tracks: []`) timeline and makes it active,
+    confirmed via `project.json`'s `activeTimeline`.
+  - **Two real bugs found live and fixed, not just "it renders":**
+    (1) `TimelinePane`'s `buildRow` (feeding `editorData`'s `useMemo`, which
+    runs *before* the component's own "no video track yet" early-return
+    guard) crashed the whole React tree — `TypeError: undefined is not an
+    object (evaluating 'track.clips')` — the moment a project actually
+    switched to an empty timeline, which pass 2 could never produce
+    (`chroma_timeline_create` didn't exist yet) but pass 3's switcher does
+    every time "+ New" is clicked. Fixed with `buildRow`'s own `if (!track)`
+    guard. (2) `TimelineSwitcher`'s `SelectValue` showed the raw timeline
+    **id** instead of its name — Base UI's `Select.Value` renders the bare
+    `value` unless given a `children` render function; fixed by mapping
+    `id → timelines.find(...).name` there. Both caught only by actually
+    clicking through the app, not by `tsc`/build success — exactly why this
+    pass's verification bar required it.
+  - **Drag-to-track / drag-to-folder — verified by review, not a live
+    click-through; noted honestly rather than asserted.** AppleScript UI
+    scripting (the mechanism every other live check in this pass used) has
+    no drag primitive, so `cliclick` (CGEvent-level synthetic input) was
+    installed to attempt a real OS drag. Its mouse *moves* landed correctly
+    (`m:` + position read-back matched), but neither its synthetic clicks
+    nor drags produced any observable effect on the app (no `project.json`
+    change, no frontend console activity at all) — including a plain
+    synthetic click on a button AX scripting had already proven clickable
+    seconds earlier. That isolates it to a CGEvent-delivery/permission gap
+    for whatever posts on `cliclick`'s behalf in this sandbox (distinct from
+    the Accessibility-API path `osascript`/System Events uses, which does
+    work here), not a bug in the drag code itself. What *is* verified: the
+    `dataTransfer` contract is symmetric and small (`CHROMA_MEDIA_DRAG_MIME`
+    set on `dragstart` in `SourcesPanel`, read in `onDrop` in `TimelinePane`/
+    `FolderRow`), `clipFromDraggedMedia`'s reject-when-unprobed guard, and
+    `add_clip`'s empty-timeline auto-vivify — all by direct code review, plus
+    the fact that a clip landing via any path (drag or otherwise) flows
+    through `chroma_timeline_set`'s already-tested "store what's sent
+    verbatim" contract. This is the one piece of this pass without a live
+    click-through; a follow-up session with working drag-capable tooling (or
+    running interactively, where a person can literally drag) should confirm
+    it directly rather than trusting review alone indefinitely.
+  - Dev server killed after (`lsof -ti:1420 | xargs kill -9` +
+    `pkill RapidRAW`).
+- **Deferred / still open:** a live (not just reviewed) confirmation of
+  drag-to-track/drag-to-folder once drag-capable tooling is available;
+  timeline rename/delete (no UI or command); thumbnail generation for the
+  Sources grid (generic file icon for now); Editor timeline audio playback
+  (roadmap item 1, unrelated to this one); and the mature multi-track
+  timeline UI (roadmap item 2) — this pass closes out "media pool + import +
+  multiple timelines," not those neighbours.

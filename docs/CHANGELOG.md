@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Media pool, pass 3 (D-046): `shots`/`media` unified, closes the
+  roadmap item.** `ProjectShot` now references a `MediaItem` by id (`resolve_shot`,
+  graceful fallback for a dangling reference) instead of duplicating `sourcePath`/
+  `name`; wire DTOs unchanged, so the frontend session store needed no rewrite.
+  `find_or_create_media` is the one choke point every shot-constructing path goes
+  through; `chroma_project_add_shot` is the new explicit "add to grading" command. A
+  docked Sources/Library panel (`app/src/components/chroma/SourcesPanel.tsx`, injected
+  into `@chroma/shell` by prop) with import, client-side search, and a bin tree
+  (drag-to-move via `chroma_media_move`); `TimelineSwitcher` in `@chroma/editor` for
+  D-045's `chroma_timeline_list`/`_create`/`_set_active`; drag-to-track via plain HTML5
+  `dataTransfer` (`CHROMA_MEDIA_DRAG_MIME`), scoped to the Edit tab by construction
+  (inactive tabs are `display:none`, never a drop target). `cargo test chroma::`
+  73/73 (+8). Booted the real app and drove it end-to-end via accessibility scripting
+  (no screen-recording access): created a project, imported a clip, added it to
+  grading, created + switched timelines, confirmed an empty timeline's drop zone no
+  longer crashes (`buildRow` needed its own guard — found live, fixed) and the
+  timeline-switcher's `SelectValue` needed a render-children fix to show names instead
+  of raw ids (found live, fixed).
+
 - **2026-09-02** — **Docs reconciliation pass** (roadmap "Next" item 7, the `CLAUDE.md`
   hard-rule debt owed since the D-039 pivot). `03-architecture.md` fully rewritten for the
   3-tab world (crate/package tables, per-tab current state, data model, AI sidecar, the

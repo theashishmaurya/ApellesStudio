@@ -1,13 +1,18 @@
 /**
- * @chroma/editor — the Edit-tab timeline store (D-041).
+ * @chroma/editor — the Edit-tab timeline store (D-041, timeline switcher D-046
+ * pass 3).
  *
  * Kept in `@chroma/editor` for now; a `@chroma/bridge` extraction (shared
  * stores + typed Tauri bindings) is a separate later task (D-039 step 6).
  *
- * State: the `chroma-timeline` model for the open project, the playhead
- * (timeline frame), and a play flag. `load()` fetches (`chroma_timeline_get`);
- * `applyOp()` mutates optimistically then persists (`chroma_timeline_set`,
- * debounced) + refetches to reconcile.
+ * State: the `chroma-timeline` model for the **active** timeline, the
+ * playhead (timeline frame), a play flag, and — D-046 pass 3 — the project's
+ * full timeline list for the switcher UI (`TimelineSwitcher.tsx`). `load()`
+ * fetches (`chroma_timeline_get`, always the active one); `applyOp()` mutates
+ * optimistically then persists (`chroma_timeline_set`, debounced) + refetches
+ * to reconcile. `loadList()`/`createTimeline()`/`setActiveTimeline()` wrap
+ * the D-045 `chroma_timeline_list`/`_create`/`_set_active` commands that had
+ * no UI consumer until this pass.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -17,6 +22,14 @@ import { applyOp as applyOpPure, timelineDuration, type EditOp, type Timeline } 
 
 const SAVE_DEBOUNCE_MS = 400;
 
+/** Mirrors `chroma::edit::TimelineSummary` (serde camelCase). */
+export interface TimelineSummary {
+  id: string;
+  name: string;
+  duration: number;
+  active: boolean;
+}
+
 interface EditorTimelineState {
   timeline: Timeline | null;
   /** null until the first load resolves; a string when there's no project / an error */
@@ -24,12 +37,22 @@ interface EditorTimelineState {
   loaded: boolean;
   playhead: number;
   playing: boolean;
+  /** every timeline in the open project, for the switcher (D-046 pass 3) */
+  timelines: TimelineSummary[];
 
   load: () => Promise<void>;
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
   applyOp: (op: EditOp) => void;
   _flushSave: () => void;
+
+  /** re-read the project's timeline list (id/name/duration/active per one) */
+  loadList: () => Promise<void>;
+  /** create a new empty timeline, make it active, and reload both the list
+   *  and the (now-empty) active timeline */
+  createTimeline: (name: string) => Promise<{ ok: boolean; error?: string }>;
+  /** switch the active timeline by id, then reload both */
+  setActiveTimeline: (id: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -40,6 +63,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   loaded: false,
   playhead: 0,
   playing: false,
+  timelines: [],
 
   load: async () => {
     try {
@@ -85,5 +109,36 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     invoke('chroma_timeline_set', { timeline })
       .then(() => get().load())
       .catch((e) => set({ error: String(e) }));
+  },
+
+  loadList: async () => {
+    try {
+      const timelines = await invoke<TimelineSummary[]>('chroma_timeline_list');
+      set({ timelines });
+    } catch {
+      // no project open — leave whatever list (likely empty) is already there
+    }
+  },
+
+  createTimeline: async (name) => {
+    try {
+      await invoke<Timeline>('chroma_timeline_create', { name });
+      await Promise.all([get().load(), get().loadList()]);
+      set({ playhead: 0 });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  setActiveTimeline: async (id) => {
+    try {
+      await invoke('chroma_timeline_set_active', { id });
+      await Promise.all([get().load(), get().loadList()]);
+      set({ playhead: 0 });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
   },
 }));

@@ -1,31 +1,50 @@
 # @chroma/editor
 
-**The Edit tab** (D-039 / D-041). A single-video-track timeline of the open
-project's shots — scrub + play with a live preview, and reorder / trim / split /
-remove edits.
+**The Edit tab** (D-039 / D-041; timeline switcher + drag-to-track D-046). A
+single-video-track timeline of the open project's shots — scrub + play with a
+live preview, reorder / trim / split / remove edits, and add a clip by
+dragging a pool item in from the shell's Sources panel.
 
-- `EditorTab` — the tab: preview pane (top) + `@xzdarcy/react-timeline-editor`
-  strip (bottom), or an empty state when no project is open. The transport
-  (`SkipBack` / `Play`–`Pause` / `SkipForward`) uses `lucide-react` icons; the
-  timeline toolbar (`Scissors` split, `Trash2` remove) and the empty-state action
-  are `@chroma/ui` `<Button>`s, the toolbar buttons wrapped in `@chroma/ui`
-  `<Tooltip>` (D-042).
+- `EditorTab` — the tab: preview pane (top) + `TimelineSwitcher` +
+  `@xzdarcy/react-timeline-editor` strip (bottom), or an empty state when no
+  project is open. The transport (`SkipBack` / `Play`–`Pause` / `SkipForward`)
+  uses `lucide-react` icons; the timeline toolbar (`Scissors` split, `Trash2`
+  remove) and the empty-state action are `@chroma/ui` `<Button>`s, the toolbar
+  buttons wrapped in `@chroma/ui` `<Tooltip>` (D-042).
+- `TimelineSwitcher` (D-046) — a `@chroma/ui` `<Select>` of the project's
+  timelines (D-045's `chroma_timeline_list`) with the active one checked,
+  switching via `chroma_timeline_set_active`, plus inline "+ New" →
+  `chroma_timeline_create`. No rename/delete UI (no backing commands).
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
-  `load()`, `applyOp()`, `setPlayhead()`. Optimistic ops → debounced
+  `timelines` (D-046), `load()`, `applyOp()`, `setPlayhead()`, `loadList()`/
+  `createTimeline()`/`setActiveTimeline()` (D-046). Optimistic ops → debounced
   `chroma_timeline_set` → `chroma_timeline_get` refetch. Lives here for now; a
   `@chroma/bridge` extraction is a later task.
-- `timeline.ts` — the model mirrored from the `chroma-timeline` Rust crate + the
-  pure edit ops.
+- `timeline.ts` — the model mirrored from the `chroma-timeline` Rust crate,
+  the pure edit ops (including D-046's `add_clip`, purely client-side — no
+  Rust op needed since `chroma_timeline_set` stores whatever is sent
+  verbatim), and `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia`
+  — the drag-to-track contract `TimelinePane`'s drop handler and the Sources
+  panel's drag source both implement.
 
 Backed by the `chroma-timeline` crate and the `chroma::edit` Tauri commands
-(`chroma_timeline_get` / `_set` / `_frame`). The preview is a standalone
-decode→jpeg (`chroma_timeline_frame`) — **not** the Colorist's graded wgpu path.
+(`chroma_timeline_get` / `_set` / `_frame` / `_list` / `_create` /
+`_set_active`). The preview is a standalone decode→jpeg (`chroma_timeline_frame`)
+— **not** the Colorist's graded wgpu path.
 
-A project can hold several named timelines as of D-045 (2026-09-02), but this
-package still only ever gets/sets **the active one** — same three command
-names, no switcher UI here yet (pass 3). `Timeline` gained an `id` field
-(`timeline.ts`) accordingly.
+**Drag-to-track (D-046).** `TimelinePane` accepts a plain HTML5
+`dataTransfer` drop carrying `CHROMA_MEDIA_DRAG_MIME` JSON (from the shell's
+Sources panel, `app/src/components/chroma/SourcesPanel.tsx` — not a package
+this one depends on) and turns it into an `add_clip` op. Plain browser DnD
+rather than a shared `DndContext`/store, because the Sources panel is docked
+at the shell level and D-039's layer direction forbids the shell depending on
+a tab package to share one. This also scopes the drop to "only while the Edit
+tab is active" for free — an inactive tab's content is `hidden`
+(`display:none`), which is never a valid drop target. `TimelinePane` also
+handles a *track-less* timeline (`tracks: []`, what `chroma_timeline_create`
+makes) with its own empty-state drop zone; the first drop creates the video
+track.
 
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
-cut, GPU compositing, grade-in-preview, OTIO export, MCP, a timeline-switcher
-UI (D-045). See `docs/notes/editor-mvp.md`.
+cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline
+rename/delete. See `docs/notes/editor-mvp.md`.

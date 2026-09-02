@@ -71,7 +71,10 @@ export interface ProjectSettings {
   fps?: number | null;
   colorSpace?: string | null;
 }
-interface ProjectOpenDto {
+/** Mirrors `chroma::project::ProjectOpenDto` (serde camelCase) — also what
+ *  `chroma_project_add_shot` (D-046) returns, consumed the same way via
+ *  `_hydrateOpenDto` (see `SourcesPanel`'s "add to grading" action). */
+export interface ProjectOpenDto {
   projectPath: string;
   name: string;
   gradeDir: string;

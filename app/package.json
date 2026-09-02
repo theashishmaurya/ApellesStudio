@@ -19,6 +19,7 @@
     "i18n:lint": "i18next-cli lint"
   },
   "dependencies": {
+    "@chroma/bridge": "*",
     "@chroma/editor": "*",
     "@chroma/motion": "*",
     "@chroma/shell": "*",

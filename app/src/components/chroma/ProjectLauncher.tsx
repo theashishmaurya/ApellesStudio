@@ -46,7 +46,9 @@ function relTime(ms: number): string {
   return `${y} year${y === 1 ? '' : 's'} ago`;
 }
 
-async function pickClips(): Promise<string[]> {
+/** Native multi-select clip picker — also reused by `SourcesPanel` (D-046
+ *  pass 3) for the Sources panel's Import action, same dialog/filter. */
+export async function pickClips(): Promise<string[]> {
   try {
     const sel = await openDialog({
       multiple: true,

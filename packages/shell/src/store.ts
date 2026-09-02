@@ -20,6 +20,12 @@
  * that surface should be visible. The shell root must go transparent in that
  * window too, or its own opaque background blocks the transparent "hole" the
  * tab punches for the surface to show through (see `Shell.tsx`'s root class).
+ *
+ * `sourcesPanelOpen` (D-046, 2026-09-02): whether the docked Sources panel is
+ * shown. Session-only like the above two — same "don't persist UI chrome
+ * that would otherwise silently reappear/disappear across a restart"
+ * reasoning `activeTab` documents. Defaults closed so it never surprises an
+ * existing single-panel Colorist layout on first launch after this change.
  */
 
 import { create } from 'zustand';
@@ -33,6 +39,8 @@ interface ShellStore {
   setActiveTab: (tab: ShellTabId) => void;
   wgpuSurfaceActive: boolean;
   setWgpuSurfaceActive: (active: boolean) => void;
+  sourcesPanelOpen: boolean;
+  setSourcesPanelOpen: (open: boolean) => void;
 }
 
 export const useShellStore = create<ShellStore>((set) => ({
@@ -40,6 +48,8 @@ export const useShellStore = create<ShellStore>((set) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
   wgpuSurfaceActive: false,
   setWgpuSurfaceActive: (active) => set({ wgpuSurfaceActive: active }),
+  sourcesPanelOpen: false,
+  setSourcesPanelOpen: (open) => set({ sourcesPanelOpen: open }),
 }));
 
 /** Convenience selector hook — returns just the active tab id. */

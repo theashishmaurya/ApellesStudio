@@ -2101,6 +2101,7 @@ pub fn run() {
             chroma::project::chroma_media_import,
             chroma::project::chroma_media_list,
             chroma::project::chroma_media_move,
+            chroma::project::chroma_project_add_shot,
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
             chroma::edit::chroma_timeline_frame,

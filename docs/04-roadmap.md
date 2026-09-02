@@ -19,13 +19,16 @@ numbers are actually calibrated).
   (D-043) — it's the grading editor only now.
 - **Editor** — MVP: single-video-track timeline (`chroma-timeline` + `react-timeline-editor`),
   scrub/play preview (independent of the Colorist render path) via the shared
-  `@chroma/player` component, reorder/trim/split/remove, persisted in the project. No
-  multi-track, audio, transitions, or transcript cut yet.
+  `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
+  persisted in the project. Multiple named timelines per project, switchable via
+  `TimelineSwitcher` (D-046). No multi-track, audio, or transcript cut yet.
 - **Motion** — placeholder tab. The engine (`packages/motion-engine/`, 7 primitives +
   manifest compiler) is fully functional, just not wired to a tab UI. **Gap — see Next.**
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
-  screen (opens on the launcher, tabs appear once a project is open), `@chroma/ui`
-  (shadcn/Base UI, 18 components, themed).
+  screen (opens on the launcher, tabs appear once a project is open), a docked
+  Sources/Library panel reachable from every tab (thumbnails-less grid, import,
+  search, bin tree, drag-to-track — D-046), `@chroma/ui` (shadcn/Base UI, 18
+  components, themed).
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.
@@ -41,31 +44,7 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
-1. **Media pool + import + multiple timelines** — the actual "Sources" replacement.
-   `MediaItem` model unified with D-037 `shots` (pool = all media; a Colorist "shot" =
-   a pool item being graded; an Editor "clip" = a windowed reference on a track).
-   Multi-select import (referenced in place, never copied), bins/folders, multiple
-   named timelines per project, a global Sources/Library panel (thumbnails + import +
-   search + drag-to-track) docked in the shell so every tab reaches it. MCP:
-   `import_media`/`list_media`/`list_timelines`/`set_active_timeline`. Big — likely
-   2–3 subagent passes (model+import / bins+multi-timeline / UI).
-   - **Pass 1 done (D-044, 2026-09-02):** `ProjectManifest.media: Vec<MediaItem>` —
-     additive alongside `shots`, not yet unified (see D-044 for why + what's owed).
-     `chroma_media_import`/`chroma_media_list` commands (probe, dedup, offline
-     flagging). `useMediaPoolStore` scaffolding in `@chroma/bridge`, no panel UI.
-   - **Pass 2 done (D-045, 2026-09-02):** bins/folders (`MediaItem.folder`, a plain
-     path string, no separate bin entity — Palmier-MCP-folder convention;
-     `chroma_media_import`'s optional `folder` arg + new `chroma_media_move`) and
-     multiple named timelines (`ProjectManifest.timeline: Option<Timeline>` (D-041)
-     → `timelines: Vec<Timeline>` + `active_timeline: usize`, migrated losslessly
-     from the old singular key; `Timeline` gained an `id`; new
-     `chroma_timeline_list`/`_create`/`_set_active`, `_get`/`_set`/`_frame` now
-     target the active timeline). Still model + commands only — no UI, and
-     `set_active_timeline` (roadmap text) shipped as `chroma_timeline_set_active`.
-     `shots`/`media` still not unified.
-   - **Still open (pass 3):** the `shots`/`media` unification, the docked
-     Sources/Library panel, the bin-tree UI, the timeline-switcher UI.
-2. **Editor timeline audio playback** — owner caught live, 2026-09-02: the Edit tab's
+1. **Editor timeline audio playback** — owner caught live, 2026-09-02: the Edit tab's
    preview has no sound at all during playback, silent or muted are indistinguishable
    from "not built yet." Known gap since the Editor MVP (D-041 said "no audio yet"
    explicitly) but wasn't a tracked queue item until now. `packages/editor`'s preview
@@ -73,7 +52,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    pipe) — needs its own audio decode/playback path (`symphonia`/`cpal`/`dasp`,
    already named as the intended audio stack in `architecture-lock.md`, not yet built)
    synced to the same playhead the video preview already tracks.
-3. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
+2. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
    Palmier/Premiere-class editors. Today's `react-timeline-editor` embed (D-041 MVP) is
    missing table-stakes NLE interaction: zoom in/out on the ruler (scroll-wheel over the
    timeline, not just the toolbar slider), trim-by-dragging a clip's edge (currently
@@ -82,25 +61,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    on audio clips, snapping, ripple feedback). Scope this properly against
    `react-timeline-editor`'s actual API before starting — some of this may already be
    supported and just not wired (check before assuming a custom timeline is needed).
-   Depends on multiple tracks existing to matter fully (ties to item 1's `shots`/`media`
-   unification and real multi-track support, not just the current single-video-track
-   assembly).
-4. **Export → a top-right button + an Export window** — move Export out of the buried
+   Depends on real multi-track support, not just the current single-video-track
+   assembly (the `shots`/`media` unification item 1 depended on is done — D-046).
+3. **Export → a top-right button + an Export window** — move Export out of the buried
    `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
    project spec), frame range, `.cube` bake toggle, output path, progress. Backed by
    the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
    `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
    later (export the Edit tab's active timeline too).
-5. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
+4. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
    ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
    manifest editor (JSON-in to start — visual editor is an open question, see
    `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
    `architecture-lock.md`.
-6. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
+5. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
    timeline ops push before/after snapshots. Ties into the D-032 activity feed.
-7. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
+6. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
    full rewrite for the 3-tab world (currently a stale banner over the pre-pivot doc);
    `00-vision.md`/`01-prd.md`/`02-scope.md` still say "grading only, not an editor";
    `BUGS.md`'s "Known engine constraints" list still names solved items (D-014/34/36).
@@ -183,6 +161,14 @@ settings — typed output spec (D-038) · **RapidRAW's DAM/welcome/library/commu
 shell removed from the Colorist tab** (D-043, −7,836 LOC) · **`@chroma/player`**, the
 shared presentational preview component (viewport + title strip + transport), Editor
 tab migrated to it — Colorist + Motion adoption still open.
+
+**Media pool + import + multiple timelines (2026-09-02, 3 passes):** the "Sources"
+replacement, closed out. Pass 1 (D-044) `ProjectManifest.media: Vec<MediaItem>`,
+additive; pass 2 (D-045) bins/folders + `timelines: Vec<Timeline>` + `active_timeline`,
+model + commands only; pass 3 (D-046) the actual UI — `shots`/`media` unified
+(`ProjectShot` references a `MediaItem` by id, wire DTOs unchanged), a docked
+Sources/Library panel (import, search, bin tree, drag-to-track) reachable from every
+tab, `TimelineSwitcher`.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 

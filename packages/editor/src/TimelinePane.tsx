@@ -1,22 +1,41 @@
 /**
- * @chroma/editor — the timeline strip (D-041).
+ * @chroma/editor — the timeline strip (D-041; drag-to-track D-046 pass 3).
  *
  * `@xzdarcy/react-timeline-editor` with one row (the video track). Each clip is
  * an "action". Drag the body → `reorder`; drag an edge → `trim_start` /
- * `trim_end`; "Split at playhead" → `split`; select + Delete / × → `remove`.
- * Every edit goes through the store (`applyOp` → debounced `chroma_timeline_set`
- * → `chroma_timeline_get` refetch). Time in the editor is seconds (frame / fps).
+ * `trim_end`; "Split at playhead" → `split`; select + Delete / × → `remove`;
+ * drop a Sources-panel pool item → `add_clip`. Every edit goes through the
+ * store (`applyOp` → debounced `chroma_timeline_set` → `chroma_timeline_get`
+ * refetch). Time in the editor is seconds (frame / fps).
+ *
+ * Drag-to-track (D-046): plain HTML5 drag/drop, not a shared `DndContext` —
+ * the Sources panel is docked at the shell level (`@chroma/shell`) while this
+ * pane lives inside the Edit tab's content (`@chroma/editor`), and D-039's
+ * layer direction means shell can't depend on a tab package to share a drag
+ * context. Native drag events cross that boundary for free. This also gives
+ * the "scoped to the Edit tab being active" narrowing the roadmap item
+ * allowed for free: an inactive tab's panel is `hidden` (D-039's Shell keeps
+ * every tab mounted), and a `display:none` element isn't a valid drop target
+ * — see the D-046 decision.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
-import { Scissors, Trash2 } from 'lucide-react';
+import { Film, Scissors, Trash2 } from 'lucide-react';
 import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@chroma/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
-import { clipStartFrame, timelineFps, videoTrackIndex, type Timeline } from './timeline';
+import {
+  CHROMA_MEDIA_DRAG_MIME,
+  clipFromDraggedMedia,
+  clipStartFrame,
+  timelineFps,
+  videoTrackIndex,
+  type DraggedMedia,
+  type Timeline,
+} from './timeline';
 
 const EFFECT_ID = 'clip';
 const SCALE_SEC = 1;
@@ -25,6 +44,12 @@ const SCALE_WIDTH = 90;
 function buildRow(tl: Timeline, fps: number): TimelineRow {
   const ti = videoTrackIndex(tl);
   const track = tl.tracks[ti];
+  // D-046: a freshly `chroma_timeline_create`d timeline has `tracks: []` —
+  // the "no video track yet" state `TimelinePane`'s own empty-drop-zone
+  // guard handles below, but `editorData` (this fn) is computed by a
+  // `useMemo` that runs before that guard's early return, so it needs its
+  // own guard rather than assuming `track` exists.
+  if (!track) return { id: 'video', actions: [] };
   const actions: TimelineAction[] = track.clips.map((clip, i) => {
     const startF = clipStartFrame(track, i);
     return {
@@ -63,8 +88,54 @@ export function TimelinePane() {
 
   const effects = useMemo(() => ({ [EFFECT_ID]: { id: EFFECT_ID, name: 'clip' } }), []);
 
+  const [dragOver, setDragOver] = useState(false);
+
+  const onDragOver = (e: DragEvent) => {
+    if (!e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDragOver(true);
+  };
+  const onDragLeave = () => setDragOver(false);
+  const onDrop = (e: DragEvent) => {
+    setDragOver(false);
+    const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let media: DraggedMedia;
+    try {
+      media = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const clip = clipFromDraggedMedia(media);
+    if (!clip) return; // unprobed / offline media has no known length — nothing to place
+    applyOp({ kind: 'add_clip', track: ti, clip });
+  };
+
   if (!timeline) return null;
   const track = timeline.tracks[ti];
+
+  if (!track) {
+    // a brand new timeline (`chroma_timeline_create`) has no tracks yet —
+    // the first drop creates one (see `applyOp`'s 'add_clip' handling).
+    return (
+      <div
+        className={
+          'h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6 border-2 border-dashed rounded-none transition-colors ' +
+          (dragOver ? 'border-accent bg-accent/5' : 'border-transparent')
+        }
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        <Film className="size-6 text-text-secondary/50" />
+        <p className="text-xs text-text-secondary">
+          Empty timeline — drag a clip from Sources to get started.
+        </p>
+      </div>
+    );
+  }
 
   const idxOf = (actionId: string) => track.clips.findIndex((c) => (c.id || '') === actionId);
 
@@ -92,7 +163,10 @@ export function TimelinePane() {
 
   return (
     <div
-      className="flex flex-col min-h-0 h-full bg-bg-primary"
+      className={
+        'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
+        (dragOver ? 'ring-2 ring-inset ring-accent' : '')
+      }
       tabIndex={0}
       onKeyDown={(e) => {
         if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
@@ -100,6 +174,9 @@ export function TimelinePane() {
           doRemove();
         }
       }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <TooltipProvider>
         <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">

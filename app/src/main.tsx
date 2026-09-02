@@ -5,6 +5,7 @@ import { EditorTab, useEditorTimelineStore } from '@chroma/editor';
 import { MotionTab } from '@chroma/motion';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
+import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { useSessionStore } from './store/useSessionStore';
 import { installFrontendLogBridge } from './utils/frontendLogBridge';
 import './styles.css';
@@ -38,6 +39,7 @@ function Root() {
     <Shell
       projectOpen={projectOpen}
       launcher={<ProjectLauncher />}
+      sourcesPanel={<SourcesPanel />}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}

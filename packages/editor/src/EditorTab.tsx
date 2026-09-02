@@ -16,6 +16,7 @@ import { Button } from '@chroma/ui';
 
 import { PreviewPane } from './PreviewPane';
 import { TimelinePane } from './TimelinePane';
+import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
 
 export function EditorTab() {
@@ -56,8 +57,11 @@ export function EditorTab() {
       <div className="flex-1 min-h-0 flex flex-col">
         <PreviewPane />
       </div>
-      <div className="h-[46%] min-h-[180px] shrink-0 border-t border-border-color">
-        <TimelinePane />
+      <div className="h-[46%] min-h-[180px] shrink-0 border-t border-border-color flex flex-col min-h-0">
+        <TimelineSwitcher />
+        <div className="flex-1 min-h-0">
+          <TimelinePane />
+        </div>
       </div>
     </div>
   );

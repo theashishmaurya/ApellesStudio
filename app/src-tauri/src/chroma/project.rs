@@ -40,6 +40,24 @@
 //! migrated losslessly from the old singular key by [`load_manifest`]. Still
 //! no bin-tree UI, no timeline-switcher UI, and `shots`/`media` are still
 //! unified — pass 3.
+//!
+//! **`shots`/`media` unification (D-046, pass 3):** [`ProjectShot`] no longer
+//! duplicates `source_path`/`name` — it holds a [`MediaItem::id`] reference
+//! (`media_id`) instead, so the pool is the single source of truth for what a
+//! shot's path/name/probed-facts actually are. [`resolve_shot`] does the
+//! lookup (with a graceful "dangling reference" fallback — see its doc);
+//! [`find_or_create_media`] is the one choke point that attaches a shot to
+//! the pool (`new_project_in`, `chroma_project_save`, `chroma_project_relink`
+//! all go through it rather than duplicating the find-or-create). A brand new
+//! [`chroma_project_add_shot`] command is the Sources panel's explicit
+//! "add to grading" action on an existing pool item. [`load_manifest`]
+//! losslessly migrates a legacy `shot.sourcePath`/`shot.name` shape (every
+//! `project.json` before this decision) into a pool entry + `mediaId`, the
+//! same raw-JSON-before-typed-deserialize move [`migrate_legacy_timeline`]
+//! already made for timelines — see [`migrate_legacy_shots`] and the D-046
+//! decision for why the wire-level DTOs (`ProjectShotDto`, `ProjectShotInput`,
+//! `ProjectOpenDto`) didn't need to change shape at all, keeping this pass's
+//! frontend cost to just the new UI rather than a `useSessionStore` rewrite.
 
 use std::path::{Path, PathBuf};
 
@@ -61,16 +79,16 @@ const CURRENT_MAJOR: u64 = 1;
 // the manifest
 // --------------------------------------------------------------------------- //
 
+/// A pool item currently being graded (D-046: references a [`MediaItem`] by
+/// id rather than duplicating its `source_path`/`name` — see the module doc).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectShot {
     pub id: String,
-    /// absolute path to the source clip — referenced, never copied
-    pub source_path: String,
+    /// the pool item this shot grades — [`resolve_shot`] does the lookup.
+    pub media_id: String,
     #[serde(default)]
     pub frame: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
 }
 
 /// Per-project output spec (D-038). Every field is **optional** — a project with
@@ -354,6 +372,56 @@ fn add_media(
 }
 
 // --------------------------------------------------------------------------- //
+// shots/media unification (D-046) — a ProjectShot references a MediaItem by
+// id; these are the choke points every shot-constructing/-reading path goes
+// through instead of duplicating the find-or-create / resolve logic.
+// --------------------------------------------------------------------------- //
+
+impl ProjectManifest {
+    /// Look up a pool item by id.
+    pub fn media_for(&self, media_id: &str) -> Option<&MediaItem> {
+        self.media.iter().find(|m| m.id == media_id)
+    }
+}
+
+/// Resolve a shot's display `(source_path, name)` via its `media_id`. A shot
+/// whose media item no longer exists in the pool — a **dangling
+/// reference** (the item was removed after the shot was created; there is no
+/// `chroma_media_remove` command yet, but a hand-edited or future-removed
+/// pool can produce this) — resolves to `("", "(missing media)")` rather than
+/// erroring, the same "offline is flagged, not fatal" discipline the rest of
+/// this module uses; callers treat an empty `source_path` as offline.
+pub fn resolve_shot(manifest: &ProjectManifest, shot: &ProjectShot) -> (String, String) {
+    match manifest.media_for(&shot.media_id) {
+        Some(m) => (m.source_path.clone(), m.name.clone()),
+        None => (String::new(), "(missing media)".to_string()),
+    }
+}
+
+/// Find an existing pool item by `source_path`, or probe + create one (filed
+/// at the pool root) named `name_hint` (falls back to the file name) — the
+/// single choke point through which a shot gets attached to the pool.
+/// `new_project_in`, `chroma_project_save`, and `chroma_project_relink` all
+/// go through this rather than duplicating find-or-create. Returns the
+/// item's id either way.
+fn find_or_create_media(
+    manifest: &mut ProjectManifest,
+    source_path: &str,
+    name_hint: Option<&str>,
+) -> String {
+    if let Some(existing) = manifest.media.iter().find(|m| m.source_path == source_path) {
+        return existing.id.clone();
+    }
+    let mut item = probe_media_item(source_path, None);
+    if let Some(n) = name_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        item.name = n.to_string();
+    }
+    let id = item.id.clone();
+    manifest.media.push(item);
+    id
+}
+
+// --------------------------------------------------------------------------- //
 // where projects live
 // --------------------------------------------------------------------------- //
 
@@ -447,8 +515,91 @@ fn migrate_legacy_timeline(raw: &mut Value) {
     obj.insert("timelines".to_string(), Value::Array(vec![legacy]));
 }
 
+/// D-046: pre-migration `project.json` shots carried `sourcePath`/`name`
+/// directly (D-037) — the shot *was* the media reference, with no pool at
+/// all. Migrate the **raw** JSON, before typed deserialize: every shot
+/// lacking a (non-empty) `mediaId` gets one, pointing at a `media` entry with
+/// that `sourcePath` — reusing one already in the pool with the same path
+/// (matched by string, same dedup rule [`add_media`] uses) or synthesizing a
+/// fresh one (unprobed — `MediaItem::video` stays `None` until the next
+/// `chroma_media_list`/import re-checks it; cheap and correct, no need to
+/// shell out to ffprobe during every project load). Safe to call on an
+/// already-migrated (or fresh) manifest: a shot that already carries a
+/// non-empty `mediaId` is left untouched, and a project with no `shots` at
+/// all is a no-op.
+fn migrate_legacy_shots(raw: &mut Value) {
+    let Some(obj) = raw.as_object_mut() else {
+        return;
+    };
+    let Some(Value::Array(shots)) = obj.get("shots").cloned() else {
+        return;
+    };
+    if shots.is_empty() {
+        return;
+    }
+
+    // Owned copy of `media` to mutate alongside `shots` — can't hold two
+    // mutable borrows into `obj` at once.
+    let mut media = match obj.remove("media") {
+        Some(Value::Array(a)) => a,
+        _ => Vec::new(),
+    };
+
+    let mut new_shots = Vec::with_capacity(shots.len());
+    for shot in shots {
+        let Value::Object(mut shot_obj) = shot else {
+            new_shots.push(shot);
+            continue;
+        };
+        let has_media_id = shot_obj
+            .get("mediaId")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+        if !has_media_id {
+            let source_path = shot_obj
+                .get("sourcePath")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = shot_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let existing_id = media.iter().find_map(|m| {
+                let o = m.as_object()?;
+                if o.get("sourcePath").and_then(|v| v.as_str()) == Some(source_path.as_str()) {
+                    o.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                } else {
+                    None
+                }
+            });
+            let media_id = existing_id.unwrap_or_else(|| {
+                let id = uuid::Uuid::new_v4().to_string();
+                let item_name = name.clone().unwrap_or_else(|| {
+                    Path::new(&source_path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| source_path.clone())
+                });
+                media.push(serde_json::json!({
+                    "id": id,
+                    "sourcePath": source_path,
+                    "name": item_name,
+                    "added": now_rfc3339(),
+                }));
+                id
+            });
+            shot_obj.insert("mediaId".to_string(), Value::String(media_id));
+        }
+        new_shots.push(Value::Object(shot_obj));
+    }
+    obj.insert("media".to_string(), Value::Array(media));
+    obj.insert("shots".to_string(), Value::Array(new_shots));
+}
+
 /// Read + parse `<project_dir>/project.json`, gate the schema major, migrate
-/// a legacy singular `timeline` key (D-045), and clamp `active_shot` /
+/// a legacy singular `timeline` key (D-045) and legacy `shot.sourcePath`/
+/// `shot.name` into pool references (D-046), and clamp `active_shot` /
 /// `active_timeline` into range. Untagged files are treated as v1.
 pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     let mp = project_dir.join("project.json");
@@ -473,6 +624,7 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     }
 
     migrate_legacy_timeline(&mut raw);
+    migrate_legacy_shots(&mut raw);
 
     let mut manifest: ProjectManifest =
         serde_json::from_value(raw).map_err(|e| format!("project.json shape: {e}"))?;
@@ -554,17 +706,17 @@ pub fn new_project_in(
         .map_err(|e| format!("create {}: {e}", project_dir.display()))?;
 
     let mut manifest = ProjectManifest::fresh(&clean);
-    manifest.shots = media_paths
-        .iter()
-        .map(|p| ProjectShot {
+    // D-046: every seed path lands in the pool first (find-or-create, probed),
+    // then a shot referencing it — this is the "add to grading" flow's entry
+    // point, same choke point `chroma_project_save`/`_relink` use.
+    for p in media_paths {
+        let media_id = find_or_create_media(&mut manifest, p, None);
+        manifest.shots.push(ProjectShot {
             id: uuid::Uuid::new_v4().to_string(),
-            source_path: p.clone(),
+            media_id,
             frame: 0,
-            name: Path::new(p)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string()),
-        })
-        .collect();
+        });
+    }
 
     // D-038: seed the project's output spec from the first shot's clip so a
     // fresh project has a sensible resolution + timebase (editable later). A
@@ -696,12 +848,6 @@ pub struct ProjectOpenDto {
     pub settings: ProjectSettings,
 }
 
-/// `true` if the shot's source is a readable video file right now.
-fn shot_is_online(shot: &ProjectShot) -> bool {
-    let p = Path::new(&shot.source_path);
-    p.is_file() && video::is_video_file(p)
-}
-
 async fn open_manifest(
     project_dir: PathBuf,
     manifest: ProjectManifest,
@@ -717,29 +863,18 @@ async fn open_manifest(
     let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(manifest.shots.len());
 
     for shot in &manifest.shots {
-        let online = shot_is_online(shot);
-        let name = shot
-            .name
-            .clone()
-            .or_else(|| {
-                Path::new(&shot.source_path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-            })
-            .unwrap_or_else(|| shot.source_path.clone());
+        let (source_path, name) = resolve_shot(&manifest, shot);
+        let online = !source_path.is_empty() && media_item_is_online(&source_path);
 
         if online {
-            let src = PathBuf::from(&shot.source_path);
-            match load::load_video_frame(&src, &shot.source_path, shot.frame, state).await {
+            let src = PathBuf::from(&source_path);
+            match load::load_video_frame(&src, &source_path, shot.frame, state).await {
                 Ok(_) => online_paths.push(src),
                 Err(e) => {
-                    log::warn!(
-                        "[chroma::project] shot {} failed to load: {e}",
-                        shot.source_path
-                    );
+                    log::warn!("[chroma::project] shot {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
                         id: shot.id.clone(),
-                        source_path: shot.source_path.clone(),
+                        source_path,
                         name,
                         frame: shot.frame,
                         offline: true,
@@ -751,7 +886,7 @@ async fn open_manifest(
 
         dtos.push(ProjectShotDto {
             id: shot.id.clone(),
-            source_path: shot.source_path.clone(),
+            source_path,
             name,
             frame: shot.frame,
             offline: !online,
@@ -763,7 +898,7 @@ async fn open_manifest(
         let want = manifest
             .shots
             .get(manifest.active_shot)
-            .map(|s| PathBuf::from(&s.source_path));
+            .map(|s| PathBuf::from(resolve_shot(&manifest, s).0));
         let active_online = want
             .and_then(|w| online_paths.iter().position(|p| p == &w))
             .unwrap_or(0);
@@ -904,15 +1039,20 @@ pub async fn chroma_project_save(
     if let Some(stem) = dir.file_stem() {
         manifest.name = stem.to_string_lossy().to_string();
     }
-    manifest.shots = shots
-        .into_iter()
-        .map(|s| ProjectShot {
+    // D-046: the wire shape (`ProjectShotInput`) is unchanged — still
+    // id/sourcePath/frame/name — so the frontend session store didn't need to
+    // change for this pass. Each incoming shot resolves (find-or-create) a
+    // pool item via `find_or_create_media` before becoming a `ProjectShot`.
+    let mut new_shots = Vec::with_capacity(shots.len());
+    for s in shots {
+        let media_id = find_or_create_media(&mut manifest, &s.source_path, s.name.as_deref());
+        new_shots.push(ProjectShot {
             id: s.id,
-            source_path: s.source_path,
+            media_id,
             frame: s.frame,
-            name: s.name,
-        })
-        .collect();
+        });
+    }
+    manifest.shots = new_shots;
     manifest.active_shot = active_shot.min(manifest.shots.len().saturating_sub(1));
     save_manifest(&dir, &manifest)?;
 
@@ -945,7 +1085,12 @@ pub fn chroma_project_current() -> Option<Value> {
         .map(|p| serde_json::json!({ "name": p.name, "path": p.path.to_string_lossy() }))
 }
 
-/// Re-point one shot at a new source path and reopen the project.
+/// Re-point one shot at a new source path and reopen the project. D-046:
+/// updates the shot's underlying pool item in place (so any other shot/timeline
+/// clip sharing that `media_id` re-points too, by design — a relink is "this
+/// same logical media now lives here"); if the shot's `media_id` is dangling
+/// (its pool item was removed), find-or-creates one at `new_path` instead and
+/// repoints the shot to it.
 #[tauri::command]
 pub async fn chroma_project_relink(
     path: Option<String>,
@@ -958,15 +1103,34 @@ pub async fn chroma_project_relink(
         .or_else(|| state::current_project().map(|p| p.path))
         .ok_or("no project loaded")?;
     let mut manifest = load_manifest(&dir)?;
-    let shot = manifest
+    let media_id = manifest
         .shots
-        .iter_mut()
+        .iter()
         .find(|s| s.id == shot_id)
-        .ok_or_else(|| format!("shot {shot_id} is not in this project"))?;
-    shot.source_path = new_path.clone();
-    shot.name = Path::new(&new_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string());
+        .ok_or_else(|| format!("shot {shot_id} is not in this project"))?
+        .media_id
+        .clone();
+
+    match manifest.media.iter_mut().find(|m| m.id == media_id) {
+        Some(m) => {
+            m.source_path = new_path.clone();
+            m.name = Path::new(&new_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| new_path.clone());
+            m.video = media_item_is_online(&new_path)
+                .then(|| video::probe(Path::new(&new_path)).ok())
+                .flatten()
+                .as_ref()
+                .map(MediaVideoInfo::from);
+        }
+        None => {
+            let new_media_id = find_or_create_media(&mut manifest, &new_path, None);
+            if let Some(s) = manifest.shots.iter_mut().find(|s| s.id == shot_id) {
+                s.media_id = new_media_id;
+            }
+        }
+    }
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
     open_manifest(dir, manifest, &state).await
@@ -1063,6 +1227,43 @@ pub fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     Ok(manifest.media.iter().map(MediaItemDto::from).collect())
 }
 
+/// Pure model half of [`chroma_project_add_shot`] — push a new shot
+/// referencing `media_id` and make it active, or error if the id isn't in
+/// the pool. Split out so it's testable without a `tauri::State` (no other
+/// test in this module drives the state-taking commands directly — see
+/// `open_manifest`'s callers — this keeps that convention).
+fn add_shot_for_media(manifest: &mut ProjectManifest, media_id: &str) -> Result<(), String> {
+    if manifest.media_for(media_id).is_none() {
+        return Err(format!("no media item with id {media_id}"));
+    }
+    manifest.shots.push(ProjectShot {
+        id: uuid::Uuid::new_v4().to_string(),
+        media_id: media_id.to_string(),
+        frame: 0,
+    });
+    manifest.active_shot = manifest.shots.len() - 1;
+    Ok(())
+}
+
+/// Create a graded shot referencing an existing pool item (D-046) — the
+/// Sources panel's explicit "add to grading" action, distinct from a plain
+/// `chroma_media_import` (pool-only, no shot). Errors if `media_id` isn't in
+/// the pool. The new shot becomes active; returns the same `ProjectOpenDto`
+/// shape `chroma_project_open`/`_new`/`_relink` do, so the frontend hydrates
+/// it through the exact same `_hydrateOpenDto` path.
+#[tauri::command]
+pub async fn chroma_project_add_shot(
+    media_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProjectOpenDto, String> {
+    let dir = require_open_project()?;
+    let mut manifest = load_manifest(&dir)?;
+    add_shot_for_media(&mut manifest, &media_id)?;
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    open_manifest(dir, manifest, &state).await
+}
+
 // --------------------------------------------------------------------------- //
 // tests — pure model (no decode, no tauri State)
 // --------------------------------------------------------------------------- //
@@ -1102,7 +1303,7 @@ mod tests {
         assert_eq!(manifest.shots.len(), 2);
         assert_eq!(manifest.active_shot, 0);
         assert_ne!(manifest.shots[0].id, manifest.shots[1].id);
-        assert_eq!(manifest.shots[0].name.as_deref(), Some("a.mov"));
+        assert_eq!(resolve_shot(&manifest, &manifest.shots[0]).1, "a.mov");
 
         // creating it again is refused
         assert!(new_project_in(&root, "My Shoot", &[]).is_err());
@@ -1129,7 +1330,10 @@ mod tests {
         assert_eq!(reloaded.name, "grade-job");
         assert_eq!(reloaded.shots.len(), 1);
         assert_eq!(reloaded.shots[0].frame, 120);
-        assert_eq!(reloaded.shots[0].source_path, "/shoot/A001.mov");
+        assert_eq!(
+            resolve_shot(&reloaded, &reloaded.shots[0]).0,
+            "/shoot/A001.mov"
+        );
         assert_eq!(reloaded.settings.width, Some(1920));
         assert_eq!(reloaded.settings.height, Some(1080));
         assert_eq!(reloaded.settings.fps, Some(24.0));
@@ -1321,23 +1525,11 @@ mod tests {
         std::fs::write(&present, b"not really a video").unwrap();
         let missing = root.join("gone.mov");
 
-        let online = ProjectShot {
-            id: "a".into(),
-            source_path: present.to_string_lossy().to_string(),
-            frame: 0,
-            name: None,
-        };
-        let offline = ProjectShot {
-            id: "b".into(),
-            source_path: missing.to_string_lossy().to_string(),
-            frame: 0,
-            name: None,
-        };
         // extension is a real video ext + the file exists -> "online" by the
         // cheap check (probe/decode failure is handled at open time, not here)
-        assert!(shot_is_online(&online));
+        assert!(media_item_is_online(&present.to_string_lossy()));
         assert!(
-            !shot_is_online(&offline),
+            !media_item_is_online(&missing.to_string_lossy()),
             "a missing path is offline, not an error"
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -1459,22 +1651,48 @@ mod tests {
         assert_eq!(reloaded.media.len(), 1);
         assert_eq!(reloaded.media[0].source_path, manifest.media[0].source_path);
 
-        // ...and a pre-D-044 project.json with no `media` key at all (the real
-        // shape on disk before this change, e.g. `~/Movies/Chroma/*.chroma`)
-        // still loads, with an empty pool.
+        // ...and a pre-D-044 project.json with no `media` key and no shots at
+        // all still loads, with an empty pool (an absent `shots` key is a
+        // no-op for `migrate_legacy_shots` too — nothing to backfill).
         let legacy = root.join("legacy.chroma");
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(
             legacy.join("project.json"),
-            r#"{"schema":"chroma.project/1","name":"legacy","shots":[{"id":"s1","sourcePath":"/a.mov"}],"activeShot":0,"settings":{}}"#,
+            r#"{"schema":"chroma.project/1","name":"legacy","shots":[],"activeShot":0,"settings":{}}"#,
         )
         .unwrap();
         let m = load_manifest(&legacy).unwrap();
         assert!(
             m.media.is_empty(),
-            "an absent `media` key loads as an empty pool"
+            "an absent `media` key with no shots loads as an empty pool"
         );
-        assert_eq!(m.shots.len(), 1, "pre-existing `shots` are untouched");
+        assert!(m.shots.is_empty());
+
+        // a pre-D-044 project.json *with* a shot but no `media` key (the real
+        // shape every `~/Movies/Chroma/*.chroma` had before D-046 — see
+        // `legacy_shot_shape_migrates_to_media_id_and_backfills_the_pool` for
+        // the full migration behaviour) backfills a pool entry for it rather
+        // than staying empty — that's the D-046 unification, not a regression
+        // of this D-044-era expectation.
+        let legacy2 = root.join("legacy2.chroma");
+        std::fs::create_dir_all(&legacy2).unwrap();
+        std::fs::write(
+            legacy2.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"legacy2","shots":[{"id":"s1","sourcePath":"/a.mov"}],"activeShot":0,"settings":{}}"#,
+        )
+        .unwrap();
+        let m2 = load_manifest(&legacy2).unwrap();
+        assert_eq!(
+            m2.shots.len(),
+            1,
+            "pre-existing shots are untouched in count/order"
+        );
+        assert_eq!(
+            m2.media.len(),
+            1,
+            "D-046: the shot's path is backfilled into the pool"
+        );
+        assert_eq!(resolve_shot(&m2, &m2.shots[0]).0, "/a.mov");
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1733,6 +1951,255 @@ mod tests {
         assert_eq!(listed.len(), 1);
 
         state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- shots/media unification (D-046) ------------------------------------
+
+    #[test]
+    fn new_project_shots_reference_pool_items_not_paths() {
+        let root = tmp("unify_new_project");
+        let a = root.join("a.mov").to_string_lossy().to_string();
+        let (_dir, manifest) = new_project_in(&root, "unify", &[a.clone()]).unwrap();
+        assert_eq!(manifest.media.len(), 1, "the seed path lands in the pool");
+        assert_eq!(manifest.shots.len(), 1);
+        assert_eq!(
+            manifest.shots[0].media_id, manifest.media[0].id,
+            "the shot references the pool item, not the path directly"
+        );
+        let (path, name) = resolve_shot(&manifest, &manifest.shots[0]);
+        assert_eq!(path, a);
+        assert_eq!(name, "a.mov");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn shot_survives_its_media_item_being_renamed_and_moved() {
+        // renaming/re-filing the pool item (not the shot) is exactly what
+        // "the pool is the source of truth" buys — the shot still resolves
+        // correctly with zero shot-side changes.
+        let root = tmp("unify_rename");
+        let a = root.join("a.mov").to_string_lossy().to_string();
+        let (_dir, mut manifest) = new_project_in(&root, "unify-rename", &[a]).unwrap();
+        let shot = manifest.shots[0].clone();
+        assert_eq!(resolve_shot(&manifest, &shot).1, "a.mov");
+
+        manifest.media[0].name = "Hero take".into();
+        manifest.media[0].folder = Some("Interviews".into());
+        assert_eq!(resolve_shot(&manifest, &shot).1, "Hero take");
+        assert_eq!(
+            manifest
+                .media_for(&shot.media_id)
+                .unwrap()
+                .folder
+                .as_deref(),
+            Some("Interviews")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn shot_with_dangling_media_id_resolves_gracefully() {
+        // no `chroma_media_remove` command exists yet, but the reference can
+        // still go dangling (hand-edited project.json, a future removal
+        // feature) — resolve_shot must not panic or error, just flag it.
+        let shot = ProjectShot {
+            id: "s1".into(),
+            media_id: "does-not-exist".into(),
+            frame: 0,
+        };
+        let manifest = ProjectManifest::fresh("dangling");
+        let (path, name) = resolve_shot(&manifest, &shot);
+        assert_eq!(path, "");
+        assert_eq!(name, "(missing media)");
+        assert!(manifest.media_for(&shot.media_id).is_none());
+    }
+
+    #[test]
+    fn open_manifest_flags_a_dangling_shot_offline_without_erroring() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("unify_dangling_open");
+        let dir = root.join("x.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        // a shot whose mediaId matches nothing in `media` at all — the
+        // shape a hand-edited or corrupted project.json could have.
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"x",
+                "shots":[{"id":"s1","mediaId":"ghost","frame":0}],
+                "activeShot":0,"settings":{},"media":[]}"#,
+        )
+        .unwrap();
+
+        let m = load_manifest(&dir).unwrap();
+        assert_eq!(m.shots.len(), 1, "the dangling shot is not dropped on load");
+        let (path, name) = resolve_shot(&m, &m.shots[0]);
+        assert_eq!(path, "");
+        assert_eq!(name, "(missing media)");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_shot_shape_migrates_to_media_id_and_backfills_the_pool() {
+        // the exact shape every project.json had before D-046 (and the real
+        // ~/Movies/Chroma/New.chroma/project.json as of this decision):
+        // shots carry sourcePath/name directly, media is empty.
+        let root = tmp("unify_legacy_migration");
+        let dir = root.join("legacy.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"New",
+                "shots":[{"id":"8022aef1","sourcePath":"/a/pexels.mp4","frame":0,"name":"pexels.mp4"}],
+                "activeShot":0,"settings":{},
+                "timelines":[{"id":"t1","name":"New","rate":null,"tracks":[]}],
+                "activeTimeline":0,"media":[]}"#,
+        )
+        .unwrap();
+
+        let m = load_manifest(&dir).unwrap();
+        assert_eq!(m.shots.len(), 1);
+        assert!(!m.shots[0].media_id.is_empty(), "a mediaId is backfilled");
+        assert_eq!(m.media.len(), 1, "a matching pool item is synthesized");
+        assert_eq!(m.media[0].source_path, "/a/pexels.mp4");
+        assert_eq!(m.media[0].id, m.shots[0].media_id);
+        let (path, name) = resolve_shot(&m, &m.shots[0]);
+        assert_eq!(path, "/a/pexels.mp4");
+        assert_eq!(name, "pexels.mp4");
+
+        // saving never reintroduces sourcePath/name on the shot (the struct
+        // has no such fields) — a re-load stays migrated and idempotent.
+        save_manifest(&dir, &m).unwrap();
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).unwrap())
+                .unwrap();
+        let shot_raw = &raw["shots"][0];
+        assert!(shot_raw.get("sourcePath").is_none());
+        assert!(shot_raw.get("name").is_none());
+        assert_eq!(
+            shot_raw["mediaId"],
+            Value::String(m.shots[0].media_id.clone())
+        );
+
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(
+            reloaded.media.len(),
+            1,
+            "migration doesn't duplicate on re-load"
+        );
+        assert_eq!(reloaded.shots[0].media_id, m.shots[0].media_id);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn legacy_shot_sharing_a_source_path_with_an_existing_pool_item_reuses_it() {
+        let root = tmp("unify_legacy_dedup");
+        let dir = root.join("legacy2.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"y",
+                "shots":[{"id":"s1","sourcePath":"/shared.mov","frame":0,"name":"shared.mov"}],
+                "activeShot":0,"settings":{},
+                "media":[{"id":"m-existing","sourcePath":"/shared.mov","name":"shared.mov","added":"2026-01-01T00:00:00Z"}]}"#,
+        )
+        .unwrap();
+        let m = load_manifest(&dir).unwrap();
+        assert_eq!(m.media.len(), 1, "no duplicate pool item is created");
+        assert_eq!(m.shots[0].media_id, "m-existing");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn chroma_project_save_attaches_a_new_shot_to_the_pool() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("unify_save");
+        let (dir, manifest) = new_project_in(&root, "unify-save", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "unify-save".into(),
+        }));
+
+        let clip_path = root.join("clip.mov").to_string_lossy().to_string();
+        let shots = vec![ProjectShotInput {
+            id: "shot-1".into(),
+            source_path: clip_path.clone(),
+            frame: 12,
+            name: Some("clip.mov".into()),
+        }];
+        // chroma_project_save is async; drive it on a tiny local runtime
+        // rather than pulling tokio::test into this otherwise-sync module.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(chroma_project_save(
+            Some(dir.to_string_lossy().to_string()),
+            shots,
+            0,
+        ))
+        .unwrap();
+
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.shots.len(), 1);
+        assert_eq!(reloaded.media.len(), 1, "the new shot's path is pooled");
+        assert_eq!(reloaded.media[0].source_path, clip_path);
+        assert_eq!(reloaded.shots[0].media_id, reloaded.media[0].id);
+        assert_eq!(reloaded.shots[0].frame, 12);
+
+        // saving the same source path again does not duplicate the pool item
+        let shots2 = vec![ProjectShotInput {
+            id: "shot-1".into(),
+            source_path: clip_path.clone(),
+            frame: 30,
+            name: Some("clip.mov".into()),
+        }];
+        rt.block_on(chroma_project_save(
+            Some(dir.to_string_lossy().to_string()),
+            shots2,
+            0,
+        ))
+        .unwrap();
+        let reloaded2 = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded2.media.len(), 1, "re-saving the same path dedupes");
+        assert_eq!(reloaded2.shots[0].frame, 30);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn add_shot_for_media_references_an_existing_pool_item() {
+        // the sync model half of `chroma_project_add_shot` — the Sources
+        // panel's "add to grading" action on a pool-only item. The
+        // state-taking command wrapper itself (open_manifest integration) is
+        // verified live against the real project, same as the other
+        // state-taking commands in this module (none are unit-tested
+        // directly — see `open_manifest`'s doc).
+        let root = tmp("unify_add_shot");
+        let (_dir, mut manifest) = new_project_in(&root, "unify-add-shot", &[]).unwrap();
+        let path = root.join("pool-only.mov").to_string_lossy().to_string();
+        add_media(&mut manifest, &[path.clone()], None);
+        assert!(
+            manifest.shots.is_empty(),
+            "a plain pool import creates no shot"
+        );
+        let media_id = manifest.media[0].id.clone();
+
+        add_shot_for_media(&mut manifest, &media_id).unwrap();
+        assert_eq!(manifest.shots.len(), 1);
+        assert_eq!(manifest.shots[0].media_id, media_id);
+        assert_eq!(manifest.active_shot, 0);
+        assert_eq!(resolve_shot(&manifest, &manifest.shots[0]).0, path);
+
+        // an unknown media id errors rather than creating a dangling shot
+        assert!(add_shot_for_media(&mut manifest, "no-such-media").is_err());
+        assert_eq!(
+            manifest.shots.len(),
+            1,
+            "the failed add did not append a shot"
+        );
+
         let _ = std::fs::remove_dir_all(&root);
     }
 

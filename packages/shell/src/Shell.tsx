@@ -31,10 +31,19 @@
  * Once a project opens, the tabs appear plus a "‹ Projects" button that calls
  * `onCloseProject`. Tab panels stay mounted underneath the launcher (hidden) so
  * the Colorist app's MCP control bridge keeps running.
+ *
+ * Docked Sources panel (D-046 pass 3): same injection pattern as `launcher` —
+ * the shell renders whatever `sourcesPanel` node is passed in (never imports
+ * the D-046 `SourcesPanel` itself, for the same app → shell dependency-
+ * direction reason), as a fixed-width column to the right of the tab content,
+ * toggled by a chrome-bar button. Collapsed by default so it never disrupts
+ * Colorist's own left/right panel system or Editor's timeline pane — it's a
+ * sibling of the tab content area, not layered over it, and its own opaque
+ * background means it plays fine alongside the wgpu-transparent root (B-006).
  */
 
 import { useEffect, type ReactNode } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, PanelRight } from 'lucide-react';
 import { Button } from '@chroma/ui';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
@@ -55,12 +64,20 @@ export interface ShellProps {
   launcher: ReactNode;
   /** "‹ Projects" — close the current project, back to the launcher. */
   onCloseProject?: () => void;
+  /** the D-046 Sources/Library panel, injected by the caller (app → shell
+   *  only, same reasoning as `launcher`). Docked to the right of the tab
+   *  content, toggled via a chrome-bar button; omit to run without one. */
+  sourcesPanel?: ReactNode;
 }
 
-export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProps) {
+const SOURCES_PANEL_WIDTH = 288;
+
+export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPanel }: ShellProps) {
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
   const wgpuSurfaceActive = useShellStore((s) => s.wgpuSurfaceActive);
+  const sourcesPanelOpen = useShellStore((s) => s.sourcesPanelOpen);
+  const setSourcesPanelOpen = useShellStore((s) => s.setSourcesPanelOpen);
   const chrome = useWindowChrome();
 
   // If persisted/default tab isn't in the registry, fall back to the first tab.
@@ -154,25 +171,55 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProp
           </div>
         )}
 
-        {/* right: win/linux controls, or a spacer on mac */}
-        <div className="ml-auto flex items-center h-full">
+        {/* right: Sources toggle (project open only) + win/linux controls / mac spacer */}
+        <div className="ml-auto flex items-center h-full gap-0.5">
+          {projectOpen && sourcesPanel && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setSourcesPanelOpen(!sourcesPanelOpen)}
+              title="Sources"
+              aria-label="Sources"
+              aria-pressed={sourcesPanelOpen}
+              className={
+                'h-6 w-6 p-0 ' +
+                (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
+              }
+            >
+              <PanelRight className="size-3.5" />
+            </Button>
+          )}
           <WindowControls chrome={chrome} />
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
-        {/* tab panels — always mounted (state + the Colorist MCP bridge persist);
-            all hidden while the launcher is up. */}
-        {tabs.map((tab) => {
-          const isActive = projectOpen && tab.id === active;
-          return (
-            <div key={tab.id} role="tabpanel" className={isActive ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
-              {tab.element}
-            </div>
-          );
-        })}
+      <div className="flex-1 min-h-0 flex overflow-hidden relative">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+          {/* tab panels — always mounted (state + the Colorist MCP bridge persist);
+              all hidden while the launcher is up. */}
+          {tabs.map((tab) => {
+            const isActive = projectOpen && tab.id === active;
+            return (
+              <div key={tab.id} role="tabpanel" className={isActive ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
+                {tab.element}
+              </div>
+            );
+          })}
 
-        {!projectOpen && <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>}
+          {!projectOpen && <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>}
+        </div>
+
+        {/* docked Sources panel (D-046) — a sibling column, never layered over
+            the tab content, so it can't fight Colorist's own panels or
+            Editor's timeline pane for space. */}
+        {projectOpen && sourcesPanel && sourcesPanelOpen && (
+          <div
+            className="shrink-0 h-full border-l border-border-color bg-surface overflow-hidden"
+            style={{ width: SOURCES_PANEL_WIDTH }}
+          >
+            {sourcesPanel}
+          </div>
+        )}
       </div>
     </div>
   );

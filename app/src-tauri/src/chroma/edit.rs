@@ -89,27 +89,21 @@ fn current_project_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "no project open — open one in the Colorist tab".to_string())
 }
 
-/// Build a single-video-track timeline from a manifest's shots, probing each
-/// source for its frame count (0 when a source is offline / not probe-able).
-/// Assigns a fresh id (D-045) — `chroma-timeline` itself never generates one.
+/// Build a single-video-track timeline from a manifest's shots, resolving
+/// each shot's source path/name via its `media_id` (D-046 — see
+/// `project::resolve_shot`) and probing that path for its frame count (0 when
+/// offline / not probe-able / dangling). Assigns a fresh id (D-045) —
+/// `chroma-timeline` itself never generates one.
 fn build_from_shots(manifest: &project::ProjectManifest) -> Timeline {
     let tuples: Vec<(String, String, String, i64)> = manifest
         .shots
         .iter()
         .map(|shot| {
-            let name = shot
-                .name
-                .clone()
-                .or_else(|| {
-                    Path::new(&shot.source_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                })
-                .unwrap_or_else(|| shot.source_path.clone());
-            let frames = probe_cached(Path::new(&shot.source_path))
+            let (source_path, name) = project::resolve_shot(manifest, shot);
+            let frames = probe_cached(Path::new(&source_path))
                 .map(|i| i.frame_count as i64)
                 .unwrap_or(0);
-            (shot.id.clone(), shot.source_path.clone(), name, frames)
+            (shot.id.clone(), source_path, name, frames)
         })
         .collect();
     let mut tl = Timeline::from_shots(&tuples);
