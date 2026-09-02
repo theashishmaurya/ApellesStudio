@@ -27,6 +27,30 @@ Still real:
 
 ## Open
 
+## B-010 — `ExportPanel` (`Panel.Export`) is reachable and appears usable while a video clip is loaded, but silently attempts a still-image export against the video's own path
+status: open · severity: low (a working, prominent alternative — `ExportDialog`, D-049 — now exists; this is dead-end UX, not data loss) · area: `app/src/components/panel/right/ExportPanel.tsx`, `app/src-tauri/src/export_processing.rs`
+- **repro:** open a video clip in the Colorist tab, click the "Export" icon
+  in the panel switcher (`Panel.Export`), pick any format, click Export.
+- **expected:** either the panel is unavailable for video content, or it
+  exports something sensible from the clip (a frame, or the graded video).
+- **actual:** `selectedImage.path` for a loaded video shot is the clip's own
+  file path (`useSessionStore`'s `applyLoaded` — no still/video branch), so
+  `ExportPanel`'s `numImages`/`canExport` read as if a real image were
+  selected. Clicking Export calls `Invokes.ExportImages` →
+  `export_processing.rs`'s `export_images_impl`, which `image::open()`s the
+  path as a still — this will error (or, worst case, silently mis-handle a
+  path `image` happens to partially parse) on a video container.
+- **cause:** `ExportPanel` is RapidRAW's unmodified still-image exporter; it
+  was never taught about `useChromaStore.videoInfo`/video-ness, because
+  nothing in the Colorist pivot (D-039/D-043) ever routed a real video
+  export through it — that gap is exactly what D-049's `ExportDialog`
+  fills, via the correct backend (`chroma_export_video`).
+- **fix (not done — out of scope for D-049):** gate `Panel.Export`'s
+  availability/rendering on `!videoInfo?.isVideo` (simplest), or teach
+  `export_images_impl` to route a video path to the real video-export path
+  instead of `image::open()`. D-049 deliberately left `ExportPanel` fully
+  routed rather than partially unrouting it — see that decision for why.
+
 ## Fixed
 
 ## B-009 — duplicate `remotion` packages crash the app at runtime with "Multiple versions of Remotion detected"

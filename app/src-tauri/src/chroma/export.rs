@@ -13,6 +13,14 @@
 //!
 //! Fork hygiene (D-003): all new code, one `pub mod export;` in `chroma/mod.rs`
 //! and three `generate_handler!` lines in `lib.rs`. Divergence log: docs/09.
+//!
+//! D-049: `chroma_export_video`/`chroma_export_progress`/`chroma_bake_lut` were
+//! reachable only from the agent/MCP control surface (`useChromaControl.ts`'s
+//! `export` op) — no GUI caller existed. The Colorist tab's Export dialog
+//! (`app/src/components/chroma/ExportDialog.tsx`) is now the primary GUI
+//! caller: it polls `chroma_export_progress` for its progress bar and passes
+//! explicit `out_width`/`out_height` for its resolution field (see
+//! `resolve_export_resolution`). No export-logic change beyond that param.
 
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -574,9 +582,29 @@ fn default_out_path(kind: &str) -> Result<PathBuf, String> {
     Ok(dir.join(name))
 }
 
+/// D-049: resolve the export's output resolution. An explicit pair from the
+/// caller (the Export dialog's "Custom" resolution field) wins outright; else
+/// the D-038 project spec; else `(None, None)` — `export_video`'s own
+/// clip-derived default. A partial explicit pair (only one of width/height,
+/// or a non-positive value) is treated as absent, same convention as
+/// `ExportOpts`/`export_video`'s own `(Some(ow), Some(oh)) if ow > 0 && oh > 0`
+/// guard.
+fn resolve_export_resolution(
+    explicit: (Option<u32>, Option<u32>),
+    project: (Option<u32>, Option<u32>),
+) -> (Option<u32>, Option<u32>) {
+    match explicit {
+        (Some(w), Some(h)) if w > 0 && h > 0 => (Some(w), Some(h)),
+        _ => project,
+    }
+}
+
 /// Start a background export of the loaded clip. Returns immediately with the
 /// frame total; poll [`chroma_export_progress`]. `js_adjustments` is the live
-/// grade doc from the frontend store.
+/// grade doc from the frontend store. `out_width`/`out_height` (D-049, the
+/// Export dialog's resolution field) override the D-038 project spec, which
+/// in turn overrides the clip's own dimensions — see
+/// [`resolve_export_resolution`].
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn chroma_export_video(
@@ -586,6 +614,8 @@ pub async fn chroma_export_video(
     codec: Option<String>,
     quality: Option<i64>,
     fps_override: Option<f64>,
+    out_width: Option<u32>,
+    out_height: Option<u32>,
     js_adjustments: Value,
 ) -> Result<Value, String> {
     let cv = current_video().ok_or("no video loaded")?;
@@ -609,18 +639,22 @@ pub async fn chroma_export_video(
     // D-038: a loaded project's output spec (resolution + timebase) overrides
     // the clip-derived output. Absent settings ⇒ every field stays `None` ⇒
     // the export is unchanged. An explicit `fps_override` arg (the export
-    // dialog) still wins over the project's fps.
+    // dialog) still wins over the project's fps; D-049 adds the same explicit-
+    // wins-over-project precedence for resolution.
     let proj = super::state::current_project()
         .and_then(|p| super::project::load_manifest(&p.path).ok())
         .map(|m| m.settings)
         .unwrap_or_default();
 
+    let (resolved_w, resolved_h) =
+        resolve_export_resolution((out_width, out_height), (proj.width, proj.height));
+
     let opts = ExportOpts {
         codec,
         quality,
         fps_override: fps_override.or(proj.fps),
-        out_width: proj.width,
-        out_height: proj.height,
+        out_width: resolved_w,
+        out_height: resolved_h,
     };
     let video_path = cv.path.clone();
     let out_str = out.to_string_lossy().to_string();
@@ -667,6 +701,44 @@ pub async fn chroma_bake_lut(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // D-049: explicit dialog resolution > project spec > clip-derived (None).
+    #[test]
+    fn resolve_export_resolution_explicit_wins() {
+        assert_eq!(
+            resolve_export_resolution((Some(1280), Some(720)), (Some(3840), Some(2160))),
+            (Some(1280), Some(720))
+        );
+    }
+
+    #[test]
+    fn resolve_export_resolution_falls_back_to_project() {
+        assert_eq!(
+            resolve_export_resolution((None, None), (Some(3840), Some(2160))),
+            (Some(3840), Some(2160))
+        );
+    }
+
+    #[test]
+    fn resolve_export_resolution_falls_back_to_clip_derived_when_neither_set() {
+        assert_eq!(
+            resolve_export_resolution((None, None), (None, None)),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn resolve_export_resolution_ignores_partial_or_zero_explicit() {
+        // only one dimension set, or a zero — treated as absent, not a crash/half-apply.
+        assert_eq!(
+            resolve_export_resolution((Some(1280), None), (Some(3840), Some(2160))),
+            (Some(3840), Some(2160))
+        );
+        assert_eq!(
+            resolve_export_resolution((Some(0), Some(720)), (Some(3840), Some(2160))),
+            (Some(3840), Some(2160))
+        );
+    }
 
     fn test_video() -> Option<PathBuf> {
         std::env::var("CHROMA_TEST_VIDEO").ok().map(PathBuf::from).filter(|p| p.exists())

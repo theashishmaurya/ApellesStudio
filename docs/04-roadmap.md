@@ -70,12 +70,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    supported and just not wired (check before assuming a custom timeline is needed).
    Depends on real multi-track support, not just the current single-video-track
    assembly (the `shots`/`media` unification item 1 depended on is done — D-046).
-3. **Export → a top-right button + an Export window** — move Export out of the buried
-   `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
-   project spec), frame range, `.cube` bake toggle, output path, progress. Backed by
-   the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
-   `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
-   later (export the Edit tab's active timeline too).
+3. **Export → a top-right button + an Export window** — done, 2026-09-03 (**D-049**):
+   `ExportDialog`, the right-most button in the Colorist tab's `EditorToolbar`
+   (top-right of the tab), backed by the existing `chroma_export_video`/
+   `chroma_bake_lut` (D-022) via `@chroma/ui`'s `Dialog`/`Select` (D-042). Codec,
+   resolution (Project spec / Clip / Custom — D-038 project spec is the default when
+   set), frame range (full clip / custom), a `.cube` bake toggle, an output path via
+   the native save dialog, and a real progress bar (polled `chroma_export_progress` —
+   no new progress mechanism needed, it already existed and had no GUI caller). The
+   old `Panel.Export`/`ExportPanel` toggle was **not** removed — it's RapidRAW's
+   still-image exporter, a different and already-broken-for-video feature, not a
+   duplicate (see D-049; the video-export brokenness itself is **B-010**, still open).
+   **Deferred, unchanged:** shell-level export (the Edit tab's active timeline) and a
+   push-based/percent-exact progress event (polling is coarse but real).
 4. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
