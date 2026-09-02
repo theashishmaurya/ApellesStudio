@@ -50,6 +50,19 @@ commit.
   open). `ProjectLauncher` + session store likely move to `@chroma/bridge` (or a
   `@chroma/project` fe package) so shell + colorist both reach them. **Queued after the
   UI pass — heavy `@chroma/shell` + `app/src/App.tsx` overlap.**
+- [ ] **`@chroma/player` — one shared preview component for all 3 tabs** (requested
+  2026-09-02, Palmier-viewer-style). A **presentational** package: a canvas viewport +
+  a title strip (`‹ ›` nav, name, `…` menu) + a transport bar — timecode
+  `cur / total`, skip-start / step-back / play-pause / step-fwd / skip-end, and a right
+  cluster: snapshot, fullscreen, playback-rate (`1×`), zoom (`Fit` / fill / %).
+  Props: `{ frame, total, fps, playing, rate, zoom, onPlayPause, onStep, onSeek,
+  onSkipStart/End, onRateChange, onZoomChange, onSnapshot, onFullscreen }` + a
+  `surface` slot = whatever the tab renders inside (an `<img>` for the Editor's
+  `chroma_timeline_frame`, the wgpu native-surface region for the Colorist grade
+  preview, a `@remotion/player` for Motion). Each tab owns its frame source + wires the
+  callbacks to its own transport logic. Editor tab adopts it first (its hand-rolled
+  transport moves into the player), Colorist + Motion follow. **Queued after the launcher
+  move.**
 - [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
   history spanning all tabs. A `@chroma/history` store holding a unified stack of
   `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
