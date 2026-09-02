@@ -39,6 +39,17 @@ commit.
   suppressed; `@chroma/ui` package started (Button/Switch/Slider/Input/Text/
   CollapsibleSection extracted, app-side re-export shims); Editor tab transport + toolbar
   rebuilt with `lucide-react` icons + `@chroma/ui` instead of hand-crafted text buttons.
+- [ ] **Project launcher = the app entry screen** (requested 2026-09-02): right now the
+  D-037 launcher lives *inside* the Colorist tab, so you see tabs → click Colorist →
+  then the "Welcome to Chroma" screen. Wrong. It should be: **app opens → launcher (no
+  tabs) → open/create a project → tabs appear**, all 3 tabs operating on that project;
+  a "‹ Projects" affordance closes the project back to the launcher. Composition root
+  (`app/src/main.tsx`) routes: `no project` → `<ProjectLauncher>` (full window, chrome
+  bar only); `project open` → `<Shell tabs>`. The Colorist tab (`<App/>`) drops its
+  `activeView: 'projects'` branch and always renders its editor (assumes a project is
+  open). `ProjectLauncher` + session store likely move to `@chroma/bridge` (or a
+  `@chroma/project` fe package) so shell + colorist both reach them. **Queued after the
+  UI pass — heavy `@chroma/shell` + `app/src/App.tsx` overlap.**
 - [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
   history spanning all tabs. A `@chroma/history` store holding a unified stack of
   `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
