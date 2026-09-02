@@ -34,6 +34,17 @@ commit.
   `@xzdarcy/react-timeline-editor` timeline + scrub/play preview + `useEditorTimelineStore`.
   Deferred: multi-track / audio / transitions / transcript / compositing / grade-in-preview
   / OTIO export / MCP.
+- [ ] **UI pass** (in progress, 2026-09-02): window chrome → `@chroma/shell` (traffic
+  lights + Win/Linux controls, drag region), tabs centered, RapidRAW `<TitleBar/>`
+  suppressed; `@chroma/ui` package started (Button/Switch/Slider/Input/Text/
+  CollapsibleSection extracted, app-side re-export shims); Editor tab transport + toolbar
+  rebuilt with `lucide-react` icons + `@chroma/ui` instead of hand-crafted text buttons.
+- [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
+  history spanning all tabs. A `@chroma/history` store holding a unified stack of
+  `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
+  history feeds/delegates into it (don't rebuild it); Editor timeline ops push
+  before/after snapshots; the shell owns the keyboard listener. Ties into D-032's activity
+  feed. **Queued behind the UI pass (overlapping files).**
 - [ ] Migration step 2 — extract leaf pure crates (`chroma-types`, `chroma-grade-model`,
   `chroma-timeline`) for real.
 - [ ] Steps 3–7 — `chroma-gpu` / `chroma-media` / `chroma-project`; `chroma-agent` /
