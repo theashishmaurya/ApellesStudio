@@ -27,6 +27,7 @@
     "tauri": "npm run tauri --workspace app --",
     "tauri:dev": "npm run start --workspace app",
     "tauri:build": "npm run tauri --workspace app -- tauri build",
-    "typecheck": "npm run typecheck --workspace app"
+    "typecheck": "npm run typecheck --workspace app",
+    "test": "npm run test --workspaces --if-present"
   }
 }

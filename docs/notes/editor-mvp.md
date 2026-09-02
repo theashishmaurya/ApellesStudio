@@ -38,7 +38,10 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
     drag edge → `trim_start` / `trim_end`; "Split at playhead" → `split`; select
     + Delete / "Remove clip" → `remove`. Each edit → `useEditorTimelineStore`
     optimistic op → debounced (~400 ms) `chroma_timeline_set` → `chroma_timeline_get`
-    refetch.
+    refetch. **Undo/redo (D-051, 2026-09-03):** every op also pushes a
+    before/after `Timeline` snapshot pair onto the shared `@chroma/history`
+    stack — no local keybinding here, undo/redo is shell-level (Cmd/Ctrl+Z /
+    Cmd/Ctrl+Y, `@chroma/shell`) and works regardless of which tab is active.
   - Empty state when no project is open.
 
 ## Deferred (later tracked steps)

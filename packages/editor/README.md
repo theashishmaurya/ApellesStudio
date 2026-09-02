@@ -16,16 +16,29 @@ dragging a pool item in from the shell's Sources panel.
   switching via `chroma_timeline_set_active`, plus inline "+ New" →
   `chroma_timeline_create`. No rename/delete UI (no backing commands).
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
-  `timelines` (D-046), `load()`, `applyOp()`, `setPlayhead()`, `loadList()`/
-  `createTimeline()`/`setActiveTimeline()` (D-046). Optimistic ops → debounced
-  `chroma_timeline_set` → `chroma_timeline_get` refetch. Lives here for now; a
-  `@chroma/bridge` extraction is a later task.
+  `timelines` (D-046), `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
+  `setPlayhead()`, `loadList()`/`createTimeline()`/`setActiveTimeline()`
+  (D-046). Optimistic ops → debounced `chroma_timeline_set` →
+  `chroma_timeline_get` refetch. Lives here for now; a `@chroma/bridge`
+  extraction is a later task.
 - `timeline.ts` — the model mirrored from the `chroma-timeline` Rust crate,
   the pure edit ops (including D-046's `add_clip`, purely client-side — no
   Rust op needed since `chroma_timeline_set` stores whatever is sent
-  verbatim), and `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia`
-  — the drag-to-track contract `TimelinePane`'s drop handler and the Sources
+  verbatim), `labelForOp` (D-051), and
+  `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia` — the
+  drag-to-track contract `TimelinePane`'s drop handler and the Sources
   panel's drag source both implement.
+
+**Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
+`{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto
+`@chroma/history`'s shared stack — whole-`Timeline` snapshots (`before`/`after`),
+not inverse deltas, since every op here already round-trips through a
+whole-document `chroma_timeline_set`. `undo()`/`redo()` call
+`restoreSnapshot()`, which sets state to the given snapshot, cancels any
+pending debounced save, and persists + refetches immediately (no debounce —
+undo/redo are discrete actions). Shell-level Cmd/Ctrl+Z / Cmd/Ctrl+Y
+(`@chroma/shell`) is the only way this fires; there's no Edit-tab-local
+undo keybinding. `src/timeline.test.ts` (vitest) covers `labelForOp`.
 
 Backed by the `chroma-timeline` crate and the `chroma::edit` Tauri commands
 (`chroma_timeline_get` / `_set` / `_frame` / `_list` / `_create` /

@@ -54,6 +54,7 @@ import { useAppNavigation } from './hooks/useAppNavigation';
 import { useExternalEditSession } from './hooks/useExternalEditSession';
 import { useChromaControl } from './hooks/useChromaControl';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
+import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
@@ -162,6 +163,9 @@ function App() {
   useChromaControl();
   // D-037: debounced project.json + grade + thumb autosave once a project is loaded
   useProjectAutosave();
+  // D-051: bridge useEditorStore's grade history into @chroma/history (shell
+  // global undo/redo) — single mount, same rationale as the two above.
+  useColoristHistoryBridge();
 
   const { multiSelectedPaths } = useLibraryStore(
     useShallow((state) => ({

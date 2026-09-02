@@ -90,10 +90,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    duplicate (see D-049; the video-export brokenness itself is **B-010**, still open).
    **Deferred, unchanged:** shell-level export (the Edit tab's active timeline) and a
    push-based/percent-exact progress event (polling is coarse but real).
-4. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
-   `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
-   existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
-   timeline ops push before/after snapshots. Ties into the D-032 activity feed.
+4. **Global undo/redo** — done, 2026-09-03 (**D-051**): shell-level Cmd/Ctrl+Z
+   (undo) / Cmd/Ctrl+Y or Cmd/Ctrl+Shift+Z (redo) spanning all 3 tabs, owned by
+   `Shell.tsx` — pops the new `@chroma/history` store (`{tab, label, undo(),
+   redo(), ts}`) regardless of which tab is active and **switches to that tab**
+   so the effect is always visible. The Colorist's existing 50-deep
+   `useEditorStore` history was left untouched and bridged in via
+   `useColoristHistoryBridge.ts` (an adapter, not a rewrite); the Editor's
+   timeline ops (`useEditorTimelineStore.applyOp`) now push before/after
+   `Timeline` snapshots for every reorder/trim/split/remove/add_clip — real
+   Edit-tab undo for the first time. D-032 tie-in: explicitly out of scope,
+   documented why. **Deferred:** the Motion tab (no natural edit-history unit
+   this pass) and routing the Colorist toolbar's own Undo/Redo buttons through
+   the shared stack (still call `useEditorStore` directly — a known, harmless,
+   documented gap, see D-051).
 5. **Docs reconciliation** — done, 2026-09-02: `03-architecture.md` fully rewritten for
    the 3-tab world, `00-vision.md`/`01-prd.md`/`02-scope.md` corrected off "grading
    only, not an editor," `BUGS.md`'s "Known engine constraints" cleaned of solved items
