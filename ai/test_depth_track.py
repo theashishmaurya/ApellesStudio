@@ -23,9 +23,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "vendor"))
 
 REPO = os.path.dirname(HERE)
-CLIP = os.environ.get(
-    "CHROMA_DEPTH_TEST_CLIP", os.path.join(REPO, "scratch", "Tokyo-Walk_rgb.mp4")
-)
+
+
+def _default_clip() -> str:
+    # Moving-camera test clips live in ~/Downloads (alongside the C019 take);
+    # fall back to scratch/ for older checkouts.
+    for cand in (
+        os.path.expanduser("~/Downloads/Tokyo-Walk_rgb.mp4"),
+        os.path.join(REPO, "scratch", "Tokyo-Walk_rgb.mp4"),
+    ):
+        if os.path.exists(cand):
+            return cand
+    return os.path.expanduser("~/Downloads/Tokyo-Walk_rgb.mp4")
+
+
+CLIP = os.environ.get("CHROMA_DEPTH_TEST_CLIP", _default_clip())
 N = int(os.environ.get("CHROMA_DEPTH_TEST_FRAMES", "16"))
 
 
