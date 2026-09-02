@@ -258,6 +258,27 @@ no new UI framework, binary stays Tauri-small.
   small-binary lock.** Fallback only if building the compositor proves too costly.
 - **`cros_codecs`**, **`oxivideo`** — Rust HW-decode crates to watch.
 
+### libopenshot (`OpenShot/libopenshot`) — evaluated 2026-09-02, **REJECTED as a dependency**
+
+Checked at the owner's request. It's the C++ engine behind the OpenShot app
+(OpenShot 3.5, March 2026). Verdict against the constraint lock:
+
+| Constraint | libopenshot |
+|---|---|
+| Rust-native | ❌ C++. API is C++/Python/Ruby via **SWIG** — no C ABI, **no Rust bindings exist**; you'd hand-write + maintain FFI over a large C++ surface |
+| Performance-first, no lag | ❌ **CPU compositing.** HW accel is FFmpeg **decode/encode only**; their own `doc/HW-ACCEL.md` says decoded frames are "copied back to CPU memory for the rest of the pipeline" and RTX perf is "not great." Real-time playback drops frames at 1080p+ without proxies |
+| Small binary | ❌ FFmpeg + `libopenshot-audio` (a JUCE fork) + historically Qt / ImageMagick / OpenMP / ZeroMQ |
+| wgpu integration | ❌ no GPU compositor to hook into — renders to CPU image buffers |
+| Licence | ⚠️ LGPL-3 (lib) — workable, but the dyn-link requirement + C++ ABI churn |
+
+**Even today's Chroma (wgpu grade pipeline) is architecturally ahead of it for
+compositing.** Linking libopenshot would import its CPU-bound ceiling and its
+dependency weight to get a timeline + transitions + keyframes we can build lighter.
+
+**Still useful as a *reference*:** its `Timeline` / `Clip` / `Keyframe` (Bezier)
+headers are a battle-tested model for timeline structure, effect ordering, and
+keyframe interpolation — worth reading, not linking.
+
 ### Revised estimate (Rust-native)
 
 Lean editing tab (talking-head: transcript cut + multi-shot timeline + trim/ripple +
