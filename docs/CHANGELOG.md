@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **`@chroma/player` — shared preview component, Editor tab
+  migrated (roadmap "Next" item 1, built).** New package: `<Player>` (viewport +
+  title strip + transport bar), fully controlled and presentational — no
+  `@tauri-apps/api`, no zustand, no video/decode logic, built on `@chroma/ui`'s
+  `Button`/`Slider`. `fmtTimecode` moved here from `@chroma/editor`'s
+  `PreviewPane.tsx` (single source of truth). `PreviewPane.tsx` rewritten to use
+  it: all frame-fetch (`chroma_timeline_frame`) and rAF play-loop logic stays
+  put, only the hand-rolled transport JSX moved to `<Player>`. Colorist + Motion
+  adoption is follow-on, not done here.
+
 - **2026-09-02** — **Colorist tab is the grading editor only — RapidRAW's
   DAM/welcome/library/community shell removed (D-043, built).** The "Sources"
   folder-tree panel the owner flagged is gone, along with the whole photo-library

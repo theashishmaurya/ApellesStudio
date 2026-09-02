@@ -17,6 +17,7 @@ code lives today — the packages below are extracted from it incrementally.
 | `@chroma/shell` | **yes** — 3-tab layout + window chrome (D-039 steps 6a/6b) | the window title bar (`WindowChrome.tsx` — traffic lights / window controls / drag region) + the tab switcher; project launcher (D-037) still to move here. Owns the app chrome, so it couples to Tauri |
 | `@chroma/motion-engine` | **yes** — moved in from `videoAgent/engine/motion/` (D-039) | the Remotion project itself: 7 primitives + the JSON scene-manifest compiler (`src/engine/build.ts`) |
 | `@chroma/colorist` | future | the **Colorist tab** — adjustment panels, scopes, mask editor (RapidRAW's adjustment UI, adapted). Lives in `app/src/` for now. |
+| `@chroma/player` | **yes** — canvas viewport + title strip + transport bar, presentational only (roadmap "Next" item 1) | the shared `<Player>` component every tab embeds: each supplies its own frame `surface` (Editor's `chroma_timeline_frame` `<img>`, Colorist's wgpu surface, Motion's `@remotion/player`) and owns its own frame-fetch/IPC/playback-loop logic — this package has none. Also exports `fmtTimecode`. `@chroma/editor` is the first (and so far only) consumer; Colorist + Motion adoption is follow-on. See `player/README.md` |
 | `apps/desktop` | future | the Vite entry that composes shell + tabs; what `src-tauri` serves. `app/` plays this role today. |
 
 ## Migration status (D-039)
@@ -45,3 +46,10 @@ code lives today — the packages below are extracted from it incrementally.
   `bg-muted`). `@chroma/shell` ("‹ Projects" button) + `@chroma/editor` (timeline
   toolbar → `Button` + `Tooltip`) migrated. `@chroma/tokens` + `@chroma/bridge`
   are still later passes.
+- **`@chroma/player` (2026-09-02, roadmap "Next" item 1):** new package — the
+  shared `<Player>` preview component (viewport + title strip + transport bar),
+  presentational only, built on `@chroma/ui`'s `Button`/`Slider`. `fmtTimecode`
+  moved here from `@chroma/editor`'s `PreviewPane.tsx` (single source of truth).
+  `@chroma/editor` migrated: `PreviewPane.tsx` keeps all its frame-fetch/rAF
+  play-loop logic as-is, only the rendered transport JSX now comes from
+  `<Player>`. Colorist + Motion adoption is follow-on, not done here.

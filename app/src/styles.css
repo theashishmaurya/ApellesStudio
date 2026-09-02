@@ -8,6 +8,7 @@
 @source "../../packages/shell/src";
 @source "../../packages/editor/src";
 @source "../../packages/motion/src";
+@source "../../packages/player/src";
 
 @theme {
   --color-bg-primary: var(--app-bg-primary);

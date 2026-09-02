@@ -18,8 +18,9 @@ numbers are actually calibrated).
   harness. MCP surface: 38+ tools. **RapidRAW's DAM/welcome/library shell is gone**
   (D-043) — it's the grading editor only now.
 - **Editor** — MVP: single-video-track timeline (`chroma-timeline` + `react-timeline-editor`),
-  scrub/play preview (independent of the Colorist render path), reorder/trim/split/remove,
-  persisted in the project. No multi-track, audio, transitions, or transcript cut yet.
+  scrub/play preview (independent of the Colorist render path) via the shared
+  `@chroma/player` component, reorder/trim/split/remove, persisted in the project. No
+  multi-track, audio, transitions, or transcript cut yet.
 - **Motion** — placeholder tab. The engine (`packages/motion-engine/`, 7 primitives +
   manifest compiler) is fully functional, just not wired to a tab UI. **Gap — see Next.**
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
@@ -40,13 +41,7 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
-1. **`@chroma/player`** — one shared preview component all 3 tabs embed: canvas
-   viewport + title strip (`‹ ›`, name, `…`) + transport (timecode, skip/step/play,
-   snapshot, fullscreen, rate, zoom). Presentational only — each tab supplies its own
-   frame source (Editor's `chroma_timeline_frame`, Colorist's wgpu surface, Motion's
-   `@remotion/player`) via a `surface` slot. Editor adopts it first (its hand-rolled
-   transport moves in), Colorist + Motion follow.
-2. **Media pool + import + multiple timelines** — the actual "Sources" replacement.
+1. **Media pool + import + multiple timelines** — the actual "Sources" replacement.
    `MediaItem` model unified with D-037 `shots` (pool = all media; a Colorist "shot" =
    a pool item being graded; an Editor "clip" = a windowed reference on a track).
    Multi-select import (referenced in place, never copied), bins/folders, multiple
@@ -54,22 +49,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    search + drag-to-track) docked in the shell so every tab reaches it. MCP:
    `import_media`/`list_media`/`list_timelines`/`set_active_timeline`. Big — likely
    2–3 subagent passes (model+import / bins+multi-timeline / UI).
-3. **Export → a top-right button + an Export window** — move Export out of the buried
+2. **Export → a top-right button + an Export window** — move Export out of the buried
    `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
    project spec), frame range, `.cube` bake toggle, output path, progress. Backed by
    the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
    `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
    later (export the Edit tab's active timeline too).
-4. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
+3. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
    ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
    manifest editor (JSON-in to start — visual editor is an open question, see
    `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
    `architecture-lock.md`.
-5. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
+4. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
    timeline ops push before/after snapshots. Ties into the D-032 activity feed.
-6. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
+5. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
    full rewrite for the 3-tab world (currently a stale banner over the pre-pivot doc);
    `00-vision.md`/`01-prd.md`/`02-scope.md` still say "grading only, not an editor";
    `BUGS.md`'s "Known engine constraints" list still names solved items (D-014/34/36).
@@ -149,7 +144,9 @@ temporal depth track, Video Depth Anything (D-036).
 chrome in the shell, `@chroma/ui` started) · project launcher promoted to the app's
 entry screen · `@chroma/ui` rebuilt properly on shadcn/Base UI (D-042) · project
 settings — typed output spec (D-038) · **RapidRAW's DAM/welcome/library/community
-shell removed from the Colorist tab** (D-043, −7,836 LOC).
+shell removed from the Colorist tab** (D-043, −7,836 LOC) · **`@chroma/player`**, the
+shared presentational preview component (viewport + title strip + transport), Editor
+tab migrated to it — Colorist + Motion adoption still open.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 

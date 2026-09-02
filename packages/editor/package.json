@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "description": "Chroma Editing tab (D-039 / D-041) — single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove.",
   "dependencies": {
+    "@chroma/player": "*",
     "@chroma/ui": "*",
     "@tauri-apps/api": "^2.11.1",
     "@xzdarcy/react-timeline-editor": "^1.0.0",

@@ -1,32 +1,25 @@
 /**
- * @chroma/editor — the preview pane + transport bar (D-041).
+ * @chroma/editor — the preview pane (D-041, transport migrated to
+ * `@chroma/player` — D-039 roadmap "Next" item 1).
  *
  * A plain `<img>` fed by `chroma_timeline_frame(playhead)` (a lightweight
  * backend decode→jpeg — no grade, no compositing). Play is a wall-clock
  * `requestAnimationFrame` loop that advances the playhead and refetches,
  * dropping frames to stay real-time (same pattern as the Colorist tab's
- * `ChromaTimeline.tsx`).
+ * `ChromaTimeline.tsx`). This frame-fetch + play-loop logic is tab-owned and
+ * stays here — only the rendered transport JSX (the hand-rolled button row)
+ * moved to `<Player>`, which is purely presentational.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react';
+import { Player } from '@chroma/player';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 
 const SCRUB_LONG_EDGE = 960;
 const PLAY_LONG_EDGE = 640;
-
-function fmtTimecode(frame: number, fps: number): string {
-  const totalSecs = frame / fps;
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor((totalSecs % 3600) / 60);
-  const s = Math.floor(totalSecs % 60);
-  const f = Math.round(frame % fps);
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
-}
 
 export function PreviewPane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -130,56 +123,27 @@ export function PreviewPane() {
   };
 
   return (
-    <div className="flex flex-col min-h-0 flex-1 bg-bg-primary">
-      <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black/40">
-        {frameSrc ? (
+    <Player
+      title="Timeline"
+      surface={
+        frameSrc ? (
           <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
         ) : (
           <div className="text-sm text-text-secondary">
             {decodeErr ? `preview error: ${decodeErr}` : 'no frame'}
           </div>
-        )}
-      </div>
-
-      <div className="shrink-0 flex items-center gap-1 px-3 py-2 border-t border-border-color bg-surface text-text-primary">
-        <button
-          type="button"
-          className="p-1 rounded hover:bg-hover-color"
-          onClick={() => step(-1)}
-          title="Step back one frame"
-          aria-label="Step back one frame"
-        >
-          <SkipBack size={15} />
-        </button>
-        <button
-          type="button"
-          className="p-1 rounded hover:bg-hover-color"
-          onClick={() => setPlaying(!playing)}
-          title={playing ? 'Pause' : 'Play'}
-          aria-label={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? <Pause size={15} /> : <Play size={15} />}
-        </button>
-        <button
-          type="button"
-          className="p-1 rounded hover:bg-hover-color"
-          onClick={() => step(1)}
-          title="Step forward one frame"
-          aria-label="Step forward one frame"
-        >
-          <SkipForward size={15} />
-        </button>
-        <span className="ml-2 text-xs tabular-nums text-text-secondary">
-          {fmtTimecode(playhead, fps)} / {fmtTimecode(lastFrame, fps)}
-        </span>
-        <span className="text-xs tabular-nums text-text-secondary">
-          · f{playhead} / {lastFrame}
-        </span>
-        <div className="flex-1" />
-        <span className="text-[11px] text-text-secondary/70">
-          preview ≤ {playing ? PLAY_LONG_EDGE : SCRUB_LONG_EDGE}px · {fps.toFixed(2)} fps
-        </span>
-      </div>
-    </div>
+        )
+      }
+      frame={playhead}
+      total={lastFrame}
+      fps={fps}
+      playing={playing}
+      onPlayPause={() => setPlaying(!playing)}
+      onStep={step}
+      onSeek={(f) => {
+        setPlaying(false);
+        setPlayhead(f);
+      }}
+    />
   );
 }
