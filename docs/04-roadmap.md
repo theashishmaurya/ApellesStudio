@@ -1,473 +1,157 @@
 # 04 — Roadmap
 
-Phased. Each phase ends at a demoable checkpoint. Timelines are rough solo-dev estimates,
-not commitments.
+Reorganized 2026-09-02 (was pure chronological append — unreadable after 40+ decisions).
+**Now / Next / Later / Shipped**, not phases. Full rationale for any `D-NNN` lives in
+`docs/08-decisions.md` — this file tracks *state*, not the reasoning; don't duplicate
+prose here that already exists there. Timelines are rough solo-dev-with-Claude
+estimates, not commitments (see `docs/notes/product-direction.md` §5 for how those
+numbers are actually calibrated).
 
 ---
 
-## D-039 — 3-tab restructure (Edit / Motion / Colorist) migration
+## Now — what's live, by tab
 
-The architecture lock (`docs/08-decisions.md` D-039, `docs/notes/architecture-lock.md`):
-thin-shell/fat-core Cargo + npm monorepo workspace. Incremental, `cargo test` green each
-commit.
+- **Colorist** — the full pre-pivot grade pipeline: primary/curves/wheels/LUT, masks
+  (shape + AI subject, composable, keyframeable), scopes, `match_to_reference`,
+  depth-haze, subject tracking (SAM2+ViTMatte) + temporal depth track (VDA), export +
+  `.cube` bake, `grade.json`, the agent activity feed + `request_human`, an eval
+  harness. MCP surface: 38+ tools. **RapidRAW's DAM/welcome/library shell is gone**
+  (D-043) — it's the grading editor only now.
+- **Editor** — MVP: single-video-track timeline (`chroma-timeline` + `react-timeline-editor`),
+  scrub/play preview (independent of the Colorist render path), reorder/trim/split/remove,
+  persisted in the project. No multi-track, audio, transitions, or transcript cut yet.
+- **Motion** — placeholder tab. The engine (`packages/motion-engine/`, 7 primitives +
+  manifest compiler) is fully functional, just not wired to a tab UI. **Gap — see Next.**
+- **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
+  screen (opens on the launcher, tabs appear once a project is open), `@chroma/ui`
+  (shadcn/Base UI, 18 components, themed).
+- **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
+  (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
+  `docs/notes/architecture-lock.md`.
 
-- [x] **Migration step 1 — workspace skeleton** (D-040 + D-039 skeleton commit, 2026-09-02):
-  de-submodule the fork into `app/` (D-040); root `Cargo.toml [workspace]` +
-  `crates/{chroma-types,chroma-timeline,chroma-grade-model}` stubs (each `cargo check`
-  clean, `it_builds` test); root `package.json` npm workspaces +
-  `packages/{tokens,ui,bridge,editor,motion,shell}` stubs; the Remotion motion engine
-  moved in as `packages/motion-engine/` (`@chroma/motion-engine`); `app` → `@chroma/app`.
-  **No real code moved; the whole workspace builds (`cargo build`) + `npm install` hoists.**
-- [x] **3-tab shell (`@chroma/shell`) + placeholder tabs** (2026-09-02): `@chroma/shell`
-  is a real package — `<Shell tabs={...}/>` (tab bar + persisted `useShellStore` +
-  Cmd/Ctrl+1/2/3), tab content injected via a registry prop so the shell stays
-  react+zustand-only. `@chroma/editor` (`<EditorTab/>`) + `@chroma/motion` (`<MotionTab/>`)
-  are placeholder tabs. `app/src/main.tsx` mounts `<Shell>` with the Colorist tab = the
-  whole existing app, untouched (its root `h-screen` → `h-full`). tsc baseline 74
-  unchanged; `vite build` green. Brought forward from step 6.
-- [x] **Editor tab MVP** (D-041, 2026-09-02): `chroma-timeline` made real
-  (`Timeline::from_shots`, `Track::clip_at`, `Timeline::duration`, reorder / trim /
-  split / remove ops, 9 tests); `app/src-tauri/src/chroma/edit.rs` bridge — 3 commands
-  (`chroma_timeline_get` / `_set` / `_frame`), timeline persisted in `ProjectManifest`
-  (`#[serde(default)]`, additive), a standalone decode→jpeg preview independent of the
-  Colorist render path; `@chroma/editor` real tab — single-video-track
-  `@xzdarcy/react-timeline-editor` timeline + scrub/play preview + `useEditorTimelineStore`.
-  Deferred: multi-track / audio / transitions / transcript / compositing / grade-in-preview
-  / OTIO export / MCP.
-- [x] **UI pass** (2026-09-02): window chrome → `@chroma/shell` (`WindowChrome.tsx` —
-  traffic lights + Win/Linux controls + drag region), tabs centered, RapidRAW
-  `<TitleBar/>` no longer rendered, `.macos-window-shell` on the shell root;
-  `@chroma/ui` package started (Button / Switch / Input / Text / CollapsibleSection
-  extracted with app-side re-export shims — `Slider` + app-coupled components deferred);
-  Editor tab transport + toolbar rebuilt with `lucide-react` icons + a `@chroma/ui`
-  `<Button>` instead of hand-crafted text buttons. See D-039 migration log step 6b.
-- [x] **Project launcher = the app entry screen** (D-039 migration log step, 2026-09-02):
-  the app now opens on the launcher with no tab bar (just the chrome bar); opening or
-  creating a project flips `<Shell>` into the 3-tab layout, and a "‹ Projects" button in
-  the chrome bar calls `closeProject()` to come back. `<Shell>` gained `projectOpen` /
-  `launcher` / `onCloseProject` props (it never imports `ProjectLauncher` — app → shell
-  only); the composition root (`app/src/main.tsx`) is a small `Root` that reads
-  `useSessionStore` and does the routing. The Colorist tab (`<App/>`) dropped its
-  `activeView: 'projects'` branch (`useUIStore` default → `'editor'`); tab panels stay
-  mounted under the launcher so the MCP control bridge keeps running. Follow-ups: reopen
-  the last project on launch (no persisted "last project" today); moving `ProjectLauncher`
-  + the session store into `@chroma/bridge` / a `@chroma/project` fe package.
-- [x] **`@chroma/ui` on shadcn/ui + Base UI** (D-042, built 2026-09-02) — canonical
-  shadcn (`components.json`, `lib/utils`, `components/ui/*`), 18 structural components on
-  Base UI (`@base-ui/react` 1.7.0), themed to the `--app-*` tokens (one `@theme` source,
-  `--color-accent` kept as brand / shadcn hover → `bg-muted`). 5 hand-extracted rebuilt
-  (shims stay; Switch shim → new `LabeledSwitch`). `@chroma/shell` + `@chroma/editor`
-  toolbar migrated. RapidRAW's domain components (ColorWheel / LUT / DepthRangePicker /
-  grading sliders) stay in `app/`. Deferred: typography unification, Colorist panel
-  migration (`Dropdown` → `Select`/`DropdownMenu`).
-- [x] **D-043 — Colorist tab = grading editor only; strip RapidRAW's DAM/welcome/library
-  shell** (owner directive 2026-09-02, **built 2026-09-02**). RapidRAW's photo-manager
-  shell no longer leaks through the Colorist tab: the "Welcome back / Continue Session /
-  Add Folder" home screen (`MainLibrary.tsx`), the "Sources" folder-tree + "Library"
-  photo grid (`LibraryView.tsx` + `panel/library/*` + `FolderTree.tsx`), albums, culling,
-  the web "Community" presets page, the "Home" button, and RapidRAW branding are all
-  deleted — Colorist renders only the editor, with a `ColoristEmptyState` when no shot is
-  selected. Full removal list, LOC delta, and the two analysis misses (found + resolved
-  during the surgery): `docs/09-engine-notes.md` D-043 entry, `docs/08-decisions.md`
-  D-043 "Built" section. Overrides D-003 for the shell layer (the grading engine stays
-  untouched). Media pool + global Sources panel (below) is the real replacement, still
-  queued.
-- [ ] **`@chroma/player` — one shared preview component for all 3 tabs** (requested
-  2026-09-02, Palmier-viewer-style). A **presentational** package: a canvas viewport +
-  a title strip (`‹ ›` nav, name, `…` menu) + a transport bar — timecode
-  `cur / total`, skip-start / step-back / play-pause / step-fwd / skip-end, and a right
-  cluster: snapshot, fullscreen, playback-rate (`1×`), zoom (`Fit` / fill / %).
-  Props: `{ frame, total, fps, playing, rate, zoom, onPlayPause, onStep, onSeek,
-  onSkipStart/End, onRateChange, onZoomChange, onSnapshot, onFullscreen }` + a
-  `surface` slot = whatever the tab renders inside (an `<img>` for the Editor's
-  `chroma_timeline_frame`, the wgpu native-surface region for the Colorist grade
-  preview, a `@remotion/player` for Motion). Each tab owns its frame source + wires the
-  callbacks to its own transport logic. Editor tab adopts it first (its hand-rolled
-  transport moves into the player), Colorist + Motion follow. **Queued after the launcher
-  move.**
-- [ ] **Media pool + import + multiple timelines** (requested 2026-09-02, Palmier/Resolve
-  media-pool style). The Editor MVP (D-041) just uses the project's D-037 `shots` as the
-  timeline clips directly — no import, no library, one timeline. Needed:
-  - **`MediaItem` model** — `{ id, kind: video|audio|image|generated, source_path, name,
-    duration, thumbnail, offline }`, project-level (`ProjectManifest.media`). **Unify
-    with `shots`:** the media pool is *all* imported media; a Colorist "shot" is a
-    media item being graded; an Editor "clip" is a windowed reference to a media item on
-    a track. D-037 `shots` migrate into / become a view of the pool.
-  - **Import** — file picker (video/audio/image, multi-select) → probe (duration,
-    thumbnail via `chroma::video::extract_thumb`) → add to pool. Referenced in place,
-    never copied (D-037 rule). Relink for offline items (extend D-037's shot relink).
-  - **Bins / folders** — organise the pool (Palmier's `cards-v4`, `explainers`, `score`
-    folders in the screenshot).
-  - **Multiple timelines per project** — `ProjectManifest.timelines: Vec<{ id, name,
-    timeline: chroma_timeline::Timeline }>` (was `timeline: Option<Timeline>`), one
-    active; create / rename / duplicate / delete; a timeline itself can be a pool item
-    ("Timeline 1" nested-sequence, deferred).
-  - **Library / Sources panel UI** — a **global** media-pool panel shared by all tabs
-    (mainly the Editor): thumbnail grid + Import button + folder tree + smart search +
-    drag-a-pool-item-onto-a-track. `@chroma/ui` components. Lives in `@chroma/shell` or a
-    `@chroma/media` fe package so every tab can dock it.
-  - **Remove RapidRAW's "Sources" panel from the Colorist tab** (requested 2026-09-02):
-    the left folder-browser / albums panel (`app/src/App.tsx` → `LibraryView` /
-    `panel/library/*`) goes — the Colorist grades whatever media item is selected in the
-    shared pool. Keep the components unrouted (D-003) but the Colorist layout drops the
-    left panel.
-  - MCP: `import_media` / `list_media` / `list_timelines` / `set_active_timeline` so the
-    agent can build edits too.
-  Schema: additive `chroma.project/1` (like D-038/D-041). **Big — its own decision
-  (D-0xx) + likely 2–3 subagent passes (model+import, bins+multi-timeline, UI).**
-- [ ] **Export → a top-right button + an Export window** (requested 2026-09-02). Today
-  RapidRAW's `ExportPanel` is a right-side panel toggled by `isLibraryExportPanelVisible`.
-  Wanted: an **Export** button top-right of the Colorist tab (near undo/redo/eye/
-  fullscreen) that opens a proper **Export dialog/window** with all settings — codec
-  (ProRes / H.264 …), resolution (+ the D-038 project output spec as the default), frame
-  range, `.cube` LUT bake toggle, output path, progress. Backed by the existing
-  `chroma_export_video` / `chroma_bake_lut` (D-022) + the `export` bridge op. Eventually
-  the Export window is shell-level (export the active timeline from the Edit tab too), but
-  Colorist-first. `@chroma/ui` (needs `Dropdown` — extract it, or a local one).
-- [ ] **Global undo/redo** (requested 2026-09-02): a shell-level Cmd/Ctrl-Z / Cmd-Shift-Z
-  history spanning all tabs. A `@chroma/history` store holding a unified stack of
-  `{ tab, label, undo(), redo(), ts }`; the Colorist's existing 50-deep `useEditorStore`
-  history feeds/delegates into it (don't rebuild it); Editor timeline ops push
-  before/after snapshots; the shell owns the keyboard listener. Ties into D-032's activity
-  feed. **Queued behind the UI pass (overlapping files).**
-- [ ] Migration step 2 — extract leaf pure crates (`chroma-types`, `chroma-grade-model`,
-  `chroma-timeline`) for real.
-- [ ] Steps 3–7 — `chroma-gpu` / `chroma-media` / `chroma-project`; `chroma-agent` /
-  `chroma-ai`; `chroma-grade` + thin `chroma-app`; frontend `@chroma/{tokens,ui,bridge}`;
-  the project launcher (D-037) moves from inside the Colorist tab up to `@chroma/shell`
-  (a project spans all 3 tabs); `chroma-compositor` + `@chroma/editor` greenfield.
+Run it: `npm run tauri:dev` from the repo root.
 
 ---
 
-## Working queue — round 2 (to v1)
+## Next — the active queue, in order
 
-Round 1 done (D-021…D-025): scopes/`inspect_color`, export + `.cube`, mask
-composition ops, depth-haze, `grade.json`. Round 2, in order:
+Each of these was scoped in a real conversation (owner-requested or -directed); detail
+lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they share hot
+files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
+crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
-1. [x] **`match_to_reference` auto-apply** (D-026, 2026-09-01) — the gap already
-   computes (D-021); this closes the loop: measure the scope gap to a reference
-   image, apply a **damped** primary correction (exposure / temperature / tint /
-   contrast / saturation) with per-step ceilings + roll-back-on-worse +
-   best-snapshot, re-measure, iterate. `match_reference` op in
-   `useChromaControl.ts`; MCP `match_to_reference(reference, strength?, max_iters?,
-   tolerance?)`. Primary only (a match is a balance) — creative/curve/mask work is
-   separate. Detail: `docs/notes/match-reference.md`.
-2. [x] **Per-mask blur** (D-027, 2026-09-01) — `blur` (0–100) on every mask's
-   adjustments; the grade shader blends the masked region toward its existing
-   ~40 px `structure_blur` pre-pass, weighted by `mask · blur/100` (approach (a):
-   one struct field, ~20 wgsl lines, no new pass). Completes depth-haze
-   (`handleAddDepthHaze` += `blur`) and unblocks "blur the background" as a mask
-   op. Slider in `Details.tsx`, `set_mask_adjust` whitelist, new `add_mask` op.
-   Limit: fixed radius, ungraded blur sample. Detail: `docs/notes/mask-blur.md`.
-3. [x] **Rust-managed sidecar spawn** (D-028, 2026-09-01) — the app starts/monitors
-   `ai/` (venv-aware), no manual `ai/run.sh`. Resolve python/venv → spawn
-   `uvicorn` → pipe logs into `app.log` → poll `/health` → restart on crash with
-   capped backoff → `child.kill()` on app exit. Detects + leaves an already-
-   running external sidecar alone. `chroma_ai_status` for a future UI
-   indicator. Detail: `docs/notes/sidecar-lifecycle.md`.
-4. [x] **Strip `@clerk/react`** (D-029, 2026-09-02) — removed the community-login
-   dep from the frontend. `<ClerkProvider>` + the hard-coded dev publishable key
-   gone from `App.tsx`; `useUser`/`useAuth`/`useClerk` replaced with local
-   null-returning stubs at the 3 call sites (`useAiMasking.ts`, `AIPanel.tsx`,
-   `SettingsPanel.tsx`); the `<SignIn>` / `<CloudDashboard>` block in Settings
-   replaced with a one-line "Chroma runs all AI locally" note. Dep dropped from
-   `package.json` + lockfile. Kills the `<TitleBar>` React error and the Clerk
-   dev-key warnings.
-5. [x] **Smooth playback / proxy** (D-030, 2026-09-02) — one persistent
-   `ffmpeg -f rawvideo` sequential-decode pipe per clip (`src/chroma/decode_pipe.rs`):
-   forward step / short scrub = a single raw-frame read, jump = a keyframe-seek
-   respawn, no per-frame PNG round-trip. Decode throughput ~1.6 → ~39 fps on C019.
-   `chroma_seek` uses it (falls back to `video::decode_frame` on error). Export's
-   `spawn_decoder` also seeks now (`-ss`+`-copyts`+timestamp `select`) so a
-   `from > 0` range no longer decodes from frame 0, matte-safe. Proxy files
-   deferred. Detail: `docs/notes/smooth-playback.md`.
-   - [x] **Frontend regrade ceiling closed** (D-031, 2026-09-02) — the "per-frame
-     frontend regrade + IPC" D-030 left open. Fused `chroma_play_frame` command
-     (scaled decode + swap + one preview job = one IPC call), ~1280 px playback
-     grade res (ffmpeg does the downscale, not the CPU), rAF wall-clock loop in
-     `ChromaTimeline`. Headless harness on C019: **36.5 fps** at 1280 px (was
-     14.5 fps at 4K); 50.9 fps at 960 px. Full-res on pause; scrub unchanged.
-     Detail: `docs/notes/playback-30fps.md`.
+1. **`@chroma/player`** — one shared preview component all 3 tabs embed: canvas
+   viewport + title strip (`‹ ›`, name, `…`) + transport (timecode, skip/step/play,
+   snapshot, fullscreen, rate, zoom). Presentational only — each tab supplies its own
+   frame source (Editor's `chroma_timeline_frame`, Colorist's wgpu surface, Motion's
+   `@remotion/player`) via a `surface` slot. Editor adopts it first (its hand-rolled
+   transport moves in), Colorist + Motion follow.
+2. **Media pool + import + multiple timelines** — the actual "Sources" replacement.
+   `MediaItem` model unified with D-037 `shots` (pool = all media; a Colorist "shot" =
+   a pool item being graded; an Editor "clip" = a windowed reference on a track).
+   Multi-select import (referenced in place, never copied), bins/folders, multiple
+   named timelines per project, a global Sources/Library panel (thumbnails + import +
+   search + drag-to-track) docked in the shell so every tab reaches it. MCP:
+   `import_media`/`list_media`/`list_timelines`/`set_active_timeline`. Big — likely
+   2–3 subagent passes (model+import / bins+multi-timeline / UI).
+3. **Export → a top-right button + an Export window** — move Export out of the buried
+   `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
+   project spec), frame range, `.cube` bake toggle, output path, progress. Backed by
+   the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
+   `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
+   later (export the Edit tab's active timeline too).
+4. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
+   ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
+   manifest editor (JSON-in to start — visual editor is an open question, see
+   `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
+   `architecture-lock.md`.
+5. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
+   `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
+   existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
+   timeline ops push before/after snapshots. Ties into the D-032 activity feed.
+6. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
+   full rewrite for the 3-tab world (currently a stale banner over the pre-pivot doc);
+   `00-vision.md`/`01-prd.md`/`02-scope.md` still say "grading only, not an editor";
+   `BUGS.md`'s "Known engine constraints" list still names solved items (D-014/34/36).
 
-Round 3 (after): [x] **`request_human` + a GUI "agent activity" feed**
-(per-change diff + undo) (D-032, 2026-09-02) — every mutating bridge op records
-one entry (summary + per-field grade diff + jump-to-here undo) in a new
-`useAgentStore`; `request_human(reason, roi?)` is a non-blocking op/tool that
-posts a banner + optional canvas ROI, cleared by the user, polled via
-`get_state().pendingHumanRequest`.
+### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
-[x] **Multi-shot session model + shot strip** (D-033, 2026-09-02) — a
-process-global `Session { shots: Vec<Shot>, active }` in `chroma/state.rs`
-(`current_video()` unchanged, returns the active shot; `set_current_video`
-upserts by path), `chroma/session.rs` commands (list / add / set-active / remove
-/ thumbnail), a frontend `useSessionStore` (per-shot grade cache + switch/copy
-thunks) + `components/chroma/ShotStrip.tsx`, per-shot D-032 activity feeds
-(`useAgentStore.scopeToShot`), MCP `list_shots` / `set_active_shot` / `add_shots`
-(24 → 27). **Lightweight by decision** — the per-clip `grade.json` sidecar
-(D-025) is still the on-disk per-shot document; no `.chroma` project bundle.
-Deferred follow-ups: `.chroma/session.json` reopen (shot-path list, not a
-bundle); drag-drop reorder; copy-grade-to-any-shot picker (v1 = to the next
-shot); auto-load each shot's `grade.json` on add; stills as shots. Detail:
-`docs/notes/multi-shot.md`. **The `.chroma/session.json` reopen deferral landed
-as D-037** — the project model + launcher (`docs/notes/project-model.md`).
-
-Multi-subject batch tracking (D-017) — **deferred to Phase 4** (2026-09-02, user
-call): independent per-subject tracking already works; the remaining bit is a
-pure perf optimization (batch N objects into one SAM propagation pass instead of
-one pass each) that only matters when tracking 2+ subjects at once — niche for a
-talking-head grade. Tracked under Phase 4.
-
-Then: ~~mask keyframes~~ **[x] mask
-keyframes (D-034, 2026-09-02)** — a shape sub-mask carries
-`parameters.chromaKeyframes` (`[{frame, params}]`); the engine interpolates its
-geometry per source frame at render time (one hook in `generate_sub_mask_bitmap`,
-mirroring D-019), so it glides on scrub / playback / export. Linear scalars,
-shortest-arc rotation, brush points lerp-or-snap. New `chroma/keyframes.rs`
-(14 tests) + `utils/maskKeyframes.ts` + `components/chroma/MaskKeyframeBar.tsx`
-(◆ button + diamond track) + interpolated canvas overlay + drag-writes-key. MCP:
-`add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` /
-`clear_mask_keyframes` (27 → 31). Deferred: grade-adjustment keyframing (separate
-item), easing handles, keyframing mode/invert, a full dope sheet. Detail:
-`docs/notes/mask-keyframes.md`.
-
-[x] **Agent eval harness (D-035, 2026-09-02)** — a new top-level `eval/`: a
-7-task data set (`tasks.json`) + an **offline** scorer (`score.mjs` — ports
-`computeScopes`/`computeGap` from `scopes.ts` + an *approximate* primary-grade
-operator so a `grade.json` scores with no app/agent/network) + a committed
-`baseline.json` floor. Score = normalised inverse residual scope gap to the goal
-with hard-fail gates (clipping introduced, mask background moved, over-grade).
-The unfixed floor scores mean 0.452 (2/7); 7 hand-authored good grades score
-0.975 (7/7, all up vs baseline); `bad_examples/` score 0.0 with gates firing —
-the scorer ranks good ≫ bad offline. The closed loop (drive the agent over MCP →
-`save_grade` → score) is a runbook, `eval/run.md`. MCP: added the adversarial
-"assume the grade is still flawed" framing to `SCOPE_DISCIPLINE` / `inspect_color`
-(tool count unchanged, 31). Zero engine changes. Detail:
-`docs/notes/eval-harness.md`.
-
-Then Phase 4 release (packaging/signing, external-reader docs + README + demo,
-decide name/license/headline — D-002/D-007/D-010).
+Extract the leaf pure crates for real (`chroma-types`, `chroma-grade-model`,
+`chroma-timeline` — currently stubs) → `chroma-gpu`/`chroma-media`/`chroma-project` →
+`chroma-agent`/`chroma-ai` → `chroma-grade` wraps `app/`, `chroma-app` goes thin →
+**`chroma-compositor`** (the real multi-track engine) + `@chroma/editor` greenfield.
+This is where isolated-worktree parallel subagents start making sense — each crate is
+self-contained by design (see the "worktrees" discussion, 2026-09-02: file-boundary
+discipline is the actual lever, not the worktree flag itself).
 
 ---
 
-## Round 1 — done (2026-09-01)
+## Later — researched, designed, deliberately not built yet
 
-1. [x] **Scopes + `inspect_color`** (D-021, 2026-09-01) — `app/src/utils/scopes.ts`,
-   pure JS off the captured preview (not WGSL — the agent path, separate from the
-   UI's Rust waveform). `computeScopes` (black/white points, luma + per-channel
-   clip %, per-zone means, warm-cool + green-magenta cast, 12-bin hue histogram,
-   mean saturation), parade + vectorscope PNGs, `computeGap` (reference→knob
-   hints). MCP `inspect_color(frame?, reference?)` + `sample` / `sample_region`;
-   every mutating op response now also carries `scopes`. Scope-first discipline in
-   the tool docstrings + `mcp/README.md`. Detail: `docs/notes/scopes.md`.
-2. [x] **Export** (D-022, 2026-09-01) — `app/src-tauri/src/chroma/export.rs`:
-   one `ffmpeg -f rawvideo` decode pipe → `render_core::render` per frame (one
-   GPU ctx + `OwnedRenderCaches` for the run; `transform_hash = frame`) → one
-   `ffmpeg` encode pipe. ProRes 422 HQ (`prores_ks -profile:v 3`) / H.264
-   (`libx264 -crf 18`). Per-frame tracked matte via `state::set_current_frame`
-   before each grade (D-019). `bake_primary_lut` — `size³` identity lattice
-   through the primary grade only → `.cube` (warns on dropped masked layers).
-   Commands `chroma_export_video` (bg + `chroma_export_progress` poll) /
-   `chroma_bake_lut`; frontend `export` / `export_progress` bridge ops; MCP
-   `export(kind, path?, from?, to?)`. Detail: `docs/notes/export.md`.
-3. [x] **Mask refinement = RapidRAW's composition** (D-023, 2026-09-01) —
-   NOT a +/− point mechanism. "Subtract from Mask → Subject" already does
-   edge-aware SAM exclude. MCP exposes it: `add_subject_mask(mode)`,
-   `add_component(mask_id, type, mode)` (add a Subject/Radial/Linear/Brush
-   sub-mask to an existing container, default subtractive), `set_submask_mode`.
-   No +/− point UI built; the sidecar/engine `points` support stays unused.
-4. [x] **Depth-haze preset** (D-024, 2026-09-01) — one action → a "Depth Haze"
-   mask: a full-range `ai-depth` sub-mask **inverted** (mask value == distance),
-   graded with negative `dehaze` (adds haze) + `saturation -25` + `blacks +10` +
-   `shadows +8`, all × `amount`. Depth is a **static** bake (per-frame /
-   temporal smoothing deferred); `chroma_seek` busts `ai_state.depth_map` so a
-   re-apply on a new frame is correct. `useAiMasking.handleAddDepthHaze`, an
-   "Add depth haze" button, MCP `apply_haze({amount?, protect_subject?})`. Also
-   landed: `useChromaControl` mounted app-level + `open(path)` op. Detail:
-   `docs/notes/depth-haze.md`.
-5. [x] **`grade.json` schema + load/save** (D-025, 2026-09-01) —
-   `app/src-tauri/src/chroma/grade.rs`. v1 = a **versioned, documented wrapper**
-   around RapidRAW's `adjustments` (`{schema:"chroma.grade/1", shot, adjustments,
-   notes}`), NOT `docs/06`'s ordered `stack` (that's the v2 node graph, D-005).
-   Mask mattes externalized: static → `<name>.mattes/<subId>.png` (`{"$matte"}`),
-   tracked → `{"$trackDir"}` (referenced, not copied). `chroma_save_grade` /
-   `chroma_load_grade` + a `chroma.grade/<major>` migration gate. Frontend
-   `get_grade` / `save_grade` / `load_grade` ops; MCP 3 tools. One grade per open
-   clip — full session/shot model still open. Detail: `docs/notes/grade-json.md`.
+No urgency — each needs an earlier item to land first, or is a bigger bet.
+
+- **Believable AI background replacement** — matte the tracked subject over a
+  still/plate/generated BG + the integration stack (light wrap, grade match via
+  `match_to_reference`, relight-to-BG via the depth-driven puck relight, defocus +
+  grain match). Needs `chroma-compositor` + the relight work. v1 = static-camera only.
+  `docs/notes/background-replace.md`.
+- **Interactive relight (puck UI) + photoreal bake** — deterministic depth-driven
+  light pucks ship early (real-time); RelightVid diffusion bake is the v3 upgrade for
+  photoreal. `docs/notes/relight-research.md`.
+- **Visual understanding for the Editor tab** — temporal (Qwen3-VL, local default) +
+  spatial (SAM2/YOLO, already have, just under-exposed) → natural-language footage
+  search, B-roll auto-tagging, shot classification, auto-reframe hints, highlight
+  detection. Needs the media pool first. First concrete task: a real local throughput
+  benchmark (current numbers are extrapolated, not measured). Molmo 2 stays
+  excluded from shipping (licence). `docs/notes/video-search.md`.
+- **Multi-subject batch tracking** (D-017) — independent per-subject tracking already
+  works; batching N objects into one SAM propagation pass is a pure perf optimization,
+  niche for a single-subject talking-head grade.
+- **OTIO / Palmier session import** — land a cut into a `.chroma` project (D-037).
+- ProRes export round-trip verified with Palmier's `swap_clip_media`.
+- **Packaging** — signed macOS build, sidecar + its Python bundled, models
+  auto-downloaded (not lazy-fetched at first use, for a shipped build).
+- `docs/` cleaned for external readers, a real README, a 90-second demo.
+- **The three open product decisions** — name (D-010), licence (D-002, leaning AGPL),
+  v1 headline feature (D-007). All shift under the 3-tab framing; not re-decided since.
+- Node graph, ACES/HDR (OpenColorIO); CoTracker planar tracking + bezier roto;
+  film-emulation chain; Windows/Linux + batch/headless mode; OFX plugin export (the
+  gyroflow model); a public MCP contract + web review viewer.
 
 ---
 
-## Phase 0 — Scaffolding & spikes  ·  ~1 week
+## Shipped — terse history (full rationale lives in `docs/08-decisions.md`)
 
-- [x] Repo, submodule (RapidRAW → `engine/`), docs
-- [x] `CLAUDE.md` working rules
-- [x] Read `app/src-tauri` — first pass (`docs/09-engine-notes.md`): grade path mapped,
-      AI stack is ONNX/`ort` in-process (D-009 revised), toolchain gap found (B-001)
-- [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
-- [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
-- [x] **Spike D-006** — *not needed*: `WgpuDisplay` already renders to a native wgpu surface. Decided.
-- [x] App builds (7m18s) + launches — window opens, ONNX runtime loads, no GPU errors. Frontend throws a `<TitleBar>` React error + Clerk auth warnings (the `@clerk/react` community-login dep — strip it early, irrelevant to Chroma). *(Stripped: D-029, 2026-09-02.)*
-- [x] ffmpeg decode → 4K Rec709 frame from `C019.MOV` works (`scratch/frame_c019_10s.png`). The frame→grade half is blocked on **D-014** (render core is Tauri-coupled) — moved to Phase 1 task 1.
-- [x] **SAM 2 running** (D-012 revised → Python sidecar via `ultralytics`, MPS): `ai/server.py` `/segment` produces a subject matte on the 4K C019 frame. YOLO auto-person + box + multi-point (+/−) prompts. Solves the hands problem (single frame).
-- [x] **Matte edge refine** (D-016): SAM 2 staircases at 4K → added trimap → **ViTMatte** stage in `/segment` (`refine: true` default). Clean edge, ~2.8s warm. Worklog: `docs/notes/matte-edge-pipeline/`.
-- [x] Fork model decided (D-003): standalone project, hard fork, no upstream coordination.
+Chronological, one line each. This replaces the old Phase-0-through-4 / Round-1-2-3
+narrative sections — that detail wasn't wrong, it was just duplicated from the decision
+log and made the file unscannable.
 
-**Checkpoint:** a graded video frame on screen, the architecture spikes answered.
+**Phase 0–3 (pre-pivot foundation, 2026-08-31 → 2026-09-01):** repo + fork decided
+(D-003) · toolchain fixed (B-001) · `render_core` Tauri seam (D-014) · video I/O via
+ffmpeg CLI (D-015) · SAM2 + ViTMatte matte pipeline (D-016) · SAM2 memory-propagation
+tracking (D-018) · render-time tracked matte (D-019) · control server + MCP bridge
+(D-020) · scopes + `inspect_color` (D-021) · export + `.cube` bake (D-022) · mask
+composition ops, not +/− points (D-023) · depth-haze preset (D-024) · `grade.json` v1
+(D-025).
 
----
+**Round 2 (2026-09-01→02):** `match_to_reference` auto-apply (D-026) · per-mask blur
+(D-027) · Rust-managed AI sidecar (D-028) · stripped `@clerk/react` (D-029) ·
+persistent decode pipe (D-030) · real-time playback ≥30fps (D-031).
 
-## Phase 1 — Video grading core  ·  ~3–4 weeks
+**Round 3 (2026-09-02):** agent activity feed + `request_human` (D-032) · multi-shot
+session + shot strip (D-033) · mask keyframes (D-034) · agent eval harness (D-035) ·
+temporal depth track, Video Depth Anything (D-036).
 
-- [x] `src/chroma/video.rs` — ffmpeg probe + single-frame decode (D-015). Tests pass on the real 4K C019 take.
-- [x] **Minimal video-open path** — video loads as frame 0 into the existing pipeline; filmstrip + import filter accept video. Built, tests pass. Needs a visual confirm (open C019 in the app).
-- [x] **D-014: `render_core` seam** — `src-tauri/src/render_core.rs`: `render(ctx, caches, base, req, …) -> DynamicImage` + `init_gpu_context()` (device+queue, no surface). `process_and_get_dynamic_image_inner` now takes `RenderCaches` not `tauri::State`. GUI path unchanged. Headless API unused until the control/MCP server.
-- [x] Video I/O: per-frame grade → ProRes/H.264 encode (D-022, 2026-09-01);
-      export decoder now seeks instead of walking from frame 0 (D-030, 2026-09-02).
-- [x] Transport bar (`ChromaTransport`) — play/step/scrub; `chroma_seek` decodes the frame + re-renders with the grade. Decode via the persistent pipe (D-030); frontend stepper + per-frame regrade unchanged.
-- [x] Timeline view (`ChromaTimeline`) — replaces the filmstrip when a video is loaded: a 48-frame thumbnail strip (`chroma_frame_thumbnails`, cached), click/drag to seek, playhead marker.
-- [x] Smooth playback — persistent sequential-decode pipe (D-030, 2026-09-02;
-      `src/chroma/decode_pipe.rs`) + fused `chroma_play_frame` command / reduced
-      playback res / rAF wall-clock loop (D-031, 2026-09-02) — **36.5 fps on C019
-      4K** in the headless harness. Proxy files deferred.
-- [x] Shot / session model + `grade.json` load/save/validate — `grade.json`
-      (D-025); multi-shot `Session` + shot strip + per-shot grade/feed (D-033,
-      2026-09-02); **project model + launcher (D-037, 2026-09-02)** — a
-      `<name>.chroma` dir (`project.json` + `thumb.jpg` + `grades/`), a project
-      launcher replacing RapidRAW's Library view as the home screen, media
-      referenced in place + relink for offline media, debounced autosave. Clip
-      in/out points still open. The reserved per-project `settings` field is now
-      a typed output spec — resolution / fps / colour space (**D-038,
-      2026-09-02**; colour space stored + surfaced only, colour management stays
-      D-004). Deferred polish: project rename/delete/duplicate + search from the
-      launcher, drag-to-import, a Settings-panel folder row, batched open-time
-      decode.
-- [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
-- [x] Shot strip (selector) — `components/chroma/ShotStrip.tsx` (D-033, 2026-09-02)
-- [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)
-- [x] `.cube` bake of the primary grade (D-022, 2026-09-01 — `bake_primary_lut`)
-- [ ] All inherited adjustment/mask panels working against a video frame, not a still
+**The 3-tab pivot (2026-09-02, D-039):** Palmier closing triggered the decision — Edit
+/ Motion / Colorist, Rust-native/small-binary constraint locked, architecture designed
+(`architecture-lock.md`) · de-submoduled to a monorepo (D-040) · workspace skeleton +
+3-tab shell · Editor tab MVP, `chroma-timeline` made real (D-041) · UI pass (window
+chrome in the shell, `@chroma/ui` started) · project launcher promoted to the app's
+entry screen · `@chroma/ui` rebuilt properly on shadcn/Base UI (D-042) · project
+settings — typed output spec (D-038) · **RapidRAW's DAM/welcome/library/community
+shell removed from the Colorist tab** (D-043, −7,836 LOC).
 
-**Checkpoint:** grade a talking-head clip by hand, scrub it, export a `.cube` that matches in Palmier.
-
----
-
-## Phase 2 — AI sidecar  ·  ~3–4 weeks
-
-- [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: Rust-managed spawn + supervise (D-028, 2026-09-01) — `ai/run.sh` still works standalone.
-- [x] **Depth for video — a real temporal depth track** (D-036, 2026-09-02). Not
-      per-frame Depth Anything V2 + a hand-rolled EMA — a **temporally-consistent
-      video-depth model** (Video Depth Anything — Small, vits, Apache-2.0), the
-      same thing DaVinci Resolve's z-depth moved to. Runs in the `ai/` sidecar
-      (`/depth_track` job mirroring `/track`, cross-frame attention is the
-      "too-fragile-to-ONNX" case, D-009 precedent); per-frame depth PNGs cached
-      to `<clip>/.chroma/depth/<key>/`, read at render time via `chromaDepthDir`
-      (mirrors D-019). Scrub / playback / export get per-frame depth for free.
-      `apply_haze` prefers the track when present; the Rust DA-V2 ONNX path stays
-      as the static single-frame bake for stills / un-tracked haze.
-      `docs/notes/depth-track.md`.
-- [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
-- [x] Mask include/exclude refinement — **via RapidRAW's Add/Subtract/Intersect composition, not +/− points** (**D-023**). "Subtract from Mask → Subject" already does edge-aware SAM exclude. MCP: `add_subject_mask(mode)`, `add_component`, `set_submask_mode`. No point UI; `ai/` + engine `points` support stays unused.
-- [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).
-- [x] Per-frame subject tracking via **SAM 2 memory propagation** (D-018): prompt once, feed frames, ~180ms/frame mask. Sidecar `/track` (bg job, disk cache) + `/refine_track`.
-- [x] **In-app tracking works end to end** (D-019): "Track subject across clip" → scrub → the matte + red overlay + grade follow the frame in lockstep. Matte read from disk at render time; `chromaTrackDir` persists with the project (no re-track on reopen). "Finalize matte" for the full-quality pre-export pass. Sidecar memory bounded (B-002).
-- [ ] Multi-subject: two `ai-subject` masks each with their own `chromaTrackDir` should already work (untested); batch N objects into one propagation pass (`max_obj_num > 1`) so they don't each cost a full pass (D-017)
-- [ ] `color-matcher` → reference match returns a CDL/curve fragment
-- [x] **Depth haze preset** (D-024, 2026-09-01) — one action, depth-weighted desat +
-      black-lift + dehaze + background defocus (per-mask blur, D-027). `docs/notes/depth-haze.md`
-- [x] Mask keyframes in the data model + GUI handles (D-034, 2026-09-02) —
-      `parameters.chromaKeyframes`, interpolated at render time; `MaskKeyframeBar`
-      (◆ button + diamond track) + interpolated overlay + drag-writes-key + 4 MCP
-      tools. `docs/notes/mask-keyframes.md`
-
-**Checkpoint:** click "isolate subject" → tracked matte that holds through hand gestures; "add haze" → depth-graded background separation.
-
----
-
-## Phase 3 — MCP + the agent loop  ·  ~2–3 weeks
-
-- [x] **Control server + MCP bridge (D-020)** — `src/chroma/control.rs` (in-app HTTP) ⇄ Tauri events ⇄ `useChromaControl` (frontend owns the state). `mcp/` Python stdio server. One shared grade/mask doc: MCP edits move the app's real sliders/history, `get_state` reflects manual edits. v1 ops: primary, curves, wheels, seek, subject mask + track, per-mask grade, invert, delete. Verified with real `curl` + an MCP client against the C019 take.
-- [ ] Tools: shot ops, ~~primary, curves, wheels~~, LUT, masks (~~subject~~ / shape / ~~depth (via `apply_haze`)~~), ~~scopes~~, match_to_reference, ~~apply_haze~~ (D-024), ~~export~~ (D-022), ~~open~~
-- [x] Every mutating op returns `{image_b64, histogram, adjustments}` (image is a best-effort `generate_uncropped_preview` re-render — the app renders to a native WGPU surface)
-- [x] `request_human(reason, roi)` handoff + the GUI "agent activity" feed with per-change diff + undo
-      (D-032, 2026-09-02) — `useAgentStore` slice + a recording hook in `useChromaControl.ts`'s
-      chokepoint (one entry per mutating op, `debouncedSetHistory.flush()` collapses
-      `match_reference`'s N iters to one), `diffAdjustments` / `summarizeActivity`
-      (`app/src/utils/agentActivity.ts`), a fixed bottom-left `AgentActivityDock` (feed +
-      `request_human` banner) + `AgentRoiHighlight` on the canvas. `request_human` op/tool is
-      non-blocking; undo is jump-to-here (drops newer feed entries; documented history-cap
-      fallback). Detail: `docs/notes/agent-activity-feed.md`.
-- [x] Agent eval: a scripted brief → measure round-trips to an acceptable grade (G1, G2)
-      (D-035, 2026-09-02) — `eval/` task set + offline scorer + committed baseline; closed
-      loop is `eval/run.md`. See `docs/notes/eval-harness.md`.
-
-**Checkpoint:** a full talking-head grade (primary + tracked subject + depth haze + shot match) done in one Claude Code conversation + <5 min human mask cleanup. **This is v1.**
-
----
-
-## Phase 4 — Harden & release v1  ·  ~2 weeks
-
-- [x] Strip the `@clerk/react` community-login dep from the frontend (D-029, 2026-09-02; pulled forward to round-2 item 4)
-- [x] Rust-managed sidecar lifecycle — spawn/monitor `ai/` from the app, no manual `ai/run.sh` (D-028, 2026-09-01; pulled forward from round-2 item 3)
-- [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
-      moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
-      new `open(path)` op so a clip can be loaded headlessly.
-- [x] **Project model + launcher (D-037, 2026-09-02)** — `<name>.chroma` dir
-      (`project.json` + `thumb.jpg` + `grades/`), a launcher home screen
-      replacing RapidRAW's Library view, media referenced in place + relink,
-      debounced autosave, MCP `list_projects` / `open_project` / `new_project` /
-      `save_project`. Completes D-033's deferred session persistence. The
-      reserved `settings` field is now a typed per-project output spec
-      (resolution / fps / colour space) — **D-038, 2026-09-02**. Deferred
-      polish: launcher rename/delete/duplicate/search, drag-to-import, a
-      SettingsPanel folder row, batched open-time per-shot decode.
-- [ ] Multi-subject **batch** tracking (D-017) — one SAM propagation pass for N objects (`max_obj_num > 1`, `obj_ids` per mask) instead of one pass each; deferred from round 3 (2026-09-02) as a perf-only optimization
-- [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut) — now lands *into* a `<name>.chroma` project (D-037)
-- [ ] ProRes export round-trip verified with `swap_clip_media`
-- [ ] Packaging: signed macOS build, the sidecar + its Python bundled, models auto-downloaded
-- [ ] `docs/` cleaned for external readers; a real README with a 90-second demo
-- [ ] Decide: name (**D-010**), license (**D-002**), v1 headline feature (**D-007**)
-- [ ] Ship. Get one external user. Open the issue tracker.
-
-**v1 = done when:** the Phase 3 checkpoint (full talking-head grade in one Claude
-conversation + <5 min human cleanup) passes on 3 real clips, export round-trips to
-Palmier, and it's a signed installable build.
-
----
-
-## Beyond v1 (see `docs/02-scope.md` v2/v3)
-
-- Node graph, ACES/HDR (OpenColorIO)
-- CoTracker planar tracking + tracker GUI, bezier roto
-- Film-emulation chain (port ComfyUI-Darkroom science)
-- Windows/Linux, batch/headless mode
-- OFX plugin export (the gyroflow model — grade node in Resolve/Fusion/AE)
-- Public MCP contract, web review viewer
-- **AI background replacement, believable** (owner asked 2026-09-02) — matte the tracked
-  subject over a still / plate / AI-generated BG, then the integration stack: **light
-  wrap** (new shader pass), **grade match** (`match_to_reference`, D-026, vs the BG),
-  **relight the subject to the BG's light** (depth-driven puck relight, D-013 — the
-  agent auto-places pucks from BG light analysis; biggest believability lever),
-  **defocus match** (per-mask blur D-027 + depth D-036), **grain match** (one pass over
-  the whole comp). The agent does the integration end-to-end — what consumer AI-BG tools
-  skip. Needs `chroma-compositor` + D-013 first. v1 = static-camera only (moving plate
-  needs a camera solve). Detail: `docs/notes/background-replace.md`.
-- **Visual understanding for the Editor tab** (owner asked 2026-09-02) — natural-language
-  footage search ("find where I was driving and said X, bring it to the front") is the
-  first consumer of a broader need: an editor needs **temporal** ("when") + **spatial**
-  ("where") understanding. Spatial is already half-built (SAM2 + YOLO in the `ai/`
-  sidecar, currently only exposed for subject isolation). Temporal/general-scene is the
-  gap — **Qwen3-VL** (Apache-2.0, 2B/4B/8B sized per device, MLX-native, built + benchmarked
-  on temporal grounding) fills it, local default. **Molmo 2 excluded from shipping**
-  (its own model card: "research and educational use," non-commercial training data) —
-  documented as an optional BYO model only, never bundled; also not clearly the better
-  tool for this axis anyway (its edge is spatial pointing/tracking, which SAM2 already
-  covers at higher precision). Cloud opt-in fallback: Gemini 3's agentic video API
-  (primary) / Gemini 2.5 Pro (fallback) — never the default, footage-upload needs
-  explicit permission. Unlocks beyond search: B-roll auto-tagging, shot classification,
-  person-count queries, auto-reframe hints, highlight detection. Needs the media pool
-  first. **First concrete task when picked up: a real local Qwen3-VL throughput
-  benchmark on an hour-long clip** — the current processing-time estimate (5–10 hours
-  of footage → ~30 min–2 hrs at a coarse sample rate) is reasoned extrapolation, not
-  measured. Detail: `docs/notes/video-search.md`.
+**Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
 ---
 
@@ -475,9 +159,8 @@ Palmier, and it's a signed installable build.
 
 | Risk | Mitigation |
 |---|---|
-| Tauri video presentation is too slow / too hard | Phase 0 spike D-006 *first*; fallback = separate native window for the canvas |
-| SAM 2 matte quality poor on real footage | Phase 0 spike; fallback = SAM2 + heavy matte refinement, or interactive-segmenter click prompts |
-| RapidRAW's still-centric architecture fights the video model | Phase 0 code-read; fallback = use its engine as a crate, new video-first shell (Path C) |
-| AGPL blocks a direction we want later | decide license intent now (D-002); AGPL is fine for "open project", accept the SaaS limitation |
-| Solo-dev bandwidth | v1 scope is deliberately tiny (one footage type, one platform); everything else is later |
-| RapidRAW maintainer objects to a fork | it's AGPL, forking is allowed; but reach out first (D-003) — collaboration beats a fork |
+| The multi-track compositor (the Editor's long pole) is harder than estimated | it's the first thing in "Then — the deeper migration"; scoped small first (2–3 layers + a dissolve) before generalizing |
+| Solo-dev + session rate limits slow the pace | the docs discipline (this file + `08-decisions.md`) means no re-derivation cost across sessions; subagents checkpoint-commit rather than lose work on failure |
+| Speed accrues cleanup debt | `CLAUDE.md`'s "Standards — no shortcuts" hard rule exists specifically for this; verify before reporting done, every time |
+| AGPL blocks a direction wanted later | decide licence intent explicitly when D-002 is picked up; AGPL is fine for "open project," accept the SaaS limitation |
+| The "open + local + agentic" window keeps narrowing (competitors emerging weekly) | the defensible wedge is colour-science depth + Rust-native perf, not the category label — see `product-direction.md` §7 |
