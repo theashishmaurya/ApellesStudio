@@ -1,357 +1,235 @@
-# Product direction — under consideration (not decided)
+# Product direction — decided (D-039), this is the research record
 
-**Status:** captured 2026-09-02, owner is thinking it over. Nothing here overrides
-`docs/00-vision.md` yet. Do **not** start building against this without an explicit
-go-ahead + a vision-doc rewrite + a decision entry (D-0xx).
+**Status: DECIDED.** Chroma is a 3-tab AI-native video app — **Edit / Motion /
+Colorist** — locked as **D-039** (`docs/08-decisions.md`) and under active
+construction (`docs/04-roadmap.md`). This file is the **research and rationale
+archive** that led there and keeps accumulating as the build continues — not an
+open question anymore. If anything here conflicts with `08-decisions.md`, the
+decision doc wins; update this file to match.
 
-## The trigger
+---
 
-Palmier Pro is going **closed-source and commercial**. It's the AI-native NLE the
-current workflow leans on for the *cut* (retake/silence/filler removal via word-level
-transcript editing, `/palmier-recut`). Several of the "good parts" — real per-word
-timestamps (mlx-whisper backend), the transcript-driven edit model — are things we've
-already had to build or re-build ourselves in `videoAgent`. Depending on a closed tool
-for the middle of the pipeline is the risk the owner wants out of.
+## 1. The trigger
 
-## The idea
+**Palmier Pro — the AI-native NLE this pipeline leaned on for the cut — is going
+closed-source and commercial.** The genuinely valuable parts (real word-level
+transcript timestamps, the transcript-driven edit model) are things already
+rebuilt independently in `videoAgent` (`whisper_transcribe.py --word-timestamps`,
+mlx-whisper). Depending on a closing tool for the middle of the pipeline was the
+risk to remove.
 
-One **AI-native, local** app, three tabs, covering the whole content pipeline the owner
-actually runs (script → cut → motion graphics → grade → music → publish):
+## 2. The decision (D-039)
+
+One AI-native, **local** app, three tabs, covering the whole pipeline this project
+actually runs — script → cut → motion graphics → grade → publish:
 
 1. **Editing** — timeline, transcript-based rough cut, trim/ripple/reorder, cuts +
-   simple transitions, audio. The Palmier-replacement surface.
-2. **Motion** — the Remotion motion-graphics engine (already exists in `videoAgent` at
-   `engine/motion/`, 7 primitives + JSON scene-manifest compiler, `/animate`). Explainer
-   cards / overlays as code.
-3. **Colorist** — what Chroma is today (the grade pipeline + the agent + scopes +
-   tracking + depth + the project model).
+   transitions, audio. The Palmier-replacement surface.
+2. **Motion** — the Remotion motion-graphics engine, moved in from `videoAgent`
+   as `packages/motion-engine/` (7 primitives + JSON manifest compiler — already
+   built, just needs a tab UI wired to it).
+3. **Colorist** — Chroma as it existed pre-pivot: the grade pipeline, the agent,
+   scopes, tracking, depth, the project model.
 
-AI-native throughout, following "the exact flow we follow" — i.e. an agent can drive
-each stage, the human refines.
+**Constraint lock (owner, non-negotiable):** Rust-native, performance-first
+("can't afford lags"), small binary — **hence Tauri**. This explicitly **rejects**
+JS/WebCodecs/headless-Chrome editing engines (Remotion-as-editor, Diffusion
+Studio, OpenCut-web) and heavy C++ runtimes (libopenshot). Remotion stays *only*
+as the Motion tab's engine — never the editing engine.
 
-## Why this is a big deal (the honest cost)
+**Architecture:** thin-shell/fat-core Rust workspace (`crates/`) + a matching
+frontend package workspace (`packages/`), monorepo (`app/` = the vendored
+RapidRAW fork, submodule dropped D-040). Full crate/package table, dependency
+layers, and the migration plan live in `docs/notes/architecture-lock.md` — not
+duplicated here.
 
-- `docs/00-vision.md` is explicit: *"Not an NLE. No timeline editing, no trimming, no
-  transitions, no audio. It grades clips handed to it."* This idea inverts that. The
-  vision doc's whole thesis — that the **unclaimed** space is the AI *colorist*, because
-  every open-source project is already an editor — would need rethinking.
-- RapidRAW (the Chroma base) contributes **zero** editing infrastructure — "No video.
-  Zero video deps. No decode, no frames, no timeline, no temporal state" (`docs/09`).
-  The editing tab is a ground-up build.
-- The Remotion engine lives in a **different repo** (`videoAgent`). A three-tab app means
-  either vendoring it, submoduling it, or a monorepo restructure.
-- Scope: a credible editing tab alone is months of solo work; Palmier is a team's
-  multi-year product.
+## 3. Why this is genuinely hard (say it plainly)
 
-## The smaller version (if the full thing is too much)
+- `docs/00-vision.md` originally said *"Not an NLE."* That thesis — the
+  unclaimed space is the AI **colorist**, because every open project is already
+  an editor — is now superseded, not forgotten. It's *why* the Colorist tab still
+  gets the deepest craft investment even inside a 3-tab app (§6).
+- RapidRAW contributed **zero** editing infrastructure — "No video, no timeline,
+  no temporal state" was the honest starting line for the Editor tab.
+- The Motion engine lives in a different repo's history (`videoAgent`) — now
+  resolved by the monorepo move, but was a real seam.
+- A credible **editing tab alone** is months of work solo; see §5 for the actual
+  numbers, twice (once naive, once recalibrated against what we've actually
+  shipped with Claude).
 
-Scope the editing tab to the **actual workflow**, not feature-parity: transcript rough
-cut + a multi-shot timeline with trim/ripple/reorder + hard cuts + cross-dissolves.
-That covers ~90% of talking-head/explainer needs without chasing multicam / titles /
-audio mixing / effects. The project model being built now (D-037) is a shared
-foundation either way.
+## 4. Reuse — what to build on, and what got rejected
 
-## What's already true and reusable
+### 4.1 Editing-tab engine — four paths considered
 
-- **Colorist tab**: Chroma as of D-036 (grade pipeline, agent + MCP, scopes, subject
-  tracking, temporal depth track, mask keyframes, multi-shot session, activity feed).
-- **Project model**: D-037 (in progress) — `~/Movies/Chroma/<name>.chroma`, saved
-  projects, launcher. A three-tab app needs exactly this project container.
-- **Motion engine**: `videoAgent` `engine/motion/` — Remotion, done, `/animate` +
-  `/motion-primitives`.
-- **Transcript / word timestamps**: `videoAgent` `src/transcribe/whisper_transcribe.py
-  --word-timestamps` (mlx-whisper backend).
-- **The `ai/` sidecar** already hosts SAM 2, ViTMatte, YOLO, Video Depth Anything —
-  the AI substrate an editing tab's smart features (silence detection, scene detect,
-  auto-reframe) would extend.
-
-## Open questions for when this is revisited
-
-- One repo or three? (monorepo vs Chroma + a motion submodule + shared core)
-- Does the editing tab share the wgpu render pipeline with the colorist tab, or is it
-  its own compositor?
-- OTIO as the interchange format between tabs (cut → grade → motion overlay)?
-- Is this still "open-source, local, no cloud"? (the Palmier-going-closed trigger
-  suggests yes, emphatically)
-- Name / licence / headline (D-002 / D-007 / D-010) all shift under this.
-
----
-
-## Prior-art research (2026-09-02) — what we could build on
-
-The colorist tab stood on RapidRAW. The question: is there an equivalent base for
-the **editing tab** and the timeline/compositor gap.
-
-### Editing tab — three architectural paths
-
-**Path A — Remotion-based (unifies with the Motion tab).**
-Chroma's motion engine already *is* Remotion. Reuse candidates:
-- **Vanta** (`itsjwill/vanta`, **MIT**, "fork it and rename it") — an OSS Remotion
-  editor: multi-track timeline, trim/split/join, keyframes, playhead synced to
-  `@remotion/player`, built on `react-timeline-editor` (661★), JSON-exports to
-  Remotion sequences. Early (~8 commits) but explicitly a reusable base. Also wires
-  WhisperX word-timestamps.
-- **Remotion's own** "building-a-timeline" docs + copy-pasteable Timeline component
-  (the polished one is Remotion Pro, paid).
-- `react-timeline-editor` — the raw timeline UI both use.
-- Playback = `@remotion/player` (multi-track via `<Sequence>`); export =
-  `@remotion/renderer` (headless Chrome; `@remotion/media` sped this up) **or** emit
-  an EDL and assemble with ffmpeg.
-- **Licence catch:** Remotion is source-available, free for individuals / non-profits
-  / for-profit ≤3 people; **4+ employees → paid company licence** ($100/mo min), and
-  "not selling Remotion as a product itself." Shipping an **open-source editor** built
-  on Remotion is a grey zone worth a direct read of their licence FAQ — **this already
-  affects the Motion tab today.**
-- Pros: one engine for Motion + Editing, all React/TS, LLMs write it well, fastest to
-  a prototype. Cons: the licence question; headless-Chrome export slower than native;
-  a *different* render path from the colorist wgpu grade pipeline (two engines).
-
-**Path B — OpenCut's Rust core (unifies with the colorist wgpu world).**
-`OpenCut-app/OpenCut` (**MIT**, ~88k★) is mid-rewrite into a monorepo with a
-**platform-agnostic Rust core**: `rust/crates/{compositor, effects, masks (JFA
-feathering), gpu, time}` + `rust/wasm/` bindings — a wgpu GPU compositor built to be
-embedded in different frontends. Their roadmap: "headless mode, scripting tab, **MCP
-server for AI agents**" — the same direction as Chroma.
-- Pros: real native GPU compositing (not headless Chrome), **same wgpu foundation as
-  RapidRAW's grade shader** → the path to ONE render pipeline for cut+grade; MIT.
-- Cons: it's a **pre-release rewrite** — risky to build on *now*; desktop shell is
-  **GPUI (Zed's framework), not Tauri** (we'd take the crates, not the app); younger
-  and less proven than Remotion. The **classic** OpenCut (Next.js, stable, browser
-  render, WASM audio only) is less aligned.
-- Realistic play: **track it**, prototype on Path A, adopt the compositor crate when
-  its rewrite stabilises.
-
-**Path C — Rust-native, standing on parts.** `wgpu` (already in Chroma) for the
-compositor + **OpenTimelineIO** JSON as the timeline model + ffmpeg CLI (already
-wired, D-015) for decode/encode/assembly. Most control, most work; Path B's crates
-become the reference implementation.
-
-### Transcript-based cut (the Descript-style feature) — low risk, well-trodden
-- **CutScript** (`DataAnts-AI/CutScript`) — WhisperX word-level, local, "delete a word
-  in the transcript → it's cut from the video." The edit-model to copy.
-- **Rescript** (`getrescript`) — OSS, offline, Whisper word-level + speaker labels.
-- **OpenScript** — local-first Descript alt.
-- We already have the transcription half (`videoAgent` `whisper_transcribe.py
-  --word-timestamps`, mlx-whisper); these show the text-edit → EDL layer.
-
-### Timeline interchange — use it regardless of path
-**OpenTimelineIO** (ASWF/Pixar, JSON, the modern EDL). Rust bindings exist
-(`vfx-rs/opentimelineio-bind`, `opentimelineio` crate) but are **Linux-only** for now
-— the JSON schema is usable directly. This should be Chroma's timeline format: it's
-how a cut round-trips to/from any other tool, and it's the "the edit is code" parallel
-to `grade.json`.
-
-### Full editors worth studying (not necessarily building on)
-- **OpenReel Video** (`Augani/openreel-video`, **MIT**) — React + WebCodecs + **WebGPU**,
-  multi-track timeline, keyframes, **color grading**, audio effects. Browser, WebGPU —
-  conceptually close to our wgpu world.
-- **Twick** (`ncounterspecialist/twick`) — React **SDK** (embeddable, not a full app),
-  canvas timeline, AI captions, serverless MP4 export. Closest to a drop-in editing
-  component.
-- **Rust NLE prototype** (dev.to, Mar 2026) — wgpu + GPUI + prompt-based editing;
-  proof others are building exactly this.
-
-### Recommendation (for when this is picked up)
-1. **Timeline model = OpenTimelineIO JSON** from day one.
-2. **Editing-tab UI = a Remotion-based timeline** (Vanta / `react-timeline-editor` /
-   Remotion's own) — fastest to a working talking-head MVP, and the Motion tab is
-   already Remotion. Resolve the Remotion OSS-licence question first.
-3. **Compositor/playback**: `@remotion/player` for the MVP; **watch OpenCut's
-   `rust/crates/compositor`** and adopt it (or build the wgpu equivalent sharing the
-   grade pipeline) when it stabilises — that's the route to a single render engine.
-4. **Transcript cut**: build on the CutScript/Rescript model + the whisper
-   word-timestamps we already have.
-5. **Export**: OTIO → ffmpeg assembly (ffmpeg already wired).
-
-**Time impact:** reusing a Remotion timeline + a transcript-cut base could pull the
-"lean editing tab" estimate from ~3–4 months toward **~6–10 weeks** for a
-talking-head-focused MVP. Path B (Rust compositor) is the bigger, later investment
-for a unified engine.
-
-### Path D — Diffusion Studio (`diffusionstudio`, YC F24) — added 2026-09-02
-
-The closest thing to "the thing we want to build, already built." Tagline: *"the
-video editor your agents can drive."* Compositions as code, canvas ↔ JSX
-bidirectional, a `dapi` CLI for agents (works with Claude Code) — nearly identical
-philosophy to Chroma's "the grade is code / MCP-driven," applied to **editing**. So:
-both a reusable building block **and** a competitor/validator.
-
-- **`diffusionstudio/core`** — **MPL-2.0**, TypeScript **WebCodecs** compositing
-  engine built on **Mediabunny** (which `engine/motion/` *already* depends on —
-  `mediabunny 1.55.1`). Provides timeline compositions, layered tracks, clips
-  (video/image/text), transitions, **masks**, keyframe animation, effects, audio,
-  real-time playback **and** render modes. ~1.2k★, active. Hardware decode/encode via
-  WebCodecs — **no headless Chrome** (unlike Remotion render). Browser-only, but
-  Chroma's Tauri frontend *is* a browser/webview. Free tier stamps a *"Made with
-  Diffusion Studio"* watermark on renders; a **one-time** licence key removes it
-  (local crypto check, offline) — cleaner than Remotion's company-size fee.
-- **`diffusionstudio/editor`** — MPL-2.0, full app: **SolidJS** UI + **Electron**
-  shell + Vite, headless runtime engine, JSX authoring, transcript + captions,
-  media inspection (waveform / filmstrip / transcription), generative assets,
-  export. ~2.3k★, very active (~480 commits). **Different UI framework (Solid, not
-  React) and shell (Electron, not Tauri)** — so a *reference* for the transcript /
-  media-inspection UX and the JSX-composition model, not a wholesale lift.
-
-**Where it lands vs the other paths:**
-- vs **Path A (Remotion)**: `core` is an actual *editing* engine (timeline + tracks +
-  playback), not a render framework you bolt a timeline onto. WebCodecs (fast, native
-  HW) beats headless-Chrome export. MPL-2.0 + one-time key beats the company-size
-  licence. **For the editing tab specifically, `core` looks like the better fit.**
-- vs **Path B (OpenCut Rust)**: `core` is TS/WebCodecs — runs in Chroma's existing
-  webview, ships now, more mature. OpenCut is Rust/wgpu — native perf, shares the
-  colorist wgpu world, but pre-release. `core` = faster path; OpenCut = deeper
-  unification later.
-- **Risk:** Diffusion is a funded startup building exactly this. Adopting `core`
-  means "Diffusion's editing engine + our colorist + our motion in one Tauri app" —
-  a legit integration, but track whether their licence / direction stays friendly.
-
-**Revised recommendation:** evaluate `diffusionstudio/core` as the **editing-tab
-engine** first (MPL-2.0, WebCodecs, already shares Mediabunny with the Motion tab,
-has timeline/tracks/masks/keyframes out of the box). Keep OTIO JSON as the portable
-interchange on top. Remotion stays the **Motion** tab. OpenCut's Rust compositor
-stays the "watch for a unified native engine" option.
-
----
-
-## CONSTRAINT LOCK (2026-09-02, owner) — Rust-native, performance-first, small binary
-
-> "our thing is Rust native performance first — we can't afford lags, we need to be
-> very very performant, and small size, hence Tauri."
-
-Diffusion Studio, Remotion, OpenCut-web, Vanta were **reference only** — for *what
-features exist*, not stacks to adopt. **The editing tab is not a JS/WebCodecs/browser
-engine.** No Electron, no headless-Chrome render, no GStreamer runtime bundled (size).
-This **rejects Paths A (Remotion) and D (Diffusion) as engines** — Remotion stays the
-Motion tab only; the rest are feature references.
-
-### The Rust-native stack that fits
-
-| Layer | Choice | Notes |
+| path | what | verdict |
 |---|---|---|
-| **Decode** | **VideoToolbox** (macOS HW) → wgpu texture; ffmpeg CLI fallback (already wired, D-015) | zero-copy on Apple Silicon; no GStreamer bloat. Gyroflow's decode code / `oxivideo` (ex-`gpu-video`, **Apache-2/MIT**, VideoToolbox + wgpu, *pre-release "NOT READY"*) as the reference for VT→wgpu |
-| **Compositor** | **wgpu**, extending Chroma's `render_core` (D-014): blend N layers + transitions, then the existing grade pass | ONE engine for cut+grade. **OpenCut `rust/crates/compositor`** (MIT, wgpu, shipping in v0.3.0 — replaced their WebGL renderer) as reference or vendored dep |
-| **Timeline model** | plain Rust serde structs, **OTIO-shaped**; exports OTIO / EDL / FCPXML | "the edit is code," parallel to `grade.json`. NOT the heavy OTIO C bindings |
-| **Timeline UI** | React in the existing Tauri webview — thin: sends edits, gets frames on the wgpu surface | same pattern as the grade panel today; no new UI framework |
-| **Transcript cut** | whisper `--word-timestamps` (already have, mlx) → text edit → ripple ops on the model | CutScript / Rescript as the UX model |
-| **Export** | composite → grade per frame → ffmpeg encode pipe (already have, D-022) | already built for the colorist |
+| **A — Remotion-as-editor** | `react-timeline-editor` / Vanta / Remotion's own timeline component | **Rejected as the engine** (JS/WebCodecs, against the constraint lock). `react-timeline-editor` still used as the **UI widget** — it's a control surface, not a render path, so it doesn't violate the lock (Editor MVP, D-041). |
+| **B — OpenCut's Rust compositor** | `OpenCut-app/OpenCut` (MIT, ~88k★), mid-rewrite to a wgpu compositor in `rust/crates/` (compositor/effects/masks/gpu/time), shipping since v0.3.0 | **Watch, adopt when it stabilises.** Same wgpu foundation as Chroma's grade shader — the path to one render engine for cut+grade. Pre-release risk today. |
+| **C — Rust-native from parts** | `wgpu` (already in Chroma) + OTIO-shaped serde timeline + ffmpeg CLI (already wired, D-015) | **The actual chosen path** (see `architecture-lock.md`'s `chroma-compositor`). Path B's crates are the reference implementation to study. |
+| **D — Diffusion Studio** | `diffusionstudio/core`, MPL-2.0, WebCodecs, built on Mediabunny (already a `motion-engine` dep) | **Rejected as the engine** (browser/WebCodecs, against the lock). Genuinely the closest philosophical match (*"the video editor your agents can drive"*) — reference for feature completeness, not a dependency. |
 
-### Why this is bounded work
+**libopenshot** — evaluated separately, **rejected outright**: C++, SWIG-only API
+(no Rust bindings), **CPU compositing** (HW accel is ffmpeg decode/encode only —
+their own docs admit the GPU↔CPU round-trip is the bottleneck), heavy deps
+(JUCE audio, historically Qt/ImageMagick). Even today's Chroma (wgpu grade
+pipeline) is architecturally ahead of it. Keep its `Timeline`/`Clip`/`Keyframe`
+headers as a *reading* reference only.
 
-Chroma **already owns** the hard single-clip parts: wgpu context, decode pipe (D-030),
-render-to-surface, export pipe, ffmpeg wiring, the grade compute pass. The editing tab
-adds: (1) the timeline serde model — small; (2) **multi-layer wgpu compositing** — the
-real new work, blend N decoded RGBA layers + transitions on GPU feeding the existing
-grade pass; (3) a thin React timeline UI; (4) the transcript-cut UX. No new runtime,
-no new UI framework, binary stays Tauri-small.
+### 4.2 The Rust-native stack that fits the lock
 
-### Reference projects (Rust-native, study don't necessarily adopt)
+| layer | pick | why |
+|---|---|---|
+| Decode | `re_video` (Rerun, MIT/Apache) or native VideoToolbox → wgpu texture; ffmpeg-CLI fallback (D-015, already wired) | zero-copy on Apple Silicon, no GStreamer bloat |
+| Compositor | `chroma-compositor` on `wgpu`, extending `render_core` (D-014); OpenCut's crate as reference | one engine for cut + grade |
+| Timeline model | OTIO-shaped serde structs (not the OTIO C bindings) | "the edit is code," parallel to `grade.json`; `chroma-timeline` (D-041) already started this |
+| Timeline UI | `react-timeline-editor` (MIT) | a control surface — video never flows through it, so it's perf-neutral despite being JS |
+| Transcript cut | whisper `--word-timestamps` (already have) + the CutScript/Rescript edit-model | low risk, well-trodden |
+| Audio | `symphonia` + `cpal` + `rubato` + `dasp` | native Rust, no runtime cost |
+| UI kit | `@chroma/ui` on **shadcn/ui + Base UI** (D-042, built) | canonical, not hand-rolled — see D-042 |
 
-- **Gausian** (`gausian-AI/Gausian_native_editor`) — Rust + **egui/wgpu** + VideoToolbox
-  + GStreamer + SQLite, AI-video focus, exports FCPXML/EDL. **MPL-2.0 core, commercial
-  advanced features.** egui UI (not a frontend fit) but **modular crates**: `timeline`,
-  `project`, `media-io`, `renderer`, `native-decoder`, `exporters`, `cli` — potentially
-  extractable. Closest existing thing to this tab. ~1k★, young (24 commits).
-- **OpenCut v0.3.0** — Rust/wgpu compositor compiled to WASM *and* native (GPUI shell).
-  MIT. The compositor crate is the reusable bit.
-- **`gstreamer-editing-services`** (GES) Rust bindings — a full mature NLE lib, but
-  the GStreamer runtime is a large dependency + macOS packaging pain → **against the
-  small-binary lock.** Fallback only if building the compositor proves too costly.
-- **`cros_codecs`**, **`oxivideo`** — Rust HW-decode crates to watch.
+### 4.3 Why the editing tab is *bounded* work, not greenfield
 
-### libopenshot (`OpenShot/libopenshot`) — evaluated 2026-09-02, **REJECTED as a dependency**
+Chroma already owns the hard single-clip parts: wgpu context, decode pipe
+(D-030), render-to-surface, export pipe (D-022), the grade compute pass, 30fps
+playback (D-031). The Editor tab is an *extension* of proven code — the
+multi-layer compositor is the one genuinely new system.
 
-Checked at the owner's request. It's the C++ engine behind the OpenShot app
-(OpenShot 3.5, March 2026). Verdict against the constraint lock:
+## 5. Timelines — two takes, and which one to trust
 
-| Constraint | libopenshot |
+### 5.1 The "what does a full NLE cost" breakdown (solo-human baseline)
+
+| system | solo-human effort |
 |---|---|
-| Rust-native | ❌ C++. API is C++/Python/Ruby via **SWIG** — no C ABI, **no Rust bindings exist**; you'd hand-write + maintain FFI over a large C++ surface |
-| Performance-first, no lag | ❌ **CPU compositing.** HW accel is FFmpeg **decode/encode only**; their own `doc/HW-ACCEL.md` says decoded frames are "copied back to CPU memory for the rest of the pipeline" and RTX perf is "not great." Real-time playback drops frames at 1080p+ without proxies |
-| Small binary | ❌ FFmpeg + `libopenshot-audio` (a JUCE fork) + historically Qt / ImageMagick / OpenMP / ZeroMQ |
-| wgpu integration | ❌ no GPU compositor to hook into — renders to CPU image buffers |
-| Licence | ⚠️ LGPL-3 (lib) — workable, but the dyn-link requirement + C++ ABI churn |
+| Timeline & edit model | 1.5–2 mo |
+| **Playback / multi-track compositor** ← the long pole | 3–4 mo |
+| Audio subsystem | 2–3 mo |
+| Transitions & effects | 2–3 mo |
+| Media management | 1 mo |
+| Export / render | 1–1.5 mo |
+| Timeline UI (the most complex widget in any NLE) | 2–3 mo |
+| Interop (OTIO/EDL) | 3–4 wk |
+| Project/session | 2–3 wk |
 
-**Even today's Chroma (wgpu grade pipeline) is architecturally ahead of it for
-compositing.** Linking libopenshot would import its CPU-bound ceiling and its
-dependency weight to get a timeline + transitions + keyframes we can build lighter.
+**Tiers:** Lean (your actual workflow) ~2–3 mo solo · Creator-complete ~10–14 mo
+solo · Pro-parity (Premiere/Resolve) ~3–5 years solo, **don't chase this one**.
 
-**Still useful as a *reference*:** its `Timeline` / `Clip` / `Keyframe` (Bezier)
-headers are a battle-tested model for timeline structure, effect ordering, and
-keyframe interpolation — worth reading, not linking.
+### 5.2 Recalibrated against what's actually shipped with Claude + subagents (2026-09-02)
 
-### Revised estimate (Rust-native)
+Speedup is **not uniform** — it depends on work type:
 
-Lean editing tab (talking-head: transcript cut + multi-shot timeline + trim/ripple +
-cuts/dissolves + export): **~2.5–3.5 months** solo. OpenCut's compositor crate, if
-cleanly extractable, could shave ~3–4 weeks off the compositing layer. Full parity:
-8–12+ months.
+| work type | speedup vs. solo-human |
+|---|---|
+| Wiring, CRUD, refactors, UI-from-a-kit, tests, docs, known-pattern model integration | ~3–4× |
+| Real-time/GPU/timing debugging, cross-boundary integration bugs | ~1.3–1.5× |
+| Novel algorithm design (compositor blend math, audio sync) | ~1.3–1.7× |
+| UX taste calls against real footage | ~1× (that's still you) |
 
-### The market pattern worth noting
+**Recalibrated tiers:** Lean editing tab **~4–7 weeks** calendar (if engaged
+near-daily) · Creator-complete **~4–6 months** · Pro-parity still **2–3+ years**
+— Claude doesn't change "this is a company-sized product."
 
-Palmier → closed. Diffusion Studio → MPL core + paid "advanced." Gausian → MPL core +
-paid "advanced." **Every AI-video startup is "open core + paid pro."** A genuinely,
-fully-open (AGPL/MPL, no commercial-feature gate) + local + Rust-fast three-tab tool
-is an unoccupied position.
+**What actually determines the calendar number:** your hours/day and turnaround
+speed on testing + decisions (proven today — fast replies = fast progress),
+session rate limits (hit twice in one day already), and whether the compositor/
+audio/playback debugging gets gnarly (those estimates are the softest). Speed
+without the docs discipline (`CLAUDE.md`'s hard rule) accrues cleanup debt that
+eats the gains — that's *why* the rule exists, not decoration.
 
-## The 2026 market — updated 2026-09-02 (owner asked "who's going big on AI editing")
+## 6. What's already true and reusable (as of 2026-09-02)
 
-**"Agentic video editing" became a named category in 2026**, with real money behind it —
-this is validation the space is real, and a signal the window for "unclaimed" is closing.
+- **Colorist tab** — the pre-pivot Chroma: grade pipeline, agent + MCP (38+
+  tools), scopes, subject tracking (SAM2+ViTMatte), temporal depth track (VDA),
+  mask keyframes, multi-shot session, activity feed, eval harness.
+- **Project model (D-037/38)** — `~/Movies/Chroma/<name>.chroma`, the container
+  all three tabs share.
+- **Motion engine** — `packages/motion-engine/`, fully functional, needs only a
+  tab UI (`@remotion/player` embed + manifest editor) — **currently the
+  single biggest gap in the active roadmap queue**, see `04-roadmap.md`.
+- **Transcript / word timestamps** — `videoAgent`'s mlx-whisper backend.
+- **`@chroma/ui`** — shadcn/Base UI, themed, 18 structural components (D-042).
+- **3-tab shell, launcher-as-entry-screen, Editor MVP** — all live (D-039
+  migration log).
 
-- **a16z published "It's time for agentic video editing"** — a thesis piece, i.e. VCs are
-  actively hunting this category.
-- **Cardboard** (YC W2026, `cardboard.ai`) — describe a cut in plain English, the agent
-  assembles a multi-track timeline. **Highest-upvoted HN launch in its whole YC batch.**
-  Built on WebCodecs + Claude Sonnet, browser-based, **commercial/paid, not open**.
-- **Eddie AI** (`heyeddie.ai`, owner-flagged 2026-09-02) — the closest shape to Chroma's
-  *ambition* of anyone found: rough-cut assembly, A-roll transcription + soundbite ID +
-  filler removal, **B-roll auto-tagging with visual descriptions** (the exact
-  "find-me-the-moment-where" capability, already shipping as a feature — real demand
-  proof), colour grading, AI music + ducking, multicam sync, captions/titles, voiceover.
-  Surfaces via web/desktop/iPhone/API/CLI **and MCP** (Claude/ChatGPT-callable — same
-  agent-tool instinct as Chroma). But it's a **companion/logging tool, not a standalone
-  NLE** — it preps footage then exports to Premiere/FCP/Resolve to finish. Cloud,
-  pay-as-you-go credits (never expire), 50k+ users — real traction. Closed source. (A
-  page element implied an Anthropic affiliation — **unverified, likely just the MCP
-  integration being misread**; don't repeat that as fact without checking the company's
-  own about page.)
-- **Mobbi AI** (Vega Labs) — "vibe editing," chains Seedance 2.0 / Sora 2 / Kling 3.0 /
-  Veo 3.1 generation models into one conversational workflow. Generation-first, not
-  grading/editing-craft-first.
-- **Avid** — even the 40-year-old incumbent (Media Composer 2026.8) shipped "agentic
-  capabilities" at IBC2026. When the legacy pro tool moves, the category is mainstream.
-- **Runway** — not a direct editor competitor, but $544.5M raised total (+$300M more,
-  Nvidia/General Atlantic/SoftBank), the ambient signal of how much capital is in
-  adjacent AI-video.
+## 7. The 2026 market — why the window narrowed, and where the wedge still is
 
-**Open-source / local players emerged too — this directly narrows Chroma's "unclaimed"
-claim, read carefully:**
-- **`MartinDelophy/ai-video-editor`** — "creators and AI agents edit the same real
-  timeline," open-source, local-first. **This is Chroma's D-020 shared-state thesis,
-  independently arrived at by someone else.**
-- **OpenReel Video** (`openreel.video`, MIT) — chat with an agent that controls the full
-  timeline, free, local-first.
-- **OpenMontage** (`calesthio/OpenMontage`) — "world's first open-source agentic video
-  *production* system" — 12 pipelines, 100+ tools, 700+ agent skill/knowledge files,
-  local generation models (WAN 2.1, Hunyuan), offline TTS (Piper). Reads as an
-  **agent-skills framework** (closer in shape to this repo's own `videoAgent` skills)
-  than a GUI app.
-- **LTX Desktop** — free/open/local NLE built around the LTX-Video generation model.
+**"Agentic video editing" became a named, funded category in 2026** — not
+unclaimed anymore, but validated at scale:
 
-**What still differentiates Chroma against all of the above (verified — none of them do
-this):**
-1. **Colorist depth.** Every one of these is cut-assembly-first or generation-first.
-   None have a real grade pipeline — a GPU shader stack, scopes, `match_to_reference`,
-   depth-based haze/relight, mask keyframes. That craft depth is still Chroma's alone.
-2. **Rust-native, not browser/WebCodecs.** Cardboard and OpenReel are browser-based
-   (the class of engine the owner explicitly rejected, D-039's constraint lock). Nobody
-   surveyed is building the wgpu-native compositor Chroma's architecture calls for.
-3. **One integrated studio, not a point tool.** Edit + Motion + Colorist sharing one
-   project is a different shape than "an editor" or "a generator" alone.
-4. **MCP, an open standard** — works with any MCP client (Claude Code included), not a
-   bespoke chat UI bolted onto one app.
+- **a16z** published *"It's time for agentic video editing"* (VC thesis piece).
+- **Cardboard** (YC W2026) — describe a cut, agent assembles a multi-track
+  timeline. Highest-upvoted HN launch in its batch. WebCodecs + Claude Sonnet,
+  browser, **paid, closed**.
+- **Mobbi AI** — "vibe editing," chains Seedance/Sora/Kling/Veo generation
+  models. Generation-first, not editing/grading-craft-first.
+- **Avid** shipped agentic features at IBC2026 — when a 40-year incumbent moves,
+  the category's mainstream.
+- **Runway** — $544.5M+ raised, ambient signal of capital in adjacent AI-video.
+- **Eddie AI** (`heyeddie.ai`) — closest *feature* shape to Chroma's ambition:
+  rough-cut, transcription + soundbite ID, **B-roll auto-tagging with visual
+  descriptions** (real proof-of-demand for the visual-search feature, see
+  `docs/notes/video-search.md`), colour grading, AI music, multicam, MCP-callable.
+  But a **companion/logging tool**, not a standalone NLE — preps footage, hands
+  off to Premiere/FCP/Resolve to finish. Cloud, credits, 50k+ users, closed.
+  (An "Anthropic-affiliated" read off their page was **unverified** — likely a
+  misread of their MCP/Claude integration; don't repeat as fact.)
 
-**Read on the timing:** the window to be *first* at "open + local + agentic" is closing —
-`MartinDelophy/ai-video-editor` already claims the exact thesis. The window to be *best*
-at "open + local + agentic + real colour science + Rust-fast" is still open, because
-nobody surveyed is doing the colorist part seriously. That's the wedge to actually defend.
+**Open-source, local competitors also emerged — the part that actually narrows
+the "unclaimed" claim:**
+- **`MartinDelophy/ai-video-editor`** — "creators and AI agents edit the same
+  real timeline," open-source, local-first. **This is Chroma's exact D-020
+  shared-state thesis, arrived at independently.**
+- **OpenReel Video** (MIT) — chat-driven timeline agent, free, local.
+- **OpenMontage** — "world's first open-source agentic video *production*
+  system," reads more like an agent-skills framework (closer to `videoAgent`'s
+  own skill set) than a GUI app.
+- **LTX Desktop** — free/local NLE built around the LTX-Video generation model.
+
+**What still differentiates Chroma, checked against all of the above:**
+1. **Real colour science** — none of them have a grade pipeline this deep (GPU
+   shader stack, scopes, `match_to_reference`, depth-based haze/relight, mask
+   keyframes). Still Chroma's alone.
+2. **Rust-native, not browser** — Cardboard/OpenReel/Diffusion Studio are all
+   WebCodecs-in-browser, the exact class rejected on performance grounds.
+   Nobody surveyed is building the wgpu-native compositor Chroma's architecture
+   calls for.
+3. **One integrated studio**, not a point tool.
+4. **MCP**, an open standard — any MCP client, not a bespoke chat UI.
+
+**The honest read:** the window to be *first* at "open + local + agentic"
+already closed (`MartinDelophy/ai-video-editor` has that exact tagline). The
+window to be *best* at "open + local + agentic + real colour science +
+Rust-fast" is still open — nobody surveyed takes the colorist part seriously.
+**That's the wedge to defend, not the category label.**
+
+## 8. Business — is this worth money (owner asked 2026-09-02)
+
+Short version, not financial advice:
+
+- **Real value:** agent-native architecture (not bolted-on AI), local + no
+  credits (every well-funded competitor is cloud + metered), the colorist depth
+  gap, and the owner's own YouTube channel as a distribution flywheel most solo
+  OSS devs don't have.
+- **Hard truths:** the editing tab alone is a multi-month build against free
+  incumbents (Resolve, CapCut); pure OSS doesn't pay — every comparable project
+  is "open core + paid pro" (Diffusion Studio, Gausian; Palmier just closed
+  entirely); distribution is the real 80% of the problem, not the build.
+- **Realistic paths:** open-core + paid Pro (cloud model hosting, team/collab,
+  org licence — Remotion's model) · the colorist alone as a focused paid tool ·
+  services · sponsorship/acquisition as outcomes, not plans.
+- **Recommendation:** nail the colorist first (focused, unclaimed, finishable),
+  ship OSS to build audience, monetise open-core later. Don't spread thin
+  across all three tabs before any one of them is genuinely good. Matches the
+  owner's own framing: *"just want my life to be easy first, then we'll see."*
+
+## 9. Open questions still genuinely open
+
+- Name (D-010) / licence (D-002, leaning AGPL) / v1 headline feature (D-007) —
+  all shift under the 3-tab framing, not yet re-decided.
+- Does the Editor tab's compositor eventually *replace* the Colorist's grade
+  path, or do they stay two passes (composite → grade)? Leaning two-pass for
+  now (`chroma-compositor` → `chroma-grade`, per `architecture-lock.md`), not
+  re-litigated since.
+- Multi-timeline / nested-sequence support (a Motion composition as a pool
+  item) — flagged, deferred, not designed.
+- Whether `chroma-motion`'s manifest editor becomes visual or stays
+  JSON-in/agent-driven for v1 — not decided, no strong signal either way yet.
