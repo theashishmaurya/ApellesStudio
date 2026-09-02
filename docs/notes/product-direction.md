@@ -74,3 +74,96 @@ foundation either way.
 - Is this still "open-source, local, no cloud"? (the Palmier-going-closed trigger
   suggests yes, emphatically)
 - Name / licence / headline (D-002 / D-007 / D-010) all shift under this.
+
+---
+
+## Prior-art research (2026-09-02) — what we could build on
+
+The colorist tab stood on RapidRAW. The question: is there an equivalent base for
+the **editing tab** and the timeline/compositor gap.
+
+### Editing tab — three architectural paths
+
+**Path A — Remotion-based (unifies with the Motion tab).**
+Chroma's motion engine already *is* Remotion. Reuse candidates:
+- **Vanta** (`itsjwill/vanta`, **MIT**, "fork it and rename it") — an OSS Remotion
+  editor: multi-track timeline, trim/split/join, keyframes, playhead synced to
+  `@remotion/player`, built on `react-timeline-editor` (661★), JSON-exports to
+  Remotion sequences. Early (~8 commits) but explicitly a reusable base. Also wires
+  WhisperX word-timestamps.
+- **Remotion's own** "building-a-timeline" docs + copy-pasteable Timeline component
+  (the polished one is Remotion Pro, paid).
+- `react-timeline-editor` — the raw timeline UI both use.
+- Playback = `@remotion/player` (multi-track via `<Sequence>`); export =
+  `@remotion/renderer` (headless Chrome; `@remotion/media` sped this up) **or** emit
+  an EDL and assemble with ffmpeg.
+- **Licence catch:** Remotion is source-available, free for individuals / non-profits
+  / for-profit ≤3 people; **4+ employees → paid company licence** ($100/mo min), and
+  "not selling Remotion as a product itself." Shipping an **open-source editor** built
+  on Remotion is a grey zone worth a direct read of their licence FAQ — **this already
+  affects the Motion tab today.**
+- Pros: one engine for Motion + Editing, all React/TS, LLMs write it well, fastest to
+  a prototype. Cons: the licence question; headless-Chrome export slower than native;
+  a *different* render path from the colorist wgpu grade pipeline (two engines).
+
+**Path B — OpenCut's Rust core (unifies with the colorist wgpu world).**
+`OpenCut-app/OpenCut` (**MIT**, ~88k★) is mid-rewrite into a monorepo with a
+**platform-agnostic Rust core**: `rust/crates/{compositor, effects, masks (JFA
+feathering), gpu, time}` + `rust/wasm/` bindings — a wgpu GPU compositor built to be
+embedded in different frontends. Their roadmap: "headless mode, scripting tab, **MCP
+server for AI agents**" — the same direction as Chroma.
+- Pros: real native GPU compositing (not headless Chrome), **same wgpu foundation as
+  RapidRAW's grade shader** → the path to ONE render pipeline for cut+grade; MIT.
+- Cons: it's a **pre-release rewrite** — risky to build on *now*; desktop shell is
+  **GPUI (Zed's framework), not Tauri** (we'd take the crates, not the app); younger
+  and less proven than Remotion. The **classic** OpenCut (Next.js, stable, browser
+  render, WASM audio only) is less aligned.
+- Realistic play: **track it**, prototype on Path A, adopt the compositor crate when
+  its rewrite stabilises.
+
+**Path C — Rust-native, standing on parts.** `wgpu` (already in Chroma) for the
+compositor + **OpenTimelineIO** JSON as the timeline model + ffmpeg CLI (already
+wired, D-015) for decode/encode/assembly. Most control, most work; Path B's crates
+become the reference implementation.
+
+### Transcript-based cut (the Descript-style feature) — low risk, well-trodden
+- **CutScript** (`DataAnts-AI/CutScript`) — WhisperX word-level, local, "delete a word
+  in the transcript → it's cut from the video." The edit-model to copy.
+- **Rescript** (`getrescript`) — OSS, offline, Whisper word-level + speaker labels.
+- **OpenScript** — local-first Descript alt.
+- We already have the transcription half (`videoAgent` `whisper_transcribe.py
+  --word-timestamps`, mlx-whisper); these show the text-edit → EDL layer.
+
+### Timeline interchange — use it regardless of path
+**OpenTimelineIO** (ASWF/Pixar, JSON, the modern EDL). Rust bindings exist
+(`vfx-rs/opentimelineio-bind`, `opentimelineio` crate) but are **Linux-only** for now
+— the JSON schema is usable directly. This should be Chroma's timeline format: it's
+how a cut round-trips to/from any other tool, and it's the "the edit is code" parallel
+to `grade.json`.
+
+### Full editors worth studying (not necessarily building on)
+- **OpenReel Video** (`Augani/openreel-video`, **MIT**) — React + WebCodecs + **WebGPU**,
+  multi-track timeline, keyframes, **color grading**, audio effects. Browser, WebGPU —
+  conceptually close to our wgpu world.
+- **Twick** (`ncounterspecialist/twick`) — React **SDK** (embeddable, not a full app),
+  canvas timeline, AI captions, serverless MP4 export. Closest to a drop-in editing
+  component.
+- **Rust NLE prototype** (dev.to, Mar 2026) — wgpu + GPUI + prompt-based editing;
+  proof others are building exactly this.
+
+### Recommendation (for when this is picked up)
+1. **Timeline model = OpenTimelineIO JSON** from day one.
+2. **Editing-tab UI = a Remotion-based timeline** (Vanta / `react-timeline-editor` /
+   Remotion's own) — fastest to a working talking-head MVP, and the Motion tab is
+   already Remotion. Resolve the Remotion OSS-licence question first.
+3. **Compositor/playback**: `@remotion/player` for the MVP; **watch OpenCut's
+   `rust/crates/compositor`** and adopt it (or build the wgpu equivalent sharing the
+   grade pipeline) when it stabilises — that's the route to a single render engine.
+4. **Transcript cut**: build on the CutScript/Rescript model + the whisper
+   word-timestamps we already have.
+5. **Export**: OTIO → ffmpeg assembly (ffmpeg already wired).
+
+**Time impact:** reusing a Remotion timeline + a transcript-cut base could pull the
+"lean editing tab" estimate from ~3–4 months toward **~6–10 weeks** for a
+talking-head-focused MVP. Path B (Rust compositor) is the bigger, later investment
+for a unified engine.
