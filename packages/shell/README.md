@@ -57,19 +57,38 @@ panels or Editor's timeline pane for space. Toggled by a chrome-bar button
 button carries `aria-pressed`, which WebKit maps to an `AXCheckBox` role, not
 `AXButton` — worth knowing if you're scripting against it.
 
+## Global undo/redo (D-051)
+
+The shell owns the **only** Cmd/Ctrl+Z (undo) and Cmd/Ctrl+Y / Cmd/Ctrl+Shift+Z
+(redo) keydown listener in the app, gated on `projectOpen` like the tab-switch
+shortcut. It pops `@chroma/history`'s shared stack — not any one tab's local
+history — so it works no matter which tab is active, and **switches the active
+tab** to whichever tab the popped entry belongs to (the real UX decision here:
+see D-051 for why "switch focus" was chosen over "apply silently in the
+background"). Skipped while an `<input>`/`<textarea>`/contenteditable has
+focus, so it never steals native text-field undo.
+
+This means no tab may register its own competing Cmd/Ctrl+Z handler — the
+Colorist tab's pre-existing one was removed in the same change
+(`app/src/hooks/useKeyboardShortcuts.ts`) in favor of this one, single source
+of truth.
+
 ## Deps
 
 `react` + `zustand` + `lucide-react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`
 + `@chroma/ui` (D-042 — the "‹ Projects" chrome button is a `@chroma/ui`
-`<Button variant="ghost">`). The Tauri coupling is deliberate and acceptable —
-**the shell is the app chrome now.** Tab content is still injected via the `tabs`
-registry prop, so the shell never imports the colorist app or the tab packages;
-`sourcesPanel` is injected the same way for the same reason.
+`<Button variant="ghost">`) + `@chroma/history` (D-051 — the shared undo/redo
+stack; a generic leaf package, not a tab package, so this doesn't violate "the
+shell never imports the tab packages"). The Tauri coupling is deliberate and
+acceptable — **the shell is the app chrome now.** Tab content is still
+injected via the `tabs` registry prop, so the shell never imports the colorist
+app or the tab packages; `sourcesPanel` is injected the same way for the same
+reason.
 
 ## Status
 
 D-039 — the 3-tab layout + window chrome + the project-launcher entry screen
-(step 6c) are live. D-046 added the docked Sources-panel slot. Follow-up: move
-`ProjectLauncher` + the session store into `@chroma/bridge` / a `@chroma/project`
-fe package so the shell can own the launcher outright instead of taking it as
-a prop.
+(step 6c) are live. D-046 added the docked Sources-panel slot. D-051 added
+global undo/redo. Follow-up: move `ProjectLauncher` + the session store into
+`@chroma/bridge` / a `@chroma/project` fe package so the shell can own the
+launcher outright instead of taking it as a prop.

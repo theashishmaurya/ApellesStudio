@@ -251,21 +251,18 @@ export const useKeyboardShortcuts = ({
           handleRotate(90);
         },
       },
-      undo: {
-        shouldFire: (s: any) => !!s.editor.selectedImage && s.editor.historyIndex > 0,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.editor.undo();
-        },
-      },
-      redo: {
-        shouldFire: (s: any) =>
-          !!s.editor.selectedImage && s.editor.historyIndex < s.editor.history.length - 1,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.editor.redo();
-        },
-      },
+      // D-051: undo/redo moved to the shell-level global keybinding
+      // (`@chroma/shell`'s `Shell.tsx`, Cmd/Ctrl+Z / Cmd/Ctrl+Y), which pops
+      // `@chroma/history`'s shared stack via the `useColoristHistoryBridge`
+      // adapter — that stack's entries call `useEditorStore`'s
+      // `goToHistoryIndex`/`setEditor`+`pushHistory` under the hood, so the
+      // net effect on this store is identical. No handler here anymore: a
+      // second Cmd/Ctrl+Z listener on this same combo would double-undo
+      // whenever the Colorist tab is active. `KEYBIND_DEFINITIONS` above
+      // still lists `undo`/`redo` (`Ctrl+Z`/`Ctrl+Y`) purely for the
+      // keybinds settings display — still accurate, since the shell uses the
+      // same combo — `comboMap` resolving to an action with no handler here
+      // is a deliberate, safe no-op (see `handleKeyDown` below).
       toggle_fullscreen: {
         shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any) => {

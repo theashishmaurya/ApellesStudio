@@ -1,0 +1,18 @@
+{
+  "name": "@chroma/history",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Chroma shell-level global undo/redo (D-051) — a generic {tab, label, undo(), redo(), ts} history stack shared across all 3 tabs. No Tauri, no tab-specific imports; consumed by @chroma/shell (the Cmd/Ctrl+Z keybinding) and by each tab that wants its edits to participate.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

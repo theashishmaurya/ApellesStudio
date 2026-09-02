@@ -24,6 +24,18 @@
  *
  * Keyboard: Cmd/Ctrl+1 / +2 / +3 switch tabs (only while a project is open).
  *
+ * Global undo/redo (D-051): Cmd/Ctrl+Z undoes, Cmd/Ctrl+Y **or**
+ * Cmd/Ctrl+Shift+Z redoes (the codebase's existing Colorist-only keybind
+ * already used Ctrl+Y — `app/src/utils/keyboardUtils.ts` — kept as the
+ * primary redo combo for consistency; Cmd+Shift+Z accepted too since it's
+ * the platform convention on macOS and costs nothing to also support). Both
+ * pop `@chroma/history`'s shared stack regardless of which tab is active,
+ * and — the real UX decision here, see D-051 — **switch the active tab** to
+ * whichever tab the undone/redone entry belongs to, so the user always sees
+ * the effect of the undo/redo they just triggered rather than it applying
+ * silently behind a different tab. Skipped while a text input/textarea/
+ * contenteditable has focus, so native text-field undo isn't hijacked.
+ *
  * Project gating (D-039): the shell renders `launcher` (passed in — the shell
  * never imports the D-037 `ProjectLauncher`, dependency direction is app →
  * shell) full-window whenever `projectOpen` is false, with the tab buttons
@@ -45,6 +57,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { ChevronLeft, PanelRight } from 'lucide-react';
 import { Button } from '@chroma/ui';
+import { useHistoryStore } from '@chroma/history';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
 
@@ -97,6 +110,33 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [tabs, setActiveTab, projectOpen]);
+
+  // D-051 — global undo/redo, see the module doc comment above.
+  useEffect(() => {
+    if (!projectOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      const key = e.key.toLowerCase();
+      const isUndo = key === 'z' && !e.shiftKey;
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+      if (!isUndo && !isRedo) return;
+
+      const el = document.activeElement;
+      const isTextInput =
+        el instanceof HTMLElement &&
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      if (isTextInput) return;
+
+      e.preventDefault();
+      const entry = isUndo ? useHistoryStore.getState().undo() : useHistoryStore.getState().redo();
+      if (entry && tabs.some((t) => t.id === entry.tab) && entry.tab !== active) {
+        setActiveTab(entry.tab as ShellTabId);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [tabs, active, setActiveTab, projectOpen]);
 
   return (
     <div

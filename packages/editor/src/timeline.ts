@@ -14,6 +14,11 @@
  * active_timeline` in `app/src-tauri/src/chroma/project.rs`): `chroma_timeline_
  * get`/`_set`/`_frame` are unchanged here, they just transparently target
  * whichever timeline is active. No timeline-switcher UI yet (pass 3).
+ *
+ * D-051: `labelForOp` turns an `EditOp` into the human-readable label
+ * `useEditorTimelineStore.applyOp` puts on the `@chroma/history` entry it
+ * pushes for every op — kept here (pure, testable) rather than inline in the
+ * store.
  */
 
 export interface Rational {
@@ -143,6 +148,36 @@ export type EditOp =
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
    *  `chroma_timeline_create`), a video track is created to hold it. */
   | { kind: 'add_clip'; track: number; clip: Clip; atIndex?: number };
+
+/** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
+ *  labels (D-051) only, never used in the actual edit logic below. */
+function clipLabel(tl: Timeline, track: number, clip: number): string {
+  const name = tl.tracks[track]?.clips[clip]?.name;
+  return name ? `"${name}"` : 'clip';
+}
+
+/** Human-readable one-liner for an `EditOp`, evaluated against the timeline
+ *  it's about to be applied to (`before`) — used as the `label` on the
+ *  `@chroma/history` entry `useEditorTimelineStore.applyOp` pushes for every
+ *  op (D-051). Pure and separately testable; not used by `applyOp` itself. */
+export function labelForOp(op: EditOp, before: Timeline): string {
+  switch (op.kind) {
+    case 'reorder':
+      return `Reorder ${clipLabel(before, op.track, op.from)}`;
+    case 'trim_start':
+      return `Trim ${clipLabel(before, op.track, op.clip)} (start)`;
+    case 'trim_end':
+      return `Trim ${clipLabel(before, op.track, op.clip)} (end)`;
+    case 'split':
+      return `Split ${clipLabel(before, op.track, op.clip)}`;
+    case 'remove':
+      return `Remove ${clipLabel(before, op.track, op.clip)}`;
+    case 'add_clip':
+      return `Add "${op.clip.name}"`;
+    default:
+      return 'Edit timeline';
+  }
+}
 
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   if (op.kind === 'add_clip') {

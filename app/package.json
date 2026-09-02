@@ -21,6 +21,7 @@
   "dependencies": {
     "@chroma/bridge": "*",
     "@chroma/editor": "*",
+    "@chroma/history": "*",
     "@chroma/motion": "*",
     "@chroma/shell": "*",
     "@chroma/ui": "*",

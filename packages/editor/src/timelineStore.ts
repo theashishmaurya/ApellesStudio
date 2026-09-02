@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the Edit-tab timeline store (D-041, timeline switcher D-046
- * pass 3).
+ * pass 3, undo/redo D-051).
  *
  * Kept in `@chroma/editor` for now; a `@chroma/bridge` extraction (shared
  * stores + typed Tauri bindings) is a separate later task (D-039 step 6).
@@ -13,12 +13,23 @@
  * to reconcile. `loadList()`/`createTimeline()`/`setActiveTimeline()` wrap
  * the D-045 `chroma_timeline_list`/`_create`/`_set_active` commands that had
  * no UI consumer until this pass.
+ *
+ * D-051: every real (non-no-op) `applyOp` call pushes a `{tab:'edit', ...}`
+ * before/after snapshot pair onto `@chroma/history`'s shared undo stack —
+ * whole-`Timeline` snapshots (not inverse deltas), because every op here is
+ * already whole-document replace/persist, so restoring a snapshot is exactly
+ * what a normal edit does. `restoreSnapshot()` is what the history entries'
+ * `undo()`/`redo()` closures call: set state to the given `Timeline`,
+ * cancelling any pending debounced save, then persist immediately (undo/redo
+ * are discrete user actions — no reason to debounce them) and refetch to
+ * reconcile, same as a normal edit.
  */
 
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
+import { useHistoryStore } from '@chroma/history';
 
-import { applyOp as applyOpPure, timelineDuration, type EditOp, type Timeline } from './timeline';
+import { applyOp as applyOpPure, labelForOp, timelineDuration, type EditOp, type Timeline } from './timeline';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -44,6 +55,9 @@ interface EditorTimelineState {
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
   applyOp: (op: EditOp) => void;
+  /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
+   *  bypassing the debounced save so it lands immediately. */
+  restoreSnapshot: (timeline: Timeline) => void;
   _flushSave: () => void;
 
   /** re-read the project's timeline list (id/name/duration/active per one) */
@@ -89,18 +103,41 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   setPlaying: (playing) => set({ playing }),
 
   applyOp: (op) => {
-    const cur = get().timeline;
-    if (!cur) return;
-    const next = applyOpPure(cur, op);
-    if (next === cur) return; // no-op (clamped away)
-    const dur = timelineDuration(next);
-    set((s) => ({ timeline: next, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
+    const before = get().timeline;
+    if (!before) return;
+    const after = applyOpPure(before, op);
+    if (after === before) return; // no-op (clamped away)
+    const dur = timelineDuration(after);
+    set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
       get()._flushSave();
     }, SAVE_DEBOUNCE_MS);
+
+    // D-051 — one shared-history entry per applied op, snapshot-based (see
+    // module doc comment). `before`/`after` are already independent trees
+    // (`applyOpPure` clones rather than mutating), so closing over them
+    // directly is safe even though `timeline` keeps changing underneath.
+    useHistoryStore.getState().push({
+      tab: 'edit',
+      label: labelForOp(op, before),
+      undo: () => get().restoreSnapshot(before),
+      redo: () => get().restoreSnapshot(after),
+    });
+  },
+
+  restoreSnapshot: (timeline) => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const dur = timelineDuration(timeline);
+    set((s) => ({ timeline, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
+    invoke('chroma_timeline_set', { timeline })
+      .then(() => get().load())
+      .catch((e) => set({ error: String(e) }));
   },
 
   _flushSave: () => {

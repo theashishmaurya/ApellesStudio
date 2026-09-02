@@ -109,6 +109,20 @@ useAgentStore.markUndoneFrom(E.id)               // E + all newer entries → un
 - The feed is **session-only** — not persisted, not in `grade.json`. It's a
   working record of what the agent just did, not an audit log.
 
+**D-051 update (2026-09-03):** the pseudocode above (fast-path history jump,
+snapshot-restore fallback) now lives as a standalone, shared function —
+`restoreEditorHistorySnapshot(targetIndex, snapshot)` in
+`app/src/utils/editorHistorySnapshot.ts` — extracted out of
+`AgentActivityDock.tsx`'s `undoEntry` so the new shell-level global undo/redo
+(`@chroma/history`, bridged in via `useColoristHistoryBridge.ts`) can reuse
+the exact same restore logic instead of a second implementation drifting
+from this one. `undoEntry` now just calls it + `markUndoneFrom`. The feed
+itself, its jump-to-here semantics, and the limitations below are unchanged —
+see D-051 in `08-decisions.md` for why the shared undo stack does *not* also
+write into this feed (a deliberate, documented scope line: this feed is an
+agent-attribution log, the shared stack is generic cross-tab/cross-actor
+undo).
+
 ### One entry per op (not per internal step)
 
 Recording happens once per `chroma://request`. `match_reference` runs ~5

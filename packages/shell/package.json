@@ -5,8 +5,9 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma app shell (D-039) — the window title bar (window chrome + the 3 tabs Edit/Motion/Colorist), a persisted tab store, Cmd/Ctrl+1/2/3 switching. Tab content is injected via a registry prop so the shell never imports the tab packages. Owns the app chrome, so it couples to Tauri.",
+  "description": "Chroma app shell (D-039) — the window title bar (window chrome + the 3 tabs Edit/Motion/Colorist), a persisted tab store, Cmd/Ctrl+1/2/3 switching, and (D-051) the global Cmd/Ctrl+Z / Cmd/Ctrl+Y undo/redo keybinding over @chroma/history. Tab content is injected via a registry prop so the shell never imports the tab packages. Owns the app chrome, so it couples to Tauri.",
   "dependencies": {
+    "@chroma/history": "*",
     "@chroma/ui": "*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-os": "^2.3.2",

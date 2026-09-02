@@ -13,8 +13,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, Undo2, Trash2, UserRound, X } from 'lucide-react';
 
 import { useAgentStore, AgentActivityEntry } from '../../store/useAgentStore';
-import { useEditorStore } from '../../store/useEditorStore';
-import { useChromaStore } from '../../store/useChromaStore';
+import { restoreEditorHistorySnapshot } from '../../utils/editorHistorySnapshot';
 
 function timeAgo(ts: number): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
@@ -32,32 +31,12 @@ function fmtCell(v: any): string {
 }
 
 /** Undo an op: jump the grade back to the state before it ran, and mark this
- * entry + every newer one undone (they built on this op's result). */
+ * entry + every newer one undone (they built on this op's result). The
+ * restore itself (fast-path history jump, or a snapshot-restore fallback if
+ * the pre-op state scrolled off the 50-slot history stack) is shared with
+ * the D-051 Colorist→shared-history bridge — see `editorHistorySnapshot.ts`. */
 function undoEntry(entry: AgentActivityEntry) {
-  const ed = useEditorStore.getState();
-  const target = entry.historyIndexBefore;
-  const hist = ed.history;
-
-  let jumped = false;
-  try {
-    if (
-      target >= 0 &&
-      target < hist.length &&
-      JSON.stringify(hist[target]) === JSON.stringify(entry.adjustmentsBefore)
-    ) {
-      ed.goToHistoryIndex(target);
-      jumped = true;
-    }
-  } catch {
-    /* fall through to snapshot restore */
-  }
-  if (!jumped) {
-    // the pre-op state scrolled off the 50-slot history stack — restore the
-    // snapshot as a new forward edit (docs/notes/agent-activity-feed.md).
-    ed.setEditor({ adjustments: entry.adjustmentsBefore });
-    ed.pushHistory(entry.adjustmentsBefore);
-  }
-  useChromaStore.getState().bumpFrameNonce();
+  restoreEditorHistorySnapshot(entry.historyIndexBefore, entry.adjustmentsBefore);
   useAgentStore.getState().markUndoneFrom(entry.id);
 }
 

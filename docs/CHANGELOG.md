@@ -23,6 +23,23 @@ One or two lines per session. Detail lives in the decision it references.
   their backing command surface and the library's own native-support mechanism
   (read directly from its bundled source).
 
+- **2026-09-03** — **Global undo/redo (D-052): shell-level Cmd/Ctrl+Z spanning all 3
+  tabs.** New `@chroma/history` package (a generic `{tab, label, undo(), redo(), ts}`
+  stack — a new leaf package, not folded into `@chroma/bridge`, see D-052). Colorist's
+  existing `useEditorStore` grade history is bridged in unchanged
+  (`useColoristHistoryBridge.ts`, reuses the D-032 `restoreEditorHistorySnapshot`
+  helper — extracted from `AgentActivityDock.tsx` so both share one implementation).
+  The Edit tab's timeline ops get real undo for the first time — `useEditorTimelineStore
+  .applyOp` pushes before/after `Timeline` snapshots. `Shell.tsx` owns the only
+  Cmd/Ctrl+Z / Cmd/Ctrl+Y (+ Cmd/Ctrl+Shift+Z) listener, pops the shared stack
+  regardless of active tab, and **switches to the popped entry's tab** so the effect
+  is always visible (the real UX call, reasoning in D-052). Colorist's own local
+  Cmd/Ctrl+Z handler removed to avoid double-undo. Deferred: Motion tab (no natural
+  edit-history unit), and the Colorist toolbar's Undo/Redo buttons still bypass the
+  shared stack (documented, harmless). 16/16 new unit tests (`@chroma/history` +
+  `labelForOp`) passing, `tsc --noEmit` 64/64 baseline unchanged, `cargo test
+  chroma::` unaffected (no Rust touched).
+
 - **2026-09-03** — **Export dialog, Colorist tab (D-049): a top-right button replaces
   the "buried `ExportPanel` toggle" roadmap item.** New `ExportDialog.tsx`
   (`@chroma/ui` `Dialog`/`Select`, D-042) in `EditorToolbar`'s top-right button group —

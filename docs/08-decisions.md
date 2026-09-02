@@ -3232,3 +3232,208 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   this scale (a handful of clips, decode is fast) but the first thing to
   revisit if a long timeline with many clips makes waveform requests feel
   slow.
+
+## D-052 — Global undo/redo: a new `@chroma/history` package (generic stack, not `@chroma/bridge`), snapshot-based bridges for both existing edit surfaces, shell-owned Cmd/Ctrl+Z that switches tabs
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Roadmap "Next" item 4. Cmd/Ctrl-Z worked only while Colorist
+  was the active tab, only for grade adjustments (`useEditorStore`'s existing
+  50-deep history, undo/redo already wired in `useKeyboardShortcuts.ts`). The
+  Edit tab's timeline ops (reorder/trim/split/remove/add_clip, D-041/D-046,
+  `useEditorTimelineStore.applyOp`) had no undo at all. No shell-level
+  keybinding spanned tabs. Studied first: `useEditorStore`'s actual
+  `pushHistory`/`undo`/`redo`/`goToHistoryIndex`/`resetHistory` (D-032's
+  `AgentActivityDock.tsx` `undoEntry` already had to solve "restore a past
+  grade snapshot reliably," including the documented 50-slot-eviction
+  fallback — reused rather than re-derived), `applyOp`'s always-clone
+  edit-op model in `timeline.ts`, and D-032's `08-decisions.md` entry for
+  what the agent-activity feed already displays/logs.
+
+- **Package: `@chroma/history`, not folded into `@chroma/bridge`.** `@chroma/
+  bridge`'s own README states its boundary explicitly: "typed Tauri command
+  bindings + the zustand stores + the control-bridge hook" — the
+  frontend↔backend seam. The shared undo stack has zero Tauri surface and no
+  backend seam; it's pure frontend state (`{id, tab, label, undo(), redo(),
+  ts}`, two stacks, push/undo/redo/cap) depended on by `@chroma/shell` (which
+  explicitly must *not* depend on `@chroma/bridge` or the colorist app — see
+  `store.ts`'s own header comment) and by tab packages. A new leaf package,
+  same layer as `@chroma/ui`, was the shape that didn't force a boundary
+  violation in either direction. Full reasoning in `packages/history/README.md`.
+
+- **Colorist bridge: an adapter that *observes* `useEditorStore`, doesn't
+  touch it.** `app/src/hooks/useColoristHistoryBridge.ts` subscribes
+  (`useEditorStore.subscribe((state, prevState) => …)`, same pattern as the
+  existing `useProjectAutosave.ts`) and distinguishes a genuine new edit
+  ("push") from mere navigation (undo/redo/`goToHistoryIndex` — same
+  `history` array reference) or a fresh-image reset (`resetHistory` — new
+  array, but always length 1) purely from `history`'s reference identity and
+  length; zustand's `prevState` gives the pre-push state directly, no manual
+  index bookkeeping needed. Every genuine push registers one `{tab:
+  'colorist', ...}` entry whose `undo()`/`redo()` call a **new shared
+  helper**, `app/src/utils/editorHistorySnapshot.ts`'s
+  `restoreEditorHistorySnapshot(targetIndex, snapshot)` — extracted verbatim
+  from `AgentActivityDock.tsx`'s `undoEntry` (D-032) rather than
+  reimplemented, so both the agent-activity feed's jump-to-here undo and this
+  bridge share one "fast-path history-index jump, fall back to a snapshot
+  restore-as-new-forward-edit if the target scrolled off the 50-slot stack"
+  implementation instead of two that could drift. `useEditorStore`'s own
+  internals are untouched — literally zero lines changed in that file.
+
+- **Editor timeline: whole-`Timeline` snapshot pairs, not inverse deltas.**
+  `useEditorTimelineStore.applyOp` already computes `before`/`after` as two
+  independent trees (`applyOpPure` clones rather than mutating) and already
+  round-trips every op through a whole-document `chroma_timeline_set` +
+  refetch — so restoring a snapshot *is* exactly what a normal edit already
+  does, and a new `restoreSnapshot(timeline)` action (cancel any pending
+  debounced save, set state, persist + refetch **immediately**, no debounce —
+  undo/redo are discrete actions) is all `undo()`/`redo()` need. Inverse
+  per-op deltas (e.g. "reorder" undoes with the opposite "reorder") were
+  rejected: they'd need a hand-maintained inverse for every `EditOp` variant,
+  duplicate logic `applyOpPure` already has, and buy nothing — the snapshots
+  are already sitting right there in the closure. `labelForOp` (`timeline.ts`,
+  pure, unit-tested) turns the op into the entry's human label ("Trim
+  \"B-roll 1\" (start)").
+
+- **The cross-tab UX decision — undo *switches the active tab*, it does not
+  apply silently in the background.** Three options: (a) apply the
+  undone/redone entry's effect wherever its tab lives, leaving the visible
+  tab untouched; (b) switch the active tab to whichever tab owns the popped
+  entry, so the user sees the result; (c) refuse cross-tab undo entirely
+  (only ever undo within the active tab). **(b), chosen.** (a) is silently
+  confusing — if you're on Colorist and Cmd+Z pops an Edit-tab timeline
+  entry, nothing visibly changes and the user has no idea their keypress did
+  anything, or worse, thinks the undo failed and presses it again. (c) fails
+  the brief outright ("regardless of which tab is currently active") and
+  would need its own extra state (a separate "what's undoable *here*"
+  cursor) to even implement well. (b) costs one `setActiveTab` call — the
+  shell already owns tab-switching (Cmd/Ctrl+1/2/3) — and guarantees the user
+  always sees the effect of the keypress they just made, which matches how a
+  single global undo stack reads in any app that has one (e.g. a multi-
+  document editor: Cmd+Z always shows you what got undone, switching
+  documents if it must). Implemented entirely in `Shell.tsx`'s new keydown
+  effect (parallel to the existing Cmd/Ctrl+1/2/3 one): pop
+  `@chroma/history`, then `setActiveTab(entry.tab)` if that tab isn't already
+  active. `@chroma/history` itself stays tab-switching-agnostic (plain
+  `string` for `entry.tab`, no `ShellTabId` import) — the shell is the one
+  place that knows what a "tab" means.
+
+- **Redo keybind: Ctrl+Y kept as primary (matching this codebase's existing
+  default, `keyboardUtils.ts`'s `KEYBIND_DEFINITIONS`), Cmd/Ctrl+Shift+Z also
+  accepted.** The brief said "check what convention this codebase already
+  uses, match it" — the Colorist-only redo default was already `ctrl+KeyY`
+  (i.e. Cmd+Y on macOS, not the more common macOS-native Cmd+Shift+Z), so
+  that stays primary for continuity. Cmd/Ctrl+Shift+Z is *additionally*
+  accepted (own judgement call) because it's the platform convention on
+  macOS and a second key combo mapping to the same action costs nothing and
+  removes a point of friction for anyone who reaches for it out of habit.
+
+- **Single source of truth: the Colorist tab's own local Cmd/Ctrl+Z handler
+  was removed, not left running alongside the shell's.** Two `window`
+  keydown listeners both matching the same combo would double-undo one
+  history step per press whenever Colorist is the active tab. The `undo`/
+  `redo` entries in `useKeyboardShortcuts.ts`'s `actions` map were deleted
+  (comment left explaining why); `KEYBIND_DEFINITIONS` keeps the `undo`/
+  `redo` entries for the keybinds settings display, still accurate since the
+  shell uses the same default combo — `comboMap` resolving an action with no
+  handler is an existing, safe no-op path in `handleKeyDown`.
+
+- **Known, deliberate gap: the Colorist toolbar's Undo/Redo buttons
+  (`EditorToolbar`, wired in `Editor.tsx`) are NOT routed through
+  `@chroma/history`.** They still call `useEditorStore`'s `undo()`/`redo()`
+  directly, exactly as before this change. Out of scope for this pass — the
+  brief asked for a shell-level *keybinding*, not rewiring every tab's
+  existing local UI, and it's a real, separately-scoped follow-up (would need
+  `Editor.tsx` to reach `@chroma/shell`'s `setActiveTab` too, for the same
+  "always show the effect" reasoning as the keybinding, which is a bigger
+  change than the toolbar button currently is). **Documented consequence:**
+  clicking that button moves `useEditorStore.historyIndex` without touching
+  `@chroma/history`'s stacks, so the shared stack's top can go stale relative
+  to what's actually current in Colorist. This is harmless, not corrupting —
+  every shared-history entry restores by snapshot (deep-equality-checked),
+  never by relative delta, so a subsequent shell Cmd+Z always lands on a
+  real, coherent prior state — just not always the state a user watching
+  only the toolbar button would predict. Same flavor of honestly-documented
+  edge case as D-032's own "middle-undo drops newer feed entries."
+
+- **D-032 tie-in: explicitly out of scope this pass, not silently skipped.**
+  The agent-activity feed is a *session log of agent-attributed MCP ops*
+  (`op`/`args`/`result`/`diff`, `markUndoneFrom` semantics keyed to that
+  attribution) — a different concern from this generic cross-tab,
+  cross-actor (human or agent) undo stack. Folding shell-level undo/redo
+  events into that feed would blur "who did this and why" with "what got
+  undone." The two mechanisms are already compatible at the data layer
+  without any feed change: both the feed's jump-to-here undo and the new
+  Colorist bridge now call the *same* `restoreEditorHistorySnapshot` helper,
+  operating on the same `useEditorStore.history`/`historyIndex`. **Known
+  limitation, same shape as D-032's own:** undoing a Colorist entry via the
+  shell doesn't retroactively mark any newer agent-feed entries `undone` —
+  the feed's `undone` flag is feed-local bookkeeping this pass doesn't touch.
+  Acceptable for the same "documented, not hidden" reason D-032 already
+  established a precedent for.
+
+- **Motion tab: excluded, explicitly.** The Motion tab (D-047) is a manifest
+  editor + save/render, not an incremental edit-history surface in the sense
+  Colorist's adjustments or the Editor's timeline ops are — there's no
+  discrete "op" to snapshot around; the natural unit of "undo" there would be
+  the manifest text editor's own native undo (already free, browser/editor-
+  native) or a "restore the last saved manifest" action, neither of which fit
+  this stack's shape. Not built this pass; a future pass could still register
+  manifest-save snapshots as `{tab: 'motion', ...}` entries if that turns out
+  to be wanted — the shared stack's generic shape doesn't preclude it.
+
+- **In-memory only, no persistence across restarts** — explicit non-goal
+  per the brief. `@chroma/history`'s two stacks live in a plain zustand
+  store; nothing writes them to disk. Capped at 100 entries total (`MAX_
+  HISTORY_ENTRIES`), a bit more generous than the Colorist's own 50 since
+  this stack spans 3 tabs' worth of activity, not one image's grade knobs —
+  picked, not derived from any hard constraint.
+
+- **Verified.** `packages/history/src/store.test.ts` (vitest, 11 tests) —
+  push/auto-id/redo-stack-clear-on-push/stack-cap-drops-oldest/undo-redo-
+  calls-closures/cross-tab-LIFO-order/canUndo/canRedo/peek/clear, all real
+  assertions on the pure store. `packages/editor/src/timeline.test.ts`
+  (vitest, 5 tests) — `labelForOp` per `EditOp` kind plus the out-of-range
+  fallback. `npm test` from the repo root (`--workspaces --if-present`) runs
+  both — 16/16 passing. `tsc --noEmit` (app workspace): baseline in this
+  worktree is **64** pre-existing errors both before and after this change —
+  `diff`'d line-for-line identical, confirmed zero new errors, none in any
+  touched or new file. `cargo test chroma::`: no Rust touched by this
+  change (`restoreSnapshot` calls the pre-existing `chroma_timeline_set`
+  command, no new command/behavior on the Rust side) — run anyway as a
+  regression check: **99/99 passed, 0 failed** (no env-gated real-file tests
+  set up in this pass, so the filtered-out counts are expected).
+
+  **Honest gap: could not complete a live click-through of the running app.**
+  `npm run tauri:dev` (port 1420 free) built and booted, but a first launch in
+  this fresh worktree got silently swallowed by `tauri_plugin_single_instance`
+  — this worktree's `tauri.conf.json` shares the exact same bundle identifier
+  (`io.github.CyberTimon.RapidRAW`, unchanged since D-039/D-040, not yet
+  worktree-scoped) as the concurrent `timeline-ui` agent's already-running
+  instance, so the second launch handed off to the first and exited with no
+  error logged. Worked around it correctly the first time — temporarily
+  retargeted this worktree's `identifier` to
+  `io.github.CyberTimon.RapidRAW.undoredoverify` in `tauri.conf.json` (same
+  spirit as the brief's sanctioned temporary-port-override) and relaunched;
+  only the final `RapidRAW` crate needed relinking (~10s, not the ~3.5 min
+  full dependency rebuild) — but that relink hit **`error: … No space left on
+  device (os error 28)`**: `df` showed `/System/Volumes/Data` at 100% capacity,
+  308Mi free, with `~/my_projects/chroma/target` (21G) +
+  `chroma-worktrees/timeline-ui/target` (7.4G) +
+  this worktree's own `target` (5.9G) as the visible weight — a shared-disk
+  resource-exhaustion problem from several concurrent worktrees each holding
+  a full multi-GB Rust `target/`, not a defect in this change (no `B-NNN`
+  filed — CLAUDE.md is explicit that "disk was full" is housekeeping, not a
+  code bug). Reverted `tauri.conf.json` back to the real identifier
+  immediately (`git checkout --`, confirmed clean) rather than leave a
+  dangling verification-only diff, and did not attempt to free space by
+  deleting another worktree's or the main checkout's `target/` — not this
+  agent's call to make unilaterally against another agent's live build.
+  **What this means concretely:** the Colorist bridge and the Editor
+  timeline-op push/restore path are verified by code inspection, the reused
+  D-032 `restoreEditorHistorySnapshot` primitive (already proven correct by
+  the existing agent-feed undo it was extracted from), and a clean
+  `cargo test`/`tsc` pass — but pressing Cmd+Z in a real running window and
+  watching a real slider value or a real clip actually move back was **not**
+  independently observed this session. Flagging for the orchestrating session
+  to either re-run this one check once disk pressure clears, or accept the
+  static verification as sufficient.
