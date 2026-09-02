@@ -37,7 +37,33 @@ session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
 
 ---
 
-## The cardinal rule: document the decisions that shape the project
+## The cardinal rule: keep the documentation right — HARD RULE (owner, 2026-09-02)
+
+**Docs are not optional and not "later." Every change lands with its docs in the same
+commit, or it doesn't land.** `docs/` describes the system *as it actually is* — if code
+and docs disagree, that's a bug, fix the doc now.
+
+Every change, before you commit:
+1. **Decision?** → `D-NNN` in `docs/08-decisions.md` (context · real options · choice · why).
+2. **Bug in our code / the engine?** → `B-NNN` in `docs/BUGS.md` (not setup/housekeeping).
+3. **Engine divergence from upstream RapidRAW?** → an entry in `docs/09-engine-notes.md`.
+4. **Roadmap item done / changed / deferred?** → tick / update `docs/04-roadmap.md`.
+5. **Session?** → one or two lines in `docs/CHANGELOG.md` `[Unreleased]`, newest-first.
+6. **New module/subsystem?** → a header comment (what it is / does / does NOT do / `D-NNN`)
+   and, for a package/crate, its `README.md`.
+7. **A `docs/notes/<topic>.md`** for anything with worked-out design detail (matte pipeline,
+   sidecar lifecycle, the migration plans, research trails…).
+
+A subagent's work is **not done** until its docs are written and committed. Verify the doc
+set is consistent before reporting done — no "docs pending."
+
+**Known drift to reconcile (do not let this grow):** `docs/03-architecture.md` is stale
+(has a banner, needs the full D-039 rewrite); `docs/00-vision.md` / `01-prd.md` /
+`02-scope.md` still say "grading only, not an editor"; `docs/BUGS.md` "Known engine
+constraints" lists items since solved (D-014/D-034/D-036). A docs-reconciliation pass is
+on the roadmap.
+
+### What counts as a `D-NNN`
 
 **A significant decision gets a `D-NNN` entry in `docs/08-decisions.md` — context, the
 real options, the choice, and *why*.** Keep it short.
