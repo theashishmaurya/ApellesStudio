@@ -11,6 +11,7 @@
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
 //! - `session`  — multi-shot session: add / list / switch / remove shots (D-033)
 //! - `project`  — the saved `<name>.chroma` project: list / open / new / save (D-037)
+//! - `edit`     — the Edit-tab bridge: `chroma-timeline` model ⇄ frontend + a lightweight decode→jpeg preview (D-041)
 //! - `playback` — fused decode+install+grade command for real-time playback (D-031)
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)
@@ -24,6 +25,7 @@ pub mod commands;
 pub mod control;
 pub mod decode_pipe;
 pub mod depth;
+pub mod edit;
 pub mod export;
 pub mod grade;
 pub mod keyframes;

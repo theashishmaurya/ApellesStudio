@@ -1592,3 +1592,56 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
     `npm install` hoists; `cd app && npx tsc --noEmit` = **74** errors (baseline
     unchanged); `python3 -m py_compile mcp/server.py` clean. App run command:
     `npm run tauri:dev` from the repo root. No `cargo clean` needed (fresh root `target/`).
+
+---
+
+## D-041 — Editor tab MVP: single-video-track timeline of the project's shots, lightweight decode→jpeg preview, timeline persisted in the `.chroma` project
+
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context.** D-039 gave Chroma a 3-tab shell; the Edit tab was a placeholder.
+  This is its first real cut — a working timeline — kept deliberately small.
+- **Scope (MVP).** One video track assembled from the open project's shots
+  (`ProjectShot` → one full-length clip each, back to back), scrub + play with a
+  live preview, and the four edit ops: reorder, trim (head/tail), split, remove.
+- **Out of scope (later tracked steps):** multi-track, audio, transitions,
+  transcript cut, GPU compositing, grade-in-the-preview, OTIO (`.otio`) export,
+  MCP tools.
+- **Options considered / choices:**
+  - *Where the edit model lives* → the pure `chroma-timeline` crate (D-039 L2),
+    made real here: `Timeline::from_shots`, position helpers (`Track::clip_at`,
+    `Timeline::duration`), and the edit ops as `Result<(), TimelineError>`
+    methods, each unit-tested. `Clip` gains a stable `id`, an optional
+    `shot_id`, and `source_len` (the media frame-count ceiling for trims). serde
+    is our own plain JSON for v1 — a real OTIO exporter is deferred and noted in
+    the module doc. The crate still probes nothing; callers pass frame counts.
+  - *Preview render path* → a **standalone lightweight decode→jpeg**
+    (`chroma::edit` + `decode_pipe::playback_frame_scaled` → `image` JPEG q80 →
+    `data:` URL), **independent of the Colorist's `AppState` / wgpu / grade
+    path**. Rationale: the editor preview needs "give me timeline frame N fast",
+    not a graded composite; compositing + grade-in-preview come with
+    `chroma-compositor` (D-039 L1) later. Keeps the fork diff tiny and the two
+    render paths decoupled.
+  - *Timeline persistence* → **inside the `.chroma` project**:
+    `ProjectManifest.timeline: Option<Timeline>`, `#[serde(default)]`, schema
+    major unchanged — the exact additive move D-038 made for `settings`. Travels
+    through the existing `load_manifest` / `save_manifest`; built + persisted
+    lazily on first `chroma_timeline_get`.
+  - *Timeline UI* → `@xzdarcy/react-timeline-editor` (MIT, the lib D-039 named) —
+    a pure control surface, no video through it. New dep on `@chroma/editor`
+    only.
+- **Commands (registered in `lib.rs`):** `chroma_timeline_get` (persisted or
+  freshly built + persisted), `chroma_timeline_set` (replace + persist — stores
+  verbatim, the frontend ops are authoritative), `chroma_timeline_frame(pos,
+  max_long_edge?)` (resolve `pos` → `(clip, source frame)` via `clip_at`, decode,
+  JPEG, `data:` URL; out-of-range → 1×1 transparent PNG).
+- **Fork hygiene (D-003).** All new code in `crates/chroma-timeline` +
+  `app/src-tauri/src/chroma/edit.rs`. The only upstream-file edits: the
+  `timeline` field on `ProjectManifest` (`project.rs`), `pub mod edit;` in
+  `chroma/mod.rs`, three `generate_handler!` lines + one path-dep in
+  `app/src-tauri/Cargo.toml`. Logged in `docs/09-engine-notes.md`.
+- **Consequences / deferred.** Editor preview fps defaults to 24 (`from_shots`
+  leaves `rate: None`) — wiring project `settings.fps` in is a follow-up. No
+  gaps in the model yet (clips are strictly back to back). `@chroma/bridge`
+  extraction of the store is still its own later task — `useEditorTimelineStore`
+  lives in `@chroma/editor` for now.

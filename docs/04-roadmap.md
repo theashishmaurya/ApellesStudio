@@ -25,6 +25,15 @@ commit.
   are placeholder tabs. `app/src/main.tsx` mounts `<Shell>` with the Colorist tab = the
   whole existing app, untouched (its root `h-screen` → `h-full`). tsc baseline 74
   unchanged; `vite build` green. Brought forward from step 6.
+- [x] **Editor tab MVP** (D-041, 2026-09-02): `chroma-timeline` made real
+  (`Timeline::from_shots`, `Track::clip_at`, `Timeline::duration`, reorder / trim /
+  split / remove ops, 9 tests); `app/src-tauri/src/chroma/edit.rs` bridge — 3 commands
+  (`chroma_timeline_get` / `_set` / `_frame`), timeline persisted in `ProjectManifest`
+  (`#[serde(default)]`, additive), a standalone decode→jpeg preview independent of the
+  Colorist render path; `@chroma/editor` real tab — single-video-track
+  `@xzdarcy/react-timeline-editor` timeline + scrub/play preview + `useEditorTimelineStore`.
+  Deferred: multi-track / audio / transitions / transcript / compositing / grade-in-preview
+  / OTIO export / MCP.
 - [ ] Migration step 2 — extract leaf pure crates (`chroma-types`, `chroma-grade-model`,
   `chroma-timeline`) for real.
 - [ ] Steps 3–7 — `chroma-gpu` / `chroma-media` / `chroma-project`; `chroma-agent` /

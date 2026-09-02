@@ -10,6 +10,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "bytemuck",
+ "chroma-timeline",
  "chrono",
  "fern",
  "filetime",
@@ -938,6 +939,7 @@ dependencies = [
  "chroma-types",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

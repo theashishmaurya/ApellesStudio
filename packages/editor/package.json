@@ -5,8 +5,11 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Editing tab (new, D-039) — timeline strip, transcript cut, multi-track. Placeholder for now.",
+  "description": "Chroma Editing tab (D-039 / D-041) — single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove.",
   "dependencies": {
-    "react": "^19.2.8"
+    "@tauri-apps/api": "^2.11.1",
+    "@xzdarcy/react-timeline-editor": "^1.0.0",
+    "react": "^19.2.8",
+    "zustand": "^5.0.15"
   }
 }

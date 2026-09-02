@@ -755,5 +755,35 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   hot-reload; a stale cargo fingerprint may need `cargo clean -p RapidRAW` + a
   dev-server restart to link the new command.
 
+- **2026-09-02** · **Editor tab MVP — single-track timeline + scrub preview (D-041)** —
+  new crate consumer: `app/src-tauri` gains a path dep
+  `chroma-timeline = { path = "../../crates/chroma-timeline" }` (D-039 L2, made
+  real in this task). All bridge code is new: `src/chroma/edit.rs` — three
+  commands (`chroma_timeline_get` / `_set` / `_frame`), a per-clip `VideoInfo`
+  probe cache, timeline build-from-shots, and a **standalone decode→jpeg preview
+  path** (`decode_pipe::playback_frame_scaled` → `image` JPEG q80 → `data:` URL)
+  that is deliberately independent of the Colorist `AppState` / wgpu / grade
+  render path.
+  · **Upstream-file edits (minimal):** `chroma/mod.rs` +1 (`pub mod edit;` +
+  doc line); `chroma/project.rs` — `ProjectManifest.timeline:
+  Option<chroma_timeline::Timeline>` (`#[serde(default)]`, schema major
+  unchanged, threaded through `fresh()`); `lib.rs` +3 `generate_handler!` lines;
+  `app/src-tauri/Cargo.toml` +1 path dep. Nothing else in Rust core.
+  · **Frontend (`@chroma/editor`, greenfield):** `timeline.ts` (model mirror +
+  pure ops), `timelineStore.ts` (`useEditorTimelineStore` zustand), `PreviewPane`
+  (img + transport + rAF play loop), `TimelinePane`
+  (`@xzdarcy/react-timeline-editor`), `EditorTab` (layout + empty state). New
+  deps on `@chroma/editor` only: `@xzdarcy/react-timeline-editor`,
+  `@tauri-apps/api`, `zustand`.
+  · Verified: `cargo build --no-default-features` clean; `cargo test
+  --no-default-features -p chroma-timeline` **9/9**; `cargo test
+  --no-default-features chroma::` **54/54** (unchanged); `npm install` clean;
+  `cd app && npx tsc --noEmit` **74** (baseline unchanged, none in
+  `packages/editor`); `cd app && npm run build` (vite prod) green. **Manual
+  smoke test open** (open a project in the Colorist tab → Edit tab → scrub /
+  split / trim / reorder / delete / restart-persistence). New commands were
+  added → a `cargo clean -p RapidRAW` + dev-server restart may be needed to
+  clear the stale-incremental-fingerprint issue before the commands link.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

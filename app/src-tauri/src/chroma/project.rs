@@ -127,6 +127,13 @@ pub struct ProjectManifest {
     /// ignored, missing keys → `None`); an absent `settings` key → all `None`.
     #[serde(default)]
     pub settings: ProjectSettings,
+    /// The Edit-tab timeline (D-041) — a single-video-track assembly of the
+    /// project's shots plus any edits made in the Edit tab. Additive and
+    /// optional (schema major unchanged, same as D-038's `settings`): an
+    /// absent key → `None`, and the project behaves as it did pre-D-041.
+    /// Built + persisted lazily by `chroma::edit::chroma_timeline_get`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<chroma_timeline::Timeline>,
 }
 
 impl ProjectManifest {
@@ -140,6 +147,7 @@ impl ProjectManifest {
             shots: Vec::new(),
             active_shot: 0,
             settings: ProjectSettings::default(),
+            timeline: None,
         }
     }
 }

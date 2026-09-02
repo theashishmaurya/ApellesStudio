@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Editor tab MVP (D-041)**. The Edit tab is a real, working
+  single-video-track timeline of the open project's shots. `chroma-timeline` made
+  real: `Timeline::from_shots`, `Track::clip_at` / `Timeline::duration`, and
+  reorder / trim-start / trim-end / split / remove ops (each unit-tested, 9/9).
+  New Rust bridge `chroma::edit` — `chroma_timeline_get` / `_set` / `_frame`
+  commands; the timeline persists **in the `.chroma` project** (`ProjectManifest.timeline`,
+  `#[serde(default)]`, schema major unchanged — same additive move as D-038's
+  `settings`). The preview is a **standalone lightweight decode→jpeg**
+  (`decode_pipe` → `image` q80 → `data:` URL), independent of the Colorist's
+  wgpu / grade path. `@chroma/editor` is a real tab now: a
+  `@xzdarcy/react-timeline-editor` strip (drag = reorder, edge-drag = trim,
+  Split-at-playhead, select + Delete = remove) over a preview pane with a
+  wall-clock rAF play loop, backed by `useEditorTimelineStore` (zustand, stays in
+  `@chroma/editor` for now). Deferred: multi-track, audio, transitions,
+  transcript cut, GPU compositing, grade-in-preview, OTIO export, MCP.
+  `cargo build` + `chroma-timeline` 9/9 + `chroma::` 54/54 + `tsc` 74 baseline +
+  `vite build` all green.
+
 - **2026-09-02** — **3-tab shell (D-039 migration)**. `@chroma/shell` (react +
   zustand only): `<Shell tabs={registry}>` — an h-9 tab bar (Edit / Motion /
   Colorist) over the active tab, all tabs stay mounted, Cmd/Ctrl+1/2/3, active tab

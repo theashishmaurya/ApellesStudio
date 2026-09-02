@@ -1,11 +1,15 @@
 /**
- * @chroma/editor — the Editing tab (D-039, new/greenfield).
+ * @chroma/editor — the Edit tab (D-041, MVP).
  *
- * Will hold: the timeline strip (`react-timeline-editor` based), the transcript
- * pane (whisper word-timestamps → EDL), and the trim / ripple / roll UI, reading
- * the `chroma-timeline` model over `@chroma/bridge`.
+ * Single-video-track timeline of the open project's shots, scrub + play with a
+ * lightweight decode→jpeg preview (independent of the Colorist render path),
+ * and basic edits (reorder / trim / split / remove) persisted in the `.chroma`
+ * project via the `chroma-timeline` crate.
  *
- * Status: D-039 3-tab-shell step — placeholder tab only.
+ * Deferred to later tracked steps: multi-track, audio, transitions, transcript
+ * cut, GPU compositing, grade-in-preview, OTIO export, MCP tools.
  */
 
 export { EditorTab } from './EditorTab';
+export { useEditorTimelineStore } from './timelineStore';
+export type { Timeline, Track, Clip, EditOp } from './timeline';
