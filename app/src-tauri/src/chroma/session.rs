@@ -24,8 +24,10 @@ pub struct ShotDto {
     pub path: String,
     /// filename, for the strip label
     pub name: String,
-    pub width: u32,
-    pub height: u32,
+    /// `chroma_types::Resolution` (D-053) via `#[serde(flatten)]` — same
+    /// `width`/`height` JSON keys the frontend already reads.
+    #[serde(flatten)]
+    pub resolution: chroma_types::Resolution,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
@@ -44,8 +46,7 @@ impl From<&Shot> for ShotDto {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| s.path.to_string_lossy().to_string()),
-            width: s.info.width,
-            height: s.info.height,
+            resolution: s.info.resolution,
             fps: s.info.fps(),
             frame_count: s.info.frame_count,
             duration_secs: s.info.duration_secs,

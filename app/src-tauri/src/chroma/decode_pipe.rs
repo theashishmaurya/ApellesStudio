@@ -91,11 +91,11 @@ impl FramePipe {
         scale: Option<(u32, u32)>,
     ) -> Result<Self> {
         let fps = info.fps();
-        if fps <= 0.0 || info.width == 0 || info.height == 0 {
+        if fps <= 0.0 || info.resolution.width == 0 || info.resolution.height == 0 {
             return Err(anyhow!("decode pipe needs a probed CFR video (fps + dimensions)"));
         }
         let seek = ((start as f64 - 0.5) / fps).max(0.0);
-        let (out_w, out_h) = scale.unwrap_or((info.width, info.height));
+        let (out_w, out_h) = scale.unwrap_or((info.resolution.width, info.resolution.height));
 
         let mut cmd = Command::new(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error", "-ss"])
@@ -332,7 +332,7 @@ mod tests {
             return;
         };
         let info = crate::chroma::video::probe(&vid).expect("probe");
-        let scale = scale_target(info.width, info.height, 1280);
+        let scale = scale_target(info.resolution.width, info.resolution.height, 1280);
         assert!(scale.is_some(), "C019 is 4K, should scale");
         let (sw, sh) = scale.unwrap();
 
@@ -344,7 +344,7 @@ mod tests {
         }
         // a scale change forces a respawn (native size back)
         let native = pipe.frame_scaled(&vid, &info, 203, None).expect("native frame").to_rgb8();
-        assert_eq!(native.dimensions(), (info.width, info.height));
+        assert_eq!(native.dimensions(), (info.resolution.width, info.resolution.height));
     }
 
     fn mean_abs_diff(a: &RgbImage, b: &RgbImage) -> f64 {

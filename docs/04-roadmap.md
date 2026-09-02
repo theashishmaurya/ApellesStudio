@@ -125,6 +125,26 @@ This is where isolated-worktree parallel subagents start making sense — each c
 self-contained by design (see the "worktrees" discussion, 2026-09-02: file-boundary
 discipline is the actual lever, not the worktree flag itself).
 
+- ~~**Step 2 — `chroma-types` real extraction**~~ — **done, partial-by-design,
+  D-053 (2026-09-03).** Audited `app/src-tauri/src/chroma/*` for real duplicates
+  of resolution/rational/colour-space/time-range/error types. Real find:
+  `width`/`height` field pairs (no dedicated `Resolution` struct existed, but
+  four structs derived from `video::VideoInfo` all used the identical field
+  names) — migrated via `#[serde(flatten)]`, a verified zero-wire-change move
+  (same JSON keys before/after). `Rational` gained a `Display` impl used by
+  `export.rs`'s ffmpeg fps-arg string. **Deliberately not migrated:**
+  `ChromaError` (no real call site in `app/src-tauri` — its Tauri commands
+  correctly use `Result<T, String>`/`anyhow`, a different layer's
+  convention, not a duplicate); `ColorSpace` (still a free `String` by
+  design, D-038, pending real colour management, D-004); `TimeRange` (no
+  such struct exists outside `chroma-timeline`, out of scope this step);
+  `ProjectSettings`/`ExportOpts`'s width/height (independently-optional
+  patch/override fields — a genuinely different concept from an atomic
+  `Resolution`, not forced in). Full audit + reasoning in D-053. **Next:**
+  steps 3–7 (`chroma-grade-model`, `chroma-timeline` real-per-type work is
+  already done per D-041/045/046; `chroma-gpu`/`chroma-media`/`chroma-project`
+  remain) — see `architecture-lock.md`'s migration strategy.
+
 ---
 
 ## Later — researched, designed, deliberately not built yet

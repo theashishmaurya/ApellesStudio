@@ -12,6 +12,7 @@ dependencies = [
  "bytemuck",
  "chroma-motion",
  "chroma-timeline",
+ "chroma-types",
  "chrono",
  "cpal",
  "dasp_sample",
@@ -983,6 +984,7 @@ name = "chroma-types"
 version = "0.0.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
 ]
 

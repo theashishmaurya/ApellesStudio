@@ -12,8 +12,10 @@ use super::{decode_pipe, load, video};
 pub struct VideoInfoDto {
     pub is_video: bool,
     pub path: String,
-    pub width: u32,
-    pub height: u32,
+    /// `chroma_types::Resolution` (D-053) via `#[serde(flatten)]` — same
+    /// `width`/`height` JSON keys the frontend already reads, zero wire change.
+    #[serde(flatten)]
+    pub resolution: chroma_types::Resolution,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
@@ -31,8 +33,7 @@ pub fn chroma_video_info() -> Option<VideoInfoDto> {
     Some(VideoInfoDto {
         is_video: true,
         path: cv.path.to_string_lossy().to_string(),
-        width: cv.info.width,
-        height: cv.info.height,
+        resolution: cv.info.resolution,
         fps: cv.info.fps(),
         frame_count: cv.info.frame_count,
         duration_secs: cv.info.duration_secs,
@@ -107,7 +108,7 @@ pub async fn seek_and_install(
     let path = cv.path.clone();
     let info = cv.info.clone();
     let scale = scale_long_edge
-        .and_then(|le| decode_pipe::scale_target(cv.info.width, cv.info.height, le));
+        .and_then(|le| decode_pipe::scale_target(cv.info.resolution.width, cv.info.resolution.height, le));
     let decoded = tokio::task::spawn_blocking(move || {
         decode_pipe::playback_frame_scaled(&path, &info, clamped, scale).or_else(|e| {
             log::warn!("[chroma::seek] decode pipe fell back to single-frame decode: {e}");
