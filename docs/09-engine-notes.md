@@ -1,9 +1,16 @@
 # 09 — Engine notes (RapidRAW code-read)
 
-Living map of `engine/` (RapidRAW), branched from upstream commit `4f6a365` (2026-08-31,
+Living map of the RapidRAW fork, branched from upstream commit `4f6a365` (2026-08-31,
 shallow). Update this whenever we learn more or diverge from upstream.
 
-Read status: **first pass, not built yet.** ~35k LOC Rust in `src-tauri/src/`.
+> **As of D-040 (2026-09-02):** the fork is no longer a git submodule — its working
+> tree is **vendored at `app/`** (was submodule branch `chroma`, tip `41e9326`).
+> Pre-fold history is archived in `engine-history.bundle` (repo root, gitignored).
+> There is no live `upstream` remote anymore — we've diverged hard and **track
+> upstream RapidRAW manually**. Paths below now read `app/src-tauri/…` and
+> `app/src/…` (bulk-updated from `engine/…` in the D-039 skeleton commit).
+
+Read status: **first pass, not built yet.** ~35k LOC Rust in `app/src-tauri/src/`.
 
 ---
 
@@ -154,7 +161,7 @@ Pipeline: `MaskDefinition` (JSON) → `generate_mask_bitmap` → `GrayImage` →
 `RenderRequest.mask_bitmaps`. Video + tracking: per frame, regenerate from keyframed
 geometry OR push a per-frame matte via the base64 path.
 
-## Frontend — `engine/src/` (React/TS, 114 files, ~42k LOC)
+## Frontend — `app/src/` (React/TS, 114 files, ~42k LOC)
 
 | Dir | Role | Our plan |
 |---|---|---|

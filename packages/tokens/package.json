@@ -1,0 +1,8 @@
+{
+  "name": "@chroma/tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "description": "Chroma design tokens + theme (extracted from RapidRAW's CSS vars). D-039 stub."
+}

@@ -109,12 +109,12 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 `add_subject_mask`, `track_subject`, `set_mask_adjust`, `invert_mask`,
 `delete_mask` **[D-020, shipped]**; `inspect_color` (+ `reference`→`gap`),
 `sample`, `sample_region` **[D-021, shipped 2026-09-01]** — computed in JS off the
-captured preview (`engine/src/utils/scopes.ts`), not WGSL; every mutating op
+captured preview (`app/src/utils/scopes.ts`), not WGSL; every mutating op
 response also carries the compact `scopes` summary now; `export` /
 `export_progress` **[D-022, shipped 2026-09-01]** — ProRes/H.264 clip render +
-`.cube` primary bake, `engine/src-tauri/src/chroma/export.rs`. `get_grade` /
+`.cube` primary bake, `app/src-tauri/src/chroma/export.rs`. `get_grade` /
 `save_grade` / `load_grade` **[D-025, shipped 2026-09-01]** — the git-committable
-grade document (`engine/src-tauri/src/chroma/grade.rs`), a versioned wrapper
+grade document (`app/src-tauri/src/chroma/grade.rs`), a versioned wrapper
 around `adjustments` with externalized mattes. `match_to_reference` **[D-026,
 shipped 2026-09-01]** — the automated measure→adjust→re-measure loop against a
 reference image (`match_reference` op in `useChromaControl.ts`; primary knobs

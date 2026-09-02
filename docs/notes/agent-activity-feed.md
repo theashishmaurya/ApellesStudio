@@ -17,7 +17,7 @@ expandable per-field **diff** of the grade before vs after the op, and an
 
 ### Where it's recorded — the one chokepoint
 
-`engine/src/hooks/useChromaControl.ts`, the single `listen('chroma://request')`
+`app/src/hooks/useChromaControl.ts`, the single `listen('chroma://request')`
 handler (D-020). Every MCP op already passes through here. For a **mutating** op
 (not in `READ_ONLY`, not `seek` / `open` / `request_human`):
 
@@ -57,7 +57,7 @@ Snapshots are the same shape/size RapidRAW's own 50-slot history stack already
 holds, so this is not new memory pressure of a different order. The feed is
 capped at **50** entries (FIFO), same as the history stack.
 
-### The diff — `engine/src/utils/agentActivity.ts` (pure, unit-testable)
+### The diff — `app/src/utils/agentActivity.ts` (pure, unit-testable)
 
 `diffAdjustments(a, b)` — a recursive structural diff producing
 `{ path, before, after }` rows:
@@ -161,7 +161,7 @@ no pixel math of its own.
 can poll. The request survives until the user clears it or the agent posts a new
 one (last-write-wins, single slot).
 
-## Store — `engine/src/store/useAgentStore.ts` (new)
+## Store — `app/src/store/useAgentStore.ts` (new)
 
 A small dedicated Zustand store (kept out of `useChromaStore` / `useEditorStore`
 so the fork diff stays localised — same rationale as `useChromaStore`, D-003):
@@ -176,13 +176,13 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
 
 ## GUI
 
-- `engine/src/components/chroma/AgentActivityDock.tsx` (new) — a fixed
+- `app/src/components/chroma/AgentActivityDock.tsx` (new) — a fixed
   bottom-left dock, mounted once in `App.tsx` next to `useChromaControl()`.
   Contains the `request_human` banner (top) + the collapsible activity feed.
   Hidden entirely when there's no activity and no pending request. RapidRAW
   `Text` / `Button` + the `bg-surface` / `border-border-color` / `text-text-*`
   tokens.
-- `engine/src/components/chroma/AgentRoiHighlight.tsx` (new) — the canvas ROI
+- `app/src/components/chroma/AgentRoiHighlight.tsx` (new) — the canvas ROI
   rect, rendered inside `ImageCanvas.tsx`'s overlay layer.
 
 ## Upstream-file edits (divergence — doc 09)

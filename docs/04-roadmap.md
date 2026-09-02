@@ -5,6 +5,27 @@ not commitments.
 
 ---
 
+## D-039 — 3-tab restructure (Edit / Motion / Colorist) migration
+
+The architecture lock (`docs/08-decisions.md` D-039, `docs/notes/architecture-lock.md`):
+thin-shell/fat-core Cargo + npm monorepo workspace. Incremental, `cargo test` green each
+commit.
+
+- [x] **Migration step 1 — workspace skeleton** (D-040 + D-039 skeleton commit, 2026-09-02):
+  de-submodule the fork into `app/` (D-040); root `Cargo.toml [workspace]` +
+  `crates/{chroma-types,chroma-timeline,chroma-grade-model}` stubs (each `cargo check`
+  clean, `it_builds` test); root `package.json` npm workspaces +
+  `packages/{tokens,ui,bridge,editor,motion,shell}` stubs; the Remotion motion engine
+  moved in as `packages/motion-engine/` (`@chroma/motion-engine`); `app` → `@chroma/app`.
+  **No real code moved; the whole workspace builds (`cargo build`) + `npm install` hoists.**
+- [ ] Migration step 2 — extract leaf pure crates (`chroma-types`, `chroma-grade-model`,
+  `chroma-timeline`) for real.
+- [ ] Steps 3–7 — `chroma-gpu` / `chroma-media` / `chroma-project`; `chroma-agent` /
+  `chroma-ai`; `chroma-grade` + thin `chroma-app`; frontend `@chroma/{tokens,ui,bridge}`
+  then `@chroma/shell` + 3-tab layout; `chroma-compositor` + `@chroma/editor` greenfield.
+
+---
+
 ## Working queue — round 2 (to v1)
 
 Round 1 done (D-021…D-025): scopes/`inspect_color`, export + `.cube`, mask
@@ -117,7 +138,7 @@ decide name/license/headline — D-002/D-007/D-010).
 
 ## Round 1 — done (2026-09-01)
 
-1. [x] **Scopes + `inspect_color`** (D-021, 2026-09-01) — `engine/src/utils/scopes.ts`,
+1. [x] **Scopes + `inspect_color`** (D-021, 2026-09-01) — `app/src/utils/scopes.ts`,
    pure JS off the captured preview (not WGSL — the agent path, separate from the
    UI's Rust waveform). `computeScopes` (black/white points, luma + per-channel
    clip %, per-zone means, warm-cool + green-magenta cast, 12-bin hue histogram,
@@ -125,7 +146,7 @@ decide name/license/headline — D-002/D-007/D-010).
    hints). MCP `inspect_color(frame?, reference?)` + `sample` / `sample_region`;
    every mutating op response now also carries `scopes`. Scope-first discipline in
    the tool docstrings + `mcp/README.md`. Detail: `docs/notes/scopes.md`.
-2. [x] **Export** (D-022, 2026-09-01) — `engine/src-tauri/src/chroma/export.rs`:
+2. [x] **Export** (D-022, 2026-09-01) — `app/src-tauri/src/chroma/export.rs`:
    one `ffmpeg -f rawvideo` decode pipe → `render_core::render` per frame (one
    GPU ctx + `OwnedRenderCaches` for the run; `transform_hash = frame`) → one
    `ffmpeg` encode pipe. ProRes 422 HQ (`prores_ks -profile:v 3`) / H.264
@@ -151,7 +172,7 @@ decide name/license/headline — D-002/D-007/D-010).
    landed: `useChromaControl` mounted app-level + `open(path)` op. Detail:
    `docs/notes/depth-haze.md`.
 5. [x] **`grade.json` schema + load/save** (D-025, 2026-09-01) —
-   `engine/src-tauri/src/chroma/grade.rs`. v1 = a **versioned, documented wrapper**
+   `app/src-tauri/src/chroma/grade.rs`. v1 = a **versioned, documented wrapper**
    around RapidRAW's `adjustments` (`{schema:"chroma.grade/1", shot, adjustments,
    notes}`), NOT `docs/06`'s ordered `stack` (that's the v2 node graph, D-005).
    Mask mattes externalized: static → `<name>.mattes/<subId>.png` (`{"$matte"}`),
@@ -166,7 +187,7 @@ decide name/license/headline — D-002/D-007/D-010).
 
 - [x] Repo, submodule (RapidRAW → `engine/`), docs
 - [x] `CLAUDE.md` working rules
-- [x] Read `engine/src-tauri` — first pass (`docs/09-engine-notes.md`): grade path mapped,
+- [x] Read `app/src-tauri` — first pass (`docs/09-engine-notes.md`): grade path mapped,
       AI stack is ONNX/`ort` in-process (D-009 revised), toolchain gap found (B-001)
 - [x] **`rustup update`** (B-001 fixed → rustc 1.98.0); `cargo check` on `engine` passes clean (4m24s, 682 deps)
 - [x] Deeper read: `gpu_processing.rs` (WgpuDisplay = D-006 answered), `shader.wgsl` (32-mask array, apply_dehaze, AgX), `mask_generation.rs` (JSON masks, base64 matte hook), frontend map — all in doc 09
@@ -257,7 +278,7 @@ decide name/license/headline — D-002/D-007/D-010).
       (D-032, 2026-09-02) — `useAgentStore` slice + a recording hook in `useChromaControl.ts`'s
       chokepoint (one entry per mutating op, `debouncedSetHistory.flush()` collapses
       `match_reference`'s N iters to one), `diffAdjustments` / `summarizeActivity`
-      (`engine/src/utils/agentActivity.ts`), a fixed bottom-left `AgentActivityDock` (feed +
+      (`app/src/utils/agentActivity.ts`), a fixed bottom-left `AgentActivityDock` (feed +
       `request_human` banner) + `AgentRoiHighlight` on the canvas. `request_human` op/tool is
       non-blocking; undo is jump-to-here (drops newer feed entries; documented history-cap
       fallback). Detail: `docs/notes/agent-activity-feed.md`.

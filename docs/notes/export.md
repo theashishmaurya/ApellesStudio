@@ -6,7 +6,7 @@ at render time), D-015 (ffmpeg CLI).
 
 ## What shipped
 
-`engine/src-tauri/src/chroma/export.rs` — new, self-contained.
+`app/src-tauri/src/chroma/export.rs` — new, self-contained.
 
 | item | signature |
 |---|---|
@@ -91,7 +91,7 @@ DOMAIN_MAX 1 1 1
   .cube`. It's a local file the user asked for — no confirm-before-write, but the
   resolved path is always returned.
 
-Frontend bridge op (`engine/src/hooks/useChromaControl.ts`): `export` /
+Frontend bridge op (`app/src/hooks/useChromaControl.ts`): `export` /
 `export_progress`, both marked READ_ONLY (no settle/re-render), pull
 `useEditorStore.getState().adjustments` and `invoke` the command.
 

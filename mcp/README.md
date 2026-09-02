@@ -9,9 +9,9 @@ Claude (MCP client)
   │  stdio
 mcp/server.py
   │  HTTP  POST /op {op, args}
-engine/src-tauri/src/chroma/control.rs   (control server, in the app, port 19788)
+app/src-tauri/src/chroma/control.rs   (control server, in the app, port 19788)
   │  Tauri events  chroma://request  /  chroma://response/<id>
-engine/src/hooks/useChromaControl.ts     (frontend — owns all grade/mask state)
+app/src/hooks/useChromaControl.ts     (frontend — owns all grade/mask state)
   │  the SAME store actions the GUI buttons call
 useEditorStore  →  render  →  { rendered frame, histogram, adjustments }
 ```
@@ -112,7 +112,7 @@ re-measure, converge on a target rather than drift — is a regression test:
 and `../docs/notes/eval-harness.md` (D-035).
 
 Adding a capability = one entry in the frontend `OPS` registry
-(`engine/src/hooks/useChromaControl.ts`) + one tool here.
+(`app/src/hooks/useChromaControl.ts`) + one tool here.
 
 ## Troubleshooting
 

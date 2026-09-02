@@ -163,7 +163,8 @@ fn resolve_ai_dir() -> Option<PathBuf> {
         }
         log::warn!("[sidecar] CHROMA_AI_DIR={d} has no server.py — ignoring it");
     }
-    // Dev layout: CARGO_MANIFEST_DIR = <workspace>/engine/src-tauri, ai/ = <workspace>/ai.
+    // Dev layout: CARGO_MANIFEST_DIR = <workspace>/app/src-tauri, ai/ = <workspace>/ai
+    // (so "../../ai" still resolves after the D-040 de-submodule).
     // TODO(Phase 4): packaged builds need a resource-dir lookup instead — docs/notes/sidecar-lifecycle.md.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for rel in ["../../ai", "../ai", "ai"] {

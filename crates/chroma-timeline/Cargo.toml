@@ -1,0 +1,15 @@
+[package]
+name = "chroma-timeline"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Chroma L2 — the OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, transcript→EDL. Pure data + logic, no gpu/media."
+
+[dependencies]
+chroma-types = { path = "../chroma-types" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -6,7 +6,7 @@ Roadmap "Now" item 1. Built 2026-09-01. See also
 
 ## What shipped
 
-**`engine/src/utils/scopes.ts`** — a pure, dependency-free module. Downsamples to
+**`app/src/utils/scopes.ts`** — a pure, dependency-free module. Downsamples to
 ≤512 px long edge (nearest-neighbour stride) before any per-pixel work.
 
 - **`computeScopes(imageData) → Scopes`** — the numeric summary:
@@ -45,7 +45,7 @@ Roadmap "Now" item 1. Built 2026-09-01. See also
 Histogram is **not** recomputed here — it's passed through from
 `useEditorStore.histogram` (RapidRAW's Rust analytics readback).
 
-## Wiring — `engine/src/hooks/useChromaControl.ts`
+## Wiring — `app/src/hooks/useChromaControl.ts`
 
 - New bridge ops: **`inspect_color({frame?, reference?})`**, **`sample({x,y})`**,
   **`sample_region({x,y,w,h})`**. Read-only (no settle / re-render).

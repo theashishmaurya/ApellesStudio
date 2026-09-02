@@ -10,7 +10,7 @@ projects, click to open.
 
 ## What shipped
 
-### Rust — `engine/src-tauri/src/chroma/project.rs` (new, self-contained)
+### Rust — `app/src-tauri/src/chroma/project.rs` (new, self-contained)
 
 Pure `serde_json` + `std::fs`. No GPU, no `AppState`, no store mutation — same
 discipline as `grade.rs`.
@@ -31,7 +31,7 @@ discipline as `grade.rs`.
 
 Upstream footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines.
 
-### Frontend — `engine/src/`
+### Frontend — `app/src/`
 
 - **`components/chroma/ProjectLauncher.tsx`** — "Welcome to Chroma" + "My
   Projects" grid of `ProjectCard`s (thumb + name + `relTime(modified)` + shot

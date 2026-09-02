@@ -48,7 +48,7 @@ primary grade, curves, colour wheels, HSL, effects, LUT ref, and
 ### Matte externalization
 
 A mask matte can be megabytes of base64 — inlining it makes `grade.json`
-un-diffable. So on **save** (`chroma_save_grade`, `engine/src-tauri/src/chroma/grade.rs`):
+un-diffable. So on **save** (`chroma_save_grade`, `app/src-tauri/src/chroma/grade.rs`):
 
 | in `adjustments.masks[].subMasks[].parameters` | becomes | file written |
 |---|---|---|

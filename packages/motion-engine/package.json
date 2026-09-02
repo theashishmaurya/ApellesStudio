@@ -1,0 +1,45 @@
+{
+  "name": "@chroma/motion-engine",
+  "version": "1.0.0",
+  "description": "Chroma Motion tab engine — data-driven Remotion motion primitives + JSON scene-manifest compiler. Moved in from videoAgent/engine/motion/ (D-039).",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "9.2.0",
+    "@remotion/animation-utils": "^4.0.519",
+    "@remotion/cli": "4.0.519",
+    "@remotion/google-fonts": "^4.0.519",
+    "@remotion/media": "4.0.519",
+    "@remotion/motion-blur": "^4.0.519",
+    "@remotion/noise": "^4.0.519",
+    "@remotion/three": "4.0.519",
+    "@remotion/transitions": "^4.0.519",
+    "@remotion/zod-types": "4.0.519",
+    "@types/d3-force": "^3.0.10",
+    "d3-force": "^3.0.0",
+    "mediabunny": "1.55.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.519",
+    "roughjs": "^4.6.6",
+    "three": "0.178.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.519",
+    "@types/react": "19.2.7",
+    "@types/three": "0.170.0",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  }
+}

@@ -53,20 +53,48 @@ in the same commit.
   reimplementing. When you must diverge from upstream, document the divergence in
   `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes.
 
-## `engine/` (the submodule)
+## Monorepo layout (D-039 / D-040)
 
-- It's a git submodule → `CyberTimon/RapidRAW`. AGPL-3.0.
-- Do not commit changes *inside* `engine/` casually — every divergence is tracked in
-  `docs/09-engine-notes.md` (what we changed, why, upstream commit we branched from).
-- Keep `upstream` as a remote inside `engine/` for pulling fixes.
-- Decision D-003 (hard fork vs. collaborate with the maintainer) is still open — until
-  it's decided, keep our changes minimal and cleanly separable.
+`chroma/` is one repo — no submodule. The RapidRAW fork is **vendored at `app/`**
+(D-040: de-submoduled 2026-09-02, working tree moved verbatim; pre-fold history is in
+`engine-history.bundle`, gitignored). References to "`engine/`" in older docs mean `app/`.
+
+```
+chroma/
+  Cargo.toml            ← virtual [workspace] — members: app/src-tauri, crates/*
+  Cargo.lock            ← the workspace lock (was app/src-tauri/Cargo.lock)
+  package.json          ← npm workspaces — app, packages/*
+  app/                  ← the vendored RapidRAW fork (AGPL-3.0)
+    src/                ← React/TS frontend  (was engine/src)
+    src-tauri/          ← the Tauri Rust crate, still named `RapidRAW` (rename = later step)
+  crates/               ← Chroma's own layered Rust crates (thin-shell/fat-core, D-039)
+                          3 stubs so far: chroma-types, chroma-timeline, chroma-grade-model
+  packages/             ← Chroma's frontend workspace — @chroma/{tokens,ui,bridge,editor,motion,shell}
+    motion-engine/      ← the Remotion motion engine, moved in from videoAgent/engine/motion/
+  ai/  mcp/  eval/  docs/  scratch/
+```
+
+Rules for the fork at `app/`:
+- AGPL-3.0 (→ `CyberTimon/RapidRAW`). Upstream is **tracked manually now** — the hard fork
+  is D-003 (no live submodule remote). Cherry-pick upstream fixes by hand when wanted.
+- Do not scatter edits through `app/src-tauri` casually — new files/modules over
+  in-place edits, and every divergence from upstream is logged in `docs/09-engine-notes.md`
+  (what changed, why, the upstream commit we branched from).
+- Over time Chroma's `crates/` absorb more and the fork shrinks to "grade shader + mask
+  raster" (D-039).
+
+## Running the app (post-D-039)
+
+From the repo root: `npm run tauri:dev` (→ `npm run start --workspace app` → `tauri dev`
+in `app/`, which runs `app/`'s vite via `beforeDevCommand`). Or `cd app && npm run tauri dev`.
+`npm run tauri:build` for a release build. A `cargo clean` is **not** needed — the
+workspace `target/` is fresh at the repo root.
 
 ## Code
 
-- Rust: match the surrounding style in `engine/src-tauri`. `cargo fmt`, `cargo clippy`
+- Rust: match the surrounding style in `app/src-tauri`. `cargo fmt`, `cargo clippy`
   clean before commit.
-- Frontend: match `engine/src` (React/TS).
+- Frontend: match `app/src` (React/TS).
 - Every new crate/dependency: a `D-NNN` (what it's for, what else was considered, its
   license, its maintenance status).
 - Prefer boring, well-maintained deps. This is a long project.

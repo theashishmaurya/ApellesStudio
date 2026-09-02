@@ -1,5 +1,5 @@
 {
-  "name": "rapidraw",
+  "name": "@chroma/app",
   "author": "Timon Käch",
   "private": true,
   "scripts": {

@@ -1,0 +1,49 @@
+# Chroma — Rust workspace root (D-039 migration step 1)
+#
+# Virtual workspace. The Tauri binary crate is `app/src-tauri` (still named
+# `RapidRAW` — the vendored fork, D-040; renamed in a later migration step).
+# `crates/*` are Chroma's own layered crates (thin-shell / fat-core, D-039):
+# pure domain models with no wgpu / ffmpeg, GPU + media I/O isolated below them.
+#
+# Only 3 stub crates exist today (chroma-types, chroma-timeline,
+# chroma-grade-model). The full planned set (~11) is in `crates/README.md`.
+# No real code has moved out of `app/src-tauri` yet — that is per-crate,
+# tracked, and later (D-039 migration steps 2+).
+
+[workspace]
+resolver = "2"
+members = [
+    "app/src-tauri",
+    "crates/*",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98"
+license = "AGPL-3.0-only"
+repository = "https://github.com/theashishmaurya/chroma"
+
+# Shared dependency versions. Available to members via `<dep>.workspace = true`.
+# `app/src-tauri` does NOT adopt these yet (it keeps its own pinned versions from
+# the fork) — they exist so the new `crates/*` share one source of truth.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+
+# Build profiles live at the workspace root (profiles in a non-root member are
+# ignored). Moved here verbatim from `app/src-tauri/Cargo.toml` (D-040 fork) so
+# the perf-tuned dev build is preserved.
+[profile.dev]
+opt-level = 2
+debug = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true

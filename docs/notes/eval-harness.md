@@ -2,7 +2,7 @@
 
 Round-3 tail item. Built 2026-09-02. See `docs/08-decisions.md` **D-035** (the
 call), `docs/notes/agent-visual-feedback.md` (the thesis it tests),
-`docs/notes/scopes.md` / `engine/src/utils/scopes.ts` (the ground-truth math the
+`docs/notes/scopes.md` / `app/src/utils/scopes.ts` (the ground-truth math the
 scorer ports), `docs/notes/match-reference.md` (D-026 — the workflow task (b)
 mirrors).
 

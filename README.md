@@ -19,11 +19,21 @@ tracker, judge a look).
 
 ## Layout
 
+> **As of D-039/D-040 (2026-09-02):** Chroma is becoming a 3-tab app
+> (Edit / Motion / Colorist) on a Cargo + npm **monorepo workspace**. The prose
+> above predates that — see `docs/08-decisions.md` D-039 and
+> `docs/notes/architecture-lock.md`.
+
 ```
-engine/     git submodule → CyberTimon/RapidRAW (our fork base — Rust + wgpu + Tauri
-            image grading engine with depth masking + AI masks already built in)
+app/        the vendored RapidRAW fork (was the engine/ submodule — de-submoduled
+            in D-040, working tree at app/; Rust + wgpu + Tauri grading engine).
+            app/src (React/TS frontend) + app/src-tauri (the Rust crate)
+crates/     Chroma's own layered Rust crates (D-039) — chroma-types / chroma-timeline
+            / chroma-grade-model so far
+packages/   Chroma's frontend workspace — @chroma/{tokens,ui,bridge,editor,motion,shell}
+            + packages/motion-engine/ (the Remotion motion engine, moved in)
 ai/         Python sidecar — SAM 2, Depth Anything V2, CoTracker, color-matcher (planned)
-mcp/        MCP server exposing the grade graph to an agent (planned)
+mcp/        MCP server exposing the grade graph to an agent
 docs/       everything: vision, PRD, scope, architecture, roadmap, research, decisions, bugs
 ```
 
@@ -46,5 +56,6 @@ docs/       everything: vision, PRD, scope, architecture, roadmap, research, dec
 ## License
 
 Chroma's own code: TBD (see [`docs/08-decisions.md`](docs/08-decisions.md) D-002).
-`engine/` is **AGPL-3.0** (inherited from RapidRAW) — any distributed build of the
-combined work is AGPL. This blocks a closed SaaS; it does not block an open project.
+The vendored RapidRAW fork at `app/` is **AGPL-3.0** (inherited from RapidRAW) — any
+distributed build of the combined work is AGPL. This blocks a closed SaaS; it does not
+block an open project.

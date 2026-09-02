@@ -190,7 +190,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
 **decided (2026-09-01)**
 
 - **Choice:** shell out to `ffmpeg` / `ffprobe` (subprocess) for probe + frame decode.
-  Module: `engine/src-tauri/src/chroma/video.rs`.
+  Module: `app/src-tauri/src/chroma/video.rs`.
 - **Why not `ffmpeg-next` / `ffmpeg-sys`:** those need libav + pkg-config + a C toolchain
   in every build/CI; a constant source of breakage. ffmpeg is already a hard dep of this
   workflow, it's on every target, the CLI is stable.
@@ -241,7 +241,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   changes (fork hygiene — D-003). The agent needs *grounding numbers*, not a
   60 fps scope. A WGSL pass would touch `gpu_processing.rs`, the shader set, and
   the readback path for a precision the agent loop doesn't use.
-- **Consequences:** `engine/src/utils/scopes.ts` (new, pure, no deps). The
+- **Consequences:** `app/src/utils/scopes.ts` (new, pure, no deps). The
   interactive **UI** scopes (real-time, while the user drags) stay RapidRAW's
   Rust waveform path and can get a WGSL build later, independently — the two
   don't share code. Histogram is still RapidRAW's (passed through). Sample coords
@@ -508,7 +508,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   `.run(...)` exit hook (`RunEvent::ExitRequested` / `Exit`), which
   `kill()` + `wait()`s it *before* the existing `libc::_exit(0)` — that call
   doesn't run destructors, so the kill has to happen first, not via `Drop`.
-- **Consequences:** `engine/src-tauri/src/chroma/sidecar.rs` (new, self-
+- **Consequences:** `app/src-tauri/src/chroma/sidecar.rs` (new, self-
   contained). `lib.rs` +1 spawn line, +2 `shutdown()` calls, +1 handler line;
   `chroma/mod.rs` +1. `chroma::mask`'s "unreachable" error hints now mention the
   auto-start + `CHROMA_AI_NO_SPAWN`. **Packaged-app path resolution is still
@@ -593,7 +593,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   `.chroma/mattes/` dir too (documented in `docs/06` + the `save_grade` tool text).
 - **Schema gate:** `chroma.grade/<major>`; `load` migrates `major==1|missing` (identity
   stub), hard-errors a newer or unknown major.
-- **Shape of the impl:** `engine/src-tauri/src/chroma/grade.rs` (new, pure JSON+fs, no
+- **Shape of the impl:** `app/src-tauri/src/chroma/grade.rs` (new, pure JSON+fs, no
   GPU, no store) — `chroma_save_grade` / `chroma_load_grade`. Frontend `useChromaControl`
   ops `get_grade` / `save_grade` / `load_grade` (load → `setAdjustments(() =>
   normalizeLoadedAdjustments(g.adjustments))` → `bumpFrameNonce`). MCP: 3 tools. **v1 does
@@ -826,7 +826,7 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   an amber rect + outside-dim on the canvas (reusing the mask-overlay coordinate
   space). Last-write-wins (one slot). Zero Rust — it rides the generic
   `POST /op` path like every other op.
-- **Store:** a new `engine/src/store/useAgentStore.ts` (not folded into
+- **Store:** a new `app/src/store/useAgentStore.ts` (not folded into
   `useEditorStore` / `useChromaStore`) — same fork-hygiene rationale as
   `useChromaStore` (D-003). Session-only; not in `grade.json`.
 - **Consequences / footprint:** new files `useAgentStore.ts`,
@@ -990,11 +990,11 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   creating one on top of the other.
 - **No video loaded (a still):** `interpolated_parameters` returns `None` — a
   still renders byte-identical. Keyframes are meaningless without a frame axis.
-- **Frontend.** New `engine/src/utils/maskKeyframes.ts` mirrors the Rust
+- **Frontend.** New `app/src/utils/maskKeyframes.ts` mirrors the Rust
   interpolator (same rules, same cases) so the canvas overlay shows the
   **interpolated** shape at the current frame ("what you see is what renders")
   and the keyframe button / canvas-drag writer share one code path. New
-  `engine/src/components/chroma/MaskKeyframeBar.tsx` (mounted in the Chroma-owned
+  `app/src/components/chroma/MaskKeyframeBar.tsx` (mounted in the Chroma-owned
   `ChromaTimeline`): a "◆ Keyframe mask" button that snapshots the active shape
   sub-mask's geometry at the current frame (re-press = update), a diamond track
   (click a diamond to seek), delete-this-key, clear-all. **Dragging the mask on
@@ -1540,3 +1540,55 @@ entry `src-tauri` serves). **Monorepo — `chroma/` is the home.**
   position (Palmier closed, Diffusion/Gausian = open-core + paid-pro).
 - D-013 (relight) upgraded — see `docs/notes/relight-research.md`: interactive
   depth-driven puck relight ships early (deterministic), photoreal diffusion bake at v3.
+
+### Migration log
+
+Incremental execution of D-039. Each step is its own commit; the app builds at every one.
+
+- **D-040 (2026-09-02) — de-submodule.** The `engine/` git submodule (RapidRAW fork,
+  branch `chroma`, tip `41e9326`) moved to `app/` verbatim; `.gitmodules` + submodule
+  gone. Pre-fold history → `engine-history.bundle` (gitignored). Upstream RapidRAW is
+  now tracked manually (no live remote). Its own commit; nothing else moved.
+
+- **Step 1 (2026-09-02) — workspace skeleton.** Recorded here rather than as a new
+  D-number (it's execution of D-039, not a new decision).
+  - **Rust:** root `Cargo.toml` — virtual `[workspace]` (`resolver = "2"`, members
+    `["app/src-tauri", "crates/*"]`), `[workspace.package]` (edition 2024, rust 1.98,
+    AGPL), `[workspace.dependencies]` (serde / serde_json / anyhow / thiserror) —
+    `app/src-tauri` does **not** adopt them yet. `app/src-tauri/Cargo.lock` → root
+    `Cargo.lock`. Build profiles (`[profile.*]`) hoisted from `app/src-tauri/Cargo.toml`
+    to the root (Cargo ignores them in a non-root member). `rust-toolchain.toml` copied
+    to the root. `app/src-tauri/Cargo.toml` unchanged otherwise — still `[package]
+    name = "RapidRAW"` (rename is a later step), absorbed as a member.
+  - **3 stub crates** under `crates/` (each `cargo check` + `cargo test` clean, doc
+    comment stating its D-039 responsibility, one placeholder item, an `it_builds` test,
+    a `README.md`): `chroma-types` (`Resolution` / `Rational` / `ChromaError`),
+    `chroma-timeline` (`Timeline` / `Track` / `Clip`, OTIO-shaped, serde),
+    `chroma-grade-model` (`Grade` wrapper mirroring `grade.json` D-025).
+    `crates/README.md` carries the full ~11-crate plan (which exist / which are future).
+  - **Frontend:** root `package.json` — `private`, `name: "chroma"`, npm workspaces
+    `["app", "packages/*"]`, scripts (`dev` / `build` / `tauri` / `tauri:dev` /
+    `tauri:build`). 6 stub packages under `packages/` (`@chroma/tokens`, `@chroma/ui`,
+    `@chroma/bridge`, `@chroma/editor`, `@chroma/motion`, `@chroma/shell`) — each a
+    `package.json` + `src/index.ts` placeholder + `README.md`. `app/package.json` name
+    `rapidraw` → `@chroma/app` (nothing else changed). `app/` does **not** import from
+    `packages/*` yet — workspace only declared. `packages/README.md` carries the full
+    package plan (incl. the future `@chroma/colorist` + `apps/desktop`).
+  - **Motion engine moved in:** `videoAgent/engine/motion/` → `packages/motion-engine/`
+    (`cp -R`, dropped `node_modules` / `out/` / `.git` / nested `package-lock.json`),
+    `package.json` name →
+    `@chroma/motion-engine`. `videoAgent`'s copy is now stale (delete it); its
+    `engine/catalog.md` + `.claude/skills/motion-primitives/` stay the design reference.
+  - **Path fixes:** repo-wide `engine/src-tauri/…` → `app/src-tauri/…`,
+    `engine/src/…` → `app/src/…` (docs, `mcp/README.md`, `mcp/server.py`, `ai/README.md`,
+    `eval/lib/*.mjs`, `CLAUDE.md`, `README.md`). `09-engine-notes.md` header notes the
+    D-040 vendor; `03-architecture.md` got a "stale, see D-039" banner (full rewrite is
+    separate); `sidecar.rs::resolve_ai_dir` comment corrected (`../../ai` still resolves
+    from `app/src-tauri`). `tauri.conf.json` unchanged — `beforeDevCommand: "npm run dev"`
+    still resolves to `app/`'s vite because `tauri` is invoked with cwd `app/`
+    (`npm run start --workspace app`).
+  - **Verified:** `cargo build --no-default-features` clean (`RapidRAW` + 3 stubs, 6m30s
+    cold); `cargo test -p chroma-types -p chroma-timeline -p chroma-grade-model` green;
+    `npm install` hoists; `cd app && npx tsc --noEmit` = **74** errors (baseline
+    unchanged); `python3 -m py_compile mcp/server.py` clean. App run command:
+    `npm run tauri:dev` from the repo root. No `cargo clean` needed (fresh root `target/`).

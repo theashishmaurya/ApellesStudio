@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // scopes.check.mjs — guard against the standalone port in scopes.mjs drifting
-// from the engine ground truth in engine/src/utils/scopes.ts (D-021).
+// from the engine ground truth in app/src/utils/scopes.ts (D-021).
 //
 // Not a numeric equivalence test (the engine module is TS + browser canvas and
 // can't run here) — a constant-drift tripwire. It asserts the load-bearing
@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const SRC = path.resolve(DIR, '../../engine/src/utils/scopes.ts');
+const SRC = path.resolve(DIR, '../../app/src/utils/scopes.ts');
 
 if (!fs.existsSync(SRC)) {
   console.log('scopes.ts not present (thin clone) — skipping drift check.');

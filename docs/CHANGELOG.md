@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Monorepo workspace skeleton (D-039 + D-040)**. The RapidRAW
+  fork was de-submoduled into `app/` (D-040), then the workspace made real (D-039
+  migration step 1): root `Cargo.toml [workspace]` (members `app/src-tauri` +
+  `crates/*`, `Cargo.lock` moved to root, build profiles hoisted from the member);
+  3 pure-leaf **stub** crates — `chroma-types` (`Resolution`/`Rational`/`ChromaError`),
+  `chroma-timeline` (OTIO-shaped `Timeline`/`Track`/`Clip`), `chroma-grade-model`
+  (`Grade` wrapper, mirrors `grade.json` D-025) — each `cargo check` clean with an
+  `it_builds` test; root `package.json` npm workspaces + 6 stub packages
+  `@chroma/{tokens,ui,bridge,editor,motion,shell}`; the Remotion motion engine moved
+  in from `videoAgent/engine/motion/` as `packages/motion-engine/`
+  (`@chroma/motion-engine`); `app` package renamed `rapidraw` → `@chroma/app`.
+  Repo-wide `engine/…` → `app/…` path fixes (docs, `mcp/`, `ai/`, `eval/`, CLAUDE.md,
+  README, sidecar comment). **No real code moved — the whole workspace builds
+  (`cargo build --no-default-features` clean, `RapidRAW` crate + 3 stubs),
+  `npm install` hoists, `tsc` baseline unchanged (74), `py_compile` clean.** Run the
+  app: `npm run tauri:dev` from the repo root. Migration log in `D-039`
+  ("### Migration log"); `crates/README.md` + `packages/README.md` carry the full
+  planned lists.
+
 - **2026-09-02** — **Per-project output spec (D-038)**. D-037's reserved,
   unused `settings` field on `project.json` gets a real typed shape:
   `ProjectSettings { width?, height?, fps?, color_space? }`, all optional. A
@@ -88,7 +107,7 @@ One or two lines per session. Detail lives in the decision it references.
   already-correct frame, grade a masked region only, tame highlight clipping) +
   an **offline** scorer (`eval/score.mjs` — no app, no agent, no network). The
   scorer ports `computeScopes` / `computeGap` / `gapMagnitude` verbatim from
-  `engine/src/utils/scopes.ts` (`eval/lib/scopes.mjs`, drift-guarded by
+  `app/src/utils/scopes.ts` (`eval/lib/scopes.mjs`, drift-guarded by
   `scopes.check.mjs`) plus an **approximate** primary-grade operator
   (`eval/lib/apply.mjs`) that turns a `grade.json` (D-025) into a scoped result
   frame — so absolute scores are only comparable *within* the harness, and
@@ -180,7 +199,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 - **2026-09-02** — **Real-time playback ≥30 fps (D-031, round-2 item 5 tail)**.
   Closes the "frontend regrade + IPC per frame" ceiling D-030 named. New
-  `engine/src-tauri/src/chroma/playback.rs::chroma_play_frame` — one IPC call
+  `app/src-tauri/src/chroma/playback.rs::chroma_play_frame` — one IPC call
   that decodes (scaled, via the D-030 pipe's new `-vf scale` path), swaps the
   base frame, and dispatches a single preview job at ~1280 px playback res,
   replacing per-frame `chroma_seek` + `bumpFrameNonce` + `apply_adjustments`
@@ -200,7 +219,7 @@ One or two lines per session. Detail lives in the decision it references.
   `docs/notes/playback-30fps.md`.
 
 - **2026-09-02** — **Smooth playback: persistent decode pipe (D-030, round-2 item 5)**.
-  New `engine/src-tauri/src/chroma/decode_pipe.rs` — one long-lived
+  New `app/src-tauri/src/chroma/decode_pipe.rs` — one long-lived
   `ffmpeg -ss <(start-0.5)/fps> -i clip -f rawvideo -pix_fmt rgb24 -` per clip
   instead of a fresh spawn + keyframe seek + PNG round-trip per frame. `FramePipe`:
   a forward step is one raw `read_exact`, a ≤48-frame hop discards to target, a
@@ -280,7 +299,7 @@ One or two lines per session. Detail lives in the decision it references.
   `docs/notes/match-reference.md`.
 
 - **2026-09-01** — **`grade.json` save/load + versioned schema (D-025)** — "the grade is
-  code". New `engine/src-tauri/src/chroma/grade.rs` (pure JSON+fs, no GPU/store):
+  code". New `app/src-tauri/src/chroma/grade.rs` (pure JSON+fs, no GPU/store):
   `chroma_save_grade` / `chroma_load_grade`. v1 `grade.json` is a **versioned wrapper**
   around RapidRAW's `adjustments` — `{schema:"chroma.grade/1", shot:{source,width,height,
   fps,frameCount,colorSpace,reference}, adjustments:{…}, notes}` — NOT `docs/06`'s ordered
@@ -312,7 +331,7 @@ One or two lines per session. Detail lives in the decision it references.
   `open(path)` op/tool. Engine edit: `chroma_seek` +5 lines, `cargo check` clean. Detail:
   `docs/notes/depth-haze.md`.
 - **2026-09-01** — **Video export + `.cube` bake (D-022)**. New
-  `engine/src-tauri/src/chroma/export.rs`: `export_video` (one `ffmpeg -f rawvideo`
+  `app/src-tauri/src/chroma/export.rs`: `export_video` (one `ffmpeg -f rawvideo`
   decode pipe → `render_core::render` per frame, one GPU ctx for the run → one `ffmpeg`
   encode pipe; ProRes 422 HQ / H.264) and `bake_primary_lut` (`size³` identity lattice
   through the primary grade only → `.cube`, warns on dropped masked layers). Per-frame
@@ -322,7 +341,7 @@ One or two lines per session. Detail lives in the decision it references.
   Verified on the 1080×1920 test clip: neutral + `exposure` + tracked-subject exports
   (`ffprobe` + frame spot-checks) and a warm `.cube` that reddens a grey ramp in ffmpeg.
   Detail: `docs/notes/export.md`.
-- **2026-09-01** — **Scopes + `inspect_color` (D-021)**. New `engine/src/utils/scopes.ts`
+- **2026-09-01** — **Scopes + `inspect_color` (D-021)**. New `app/src/utils/scopes.ts`
   (pure JS, no deps): `computeScopes` (black/white points, luma + per-channel clip %,
   per-zone means, warm-cool + green-magenta cast, 12-bin saturation-weighted hue
   histogram, mean saturation), `renderParade` / `renderVectorscope` PNGs, `computeGap`

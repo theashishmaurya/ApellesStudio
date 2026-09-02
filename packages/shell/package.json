@@ -1,0 +1,8 @@
+{
+  "name": "@chroma/shell",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "description": "Chroma app shell (D-039) — tab switcher (Edit/Motion/Colorist), project launcher (D-037), window chrome, routing. D-039 stub."
+}

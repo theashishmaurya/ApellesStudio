@@ -3,7 +3,7 @@
 The Chroma app starts and supervises the `ai/` FastAPI sidecar itself. No more
 `cd ai && ./run.sh` before using subject mask / tracking / depth.
 
-Code: `engine/src-tauri/src/chroma/sidecar.rs` (one file). Upstream footprint:
+Code: `app/src-tauri/src/chroma/sidecar.rs` (one file). Upstream footprint:
 `chroma/mod.rs` +1 (`pub mod sidecar;`), `lib.rs` +1 `std::thread::spawn` in
 `.setup()`, +2 `chroma::sidecar::shutdown()` calls in the `.run(...)` exit hook,
 +1 `generate_handler!` line (`chroma_ai_status`). No new crate.
@@ -19,7 +19,7 @@ logging is already installed and every `[sidecar]` line lands in `app.log`).
 **Sidecar dir** (`resolve_ai_dir`):
 1. `CHROMA_AI_DIR` env, if it contains `server.py` (else warn + fall through).
 2. `env!("CARGO_MANIFEST_DIR")/../../ai` → `../ai` → `ai` (first with `server.py`).
-   `CARGO_MANIFEST_DIR` is `<workspace>/engine/src-tauri`, so `../../ai` is the
+   `CARGO_MANIFEST_DIR` is `<workspace>/app/src-tauri`, so `../../ai` is the
    dev checkout's sidecar.
 
 **Python** (`resolve`):

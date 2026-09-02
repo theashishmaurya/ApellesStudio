@@ -1,5 +1,13 @@
 # 03 — Architecture
 
+> **STALE as of D-039/D-040 (2026-09-02).** This file still describes the Phase-0
+> 4-component grading-only scaffold. The current architecture is the **3-tab app
+> (Edit / Motion / Colorist) on a thin-shell/fat-core Cargo + npm monorepo
+> workspace** — see `docs/08-decisions.md` **D-039** and
+> `docs/notes/architecture-lock.md` for the crate/package structure, and D-040
+> for the de-submodule. A full rewrite of this file is a separate task; below,
+> only stale `engine/` paths have been corrected to `app/`.
+
 Status: **draft**. This is the intended design, not the current state (current state:
 scaffolding only).
 
@@ -37,7 +45,7 @@ scaffolding only).
 
 ## The four components
 
-### 1. Engine — Rust core (`engine/src-tauri`, forked from RapidRAW)
+### 1. Engine — Rust core (`app/src-tauri`, the vendored RapidRAW fork, D-040)
 
 **Keep from RapidRAW:** the wgpu renderer, WGSL grade shaders, adjustment model, shape +
 depth masks, curves, wheels, LUT, white-balance picker, mask panel UI, non-destructive

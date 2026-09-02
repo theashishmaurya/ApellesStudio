@@ -923,6 +923,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "chroma-grade-model"
+version = "0.0.0"
+dependencies = [
+ "chroma-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "chroma-timeline"
+version = "0.0.0"
+dependencies = [
+ "chroma-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "chroma-types"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"

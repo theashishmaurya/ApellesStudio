@@ -7,7 +7,7 @@ damping), and D-021 (the gap already computed, this applies it).
 
 ## What shipped
 
-- **`match_reference` op** in `engine/src/hooks/useChromaControl.ts` `OPS`.
+- **`match_reference` op** in `app/src/hooks/useChromaControl.ts` `OPS`.
   `match_reference({ reference, strength = 1.0, max_iters = 4, tolerance = 3.0 })`.
 - **`match_to_reference` MCP tool** in `mcp/server.py` → `POST /op match_reference`.
 

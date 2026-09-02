@@ -100,18 +100,8 @@ sha2 = "0.11"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 hex = "0.4"
 
-[profile.dev]
-opt-level = 2
-debug = 1
-incremental = true
-
-[profile.dev.package."*"]
-opt-level = 3
-
-[profile.release]
-codegen-units = 1
-lto = true
-strip = true
+# Build profiles moved to the workspace root `Cargo.toml` (D-039) — Cargo ignores
+# `[profile.*]` in a non-root workspace member.
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

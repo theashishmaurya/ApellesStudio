@@ -7,7 +7,7 @@ time).
 
 ## What shipped
 
-`engine/src-tauri/src/chroma/grade.rs` — new, self-contained. Pure `serde_json` +
+`app/src-tauri/src/chroma/grade.rs` — new, self-contained. Pure `serde_json` +
 `std::fs`. No GPU, no `AppState`, no store mutation.
 
 | item | signature |

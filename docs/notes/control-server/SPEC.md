@@ -14,11 +14,11 @@ new MCP capability = add one entry to the op registry in `useChromaControl`.
 
 ---
 
-## Part 1 — Rust control server  ·  `engine/src-tauri/src/chroma/control.rs` (new)
+## Part 1 — Rust control server  ·  `app/src-tauri/src/chroma/control.rs` (new)
 
-- Add dep to `engine/src-tauri/Cargo.toml`: `tiny_http = "0.12"`.
-- `pub mod control;` in `engine/src-tauri/src/chroma/mod.rs`.
-- Spawn in `engine/src-tauri/src/lib.rs` `.setup()` (near the other `std::thread::spawn`
+- Add dep to `app/src-tauri/Cargo.toml`: `tiny_http = "0.12"`.
+- `pub mod control;` in `app/src-tauri/src/chroma/mod.rs`.
+- Spawn in `app/src-tauri/src/lib.rs` `.setup()` (near the other `std::thread::spawn`
   blocks, ~line 1971): `let h = app_handle.clone(); std::thread::spawn(move || chroma::control::serve(h));`
 - `pub fn serve(app: tauri::AppHandle)`:
   - bind `127.0.0.1:${CHROMA_CONTROL_PORT:-19788}` (log the port; if bind fails, log + return, don't panic)
@@ -35,9 +35,9 @@ new MCP capability = add one entry to the op registry in `useChromaControl`.
 
 Keep it small (~150 lines). Zero grade/mask logic here.
 
-## Part 2 — Frontend bridge  ·  `engine/src/hooks/useChromaControl.ts` (new)
+## Part 2 — Frontend bridge  ·  `app/src/hooks/useChromaControl.ts` (new)
 
-- Mount once in `engine/src/components/panel/Editor.tsx` (next to `useChromaSubjectTracking()`).
+- Mount once in `app/src/components/panel/Editor.tsx` (next to `useChromaSubjectTracking()`).
   It needs `useEditorActions()`, `useAiMasking()`, store getters.
 - `import { listen, emit } from '@tauri-apps/api/event'`.
 - `listen('chroma://request', async (ev) => { const {id, op, args} = ev.payload; const result = await OPS[op]?.(args) ?? {error:'unknown op'}; emit('chroma://response/'+id, withFrame(result)) })`.
@@ -84,7 +84,7 @@ Keep it small (~150 lines). Zero grade/mask logic here.
 
 ## Done =
 
-1. `cargo check` on `engine/src-tauri` clean; app still launches (watch `/tmp/chroma_tauri.log`
+1. `cargo check` on `app/src-tauri` clean; app still launches (watch `/tmp/chroma_tauri.log`
    — `npm run tauri dev` is already running).
 2. With the app open + an image/video loaded:
    `curl 127.0.0.1:19788/health` → real state.

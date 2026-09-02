@@ -14,12 +14,12 @@ are not keyframed.
 
 | piece | file |
 |---|---|
-| interpolation (pure, 14 unit tests) | `engine/src-tauri/src/chroma/keyframes.rs` |
-| the one render hook | `engine/src-tauri/src/mask_generation.rs` — `generate_sub_mask_bitmap`, top |
-| frontend mirror (overlay + button share it) | `engine/src/utils/maskKeyframes.ts` |
-| keyframe button + diamond track | `engine/src/components/chroma/MaskKeyframeBar.tsx` (in `ChromaTimeline`) |
-| interpolated overlay + drag-writes-key | `engine/src/components/panel/editor/ImageCanvas.tsx` |
-| bridge ops | `engine/src/hooks/useChromaControl.ts` — `add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` / `clear_mask_keyframes` |
+| interpolation (pure, 14 unit tests) | `app/src-tauri/src/chroma/keyframes.rs` |
+| the one render hook | `app/src-tauri/src/mask_generation.rs` — `generate_sub_mask_bitmap`, top |
+| frontend mirror (overlay + button share it) | `app/src/utils/maskKeyframes.ts` |
+| keyframe button + diamond track | `app/src/components/chroma/MaskKeyframeBar.tsx` (in `ChromaTimeline`) |
+| interpolated overlay + drag-writes-key | `app/src/components/panel/editor/ImageCanvas.tsx` |
+| bridge ops | `app/src/hooks/useChromaControl.ts` — `add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` / `clear_mask_keyframes` |
 | MCP tools | `mcp/server.py` — same 4 names (27 → 31 tools) |
 
 ## Data model
@@ -130,7 +130,7 @@ seek(45) -> the mask is half-way between
 
 ## Verification (2026-09-02)
 
-- `cd engine/src-tauri && cargo check --no-default-features` — clean.
+- `cd app/src-tauri && cargo check --no-default-features` — clean.
 - `cargo test --no-default-features chroma::` — **37 passed** (23 baseline + 14
   new in `chroma::keyframes::tests`):
   `empty_or_missing_is_none`, `single_key_holds_everywhere`,

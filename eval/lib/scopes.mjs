@@ -1,4 +1,4 @@
-// scopes.mjs — STANDALONE PORT of engine/src/utils/scopes.ts (computeScopes +
+// scopes.mjs — STANDALONE PORT of app/src/utils/scopes.ts (computeScopes +
 // computeGap) for the offline eval scorer. No engine dependency.
 //
 // ⚠ SECOND COPY OF THE MATH. The engine's scopes.ts is the ground truth the

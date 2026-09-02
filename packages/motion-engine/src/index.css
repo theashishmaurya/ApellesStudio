@@ -1,0 +1,2 @@
+/* engine base — the viewer paints its own ground; primitives set bg explicitly */
+body { margin: 0; }

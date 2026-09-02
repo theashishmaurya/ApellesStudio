@@ -3,7 +3,7 @@
 
 Thin stdio MCP server. Every tool is a wrapper around the Chroma *control
 server* — a tiny HTTP server running inside the Chroma desktop app
-(`engine/src-tauri/src/chroma/control.rs`). The control server forwards each op
+(`app/src-tauri/src/chroma/control.rs`). The control server forwards each op
 to the app's frontend, which applies it through the SAME store actions the GUI
 buttons use and renders. So an edit made here moves the app's sliders and
 re-renders its canvas; `get_state` reflects the user's manual edits too.

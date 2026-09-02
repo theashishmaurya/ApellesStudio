@@ -137,13 +137,13 @@ IPC hop or the native wgpu surface. In a `tauri dev`:
 
 ## Files
 
-- new: `engine/src-tauri/src/chroma/playback.rs` — `chroma_play_frame`,
+- new: `app/src-tauri/src/chroma/playback.rs` — `chroma_play_frame`,
   `playback_dim`, the harness.
-- `engine/src-tauri/src/chroma/decode_pipe.rs` — `+scale_target`,
+- `app/src-tauri/src/chroma/decode_pipe.rs` — `+scale_target`,
   `+open_scaled` / `+frame_scaled` / `+playback_frame_scaled`; `open` / `frame` /
   `playback_frame` become native-size wrappers.
-- `engine/src-tauri/src/chroma/commands.rs` — `chroma_seek` body extracted to
+- `app/src-tauri/src/chroma/commands.rs` — `chroma_seek` body extracted to
   `pub async fn seek_and_install(frame, scale_long_edge, state)`.
-- `engine/src-tauri/src/chroma/mod.rs` +2, `lib.rs` +1 `generate_handler!` line.
-- `engine/src/components/panel/editor/ChromaTimeline.tsx` — rAF wall-clock
+- `app/src-tauri/src/chroma/mod.rs` +2, `lib.rs` +1 `generate_handler!` line.
+- `app/src/components/panel/editor/ChromaTimeline.tsx` — rAF wall-clock
   playback loop calling `chroma_play_frame`; pause → full-res settle.

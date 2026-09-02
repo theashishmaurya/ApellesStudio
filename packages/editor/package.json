@@ -1,0 +1,8 @@
+{
+  "name": "@chroma/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "description": "Chroma Editing tab (new, D-039) — timeline strip, transcript pane, trim/ripple UI. D-039 stub."
+}
