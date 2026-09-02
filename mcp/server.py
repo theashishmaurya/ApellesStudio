@@ -339,6 +339,63 @@ def add_shots(paths: list[str]) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# project model (D-037)
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def list_projects() -> str:
+    """Every saved Chroma project in the projects folder (`~/Movies/Chroma` by
+    default), newest first. A project is a `<name>.chroma` directory holding
+    project.json (shots referenced by absolute source path — media is never
+    copied), thumb.jpg, and grades/<shotId>.grade.json per shot. Returns
+    {projects: [{name, path, modified, shotCount}], folder}. Open one with
+    open_project."""
+    import json
+
+    return json.dumps(_op("list_projects"), indent=2, default=str)
+
+
+@mcp.tool()
+def open_project(name_or_path: str) -> str:
+    """Open a saved project by name (see list_projects) or absolute `.chroma`
+    path. Loads its shots into the session, restores each shot's grade, and puts
+    the app in the editor. A shot whose source file is missing is flagged "media
+    offline" — not fatal; relink it in the app. Returns {opened: {name, path},
+    shots}."""
+    import json
+
+    arg = name_or_path
+    key = "path" if ("/" in arg or arg.endswith(".chroma")) else "name"
+    return json.dumps(_op("open_project", **{key: arg}), indent=2, default=str)
+
+
+@mcp.tool()
+def new_project(name: str, media_paths: list[str] | None = None) -> str:
+    """Create a new `<name>.chroma` project in the projects folder from the given
+    media (absolute paths; may be empty and added later), then open it in the
+    editor. Media is referenced in place, never copied. Returns {created:
+    {name, path}}."""
+    import json
+
+    return json.dumps(
+        _op("new_project", name=name, media_paths=media_paths or []),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def save_project() -> str:
+    """Save the open project: rewrite project.json (shots + active shot),
+    persist the active shot's grade.json, and regenerate the launcher thumb.
+    Autosave already does this on a debounce while editing — call this to force
+    an immediate write. Errors if no project is loaded or the session is an
+    unsaved "Untitled" (save it as a project in the app first)."""
+    import json
+
+    return json.dumps(_op("save_project"), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
 # masks
 # --------------------------------------------------------------------------- #
 @mcp.tool()

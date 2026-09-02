@@ -664,5 +664,45 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   steadier). Sidecar `/depth_track` HTTP path + the running-app button/scrub are
   an open manual smoke test (`docs/notes/depth-track.md`).
 
+- **2026-09-02** · **Project launcher + `<name>.chroma` project model (D-037)** —
+  the home screen becomes a grid of saved projects, not RapidRAW's folder browser.
+  · New: `src/chroma/project.rs` — `ProjectManifest` + load/save (pure
+  `serde_json` + `std::fs`, no GPU/`AppState`, like `grade.rs`) + commands
+  `chroma_project_list` / `_open` / `_new` / `_save` / `_relink` / `_current` /
+  `_settings_dir` / `_set_dir`. 8 new tests (**41 → 49** chroma tests).
+  · `src/chroma/state.rs` += a `ProjectRef {path,name}` module-global
+  (`set_project` / `current_project`) so save knows where to write.
+  `current_video()` unchanged. `video.rs::extract_thumb` reused for `thumb.jpg`.
+  · **Upstream-file edits (minimal):** `chroma/mod.rs` +2, `lib.rs` +8
+  `generate_handler!` lines. `src/store/useUIStore.ts` — default
+  `activeView: 'library'` → `'projects'`. `src/App.tsx` — one import, one
+  `useProjectAutosave()` call, **one routing conditional**
+  (`activeView === 'projects'` → `<ProjectLauncher/>`, else `<LibraryView/>`
+  unchanged) + the Settings-overlay gate `hasRoots` →
+  `(hasRoots || activeView === 'projects')`. `src/hooks/useAppNavigation.ts` —
+  the editor "back" button routes to `'projects'` (folder / album navigation
+  still routes to `'library'`; **LibraryView / albums / culling NOT deleted**).
+  · Chroma-only frontend: new `components/chroma/ProjectLauncher.tsx`, new
+  `hooks/useProjectAutosave.ts`. `store/useSessionStore.ts` (D-033) extends with
+  `projectPath` / `projectName` / `gradeDir` / `dirty` / `shotIds` /
+  `offlineShots` + `openProject` / `newProject` / `saveProject` /
+  `saveUntitledAs` / `relinkShot` / `_hydrateOpenDto`; `switchToShot` flushes the
+  outgoing shot's grade, `addShots` / `removeShot` keep `shotIds` synced.
+  `hooks/useChromaControl.ts` += ops `list_projects` / `open_project` /
+  `new_project` / `save_project` + `get_state().project`.
+  `components/chroma/ShotStrip.tsx` += offline-shot cards + Relink + an Untitled
+  "Save project" pill.
+  · `mcp/server.py` +4 tools → **37**. `mcp/README.md` updated.
+  · Grades for a project shot save to `<name>.chroma/grades/<shotId>.grade.json`
+  (inside the project — media is only referenced), via the same
+  `chroma_save_grade` command with an explicit path. D-025's matte / `$trackDir`
+  / `$depthDir` rules unchanged.
+  · Verified: `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **49/49**. `npx tsc --noEmit` 74 pre-existing
+  (baseline unchanged via `git stash -u`), none in a new/touched file.
+  `py_compile` + `import server` clean, 37 tools. Launcher grid / New-Project /
+  autosave / reopen / media-offline+relink are an open manual smoke test
+  (`docs/notes/project-model.md`).
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

@@ -62,6 +62,20 @@ Walk `adjustments.masks[].subMasks[].parameters` on save:
 (hundreds of per-frame PNGs) which is **not** copied into the grade — a project
 move must bring `.chroma/mattes/` too, or the tracked mask loads with no frames.
 
+### Grade location inside a project (D-037)
+
+When a shot is part of a **project** (`<name>.chroma/`, D-037), its grade is
+saved to `<name>.chroma/grades/<shotId>.grade.json` — **inside the project**,
+not as a sidecar next to the source clip. The grade belongs to the project (the
+media is only *referenced* by absolute path and may be read-only / on a scratch
+disk / shared between projects). Everything else is identical: `grades/` gets the
+`<shotId>.mattes/` PNGs beside each grade, and `$trackDir` / `$depthDir` still
+resolve to `.chroma/mattes|depth/` next to the **source clip** (per-clip
+precomputes, not per-project). The frontend writes these via the same
+`chroma_save_grade` command with an explicit `path`. A loose clip with no
+project still saves beside itself as `<clip>.grade.json` (the default). See
+`docs/notes/project-model.md`.
+
 ## Mask keyframes (D-034) — inline, no externalisation
 
 A shape sub-mask can carry `parameters.chromaKeyframes` — an ordered

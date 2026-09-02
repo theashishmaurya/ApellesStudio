@@ -4,6 +4,35 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Project launcher + `<name>.chroma` project model (D-037)**.
+  The home screen was still RapidRAW's inherited Library view — a folder tree,
+  photo grid, albums, culling. Replaced with a **project launcher**: a grid of
+  saved Chroma projects, each a card with a cached thumbnail + name + relative
+  timestamp, click to open. A project is a `<name>.chroma` **directory** (not a
+  bundle) — `project.json` (versioned, `chroma.project/1` migration gate, shots
+  referenced by **absolute source path** — media is never copied), `thumb.jpg`,
+  and `grades/<shotId>.grade.json` (each shot's D-025 grade, inside the project
+  so it travels with it). Default folder `~/Movies/Chroma/`, configurable. A
+  missing source file → the shot shows **"media offline"** with a **relink**; its
+  grade is untouched and reattaches. Completes D-033's deferred session
+  persistence — D-033's in-memory `Session` is now the loaded form of a project.
+  New `chroma/project.rs` (pure fs+json, like `grade.rs`; 8 tests) +
+  `chroma_project_list/open/new/save/relink/current/settings_dir/set_dir`;
+  `state.rs` += a `ProjectRef`. Frontend: `ProjectLauncher.tsx`,
+  `useProjectAutosave.ts` (debounced save on any grade / shot / active-shot
+  change), `useSessionStore` project thunks, one routing conditional in
+  `App.tsx`, default `activeView` `'library'` → `'projects'`. **LibraryView /
+  albums / culling not deleted** — folder navigation still routes to them, so
+  upstream stays cherry-pick-able (D-003). Quick-open preserved: a loose clip via
+  the picker or MCP `open(path)` → an in-memory "Untitled" session that still
+  seeks / plays / exports / tracks. MCP: `list_projects` / `open_project` /
+  `new_project` / `save_project`, `get_state().project` — **33 → 37** tools.
+  Verified: `cargo check` clean, `cargo test chroma::` **49/49** (41 + 8),
+  `tsc --noEmit` baseline unchanged (74, none in new/touched files),
+  `py_compile` + `import server` clean (37 tools). Launcher / New-Project /
+  autosave / reopen / relink are an open manual smoke test. Detail:
+  `docs/notes/project-model.md`, `D-037`.
+
 - **2026-09-02** — **Per-frame depth track (D-036)**. The depth-haze preset
   (D-024) baked ONE Depth Anything V2 map and reused it for every frame — it
   flickers / goes wrong on a moving camera. Replaced with a real **temporal

@@ -74,7 +74,8 @@ thunks) + `components/chroma/ShotStrip.tsx`, per-shot D-032 activity feeds
 Deferred follow-ups: `.chroma/session.json` reopen (shot-path list, not a
 bundle); drag-drop reorder; copy-grade-to-any-shot picker (v1 = to the next
 shot); auto-load each shot's `grade.json` on add; stills as shots. Detail:
-`docs/notes/multi-shot.md`.
+`docs/notes/multi-shot.md`. **The `.chroma/session.json` reopen deferral landed
+as D-037** — the project model + launcher (`docs/notes/project-model.md`).
 
 Multi-subject batch tracking (D-017) — **deferred to Phase 4** (2026-09-02, user
 call): independent per-subject tracking already works; the remaining bit is a
@@ -195,7 +196,13 @@ decide name/license/headline — D-002/D-007/D-010).
       4K** in the headless harness. Proxy files deferred.
 - [x] Shot / session model + `grade.json` load/save/validate — `grade.json`
       (D-025); multi-shot `Session` + shot strip + per-shot grade/feed (D-033,
-      2026-09-02). Clip in/out points still open.
+      2026-09-02); **project model + launcher (D-037, 2026-09-02)** — a
+      `<name>.chroma` dir (`project.json` + `thumb.jpg` + `grades/`), a project
+      launcher replacing RapidRAW's Library view as the home screen, media
+      referenced in place + relink for offline media, debounced autosave. Clip
+      in/out points still open. Deferred polish: project rename/delete/duplicate
+      + search from the launcher, drag-to-import, a Settings-panel folder row,
+      batched open-time decode.
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [x] Shot strip (selector) — `components/chroma/ShotStrip.tsx` (D-033, 2026-09-02)
 - [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)
@@ -266,8 +273,15 @@ decide name/license/headline — D-002/D-007/D-010).
 - [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
       moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
       new `open(path)` op so a clip can be loaded headlessly.
+- [x] **Project model + launcher (D-037, 2026-09-02)** — `<name>.chroma` dir
+      (`project.json` + `thumb.jpg` + `grades/`), a launcher home screen
+      replacing RapidRAW's Library view, media referenced in place + relink,
+      debounced autosave, MCP `list_projects` / `open_project` / `new_project` /
+      `save_project`. Completes D-033's deferred session persistence. Deferred
+      polish: launcher rename/delete/duplicate/search, drag-to-import, a
+      SettingsPanel folder row, batched open-time per-shot decode.
 - [ ] Multi-subject **batch** tracking (D-017) — one SAM propagation pass for N objects (`max_obj_num > 1`, `obj_ids` per mask) instead of one pass each; deferred from round 3 (2026-09-02) as a perf-only optimization
-- [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut)
+- [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut) — now lands *into* a `<name>.chroma` project (D-037)
 - [ ] ProRes export round-trip verified with `swap_clip_media`
 - [ ] Packaging: signed macOS build, the sidecar + its Python bundled, models auto-downloaded
 - [ ] `docs/` cleaned for external readers; a real README with a 90-second demo

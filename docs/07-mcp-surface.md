@@ -34,6 +34,10 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` — Phase 1 shot model |
 | `list_shots` / `select_shot` | … | Phase 1 |
 | `seek` | `frame` | `{frame, scopes}` |
+| `list_projects` ✅ (D-037) | — | saved `<name>.chroma` projects in the projects folder, newest first — `{projects:[{name,path,modified,shotCount}], folder}` |
+| `open_project` ✅ (D-037) | `name_or_path` | load a project's shots + per-shot grades into the session, enter the editor; a missing source is flagged "media offline" |
+| `new_project` ✅ (D-037) | `name`, `media_paths?` | scaffold `<name>.chroma` (media referenced in place) + open it |
+| `save_project` ✅ (D-037) | — | force-write `project.json` + the active shot's grade + `thumb.jpg` (autosave does this on a debounce) |
 
 ### Render / inspect (read-only)  — *the agent's eyes. `inspect_color` is the primary one — grade by the numbers.*
 | Tool | Params | Returns |

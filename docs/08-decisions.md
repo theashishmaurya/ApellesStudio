@@ -845,7 +845,14 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   doc 09.
 
 ## D-033 — Multi-shot session = an in-memory `Session` + per-clip `grade.json` sidecars; NOT a `.chroma` project bundle
-**decided (2026-09-02) · built (2026-09-02)**
+**decided (2026-09-02) · built (2026-09-02) · session persistence superseded by D-037 (2026-09-02)**
+
+> **Update (D-037):** the deferred `.chroma/session.json` reopen path is now
+> **D-037's project model** — a `<name>.chroma` *directory* (`project.json` +
+> `thumb.jpg` + `grades/`). D-033's in-memory `Session { shots, active }` is
+> unchanged; it is now the *loaded form* of a saved project. This record stays
+> as the multi-shot design; the "no bundle" call is what D-037 revisits — and it
+> still isn't a bundle, it's a folder of plain diff-able files.
 
 - **Context:** round-3 item 2. Chroma loaded exactly one clip — `chroma/state.rs`
   said so ("There is only ever one clip loaded, so a module global is enough for
@@ -1251,3 +1258,110 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   scrub-with-moving-camera check are an open **manual** smoke test (the
   `useEffect([])` bridge listener doesn't hot-reload and the running app was not
   driven) — listed in `docs/notes/depth-track.md`.
+
+## D-037 — Home screen = a Chroma **project launcher**; a project is a `<name>.chroma` directory (`project.json` + `thumb.jpg` + `grades/`), media referenced in place
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** Chroma still lands on RapidRAW's inherited **Library view** — a
+  folder tree (Sources), a photo-thumbnail grid, albums, culling. None of it
+  fits a colourist's workflow: you don't browse a photo catalogue, you open *a
+  job* — a set of shots from one shoot, each with its own grade and session
+  state. D-033 built the multi-shot `Session` but explicitly deferred
+  persistence ("`.chroma/session.json` reopen … deferred"). This completes that:
+  the launcher's cards *are* saved sessions.
+
+- **Decisions the user made up front (implemented as-is):**
+  1. **Media is referenced in place** by absolute path — a project never copies
+     video files (matches Resolve; matches D-033's lightweight bias). A missing
+     path → the shot shows **"media offline"** with a **relink** (re-point to a
+     new file). Grades still load — "media offline but grade intact".
+  2. **Projects live in `~/Movies/Chroma/`** by default, one directory per
+     project (`<name>.chroma/`), the folder **configurable in Settings**. The
+     launcher scans that folder for `*.chroma` dirs, newest first.
+
+- **What a project is** (finalised here):
+  ```
+  ~/Movies/Chroma/<name>.chroma/
+    project.json    { schema: "chroma.project/1", name, created, modified,
+                      shots: [{ id, sourcePath, frame, name }], activeShot, settings }
+    thumb.jpg       a frame from the active/first shot — the launcher card (regen on save)
+    grades/
+      <shotId>.grade.json    each shot's grade, D-025 format, verbatim
+  ```
+  - **Versioned + a `chroma.project/<major>` migration gate** — same discipline
+    as `grade.json` (D-025): an untagged file is treated as v1; a newer major is
+    rejected with "Upgrade Chroma".
+  - **Per-shot grades live *inside* the project** (`grades/<shotId>.grade.json`),
+    not as a sidecar next to the clip. Rationale: media is referenced and may sit
+    on a scratch disk / be read-only / be shared between projects — the grade
+    belongs to *this* project, so it travels with the project directory. D-025's
+    `$matte` / `$trackDir` / `$depthDir` externalisation rules are unchanged: the
+    static `.mattes/` PNGs sit beside the grade (so `grades/<id>.mattes/`), and
+    tracked/depth dirs are still *referenced* at `.chroma/mattes|depth/` next to
+    the **source clip** (they're per-clip precomputes, not per-project).
+  - The **D-032 activity feed is session-only** — never written to the project.
+
+- **Options for the format:** (a) a single `.chroma` **file** (zip/sqlite) —
+  opaque, needs a bespoke reader, fights git; (b) a **directory** of plain files
+  — `project.json` + `grades/*.grade.json` are the exact JSON we already
+  git-commit (D-025), inspectable, diffable, `rsync`-able. **Chose (b).** It is
+  D-033's "not a bundle" position held: a project is just a folder you could
+  hand-edit. D-033's deferred `.chroma/session.json` is *replaced* by
+  `project.json` (which is a superset — it also carries per-shot ids + active +
+  settings).
+
+- **Media-offline behaviour:** `chroma_project_open` probes each shot's
+  `sourcePath`. Present + a video → loaded into the Rust `Session` (D-033) as
+  normal. Missing → **flagged, not fatal**: it stays in the manifest, shows in
+  the shot strip as an amber "media offline" card with a **Relink** button
+  (`chroma_project_relink` → rewrite that shot's `sourcePath` → reopen). Its
+  `grades/<id>.grade.json` is untouched and reattaches on relink.
+
+- **Implementation** (fork hygiene, D-003):
+  - **Rust:** new `chroma/project.rs` — `ProjectManifest` + load/save (pure
+    `serde_json` + `std::fs`, no GPU/store, exactly like `grade.rs`) + commands
+    `chroma_project_list` / `_open` / `_new` / `_save` / `_relink` / `_current` /
+    `_settings_dir` / `_set_dir`. `state.rs` gains a `ProjectRef {path, name}`
+    module-global so `chroma_project_save` knows where to write; `current_video()`
+    unchanged. Thumb regen reuses `chroma::video::extract_thumb`. Upstream
+    footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines —
+    nothing else in Rust core.
+  - **Frontend:** new `components/chroma/ProjectLauncher.tsx` (the grid + a
+    "New Project" modal + a "Projects folder" control), new
+    `hooks/useProjectAutosave.ts` (debounced `chroma_project_save` on any grade /
+    shot-list / active-shot change once a real project is loaded — skipped for an
+    "Untitled" session). `useUIStore` default `activeView` `'library'` →
+    `'projects'`; **one** routing conditional in `App.tsx` picks `ProjectLauncher`
+    over `LibraryView` for the default view. `useSessionStore` (D-033) extends
+    with `projectPath` / `projectName` / `gradeDir` / `dirty` / `shotIds` /
+    `offlineShots` + `openProject` / `newProject` / `saveProject` /
+    `saveUntitledAs` / `relinkShot`. **RapidRAW's LibraryView / albums / culling
+    are NOT deleted** — folder / album navigation still routes to `'library'`, so
+    the upstream code stays cherry-pick-able; the default flow just never shows
+    the folder browser.
+  - **Quick-open preserved:** a loose clip via the file picker or MCP `open(path)`
+    with no project → an in-memory **"Untitled"** session. It seeks / plays /
+    exports / tracks headlessly exactly as before; the shot strip shows a "Save
+    project" nudge. Autosave stays off until `saveUntitledAs(name)` scaffolds a
+    real project from the loaded shots.
+  - **MCP:** `list_projects` / `open_project(name_or_path)` / `new_project(name,
+    media_paths?)` / `save_project()` (33 → 37 tools). `get_state` gains
+    `project: {name, path, dirty}` (null for Untitled). D-033's `add_shots` now
+    also adds to the open project and marks it dirty.
+
+- **Deferred (documented roadmap follow-ups, not designed away):** project
+  rename / delete / duplicate from the launcher, a project search box,
+  drag-a-clip-onto-the-window import, a `Projects folder` row inside the big
+  `SettingsPanel` (the launcher has its own folder control for now), and
+  batching the open-time per-shot decode.
+
+- **Verified:** `cargo check --no-default-features` clean; `cargo test
+  chroma::` **49/49** (41 + 8 new: manifest round-trip, `chroma.project/2`
+  migration gate, untagged→v1 + active-shot clamp, newest-first listing +
+  non-project dirs ignored, media-offline flagged not fatal, name sanitisation,
+  new-project creates dir+manifest, project-ref set/clear). `tsc --noEmit`
+  baseline unchanged (74, none in new/touched files — verified via `git stash
+  -u`). `py_compile` + `import server` clean, 37 tools. The launcher grid, the
+  New-Project flow, autosave, reopen, and media-offline/relink are an open
+  **manual** smoke test (the `useEffect([])` bridge listener doesn't hot-reload
+  and the running app was not driven) — listed in `docs/notes/project-model.md`.

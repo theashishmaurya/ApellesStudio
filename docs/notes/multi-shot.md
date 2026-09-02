@@ -3,6 +3,15 @@
 Round-3 item 2. Chroma held one clip; a grading job is N shots from one shoot,
 each with its own grade, flip-between-able, grade-copyable.
 
+> **Update (D-037, 2026-09-02):** the "no session file / deferred
+> `.chroma/session.json`" call below is superseded. Sessions now persist as a
+> **project** — a `<name>.chroma` directory (`project.json` + `thumb.jpg` +
+> `grades/<shotId>.grade.json`), opened from a **project launcher** that
+> replaces RapidRAW's Library view as the home screen. The in-memory `Session`
+> here is unchanged — it's the *loaded form* of a project. Per-shot grades now
+> live **inside the project** (`grades/`), not as a sidecar next to the clip.
+> See `docs/notes/project-model.md` and **D-037**.
+
 ## Decision: lightweight, in-memory
 
 See D-033 for the full lightweight-vs-bundle analysis. Short version: a `.chroma`
