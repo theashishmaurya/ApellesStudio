@@ -76,7 +76,13 @@ bundle); drag-drop reorder; copy-grade-to-any-shot picker (v1 = to the next
 shot); auto-load each shot's `grade.json` on add; stills as shots. Detail:
 `docs/notes/multi-shot.md`.
 
-Then: multi-subject batch tracking (D-017), ~~mask keyframes~~ **[x] mask
+Multi-subject batch tracking (D-017) — **deferred to Phase 4** (2026-09-02, user
+call): independent per-subject tracking already works; the remaining bit is a
+pure perf optimization (batch N objects into one SAM propagation pass instead of
+one pass each) that only matters when tracking 2+ subjects at once — niche for a
+talking-head grade. Tracked under Phase 4.
+
+Then: ~~mask keyframes~~ **[x] mask
 keyframes (D-034, 2026-09-02)** — a shape sub-mask carries
 `parameters.chromaKeyframes` (`[{frame, params}]`); the engine interpolates its
 geometry per source frame at render time (one hook in `generate_sub_mask_bitmap`,
@@ -253,6 +259,7 @@ decide name/license/headline — D-002/D-007/D-010).
 - [x] Control-server bridge: mount `useChromaControl` at app level (2026-09-01, D-024) —
       moved from `Editor` to `App`; `/op` now works before a file is open. Paired with a
       new `open(path)` op so a clip can be loaded headlessly.
+- [ ] Multi-subject **batch** tracking (D-017) — one SAM propagation pass for N objects (`max_obj_num > 1`, `obj_ids` per mask) instead of one pass each; deferred from round 3 (2026-09-02) as a perf-only optimization
 - [ ] OTIO or a simple session import from Palmier (grade the shots the editor cut)
 - [ ] ProRes export round-trip verified with `swap_clip_media`
 - [ ] Packaging: signed macOS build, the sidecar + its Python bundled, models auto-downloaded
