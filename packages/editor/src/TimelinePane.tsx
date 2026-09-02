@@ -8,9 +8,9 @@
  * → `chroma_timeline_get` refetch). Time in the editor is seconds (frame / fps).
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
-import { Timeline as TimelineEditor } from '@xzdarcy/react-timeline-editor';
+import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
 
 import { useEditorTimelineStore } from './timelineStore';
@@ -44,8 +44,15 @@ export function TimelinePane() {
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const [selected, setSelected] = useState<string | null>(null);
 
+  const editorRef = useRef<TimelineState>(null);
   const fps = timelineFps(timeline);
   const ti = timeline ? videoTrackIndex(timeline) : 0;
+
+  // keep the editor's own cursor in step with the store playhead (step buttons,
+  // the play loop, clicks in the preview transport)
+  useEffect(() => {
+    editorRef.current?.setTime(playhead / fps);
+  }, [playhead, fps]);
 
   const editorData = useMemo<TimelineRow[]>(
     () => (timeline ? [buildRow(timeline, fps)] : [{ id: 'video', actions: [] }]),
@@ -114,6 +121,7 @@ export function TimelinePane() {
 
       <div className="flex-1 min-h-0 overflow-hidden">
         <TimelineEditor
+          ref={editorRef}
           editorData={editorData}
           effects={effects}
           scale={SCALE_SEC}
