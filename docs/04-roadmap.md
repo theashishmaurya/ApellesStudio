@@ -41,17 +41,17 @@ commit.
   extracted with app-side re-export shims — `Slider` + app-coupled components deferred);
   Editor tab transport + toolbar rebuilt with `lucide-react` icons + a `@chroma/ui`
   `<Button>` instead of hand-crafted text buttons. See D-039 migration log step 6b.
-- [ ] **Project launcher = the app entry screen** (requested 2026-09-02): right now the
-  D-037 launcher lives *inside* the Colorist tab, so you see tabs → click Colorist →
-  then the "Welcome to Chroma" screen. Wrong. It should be: **app opens → launcher (no
-  tabs) → open/create a project → tabs appear**, all 3 tabs operating on that project;
-  a "‹ Projects" affordance closes the project back to the launcher. Composition root
-  (`app/src/main.tsx`) routes: `no project` → `<ProjectLauncher>` (full window, chrome
-  bar only); `project open` → `<Shell tabs>`. The Colorist tab (`<App/>`) drops its
-  `activeView: 'projects'` branch and always renders its editor (assumes a project is
-  open). `ProjectLauncher` + session store likely move to `@chroma/bridge` (or a
-  `@chroma/project` fe package) so shell + colorist both reach them. **Queued after the
-  UI pass — heavy `@chroma/shell` + `app/src/App.tsx` overlap.**
+- [x] **Project launcher = the app entry screen** (D-039 migration log step, 2026-09-02):
+  the app now opens on the launcher with no tab bar (just the chrome bar); opening or
+  creating a project flips `<Shell>` into the 3-tab layout, and a "‹ Projects" button in
+  the chrome bar calls `closeProject()` to come back. `<Shell>` gained `projectOpen` /
+  `launcher` / `onCloseProject` props (it never imports `ProjectLauncher` — app → shell
+  only); the composition root (`app/src/main.tsx`) is a small `Root` that reads
+  `useSessionStore` and does the routing. The Colorist tab (`<App/>`) dropped its
+  `activeView: 'projects'` branch (`useUIStore` default → `'editor'`); tab panels stay
+  mounted under the launcher so the MCP control bridge keeps running. Follow-ups: reopen
+  the last project on launch (no persisted "last project" today); moving `ProjectLauncher`
+  + the session store into `@chroma/bridge` / a `@chroma/project` fe package.
 - [ ] **`@chroma/ui` on shadcn/ui + Base UI** (D-042, 2026-09-02) — **do before player /
   media-pool / export**. shadcn copy-in components (Dialog, DropdownMenu, ContextMenu,
   Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, Button…)

@@ -1630,6 +1630,53 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
     Tauri imports + `@chroma/editor` icons all bundle; `cargo check --no-default-features`
     unchanged (no Rust touched).
 
+- **Step 6c (2026-09-02) — the project launcher is the app entry screen.**
+  The D-037 launcher stopped being a view *inside* the Colorist tab and became
+  the shell-level entry screen.
+  - **`@chroma/shell`.** `<Shell>` gains three props: `projectOpen: boolean`,
+    `launcher: ReactNode` (injected — the shell never imports the app's
+    `ProjectLauncher`, dependency direction stays app → shell), and
+    `onCloseProject?: () => void`. `projectOpen === false` → the chrome bar shows
+    only traffic lights + `CHROMA` + window controls (no tab buttons) and the
+    content area renders `{launcher}` full-window; `true` → the tabs plus a
+    "‹ Projects" button (next to the wordmark) that calls `onCloseProject`.
+    Cmd/Ctrl+1/2/3 gated on `projectOpen`. The tab panels stay **mounted**
+    (hidden) under the launcher so the Colorist app's MCP control bridge
+    (`useChromaControl`) keeps running — MCP `open_project` still works from the
+    launcher screen. `.macos-window-shell` stays on the shell root in both states.
+  - **Composition root.** `app/src/main.tsx` is now a small `Root` component:
+    `projectOpen = !!s.projectPath || !!s.projectName` (the `|| projectName`
+    covers a loose-clip Untitled quick-open, which sets `projectName` but not
+    `projectPath`), `launcher={<ProjectLauncher/>}`,
+    `onCloseProject={() => useSessionStore.getState().closeProject()}`.
+  - **`useSessionStore`.** New `closeProject()` action — best-effort final
+    `saveProject()` for a dirty, non-Untitled project, then reset `shots` /
+    `activeIndex` / `grades` / `projectPath` / `projectName` / `gradeDir` /
+    `shotIds` / `offlineShots` / `dirty` / `projectSettings` to initial and drop
+    the clip from the editor/chroma/agent stores (mirrors `removeShot`'s
+    "session empty" branch). **No Rust change** — `state::ProjectRef` is left
+    set; harmless because the next `open`/`new` overwrites it and every frontend
+    save path guards on `projectPath`. Autosave's debounce already no-ops once
+    `projectPath` is null.
+  - **Colorist tab.** `useUIStore` `activeView` default `'projects'` → `'editor'`
+    (a project is always open when `<App/>` is mounted now). `App.tsx` drops the
+    `activeView === 'projects' ? <ProjectLauncher/> : <LibraryView/>` conditional
+    — renders `<LibraryView/>` directly (still the fallback for the unrouted
+    albums/culling/community nav); `ProjectLauncher` import removed from `App.tsx`
+    (kept as a file — `main.tsx` imports it). `useAppNavigation`'s editor "back"
+    → `activeView: 'library'` (the `'projects'` view value is retired). The
+    settings-overlay guard in `App.tsx` drops its `|| activeView === 'projects'`
+    clause (back to `hasRoots`).
+  - **Deferred:** reopen-the-last-project on launch (no persisted "last project"
+    — `projectPath` starts null, so the app always opens at the launcher);
+    "‹ Projects" on a dirty Untitled session just discards (Untitled autosave is
+    already skipped); moving `ProjectLauncher` + the session store into
+    `@chroma/bridge` / a `@chroma/project` fe package so shell + colorist share
+    them without the app-side import.
+  - **Verified:** `npm install` clean; `cd app && npx tsc --noEmit` = **74**
+    (baseline unchanged, none in a touched file); `cd app && npm run build`
+    (vite prod) green; no Rust touched (`git status` = 6 frontend files).
+
 ---
 
 ## D-041 — Editor tab MVP: single-video-track timeline of the project's shots, lightweight decode→jpeg preview, timeline persisted in the `.chroma` project

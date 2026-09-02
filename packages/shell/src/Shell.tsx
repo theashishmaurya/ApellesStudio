@@ -22,7 +22,15 @@
  * rounded corners + clip) — before D-039 that class was on the Colorist app
  * root; the whole window is the shell's now.
  *
- * Keyboard: Cmd/Ctrl+1 / +2 / +3 switch tabs.
+ * Keyboard: Cmd/Ctrl+1 / +2 / +3 switch tabs (only while a project is open).
+ *
+ * Project gating (D-039): the shell renders `launcher` (passed in — the shell
+ * never imports the D-037 `ProjectLauncher`, dependency direction is app →
+ * shell) full-window whenever `projectOpen` is false, with the tab buttons
+ * hidden — just traffic lights + wordmark + window controls in the chrome bar.
+ * Once a project opens, the tabs appear plus a "‹ Projects" button that calls
+ * `onCloseProject`. Tab panels stay mounted underneath the launcher (hidden) so
+ * the Colorist app's MCP control bridge keeps running.
  */
 
 import { useEffect, type ReactNode } from 'react';
@@ -38,9 +46,16 @@ export interface ShellTab {
 
 export interface ShellProps {
   tabs: ShellTab[];
+  /** true once a project (or Untitled session) is open — the tabs + content
+   *  show; false renders `launcher` full-window with no tab buttons. */
+  projectOpen: boolean;
+  /** the D-037 project launcher, injected by the caller (app → shell only). */
+  launcher: ReactNode;
+  /** "‹ Projects" — close the current project, back to the launcher. */
+  onCloseProject?: () => void;
 }
 
-export function Shell({ tabs }: ShellProps) {
+export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProps) {
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
   const chrome = useWindowChrome();
@@ -49,6 +64,7 @@ export function Shell({ tabs }: ShellProps) {
   const active = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
 
   useEffect(() => {
+    if (!projectOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
       const idx = { '1': 0, '2': 1, '3': 2 }[e.key];
@@ -60,7 +76,7 @@ export function Shell({ tabs }: ShellProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [tabs, setActiveTab]);
+  }, [tabs, setActiveTab, projectOpen]);
 
   return (
     <div
@@ -79,40 +95,54 @@ export function Shell({ tabs }: ShellProps) {
           CHROMA
         </div>
 
-        {/* centre: the tabs, absolutely centred */}
-        <div
-          role="tablist"
-          aria-label="Chroma tabs"
-          className="absolute left-1/2 -translate-x-1/2 flex items-stretch h-full gap-1"
-        >
-          {tabs.map((tab) => {
-            const isActive = tab.id === active;
-            return (
-              <button
-                key={tab.id}
-                role="tab"
-                type="button"
-                aria-selected={isActive}
-                onClick={() => setActiveTab(tab.id)}
-                className={
-                  'relative flex items-center gap-1.5 px-3 text-xs font-medium transition-colors ' +
-                  (isActive
-                    ? 'text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary')
-                }
-              >
-                {tab.icon}
-                {tab.label}
-                <span
+        {/* left (project open): back to the launcher */}
+        {projectOpen && onCloseProject && (
+          <button
+            type="button"
+            onClick={onCloseProject}
+            title="Close project — back to all projects"
+            className="flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary/40 transition-colors"
+          >
+            <span aria-hidden>‹</span> Projects
+          </button>
+        )}
+
+        {/* centre: the tabs, absolutely centred (only while a project is open) */}
+        {projectOpen && (
+          <div
+            role="tablist"
+            aria-label="Chroma tabs"
+            className="absolute left-1/2 -translate-x-1/2 flex items-stretch h-full gap-1"
+          >
+            {tabs.map((tab) => {
+              const isActive = tab.id === active;
+              return (
+                <button
+                  key={tab.id}
+                  role="tab"
+                  type="button"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.id)}
                   className={
-                    'absolute left-2 right-2 bottom-0 h-0.5 rounded-full transition-colors ' +
-                    (isActive ? 'bg-accent' : 'bg-transparent')
+                    'relative flex items-center gap-1.5 px-3 text-xs font-medium transition-colors ' +
+                    (isActive
+                      ? 'text-text-primary'
+                      : 'text-text-secondary hover:text-text-primary')
                   }
-                />
-              </button>
-            );
-          })}
-        </div>
+                >
+                  {tab.icon}
+                  {tab.label}
+                  <span
+                    className={
+                      'absolute left-2 right-2 bottom-0 h-0.5 rounded-full transition-colors ' +
+                      (isActive ? 'bg-accent' : 'bg-transparent')
+                    }
+                  />
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* right: win/linux controls, or a spacer on mac */}
         <div className="ml-auto flex items-center h-full">
@@ -120,9 +150,11 @@ export function Shell({ tabs }: ShellProps) {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+        {/* tab panels — always mounted (state + the Colorist MCP bridge persist);
+            all hidden while the launcher is up. */}
         {tabs.map((tab) => {
-          const isActive = tab.id === active;
+          const isActive = projectOpen && tab.id === active;
           return (
             <div
               key={tab.id}
@@ -133,6 +165,10 @@ export function Shell({ tabs }: ShellProps) {
             </div>
           );
         })}
+
+        {!projectOpen && (
+          <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>
+        )}
       </div>
     </div>
   );

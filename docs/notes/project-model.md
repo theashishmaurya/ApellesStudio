@@ -49,9 +49,23 @@ Upstream footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines.
   flushes the outgoing shot's `grade.json`; `addShots` / `removeShot` keep
   `shotIds` in sync + mark dirty.
 - **`store/useUIStore.ts`** — default `activeView: 'library'` → `'projects'`.
+  **(D-039 step 6c)** → `'editor'`: the launcher is shell-level now, not a view
+  inside the Colorist tab, so `<App/>` always has a project open.
 - **`App.tsx`** — one routing conditional: `activeView === 'projects'` renders
   `<ProjectLauncher/>`, everything else keeps rendering `<LibraryView/>`. The
   editor "back" button (`useAppNavigation`) returns to `'projects'`.
+  **(D-039 step 6c)** — the `'projects'` branch is gone; `App.tsx` renders
+  `<LibraryView/>` directly and "back" → `'library'`.
+
+> **Update (D-039 step 6c, 2026-09-02):** the launcher moved **out of the
+> Colorist tab up to `@chroma/shell`**. The app opens on `<ProjectLauncher/>`
+> full-window with no tab bar; `useSessionStore.projectPath` (or `projectName`
+> for an Untitled quick-open) being set flips `<Shell>` into the 3-tab layout,
+> and a chrome-bar "‹ Projects" button calls the new `useSessionStore.closeProject()`
+> to come back. `<Shell>` takes `projectOpen` / `launcher` / `onCloseProject`
+> props (the shell never imports `ProjectLauncher` — app → shell only); the
+> routing lives in a small `Root` in `app/src/main.tsx`. Tab panels stay mounted
+> under the launcher so the MCP control bridge keeps serving `open_project`.
 - **`hooks/useChromaControl.ts`** — ops `list_projects` (READ_ONLY),
   `open_project` / `new_project` (NAV), `save_project` (READ_ONLY);
   `get_state().project`. **(D-038)** op `set_project_settings` (READ_ONLY);

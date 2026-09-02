@@ -33,7 +33,6 @@ import TetheringPanel from './components/panel/right/TetheringPanel';
 
 import EditorView from './components/views/EditorView';
 import LibraryView from './components/views/LibraryView';
-import ProjectLauncher from './components/chroma/ProjectLauncher';
 
 import { ContextMenuProvider } from './context/ContextMenuContext';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -950,13 +949,11 @@ function App() {
                     activeView === 'editor' && selectedImage ? 'hidden' : 'flex',
                   )}
                 >
-                  {/* D-037: the project launcher is the default landing view.
-                      RapidRAW's LibraryView still mounts for any other non-editor
-                      view (albums / culling / community) so upstream stays
-                      cherry-pick-able — the default flow just never shows it. */}
-                  {activeView === 'projects' ? (
-                    <ProjectLauncher />
-                  ) : (
+                  {/* D-039: the project launcher is now shell-level (rendered by
+                      main.tsx when no project is open), not a view inside the
+                      Colorist tab. RapidRAW's LibraryView still mounts here as the
+                      fallback for the unrouted albums / culling / community nav so
+                      upstream stays cherry-pick-able. */}
                   <LibraryView
                     sortedImageList={sortedImageList}
                     groupBadgeInfo={groupBadgeInfo}
@@ -984,9 +981,8 @@ function App() {
                     handleResetAdjustments={handleResetAdjustments}
                     requestThumbnails={requestThumbnails}
                   />
-                  )}
                 </div>
-                {isSettingsOpen && appSettings && (hasRoots || activeView === 'projects') && (
+                {isSettingsOpen && appSettings && hasRoots && (
                   <div className="absolute inset-0 z-50 flex bg-bg-secondary rounded-lg">
                     <div className="w-full h-full flex flex-col p-4 lg:p-8 overflow-y-auto custom-scrollbar">
                       <SettingsPanel

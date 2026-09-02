@@ -270,7 +270,7 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
-  activeView: 'projects', // D-037: the Chroma project launcher, not RapidRAW's folder browser
+  activeView: 'editor', // D-039: a project is always open when <App/> (Colorist) is mounted; the launcher is shell-level now
   isFullScreen: false,
   isWindowFullScreen: false,
   isInstantTransition: false,

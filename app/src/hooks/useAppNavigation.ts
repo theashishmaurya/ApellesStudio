@@ -79,9 +79,10 @@ export function useAppNavigation({ clearThumbnailQueue, refs }: AppNavigationPro
     const lastActivePath = selectedImage?.path ?? null;
 
     setLibrary({ libraryActivePath: lastActivePath });
-    // D-037: "back" from the editor returns to the project launcher, not the
-    // folder browser. (Folder / album navigation still routes to 'library'.)
-    setUI({ activeView: 'projects', slideDirection: 1 });
+    // D-039: the project launcher is shell-level now (no 'projects' view). The
+    // in-Colorist "back" returns to the library fallback; closing the project
+    // itself is the shell's "‹ Projects" affordance.
+    setUI({ activeView: 'library', slideDirection: 1 });
   }, [refs]);
 
   const handleImageSelect = useCallback(

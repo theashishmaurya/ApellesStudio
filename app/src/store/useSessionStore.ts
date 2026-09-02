@@ -179,6 +179,10 @@ interface SessionState {
   ) => Promise<{ ok: boolean; error?: string; settings?: ProjectSettings }>;
   /** open a saved project: hydrate the session + per-shot grades, ready for the editor */
   openProject: (path: string) => Promise<{ ok: boolean; error?: string; hasShots?: boolean }>;
+  /** close the loaded project / Untitled session → back to the shell-level launcher
+   *  (D-039). Flushes a final save for a dirty real project, then resets all
+   *  session + project state to initial. */
+  closeProject: () => Promise<void>;
   /** create `<name>.chroma` from the picked media, then open it */
   newProject: (name: string, mediaPaths: string[]) => Promise<{ ok: boolean; error?: string }>;
   /** turn the current in-memory Untitled session into a saved project */
@@ -512,6 +516,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } finally {
       set({ busy: false });
     }
+  },
+
+  closeProject: async () => {
+    const { projectPath, projectName, dirty } = get();
+    // best-effort final flush for a dirty, named project (Untitled autosave is
+    // already skipped, so an Untitled session is just discarded)
+    if (projectPath && projectName !== 'Untitled' && dirty) {
+      try {
+        await get().saveProject();
+      } catch {
+        /* ignore — closing anyway */
+      }
+    }
+    // reset everything back to the initial store state. Autosave's debounced
+    // saveProject() no-ops once projectPath is null; the Rust `state::ProjectRef`
+    // is left as-is (harmless — the next open/new overwrites it, and every
+    // frontend save path guards on projectPath).
+    set({
+      shots: [],
+      activeIndex: 0,
+      grades: {},
+      busy: false,
+      projectPath: null,
+      projectName: null,
+      gradeDir: null,
+      shotIds: {},
+      offlineShots: [],
+      dirty: false,
+      projectSettings: null,
+    });
+    // drop the clip from the editor stores (mirrors removeShot's "session empty" branch)
+    useEditorStore.getState().setEditor({ selectedImage: null });
+    useChromaStore.getState().setVideoInfo(null);
+    useAgentStore.getState().scopeToShot(null);
   },
 
   newProject: async (name, mediaPaths) => {

@@ -9,8 +9,10 @@
  * Window chrome (the traffic lights / window controls / drag region, ported
  * from RapidRAW's `TitleBar`) lives here now too — `WindowChrome.tsx`.
  *
- * Future (later D-039 steps): the project launcher (D-037) moves here from
- * inside the Colorist tab, since a project spans all three tabs.
+ * D-039 step 6c: the project launcher (D-037) is the shell's entry screen —
+ * `<Shell projectOpen={false} launcher={...}>` renders it full-window with no
+ * tabs. The shell still doesn't import `ProjectLauncher` (app → shell only); it
+ * arrives via the `launcher` prop.
  */
 
 export { Shell, type ShellTab, type ShellProps } from './Shell';

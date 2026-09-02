@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Project launcher is the app entry screen (D-039 migration
+  log).** The app opens on the D-037 launcher with no tab bar — just the chrome
+  bar. Opening/creating a project sets `useSessionStore.projectPath` (or
+  `projectName` for a loose-clip Untitled), flipping `<Shell>` into the 3-tab
+  layout; a "‹ Projects" button in the chrome bar calls a new `closeProject()`
+  action (flushes a final save for a dirty named project, then resets all
+  session + project state) to return. `<Shell>` gains `projectOpen` / `launcher`
+  / `onCloseProject` props — it never imports `ProjectLauncher` (app → shell
+  only); `app/src/main.tsx` is now a small `Root` that reads the session store
+  and routes. Tab panels stay mounted under the launcher so the Colorist MCP
+  control bridge keeps running. Colorist (`<App/>`) drops its `activeView:
+  'projects'` branch — `useUIStore` default `'projects'` → `'editor'`, `App.tsx`
+  renders `<LibraryView/>` directly as the unrouted albums/culling fallback,
+  `useAppNavigation` "back" → `'library'`. No Rust change (`state::ProjectRef` is
+  left set on close — harmless; the next open overwrites it and every frontend
+  save path guards on `projectPath`). `tsc` 74 baseline unchanged, `vite build`
+  green. Follow-ups: reopen-last-project on launch; Untitled close = discard.
+
 - **2026-09-02** — **UI consistency pass (D-039): window chrome in the shell,
   `@chroma/ui` kit, editor icons.** (1) The window title bar moved out of the
   Colorist tab into `@chroma/shell` — new `WindowChrome.tsx` (platform logic
