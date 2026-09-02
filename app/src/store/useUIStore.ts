@@ -78,6 +78,7 @@ const ALL_PANELS: Panel[] = [
   Panel.Masks,
   Panel.Ai,
   Panel.Presets,
+  Panel.Relight, // D-046
 ];
 
 const DEFAULT_PANEL_DEFAULT_REGIONS: Record<Panel, PanelRegion> = {
@@ -89,6 +90,7 @@ const DEFAULT_PANEL_DEFAULT_REGIONS: Record<Panel, PanelRegion> = {
   [Panel.Masks]: 'rightTop',
   [Panel.Ai]: 'rightTop',
   [Panel.Presets]: 'rightTop',
+  [Panel.Relight]: 'rightTop', // D-046
 };
 
 export const DEFAULT_PANEL_WIDTH = 350;
@@ -109,7 +111,7 @@ export function reconcileWorkspace(
     panelLayout: {
       leftTop: [Panel.Metadata, Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
       leftBottom: [],
-      rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Ai, Panel.Presets],
+      rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Relight, Panel.Ai, Panel.Presets],
       rightBottom: [],
     },
     activePanels: {

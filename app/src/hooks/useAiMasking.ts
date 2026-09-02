@@ -428,6 +428,42 @@ export function useAiMasking() {
     }
   };
 
+  // Chroma (D-046): same `chroma_depth_track`/`_status` job as `handleTrackDepth`
+  // above — the underlying track is per-clip, not per-mask (the sidecar cancels
+  // only a running "depth" job regardless of caller) — but the resulting
+  // directory is written to the top-level `adjustments.relightDepthDir` rather
+  // than a sub-mask's parameters, since the Relight layer isn't a mask (D-046).
+  // Shares `useChromaStore`'s `depthTrackProgress` with `handleTrackDepth`:
+  // only one depth-track job can run at a time system-wide anyway.
+  const handleTrackRelightDepth = async () => {
+    const { setDepthTrackProgress } = useChromaStore.getState();
+    setDepthTrackProgress({ done: 0, total: 0 });
+    try {
+      const job: any = await invoke('chroma_depth_track', { step: 1 });
+      const dir: string | undefined = job?.dir;
+      if (job?.job_id) {
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const st: any = await invoke('chroma_depth_track_status', { jobId: job.job_id });
+          if (st?.total) setDepthTrackProgress({ done: st.done ?? 0, total: st.total });
+          if (st?.state === 'done') break;
+          if (st?.state === 'error') throw new Error(st.error || 'depth track failed');
+          if (st?.state === 'cancelled' || st?.state === 'unknown') break;
+        }
+      }
+      if (dir) {
+        setAdjustments((prev: Adjustments) => ({ ...prev, relightDepthDir: dir }));
+      }
+      useChromaStore.getState().bumpFrameNonce();
+      return { dir };
+    } catch (err: any) {
+      toast.error(`Track Depth failed: ${err?.message || String(err)}`);
+      return { error: err?.message || String(err) };
+    } finally {
+      setDepthTrackProgress(null);
+    }
+  };
+
   const handleGenerateAiDepthMask = async (subMaskId: string, parameters: any) => {
     const { selectedImage, adjustments, patchesSentToBackend } = useEditorStore.getState();
     if (!selectedImage?.path) return;
@@ -642,5 +678,6 @@ export function useAiMasking() {
     handleGenerateAiSkyMask,
     handleTrackSubject,
     handleTrackDepth,
+    handleTrackRelightDepth,
   };
 }

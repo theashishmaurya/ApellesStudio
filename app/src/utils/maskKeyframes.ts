@@ -30,6 +30,11 @@ export const GEOMETRY_KEYS: Record<string, string[]> = {
   linear: ['startX', 'startY', 'endX', 'endY', 'range'],
   brush: ['lines'],
   flow: ['lines'],
+  // Interactive relight (D-046). A `RelightLight` isn't a sub-mask — this key
+  // is used directly by `RelightPanel`/`RelightPuckLayer` (the light object
+  // itself is the "parameters" every function above operates on), not looked
+  // up via `isKeyframeableMaskType`/`snapshotGeometry`'s sub-mask-type path.
+  relight: ['x', 'y', 'radius'],
 };
 
 /** The geometry keyframes are only meaningful for these sub-mask types. */

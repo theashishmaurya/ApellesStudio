@@ -13,7 +13,9 @@ import { useTranslation } from 'react-i18next';
 import type { OverlayMode } from '../right/CropPanel';
 import CompositionOverlays from './overlays/CompositionOverlays';
 import AgentRoiHighlight from '../../chroma/AgentRoiHighlight';
+import RelightPuckLayer from './RelightPuckLayer';
 import { useChromaStore } from '../../../store/useChromaStore';
+import { useEditorStore } from '../../../store/useEditorStore';
 import {
   effectiveParameters,
   parseKeyframes,
@@ -52,6 +54,9 @@ interface ImageCanvasProps {
   isCropping: boolean;
   isMaskControlHovered: boolean;
   isMasking: boolean;
+  /** Interactive relight (D-046) — the Relight right-panel tab is active;
+   *  shows the draggable light pucks. Mirrors `isMasking`/`isCropping`. */
+  isRelighting?: boolean;
   isSliderDragging: boolean;
   isStraightenActive: boolean;
   isRotationActive?: boolean;
@@ -1308,6 +1313,7 @@ const ImageCanvas = memo(
     isCropping,
     isMaskControlHovered,
     isMasking,
+    isRelighting = false,
     isSliderDragging,
     isStraightenActive,
     isRotationActive,
@@ -1581,6 +1587,31 @@ const ImageCanvas = memo(
     // its interpolated geometry for that frame (what you see = what renders),
     // and dragging it writes/updates the keyframe AT that frame.
     const chromaFrame = useChromaStore((s) => s.currentFrame);
+
+    // Chroma (D-046): interactive relight. Reads/writes `useEditorStore`
+    // directly (same precedent as `useChromaStore` above) rather than
+    // threading every relight prop through — this component is already
+    // fully prop-driven for the upstream RapidRAW surface; the Chroma-owned
+    // active-light selection doesn't need to join that surface.
+    const activeRelightLightId = useEditorStore((s) => s.activeRelightLightId);
+    const setEditorForRelight = useEditorStore((s) => s.setEditor);
+    const handleRelightLightDrag = useCallback(
+      (id: string, xPct: number, yPct: number, committed: boolean) => {
+        setAdjustments((prev: Adjustments) => ({
+          ...prev,
+          relightLights: (prev.relightLights || []).map((l) =>
+            l.id === id ? { ...l, x: xPct, y: yPct } : l,
+          ),
+        }));
+        if (committed) {
+          // Nothing further to do — `setAdjustments` above already committed
+          // the value (relight has no separate "live preview vs. commit"
+          // render cost the way a rasterized mask bitmap does; the shader
+          // reads the light position directly every frame).
+        }
+      },
+      [setAdjustments],
+    );
     const updateSubMaskKeyframeAware = useCallback(
       (id: string | null, data: any) => {
         if (id && data?.parameters && !data.parameters.chromaTrackDir) {
@@ -2961,6 +2992,21 @@ const ImageCanvas = memo(
                   />
                 )}
             </div>
+
+            {isRelighting && (adjustments.relightLights?.length ?? 0) > 0 && (
+              <RelightPuckLayer
+                lights={adjustments.relightLights}
+                imageRenderSize={imageRenderSize}
+                cropX={cropX}
+                cropY={cropY}
+                imageWidth={effectiveImageDimensions.width}
+                imageHeight={effectiveImageDimensions.height}
+                activeLightId={activeRelightLightId}
+                maxSafeScale={maxSafeScale}
+                onSelectLight={(id) => setEditorForRelight({ activeRelightLightId: id })}
+                onDragLight={handleRelightLightDrag}
+              />
+            )}
           </div>
 
           {(isMasking || isAiEditing || isWbPickerActive) && (

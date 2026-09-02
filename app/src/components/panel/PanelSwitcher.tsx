@@ -12,6 +12,7 @@ import {
   SwatchBook,
   FileInput,
   Camera,
+  Lightbulb,
   type LucideIcon,
 } from 'lucide-react';
 import { Panel, PanelRegion } from '../ui/AppProperties';
@@ -25,6 +26,7 @@ export const PANEL_ICONS: Record<Panel, LucideIcon> = {
   [Panel.Ai]: Paintbrush,
   [Panel.Presets]: SwatchBook,
   [Panel.Export]: FileInput,
+  [Panel.Relight]: Lightbulb, // D-046
   [Panel.Tethering]: Camera,
 };
 
@@ -36,6 +38,7 @@ const PANEL_TITLES: Record<Panel, string> = {
   [Panel.Ai]: 'editor.switcher.tooltips.inpaint',
   [Panel.Presets]: 'editor.switcher.tooltips.presets',
   [Panel.Export]: 'editor.switcher.tooltips.export',
+  [Panel.Relight]: 'editor.switcher.tooltips.relight', // D-046
   [Panel.Tethering]: 'editor.switcher.tooltips.tethering',
 };
 

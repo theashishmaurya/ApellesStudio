@@ -23,6 +23,30 @@ One or two lines per session. Detail lives in the decision it references.
   timeline-switcher's `SelectValue` needed a render-children fix to show names instead
   of raw ids (found live, fixed).
 
+- **2026-09-02** — **Interactive relight (D-048): draggable depth-driven light
+  pucks, real-time, deterministic.** A new "Relight" grade layer (`RelightLight[]`
+  — key/fill/rim/ambient, keyframeable via D-034's mechanism reused verbatim) with
+  a ClipDrop-style puck UI (`RelightPuckLayer`, the clone/heal-marker HTML-overlay
+  pattern, not the Konva mask-shape tree) and a right-panel (`RelightPanel`:
+  Ambient/Light-N tabs, Color/Power/Distance, "Track Depth"). Shading is a new
+  `apply_relight` WGSL pass — per-pixel normal from a depth-texture finite
+  difference, `max(0,dot(N,L))·falloff(radius)·colour·intensity` — riding the
+  *same* mask-texture-array `mask_bitmaps`/`textureLoad` plumbing D-024's
+  depth-haze mask already established (one more array layer, no new bind group).
+  Covers both live-preview paths for free (`apply_adjustments` + D-031 playback
+  share one `process_preview_job`); export/thumbnail/LUT-bake paths untouched
+  (ambient still renders there, positional lights are inert — deferred to
+  roadmap). Depth source reuses D-036's `chroma_depth_track` job verbatim.
+  Control-server ops (`add_relight_light` etc., mirroring `add_mask`) added for
+  agent access + verification. `cargo test chroma::relight` 10/10 new (incl. a
+  real-GPU determinism test); `cargo clippy`/`fmt` clean on touched files; `tsc`
+  unchanged at 64. **Verified against the real running app**: opened the real
+  `~/Movies/Chroma/New.chroma` project, added an ambient light over the control
+  server, decoded the returned preview — the frame washed a uniform colour tint
+  exactly matching the shading math; a positional light with no depth track
+  correctly produced zero change. Photoreal diffusion bake (v3, `ai/` sidecar)
+  explicitly out of scope, untouched.
+
 - **2026-09-02** — **Docs reconciliation pass** (roadmap "Next" item 7, the `CLAUDE.md`
   hard-rule debt owed since the D-039 pivot). `03-architecture.md` fully rewritten for the
   3-tab world (crate/package tables, per-tab current state, data model, AI sidecar, the

@@ -19,6 +19,7 @@ import {
   normalizeLoadedAdjustments,
 } from '../utils/adjustments';
 import { createSubMask } from '../utils/maskUtils';
+import { createRelightLight } from '../utils/relightUtils';
 import {
   parseKeyframes,
   snapshotGeometry,
@@ -548,6 +549,64 @@ export function useChromaControl() {
         setAdjustments((prev: Adjustments) => ({ ...prev, masks: [...(prev.masks || []), container] }));
         editor().setEditor({ activeMaskContainerId: container.id, activeMaskId: sub.id });
         return { maskId: container.id, subMaskId: sub.id, type };
+      },
+
+      // Interactive relight (D-046). Mirrors add_mask/list_masks/delete_mask's
+      // shape for the "Relight" layer — the agent's path to a light without
+      // driving the canvas puck (`RelightPuckLayer`) directly.
+      list_relight_lights: () => ({
+        lights: editor().adjustments.relightLights || [],
+        depthDir: editor().adjustments.relightDepthDir ?? null,
+      }),
+
+      add_relight_light: (a) => {
+        const kind = String(a?.kind ?? 'key').toLowerCase();
+        if (!['key', 'fill', 'rim', 'ambient'].includes(kind)) {
+          return { error: 'kind must be one of: key, fill, rim, ambient' };
+        }
+        const light = createRelightLight(kind as any);
+        if (typeof a?.x === 'number') light.x = a.x;
+        if (typeof a?.y === 'number') light.y = a.y;
+        if (typeof a?.radius === 'number') light.radius = a.radius;
+        if (typeof a?.intensity === 'number') light.intensity = a.intensity;
+        if (typeof a?.color === 'string') light.color = a.color;
+        setAdjustments((prev: Adjustments) => ({
+          ...prev,
+          relightLights: [...(prev.relightLights || []), light],
+        }));
+        editor().setEditor({ activeRelightLightId: light.id });
+        return { light };
+      },
+
+      set_relight_light: (a) => {
+        const id = a?.id;
+        if (typeof id !== 'string') return { error: 'id (relight light id) required' };
+        const patch: Record<string, any> = {};
+        for (const k of ['x', 'y', 'radius', 'intensity', 'color', 'visible', 'kind']) {
+          if (a?.[k] !== undefined) patch[k] = a[k];
+        }
+        let found = false;
+        setAdjustments((prev: Adjustments) => ({
+          ...prev,
+          relightLights: (prev.relightLights || []).map((l) => {
+            if (l.id !== id) return l;
+            found = true;
+            return { ...l, ...patch };
+          }),
+        }));
+        if (!found) return { error: `no relight light with id ${id}` };
+        return { id, patch };
+      },
+
+      delete_relight_light: (a) => {
+        const id = a?.id;
+        if (typeof id !== 'string') return { error: 'id (relight light id) required' };
+        setAdjustments((prev: Adjustments) => ({
+          ...prev,
+          relightLights: (prev.relightLights || []).filter((l) => l.id !== id),
+        }));
+        if (editor().activeRelightLightId === id) editor().setEditor({ activeRelightLightId: null });
+        return { id, deleted: true };
       },
 
       add_subject_mask: async (a) => {

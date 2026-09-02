@@ -740,6 +740,7 @@
         "inpaint": "Inpaint",
         "masks": "Masks",
         "presets": "Presets",
+        "relight": "Relight",
         "tethering": "Tethering"
       }
     },

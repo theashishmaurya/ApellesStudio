@@ -470,7 +470,7 @@ fn process_preview_job(
         unscaled_crop_offset.1 * effective_scale,
     );
 
-    let mask_bitmaps: Vec<ImageBuffer<Luma<u8>, Vec<u8>>> = mask_definitions
+    let mut mask_bitmaps: Vec<ImageBuffer<Luma<u8>, Vec<u8>>> = mask_definitions
         .iter()
         .filter_map(|def| {
             get_cached_or_generate_mask(
@@ -487,7 +487,26 @@ fn process_preview_job(
 
     let is_raw = loaded_image.is_raw;
     let tm_override = resolve_tonemapper_override_from_handle(app_handle, is_raw);
-    let final_adjustments = get_all_adjustments_from_json(&adjustments_clone, is_raw, tm_override);
+    let mut final_adjustments =
+        get_all_adjustments_from_json(&adjustments_clone, is_raw, tm_override);
+    // Interactive relight (D-046): append the resolved depth bitmap as one more
+    // mask-texture-array layer (same array `get_cached_or_generate_mask` just
+    // populated) and point the uniform at it. Live-preview path only — the
+    // other `mask_bitmaps` construction sites (export/thumbnail/LUT bake)
+    // leave `relight_depth_layer` at -1, so relight there stays ambient-only.
+    if final_adjustments.relight_light_count > 0
+        && let Some(dir) = crate::chroma::relight::resolve_depth_dir(&adjustments_clone)
+        && let Some(depth_bitmap) = crate::mask_generation::generate_relight_depth_bitmap(
+            &dir,
+            preview_width,
+            preview_height,
+            effective_scale,
+            scaled_crop_offset,
+        )
+    {
+        final_adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
+        mask_bitmaps.push(depth_bitmap);
+    }
     let lut_path = adjustments_clone["lutPath"].as_str();
     let lut = lut_path.and_then(|p| lut_processing::get_or_load_lut(&state, p).ok());
 

@@ -942,5 +942,39 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   deletions(-)** (`git diff --stat` — close to the analysis's −7000..−9000
   estimate), plus the 13 locale-file edits.
 
+- **2026-09-02** · new: `src-tauri/src/chroma/relight.rs` (pure + 10 tests,
+  incl. a real-GPU determinism test), `src/utils/relightUtils.ts`,
+  `src/components/panel/editor/RelightPuckLayer.tsx`,
+  `src/components/chroma/RelightPanel.tsx` · edits: `image_processing.rs`
+  (+`RelightLightGpu`, `AllAdjustments` +3 fields — the 2 pad fields are
+  `pub(crate)`, not private, so `export_processing.rs` can construct a full
+  `AllAdjustments` via `..Default::default()` — + `get_all_adjustments_from_json`
+  hook), `mask_generation.rs` (+`generate_relight_depth_bitmap`), `lib.rs`
+  (`process_preview_job` appends a resolved depth bitmap to `mask_bitmaps`,
+  a `let`-chain per clippy), `export_processing.rs`
+  (`build_single_mask_adjustments` zeroes relight too — a per-mask isolation
+  export, relight is global not mask-scoped), `shaders/shader.wgsl`
+  (+`RelightLight` struct, `AllAdjustments` +3 fields, `apply_relight`+3
+  helper fns, one call site pre-vignette), `chroma/mod.rs` (+1 `pub mod`),
+  `utils/adjustments.ts` (+`RelightLight` interface, `Adjustments` +2 fields),
+  `utils/maskKeyframes.ts` (+1 `GEOMETRY_KEYS` entry), `ImageCanvas.tsx`
+  (+`isRelighting` prop + puck-layer mount + drag handler, ~30 lines),
+  `Editor.tsx`/`App.tsx` (panel wiring), `store/useEditorStore.ts`
+  (+`activeRelightLightId`), `hooks/useAiMasking.ts`
+  (+`handleTrackRelightDepth`), `hooks/useChromaControl.ts` (+4 ops:
+  `list_relight_lights`/`add_relight_light`/`set_relight_light`/
+  `delete_relight_light`, mirroring `add_mask`'s shape),
+  `components/ui/AppProperties.tsx` (+`Panel.Relight`),
+  `components/panel/PanelSwitcher.tsx` (+icon/tooltip), `store/useUIStore.ts`
+  (panel registration), `i18n/locales/en.json` (+1 tooltip key).
+  · **Interactive relight (D-046):** a new "Relight" grade layer + a
+  depth-driven WGSL shading pass, riding D-024's existing mask-texture-array
+  plumbing (one more `textureLoad` layer, no new bind group) and D-036's
+  existing depth-track sidecar job (same commands, a new top-level
+  `relightDepthDir` target instead of a mask's parameters). No `AppState` /
+  Cargo / Tauri-command / bind-group change. Verified against the real
+  running app + a real project over the control-server bridge (D-046's
+  "Verified" section has the detail). Full design in D-046.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
