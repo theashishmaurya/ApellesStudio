@@ -18,6 +18,7 @@ Base URL: http://127.0.0.1:${CHROMA_CONTROL_PORT:-19788}
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -467,6 +468,49 @@ def track_subject(sub_mask_id: str, mode: str = "fast") -> list:
 
 
 @mcp.tool()
+def depth_track(
+    from_frame: int | None = None,
+    to_frame: int | None = None,
+    step: int = 1,
+    input_size: int = 518,
+    sub_mask_id: str | None = None,
+) -> str:
+    """Precompute a **temporally-consistent depth map for every frame** of the
+    clip (Video Depth Anything — Small, in the AI sidecar) and point a depth
+    sub-mask at the cache. This is what makes `apply_haze` track a MOVING CAMERA
+    without the depth flickering — a per-frame model can't, a video-depth model
+    (temporal attention across frames, like DaVinci Resolve's z-depth) can.
+
+    Run `apply_haze` first (it creates the depth sub-mask); then call this to
+    upgrade that mask from the static single-frame bake to the per-frame track.
+    `sub_mask_id` defaults to the "Depth Haze" depth sub-mask.
+
+    from_frame / to_frame: default the whole clip (a 4K clip — narrow the range).
+    step: save density (every frame is still fed to the model). input_size: 518
+      default; lower = faster, coarser.
+
+    NON-blocking — the first run also downloads the ~112 MB checkpoint, and a
+    long clip is minutes. Returns {started, jobId, dir, total} immediately; poll
+    `depth_track_status`. Once done, scrub/playback/export read the per-frame
+    depth automatically."""
+    return json.dumps(
+        _op("depth_track", from_frame=from_frame, to_frame=to_frame, step=step,
+            input_size=input_size, sub_mask_id=sub_mask_id),
+        indent=2, default=str,
+    )
+
+
+@mcp.tool()
+def depth_track_status() -> str:
+    """Poll the depth track started by `depth_track`. Returns
+    {running, done, total, tracked} — `tracked: true` once a depth sub-mask
+    carries the per-frame cache dir (the pass finished and the render now uses
+    it). `running: false` with `tracked: false` means it errored or was
+    cancelled — check the app log for '[depth]' / '[sidecar]' lines."""
+    return json.dumps(_op("depth_track_status"), indent=2, default=str)
+
+
+@mcp.tool()
 def set_mask_adjust(
     mask_id: str,
     exposure: float | None = None,
@@ -501,7 +545,7 @@ def set_mask_adjust(
 
 
 @mcp.tool()
-def apply_haze(amount: float = 1.0, protect_subject: bool = True) -> list:
+def apply_haze(amount: float = 1.0, protect_subject: bool = True, tracked: bool = False) -> list:
     """Depth-weighted atmospheric haze on the background — one action, pushes the
     subject forward.
 
@@ -515,14 +559,18 @@ def apply_haze(amount: float = 1.0, protect_subject: bool = True) -> list:
     composites on top and keeps the subject punchy, so nothing extra is needed.
     Caveat: a subject physically in the far-depth band still picks up some haze.
 
-    Depth is computed per frame (the seek cache is busted); it is not keyframed —
-    on a moving camera, re-run per section.
+    Depth: by default a single-frame Depth Anything V2 bake (static — fine for a
+    locked-off shot; flickers on a moving camera). `tracked=true` (video only)
+    also kicks off a `depth_track` — a per-frame temporally-consistent depth map
+    (Video Depth Anything) that the render then follows frame-by-frame. That runs
+    in the background (minutes on a long clip); poll `depth_track_status`. You
+    can also call `depth_track` later to upgrade an existing haze mask.
 
     Grade by the numbers: `inspect_color` before and after — whole-frame
     saturation should drop and the black point lift; `sample` a background pixel
     vs a subject pixel and confirm the background moved more.
-    Returns {maskId, subMaskId, amount} and the rendered frame."""
-    return _result(_op("apply_haze", amount=amount, protect_subject=protect_subject))
+    Returns {maskId, subMaskId, amount, tracked} and the rendered frame."""
+    return _result(_op("apply_haze", amount=amount, protect_subject=protect_subject, tracked=tracked))
 
 
 @mcp.tool()

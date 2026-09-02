@@ -81,3 +81,32 @@ over tolerance), any `GATE:` flag, and the rollup vs `eval/baseline.json`.
   re-run it), re-run `--baseline`, commit all three + the note.
 - Changed `scopes.ts` → update `eval/lib/scopes.mjs` to match,
   `node eval/lib/scopes.check.mjs` must pass, re-run `--baseline`.
+
+## `depth_haze_tracked` — manual closed-loop check (D-036, not scored)
+
+The offline scorer is primary-only (no masks / depth), so the depth track can't
+be a `tasks.json` entry. Run this by hand when you touch `/depth_track`, the
+render-time depth hook, or `apply_haze`:
+
+1. `open` a **moving-camera** clip — `scratch/pexels_28808272.mp4` (4K daylight
+   street walk, strong fg/bg depth) or `scratch/Tokyo-Walk_rgb.mp4`.
+2. `apply_haze({})` → the static single-frame bake. `seek` forward ~2 s and
+   `sample_region` a far-background patch vs a near-subject patch. The haze band
+   is now misaligned — it sits where the camera *was* (this is the bug D-036
+   fixes).
+3. `depth_track()` (or the "Track depth over clip" button). Poll
+   `depth_track_status` until `tracked: true`.
+4. `seek` across the same range. Expected: the haze band **tracks the camera** —
+   far stays milky/soft, the near field stays clear, and consecutive frames
+   don't shimmer. `sample_region` the same two patches at 2–3 timecodes: the
+   background-vs-subject luma/saturation gap should hold roughly constant, not
+   swing frame to frame.
+5. `export({kind:"h264", from_frame, to_frame})` a short range → the graded MP4
+   shows per-frame depth (export reads `chromaDepthDir` through the same hook).
+6. Regression: a **still** + a depth mask with no `chromaDepthDir` must render
+   exactly as before (the Rust `chroma::depth` tests cover the read logic;
+   `ai/test_depth_track.py` covers the sidecar output).
+
+A rubric-only scored task (rendered result-frame background-vs-subject
+separation) is possible later if `score.mjs` grows a mask-aware operator — kept
+light for now, per D-036.

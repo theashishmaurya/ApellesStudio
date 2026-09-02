@@ -62,6 +62,9 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `clear_mask_keyframe(mask_id, sub_mask_id, frame)` | remove one keyframe; the last one removed → static mask (D-034) |
 | `clear_mask_keyframes(mask_id, sub_mask_id)` | remove all keyframes → static mask (D-034) |
 | `track_subject(sub_mask_id, mode="fast")` | propagate a subject sub-mask across the whole clip |
+| `apply_haze(amount=1.0, protect_subject=True, tracked=False)` | one action → depth-weighted atmospheric haze on the background (inverted full-range depth mask + negative-dehaze/desat/black-lift/defocus grade). `tracked=True` (video) also runs `depth_track` so the haze follows a moving camera (D-024, D-036) |
+| `depth_track(from_frame?, to_frame?, step?, input_size?, sub_mask_id?)` | precompute a **temporally-consistent** depth map for every frame (Video Depth Anything — Small, sidecar) and point a depth sub-mask at the cache — this is what makes `apply_haze` follow a moving camera without flicker (a per-frame model + EMA can't; a video-depth model, like Resolve's z-depth, can). Non-blocking; the Rust Depth Anything V2 static bake stays the fallback for stills / un-tracked haze (D-036) |
+| `depth_track_status()` | poll `depth_track` → `{running, done, total, tracked}` (D-036) |
 | `set_mask_adjust(mask_id, **knobs)` | grade *through* a mask — same knobs as `set_primary` |
 | `invert_mask(sub_mask_id)` | grade the outside instead of the inside |
 | `delete_mask(mask_id)` | delete a whole mask container |

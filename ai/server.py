@@ -22,10 +22,15 @@ import hashlib
 import io
 import json
 import os
+import sys
 import threading
 import time
+import urllib.request
 import uuid
 from typing import Optional
+
+# Vendored model code that isn't pip-installable (Video Depth Anything — D-036).
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "vendor"))
 
 import cv2
 import numpy as np
@@ -222,7 +227,8 @@ class SegmentReq(BaseModel):
 @app.get("/health")
 def health():
     return {"ok": True, "device": DEVICE, "models": os.listdir(MODELS_DIR),
-            "vitmatte": VITMATTE_ID}
+            "vitmatte": VITMATTE_ID,
+            "video_depth": os.path.exists(os.path.join(MODELS_DIR, VDA_CKPT_NAME))}
 
 
 def _segment_array(rgb: np.ndarray, box=None, pts=None, auto_person=True,
@@ -603,3 +609,218 @@ def refine_track(req: RefineTrackReq):
         os.path.join(req.dir, f"{req.frame:06d}.png"))
     _mark_quality(req.dir, req.frame)
     return {"matte_b64": _mask_to_b64(mask), **meta}
+
+
+# ---------------------------------------------------------------------------
+# /depth_track  — precompute a *temporally-consistent* depth map per frame,
+# cached to disk. Mirrors /track (D-036). The model is **Video Depth Anything —
+# Small** (vits, Apache-2.0): a DINOv2 ViT-S backbone + a spatial-temporal head
+# whose temporal self-attention makes the depth stable frame-to-frame — this is
+# what DaVinci Resolve's "temporal z-depth" does, and what a per-frame model +
+# a hand-rolled EMA can only approximate. The vitb / vitl checkpoints are
+# CC-BY-NC-4.0 (non-commercial) — do NOT use them; Chroma ships as a product.
+#
+# The engine's Rust Depth Anything V2 (ONNX) path is unchanged — it stays the
+# static single-frame bake for stills and for apply_haze when no track exists.
+# ---------------------------------------------------------------------------
+
+VDA_CKPT_NAME = "video_depth_anything_vits.pth"
+VDA_URL = ("https://huggingface.co/depth-anything/Video-Depth-Anything-Small/"
+           "resolve/main/video_depth_anything_vits.pth")
+# vits config (run.py model_configs) — DO NOT switch encoder (licence, above).
+VDA_CFG = dict(encoder="vits", features=64, out_channels=[48, 96, 192, 384])
+
+_vda = None  # loaded VideoDepthAnything, on DEVICE, eval()
+
+
+def _vda_device() -> str:
+    # fp16 on MPS is flaky for these solvers (same lesson as ViTMatte /
+    # enhance-voice) — we always run fp32; CPU is the fallback if MPS is absent.
+    return DEVICE if DEVICE in ("mps", "cuda") else "cpu"
+
+
+def _download(url: str, dest: str) -> None:
+    tmp = dest + ".part"
+    print(f"[depth] downloading {os.path.basename(dest)} …")
+    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+    os.replace(tmp, dest)
+    print(f"[depth] saved {dest} ({os.path.getsize(dest) // (1 << 20)} MB)")
+
+
+def video_depth():
+    """Lazy-load VDA-Small. Checkpoint (~112 MB fp32) downloads to ai/models/ on
+    first call, exactly like the SAM / ViTMatte / YOLO weights (none bundled)."""
+    global _vda
+    if _vda is None:
+        import torch as _torch
+        from video_depth_anything import VideoDepthAnything
+
+        ckpt = os.path.join(MODELS_DIR, VDA_CKPT_NAME)
+        if not os.path.exists(ckpt):
+            _download(VDA_URL, ckpt)
+        m = VideoDepthAnything(**VDA_CFG)
+        m.load_state_dict(_torch.load(ckpt, map_location="cpu"), strict=True)
+        _vda = m.to(_vda_device()).eval()
+    return _vda
+
+
+class DepthTrackReq(BaseModel):
+    video_path: str
+    from_frame: int = 0
+    to_frame: int = -1        # -1 = end
+    step: int = 1             # save density (every frame is still fed to the model)
+    input_size: int = 518     # VDA default; smaller = faster, less detail
+    max_res: int = 1280       # long-edge cap for decode + storage (VDA's own default)
+    overwrite: bool = False
+
+
+def _depth_cache_key(req: DepthTrackReq) -> str:
+    return hashlib.sha1(
+        json.dumps([os.path.abspath(req.video_path), req.from_frame, req.to_frame,
+                    req.input_size, req.max_res], sort_keys=True).encode()
+    ).hexdigest()[:12]
+
+
+def _depth_cache_dir(req: DepthTrackReq) -> str:
+    d = os.path.join(os.path.dirname(os.path.abspath(req.video_path)),
+                     ".chroma", "depth", _depth_cache_key(req))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _even(v: int) -> int:
+    return v if v % 2 == 0 else v + 1
+
+
+def _depth_track_worker(job_id: str, req: DepthTrackReq):
+    job = _jobs[job_id]
+    cap = None
+    try:
+        import numpy as _np
+
+        cap = cv2.VideoCapture(req.video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"cannot open {req.video_path}")
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+        end = total - 1 if req.to_frame < 0 else min(req.to_frame, total - 1)
+        save_frames = list(range(req.from_frame, end + 1, req.step))
+        job["total"] = len(save_frames)
+        cache = _depth_cache_dir(req)
+
+        if job.get("cancelled"):
+            job["state"] = "cancelled"
+            return
+
+        # decode [from_frame .. end], downscale to max_res long edge
+        cap.set(cv2.CAP_PROP_POS_FRAMES, req.from_frame)
+        ok, bgr = cap.read()
+        if not ok:
+            raise RuntimeError(f"cannot read frame {req.from_frame}")
+        H0, W0 = bgr.shape[:2]
+        scale = min(1.0, req.max_res / max(H0, W0)) if req.max_res > 0 else 1.0
+        W, H = (_even(round(W0 * scale)), _even(round(H0 * scale))) if scale < 1.0 else (W0, H0)
+
+        def prep(b):
+            rgb = cv2.cvtColor(b, cv2.COLOR_BGR2RGB)
+            if (W, H) != (W0, H0):
+                rgb = cv2.resize(rgb, (W, H), interpolation=cv2.INTER_AREA)
+            return rgb
+
+        frames = [prep(bgr)]
+        cur = req.from_frame
+        while cur < end:
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            frames.append(prep(bgr))
+            cur += 1
+            if job.get("cancelled"):
+                job["state"] = "cancelled"
+                return
+        frames_np = _np.stack(frames)
+        del frames
+
+        # est. peak RAM: frame stack + float32 depth stack
+        est_gb = frames_np.nbytes * 7 / (1 << 30)
+        if est_gb > 6.0:
+            raise RuntimeError(
+                f"depth track would need ~{est_gb:.1f} GB RAM for "
+                f"{len(frames_np)} frames at {W}x{H}; narrow from_frame/to_frame "
+                f"or lower max_res")
+
+        model = video_depth()
+        dev = _vda_device()
+        t0 = time.time()
+        with _GPU:
+            if job.get("cancelled"):
+                job["state"] = "cancelled"
+                return
+            depths, _ = model.infer_video_depth(
+                frames_np, fps, input_size=req.input_size, device=dev, fp32=True)
+        job["infer_secs"] = round(time.time() - t0, 1)
+
+        # Global (whole-clip) normalisation — VDA's values are already temporally
+        # consistent; a per-frame min/max would re-introduce brightness pumping.
+        # 1/99 percentile clip for robustness. Output is disparity-like: bright =
+        # near (matches Depth Anything V2's ONNX orientation — the depth-haze
+        # preset inverts it).
+        lo = float(_np.percentile(depths, 1))
+        hi = float(_np.percentile(depths, 99))
+        rng = hi - lo if hi > lo else 1.0
+        u8 = _np.clip((depths - lo) / rng, 0.0, 1.0)
+        u8 = (u8 * 255.0 + 0.5).astype(_np.uint8)
+
+        done = 0
+        for i, f in enumerate(save_frames):
+            if job.get("cancelled"):
+                job["state"] = "cancelled"
+                return
+            out_path = os.path.join(cache, f"{f:06d}.png")
+            if req.overwrite or not os.path.exists(out_path):
+                idx = f - req.from_frame
+                if idx < len(u8):
+                    Image.fromarray(u8[idx], mode="L").save(out_path)
+            done += 1
+            job["done"] = done
+
+        with open(os.path.join(cache, "_depth.json"), "w") as fh:
+            json.dump({"model": "video_depth_anything_vits", "from_frame": req.from_frame,
+                       "to_frame": end, "step": req.step, "input_size": req.input_size,
+                       "res": [W, H], "src_res": [W0, H0], "norm": [lo, hi],
+                       "video_path": os.path.abspath(req.video_path),
+                       "infer_secs": job.get("infer_secs")}, fh)
+        job["state"] = "done"
+        job["dir"] = cache
+    except Exception as e:  # noqa
+        job["state"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+    finally:
+        if cap is not None:
+            cap.release()
+        _free_gpu()
+
+
+@app.post("/depth_track")
+def depth_track(req: DepthTrackReq):
+    if not os.path.exists(req.video_path):
+        return {"error": f"no such file: {req.video_path}"}
+    # one depth track at a time — cancel a running one, leave subject /track alone
+    for j in _jobs.values():
+        if j.get("kind") == "depth" and j.get("state") == "running":
+            j["cancelled"] = True
+    job_id = "d" + uuid.uuid4().hex[:11]
+    _jobs[job_id] = {"kind": "depth", "state": "running", "done": 0, "total": 0,
+                     "key": _depth_cache_key(req), "dir": _depth_cache_dir(req)}
+    threading.Thread(target=_depth_track_worker, args=(job_id, req), daemon=True).start()
+    return {"job_id": job_id, **_jobs[job_id]}
+
+
+@app.get("/depth_track/{job_id}")
+def depth_track_status(job_id: str):
+    return _jobs.get(job_id, {"state": "unknown"})

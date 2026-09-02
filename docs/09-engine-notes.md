@@ -611,5 +611,58 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   frame; `commands::seek_and_install` → `install_frame` → `set_current_video`).
   Running-app path is an open manual smoke test (`docs/notes/mask-keyframes.md`).
 
+- **2026-09-02** · **depth track (D-036)** — per-frame temporally-consistent
+  depth, model in the `ai/` sidecar (Video Depth Anything — Small, Apache-2.0),
+  render-time read in Rust. Mirrors the D-018/D-019 subject track.
+  · new `src-tauri/src/chroma/depth.rs` (self-contained): `chroma_depth_track` /
+  `chroma_depth_track_status` (thin bridges to the sidecar `/depth_track`,
+  mirror `chroma::mask::chroma_track_subject` / `_status`), and
+  `tracked_depth_map(&Value) -> Option<GrayImage>` — the render-time read:
+  `params.chromaDepthDir` + `current_video().frame` → nearest `<n>.png` ≤ frame
+  (holds between samples for `step > 1`). `None` (→ static bake, byte-identical)
+  when the param is absent/empty, no video, or nothing cached. 4 unit tests.
+  · **Upstream-file edit — `mask_generation.rs::generate_ai_depth_bitmap`:** ONE
+  hook, exactly the D-019 `tracked_full_mask` shape in `generate_ai_subject_bitmap`
+  — `let depth_map = match crate::chroma::depth::tracked_depth_map(params_value)
+  { Some(full) => generate_ai_bitmap_from_full_mask(&full, &tf), None =>
+  generate_ai_bitmap_from_base64(&params.mask_data_base64?, &tf)? };` (+ moved the
+  `data_url` bind out so a track-only sub-mask with no base64 still renders).
+  Nothing else in the file changed. The band/invert/feather maths below are
+  untouched — VDA's PNG is bright=near, same as the Rust DA-V2 bake.
+  · `chroma/mod.rs` +2 (`pub mod depth;` + a doc line). `lib.rs` +2
+  `generate_handler!` lines. **No `AppState` / Cargo change** — the Rust DA-V2
+  ONNX path (`ai_processing::run_depth_anything_model`, `ai_commands::generate_ai_depth_mask`)
+  is untouched and stays the static single-frame bake for stills / un-tracked haze.
+  · Frontend: `src/hooks/useAiMasking.ts` — new `handleTrackDepth` (mirror of
+  `handleTrackSubject`); `handleAddDepthHaze` gains `tracked?` (video only →
+  also runs the track and stamps `chromaDepthDir`). `src/store/useChromaStore.ts`
+  +2 (`depthTrackProgress` + setter). Chroma-only `src/hooks/useChromaControl.ts`
+  += `depth_track` (non-blocking — starts the job, fire-and-forget poll stamps
+  the dir) + `depth_track_status` ops; `apply_haze` op forwards `tracked`.
+  `src/utils/agentActivity.ts` +1 formatter. **Upstream-file edit —
+  `src/components/panel/right/MasksPanel.tsx` +~10:** thread `handleTrackDepth` /
+  `chromaDepthTrackProgress` through to `SettingsPanel`, one "Track depth over
+  clip" button in the `Mask.AiDepth && chromaIsVideo` block (mirrors the subject
+  track button right above it).
+  · `ai/server.py` — `/depth_track` + `/depth_track/{job_id}` (mirror `/track`):
+  bg job in `_jobs` tagged `kind:"depth"`, cancels a running depth job only,
+  `_GPU` lock around the infer, `_free_gpu()` in `finally`, lazy checkpoint
+  download to `ai/models/`, global (whole-clip) percentile normalisation for
+  temporal stability. `sys.path` += `ai/vendor/`. `/health` += `video_depth`.
+  New `ai/vendor/video_depth_anything/` (vendored, Apache-2.0 — not
+  pip-installable; `ai/vendor/README.md` documents the licence + the vits-only
+  rule + the 3 local edits). `ai/requirements.txt` += `einops`, `easydict`.
+  New `ai/test_depth_track.py` (gated `CHROMA_DEPTH_TEST=1` + a scratch/ clip).
+  · `mcp/server.py` +2 tools (`depth_track`, `depth_track_status`; `apply_haze`
+  += `tracked`) → **33**. `mcp/README.md` + `ai/README.md` updated.
+  · Verified: `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **41/41** (37 + 4 depth-read). `npx tsc
+  --noEmit` 74 pre-existing (baseline unchanged), none in a touched/new file.
+  `py_compile` clean for `mcp/server.py` + `ai/server.py`; `import server` OK,
+  33 tools. `ai/test_depth_track.py` on Tokyo-Walk (16 frames): worker `done`,
+  PNGs non-degenerate, VDA consec |Δ| 0.0032 vs per-frame DA-V2 0.0050 (1.54×
+  steadier). Sidecar `/depth_track` HTTP path + the running-app button/scrub are
+  an open manual smoke test (`docs/notes/depth-track.md`).
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

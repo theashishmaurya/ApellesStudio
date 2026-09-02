@@ -1104,3 +1104,150 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   actual CI workflow file; an engine-backed exact scorer (option (a)) as a later
   accuracy upgrade; a fixture task that exercises curves/wheels once the operator
   or an engine scorer can see them. Detail: `docs/notes/eval-harness.md`.
+
+## D-036 — Per-frame depth = a temporal video-depth **track** (Video Depth Anything — Small), in the `ai/` sidecar; render-time read mirrors the subject track (D-019)
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** the depth-haze preset (D-024) bakes ONE Depth Anything V2 map — the
+  frame it was applied on — into the sub-mask and every frame reuses it. On a
+  moving camera the depth is wrong for every other frame: the haze crawls, the
+  separation slips. D-024 itself flagged "keyframed / temporally-smoothed depth
+  track" as still open. The ask: a *proper* depth track — per-frame, temporally
+  stable, read at render time keyed by the current source frame, exactly like the
+  SAM subject track (D-018 `/track` → per-frame matte PNGs → D-019 render-time
+  read via `chromaTrackDir`).
+
+- **Option A — how to get per-frame depth that doesn't flicker:**
+  1. **Per-frame Depth Anything V2 + a hand-rolled temporal filter** (EMA across
+     consecutive frames, or a flow-warped / guided temporal filter). Cheap, no
+     new model, deterministic. But it is a *bolt-on* — it smooths the *output* of
+     a model that has no idea frames are related, so it lags on real motion,
+     smears depth edges across a fast pan, and never actually understands
+     occlusion or parallax.
+  2. **A temporally-consistent video-depth model.** DaVinci Resolve's Depth Map
+     (v19/20) made exactly this move — "z-depth estimation is now temporal, it
+     understands the motion of depth." The current SOTA zero-shot open model is
+     **Video Depth Anything** (CVPR 2025 Highlight): the Depth Anything V2 DINOv2
+     backbone + a **spatial-temporal head** (temporal self-attention across a
+     32-frame window + a temporal-gradient consistency loss). Temporal
+     consistency is *native*, not a post-filter.
+  - **Choice: 2 — Video Depth Anything, Small (`vits`).** Matching Resolve's
+    architecture, not approximating it, is the whole point of "proper". The
+    project bias is "cheapest that works" (D-024/D-027/D-030) — but here the cheap
+    per-frame + EMA path doesn't actually *work* for the stated failure case
+    (moving camera). VDA-Small is 28.4M params, real-time-class on CUDA (a
+    minutes-long bake on MPS — fine, it's a precompute, cached to disk, like
+    `/track`'s ViTMatte pass at ~3 s/frame).
+
+- **Option B — model choice within VDA. LICENSE GATE:**
+  - **`vits` = Apache-2.0 — use this.** `vitb` / `vitl` = **CC-BY-NC-4.0
+    (non-commercial)** — Chroma ships as a real product, so **they must never be
+    used**, and nobody should "upgrade" the encoder later without re-checking.
+    The vendored `ai/vendor/README.md` states this; `VDA_CFG` in the sidecar is
+    pinned to vits with a comment.
+  - Relative-depth `vits` checkpoint (`video_depth_anything_vits.pth`, ~112 MB
+    fp32). Not the metric model — the haze matte only needs a monotone
+    near→far ordering, and the existing preset already normalises + inverts.
+
+- **Option C — where it runs. Rust in-process (ONNX) vs the `ai/` Python
+  sidecar:**
+  - Depth Anything V2 (single-frame) already runs in Rust as ONNX via `ort`
+    (`ai_processing::run_depth_anything_model`). A batch loop there would be
+    zero new deps, no sidecar round-trip.
+  - **But VDA's temporal consistency comes from cross-frame self-attention
+    threaded through the whole 32-frame window with keyframe alignment between
+    windows** — the *same* "the community ONNX exports cover the image path but
+    the stateful video loop is fragile to reproduce" argument D-009/D-012 used to
+    put SAM 2's video memory in the Python sidecar. The sidecar (D-028-supervised)
+    already has `torch` + MPS.
+  - **Choice: the `ai/` sidecar.** A `/depth_track` job mirroring `/track`:
+    `{video_path, from_frame, to_frame, step, input_size, max_res}` → background
+    job in `_jobs` (tagged `kind:"depth"`, cancels only a running *depth* job,
+    `_GPU` lock around the infer, `_free_gpu()` in `finally` — B-002) → per-frame
+    depth PNGs to `<video_dir>/.chroma/depth/<key>/<frame:06d>.png` + a
+    `_depth.json`, progress polled at `/depth_track/{job_id}`. VDA is **vendored**
+    (`ai/vendor/video_depth_anything/`, Apache-2.0 — it isn't pip-installable;
+    3 local edits, all logged in `ai/vendor/README.md`); the checkpoint
+    lazy-downloads to `ai/models/` on first call like every other model. New deps:
+    `einops`, `easydict`.
+  - **Depth Anything V2 (Rust ONNX) stays exactly as-is** — the **static
+    single-frame bake** for stills and for `apply_haze` before a track exists.
+    `chromaDepthDir` present → the VDA track; absent → the existing static base64.
+    **Absent by default — zero behaviour change for stills and un-tracked masks.**
+
+- **The render-time read (mirrors D-019 precisely).** New
+  `src/chroma/depth.rs::tracked_depth_map(&Value) -> Option<GrayImage>`:
+  `params.chromaDepthDir` + `chroma::state::current_video().frame` → the nearest
+  `<n>.png` with `n <= frame` (holds a map between samples when `step > 1`).
+  **One** hook in `mask_generation.rs::generate_ai_depth_bitmap` — the exact shape
+  of the `tracked_full_mask` call in `generate_ai_subject_bitmap`:
+  `Some(full) => generate_ai_bitmap_from_full_mask(&full, &tf)`, `None =>` the
+  static base64. The band / invert / feather maths downstream are untouched —
+  VDA's PNG is disparity-like (**bright = near**), the same orientation as the
+  Rust DA-V2 bake, and the preset already inverts. `current_video().frame` is set
+  per frame by scrub (`seek_and_install`), playback (`chroma_play_frame`, D-031)
+  and export (`export.rs`) — **confirmed by reading all three** — so all three get
+  per-frame depth for free, in lockstep with the frame being graded, no per-frame
+  frontend state churn.
+
+- **Temporal smoothing = the model, plus one deterministic normalisation
+  choice.** No EMA. The one thing that *would* re-introduce flicker is
+  normalising each depth frame independently (brightness pumping), so the job
+  normalises **once, across the whole clip** (1/99 percentile clip → `u8`). Given
+  the same clip + params the worker is deterministic up to MPS float noise; the
+  *render-time read* (load a PNG) is fully deterministic — which is what the Rust
+  test depends on. A flow-warped or guided cross-frame filter on top is a
+  possible v2 if a specific clip still crawls, but VDA's head already covers the
+  cases a per-frame model can't; noted in `docs/notes/depth-track.md`, not built.
+
+- **Surface.**
+  - Rust: `chroma_depth_track` / `chroma_depth_track_status` (thin sidecar
+    bridges), `tracked_depth_map`. `chroma/mod.rs` +2, `lib.rs` +2. **No
+    `AppState` / Cargo change.**
+  - Frontend: `useAiMasking.handleTrackDepth` (mirror of `handleTrackSubject`);
+    `handleAddDepthHaze` gains `tracked?` (video → also runs the track);
+    `useChromaStore.depthTrackProgress`; `useChromaControl` `depth_track`
+    (non-blocking) + `depth_track_status` ops. Upstream-file edit: `MasksPanel.tsx`
+    +~10 — one "Track depth over clip" button in the `Mask.AiDepth &&
+    chromaIsVideo` block.
+  - MCP: `depth_track(from_frame?, to_frame?, step?, input_size?)`,
+    `depth_track_status()`, `apply_haze` += `tracked` — **31 → 33**.
+  - `ai/README.md`, `mcp/README.md`, divergence log (doc 09) updated.
+
+- **Consequences / limits.**
+  - MPS inference is ~1–1.5 fps for VDA-Small (measured: 16 frames in ~11 s incl.
+    the 32-frame window pad) — a real bake, not interactive. A long 4K clip wants
+    a narrowed `from`/`to` range and/or a lower `max_res` (default 1280) /
+    `input_size` (default 518). The job decodes the whole requested range into
+    RAM before the infer (VDA's windowing needs the sequence); it refuses a range
+    that would need > ~6 GB and tells you to narrow it.
+  - **Cancel granularity is per-run, not per-frame during the infer** — VDA's
+    `infer_video_depth` is one call; `job["cancelled"]` is checked before it and
+    during the PNG write, so a mid-infer cancel waits for the current infer to
+    return. Acceptable for a bake; documented.
+  - `step` only controls save density (every frame is fed to the model so the
+    temporal head stays dense) — same semantics as `/track` post-D-018.
+  - The eval scorer (D-035) is primary-only, so no automated depth eval there —
+    `eval/run.md` gets a `depth_haze_tracked` closed-loop entry instead.
+  - **The repo's only static-camera clip (C019) is the *weak* case** for this
+    feature. `scratch/` now has moving-camera clips (Tokyo-Walk, DAVIS, two
+    4K/foggy Pexels walks) for the test + a convincing demo; a static talking
+    head shows almost no difference between the static bake and the track.
+
+- **Verified (2026-09-02).** `cargo check --no-default-features` clean;
+  `cargo test --no-default-features chroma::` **41/41** (37 baseline + 4
+  depth-read: nearest-≤-frame / hold-between-samples / before-first→None /
+  missing-dir + absent-param→None / non-numeric-stems-ignored). `npx tsc
+  --noEmit` — **74** pre-existing errors (baseline unchanged), none in a
+  new/touched file. `python3 -m py_compile mcp/server.py ai/server.py` clean;
+  `import server` OK, **33** tools; `import server` for the sidecar OK, routes
+  include `/depth_track` + `/depth_track/{job_id}`. **Genuine VDA-on-MPS run:**
+  `ai/test_depth_track.py` (gated `CHROMA_DEPTH_TEST=1` + a `scratch/` clip)
+  drives the real `_depth_track_worker` on 16 Tokyo-Walk frames — worker reaches
+  `state:done`, every depth PNG has real dynamic range (near ≠ far), VDA
+  consecutive-frame mean |Δ| **0.0032** vs per-frame Depth Anything V2 **0.0050**
+  on the same frames (**1.5× steadier** — the temporal head earns its place).
+  The sidecar `/depth_track` HTTP path, the "Track depth over clip" button, and a
+  scrub-with-moving-camera check are an open **manual** smoke test (the
+  `useEffect([])` bridge listener doesn't hot-reload and the running app was not
+  driven) — listed in `docs/notes/depth-track.md`.

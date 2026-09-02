@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Per-frame depth track (D-036)**. The depth-haze preset
+  (D-024) baked ONE Depth Anything V2 map and reused it for every frame — it
+  flickers / goes wrong on a moving camera. Replaced with a real **temporal
+  video-depth track**, the same move DaVinci Resolve made: **Video Depth
+  Anything — Small** (vits, **Apache-2.0** — vitb/vitl are non-commercial and
+  must not be used), whose spatial-temporal head makes the depth stable
+  frame-to-frame natively, not via a bolt-on filter. Runs in the `ai/` sidecar
+  (new `/depth_track` job mirroring `/track`; VDA's cross-frame attention is
+  exactly the "too fragile to ONNX-export" case behind D-009's sidecar
+  precedent) — vendored (`ai/vendor/`, not pip-installable), checkpoint
+  lazy-downloads (~112 MB), MPS fp32. Per-frame depth PNGs cache to
+  `<clip>/.chroma/depth/<key>/` and are read at render time keyed by the current
+  source frame via a new `chromaDepthDir` param + **one** hook in
+  `mask_generation.rs::generate_ai_depth_bitmap` (mirrors D-019's tracked-matte
+  read) — so scrub, playback and export all get per-frame depth for free. The
+  Rust DA-V2 ONNX path is unchanged and stays the **static single-frame bake**
+  for stills and for `apply_haze` before a track is run; absent `chromaDepthDir`
+  → byte-identical to before. UI: a "Track depth over clip" button (mirrors the
+  subject-track button). MCP: `depth_track` / `depth_track_status`, `apply_haze`
+  gains `tracked` — **31 → 33** tools. Verified: `cargo test chroma::` 41/41
+  (37 + 4), `cargo check` clean, `tsc` baseline unchanged (74), `py_compile` +
+  `import server` clean. `ai/test_depth_track.py` on Tokyo-Walk: PNGs
+  non-degenerate, VDA consec-frame |Δ| 0.0032 vs per-frame DA-V2 0.0050 (1.5×
+  steadier). Detail: `docs/notes/depth-track.md`, `D-036`.
+
 - **2026-09-02** — **Agent eval harness (D-035, round-3 tail item)**. New
   top-level `eval/` — a regression + capability test for the grading agent (does
   it *grade by the numbers* and converge on a target, or drift?). A 7-task data

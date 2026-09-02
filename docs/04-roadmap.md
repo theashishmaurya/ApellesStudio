@@ -209,10 +209,17 @@ decide name/license/headline — D-002/D-007/D-010).
 ## Phase 2 — AI sidecar  ·  ~3–4 weeks
 
 - [x] Sidecar service (FastAPI, `ai/`), `/segment` = SAM 2 → trimap → ViTMatte (D-016). Lifecycle: Rust-managed spawn + supervise (D-028, 2026-09-01) — `ai/run.sh` still works standalone.
-- [~] Depth Anything V2 for video (extend RapidRAW's still integration; temporal smoothing)
-      — per-frame works: `chroma_seek` busts the depth cache (D-024), so a depth mask
-      re-generated on frame N grades frame N's depth. **Static bake** in the preset;
-      keyframed track + temporal smoothing still open.
+- [x] **Depth for video — a real temporal depth track** (D-036, 2026-09-02). Not
+      per-frame Depth Anything V2 + a hand-rolled EMA — a **temporally-consistent
+      video-depth model** (Video Depth Anything — Small, vits, Apache-2.0), the
+      same thing DaVinci Resolve's z-depth moved to. Runs in the `ai/` sidecar
+      (`/depth_track` job mirroring `/track`, cross-frame attention is the
+      "too-fragile-to-ONNX" case, D-009 precedent); per-frame depth PNGs cached
+      to `<clip>/.chroma/depth/<key>/`, read at render time via `chromaDepthDir`
+      (mirrors D-019). Scrub / playback / export get per-frame depth for free.
+      `apply_haze` prefers the track when present; the Rust DA-V2 ONNX path stays
+      as the static single-frame bake for stills / un-tracked haze.
+      `docs/notes/depth-track.md`.
 - [x] Engine wiring: `chroma_subject_mask(box)` → sidecar → matte → stored as an `ai-subject` mask (reuses RapidRAW's `AiSubjectMaskParameters` + mask-bitmap path). Box-drag on a loaded video routes here instead of ONNX SAM. `src/chroma/mask.rs` + `chroma_ai_health`.
 - [x] Mask include/exclude refinement — **via RapidRAW's Add/Subtract/Intersect composition, not +/− points** (**D-023**). "Subtract from Mask → Subject" already does edge-aware SAM exclude. MCP: `add_subject_mask(mode)`, `add_component`, `set_submask_mode`. No point UI; `ai/` + engine `points` support stays unused.
 - [x] Matte refinement pass — ViTMatte, D-016 (was: guided filter / RVM).

@@ -45,12 +45,13 @@ Walk `adjustments.masks[].subMasks[].parameters` on save:
 | param | → in JSON | file |
 |---|---|---|
 | `maskDataBase64` or `mask_data_base64` (PNG data-URL) | `{ "$matte": "<name>.mattes/<subMaskId>.png" }` | `<gradeDir>/<name>.mattes/<subMaskId>.png` |
-| `chromaTrackDir` (per-frame folder) | `{ "$trackDir": "<rel-or-abs>" }` | — (referenced only) |
+| `chromaTrackDir` (per-frame matte folder, D-019) | `{ "$trackDir": "<rel-or-abs>" }` | — (referenced only) |
+| `chromaDepthDir` (per-frame depth folder, D-036) | `{ "$depthDir": "<rel-or-abs>" }` | — (referenced only) |
 
 - `<name>` = grade filename minus `.grade.json` / `.json`.
-- `$trackDir` relative when it sits under the grade dir, else absolute.
-- Load reverses both: `$matte` → `data:image/png;base64,…` back in the same key;
-  `$trackDir` → absolute (join grade dir if relative).
+- `$trackDir` / `$depthDir` relative when they sit under the grade dir, else absolute.
+- Load reverses all three: `$matte` → `data:image/png;base64,…` back in the same
+  key; `$trackDir` / `$depthDir` → absolute (join grade dir if relative).
 - Both frontend camelCase (`maskDataBase64`) and engine snake_case
   (`mask_data_base64`) keys are handled — different engine paths use each.
 

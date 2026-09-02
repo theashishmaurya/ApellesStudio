@@ -24,8 +24,13 @@ running sidecar and leaves it alone instead of spawning a second one:
 ./run.sh                 # -> http://127.0.0.1:8765  (CHROMA_AI_PORT to change)
 ```
 
-Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB to
-`ai/models/`; `vitmatte-small` ~100 MB to the HF cache.
+Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB +
+`video_depth_anything_vits.pth` ~112 MB to `ai/models/`; `vitmatte-small`
+~100 MB to the HF cache.
+
+**Vendored code** (not pip-installable, in `ai/vendor/`): Video Depth Anything —
+Small for `/depth_track`. See `ai/vendor/README.md` — Apache-2.0, **vits only**
+(vitb/vitl are non-commercial). Extra deps: `einops`, `easydict`.
 
 ## Endpoints
 
@@ -36,6 +41,8 @@ Models auto-download on first use: `sam2.1_s.pt` ~88 MB + `yolo11n.pt` ~5 MB to
 | `POST /track` | `{video_path, from_frame, to_frame, step, box?, points?, mode}` → `{job_id, dir, ...}`; bg job, mattes cached to `<video_dir>/.chroma/mattes/<key>/<frame:06d>.png` |
 | `GET /track/{job_id}` | `{state, done, total, dir}` |
 | `POST /refine_track` | `{video_path, dir, frame, box?}` → upgrade one cached frame to a ViTMatte edge, returns `{matte_b64}` |
+| `POST /depth_track` | `{video_path, from_frame, to_frame, step, input_size?, max_res?}` → `{job_id, dir, ...}`; bg job (D-036), **temporally-consistent** per-frame depth (Video Depth Anything — Small) cached to `<video_dir>/.chroma/depth/<key>/<frame:06d>.png`, bright = near |
+| `GET /depth_track/{job_id}` | `{state, done, total, dir, infer_secs}` |
 
 Tracking = **SAM 2 memory propagation** (`SAM2DynamicInteractivePredictor`, D-018):
 prompt once on `from_frame` (the loose box is refined to a YOLO person box first),
@@ -66,6 +73,7 @@ ViTMatte (see `docs/notes/matte-edge-pipeline/`); `false` returns the raw SAM ma
 | **SAM 2.1 small** (via `ultralytics`) | segmentation; box / multi-point (+/−) prompts; video memory (planned) |
 | **ViTMatte small** (via `transformers`) | trimap → alpha; the edge refine (D-016) |
 | **YOLO11n** | person detection for `auto_person` |
+| **Video Depth Anything — Small** (`vits`, Apache-2.0; vendored) | `/depth_track` — per-frame temporal video depth (D-036). vitb/vitl are non-commercial — not used. |
 
 Decided as a **Python sidecar**, not ONNX/`ort` — SAM 2's video-memory loop is too fragile
 to reproduce as an ONNX export. Everything else in the engine stays ONNX-in-Rust.

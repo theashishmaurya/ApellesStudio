@@ -44,16 +44,25 @@ clip (baseline blackPoint 17, saturation 0.33):
 | 1.0 | 33 | 0.24 | 50.4 |
 | 1.6 | 39 | 0.20 | 52.2 |
 
-## Depth is a STATIC map (v1)
+## Depth: a static bake OR a per-frame temporal track (D-036)
 
-`generate_ai_depth_mask` bakes the depth PNG into the sub-mask's
-`maskDataBase64` at apply time. Every subsequent render/seek reuses that same PNG —
-**the depth map does not follow the frame.** Fine for a static-camera talking head
-(v1's one footage type). A moving camera wants a re-apply per section, or a future
-keyframed / temporally-smoothed depth track (Phase 2 "Depth Anything V2 for video"
-— the temporal-smoothing half is still open).
+`generate_ai_depth_mask` (Rust ONNX Depth Anything V2) bakes **one** depth PNG
+into the sub-mask's `maskDataBase64` at apply time — every render/seek reuses it.
+**This is still the default**, and it's right for a locked-off talking head (and
+for stills). It's also the fallback: `apply_haze` always does it, so there's a
+baked map even if a track is later cleared.
 
-### Seek cache-bust (so a re-apply on a new frame is correct)
+For a **moving camera**, run a **depth track** (D-036): `apply_haze({tracked:
+true})`, the "Track depth over clip" button, or the MCP `depth_track` tool. That
+precomputes a *temporally-consistent* depth map per frame (Video Depth Anything —
+Small, in the `ai/` sidecar) to `<clip>/.chroma/depth/<key>/`, stores that dir on
+the sub-mask as `chromaDepthDir`, and the render-time hook in
+`generate_ai_depth_bitmap` reads the **current source frame's** PNG instead of
+the static bake — in lockstep with the frame, for scrub / playback / export
+alike (mirrors the D-019 tracked-matte read). No `chromaDepthDir` → the static
+bake, byte-identical to pre-D-036. Full detail: **`docs/notes/depth-track.md`**.
+
+### Seek cache-bust (so a re-apply on a new frame is correct — static path)
 
 `ai_commands::generate_ai_depth_mask` caches the computed depth keyed by
 `path_hash = hash(path + geometry)`. On a video the path + geometry are constant
