@@ -1682,3 +1682,48 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   gaps in the model yet (clips are strictly back to back). `@chroma/bridge`
   extraction of the store is still its own later task — `useEditorTimelineStore`
   lives in `@chroma/editor` for now.
+
+---
+
+## D-042 — `@chroma/ui` is built on shadcn/ui + Base UI primitives, not hand-rolled
+
+**decided (2026-09-02)**
+
+- **Context.** The owner pushed back twice on hand-crafting UI ("don't we have
+  reusable components instead of building everything from scratch"). D-039's UI pass
+  started `@chroma/ui` by hand-extracting a few RapidRAW components (Button, Switch,
+  Input, Text, CollapsibleSection) — which meant re-implementing a Switch spring as a
+  CSS transition, inlining i18n strings, and deferring `Slider`/`Dropdown` because
+  they're app-coupled. That's the wrong direction for the 20+ structural components the
+  3-tab app needs (dialogs, dropdowns, context menus, tooltips, popovers, tabs, select,
+  command palette, resizable panels, sheets…).
+- **Options:** (a) keep hand-extracting from RapidRAW; (b) a batteries-included lib
+  (Mantine / MUI) — its own styling system, clashes with the Tailwind-v4 + CSS-var token
+  setup, heavy; (c) **shadcn/ui** — copy-in components (you own the source, **zero
+  runtime dep**), Tailwind-native, themed via CSS vars, on accessible headless
+  primitives.
+- **Choice:** (c). shadcn/ui is the 2026 standard, React 19 + Tailwind v4 ready, and its
+  copy-in model fits Chroma's "vendored, no bloat" ethos exactly. Its CSS-var theming
+  maps straight onto RapidRAW's existing `--color-*` token system. **Primitive layer:
+  Base UI** (shadcn's July-2026 default — from the ex-Radix / MUI / Floating-UI team,
+  stable v1.0; Radix's own development slowed after the WorkOS acquisition). Base UI also
+  gives Switch/Slider real animation back for free.
+- **What `@chroma/ui` becomes:**
+  - shadcn/Base-UI components for everything **structural + generic**: Button, Dialog,
+    DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command (`cmdk`),
+    Resizable (`react-resizable-panels`), Toggle, Switch, Slider, ScrollArea, Sheet,
+    Separator, Input, Label, Toast.
+  - **Keep RapidRAW's domain components** in `app/` (unrouted where replaced): `ColorWheel`,
+    `LUTControl`, `DepthRangePicker`, the grading-tuned sliders, `ImagePicker`. These are
+    craft-specific, not worth replacing.
+  - Deps `@chroma/ui` may now use: `@base-ui-components/react`, `class-variance-authority`,
+    `clsx`, `tailwind-merge`, `lucide-react`, `cmdk`, `react-resizable-panels`. (Relaxes
+    D-039's "react + clsx + lucide only" — that constraint was premature.)
+  - The 5 already-extracted components get rebuilt on shadcn (Button, Switch, Input,
+    Text→Typography, Collapsible via Base UI) — the re-export shims in
+    `app/src/components/ui/*` stay, so app call sites don't change.
+- **Migration:** additive. New UI (shell menus, Export dialog, media pool, player
+  controls, Editor) uses `@chroma/ui` from the start. The Colorist tab swaps its generic
+  components (esp. `Dropdown`) over time; its grading panels are last / never.
+- **Order:** this lands **before** `@chroma/player` / media-pool / Export-window (all of
+  which want dialogs + dropdowns).

@@ -52,6 +52,12 @@ commit.
   open). `ProjectLauncher` + session store likely move to `@chroma/bridge` (or a
   `@chroma/project` fe package) so shell + colorist both reach them. **Queued after the
   UI pass — heavy `@chroma/shell` + `app/src/App.tsx` overlap.**
+- [ ] **`@chroma/ui` on shadcn/ui + Base UI** (D-042, 2026-09-02) — **do before player /
+  media-pool / export**. shadcn copy-in components (Dialog, DropdownMenu, ContextMenu,
+  Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, Button…)
+  on Base UI primitives, themed to RapidRAW's `--color-*` tokens; rebuild the 5
+  hand-extracted components on it (shims stay); keep RapidRAW's domain components
+  (ColorWheel / LUT / DepthRangePicker / grading sliders) in `app/`.
 - [ ] **`@chroma/player` — one shared preview component for all 3 tabs** (requested
   2026-09-02, Palmier-viewer-style). A **presentational** package: a canvas viewport +
   a title strip (`‹ ›` nav, name, `…` menu) + a transport bar — timecode
