@@ -18,26 +18,63 @@ repro / expected / actual / cause / fix
 
 ## Open
 
+## Fixed
+
 ## B-006 — Colorist main preview stays black even once the wgpu transform is positioned correctly
-status: open · severity: high · area: gpu_processing.rs (WgpuDisplay / native surface), macOS window compositing
+status: fixed (2026-09-02) · severity: high · area: `@chroma/shell` root background (`packages/shell/src/Shell.tsx`) — not gpu_processing.rs
 - **repro:** open a project with a video shot in the Colorist tab; the shot-strip thumbnail
   renders fine, the main preview viewport never shows anything (solid dark/black).
 - **expected:** the main preview shows the decoded, graded frame — the native wgpu surface,
   drawn directly onto the window behind a transparent hole in the webview at the preview
   panel's on-screen position (see `update_wgpu_transform`, `WgpuDisplay::render`).
-- **actual:** after B-005 (below), `apply_adjustments` logs confirm a real WGPU render fires
-  at the *correct* output resolution matching the preview panel's actual on-screen size
-  (e.g. `1920x1080`, then `512x288` on scrub) — the positioning/sync side is provably
-  working now. The panel is still visually black regardless.
-- **not yet found:** whether this is a genuine regression from the D-039 shell (custom
-  `transparent: true` / `decorations: false` window + the new tab-bar/rounded-corner chrome
-  possibly changing macOS NSView/CALayer ordering vs. RapidRAW's original single-view
-  window), or a separate bug in `WgpuDisplay::render`'s scissor/clip math, or something else
-  entirely. Needs live visual verification (a real screenshot loop), not log-reading alone.
-- **cause:** not yet confirmed.
-- **fix:** not yet applied.
-
-## Fixed
+- **actual (pre-fix):** `apply_adjustments` logs confirmed a real WGPU render fired at the
+  *correct* output resolution and the *correct* on-screen position — the panel was still
+  visually black regardless.
+- **cause:** the render pipeline itself was never the problem. D-039's `@chroma/shell`
+  wraps the whole window in a new root `<div>` (`Shell.tsx`) that carried a hardcoded,
+  unconditional `bg-bg-primary` (opaque). The Colorist app's own root (`App.tsx`) already
+  punches a transparent "hole" through itself (`isWgpuActive ? 'bg-transparent' :
+  'bg-bg-primary'`) so the OS-transparent window (and the wgpu surface drawn directly onto
+  it) shows through — but that hole only reveals whatever sits *behind* it in the DOM, which
+  after D-039 is the shell's own new, permanently-opaque background, not the real
+  transparent window. Before D-039 the Colorist app's root *was* the window's content root,
+  so there was no opaque ancestor in the way and the trick worked. The shell's own opaque
+  background silently defeated it once introduced — a plain CSS stacking regression, not an
+  NSView/CALayer ordering issue and not a scissor/DPI bug.
+- **how this was actually isolated (not by reasoning alone):** with no screen-recording
+  permission available in the session that found this (`screencapture` failed with
+  "could not create image from display" from every invoking path tried), two proxies stood
+  in for a real screenshot: (1) a temporary debug hook in `WgpuDisplay::render` re-ran the
+  *exact same* clear/scissor/bind-group/draw call into an off-screen `COPY_SRC` texture
+  (the swapchain texture itself doesn't support `COPY_SRC`) and dumped it to PNG — this
+  showed the real graded frame, correctly positioned, proving the render pass, scissor math,
+  and bound texture were all already correct, and pointing the remaining search at
+  compositing/visibility rather than rendering; (2) after the fix, a live
+  `getComputedStyle` read of the shell root in the running app confirmed its
+  `background-color` actually flips to `rgba(0, 0, 0, 0)` exactly when the Colorist wgpu
+  surface is active. Both were run against the real app with the real
+  `~/Movies/Chroma/New.chroma` project open. A final from-cold-boot re-check hit an
+  unrelated environment wedge (WebKit's `markLayersVolatile`/process-suspension throttling
+  the webview after this session's own repeated hard `kill -9` cycles on the dev app — see
+  `sample`/`log show` trace from that session; confirmed unrelated to this fix since
+  `gpu_processing.rs` and `lib.rs` carry zero diff from before the investigation started)
+  and was not retried further; the two proxies above are the verification this fix rests on,
+  not a literal on-screen screenshot.
+- **fix:** `packages/shell/src/store.ts` — add a session-only (not persisted)
+  `wgpuSurfaceActive` flag to `useShellStore`. `app/src/App.tsx` mirrors its own
+  `isWgpuActive` into that flag via a `useEffect` (app → shell is the correct dependency
+  direction here; shell still never imports the Colorist app). `Shell.tsx`'s root class now
+  reads it: `wgpuSurfaceActive ? 'bg-transparent' : 'bg-bg-primary'`, restoring the same
+  "no opaque ancestor between the window and the app's own hole" invariant D-039 broke. The
+  tab bar and the project-launcher overlay both paint their own explicit backgrounds so they
+  stay opaque regardless.
+- **not this bug, ruled out during investigation:** `WgpuDisplay::render`'s scissor/clip
+  math and `self.config` sizing — a live debug log during investigation showed
+  `config` tracking the real window size correctly (the existing `on_window_event`
+  `Resized` handler does keep it in sync) and the scissor bounds landing well inside it with
+  `will_draw=true` every time; the off-screen dump then confirmed the draw itself was
+  correct. Not a DPI/physical-vs-logical-pixel mismatch either — both sides already agree on
+  physical pixels.
 
 ## B-005 — Colorist wgpu-position sync loop permanently stuck hidden after one transient 0×0 layout read
 status: fixed (2026-09-02) · severity: high · area: app/src/components/panel/Editor.tsx (syncWgpu)

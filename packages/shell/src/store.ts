@@ -4,6 +4,14 @@
  * One tiny zustand store holding which of the 3 tabs is active, persisted to
  * localStorage under `chroma.activeTab`. Kept separate from the app's stores on
  * purpose: the shell must not depend on `@chroma/bridge` or the colorist app.
+ *
+ * `wgpuSurfaceActive` (B-006, 2026-09-02): session-only flag, not persisted. A
+ * tab (the Colorist app) that draws its own content directly onto the native
+ * window via a wgpu surface — bypassing the webview entirely, see
+ * `app/src-tauri/src/gpu_processing.rs`'s `WgpuDisplay` — sets this true while
+ * that surface should be visible. The shell root must go transparent in that
+ * window too, or its own opaque background blocks the transparent "hole" the
+ * tab punches for the surface to show through (see `Shell.tsx`'s root class).
  */
 
 import { create } from 'zustand';
@@ -37,6 +45,8 @@ function persist(tab: ShellTabId): void {
 interface ShellStore {
   activeTab: ShellTabId;
   setActiveTab: (tab: ShellTabId) => void;
+  wgpuSurfaceActive: boolean;
+  setWgpuSurfaceActive: (active: boolean) => void;
 }
 
 export const useShellStore = create<ShellStore>((set) => ({
@@ -45,6 +55,8 @@ export const useShellStore = create<ShellStore>((set) => ({
     persist(tab);
     set({ activeTab: tab });
   },
+  wgpuSurfaceActive: false,
+  setWgpuSurfaceActive: (active) => set({ wgpuSurfaceActive: active }),
 }));
 
 /** Convenience selector hook — returns just the active tab id. */

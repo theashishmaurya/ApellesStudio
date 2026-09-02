@@ -60,6 +60,7 @@ export interface ShellProps {
 export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProps) {
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
+  const wgpuSurfaceActive = useShellStore((s) => s.wgpuSurfaceActive);
   const chrome = useWindowChrome();
 
   // If persisted/default tab isn't in the registry, fall back to the first tab.
@@ -83,7 +84,15 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProp
   return (
     <div
       className={
-        'flex flex-col h-full w-full bg-bg-primary text-text-primary overflow-hidden ' +
+        'flex flex-col h-full w-full text-text-primary overflow-hidden ' +
+        // B-006: a tab (Colorist) drawing straight onto the native window via a
+        // wgpu surface needs this root to go transparent too, or its own opaque
+        // background sits in front of the surface and blocks it from ever
+        // showing through the tab's own transparent "hole". The tab bar and the
+        // launcher overlay below both paint their own explicit backgrounds, so
+        // they stay opaque either way.
+        (wgpuSurfaceActive ? 'bg-transparent' : 'bg-bg-primary') +
+        ' ' +
         (chrome.useMacWindowShell ? 'macos-window-shell' : '')
       }
     >

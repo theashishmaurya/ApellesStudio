@@ -14,6 +14,7 @@ import {
   pointerWithin,
 } from '@dnd-kit/core';
 import clsx from 'clsx';
+import { useShellStore } from '@chroma/shell';
 
 import SettingsPanel from './components/panel/SettingsPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
@@ -620,6 +621,17 @@ function App() {
     appSettings?.useWgpuRenderer !== false &&
     selectedImage?.isReady &&
     hasRenderedFirstFrame;
+
+  // B-006: mirror isWgpuActive up to @chroma/shell so its root also drops its
+  // own opaque background — see Shell.tsx's root class + the comment there.
+  // Without this the shell's `bg-bg-primary` (added by D-039, sitting *above*
+  // this component in the DOM) blocks the transparent "hole" below from ever
+  // reaching the real OS window, so the native wgpu surface never shows
+  // through no matter how correctly it renders.
+  useEffect(() => {
+    useShellStore.getState().setWgpuSurfaceActive(!!isWgpuActive);
+    return () => useShellStore.getState().setWgpuSurfaceActive(false);
+  }, [isWgpuActive]);
 
   const layoutSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   const handleDragStart = (e: any) => {

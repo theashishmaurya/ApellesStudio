@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Colorist black preview fixed for real (B-006).** Root
+  cause was never the wgpu render pipeline — a temporary off-screen-texture
+  dump proved the render pass, scissor math, and bound frame texture were
+  already correct — it was a plain CSS regression: D-039's `@chroma/shell`
+  wraps the window in a new root `<div>` with a hardcoded opaque
+  `bg-bg-primary`, silently blocking the transparent "hole" the Colorist app
+  already punches through itself for the native wgpu surface to show
+  through. Fixed by mirroring the app's `isWgpuActive` up into a new
+  `wgpuSurfaceActive` flag on `@chroma/shell`'s store, which the shell root
+  now reads to drop its own background too. No screen-recording permission
+  was available to verify with a literal screenshot; verified instead via
+  the texture dump (pre-fix) plus a live `getComputedStyle` read of the
+  shell root in the running app (post-fix, shows `rgba(0,0,0,0)` exactly
+  when the surface is active) — see B-006 in `BUGS.md` for the full trail.
 - **2026-09-02** — **Colorist wgpu-sync stuck-hidden loop fixed (B-005); a
   second, separate black-preview bug found and logged open (B-006).** After
   B-004 fixed the IPC corruption, the Colorist preview was still black —
