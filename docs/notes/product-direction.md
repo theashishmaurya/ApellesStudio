@@ -210,3 +210,64 @@ engine** first (MPL-2.0, WebCodecs, already shares Mediabunny with the Motion ta
 has timeline/tracks/masks/keyframes out of the box). Keep OTIO JSON as the portable
 interchange on top. Remotion stays the **Motion** tab. OpenCut's Rust compositor
 stays the "watch for a unified native engine" option.
+
+---
+
+## CONSTRAINT LOCK (2026-09-02, owner) — Rust-native, performance-first, small binary
+
+> "our thing is Rust native performance first — we can't afford lags, we need to be
+> very very performant, and small size, hence Tauri."
+
+Diffusion Studio, Remotion, OpenCut-web, Vanta were **reference only** — for *what
+features exist*, not stacks to adopt. **The editing tab is not a JS/WebCodecs/browser
+engine.** No Electron, no headless-Chrome render, no GStreamer runtime bundled (size).
+This **rejects Paths A (Remotion) and D (Diffusion) as engines** — Remotion stays the
+Motion tab only; the rest are feature references.
+
+### The Rust-native stack that fits
+
+| Layer | Choice | Notes |
+|---|---|---|
+| **Decode** | **VideoToolbox** (macOS HW) → wgpu texture; ffmpeg CLI fallback (already wired, D-015) | zero-copy on Apple Silicon; no GStreamer bloat. Gyroflow's decode code / `oxivideo` (ex-`gpu-video`, **Apache-2/MIT**, VideoToolbox + wgpu, *pre-release "NOT READY"*) as the reference for VT→wgpu |
+| **Compositor** | **wgpu**, extending Chroma's `render_core` (D-014): blend N layers + transitions, then the existing grade pass | ONE engine for cut+grade. **OpenCut `rust/crates/compositor`** (MIT, wgpu, shipping in v0.3.0 — replaced their WebGL renderer) as reference or vendored dep |
+| **Timeline model** | plain Rust serde structs, **OTIO-shaped**; exports OTIO / EDL / FCPXML | "the edit is code," parallel to `grade.json`. NOT the heavy OTIO C bindings |
+| **Timeline UI** | React in the existing Tauri webview — thin: sends edits, gets frames on the wgpu surface | same pattern as the grade panel today; no new UI framework |
+| **Transcript cut** | whisper `--word-timestamps` (already have, mlx) → text edit → ripple ops on the model | CutScript / Rescript as the UX model |
+| **Export** | composite → grade per frame → ffmpeg encode pipe (already have, D-022) | already built for the colorist |
+
+### Why this is bounded work
+
+Chroma **already owns** the hard single-clip parts: wgpu context, decode pipe (D-030),
+render-to-surface, export pipe, ffmpeg wiring, the grade compute pass. The editing tab
+adds: (1) the timeline serde model — small; (2) **multi-layer wgpu compositing** — the
+real new work, blend N decoded RGBA layers + transitions on GPU feeding the existing
+grade pass; (3) a thin React timeline UI; (4) the transcript-cut UX. No new runtime,
+no new UI framework, binary stays Tauri-small.
+
+### Reference projects (Rust-native, study don't necessarily adopt)
+
+- **Gausian** (`gausian-AI/Gausian_native_editor`) — Rust + **egui/wgpu** + VideoToolbox
+  + GStreamer + SQLite, AI-video focus, exports FCPXML/EDL. **MPL-2.0 core, commercial
+  advanced features.** egui UI (not a frontend fit) but **modular crates**: `timeline`,
+  `project`, `media-io`, `renderer`, `native-decoder`, `exporters`, `cli` — potentially
+  extractable. Closest existing thing to this tab. ~1k★, young (24 commits).
+- **OpenCut v0.3.0** — Rust/wgpu compositor compiled to WASM *and* native (GPUI shell).
+  MIT. The compositor crate is the reusable bit.
+- **`gstreamer-editing-services`** (GES) Rust bindings — a full mature NLE lib, but
+  the GStreamer runtime is a large dependency + macOS packaging pain → **against the
+  small-binary lock.** Fallback only if building the compositor proves too costly.
+- **`cros_codecs`**, **`oxivideo`** — Rust HW-decode crates to watch.
+
+### Revised estimate (Rust-native)
+
+Lean editing tab (talking-head: transcript cut + multi-shot timeline + trim/ripple +
+cuts/dissolves + export): **~2.5–3.5 months** solo. OpenCut's compositor crate, if
+cleanly extractable, could shave ~3–4 weeks off the compositing layer. Full parity:
+8–12+ months.
+
+### The market pattern worth noting
+
+Palmier → closed. Diffusion Studio → MPL core + paid "advanced." Gausian → MPL core +
+paid "advanced." **Every AI-video startup is "open core + paid pro."** A genuinely,
+fully-open (AGPL/MPL, no commercial-feature gate) + local + Rust-fast three-tab tool
+is an unoccupied position.
