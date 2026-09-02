@@ -1,14 +1,37 @@
-# --- Chroma ---
-/engine builds
-engine/node_modules/
-engine/dist/
-engine/src-tauri/target/
+# --- Chroma monorepo ---
+
+# Rust workspace build output
+/target/
+**/target/
+
+# node
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+**/dist/
+*.local
+.turbo/
+
+# the app (vendored RapidRAW fork, D-039/D-040)
+app/src-tauri/gen/*
+!app/src-tauri/gen/android/
+app/src-tauri/gen/android/app/src/main/assets/
+app/src-tauri/libs/
+app/src-tauri/resources/libonnxruntime.so
+app/src-tauri/resources/libonnxruntime.dylib
+app/src-tauri/resources/onnxruntime.dll
+app/bench/out/
+**/keystore.properties
+**/keystore.jks
+**/key.properties
 
 # python ai sidecar
 ai/.venv/
 ai/__pycache__/
 ai/**/__pycache__/
 ai/models/
+ai/vendor/**/checkpoints/
 *.pyc
 
 # mcp server
@@ -16,6 +39,9 @@ mcp/target/
 mcp/.venv/
 mcp/__pycache__/
 mcp/**/__pycache__/
+
+# eval
+eval/results/*.result.png
 
 # scratch / media
 scratch/*
@@ -27,3 +53,10 @@ scratch/*
 *.cube
 !docs/**/*.cube
 .DS_Store
+
+# logs
+*.log
+logs/
+
+# recoverable pre-monorepo fork history — archive it, then delete
+engine-history.bundle

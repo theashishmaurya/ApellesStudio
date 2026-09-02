@@ -1,0 +1,830 @@
+//! Video export (roadmap item 2) + a `.cube` bake of the primary grade.
+//!
+//! What it is: the "a colour tool must output" layer. Decode the loaded clip
+//!   frame-by-frame with ffmpeg, run each frame through the *same* grade path the
+//!   GUI uses (`render_core::render`, D-014), pipe the graded RGB into one
+//!   persistent ffmpeg encoder → a ProRes / H.264 file.
+//! What it does NOT do: audio, timeline/shot assembly, colour-managed output
+//!   transforms beyond what the grade shader already bakes, GPU-accelerated
+//!   decode, or a live progress bar in the canvas. Those are later layers.
+//! Why one encoder child + a raw pipe (not image2pipe / per-frame files):
+//!   zero temp-file churn, backpressure is just pipe flow-control, deterministic.
+//!   See D-022.
+//!
+//! Fork hygiene (D-003): all new code, one `pub mod export;` in `chroma/mod.rs`
+//! and three `generate_handler!` lines in `lib.rs`. Divergence log: docs/09.
+
+use std::io::{BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use std::time::Instant;
+
+use image::{DynamicImage, GenericImageView, RgbImage};
+use once_cell::sync::Lazy;
+use serde_json::{json, Value};
+
+use crate::gpu_processing::RenderRequest;
+use crate::image_processing::get_all_adjustments_from_json;
+use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
+use crate::render_core::{self, OwnedRenderCaches};
+
+use super::state::{current_video, set_current_frame, set_current_video};
+use super::video::{self, VideoInfo};
+
+// --------------------------------------------------------------------------- //
+// public types
+// --------------------------------------------------------------------------- //
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct ExportOpts {
+    /// "prores" (default) | "h264"
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// h264: overrides `-crf` (default 18). prores: overrides `-profile:v` (default 3).
+    #[serde(default)]
+    pub quality: Option<i64>,
+    /// force the output frame rate; default = the source's exact rate.
+    #[serde(default)]
+    pub fps_override: Option<f64>,
+    /// D-038: force the output resolution (the graded composite, rendered at
+    /// clip res, is resized to this as the last step before the encoder). Both
+    /// must be set and > 0 or the clip's own dimensions are used (unchanged).
+    #[serde(default)]
+    pub out_width: Option<u32>,
+    #[serde(default)]
+    pub out_height: Option<u32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportResult {
+    pub out_path: String,
+    pub frames: u64,
+    pub ms: u128,
+    pub codec: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LutBakeResult {
+    pub out_path: String,
+    pub size: u32,
+    /// non-fatal notes — e.g. "grade had masked layers a 3D LUT can't represent".
+    pub warnings: Vec<String>,
+}
+
+// --------------------------------------------------------------------------- //
+// progress (module-global — there is only ever one export at a time)
+// --------------------------------------------------------------------------- //
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ExportProgress {
+    pub running: bool,
+    pub done: u64,
+    pub total: u64,
+    pub out_path: Option<String>,
+    pub error: Option<String>,
+}
+
+static PROGRESS: Lazy<Mutex<ExportProgress>> = Lazy::new(|| Mutex::new(ExportProgress::default()));
+
+fn progress_reset(total: u64, out_path: &str) {
+    let mut p = PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
+    *p = ExportProgress {
+        running: true,
+        done: 0,
+        total,
+        out_path: Some(out_path.to_string()),
+        error: None,
+    };
+}
+fn progress_tick(done: u64) {
+    let mut p = PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
+    p.done = done;
+}
+fn progress_finish(err: Option<String>) {
+    let mut p = PROGRESS.lock().unwrap_or_else(|e| e.into_inner());
+    p.running = false;
+    if err.is_some() {
+        p.error = err;
+    }
+}
+pub fn progress_snapshot() -> ExportProgress {
+    PROGRESS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+// --------------------------------------------------------------------------- //
+// ffmpeg helpers
+// --------------------------------------------------------------------------- //
+
+fn ffmpeg_bin() -> String {
+    std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
+}
+
+/// Drain a child's stderr on a thread, keeping the last ~16 KiB for error reports.
+fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
+    let sink = std::sync::Arc::new(Mutex::new(Vec::<u8>::new()));
+    if let Some(mut err) = child.stderr.take() {
+        let sink2 = sink.clone();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match err.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let mut g = sink2.lock().unwrap_or_else(|e| e.into_inner());
+                        g.extend_from_slice(&buf[..n]);
+                        let len = g.len();
+                        if len > 16_384 {
+                            g.drain(0..len - 16_384);
+                        }
+                    }
+                }
+            }
+        });
+    }
+    sink
+}
+
+fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
+    let g = sink.lock().unwrap_or_else(|e| e.into_inner());
+    String::from_utf8_lossy(&g).chars().rev().take(1200).collect::<String>().chars().rev().collect()
+}
+
+/// Spawn the decoder for `[from, to]` as raw rgb24.
+///
+/// D-030: `-ss` back ~1 s + `-copyts` + `select` **by absolute timestamp `t`**
+/// (not decoded-frame index `n`). D-022 walked from frame 0 with
+/// `select=between(n,…)` because an input `-ss` shifts `n` and would desync the
+/// per-frame tracked mattes (D-019, keyed by absolute source frame). Selecting by
+/// `t` with `-copyts` keeps timestamps source-absolute — frame `from` is still
+/// frame `from` — while skipping the O(from) decode from 0. `from = 0` ⇒ `-ss 0`
+/// and `select` passes everything, i.e. unchanged.
+fn spawn_decoder(path: &Path, info: &VideoInfo, from: u64, to: u64) -> Result<Child, String> {
+    let count = to.saturating_sub(from) + 1;
+    let fps = info.fps();
+    // seek a second before `from` (throwaway pre-roll), select from a half-frame
+    // before `from` — the margin points backward so a frame-rate rounding wobble
+    // can't skip the first frame forward.
+    let (seek_secs, select_t) = if fps > 0.0 {
+        (((from as f64) / fps - 1.0).max(0.0), ((from as f64 - 0.5) / fps).max(0.0))
+    } else {
+        (0.0, 0.0)
+    };
+    Command::new(ffmpeg_bin())
+        .args(["-hide_banner", "-loglevel", "error", "-ss"])
+        .arg(format!("{seek_secs:.6}"))
+        .args(["-copyts", "-i"])
+        .arg(path)
+        .args([
+            "-an",
+            "-sn",
+            "-vf",
+            &format!("select=gte(t\\,{select_t:.6})"),
+            "-frames:v",
+            &count.to_string(),
+            "-fps_mode",
+            "passthrough",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg decoder: {e}"))
+}
+
+/// Spawn the encoder: raw rgb24 in on stdin, codec-encoded file out.
+fn spawn_encoder(
+    out_path: &Path,
+    w: u32,
+    h: u32,
+    fps: &str,
+    codec: &str,
+    quality: Option<i64>,
+) -> Result<Child, String> {
+    let mut cmd = Command::new(ffmpeg_bin());
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error"])
+        .args(["-f", "rawvideo", "-pixel_format", "rgb24"])
+        .args(["-video_size", &format!("{w}x{h}")])
+        .args(["-framerate", fps])
+        .args(["-i", "-"]);
+
+    match codec {
+        "h264" => {
+            let crf = quality.unwrap_or(18).clamp(0, 51).to_string();
+            cmd.args(["-c:v", "libx264", "-crf", &crf, "-pix_fmt", "yuv420p"]);
+        }
+        _ => {
+            let profile = quality.unwrap_or(3).clamp(0, 5).to_string();
+            cmd.args(["-c:v", "prores_ks", "-profile:v", &profile, "-pix_fmt", "yuv422p10le"]);
+        }
+    }
+
+    cmd.arg(out_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn ffmpeg encoder: {e}"))
+}
+
+// --------------------------------------------------------------------------- //
+// per-frame grade (the still export path, wrapped in a video loop)
+// --------------------------------------------------------------------------- //
+
+/// Render one decoded RGB frame through the grade. Mirrors RapidRAW's
+/// `generate_preview_for_path` (JSON → `AllAdjustments` + mask bitmaps →
+/// `RenderRequest` → render) but the base image is a video frame we already hold,
+/// so there is no file decode / `load_and_composite`.
+///
+/// v1 limitation: parametric `color` / `luminance` masks need the de-warped image
+/// (`resolve_warped_image_for_masks`, GUI-state coupled) — we pass `None`, so
+/// those mask types are skipped on video export. Shape masks and AI / tracked
+/// subject mattes (the talking-head case) work.
+fn grade_frame(
+    ctx: &crate::image_processing::GpuContext,
+    caches: &OwnedRenderCaches,
+    frame: DynamicImage,
+    frame_index: u64,
+    js: &Value,
+) -> Result<RgbImage, String> {
+    let (w, h) = frame.dimensions();
+
+    let mask_defs: Vec<MaskDefinition> = js
+        .get("masks")
+        .and_then(|m| serde_json::from_value(m.clone()).ok())
+        .unwrap_or_default();
+
+    let mask_bitmaps: Vec<_> = mask_defs
+        .iter()
+        .filter_map(|def| generate_mask_bitmap(def, w, h, 1.0, (0.0, 0.0), None))
+        .collect();
+
+    let adjustments = get_all_adjustments_from_json(js, false, None);
+    let lut = js
+        .get("lutPath")
+        .and_then(|p| p.as_str())
+        .and_then(|p| crate::lut_processing::parse_lut_file(p).ok())
+        .map(std::sync::Arc::new);
+
+    // transform_hash keys the GPU input-texture cache — it MUST change per frame
+    // or frame N is graded through frame N-1's pixels.
+    let graded = render_core::render(
+        ctx,
+        caches.as_ref(),
+        &frame,
+        frame_index.wrapping_add(1),
+        RenderRequest { adjustments, mask_bitmaps: &mask_bitmaps, lut, roi: None },
+        "export",
+        false,
+        None,
+    )?;
+
+    Ok(graded.to_rgb8())
+}
+
+// --------------------------------------------------------------------------- //
+// export_video
+// --------------------------------------------------------------------------- //
+
+/// Render `[from_frame, to_frame]` of the clip at `video_path` through
+/// `js_adjustments` and encode to `out_path`. Blocking (ffmpeg + GPU) — call it
+/// off the async runtime (the Tauri command wraps it in `spawn_blocking`).
+pub fn export_video(
+    video_path: &Path,
+    out_path: &Path,
+    js_adjustments: &Value,
+    from_frame: u64,
+    to_frame: u64,
+    opts: ExportOpts,
+) -> Result<ExportResult, String> {
+    let started = Instant::now();
+    let info: VideoInfo = video::probe(video_path).map_err(|e| e.to_string())?;
+    let (w, h) = (info.width, info.height);
+    if w == 0 || h == 0 {
+        return Err("probe returned zero dimensions".into());
+    }
+
+    let last = info.frame_count.saturating_sub(1);
+    let from = from_frame.min(last);
+    let to = to_frame.min(last).max(from);
+    let total = to - from + 1;
+
+    // D-038: the output resolution. When a loaded project sets `settings.width`
+    // + `settings.height`, the graded composite (rendered at clip res `w`×`h`)
+    // is resized to `(out_w, out_h)` right before the encoder. No override ⇒
+    // `(out_w, out_h) == (w, h)` and the resize is skipped — byte-identical to
+    // before this decision.
+    let (out_w, out_h) = match (opts.out_width, opts.out_height) {
+        (Some(ow), Some(oh)) if ow > 0 && oh > 0 => (ow, oh),
+        _ => (w, h),
+    };
+    let resize_output = (out_w, out_h) != (w, h);
+
+    let codec = match opts.codec.as_deref() {
+        Some("h264") => "h264",
+        _ => "prores",
+    };
+    let fps_str = match opts.fps_override {
+        Some(f) if f > 0.0 => format!("{f}"),
+        _ if info.fps_den != 0 && info.fps_num != 0 => {
+            format!("{}/{}", info.fps_num, info.fps_den)
+        }
+        _ => "24".to_string(),
+    };
+
+    // Free the persistent playback decode pipe (D-030) for the duration of the
+    // export — one fewer idle ffmpeg holding a read fd on the same clip.
+    super::decode_pipe::reset();
+
+    // The grade path fetches tracked mattes for `current_video().frame` (D-019).
+    // Point Chroma's clip state at the export target, restore it afterwards.
+    let prev = current_video();
+    set_current_video(Some(super::state::CurrentVideo {
+        path: video_path.to_path_buf(),
+        info: info.clone(),
+        frame: from,
+    }));
+    let restore = |prev: Option<super::state::CurrentVideo>| {
+        if let Some(p) = prev {
+            set_current_video(Some(p));
+        }
+    };
+
+    progress_reset(total, &out_path.to_string_lossy());
+
+    let run = || -> Result<u64, String> {
+        let ctx = render_core::init_gpu_context()?;
+        let caches = OwnedRenderCaches::default();
+
+        let mut dec = spawn_decoder(video_path, &info, from, to)?;
+        let dec_err = drain_stderr(&mut dec);
+        let mut dec_out = BufReader::new(dec.stdout.take().ok_or("decoder stdout unavailable")?);
+
+        let mut enc = spawn_encoder(out_path, out_w, out_h, &fps_str, codec, opts.quality)?;
+        let enc_err = drain_stderr(&mut enc);
+        let mut enc_in = enc.stdin.take().ok_or("encoder stdin unavailable")?;
+
+        let frame_bytes = (w as usize) * (h as usize) * 3;
+        let mut buf = vec![0u8; frame_bytes];
+        let mut done: u64 = 0;
+
+        for i in 0..total {
+            match dec_out.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(e) => {
+                    return Err(format!(
+                        "decoder ended early at frame {}/{} ({e}): {}",
+                        done,
+                        total,
+                        tail(&dec_err)
+                    ));
+                }
+            }
+            let frame_index = from + i;
+            set_current_frame(frame_index);
+
+            let src = RgbImage::from_raw(w, h, buf.clone())
+                .ok_or("rgb frame buffer size mismatch")?;
+            let graded = grade_frame(
+                &ctx,
+                &caches,
+                DynamicImage::ImageRgb8(src),
+                frame_index,
+                js_adjustments,
+            )?;
+
+            let (gw, gh) = graded.dimensions();
+            if (gw, gh) != (w, h) {
+                return Err(format!(
+                    "graded frame {frame_index} is {gw}x{gh} (expected {w}x{h}) — \
+                     crop/ROI is not supported on video export",
+                ));
+            }
+            // D-038: last-step resize to the project output resolution. Skipped
+            // (zero-copy) when no project override is in effect.
+            let raw = if resize_output {
+                image::imageops::resize(
+                    &graded,
+                    out_w,
+                    out_h,
+                    image::imageops::FilterType::Lanczos3,
+                )
+                .into_raw()
+            } else {
+                graded.into_raw()
+            };
+            enc_in
+                .write_all(&raw)
+                .map_err(|e| format!("write to encoder stdin: {e} — {}", tail(&enc_err)))?;
+
+            done += 1;
+            progress_tick(done);
+        }
+
+        drop(enc_in); // EOF → encoder flushes and exits
+        let _ = dec.wait();
+
+        let status = enc.wait().map_err(|e| format!("wait for encoder: {e}"))?;
+        if !status.success() {
+            return Err(format!("encoder exited {status}: {}", tail(&enc_err)));
+        }
+        Ok(done)
+    };
+
+    let result = run();
+    restore(prev);
+
+    match result {
+        Ok(frames) => {
+            progress_finish(None);
+            Ok(ExportResult {
+                out_path: out_path.to_string_lossy().to_string(),
+                frames,
+                ms: started.elapsed().as_millis(),
+                codec: codec.to_string(),
+            })
+        }
+        Err(e) => {
+            progress_finish(Some(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+// --------------------------------------------------------------------------- //
+// .cube bake — primary grade only
+// --------------------------------------------------------------------------- //
+
+/// Run a `size³` identity RGB lattice through the **primary grade only** (no
+/// masks, no LUT-on-LUT, no geometry) and write it as a `.cube` 3D LUT.
+pub fn bake_primary_lut(
+    js_adjustments: &Value,
+    size: u32,
+    out_path: &Path,
+) -> Result<LutBakeResult, String> {
+    let size = size.clamp(2, 64);
+    let n = size as usize;
+
+    // strip everything a 3D LUT can't carry
+    let mut primary = js_adjustments.clone();
+    let mut warnings = Vec::new();
+    if let Some(masks) = primary.get("masks").and_then(|m| m.as_array()) {
+        let visible = masks
+            .iter()
+            .filter(|m| m.get("visible").and_then(|v| v.as_bool()).unwrap_or(true))
+            .count();
+        if visible > 0 {
+            warnings.push(format!(
+                "grade has {visible} masked/local layer(s); a 3D LUT is global-only — baked the primary grade, dropped the masks"
+            ));
+        }
+    }
+    if primary.get("lutPath").and_then(|p| p.as_str()).is_some() {
+        warnings.push("grade already applies a .cube LUT; it was NOT chained into this bake (no LUT-on-LUT)".into());
+    }
+    for k in ["masks", "lutPath", "crop"] {
+        if let Some(obj) = primary.as_object_mut() {
+            obj.remove(k);
+        }
+    }
+    if let Some(obj) = primary.as_object_mut() {
+        obj.insert("rotation".into(), json!(0.0));
+        obj.insert("flipHorizontal".into(), json!(false));
+        obj.insert("flipVertical".into(), json!(false));
+        obj.insert("orientationSteps".into(), json!(0));
+    }
+
+    // identity lattice: x = r, y = b*size + g, value = channel / (size-1)
+    let w = size;
+    let hgt = size * size;
+    let denom = (size - 1).max(1) as f32;
+    let mut grid = RgbImage::new(w, hgt);
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let px = image::Rgb([
+                    (r as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (g as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
+                    (b as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
+                ]);
+                grid.put_pixel(r as u32, (b * n + g) as u32, px);
+            }
+        }
+    }
+
+    let ctx = render_core::init_gpu_context()?;
+    let caches = OwnedRenderCaches::default();
+    let adjustments = get_all_adjustments_from_json(&primary, false, None);
+    let graded = render_core::render(
+        &ctx,
+        caches.as_ref(),
+        &DynamicImage::ImageRgb8(grid),
+        0,
+        RenderRequest { adjustments, mask_bitmaps: &[], lut: None, roi: None },
+        "bake_lut",
+        false,
+        None,
+    )?;
+    let graded = graded.to_rgb8();
+
+    let mut out = String::with_capacity(n * n * n * 24 + 128);
+    out.push_str("TITLE \"Chroma primary grade\"\n");
+    out.push_str(&format!("LUT_3D_SIZE {size}\n"));
+    out.push_str("DOMAIN_MIN 0.0 0.0 0.0\n");
+    out.push_str("DOMAIN_MAX 1.0 1.0 1.0\n");
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let p = graded.get_pixel(r as u32, (b * n + g) as u32);
+                out.push_str(&format!(
+                    "{:.6} {:.6} {:.6}\n",
+                    p[0] as f32 / 255.0,
+                    p[1] as f32 / 255.0,
+                    p[2] as f32 / 255.0
+                ));
+            }
+        }
+    }
+
+    std::fs::write(out_path, out).map_err(|e| format!("write {}: {e}", out_path.display()))?;
+    Ok(LutBakeResult {
+        out_path: out_path.to_string_lossy().to_string(),
+        size,
+        warnings,
+    })
+}
+
+// --------------------------------------------------------------------------- //
+// Tauri commands (kept here so lib.rs only gains generate_handler! lines)
+// --------------------------------------------------------------------------- //
+
+fn default_out_path(kind: &str) -> Result<PathBuf, String> {
+    let cv = current_video().ok_or("no video loaded")?;
+    let dir = cv.path.parent().ok_or("clip has no parent dir")?;
+    let stem = cv.path.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
+    let name = match kind {
+        "cube" => format!("{stem}.graded.cube"),
+        "h264" => format!("{stem}.graded.mp4"),
+        _ => format!("{stem}.graded.mov"),
+    };
+    Ok(dir.join(name))
+}
+
+/// Start a background export of the loaded clip. Returns immediately with the
+/// frame total; poll [`chroma_export_progress`]. `js_adjustments` is the live
+/// grade doc from the frontend store.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn chroma_export_video(
+    out_path: Option<String>,
+    from_frame: Option<u64>,
+    to_frame: Option<u64>,
+    codec: Option<String>,
+    quality: Option<i64>,
+    fps_override: Option<f64>,
+    js_adjustments: Value,
+) -> Result<Value, String> {
+    let cv = current_video().ok_or("no video loaded")?;
+    {
+        let p = progress_snapshot();
+        if p.running {
+            return Err(format!("an export is already running ({}/{})", p.done, p.total));
+        }
+    }
+
+    let kind = codec.clone().unwrap_or_else(|| "prores".to_string());
+    let out = match out_path {
+        Some(p) => PathBuf::from(p),
+        None => default_out_path(&kind)?,
+    };
+
+    let last = cv.info.frame_count.saturating_sub(1);
+    let from = from_frame.unwrap_or(0).min(last);
+    let to = to_frame.unwrap_or(last).min(last).max(from);
+
+    // D-038: a loaded project's output spec (resolution + timebase) overrides
+    // the clip-derived output. Absent settings ⇒ every field stays `None` ⇒
+    // the export is unchanged. An explicit `fps_override` arg (the export
+    // dialog) still wins over the project's fps.
+    let proj = super::state::current_project()
+        .and_then(|p| super::project::load_manifest(&p.path).ok())
+        .map(|m| m.settings)
+        .unwrap_or_default();
+
+    let opts = ExportOpts {
+        codec,
+        quality,
+        fps_override: fps_override.or(proj.fps),
+        out_width: proj.width,
+        out_height: proj.height,
+    };
+    let video_path = cv.path.clone();
+    let out_str = out.to_string_lossy().to_string();
+
+    progress_reset(to - from + 1, &out_str);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = export_video(&video_path, &out, &js_adjustments, from, to, opts) {
+            log::error!("[chroma::export] {e}");
+        }
+    });
+
+    Ok(json!({ "started": true, "out_path": out_str, "from": from, "to": to, "total": to - from + 1 }))
+}
+
+/// Poll the running / last export.
+#[tauri::command]
+pub fn chroma_export_progress() -> ExportProgress {
+    progress_snapshot()
+}
+
+/// Bake the primary grade to a `.cube` file. Synchronous (a 33³ lattice renders
+/// in well under a second).
+#[tauri::command]
+pub async fn chroma_bake_lut(
+    out_path: Option<String>,
+    size: Option<u32>,
+    js_adjustments: Value,
+) -> Result<LutBakeResult, String> {
+    let out = match out_path {
+        Some(p) => PathBuf::from(p),
+        None => default_out_path("cube")?,
+    };
+    let size = size.unwrap_or(33);
+    tauri::async_runtime::spawn_blocking(move || bake_primary_lut(&js_adjustments, size, &out))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+// --------------------------------------------------------------------------- //
+// tests
+// --------------------------------------------------------------------------- //
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_video() -> Option<PathBuf> {
+        std::env::var("CHROMA_TEST_VIDEO").ok().map(PathBuf::from).filter(|p| p.exists())
+    }
+
+    /// D-030: the seeked decoder must hand back the *same* absolute frames the
+    /// old walk-from-0 path did — a 1-frame shift would desync tracked mattes.
+    #[test]
+    fn seeked_decoder_is_frame_aligned() {
+        use std::io::Read as _;
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let info = video::probe(&vid).expect("probe");
+        let (from, to) = (500u64, 503u64);
+        let fb = info.width as usize * info.height as usize * 3;
+
+        let mut dec = spawn_decoder(&vid, &info, from, to).expect("spawn");
+        let mut out = dec.stdout.take().unwrap();
+        for n in from..=to {
+            let mut buf = vec![0u8; fb];
+            out.read_exact(&mut buf).unwrap_or_else(|e| panic!("frame {n}: {e}"));
+            let piped = image::RgbImage::from_raw(info.width, info.height, buf).unwrap();
+            let one = video::decode_frame(&vid, video::FramePos::Index(n), &info)
+                .expect("decode_frame")
+                .to_rgb8();
+            let (cnt, sum) = piped.as_raw().iter().zip(one.as_raw()).fold(
+                (0u64, 0u64),
+                |(c, s), (a, b)| (c + 1, s + (*a as i64 - *b as i64).unsigned_abs()),
+            );
+            let mad = sum as f64 / cnt as f64;
+            assert!(mad < 1.0, "frame {n}: mean|Δ| {mad} — seeked decoder is off by a frame");
+        }
+        let _ = dec.wait();
+    }
+
+    #[test]
+    fn export_neutral_30_frames() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_export_neutral.mov");
+        let _ = std::fs::remove_file(&out);
+        let res = export_video(&vid, &out, &json!({}), 0, 29, ExportOpts::default())
+            .expect("export");
+        assert_eq!(res.frames, 30);
+        assert!(out.exists());
+        eprintln!("neutral: {res:?}");
+    }
+
+    /// D-038: an output-resolution override resizes the encoded file; the same
+    /// export with no override is unchanged (the resize path is skipped).
+    #[test]
+    fn export_resolution_override() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let info = video::probe(&vid).expect("probe");
+
+        // no override → output dims == clip dims (byte-for-byte the old path)
+        let plain = std::env::temp_dir().join("chroma_export_res_plain.mov");
+        let _ = std::fs::remove_file(&plain);
+        export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default()).expect("plain export");
+        let pi = video::probe(&plain).expect("probe plain");
+        assert_eq!((pi.width, pi.height), (info.width, info.height));
+
+        // half-res override → encoded file is that resolution
+        let (hw, hh) = (info.width / 2, info.height / 2);
+        let scaled = std::env::temp_dir().join("chroma_export_res_scaled.mov");
+        let _ = std::fs::remove_file(&scaled);
+        export_video(
+            &vid,
+            &scaled,
+            &json!({}),
+            0,
+            9,
+            ExportOpts { out_width: Some(hw), out_height: Some(hh), ..Default::default() },
+        )
+        .expect("scaled export");
+        let si = video::probe(&scaled).expect("probe scaled");
+        assert_eq!((si.width, si.height), (hw, hh));
+    }
+
+    #[test]
+    fn export_exposure_brighter() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_export_bright.mov");
+        let _ = std::fs::remove_file(&out);
+        export_video(&vid, &out, &json!({ "exposure": 1.0 }), 0, 29, ExportOpts::default())
+            .expect("export");
+        assert!(out.exists());
+    }
+
+    /// Tracked-subject export: an `ai-subject` mask carrying a `chromaTrackDir`
+    /// + a strong exposure lift. Proves the per-frame matte (D-019) is fetched
+    /// for the frame being encoded — set `CHROMA_TEST_MATTE_DIR` to a `/track`
+    /// cache dir for the test clip.
+    #[test]
+    fn export_tracked_range() {
+        let (Some(vid), Ok(dir)) = (test_video(), std::env::var("CHROMA_TEST_MATTE_DIR")) else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO + CHROMA_TEST_MATTE_DIR");
+            return;
+        };
+        let js = json!({
+            "masks": [{
+                "id": "m1", "name": "subject", "visible": true, "invert": false, "opacity": 100.0,
+                "adjustments": { "exposure": 5.0 },
+                "subMasks": [{
+                    "id": "s1", "type": "ai-subject", "visible": true, "mode": "additive",
+                    "parameters": {
+                        "startX": 0.0, "startY": 0.0, "endX": 1080.0, "endY": 1920.0,
+                        "chromaTrackDir": dir,
+                    }
+                }]
+            }]
+        });
+        let out = std::env::temp_dir().join("chroma_export_tracked.mov");
+        let _ = std::fs::remove_file(&out);
+        let res = export_video(&vid, &out, &js, 0, 260, ExportOpts::default()).expect("export");
+        assert_eq!(res.frames, 261);
+        eprintln!("tracked: {res:?} -> {}", out.display());
+    }
+
+    #[test]
+    fn bake_lut_warm() {
+        // no GPU in CI is fine — this test is opt-in via CHROMA_TEST_VIDEO env
+        if test_video().is_none() {
+            eprintln!("skip: set CHROMA_TEST_VIDEO (proxy for 'GPU available')");
+            return;
+        }
+        let out = std::env::temp_dir().join("chroma_bake_warm.cube");
+        let _ = std::fs::remove_file(&out);
+        // RapidRAW `temperature` is a ~-100..100 slider (SCALES.temperature = 25), not Kelvin.
+        let res = bake_primary_lut(&json!({ "temperature": 20.0 }), 17, &out).expect("bake");
+        assert_eq!(res.size, 17);
+        let body = std::fs::read_to_string(&out).unwrap();
+        assert!(body.contains("LUT_3D_SIZE 17"));
+
+        let rows: Vec<[f32; 3]> = body
+            .lines()
+            .filter_map(|l| {
+                let p: Vec<f32> = l.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+                (p.len() == 3 && !l.contains("DOMAIN")).then(|| [p[0], p[1], p[2]])
+            })
+            .collect();
+        assert_eq!(rows.len(), 17 * 17 * 17);
+        // centre lattice point (input mid-grey) must come out warmer: R > B.
+        let mid = 17usize / 2;
+        let centre = rows[mid + mid * 17 + mid * 17 * 17];
+        assert!(
+            centre[0] > centre[2] + 0.01,
+            "warm push should lift R over B at mid-grey, got {centre:?}"
+        );
+    }
+}

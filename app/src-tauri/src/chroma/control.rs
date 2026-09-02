@@ -1,0 +1,164 @@
+//! Chroma control server (D-020).
+//!
+//! A tiny blocking HTTP server that runs *inside* the Tauri app and bridges
+//! `HTTP  ⇄  Tauri events  ⇄  the frontend`. Every request is turned into a
+//! `chroma://request` event; the frontend (`useChromaControl`) applies it
+//! through the *same* store actions the GUI buttons call and replies on
+//! `chroma://response/<id>` with the post-render frame + scopes. So an MCP edit
+//! and a manual slider drag share exactly one state — they can't diverge.
+//!
+//! What it does NOT do: any grade or mask logic, and it does not know the op
+//! list. It just forwards `{op, args}`. The op registry lives in the frontend.
+//!
+//! See chroma/docs/08-decisions.md D-020 and chroma/docs/notes/control-server/SPEC.md.
+
+use std::sync::mpsc;
+use std::time::Duration;
+
+use tauri::{Emitter, Listener};
+use tiny_http::{Header, Method, Response, Server};
+
+const DEFAULT_PORT: u16 = 19788;
+/// How long the HTTP request waits for the frontend to apply + render + reply.
+const BRIDGE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Shorter budget for `GET /health` so a dead/hidden window still answers fast.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
+
+type HttpResponse = Response<std::io::Cursor<Vec<u8>>>;
+
+/// Spawned from `lib.rs` `.setup()` on its own thread. Never panics: a bind
+/// failure just logs and returns (the app runs fine without the control server).
+pub fn serve(app: tauri::AppHandle) {
+    let port: u16 = std::env::var("CHROMA_CONTROL_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PORT);
+    let addr = format!("127.0.0.1:{port}");
+
+    let server = match Server::http(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("[chroma::control] bind {addr} failed: {e} — control server disabled");
+            return;
+        }
+    };
+    log::info!("[chroma::control] listening on http://{addr}  (POST /op {{op,args}})");
+
+    for mut req in server.incoming_requests() {
+        let raw = req.url().to_string();
+        let path = raw
+            .split('?')
+            .next()
+            .unwrap_or("")
+            .trim_matches('/')
+            .to_string();
+        let method = req.method().clone();
+
+        // GET /health — liveness + a best-effort snapshot of the real state.
+        if method == Method::Get && path == "health" {
+            let state = dispatch(&app, "get_state", serde_json::json!({}), HEALTH_TIMEOUT).ok();
+            let body = serde_json::json!({
+                "ok": true,
+                "service": "chroma-control",
+                "port": port,
+                "bridge": state.is_some(),
+                "state": state.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()),
+            });
+            let _ = req.respond(json_response(200, body.to_string()));
+            continue;
+        }
+
+        if method != Method::Post {
+            let _ = req.respond(json_response(405, err_body("POST only")));
+            continue;
+        }
+
+        let mut body = String::new();
+        if req.as_reader().read_to_string(&mut body).is_err() {
+            let _ = req.respond(json_response(400, err_body("could not read request body")));
+            continue;
+        }
+
+        // Two shapes: `POST /op {op, args}` (the generic one) or `POST /<op> {..args}`.
+        let (op, args) = if path.is_empty() || path == "op" {
+            let v: serde_json::Value =
+                serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let op = v
+                .get("op")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let args = v
+                .get("args")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            (op, args)
+        } else {
+            let args = serde_json::from_str(&body).unwrap_or_else(|_| serde_json::json!({}));
+            (path.clone(), args)
+        };
+
+        if op.is_empty() {
+            let _ = req.respond(json_response(400, err_body("missing op")));
+            continue;
+        }
+
+        match dispatch(&app, &op, args, BRIDGE_TIMEOUT) {
+            Ok(payload) => {
+                let _ = req.respond(json_response(200, payload));
+            }
+            Err(BridgeErr::Timeout) => {
+                let _ = req.respond(json_response(
+                    504,
+                    err_body("frontend did not respond within 20s — is the Chroma window open?"),
+                ));
+            }
+        }
+    }
+}
+
+enum BridgeErr {
+    Timeout,
+}
+
+/// The bridge: emit `chroma://request`, wait for the frontend's
+/// `chroma://response/<id>`, return its raw JSON payload string.
+fn dispatch(
+    app: &tauri::AppHandle,
+    op: &str,
+    args: serde_json::Value,
+    timeout: Duration,
+) -> Result<String, BridgeErr> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = mpsc::channel::<String>();
+
+    let handler_id = app.once(format!("chroma://response/{id}"), move |ev| {
+        let _ = tx.send(ev.payload().to_string());
+    });
+
+    let _ = app.emit(
+        "chroma://request",
+        serde_json::json!({ "id": id, "op": op, "args": args }),
+    );
+
+    match rx.recv_timeout(timeout) {
+        Ok(payload) => Ok(payload),
+        Err(_) => {
+            app.unlisten(handler_id);
+            log::warn!("[chroma::control] op '{op}' timed out waiting for the frontend");
+            Err(BridgeErr::Timeout)
+        }
+    }
+}
+
+fn json_response(status: u16, body: String) -> HttpResponse {
+    let header =
+        Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).expect("static header");
+    Response::from_string(body)
+        .with_status_code(status)
+        .with_header(header)
+}
+
+fn err_body(msg: &str) -> String {
+    serde_json::json!({ "ok": false, "error": msg }).to_string()
+}
