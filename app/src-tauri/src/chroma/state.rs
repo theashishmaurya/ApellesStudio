@@ -251,8 +251,7 @@ mod tests {
 
     fn info() -> VideoInfo {
         VideoInfo {
-            width: 1920,
-            height: 1080,
+            resolution: chroma_types::Resolution::new(1920, 1080),
             fps_num: 24,
             fps_den: 1,
             duration_secs: 10.0,

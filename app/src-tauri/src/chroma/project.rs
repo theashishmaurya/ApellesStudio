@@ -225,8 +225,11 @@ impl ProjectManifest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaVideoInfo {
-    pub width: u32,
-    pub height: u32,
+    /// `chroma_types::Resolution` (D-053) via `#[serde(flatten)]` — same
+    /// `width`/`height` keys `project.json` already persists, zero wire
+    /// change (verified by a round-trip test, see the `project` test module).
+    #[serde(flatten)]
+    pub resolution: chroma_types::Resolution,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
@@ -235,8 +238,7 @@ pub struct MediaVideoInfo {
 impl From<&video::VideoInfo> for MediaVideoInfo {
     fn from(info: &video::VideoInfo) -> Self {
         MediaVideoInfo {
-            width: info.width,
-            height: info.height,
+            resolution: info.resolution,
             fps: info.fps(),
             frame_count: info.frame_count,
             duration_secs: info.duration_secs,
@@ -673,9 +675,9 @@ pub fn infer_settings_from_clip(clip: Option<&str>) -> ProjectSettings {
     let Ok(info) = video::probe(Path::new(path)) else {
         return s;
     };
-    if info.width > 0 && info.height > 0 {
-        s.width = Some(info.width);
-        s.height = Some(info.height);
+    if info.resolution.width > 0 && info.resolution.height > 0 {
+        s.width = Some(info.resolution.width);
+        s.height = Some(info.resolution.height);
     }
     let fps = info.fps();
     if fps > 0.0 && fps.is_finite() {
@@ -1590,8 +1592,8 @@ mod tests {
             .video
             .as_ref()
             .expect("a real clip probes video info");
-        assert_eq!(info.width, 320);
-        assert_eq!(info.height, 240);
+        assert_eq!(info.resolution.width, 320);
+        assert_eq!(info.resolution.height, 240);
         assert_eq!(info.fps, 30.0);
         assert_eq!(added[0].name, clip.file_name().unwrap().to_string_lossy());
 

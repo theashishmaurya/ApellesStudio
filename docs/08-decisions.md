@@ -3437,3 +3437,130 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   independently observed this session. Flagging for the orchestrating session
   to either re-run this one check once disk pressure clears, or accept the
   static verification as sufficient.
+
+## D-053 — `chroma-types` step 2: `Resolution`/`Rational` made real (flatten-migrated, zero wire change), `ChromaError` left alone — most of `app/src-tauri`'s width/height fields are NOT the same concept as the placeholder
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** D-039 migration step 1 (this crate's skeleton commit) left
+  `Resolution`/`Rational`/`ChromaError` as one placeholder each, explicitly
+  flagged "real extraction is a later, per-type, tracked step." This is that
+  step — audit `app/src-tauri/src/chroma/*` for genuine duplicates of
+  resolution/dimensions, frame-rate/rational, colour-space, time-range, and
+  ad-hoc-error types; widen the real types to match what's actually needed;
+  migrate call sites; delete the duplicates. `chroma-timeline`/
+  `chroma-grade-model` explicitly out of scope.
+
+- **Audit result — real find: `width`/`height` pairs, no real find for the
+  rest.** Grepped every `pub struct`/`enum` in `app/src-tauri/src/chroma/*`
+  (`commands.rs`, `export.rs`, `session.rs`, `project.rs`, `video.rs`,
+  `state.rs`, `mask.rs`, `control.rs`, …) for the four target shapes:
+  - **Resolution:** no *dedicated* `Resolution`/`Dimensions` struct existed
+    anywhere — instead, `width: u32, height: u32` sibling-field pairs are
+    scattered across `video::VideoInfo` (the one real probe result — ffprobe
+    output, D-015) and every DTO derived from it (`commands.rs::
+    VideoInfoDto`, `session.rs::ShotDto`, `project.rs::MediaVideoInfo`). All
+    four use the *exact* field names `width`/`height` and are genuinely "the
+    pixel dimensions of this clip/frame" — the same concept as the
+    placeholder, just never factored out.
+  - **Rational:** no struct pairs an fps numerator/denominator anywhere
+    except `video::VideoInfo.fps_num`/`.fps_den` (plain sibling `u32`
+    fields, not extracted into a labelled pair) — and no ad-hoc
+    GCD/`simplify()`/reduction logic exists anywhere in the codebase to
+    bring in. The one real behavioural need found: `export.rs` hand-built
+    an ffmpeg `-r`/`-framerate` arg string with a bare
+    `format!("{}/{}", info.fps_num, info.fps_den)` — exactly `Rational`'s
+    natural `Display` form.
+  - **ColorSpace:** genuinely absent by design, not by omission —
+    `project.rs::ProjectSettings.color_space` is a free `String` and its own
+    doc comment says so explicitly: *"stored and surfaced only... a real
+    colour-managed pipeline... is D-004, not this."* Turning it into an enum
+    now would be inventing a type ahead of the feature that needs it.
+  - **TimeRange:** no struct anywhere in `app/src-tauri/src/chroma/*`
+    represents a start/end time span as a labelled type (ranges are always
+    two loose `u64`/`f64` args, e.g. `from_frame`/`to_frame`). The only real
+    time-range-shaped code lives in `chroma-timeline` (already real per
+    D-041/045/046, explicitly out of scope for this step) — noted below as a
+    candidate for the *next* migration step, not touched here.
+  - **Ad-hoc errors:** `app/src-tauri`'s Tauri commands uniformly return
+    `Result<T, String>` or `anyhow::Result<T>` — the correct convention for
+    that layer (Tauri IPC serializes errors as strings to the frontend;
+    `anyhow` is the app-glue default). This is not a duplicate of
+    `ChromaError` to migrate away, it's a different layer's appropriate
+    convention (D-039's own dependency direction: `chroma-types` is what the
+    *domain* crates below the app speak, not a mandate that the Tauri
+    command surface itself adopt it). The one dedicated error enum found —
+    `control.rs::BridgeErr` — has a single variant, `Timeout`, for one
+    specific HTTP-bridge-dispatch failure; it doesn't map onto `Invalid`/
+    `NotFound`/`Unsupported` without inventing a meaning that isn't there.
+    Left alone.
+
+- **The one case that looked right and wasn't: `ProjectSettings`.** This
+  task's own brief cited "a `Resolution{width,height}` used for the D-038
+  project output spec" as the paradigm same-concept case. On inspection,
+  `project.rs::ProjectSettings.width`/`.height` are `Option<u32>` fields set
+  **independently** — `merge_patch` lets a caller set `fps` without setting
+  `width`/`height`, or set only one of the pair — because they back a
+  partial-JSON-patch API (`chroma_project_set_settings`). `export.rs::
+  ExportOpts.out_width`/`.out_height` (D-049) is the same shape for the same
+  reason (`resolve_export_resolution` explicitly treats a partial pair as
+  absent). Neither is representable as `Option<Resolution>` without either
+  losing the "only one field patched" case or wrapping in something more
+  awkward than the two-`Option<u32>` fields already are — this is exactly
+  the "superficially similar, not the same concept" case the brief warned
+  against forcing. **Left as-is**, not migrated.
+
+- **What was migrated.** `chroma_types::Resolution` widened with a `Display`
+  impl (`"{width}x{height}"`); `chroma_types::Rational` widened with a
+  `Display` impl (`"{num}/{den}"`, the exact ffmpeg-arg form). Both keep
+  their original field names/shapes — `Resolution`'s `width`/`height` were
+  already what every real call site used, so adopting it via
+  `#[serde(flatten)]` is a **zero-wire-change** migration: the JSON a DTO
+  serializes to (Tauri IPC payload or persisted `project.json`, e.g.
+  `project.rs::MediaVideoInfo`) is byte-identical before and after, verified
+  by a round-trip test in `chroma-types/src/lib.rs`
+  (`resolution_flatten_round_trips_with_bare_width_height_json`). Migrated:
+  `video::VideoInfo` (the true source — every other struct below derives
+  from it), `commands.rs::VideoInfoDto`, `session.rs::ShotDto`,
+  `project.rs::MediaVideoInfo` + its `From<&video::VideoInfo>` impl, and
+  every read call site across `commands.rs`, `decode_pipe.rs`, `edit.rs`,
+  `export.rs`, `playback.rs`, `project.rs`, `state.rs` (test fixture) —
+  `info.width`/`.height` → `info.resolution.width`/`.height`. `export.rs`'s
+  ffmpeg fps-string `format!` replaced with `Rational::new(...).to_string()`.
+  `ChromaError` unchanged this step (no real call site for it found in
+  `app/src-tauri`; `chroma-motion`, D-046, remains its only real consumer).
+  `app/src-tauri/Cargo.toml` gained a direct `chroma-types` path dependency
+  (it previously only reached it transitively via `chroma-motion`/
+  `chroma-timeline`).
+
+- **Verification.** `cargo test -p chroma-types`: **4/4** (1 pre-existing +
+  3 new — `resolution_display`, `rational_display_matches_ffmpeg_arg_form`,
+  the flatten round-trip test). `cargo build`: clean across the whole
+  workspace (`Finished dev profile ... in 4m 59s`, zero errors, only the
+  same 6 pre-existing dead-code warnings in `ai_processing.rs` this change
+  didn't touch). `cargo test --manifest-path app/src-tauri/Cargo.toml
+  chroma::`: **107/107 passed**, same count D-051 last recorded — the exact
+  zero-behavior-change signal a pure type-source migration should produce.
+  `tsc --noEmit` in `app/`: **zero TS files touched by this change** (it's
+  Rust-only, and every migrated DTO's JSON shape is unchanged by
+  construction), so zero new errors, trivially. The pre-existing error count
+  itself reads **32** in this fresh worktree (a clean `npm install` here,
+  no prior `node_modules`), not the **64** D-051 last recorded on `main` —
+  none of the 32 touch anything this change modified (`useAppNavigation.ts`,
+  `useEditorActions.ts`, `useImageProcessing.ts`, `useUIStore.ts`,
+  `MasksPanel.tsx`, i18n key typing, `framer-motion` `Variants` typing —
+  all pre-existing, unrelated). Flagging the 32-vs-64 delta honestly rather
+  than silently reconciling it: likely a resolved-dependency-version drift
+  from installing fresh in this worktree vs. whatever `node_modules` state
+  `main` had when D-051 recorded 64, not something this change caused or
+  investigated further (out of scope for a Rust-only crate step). Booted the
+  real app (`npm run tauri:dev`) to catch the "value's shape quietly
+  changed" risk flagged in the brief — confirmed in `CHANGELOG.md`.
+
+- **Follow-up for the next migration step (not touched here):**
+  `chroma-timeline`'s `TimelineError` (`NoSuchTrack`/`NoSuchClip`/`BadIndex`/
+  `EmptyClip`/`SplitOutsideClip`) is a real, domain-specific error enum that
+  the *next* `chroma-types` pass may want to weigh against `ChromaError` —
+  some variants (`NoSuchTrack`, `NoSuchClip`) could plausibly become
+  `ChromaError::NotFound` cases, but `chroma-timeline` is explicitly out of
+  scope for this step (own test suite, already-real crate per D-041/045/046)
+  and wasn't touched.

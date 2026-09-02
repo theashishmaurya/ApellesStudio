@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **`chroma-types` step 2: `Resolution`/`Rational` made real
+  (D-053).** Audited `app/src-tauri/src/chroma/*` for real duplicates of the
+  D-039-step-1 placeholders. Real find: `width`/`height` field pairs on
+  `video::VideoInfo` and its DTOs (`VideoInfoDto`, `ShotDto`,
+  `MediaVideoInfo`) — migrated to `chroma_types::Resolution` via
+  `#[serde(flatten)]`, a verified zero-JSON-wire-change move (round-trip
+  test in `chroma-types`). `Rational` gained a `Display` impl, now used by
+  `export.rs`'s ffmpeg fps-arg string in place of a bare `format!`.
+  **Deliberately not migrated:** `ChromaError` (no real call site in
+  `app/src-tauri` — its Tauri commands correctly use `Result<T, String>`/
+  `anyhow`, a different layer's convention); `ProjectSettings`/`ExportOpts`'s
+  width/height (independently-optional patch/override fields, not the same
+  concept as an atomic `Resolution` — this directly re-examines the task
+  brief's own cited example and found it didn't hold up); `ColorSpace`/
+  `TimeRange` (no real duplicate exists yet). `cargo build`: clean across
+  the workspace. `cargo test -p chroma-types`: 4/4. `cargo test
+  --manifest-path app/src-tauri/Cargo.toml chroma::`: 107/107, unchanged
+  from the D-051 baseline. `tsc --noEmit` in `app/`: zero TS files touched
+  (Rust-only change) → zero new errors; the pre-existing count read 32 in
+  this fresh worktree vs. D-051's recorded 64 on `main` (dependency-version
+  drift from a clean `npm install` here, not this change — see D-053).
+  Booted the real app to confirm no runtime shape drift.
+
 - **2026-09-03** — **Mature Editor timeline UI (D-051): closes the roadmap item.**
   Scoped against `@xzdarcy/react-timeline-editor`'s real API first — edge-drag trim
   and snap-to-clip-edge/playhead turned out to already be fully native (`flexible`/

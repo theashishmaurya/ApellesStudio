@@ -57,7 +57,7 @@ pub async fn chroma_play_frame(
     //    CurrentVideo.frame at `frame` so tracked mattes (D-019) stay in lockstep).
     let source_long_edge = {
         let cv = super::state::current_video();
-        cv.map(|c| c.info.width.max(c.info.height)).unwrap_or(0)
+        cv.map(|c| c.info.resolution.width.max(c.info.resolution.height)).unwrap_or(0)
     };
     let dim = playback_dim(target_resolution, source_long_edge);
     super::commands::seek_and_install(frame, Some(dim), &state).await?;
@@ -170,7 +170,7 @@ mod tests {
             .and_then(|m| serde_json::from_value(m.clone()).ok())
             .unwrap_or_default();
 
-        let scale = crate::chroma::decode_pipe::scale_target(info.width, info.height, long_edge);
+        let scale = crate::chroma::decode_pipe::scale_target(info.resolution.width, info.resolution.height, long_edge);
 
         let ctx = render_core::init_gpu_context().expect("gpu ctx");
         let caches = OwnedRenderCaches::default();
@@ -226,7 +226,7 @@ mod tests {
         let per = total.as_secs_f64() / n_frames as f64;
         eprintln!(
             "\n=== D-031 playback throughput — C019 {}x{} @ {} fps, grade @ {} px long edge, {} frames ===",
-            info.width, info.height, info.fps(), long_edge, n_frames
+            info.resolution.width, info.resolution.height, info.fps(), long_edge, n_frames
         );
         eprintln!(
             "  scaled decode (ffmpeg): {:.2} ms/frame   grade: {:.2} ms/frame",

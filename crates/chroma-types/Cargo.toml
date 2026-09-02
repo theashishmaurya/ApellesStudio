@@ -10,3 +10,6 @@ description = "Chroma L0 — shared value types (Frame/Rational/Resolution/Color
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

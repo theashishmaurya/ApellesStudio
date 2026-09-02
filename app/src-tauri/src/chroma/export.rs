@@ -311,7 +311,7 @@ pub fn export_video(
 ) -> Result<ExportResult, String> {
     let started = Instant::now();
     let info: VideoInfo = video::probe(video_path).map_err(|e| e.to_string())?;
-    let (w, h) = (info.width, info.height);
+    let (w, h) = (info.resolution.width, info.resolution.height);
     if w == 0 || h == 0 {
         return Err("probe returned zero dimensions".into());
     }
@@ -338,8 +338,10 @@ pub fn export_video(
     };
     let fps_str = match opts.fps_override {
         Some(f) if f > 0.0 => format!("{f}"),
+        // D-053: `chroma_types::Rational`'s `Display` is exactly this
+        // `"{num}/{den}"` ffmpeg-arg form — was a bare `format!` before.
         _ if info.fps_den != 0 && info.fps_num != 0 => {
-            format!("{}/{}", info.fps_num, info.fps_den)
+            chroma_types::Rational::new(info.fps_num as i64, info.fps_den as i64).to_string()
         }
         _ => "24".to_string(),
     };
@@ -755,14 +757,14 @@ mod tests {
         };
         let info = video::probe(&vid).expect("probe");
         let (from, to) = (500u64, 503u64);
-        let fb = info.width as usize * info.height as usize * 3;
+        let fb = info.resolution.width as usize * info.resolution.height as usize * 3;
 
         let mut dec = spawn_decoder(&vid, &info, from, to).expect("spawn");
         let mut out = dec.stdout.take().unwrap();
         for n in from..=to {
             let mut buf = vec![0u8; fb];
             out.read_exact(&mut buf).unwrap_or_else(|e| panic!("frame {n}: {e}"));
-            let piped = image::RgbImage::from_raw(info.width, info.height, buf).unwrap();
+            let piped = image::RgbImage::from_raw(info.resolution.width, info.resolution.height, buf).unwrap();
             let one = video::decode_frame(&vid, video::FramePos::Index(n), &info)
                 .expect("decode_frame")
                 .to_rgb8();
@@ -806,10 +808,10 @@ mod tests {
         let _ = std::fs::remove_file(&plain);
         export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default()).expect("plain export");
         let pi = video::probe(&plain).expect("probe plain");
-        assert_eq!((pi.width, pi.height), (info.width, info.height));
+        assert_eq!((pi.resolution.width, pi.resolution.height), (info.resolution.width, info.resolution.height));
 
         // half-res override → encoded file is that resolution
-        let (hw, hh) = (info.width / 2, info.height / 2);
+        let (hw, hh) = (info.resolution.width / 2, info.resolution.height / 2);
         let scaled = std::env::temp_dir().join("chroma_export_res_scaled.mov");
         let _ = std::fs::remove_file(&scaled);
         export_video(
@@ -822,7 +824,7 @@ mod tests {
         )
         .expect("scaled export");
         let si = video::probe(&scaled).expect("probe scaled");
-        assert_eq!((si.width, si.height), (hw, hh));
+        assert_eq!((si.resolution.width, si.resolution.height), (hw, hh));
     }
 
     #[test]

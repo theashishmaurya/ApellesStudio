@@ -25,10 +25,15 @@ use base64::Engine as _;
 use image::DynamicImage;
 
 /// Container/stream facts we need. Colour tags are best-effort (may be empty).
+///
+/// `resolution` is `chroma_types::Resolution` (D-053) via `#[serde(flatten)]`
+/// — same `width`/`height` JSON keys as before this decision, zero wire
+/// change; call sites read `info.resolution.width`/`.height` (or
+/// `info.resolution` whole) instead of the old flat `info.width`/`.height`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct VideoInfo {
-    pub width: u32,
-    pub height: u32,
+    #[serde(flatten)]
+    pub resolution: chroma_types::Resolution,
     /// exact frame rate as a rational (avg_frame_rate)
     pub fps_num: u32,
     pub fps_den: u32,
@@ -168,8 +173,7 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     let (has_audio, audio_sample_rate, audio_channels) = probe_audio_stream(path);
 
     Ok(VideoInfo {
-        width,
-        height,
+        resolution: chroma_types::Resolution::new(width, height),
         fps_num,
         fps_den,
         duration_secs,
@@ -417,11 +421,11 @@ mod tests {
         };
         let path = Path::new(&p);
         let info = probe(path).expect("probe");
-        assert!(info.width > 0 && info.height > 0);
+        assert!(info.resolution.width > 0 && info.resolution.height > 0);
         assert!(info.fps() > 0.0);
         let img = decode_frame(path, FramePos::Secs(1.0), &info).expect("decode");
-        assert_eq!(img.width(), info.width);
-        assert_eq!(img.height(), info.height);
+        assert_eq!(img.width(), info.resolution.width);
+        assert_eq!(img.height(), info.resolution.height);
         // D-049: the has_audio flag and the sample rate / channel count it
         // gates must agree — whichever way CHROMA_TEST_VIDEO's audio stream
         // (or lack of one) happens to go.

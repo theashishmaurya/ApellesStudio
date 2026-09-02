@@ -296,7 +296,7 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     };
 
     let path = PathBuf::from(&clip.source_path);
-    let scale = max_long_edge.and_then(|le| decode_pipe::scale_target(info.width, info.height, le));
+    let scale = max_long_edge.and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
 
     let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
         .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
