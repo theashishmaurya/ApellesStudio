@@ -86,9 +86,7 @@ interface SettingItemProps {
 interface SettingsPanelProps {
   appSettings: any;
   onBack(): void;
-  onLibraryRefresh(): void;
   onSettingsChange(settings: any): Promise<void>;
-  rootPaths: string[];
 }
 
 interface TestStatus {
@@ -360,13 +358,6 @@ const CloudDashboard = () => {
         <div className="flex gap-2">
           <Button
             variant="ghost"
-            className="bg-transparent text-text-secondary hover:text-text-primary hover:bg-surface border-none shadow-none"
-            onClick={() => open('https://www.getrapidraw.com/dashboard')}
-          >
-            {t('settings.processing.ai.cloud.signedIn.manage')} <ExternalLinkIcon size={14} className="ml-1" />
-          </Button>
-          <Button
-            variant="ghost"
             onClick={async () => {
               await signOut();
             }}
@@ -397,9 +388,6 @@ const CloudDashboard = () => {
       ) : (
         <div className="bg-red-900/10 border border-red-500/50 p-4 rounded-md text-center">
           <Text className="mb-3">{t('settings.processing.ai.cloud.signedOut.upgradeDesc')}</Text>
-          <Button onClick={() => open('https://www.getrapidraw.com/cloud')}>
-            {t('settings.processing.ai.cloud.signedOut.upgradeBtn')}
-          </Button>
         </div>
       )}
     </div>
@@ -504,23 +492,11 @@ const PreviewModeSwitch = ({ mode, onModeChange }: PreviewModeSwitchProps) => {
   );
 };
 
-export default function SettingsPanel({
-  appSettings,
-  onBack,
-  onLibraryRefresh,
-  onSettingsChange,
-  rootPaths,
-}: SettingsPanelProps) {
+export default function SettingsPanel({ appSettings, onBack, onSettingsChange }: SettingsPanelProps) {
   const { user: _user } = useUser();
   const { t } = useTranslation();
-  const [isClearing, setIsClearing] = useState(false);
-  const [clearMessage, setClearMessage] = useState('');
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [cacheClearMessage, setCacheClearMessage] = useState('');
-  const [isClearingAiTags, setIsClearingAiTags] = useState(false);
-  const [aiTagsClearMessage, setAiTagsClearMessage] = useState('');
-  const [isClearingTags, setIsClearingTags] = useState(false);
-  const [tagsClearMessage, setTagsClearMessage] = useState('');
   const [confirmModalState, setConfirmModalState] = useState<ConfirmModalState>({
     confirmText: t('settings.data.modals.confirmClear'),
     confirmVariant: 'primary',
@@ -776,30 +752,6 @@ export default function SettingsPanel({
     onSettingsChange({ ...appSettings, myLenses: newLenses });
   };
 
-  const effectiveRootPaths = rootPaths?.length > 0 ? rootPaths : appSettings?.rootFolders || [];
-
-  const executeClearSidecars = async () => {
-    setIsClearing(true);
-    setClearMessage(t('settings.data.statuses.deleting'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAllSidecars, { rootPath: root });
-        totalCount += count;
-      }
-      setClearMessage(t('settings.data.statuses.sidecarSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear sidecars:', err);
-      setClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearing(false);
-        setClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
   const executeResetLayout = async () => {
     setIsResettingLayout(true);
     setLayoutResetMessage(t('settings.data.statuses.resettingLayout'));
@@ -835,83 +787,6 @@ export default function SettingsPanel({
     });
   };
 
-  const handleClearSidecars = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmDeleteAllEdits'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.sidecarMessage'),
-      onConfirm: executeClearSidecars,
-      title: t('settings.data.modals.confirmTitle'),
-    });
-  };
-
-  const executeClearAiTags = async () => {
-    setIsClearingAiTags(true);
-    setAiTagsClearMessage(t('settings.data.statuses.clearingAi'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAiTags, { rootPath: root });
-        totalCount += count;
-      }
-      setAiTagsClearMessage(t('settings.data.statuses.aiSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear AI tags:', err);
-      setAiTagsClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingAiTags(false);
-        setAiTagsClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearAiTags = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearAi'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.aiMessage'),
-      onConfirm: executeClearAiTags,
-      title: t('settings.data.modals.confirmAiTitle'),
-    });
-  };
-
-  const executeClearTags = async () => {
-    setIsClearingTags(true);
-    setTagsClearMessage(t('settings.data.statuses.clearingAll'));
-    try {
-      let totalCount = 0;
-      for (const root of effectiveRootPaths) {
-        const count: number = await invoke(Invokes.ClearAllTags, { rootPath: root });
-        totalCount += count;
-      }
-      setTagsClearMessage(t('settings.data.statuses.allSuccess', { count: totalCount }));
-      onLibraryRefresh();
-    } catch (err: any) {
-      console.error('Failed to clear tags:', err);
-      setTagsClearMessage(`Error: ${err}`);
-    } finally {
-      setTimeout(() => {
-        setIsClearingTags(false);
-        setTagsClearMessage('');
-      }, EXECUTE_TIMEOUT);
-    }
-  };
-
-  const handleClearTags = () => {
-    setConfirmModalState({
-      confirmText: t('settings.data.modals.confirmClearAll'),
-      confirmVariant: 'destructive',
-      isOpen: true,
-      message: t('settings.data.modals.allMessage'),
-      onConfirm: executeClearTags,
-      title: t('settings.data.modals.confirmAllTitle'),
-    });
-  };
-
   const shortcutTagVariants = {
     visible: { opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 500, damping: 30 } },
     exit: { opacity: 0, scale: 0.8, transition: { duration: 0.15 } },
@@ -923,7 +798,6 @@ export default function SettingsPanel({
     try {
       await invoke(Invokes.ClearThumbnailCache);
       setCacheClearMessage(t('settings.data.statuses.cacheSuccess'));
-      onLibraryRefresh();
     } catch (err: any) {
       console.error('Failed to clear thumbnail cache:', err);
       setCacheClearMessage(`Error: ${err}`);
@@ -1189,18 +1063,6 @@ export default function SettingsPanel({
                           )}
                         </AnimatePresence>
                       </div>
-
-                      <SettingItem
-                        label={t('settings.general.folderImageCounts')}
-                        description={t('settings.general.folderImageCountsDesc')}
-                      >
-                        <Switch
-                          checked={appSettings?.enableFolderImageCounts ?? false}
-                          id="folder-image-counts-toggle"
-                          label={t('settings.general.showImageCounts')}
-                          onChange={(checked) => onSettingsChange({ ...appSettings, enableFolderImageCounts: checked })}
-                        />
-                      </SettingItem>
 
                       <SettingItem
                         label={t('settings.general.displayEditIcon')}
@@ -1585,31 +1447,6 @@ export default function SettingsPanel({
                           </div>
                         </div>
                       </SettingItem>
-
-                      <div className="pt-8 border-t border-border-color">
-                        <div className="space-y-8">
-                          <DataActionItem
-                            buttonAction={handleClearAiTags}
-                            buttonText={t('settings.tagging.clearAiTagsButton')}
-                            description={t('settings.tagging.clearAiTagsDesc')}
-                            disabled={effectiveRootPaths.length === 0}
-                            icon={<Trash2 size={16} className="mr-2" />}
-                            isProcessing={isClearingAiTags}
-                            message={aiTagsClearMessage}
-                            title={t('settings.tagging.clearAiTagsTitle')}
-                          />
-                          <DataActionItem
-                            buttonAction={handleClearTags}
-                            buttonText={t('settings.tagging.clearAiTagsButton')}
-                            description={t('settings.tagging.clearAllTagsDesc')}
-                            disabled={effectiveRootPaths.length === 0}
-                            icon={<Trash2 size={16} className="mr-2" />}
-                            isProcessing={isClearingTags}
-                            message={tagsClearMessage}
-                            title={t('settings.tagging.clearAllTagsTitle')}
-                          />
-                        </div>
-                      </div>
                     </div>
                   </div>
 
@@ -2320,28 +2157,6 @@ export default function SettingsPanel({
                       {t('settings.data.title')}
                     </Text>
                     <div className="space-y-8">
-                      <DataActionItem
-                        buttonAction={handleClearSidecars}
-                        buttonText={t('settings.data.clearSidecarsButton')}
-                        description={
-                          <Text as="span" variant={TextVariants.small}>
-                            {t('settings.data.clearSidecarsDesc')}{' '}
-                            <code className="bg-bg-primary px-1 rounded-sm text-text-primary">.rrdata</code> files
-                            (containing your edits) within your root folders:
-                            <span className="block font-mono bg-bg-primary p-2 rounded-sm mt-2 break-all border border-border-color whitespace-pre-wrap">
-                              {effectiveRootPaths.length > 0
-                                ? effectiveRootPaths.join('\n')
-                                : t('settings.data.noFolders')}
-                            </span>
-                          </Text>
-                        }
-                        disabled={effectiveRootPaths.length === 0}
-                        icon={<Trash2 size={16} className="mr-2" />}
-                        isProcessing={isClearing}
-                        message={clearMessage}
-                        title={t('settings.data.clearSidecars')}
-                      />
-
                       <DataActionItem
                         buttonAction={handleResetLayout}
                         buttonText={t('settings.data.resetLayoutButton')}

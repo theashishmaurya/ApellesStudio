@@ -26,10 +26,8 @@ interface EditorViewProps {
   sortedImageList: ImageFile[];
   createResizeHandler: (stateKey: string, startSize: number) => (e: ReactPointerEvent<HTMLDivElement>) => void;
   createResizeResetHandler: (stateKey: string) => () => void;
-  handleBackToLibrary: () => void;
   handleEditorContextMenu: (...args: any) => void;
   handleThumbnailContextMenu: (...args: any) => void;
-  handleMainLibraryContextMenu?: (...args: any) => void;
   handleImageClick: (...args: any) => void;
   handleClearSelection: () => void;
   handleCopyAdjustments: () => void;
@@ -52,10 +50,8 @@ export default function EditorView({
   sortedImageList,
   createResizeHandler,
   createResizeResetHandler,
-  handleBackToLibrary,
   handleEditorContextMenu,
   handleThumbnailContextMenu,
-  handleMainLibraryContextMenu,
   handleImageClick,
   handleClearSelection,
   handleCopyAdjustments,
@@ -99,12 +95,7 @@ export default function EditorView({
   );
 
   const editorNode = (
-    <Editor
-      onBackToLibrary={handleBackToLibrary}
-      onContextMenu={handleEditorContextMenu}
-      onImageSelect={handleImageClick}
-      transformWrapperRef={transformWrapperRef}
-    />
+    <Editor onContextMenu={handleEditorContextMenu} onImageSelect={handleImageClick} transformWrapperRef={transformWrapperRef} />
   );
 
   const editorBottomBarComponent = (
@@ -123,7 +114,6 @@ export default function EditorView({
       multiSelectedPaths={multiSelectedPaths}
       onClearSelection={handleClearSelection}
       onContextMenu={handleThumbnailContextMenu}
-      onEmptyAreaContextMenu={handleMainLibraryContextMenu}
       onCopy={handleCopyAdjustments}
       onOpenCopyPasteSettings={() => setUI({ isCopyPasteSettingsModalOpen: true })}
       onImageSelect={handleImageClick}

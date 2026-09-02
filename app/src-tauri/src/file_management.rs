@@ -375,15 +375,6 @@ fn assign_group_ids(files: &mut [ImageFile], settings: &crate::app_settings::App
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportSettings {
-    pub filename_template: String,
-    pub organize_by_date: bool,
-    pub date_folder_format: String,
-    pub delete_after_import: bool,
-}
-
 pub fn parse_virtual_path(virtual_path: &str) -> (PathBuf, PathBuf) {
     let (source_path_str, copy_id) = if let Some((base, id)) = virtual_path.rsplit_once("?vc=") {
         (base.to_string(), Some(id.to_string()))
@@ -414,54 +405,6 @@ pub fn parse_virtual_path(virtual_path: &str) -> (PathBuf, PathBuf) {
 
     let sidecar_path = source_path.with_file_name(sidecar_filename);
     (source_path, sidecar_path)
-}
-
-#[tauri::command]
-pub async fn read_exif_for_paths(
-    paths: Vec<String>,
-    state: tauri::State<'_, AppState>,
-) -> Result<HashMap<String, HashMap<String, String>>, String> {
-    let is_hdd = state
-        .thumbnail_manager
-        .rotational_disk
-        .load(Ordering::Relaxed);
-
-    tauri::async_runtime::spawn_blocking(move || {
-        let process_path = |virtual_path: &String| {
-            let (source_path, _) = parse_virtual_path(virtual_path);
-            let source_path_str = source_path.to_string_lossy().to_string();
-
-            let map = if let Some(sidecar_exif) =
-                crate::exif_processing::read_rrexif_sidecar(&source_path)
-            {
-                sidecar_exif
-            } else if is_cloud_placeholder(&source_path) {
-                HashMap::new()
-            } else if let Ok(mmap) = read_file_mapped(&source_path) {
-                crate::exif_processing::read_exif_data(&source_path_str, &mmap)
-            } else if let Ok(bytes) = fs::read(&source_path) {
-                crate::exif_processing::read_exif_data(&source_path_str, &bytes)
-            } else {
-                HashMap::new()
-            };
-
-            if map.is_empty() {
-                None
-            } else {
-                Some((virtual_path.clone(), map))
-            }
-        };
-
-        let exif_data: HashMap<String, HashMap<String, String>> = if is_hdd {
-            paths.iter().filter_map(process_path).collect()
-        } else {
-            paths.par_iter().filter_map(process_path).collect()
-        };
-
-        Ok(exif_data)
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("Task failed: {}", e)))
 }
 
 #[tauri::command]
@@ -561,131 +504,12 @@ fn update_rotational_disk_flag(path: &str, app_handle: &AppHandle) {
     }
 }
 
-#[tauri::command]
-pub fn list_images_in_dir(path: String, app_handle: AppHandle) -> Result<Vec<ImageFile>, String> {
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-
-    update_rotational_disk_flag(&path, &app_handle);
-
-    let entries = fs::read_dir(&path).map_err(|e| e.to_string())?;
-    let mut images = Vec::new();
-    let mut sidecars_by_filename: HashMap<String, Vec<Option<String>>> = HashMap::new();
-
-    for entry in entries.filter_map(Result::ok) {
-        let entry_path = entry.path();
-        let file_name = entry
-            .file_name()
-            .into_string()
-            .unwrap_or_else(|os| os.to_string_lossy().into_owned());
-
-        if file_name.ends_with(".rrdata") {
-            let base = &file_name[..file_name.len() - 7];
-
-            let (source_filename, copy_id) =
-                if base.len() >= 7 && base.as_bytes()[base.len() - 7] == b'.' {
-                    let id = &base[base.len() - 6..];
-                    if id.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
-                        (&base[..base.len() - 7], Some(id.to_string()))
-                    } else {
-                        (base, None)
-                    }
-                } else {
-                    (base, None)
-                };
-
-            sidecars_by_filename
-                .entry(source_filename.to_string())
-                .or_default()
-                .push(copy_id);
-        } else if is_supported_image_file(&file_name) {
-            images.push((file_name, entry_path));
-        }
-    }
-
-    let tasks: Vec<_> = images
-        .into_iter()
-        .map(|(file_name, path_buf)| {
-            let sidecars = sidecars_by_filename
-                .remove(&file_name)
-                .unwrap_or_else(|| vec![None]);
-            let path_str = path_buf.to_string_lossy().into_owned();
-            (path_str, file_name, path_buf, sidecars)
-        })
-        .collect();
-
-    let mut result_list: Vec<ImageFile> = tasks
-        .into_par_iter()
-        .flat_map(|(path_str, file_name, path_buf, sidecars)| {
-            let modified = fs::metadata(&path_buf)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-
-            let is_cloud_placeholder = is_cloud_placeholder(&path_buf);
-
-            let mut file_results = Vec::with_capacity(sidecars.len());
-
-            for copy_id_opt in sidecars {
-                let (virtual_path, is_virtual_copy, sidecar_filename) = match copy_id_opt {
-                    Some(id) => (
-                        format!("{}?vc={}", path_str, id),
-                        true,
-                        format!("{}.{}.rrdata", file_name, id),
-                    ),
-                    None => (path_str.clone(), false, format!("{}.rrdata", file_name)),
-                };
-
-                let sidecar_path = path_buf.with_file_name(sidecar_filename);
-
-                let xmp_is_placeholder = enable_xmp_sync
-                    && resolve_xmp_path(&path_buf)
-                        .is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
-
-                let metadata = if crate::file_management::is_cloud_placeholder(&sidecar_path)
-                    || xmp_is_placeholder
-                {
-                    enqueue_metadata(
-                        &app_handle,
-                        virtual_path.clone(),
-                        path_buf.clone(),
-                        sidecar_path.clone(),
-                    );
-                    ImageFileMetadata {
-                        is_edited: false,
-                        tags: None,
-                        rating: 0,
-                        is_raw: crate::formats::is_raw_file(&path_buf),
-                    }
-                } else {
-                    resolve_image_metadata(&path_buf, &sidecar_path, enable_xmp_sync, &settings)
-                };
-
-                file_results.push(ImageFile {
-                    path: virtual_path,
-                    modified,
-                    is_edited: metadata.is_edited,
-                    tags: metadata.tags,
-                    exif: None,
-                    is_virtual_copy,
-                    is_raw: metadata.is_raw,
-                    group_id: None,
-                    rating: metadata.rating,
-                    is_cloud_placeholder,
-                });
-            }
-
-            file_results
-        })
-        .collect();
-
-    assign_group_ids(&mut result_list, &settings);
-    Ok(result_list)
-}
-
-#[tauri::command]
+// D-043: no longer a `#[tauri::command]` — this was the DAM's recursive folder
+// listing, reachable from the frontend only through the removed FolderTree /
+// `list_images_recursive` invoke (see docs/notes/colorist-strip.md §6). Kept as a
+// plain internal fn: `run_headless_export` (export_processing.rs) still calls it
+// directly, in-process, to enumerate a directory source for headless/MCP export —
+// unrelated to the DAM UI.
 pub fn list_images_recursive(
     path: String,
     app_handle: AppHandle,
@@ -816,544 +640,6 @@ pub fn list_images_recursive(
 
     assign_group_ids(&mut result_list, &settings);
     Ok(result_list)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum AlbumItem {
-    Album {
-        id: String,
-        name: String,
-        icon: Option<String>,
-        images: Vec<String>,
-    },
-    Group {
-        id: String,
-        name: String,
-        icon: Option<String>,
-        children: Vec<AlbumItem>,
-    },
-}
-
-fn get_albums_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let albums_dir = data_dir.join("albums");
-    if !albums_dir.exists() {
-        fs::create_dir_all(&albums_dir).map_err(|e| e.to_string())?;
-    }
-    Ok(albums_dir.join("albums.json"))
-}
-
-pub fn sort_album_tree(items: &mut [AlbumItem]) {
-    items.sort_by(|a, b| {
-        let get_sort_key = |item: &AlbumItem| match item {
-            AlbumItem::Group { name, .. } => (0, name.to_lowercase()),
-            AlbumItem::Album { name, .. } => (1, name.to_lowercase()),
-        };
-
-        let key_a = get_sort_key(a);
-        let key_b = get_sort_key(b);
-
-        key_a.cmp(&key_b)
-    });
-
-    for item in items.iter_mut() {
-        if let AlbumItem::Group { children, .. } = item {
-            sort_album_tree(children);
-        }
-    }
-}
-
-#[tauri::command]
-pub fn get_albums(app_handle: AppHandle) -> Result<Vec<AlbumItem>, String> {
-    let path = get_albums_path(&app_handle)?;
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut items: Vec<AlbumItem> = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    sort_album_tree(&mut items);
-    Ok(items)
-}
-
-#[tauri::command]
-pub fn save_albums(mut tree: Vec<AlbumItem>, app_handle: AppHandle) -> Result<(), String> {
-    let path = get_albums_path(&app_handle)?;
-    sort_album_tree(&mut tree);
-    let json_string = serde_json::to_string_pretty(&tree).map_err(|e| e.to_string())?;
-    fs::write(path, json_string).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn add_to_album(
-    album_id: String,
-    paths: Vec<String>,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    let mut tree = get_albums(app_handle.clone())?;
-
-    fn add_recursive(items: &mut [AlbumItem], target_id: &str, paths_to_add: &Vec<String>) -> bool {
-        for item in items.iter_mut() {
-            #[allow(clippy::collapsible_match)]
-            match item {
-                AlbumItem::Album { id, images, .. } if id == target_id => {
-                    for p in paths_to_add {
-                        if !images.contains(p) {
-                            images.push(p.clone());
-                        }
-                    }
-                    return true;
-                }
-                AlbumItem::Group { children, .. } => {
-                    if add_recursive(children, target_id, paths_to_add) {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
-    }
-
-    if add_recursive(&mut tree, &album_id, &paths) {
-        save_albums(tree, app_handle)?;
-    }
-    Ok(())
-}
-
-fn sync_album_path_changes(
-    app_handle: &AppHandle,
-    renames: Option<&HashMap<String, String>>,
-    deletions: Option<&HashSet<String>>,
-    folder_rename: Option<(&str, &str)>,
-) {
-    if let Ok(mut tree) = get_albums(app_handle.clone()) {
-        let mut changed = false;
-
-        fn process_nodes(
-            nodes: &mut [AlbumItem],
-            renames: Option<&HashMap<String, String>>,
-            deletions: Option<&HashSet<String>>,
-            folder_rename: Option<(&str, &str)>,
-            changed: &mut bool,
-        ) {
-            for node in nodes.iter_mut() {
-                match node {
-                    AlbumItem::Album { images, .. } => {
-                        let mut new_images = Vec::new();
-
-                        for img in images.drain(..) {
-                            let mut current_img = img;
-
-                            if let Some((old_folder, new_folder)) = folder_rename {
-                                let img_path = Path::new(&current_img);
-                                let old_path = Path::new(old_folder);
-                                if let Ok(stripped) = img_path.strip_prefix(old_path) {
-                                    let new_img_path = Path::new(new_folder).join(stripped);
-                                    current_img = new_img_path.to_string_lossy().into_owned();
-                                    *changed = true;
-                                }
-                            }
-
-                            if let Some(r) = renames {
-                                if let Some(new_path) = r.get(&current_img) {
-                                    current_img = new_path.clone();
-                                    *changed = true;
-                                } else if let Some((base_path, vc_id)) =
-                                    current_img.rsplit_once("?vc=")
-                                    && let Some(new_base) = r.get(base_path)
-                                {
-                                    current_img = format!("{}?vc={}", new_base, vc_id);
-                                    *changed = true;
-                                }
-                            }
-
-                            let mut is_deleted = false;
-                            if let Some(d) = deletions {
-                                if d.contains(&current_img) {
-                                    is_deleted = true;
-                                } else {
-                                    let img_path = Path::new(&current_img);
-                                    for del_path_str in d {
-                                        let del_path = Path::new(del_path_str);
-                                        if img_path.starts_with(del_path) {
-                                            is_deleted = true;
-                                            break;
-                                        }
-
-                                        if let Some((base_path, _)) =
-                                            current_img.rsplit_once("?vc=")
-                                            && base_path == del_path_str
-                                        {
-                                            is_deleted = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if !is_deleted {
-                                new_images.push(current_img);
-                            } else {
-                                *changed = true;
-                            }
-                        }
-                        *images = new_images;
-                    }
-                    AlbumItem::Group { children, .. } => {
-                        process_nodes(children, renames, deletions, folder_rename, changed);
-                    }
-                }
-            }
-        }
-
-        process_nodes(&mut tree, renames, deletions, folder_rename, &mut changed);
-
-        if changed {
-            let _ = save_albums(tree, app_handle.clone());
-        }
-    }
-}
-
-#[tauri::command]
-pub fn get_album_images(
-    paths: Vec<String>,
-    app_handle: AppHandle,
-) -> Result<Vec<ImageFile>, String> {
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-
-    let mut result_list: Vec<ImageFile> = paths
-        .into_par_iter()
-        .filter_map(|virtual_path| {
-            let (source_path, sidecar_path) = parse_virtual_path(&virtual_path);
-            if !source_path.exists() {
-                return None;
-            }
-
-            let modified = fs::metadata(&source_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-
-            let is_virtual_copy = virtual_path.contains("?vc=");
-            let is_cloud_placeholder = is_cloud_placeholder(&source_path);
-
-            let xmp_is_placeholder = enable_xmp_sync
-                && resolve_xmp_path(&source_path)
-                    .is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
-
-            let metadata = if crate::file_management::is_cloud_placeholder(&sidecar_path)
-                || xmp_is_placeholder
-            {
-                enqueue_metadata(
-                    &app_handle,
-                    virtual_path.clone(),
-                    source_path.clone(),
-                    sidecar_path.clone(),
-                );
-                ImageFileMetadata {
-                    is_edited: false,
-                    tags: None,
-                    rating: 0,
-                    is_raw: crate::formats::is_raw_file(&source_path),
-                }
-            } else {
-                resolve_image_metadata(&source_path, &sidecar_path, enable_xmp_sync, &settings)
-            };
-
-            Some(ImageFile {
-                path: virtual_path.clone(),
-                modified,
-                is_edited: metadata.is_edited,
-                tags: metadata.tags,
-                exif: None,
-                is_virtual_copy,
-                is_raw: metadata.is_raw,
-                group_id: None,
-                rating: metadata.rating,
-                is_cloud_placeholder,
-            })
-        })
-        .collect();
-
-    assign_group_ids(&mut result_list, &settings);
-    Ok(result_list)
-}
-
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct FolderNode {
-    pub name: String,
-    pub path: String,
-    pub children: Vec<FolderNode>,
-    pub is_dir: bool,
-    pub image_count: usize,
-    pub has_subdirs: bool,
-    pub modified: u64,
-    pub created: u64,
-}
-
-fn has_subdirs(path: &Path) -> bool {
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.filter_map(Result::ok) {
-            if let Ok(file_type) = entry.file_type()
-                && file_type.is_dir()
-            {
-                let name = entry.file_name();
-                if !name.to_string_lossy().starts_with('.') {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn scan_dir_lazy(
-    path: &Path,
-    expanded_folders: &HashSet<&str>,
-    show_image_counts: bool,
-    prefetch_one_level: bool,
-) -> Result<(Vec<FolderNode>, usize), std::io::Error> {
-    let mut children_folders = Vec::new();
-    let mut current_dir_image_count = 0;
-
-    let entries = match std::fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            log::warn!("Could not scan directory '{}': {}", path.display(), e);
-            return Ok((Vec::new(), 0));
-        }
-    };
-
-    for entry in entries.filter_map(Result::ok) {
-        let current_path = entry.path();
-        let (file_type, modified, created) = match entry.metadata() {
-            Ok(meta) => {
-                let ft = meta.file_type();
-                let mod_time = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                let cre_time = meta.created().unwrap_or(mod_time);
-
-                (
-                    ft,
-                    mod_time
-                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    cre_time
-                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                )
-            }
-            Err(_) => continue,
-        };
-
-        let file_name = entry.file_name();
-        let name_str = file_name.to_string_lossy();
-
-        if name_str.starts_with('.') {
-            continue;
-        }
-
-        if file_type.is_dir() {
-            let path_str = current_path.to_string_lossy().into_owned();
-            let is_expanded = expanded_folders.contains(path_str.as_str());
-
-            let should_scan = is_expanded || prefetch_one_level;
-            let next_prefetch = is_expanded;
-
-            let (grand_children, sub_dir_own_images) = if should_scan {
-                scan_dir_lazy(
-                    &current_path,
-                    expanded_folders,
-                    show_image_counts,
-                    next_prefetch,
-                )?
-            } else {
-                let count = if show_image_counts {
-                    WalkDir::new(&current_path)
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|e| {
-                            e.file_type().is_file()
-                                && crate::formats::is_supported_image_file(e.path())
-                        })
-                        .count()
-                } else {
-                    0
-                };
-                (Vec::new(), count)
-            };
-
-            let has_any_subdirs = if should_scan {
-                grand_children.iter().any(|c| c.is_dir)
-            } else {
-                has_subdirs(&current_path)
-            };
-
-            let grand_children_sum: usize = grand_children.iter().map(|c| c.image_count).sum();
-            let total_child_count = sub_dir_own_images + grand_children_sum;
-
-            children_folders.push(FolderNode {
-                name: name_str.into_owned(),
-                path: path_str,
-                children: grand_children,
-                is_dir: true,
-                image_count: total_child_count,
-                has_subdirs: has_any_subdirs,
-                modified,
-                created,
-            });
-        } else if show_image_counts
-            && file_type.is_file()
-            && crate::formats::is_supported_image_file(&current_path)
-        {
-            current_dir_image_count += 1;
-        }
-    }
-
-    children_folders.sort_by_key(|a| a.name.to_lowercase());
-
-    Ok((children_folders, current_dir_image_count))
-}
-
-fn get_folder_tree_sync(
-    path: String,
-    expanded_folders: Vec<String>,
-    show_image_counts: bool,
-) -> Result<FolderNode, String> {
-    let root_path = Path::new(&path);
-    if !root_path.is_dir() {
-        return Err(format!("Directory does not exist: {}", path));
-    }
-
-    let (modified, created) = root_path
-        .metadata()
-        .map(|m| {
-            let mod_time = m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let cre_time = m.created().unwrap_or(mod_time);
-            (
-                mod_time
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-                cre_time
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            )
-        })
-        .unwrap_or((0, 0));
-
-    let expanded_set: HashSet<&str> = expanded_folders.iter().map(|s| s.as_str()).collect();
-
-    let (children, own_count) = scan_dir_lazy(root_path, &expanded_set, show_image_counts, true)
-        .map_err(|e| e.to_string())?;
-
-    let children_sum: usize = children.iter().map(|c| c.image_count).sum();
-    let has_subdirs = children.iter().any(|c| c.is_dir);
-
-    let name = match root_path.file_name() {
-        Some(n) => n.to_string_lossy().into_owned(),
-        None => {
-            let trimmed = path.trim_end_matches(&['/', '\\'][..]);
-            if trimmed.is_empty() {
-                path.clone()
-            } else {
-                trimmed.to_string()
-            }
-        }
-    };
-
-    Ok(FolderNode {
-        name,
-        path: path.clone(),
-        children,
-        is_dir: true,
-        image_count: own_count + children_sum,
-        has_subdirs,
-        modified,
-        created,
-    })
-}
-
-#[tauri::command]
-pub async fn get_folder_children(
-    path: String,
-    show_image_counts: bool,
-) -> Result<Vec<FolderNode>, String> {
-    match tauri::async_runtime::spawn_blocking(move || {
-        let root_path = Path::new(&path);
-        if !root_path.is_dir() {
-            return Err(format!("Directory does not exist: {}", path));
-        }
-        let empty_set = HashSet::new();
-        let (children, _) = scan_dir_lazy(root_path, &empty_set, show_image_counts, false)
-            .map_err(|e| e.to_string())?;
-
-        Ok(children)
-    })
-    .await
-    {
-        Ok(Ok(children)) => Ok(children),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(format!("Task failed: {}", e)),
-    }
-}
-
-#[tauri::command]
-pub async fn get_folder_tree(
-    path: String,
-    expanded_folders: Vec<String>,
-    show_image_counts: bool,
-) -> Result<FolderNode, String> {
-    match tauri::async_runtime::spawn_blocking(move || {
-        get_folder_tree_sync(path, expanded_folders, show_image_counts)
-    })
-    .await
-    {
-        Ok(Ok(folder_node)) => Ok(folder_node),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(format!("Failed to execute folder tree task: {}", e)),
-    }
-}
-
-#[tauri::command]
-pub async fn get_pinned_folder_trees(
-    paths: Vec<String>,
-    expanded_folders: Vec<String>,
-    show_image_counts: bool,
-) -> Result<Vec<FolderNode>, String> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let results: Vec<Result<FolderNode, String>> = paths
-            .par_iter()
-            .map(|path| {
-                get_folder_tree_sync(path.clone(), expanded_folders.clone(), show_image_counts)
-            })
-            .collect();
-
-        let mut folder_nodes = Vec::new();
-        for result in results {
-            match result {
-                Ok(node) => folder_nodes.push(node),
-                Err(e) => log::warn!("Failed to get tree for pinned folder: {}", e),
-            }
-        }
-        folder_nodes
-    })
-    .await;
-
-    match result {
-        Ok(nodes) => Ok(nodes),
-        Err(e) => Err(format!("Task failed: {}", e)),
-    }
 }
 
 /// Checks if the given path exists and is an iCloud placeholder file on macOS.
@@ -1895,6 +1181,14 @@ pub fn start_thumbnail_workers(app_handle: tauri::AppHandle) {
 
                 let current_settings = load_settings(app_clone.clone()).unwrap_or_default();
 
+                // D-043: `rotational_disk` used to be set once per folder listing
+                // (list_images_in_dir / list_images_recursive, removed with FolderTree —
+                // that was its only setter, so without this line the flag would never
+                // update again and thumbnailing would silently stop adapting to HDDs).
+                // Re-detect per thumbnail path here instead — self-contained, and more
+                // accurate than the old once-per-folder assumption anyway.
+                update_rotational_disk_flag(&path_to_process, &app_clone);
+
                 if let Ok(cache_dir) = get_thumb_cache_dir(&app_clone) {
                     if manager_clone.rotational_disk.load(Ordering::Relaxed) {
                         let _io_permit = manager_clone.io_gate.lock().unwrap();
@@ -2174,82 +1468,7 @@ pub fn get_supported_file_types() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn create_folder(path: String) -> Result<(), String> {
-    let path_obj = Path::new(&path);
-    if let (Some(parent), Some(new_folder_name_os)) = (path_obj.parent(), path_obj.file_name())
-        && let Some(new_folder_name) = new_folder_name_os.to_str()
-        && parent.exists()
-    {
-        for entry in fs::read_dir(parent).map_err(|e| e.to_string())? {
-            if let Ok(entry) = entry
-                && entry.file_name().to_string_lossy().to_lowercase()
-                    == new_folder_name.to_lowercase()
-            {
-                return Err("A folder with that name already exists.".to_string());
-            }
-        }
-    }
-    fs::create_dir_all(&path).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn rename_folder(path: String, new_name: String, app_handle: AppHandle) -> Result<(), String> {
-    let p = Path::new(&path);
-    if !p.is_dir() {
-        return Err("Path is not a directory.".to_string());
-    }
-    if let Some(parent) = p.parent() {
-        for entry in fs::read_dir(parent).map_err(|e| e.to_string())? {
-            if let Ok(entry) = entry
-                && entry.file_name().to_string_lossy().to_lowercase() == new_name.to_lowercase()
-                && entry.path() != p
-            {
-                return Err("A folder with that name already exists.".to_string());
-            }
-        }
-        let new_path = parent.join(&new_name);
-        fs::rename(p, &new_path).map_err(|e| e.to_string())?;
-
-        let new_folder_str = new_path.to_string_lossy().into_owned();
-        sync_album_path_changes(&app_handle, None, None, Some((&path, &new_folder_str)));
-
-        Ok(())
-    } else {
-        Err("Could not determine parent directory.".to_string())
-    }
-}
-
-#[tauri::command]
-pub fn delete_folder(path: String, app_handle: AppHandle) -> Result<(), String> {
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    {
-        if let Err(trash_error) = trash::delete(&path) {
-            log::warn!(
-                "Failed to move folder to trash: {}. Falling back to permanent delete.",
-                trash_error
-            );
-            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
-        }
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
-    }
-
-    let mut deletions = HashSet::new();
-    deletions.insert(path);
-    sync_album_path_changes(&app_handle, None, Some(&deletions), None);
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn duplicate_file(
-    path: String,
-    target_album_id: Option<String>,
-    app_handle: AppHandle,
-) -> Result<String, String> {
+pub fn duplicate_file(path: String) -> Result<String, String> {
     let (source_path, source_sidecar_path) = parse_virtual_path(&path);
     if !source_path.is_file() {
         return Err("Source path is not a file.".to_string());
@@ -2304,10 +1523,6 @@ pub fn duplicate_file(
 
     let dest_path_str = dest_path.to_string_lossy().into_owned();
 
-    if let Some(album_id) = target_album_id {
-        let _ = add_to_album(album_id, vec![dest_path_str.clone()], app_handle);
-    }
-
     Ok(dest_path_str)
 }
 
@@ -2356,161 +1571,6 @@ fn find_all_associated_files(source_image_path: &Path) -> Result<Vec<PathBuf>, S
     }
 
     Ok(associated_files)
-}
-
-#[tauri::command]
-pub fn copy_files(source_paths: Vec<String>, destination_folder: String) -> Result<(), String> {
-    let dest_path = Path::new(&destination_folder);
-    if !dest_path.is_dir() {
-        return Err(format!(
-            "Destination is not a folder: {}",
-            destination_folder
-        ));
-    }
-
-    let unique_source_images: HashSet<PathBuf> = source_paths
-        .iter()
-        .map(|p| parse_virtual_path(p).0)
-        .collect();
-
-    let mut operations_to_perform = Vec::new();
-
-    for source_image_path in &unique_source_images {
-        let all_files_to_copy = find_all_associated_files(source_image_path)?;
-
-        let source_parent = source_image_path
-            .parent()
-            .ok_or("Could not get parent directory")?;
-
-        if source_parent == dest_path {
-            let stem = source_image_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or("Could not get file stem")?;
-            let extension = source_image_path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-
-            let mut counter = 1;
-            let new_base_path = loop {
-                let new_stem = format!("{}_copy_{}", stem, counter);
-                let temp_path = source_parent.join(format!("{}.{}", new_stem, extension));
-                if !temp_path.exists() {
-                    break temp_path;
-                }
-                counter += 1;
-            };
-            let new_filename = new_base_path.file_name().unwrap().to_string_lossy();
-
-            for original_file in all_files_to_copy {
-                let original_full_filename = original_file.file_name().unwrap().to_string_lossy();
-                let source_base_filename = source_image_path.file_name().unwrap().to_string_lossy();
-                let new_dest_filename =
-                    original_full_filename.replacen(&*source_base_filename, &new_filename, 1);
-
-                let final_dest_path = dest_path.join(new_dest_filename);
-                operations_to_perform.push((original_file, final_dest_path));
-            }
-        } else {
-            for file_to_copy in all_files_to_copy {
-                if let Some(file_name) = file_to_copy.file_name() {
-                    let dest_file_path = dest_path.join(file_name);
-
-                    if dest_file_path.exists() {
-                        return Err(format!(
-                            "Copy aborted: File already exists at destination: {}",
-                            dest_file_path.display()
-                        ));
-                    }
-
-                    operations_to_perform.push((file_to_copy, dest_file_path));
-                }
-            }
-        }
-    }
-
-    for (source, dest) in operations_to_perform {
-        fs::copy(&source, &dest)
-            .map_err(|e| format!("Copy failed for {}: {}", source.display(), e))?;
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn move_files(
-    source_paths: Vec<String>,
-    destination_folder: String,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    let dest_path = Path::new(&destination_folder);
-    if !dest_path.is_dir() {
-        return Err(format!(
-            "Destination is not a folder: {}",
-            destination_folder
-        ));
-    }
-
-    let unique_source_images: HashSet<PathBuf> = source_paths
-        .iter()
-        .map(|p| parse_virtual_path(p).0)
-        .collect();
-
-    let mut operations_to_perform = Vec::new();
-    let mut renames = HashMap::new();
-
-    for source_image_path in &unique_source_images {
-        let source_parent = source_image_path
-            .parent()
-            .ok_or("Could not get parent directory")?;
-
-        if source_parent == dest_path {
-            return Err("Cannot move files into the same folder they are already in.".to_string());
-        }
-
-        let all_files_to_move = find_all_associated_files(source_image_path)?;
-
-        for file_to_move in &all_files_to_move {
-            if let Some(file_name) = file_to_move.file_name() {
-                let dest_file_path = dest_path.join(file_name);
-
-                if dest_file_path.exists() {
-                    return Err(format!(
-                        "Move aborted: File already exists at destination: {}",
-                        dest_file_path.display()
-                    ));
-                }
-
-                operations_to_perform.push((file_to_move.clone(), dest_file_path));
-            }
-        }
-
-        let dest_image_path = dest_path.join(source_image_path.file_name().unwrap());
-        renames.insert(
-            source_image_path.to_string_lossy().into_owned(),
-            dest_image_path.to_string_lossy().into_owned(),
-        );
-    }
-
-    for (source, dest) in operations_to_perform {
-        if fs::rename(&source, &dest).is_err() {
-            fs::copy(&source, &dest)
-                .map_err(|e| format!("Move failed during copy for {}: {}", source.display(), e))?;
-
-            if let Err(e) = fs::remove_file(&source) {
-                log::warn!(
-                    "Moved file successfully, but failed to delete original {}: {}",
-                    source.display(),
-                    e
-                );
-            }
-        }
-    }
-
-    sync_album_path_changes(&app_handle, Some(&renames), None, None);
-
-    Ok(())
 }
 
 #[tauri::command]
@@ -3027,33 +2087,6 @@ pub fn save_presets(presets: Vec<PresetItem>, app_handle: AppHandle) -> Result<(
     fs::write(path, json_string).map_err(|e| e.to_string())
 }
 
-fn get_internal_library_root_path(app_handle: &AppHandle) -> Result<std::path::PathBuf, String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let library_dir = app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("library");
-
-        if !library_dir.exists() {
-            fs::create_dir_all(&library_dir).map_err(|e| e.to_string())?;
-        }
-        Ok(library_dir)
-    }
-    #[cfg(target_os = "android")]
-    {
-        crate::android_integration::get_android_internal_library_root()
-    }
-}
-
-#[tauri::command]
-pub fn get_or_create_internal_library_root(app_handle: AppHandle) -> Result<String, String> {
-    let library_root = get_internal_library_root_path(&app_handle)?;
-
-    Ok(library_root.to_string_lossy().to_string())
-}
-
 fn preset_file_display_name(file_path: &str) -> String {
     Path::new(file_path)
         .file_name()
@@ -3219,61 +2252,6 @@ pub fn handle_export_presets_to_file(
 }
 
 #[tauri::command]
-pub fn save_community_preset(
-    name: String,
-    adjustments: Value,
-    app_handle: AppHandle,
-    include_masks: Option<bool>,
-    include_crop_transform: Option<bool>,
-    preset_type: Option<String>,
-) -> Result<(), String> {
-    let mut current_presets = load_presets(app_handle.clone())?;
-
-    let community_folder_name = "Community";
-    let community_folder_id = match current_presets.iter_mut().find(|item| {
-        if let PresetItem::Folder(f) = item {
-            f.name == community_folder_name
-        } else {
-            false
-        }
-    }) {
-        Some(PresetItem::Folder(folder)) => folder.id.clone(),
-        _ => {
-            let new_folder_id = Uuid::new_v4().to_string();
-            let new_folder = PresetItem::Folder(PresetFolder {
-                id: new_folder_id.clone(),
-                name: community_folder_name.to_string(),
-                children: Vec::new(),
-            });
-            current_presets.insert(0, new_folder);
-            new_folder_id
-        }
-    };
-
-    let new_preset = Preset {
-        id: Uuid::new_v4().to_string(),
-        name,
-        adjustments,
-        include_masks,
-        include_crop_transform,
-        preset_type: preset_type.or(Some("style".to_string())),
-    };
-
-    if let Some(PresetItem::Folder(folder)) = current_presets.iter_mut().find(|item| {
-        if let PresetItem::Folder(f) = item {
-            f.id == community_folder_id
-        } else {
-            false
-        }
-    }) {
-        folder.children.retain(|p| p.name != new_preset.name);
-        folder.children.push(new_preset);
-    }
-
-    save_presets(current_presets, app_handle)
-}
-
-#[tauri::command]
 pub fn clear_all_sidecars(root_path: String) -> Result<usize, String> {
     if !Path::new(&root_path).exists() {
         return Err(format!("Root path does not exist: {}", root_path));
@@ -3366,13 +2344,11 @@ pub fn show_in_finder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn delete_files_from_disk(paths: Vec<String>, app_handle: AppHandle) -> Result<(), String> {
+pub fn delete_files_from_disk(paths: Vec<String>) -> Result<(), String> {
     let mut files_to_trash = HashSet::new();
-    let mut deletions = HashSet::new();
 
     for path_str in paths {
         let (source_path, sidecar_path) = parse_virtual_path(&path_str);
-        deletions.insert(path_str.clone());
 
         if path_str.contains("?vc=") {
             if sidecar_path.exists() {
@@ -3436,8 +2412,6 @@ pub fn delete_files_from_disk(paths: Vec<String>, app_handle: AppHandle) -> Resu
         }
     }
 
-    sync_album_path_changes(&app_handle, None, Some(&deletions), None);
-
     Ok(())
 }
 
@@ -3467,20 +2441,15 @@ fn deletion_stem_for(filename: &str) -> Option<&str> {
 }
 
 #[tauri::command]
-pub fn delete_files_with_associated(
-    paths: Vec<String>,
-    app_handle: AppHandle,
-) -> Result<(), String> {
+pub fn delete_files_with_associated(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
 
     let mut stems_to_delete = HashSet::new();
     let mut parent_dirs = HashSet::new();
-    let mut deletions = HashSet::new();
 
     for path_str in &paths {
-        deletions.insert(path_str.clone());
         let (source_path, _) = parse_virtual_path(path_str);
         if let Some(stem) = source_path.file_stem().and_then(|s| s.to_str()) {
             stems_to_delete.insert(stem.to_string());
@@ -3546,8 +2515,6 @@ pub fn delete_files_with_associated(
         }
     }
 
-    sync_album_path_changes(&app_handle, None, Some(&deletions), None);
-
     Ok(())
 }
 
@@ -3561,261 +2528,6 @@ pub fn get_thumb_cache_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
         fs::create_dir_all(&thumb_cache_dir).map_err(|e| e.to_string())?;
     }
     Ok(thumb_cache_dir)
-}
-
-pub fn get_cache_key_hash(path_str: &str) -> Option<String> {
-    let (_, sidecar_path) = parse_virtual_path(path_str);
-
-    let adjustments_bytes = if let Ok(content) = fs::read_to_string(&sidecar_path) {
-        if let Ok(meta) = serde_json::from_str::<ImageMetadata>(&content) {
-            serde_json::to_vec(&meta.adjustments).unwrap_or_default()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    compute_thumbnail_cache_hash(path_str, &adjustments_bytes)
-}
-
-pub fn get_cached_or_generate_thumbnail_image(
-    path_str: &str,
-    app_handle: &AppHandle,
-    gpu_context: Option<&GpuContext>,
-) -> Result<DynamicImage> {
-    let thumb_cache_dir = get_thumb_cache_dir(app_handle).map_err(|e| anyhow::anyhow!(e))?;
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let target_width_small = settings.small_thumbnail_resolution.unwrap_or(480);
-    let target_width_medium = settings.medium_thumbnail_resolution.unwrap_or(1280);
-
-    if let Some(cache_hash) = get_cache_key_hash(path_str) {
-        let cache_path = thumb_cache_dir.join(format!("{}_medium.jpg", cache_hash));
-
-        if cache_path.exists() {
-            if let Ok(image) = image::open(&cache_path) {
-                return Ok(image);
-            }
-            eprintln!(
-                "Could not open cached thumbnail, regenerating: {:?}",
-                cache_path
-            );
-        }
-
-        let thumb_image = generate_thumbnail_data(path_str, gpu_context, None, app_handle)?;
-        if let (Ok(small_data), Ok(medium_data)) = (
-            encode_thumbnail(&thumb_image, target_width_small),
-            encode_thumbnail(&thumb_image, target_width_medium),
-        ) {
-            let _ = fs::write(
-                thumb_cache_dir.join(format!("{}_small.jpg", cache_hash)),
-                &small_data,
-            );
-            let _ = fs::write(
-                thumb_cache_dir.join(format!("{}_medium.jpg", cache_hash)),
-                &medium_data,
-            );
-        }
-
-        Ok(thumb_image)
-    } else {
-        generate_thumbnail_data(path_str, gpu_context, None, app_handle)
-    }
-}
-
-#[tauri::command]
-pub async fn import_files(
-    source_paths: Vec<String>,
-    destination_folder: String,
-    settings: ImportSettings,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    let total_files = source_paths.len();
-    let _ = app_handle.emit("import-start", serde_json::json!({ "total": total_files }));
-
-    tauri::async_runtime::spawn_blocking(move || {
-        for (i, source_path_str) in source_paths.iter().enumerate() {
-            let _ = app_handle.emit(
-                "import-progress",
-                serde_json::json!({ "current": i, "total": total_files, "path": source_path_str }),
-            );
-
-            let import_result: Result<(), String> = (|| {
-                #[cfg(target_os = "android")]
-                if is_android_content_uri(source_path_str) {
-                    let resolved_name = resolve_android_content_uri_name(source_path_str)?;
-                    let source_bytes = read_android_content_uri(source_path_str)?;
-                    let source_name_path = Path::new(&resolved_name);
-                    let file_date = exif_processing::get_creation_date_from_bytes(
-                        &resolved_name,
-                        &source_bytes,
-                    );
-
-                    let mut final_dest_folder = PathBuf::from(&destination_folder);
-                    if settings.organize_by_date {
-                        let date_format_str = settings
-                            .date_folder_format
-                            .replace("YYYY", "%Y")
-                            .replace("MM", "%m")
-                            .replace("DD", "%d");
-                        let subfolder = file_date.format(&date_format_str).to_string();
-                        final_dest_folder.push(subfolder);
-                    }
-
-                    fs::create_dir_all(&final_dest_folder)
-                        .map_err(|e| format!("Failed to create destination folder: {}", e))?;
-
-                    let new_stem = generate_filename_from_template(
-                        &settings.filename_template,
-                        source_name_path,
-                        i + 1,
-                        total_files,
-                        &file_date,
-                    );
-                    let extension = source_name_path
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-                    let new_filename = format!("{}.{}", new_stem, extension);
-                    let dest_file_path = final_dest_folder.join(new_filename);
-
-                    if dest_file_path.exists() {
-                        return Err(format!(
-                            "File already exists at destination: {}",
-                            dest_file_path.display()
-                        ));
-                    }
-
-                    fs::write(&dest_file_path, source_bytes).map_err(|e| e.to_string())?;
-
-                    if settings.delete_after_import {
-                        log::info!(
-                            "Skipping delete_after_import for Android content URI source: {}",
-                            source_path_str
-                        );
-                    }
-
-                    return Ok(());
-                }
-
-                let (source_path, source_sidecar) = parse_virtual_path(source_path_str);
-                if !source_path.exists() {
-                    return Err(format!("Source file not found: {}", source_path_str));
-                }
-
-                let file_date = exif_processing::get_creation_date_from_path(&source_path);
-
-                let mut final_dest_folder = PathBuf::from(&destination_folder);
-                if settings.organize_by_date {
-                    let date_format_str = settings
-                        .date_folder_format
-                        .replace("YYYY", "%Y")
-                        .replace("MM", "%m")
-                        .replace("DD", "%d");
-                    let subfolder = file_date.format(&date_format_str).to_string();
-                    final_dest_folder.push(subfolder);
-                }
-
-                fs::create_dir_all(&final_dest_folder)
-                    .map_err(|e| format!("Failed to create destination folder: {}", e))?;
-
-                let new_stem = generate_filename_from_template(
-                    &settings.filename_template,
-                    &source_path,
-                    i + 1,
-                    total_files,
-                    &file_date,
-                );
-                let extension = source_path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
-                let new_filename = format!("{}.{}", new_stem, extension);
-                let dest_file_path = final_dest_folder.join(new_filename);
-
-                if dest_file_path.exists() {
-                    return Err(format!(
-                        "File already exists at destination: {}",
-                        dest_file_path.display()
-                    ));
-                }
-
-                fs::copy(&source_path, &dest_file_path).map_err(|e| e.to_string())?;
-                if source_sidecar.exists()
-                    && let Some(dest_str) = dest_file_path.to_str()
-                {
-                    let (_, dest_sidecar) = parse_virtual_path(dest_str);
-                    fs::copy(&source_sidecar, &dest_sidecar).map_err(|e| e.to_string())?;
-                }
-
-                let mut source_rrexif_name = source_path.file_name().unwrap().to_os_string();
-                source_rrexif_name.push(".rrexif");
-                let source_rrexif = source_path.with_file_name(source_rrexif_name);
-
-                if source_rrexif.exists() {
-                    let mut dest_rrexif_name = dest_file_path.file_name().unwrap().to_os_string();
-                    dest_rrexif_name.push(".rrexif");
-                    let dest_rrexif = dest_file_path.with_file_name(dest_rrexif_name);
-                    let _ = fs::copy(&source_rrexif, &dest_rrexif);
-                }
-
-                if settings.delete_after_import {
-                    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-                    {
-                        if let Err(trash_error) = trash::delete(&source_path) {
-                            log::warn!(
-                                "Failed to trash source file {}: {}. Deleting permanently.",
-                                source_path.display(),
-                                trash_error
-                            );
-                            fs::remove_file(&source_path).map_err(|e| e.to_string())?;
-                        }
-                        if source_sidecar.exists()
-                            && let Err(trash_error) = trash::delete(&source_sidecar)
-                        {
-                            log::warn!(
-                                "Failed to trash source sidecar {}: {}. Deleting permanently.",
-                                source_sidecar.display(),
-                                trash_error
-                            );
-                            fs::remove_file(&source_sidecar).map_err(|e| e.to_string())?;
-                        }
-                    }
-
-                    #[cfg(not(any(
-                        target_os = "windows",
-                        target_os = "macos",
-                        target_os = "linux"
-                    )))]
-                    {
-                        fs::remove_file(&source_path).map_err(|e| e.to_string())?;
-                        if source_sidecar.exists() {
-                            fs::remove_file(&source_sidecar).map_err(|e| e.to_string())?;
-                        }
-                        if source_rrexif.exists() {
-                            let _ = fs::remove_file(&source_rrexif);
-                        }
-                    }
-                }
-
-                Ok(())
-            })();
-
-            if let Err(e) = import_result {
-                eprintln!("Failed to import {}: {}", source_path_str, e);
-                let _ = app_handle.emit("import-error", e);
-                continue;
-            }
-        }
-
-        let _ = app_handle.emit(
-            "import-progress",
-            serde_json::json!({ "current": total_files, "total": total_files, "path": "" }),
-        );
-        let _ = app_handle.emit("import-complete", ());
-    });
-
-    Ok(())
 }
 
 pub fn generate_filename_from_template(
@@ -3849,18 +2561,13 @@ pub fn generate_filename_from_template(
 }
 
 #[tauri::command]
-pub fn rename_files(
-    paths: Vec<String>,
-    name_template: String,
-    app_handle: AppHandle,
-) -> Result<Vec<String>, String> {
+pub fn rename_files(paths: Vec<String>, name_template: String) -> Result<Vec<String>, String> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
 
     let mut operations: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut final_new_paths = Vec::with_capacity(paths.len());
-    let mut renames = HashMap::new();
 
     for (i, path_str) in paths.iter().enumerate() {
         let (original_path, _) = parse_virtual_path(path_str);
@@ -3953,27 +2660,18 @@ pub fn rename_files(
             continue;
         }
 
-        let old_str = old_path.to_string_lossy().into_owned();
         let new_str = new_path.to_string_lossy().into_owned();
-
-        renames.insert(old_str, new_str.clone());
 
         if is_supported_image_file(&new_path) {
             final_new_paths.push(new_str);
         }
     }
 
-    sync_album_path_changes(&app_handle, Some(&renames), None, None);
-
     Ok(final_new_paths)
 }
 
 #[tauri::command]
-pub fn create_virtual_copy(
-    source_virtual_path: String,
-    target_album_id: Option<String>,
-    app_handle: AppHandle,
-) -> Result<String, String> {
+pub fn create_virtual_copy(source_virtual_path: String) -> Result<String, String> {
     let (source_path, source_sidecar_path) = parse_virtual_path(&source_virtual_path);
 
     let new_copy_id = Uuid::new_v4().to_string()[..6].to_string();
@@ -3988,10 +2686,6 @@ pub fn create_virtual_copy(
         let json_string =
             serde_json::to_string_pretty(&default_metadata).map_err(|e| e.to_string())?;
         fs::write(new_sidecar_path, json_string).map_err(|e| e.to_string())?;
-    }
-
-    if let Some(album_id) = target_album_id {
-        let _ = add_to_album(album_id, vec![new_virtual_path.clone()], app_handle);
     }
 
     Ok(new_virtual_path)
@@ -4124,7 +2818,7 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
             return;
         }
         let skeleton = r#"<?xml version="1.0" encoding="UTF-8"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="RapidRAW">
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Chroma">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""
     xmlns:xmp="http://ns.adobe.com/xap/1.0/"

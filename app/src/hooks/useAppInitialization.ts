@@ -8,26 +8,20 @@ import { useEditorStore } from '../store/useEditorStore';
 import { useProcessStore } from '../store/useProcessStore';
 import { THEMES, DEFAULT_THEME_ID, ThemeProps } from '../utils/themes';
 import { COPYABLE_ADJUSTMENT_KEYS } from '../utils/adjustments';
-import {
-  FilterCriteria,
-  Invokes,
-  LibraryViewMode,
-  RawStatus,
-  EditedStatus,
-  Theme,
-  ThumbnailSize,
-  ThumbnailAspectRatio,
-} from '../components/ui/AppProperties';
+import { FilterCriteria, Invokes, RawStatus, EditedStatus, Theme, ThumbnailSize, ThumbnailAspectRatio } from '../components/ui/AppProperties';
 import { useTranslation } from 'react-i18next';
 
+// D-043: this used to also restore RapidRAW's folder-tree state on launch —
+// pinned/root folder trees (`GetPinnedFolderTrees`), `libraryViewMode`, the
+// preloaded-folder-contents optimization for "Continue Session", and
+// `lastFolderState` persistence. All removed with FolderTree/LibraryView (see
+// docs/notes/colorist-strip.md §6). App settings (theme, workspace, thumbnails,
+// sort/filter, language) still load and persist exactly as before.
 interface UseAppInitializationProps {
-  preloadedDataRef: React.RefObject<any>;
   thumbnailSize: ThumbnailSize;
   setThumbnailSize: (size: ThumbnailSize) => void;
   thumbnailAspectRatio: ThumbnailAspectRatio;
   setThumbnailAspectRatio: (ratio: ThumbnailAspectRatio) => void;
-  libraryViewMode: LibraryViewMode;
-  setLibraryViewMode: (mode: LibraryViewMode) => void;
 }
 
 const getDefaultLanguage = (i18nInstance: any): string => {
@@ -47,13 +41,10 @@ const getDefaultLanguage = (i18nInstance: any): string => {
 };
 
 export const useAppInitialization = ({
-  preloadedDataRef,
   thumbnailSize,
   setThumbnailSize,
   thumbnailAspectRatio,
   setThumbnailAspectRatio,
-  libraryViewMode,
-  setLibraryViewMode,
 }: UseAppInitializationProps) => {
   const isInitialMount = useRef(true);
   const { i18n } = useTranslation();
@@ -99,27 +90,12 @@ export const useAppInitialization = ({
     })),
   );
 
-  const {
-    sortCriteria,
-    filterCriteria,
-    currentFolderPath,
-    expandedFolders,
-    activeAlbumId,
-    expandedAlbumGroups,
-    setSortCriteria,
-    setFilterCriteria,
-    setLibrary,
-  } = useLibraryStore(
+  const { sortCriteria, filterCriteria, setSortCriteria, setFilterCriteria } = useLibraryStore(
     useShallow((state) => ({
       sortCriteria: state.sortCriteria,
       filterCriteria: state.filterCriteria,
-      currentFolderPath: state.currentFolderPath,
-      expandedFolders: state.expandedFolders,
-      activeAlbumId: state.activeAlbumId,
-      expandedAlbumGroups: state.expandedAlbumGroups,
       setSortCriteria: state.setSortCriteria,
       setFilterCriteria: state.setFilterCriteria,
-      setLibrary: state.setLibrary,
     })),
   );
 
@@ -131,8 +107,6 @@ export const useAppInitialization = ({
 
   const isAndroid = osPlatform === 'android';
   const defaultThumbnailSize = isAndroid ? ThumbnailSize.Small : ThumbnailSize.Medium;
-  const defaultLibraryViewMode = isAndroid ? LibraryViewMode.Recursive : LibraryViewMode.Flat;
-  const prevImageCountsNeed = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
     initPlatform();
@@ -206,55 +180,8 @@ export const useAppInitialization = ({
         if (settings?.activeWaveformChannel) setEditor({ activeWaveformChannel: settings.activeWaveformChannel });
         if (typeof settings?.waveformHeight === 'number') setEditor({ waveformHeight: settings.waveformHeight });
 
-        setLibraryViewMode(settings?.libraryViewMode ?? defaultLibraryViewMode);
         setThumbnailSize(settings?.thumbnailSize ?? defaultThumbnailSize);
         if (settings?.thumbnailAspectRatio) setThumbnailAspectRatio(settings.thumbnailAspectRatio);
-
-        if (settings?.pinnedFolders && settings.pinnedFolders.length > 0) {
-          try {
-            const trees = await invoke(Invokes.GetPinnedFolderTrees, {
-              paths: settings.pinnedFolders,
-              expandedFolders: settings.lastFolderState?.expandedFolders || [],
-              showImageCounts: settings.enableFolderImageCounts || settings.folderTreeSort?.key === 'imageCount',
-            });
-            setLibrary({ pinnedFolderTrees: trees });
-          } catch (err) {
-            console.error('Failed to load pinned folder trees:', err);
-          }
-        }
-
-        const rootFolders = settings.rootFolders?.length
-          ? settings.rootFolders
-          : settings.lastRootPath
-            ? [settings.lastRootPath]
-            : [];
-
-        if (!isAndroid && rootFolders.length > 0) {
-          const currentPath = settings.lastFolderState?.currentFolderPath || rootFolders[0];
-          const isAlbum = currentPath.startsWith('Album: ');
-          const command =
-            settings.libraryViewMode === LibraryViewMode.Recursive
-              ? Invokes.ListImagesRecursive
-              : Invokes.ListImagesInDir;
-
-          preloadedDataRef.current = {
-            rootPaths: rootFolders,
-            currentPath: currentPath,
-            trees: invoke(Invokes.GetPinnedFolderTrees, {
-              paths: rootFolders,
-              expandedFolders: settings.lastFolderState?.expandedFolders ?? rootFolders,
-              showImageCounts: settings.enableFolderImageCounts || settings.folderTreeSort?.key === 'imageCount',
-            }),
-            images: isAlbum ? undefined : invoke(command, { path: currentPath }),
-          };
-        }
-
-        if (settings?.lastFolderState) {
-          setLibrary({
-            expandedFolders: new Set(settings.lastFolderState.expandedFolders || []),
-            expandedAlbumGroups: new Set(settings.lastFolderState.expandedAlbumGroups || []),
-          });
-        }
 
         invoke('frontend_ready')
           .then((launch: any) => {
@@ -272,25 +199,19 @@ export const useAppInitialization = ({
           lastRootPath: null,
           theme: DEFAULT_THEME_ID as Theme,
           thumbnailSize: defaultThumbnailSize,
-          libraryViewMode: defaultLibraryViewMode,
         });
       })
       .finally(() => {
         isInitialMount.current = false;
       });
   }, [
-    isAndroid,
     setAppSettings,
     setTheme,
     setUI,
-    defaultLibraryViewMode,
     defaultThumbnailSize,
     setSortCriteria,
     setFilterCriteria,
     setEditor,
-    setLibrary,
-    preloadedDataRef,
-    setLibraryViewMode,
     setThumbnailSize,
     setThumbnailAspectRatio,
   ]);
@@ -333,13 +254,6 @@ export const useAppInitialization = ({
 
   useEffect(() => {
     if (isInitialMount.current || !appSettings) return;
-    if (appSettings.libraryViewMode !== libraryViewMode) {
-      handleSettingsChange({ ...appSettings, libraryViewMode });
-    }
-  }, [libraryViewMode, appSettings, handleSettingsChange]);
-
-  useEffect(() => {
-    if (isInitialMount.current || !appSettings) return;
     if (JSON.stringify(appSettings.sortCriteria) !== JSON.stringify(sortCriteria)) {
       handleSettingsChange({ ...appSettings, sortCriteria });
     }
@@ -358,106 +272,6 @@ export const useAppInitialization = ({
       i18n.changeLanguage(appSettings.language);
     }
   }, [appSettings?.language, i18n.language]);
-
-  useEffect(() => {
-    if (isInitialMount.current || !appSettings) return;
-    if (!currentFolderPath && !activeAlbumId) return;
-
-    const currentExpanded = Array.from(expandedFolders);
-    const currentExpandedAlbums = Array.from(expandedAlbumGroups);
-
-    const prevFolderState = appSettings.lastFolderState || {
-      currentFolderPath: null,
-      expandedFolders: [],
-      activeAlbumId: null,
-      expandedAlbumGroups: [],
-    };
-
-    const pathChanged = prevFolderState.currentFolderPath !== currentFolderPath;
-    const expandedChanged = JSON.stringify(prevFolderState.expandedFolders || []) !== JSON.stringify(currentExpanded);
-    const albumChanged = prevFolderState.activeAlbumId !== activeAlbumId;
-    const albumExpandedChanged =
-      JSON.stringify(prevFolderState.expandedAlbumGroups || []) !== JSON.stringify(currentExpandedAlbums);
-
-    if (pathChanged || expandedChanged || albumChanged || albumExpandedChanged) {
-      handleSettingsChange({
-        ...appSettings,
-        lastFolderState: {
-          currentFolderPath,
-          expandedFolders: currentExpanded,
-          activeAlbumId,
-          expandedAlbumGroups: currentExpandedAlbums,
-        },
-      });
-    }
-  }, [currentFolderPath, expandedFolders, activeAlbumId, expandedAlbumGroups, appSettings, handleSettingsChange]);
-
-  useEffect(() => {
-    if (!appSettings) return;
-
-    const needsImageCounts = Boolean(
-      appSettings.enableFolderImageCounts || appSettings.folderTreeSort?.key === 'imageCount',
-    );
-
-    if (prevImageCountsNeed.current === undefined) {
-      prevImageCountsNeed.current = needsImageCounts;
-      return;
-    }
-
-    if (prevImageCountsNeed.current !== needsImageCounts) {
-      prevImageCountsNeed.current = needsImageCounts;
-
-      const rootFolders = appSettings.rootFolders?.length
-        ? appSettings.rootFolders
-        : appSettings.lastRootPath
-          ? [appSettings.lastRootPath]
-          : [];
-      const pinnedFolders = appSettings.pinnedFolders || [];
-
-      const currentExpanded = Array.from(useLibraryStore.getState().expandedFolders);
-
-      setLibrary({ isTreeLoading: true });
-
-      const promises = [];
-
-      if (pinnedFolders.length > 0) {
-        promises.push(
-          invoke(Invokes.GetPinnedFolderTrees, {
-            paths: pinnedFolders,
-            expandedFolders: currentExpanded,
-            showImageCounts: needsImageCounts,
-          }).then((trees: any) => ({ type: 'pinned', trees })),
-        );
-      }
-
-      if (rootFolders.length > 0) {
-        promises.push(
-          invoke(Invokes.GetPinnedFolderTrees, {
-            paths: rootFolders,
-            expandedFolders: currentExpanded,
-            showImageCounts: needsImageCounts,
-          }).then((trees: any) => ({ type: 'root', trees })),
-        );
-      }
-
-      Promise.all(promises)
-        .then((results) => {
-          useLibraryStore.getState().setLibrary((_state) => {
-            const updates: any = { isTreeLoading: false };
-            results.forEach((res) => {
-              if (res.type === 'pinned') updates.pinnedFolderTrees = res.trees;
-              if (res.type === 'root') updates.folderTrees = res.trees;
-            });
-            return updates;
-          });
-        })
-        .catch((err) => {
-          console.error('Failed to re-fetch trees for image counts:', err);
-          setLibrary({ isTreeLoading: false });
-        });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appSettings?.enableFolderImageCounts, appSettings?.folderTreeSort?.key]);
 
   useEffect(() => {
     const root = document.documentElement;

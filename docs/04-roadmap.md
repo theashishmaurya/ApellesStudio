@@ -60,19 +60,18 @@ commit.
   toolbar migrated. RapidRAW's domain components (ColorWheel / LUT / DepthRangePicker /
   grading sliders) stay in `app/`. Deferred: typography unification, Colorist panel
   migration (`Dropdown` → `Select`/`DropdownMenu`).
-- [ ] **D-043 — Colorist tab = grading editor only; strip RapidRAW's DAM/welcome/library
-  shell** (owner directive 2026-09-02). RapidRAW's photo-manager shell still leaks
-  through the Colorist tab: the "Welcome back / Continue Session / Add Folder" home
-  screen (`MainLibrary.tsx`), the "Sources" folder-tree + "Library" photo grid
-  (`LibraryView.tsx` + `panel/library/*`), albums, culling, the web "Community" presets
-  page, a "Home" button, and RapidRAW branding (name / version 1.6.2 / "Images by Timon
-  Käch" / Ko-Fi + GitHub links) — "a separate app inside our app." **Proper analysis
-  first** → `docs/notes/colorist-strip.md` (every `activeView` branch, every entry into
-  the DAM views, every branding string, every Rust command only the library uses), then
-  remove it: Colorist renders only the editor; `useUIStore.activeView` collapses; media
-  comes from the shared pool / a file picker, not the folder tree; Rust library commands
-  removed. Overrides D-003 for the shell layer (the grading engine stays). **Next after
-  `@chroma/ui` — heavy `App.tsx` overlap.**
+- [x] **D-043 — Colorist tab = grading editor only; strip RapidRAW's DAM/welcome/library
+  shell** (owner directive 2026-09-02, **built 2026-09-02**). RapidRAW's photo-manager
+  shell no longer leaks through the Colorist tab: the "Welcome back / Continue Session /
+  Add Folder" home screen (`MainLibrary.tsx`), the "Sources" folder-tree + "Library"
+  photo grid (`LibraryView.tsx` + `panel/library/*` + `FolderTree.tsx`), albums, culling,
+  the web "Community" presets page, the "Home" button, and RapidRAW branding are all
+  deleted — Colorist renders only the editor, with a `ColoristEmptyState` when no shot is
+  selected. Full removal list, LOC delta, and the two analysis misses (found + resolved
+  during the surgery): `docs/09-engine-notes.md` D-043 entry, `docs/08-decisions.md`
+  D-043 "Built" section. Overrides D-003 for the shell layer (the grading engine stays
+  untouched). Media pool + global Sources panel (below) is the real replacement, still
+  queued.
 - [ ] **`@chroma/player` — one shared preview component for all 3 tabs** (requested
   2026-09-02, Palmier-viewer-style). A **presentational** package: a canvas viewport +
   a title strip (`‹ ›` nav, name, `…` menu) + a transport bar — timecode

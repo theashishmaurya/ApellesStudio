@@ -1867,3 +1867,29 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   Rust side: RapidRAW commands that only served the library (`get_folder_tree`,
   album CRUD, culling, community fetch…) get removed too — analysis names them.
 - **Order:** right after `@chroma/ui` (D-042). Heavy `app/src/App.tsx` overlap, so serial.
+- **Built (2026-09-02).** Full detail: `docs/09-engine-notes.md` D-043 entry.
+  Frontend deleted: `LibraryView.tsx`, `MainLibrary.tsx`, `panel/library/`
+  (`CullingView`/`LibraryGrid`/`LibraryHeader`/`LibraryItems`), `CommunityPage.tsx`,
+  `FolderTree.tsx` (the "Sources" panel — taken in this same pass per the
+  analysis's recommendation, since the owner named it directly and it unlocks
+  Tier-2 Rust), `CullingModal.tsx`, `ImportSettingsModal.tsx` (orphaned).
+  `useUIStore.activeView` deleted outright (collapsed to its one value).
+  `App.tsx` / `useAppNavigation.ts` / `useKeyboardShortcuts.ts` /
+  `useAppContextMenus.ts` / `useLibraryActions.ts` / `useFileOperations.ts` /
+  `useAppInitialization.ts` / `useTauriListeners.ts` gutted to what still
+  operates on the actively-edited image, independent of any library-folder
+  concept. Rust: Tier 1 (album/community) + Tier 2 (folder-tree/import/culling)
+  removed, `tagging_utils/` module deleted, plus two newly-orphaned functions
+  the analysis's Tier lists got wrong in each direction — `add_tag_for_paths`/
+  `remove_tag_for_paths` kept (still reachable via the editor's tagging
+  context-menu), `read_exif_for_paths` removed (its only real caller was gone).
+  `export_processing::run_headless_export`'s direct in-process call to
+  `list_images_recursive` (not a frontend `invoke`, missed by the initial
+  audit) — kept that one function as a plain internal fn, unregistered from
+  `generate_handler!`. `TetheringPanel` capture rewired to a local one-off
+  folder picker instead of the removed library folder. Branding: all 13
+  i18n locales, `tauri.conf.json`, exported-file EXIF `Software` tag +
+  skeleton-XMP `x:xmptk` (ship in real output, not just UI chrome).
+  **Net: 51 files, +363/−7823 LOC** (`app/src` + `app/src-tauri/src`) + 13
+  locale-file edits. `cargo build`/`cargo test chroma::` (54/54)/`tsc`
+  (74→64)/`vite build` all green.

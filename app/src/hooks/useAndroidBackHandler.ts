@@ -14,36 +14,12 @@ export function useAndroidBackHandler() {
         ui.setUI((state: any) => ({ confirmModalState: { ...state.confirmModalState, isOpen: false } }));
         return;
       }
-      if (ui.isCreateFolderModalOpen) {
-        ui.setUI({ isCreateFolderModalOpen: false });
-        return;
-      }
-      if (ui.isRenameFolderModalOpen) {
-        ui.setUI({ isRenameFolderModalOpen: false });
-        return;
-      }
       if (ui.isRenameFileModalOpen) {
         ui.setUI({ isRenameFileModalOpen: false });
         return;
       }
-      if (ui.isImportModalOpen) {
-        ui.setUI({ isImportModalOpen: false });
-        return;
-      }
       if (ui.isCopyPasteSettingsModalOpen) {
         ui.setUI({ isCopyPasteSettingsModalOpen: false });
-        return;
-      }
-      if (ui.isCreateAlbumModalOpen) {
-        ui.setUI({ isCreateAlbumModalOpen: false });
-        return;
-      }
-      if (ui.isCreateAlbumGroupModalOpen) {
-        ui.setUI({ isCreateAlbumGroupModalOpen: false });
-        return;
-      }
-      if (ui.isRenameAlbumModalOpen) {
-        ui.setUI({ isRenameAlbumModalOpen: false });
         return;
       }
       if (ui.panoramaModalState.isOpen) {
@@ -78,12 +54,6 @@ export function useAndroidBackHandler() {
       }
       if (ui.denoiseModalState.isOpen) {
         ui.setUI((state: any) => ({ denoiseModalState: { ...state.denoiseModalState, isOpen: false } }));
-        return;
-      }
-      if (ui.cullingModalState.isOpen) {
-        ui.setUI({
-          cullingModalState: { isOpen: false, progress: null, suggestions: null, error: null, pathsToCull: [] },
-        });
         return;
       }
       if (ui.collageModalState.isOpen) {

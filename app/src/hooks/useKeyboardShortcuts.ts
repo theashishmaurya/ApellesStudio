@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { ImageFile, Panel, ExifOverlay } from '../components/ui/AppProperties';
+import { ImageFile, Panel } from '../components/ui/AppProperties';
 import { KEYBIND_DEFINITIONS, normalizeCombo } from '../utils/keyboardUtils';
 import { useEditorStore } from '../store/useEditorStore';
 import { useLibraryStore } from '../store/useLibraryStore';
@@ -12,22 +12,16 @@ import { useLibraryActions } from './useLibraryActions';
 
 interface KeyboardShortcutsProps {
   sortedImageList: Array<ImageFile>;
-  handleBackToLibrary(): void;
   handleDeleteSelected(): void;
-  handleGoHome(): void;
   handleImageSelect(path: string, openInEditor?: boolean): void;
-  handlePasteFiles(str: string): void;
   handleToggleFullScreen(): void;
   handleZoomChange(zoomValue: number, fitToWindow?: boolean): void;
 }
 
 export const useKeyboardShortcuts = ({
   sortedImageList,
-  handleBackToLibrary,
   handleDeleteSelected,
-  handleGoHome,
   handleImageSelect,
-  handlePasteFiles,
   handleToggleFullScreen,
   handleZoomChange,
 }: KeyboardShortcutsProps) => {
@@ -88,13 +82,6 @@ export const useKeyboardShortcuts = ({
     };
 
     const actions: Record<string, any> = {
-      open_image: {
-        shouldFire: (s: any) => s.ui.activeView === 'library' && s.library.libraryActivePath !== null,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          handleImageSelect(s.library.libraryActivePath!, true);
-        },
-      },
       copy_adjustments: {
         shouldFire: () => true,
         execute: (e: any) => {
@@ -123,23 +110,11 @@ export const useKeyboardShortcuts = ({
           s.process.setProcess({ copiedFilePaths: s.library.multiSelectedPaths });
         },
       },
-      paste_files: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handlePasteFiles('copy');
-        },
-      },
       select_all: {
         shouldFire: () => sortedListRef.current.length > 0,
         execute: (e: any, s: any) => {
           e.preventDefault();
           s.library.setLibrary({ multiSelectedPaths: sortedListRef.current.map((f: ImageFile) => f.path) });
-          if (s.ui.activeView === 'library') {
-            const lastPath = sortedListRef.current[sortedListRef.current.length - 1].path;
-            s.library.setLibrary({ libraryActivePath: lastPath });
-            handleImageSelect(lastPath, false);
-          }
         },
       },
       delete_selected: {
@@ -150,7 +125,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       preview_prev: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const currentIndex = sortedListRef.current.findIndex((img) => img.path === s.editor.selectedImage!.path);
@@ -160,7 +135,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       preview_next: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const currentIndex = sortedListRef.current.findIndex((img) => img.path === s.editor.selectedImage!.path);
@@ -170,7 +145,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       zoom_in_step: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -182,7 +157,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       zoom_out_step: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -194,7 +169,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       cycle_zoom: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -225,7 +200,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       zoom_in: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -237,7 +212,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       zoom_out: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -249,14 +224,14 @@ export const useKeyboardShortcuts = ({
         },
       },
       zoom_fit: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any) => {
           e.preventDefault();
           handleZoomChange(0, true);
         },
       },
       zoom_100: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any) => {
           e.preventDefault();
           handleZoomChange(1.0);
@@ -277,7 +252,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       undo: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage && s.editor.historyIndex > 0,
+        shouldFire: (s: any) => !!s.editor.selectedImage && s.editor.historyIndex > 0,
         execute: (e: any, s: any) => {
           e.preventDefault();
           s.editor.undo();
@@ -285,9 +260,7 @@ export const useKeyboardShortcuts = ({
       },
       redo: {
         shouldFire: (s: any) =>
-          s.ui.activeView === 'editor' &&
-          !!s.editor.selectedImage &&
-          s.editor.historyIndex < s.editor.history.length - 1,
+          !!s.editor.selectedImage && s.editor.historyIndex < s.editor.history.length - 1,
         execute: (e: any, s: any) => {
           e.preventDefault();
           s.editor.redo();
@@ -301,7 +274,7 @@ export const useKeyboardShortcuts = ({
         },
       },
       show_original: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any) => {
           e.preventDefault();
           toggleShowOriginal();
@@ -349,13 +322,6 @@ export const useKeyboardShortcuts = ({
           s.ui.setPanel(Panel.Metadata);
         },
       },
-      toggle_folder_tree: {
-        shouldFire: () => true,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.ui.setPanel(Panel.FolderTree);
-        },
-      },
       toggle_analytics: {
         shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
@@ -398,25 +364,12 @@ export const useKeyboardShortcuts = ({
         },
       },
       toggle_bottom_panel: {
-        shouldFire: (s: any) => s.ui.activeView !== 'library',
+        shouldFire: () => true,
         execute: (e: any, s: any) => {
           e.preventDefault();
           s.ui.setUI((state: any) => ({
             uiVisibility: { ...state.uiVisibility, filmstrip: !state.uiVisibility.filmstrip },
           }));
-        },
-      },
-      toggle_library_exif: {
-        shouldFire: (s: any) => s.ui.activeView === 'library',
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          const current = s.settings.appSettings?.exifOverlay || ExifOverlay.Off;
-          const nextState = {
-            [ExifOverlay.Off]: ExifOverlay.Hover,
-            [ExifOverlay.Hover]: ExifOverlay.Always,
-            [ExifOverlay.Always]: ExifOverlay.Off,
-          }[current as ExifOverlay];
-          s.settings.handleSettingsChange({ ...s.settings.appSettings, exifOverlay: nextState });
         },
       },
       open_settings: {
@@ -426,15 +379,8 @@ export const useKeyboardShortcuts = ({
           s.ui.setUI({ isSettingsOpen: true });
         },
       },
-      focus_search: {
-        shouldFire: (s: any) => s.ui.activeView === 'library',
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.ui.requestSearchFocus();
-        },
-      },
       toggle_crop: {
-        shouldFire: (s: any) => s.ui.activeView === 'editor' && !!s.editor.selectedImage,
+        shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
           e.preventDefault();
           if (s.ui.activePanel === Panel.Crop) {
@@ -531,9 +477,7 @@ export const useKeyboardShortcuts = ({
       },
       brush_size_up: {
         shouldFire: (s: any) =>
-          s.ui.activeView === 'editor' &&
-          !!s.editor.selectedImage &&
-          (s.ui.activePanel === Panel.Masks || s.ui.activePanel === Panel.Ai),
+          !!s.editor.selectedImage && (s.ui.activePanel === Panel.Masks || s.ui.activePanel === Panel.Ai),
         execute: (e: any, s: any) => {
           e.preventDefault();
           const currentSettings = s.editor.brushSettings || { size: 50 };
@@ -545,9 +489,7 @@ export const useKeyboardShortcuts = ({
       },
       brush_size_down: {
         shouldFire: (s: any) =>
-          s.ui.activeView === 'editor' &&
-          !!s.editor.selectedImage &&
-          (s.ui.activePanel === Panel.Masks || s.ui.activePanel === Panel.Ai),
+          !!s.editor.selectedImage && (s.ui.activePanel === Panel.Masks || s.ui.activePanel === Panel.Ai),
         execute: (e: any, s: any) => {
           e.preventDefault();
           const currentSettings = s.editor.brushSettings || { size: 50 };
@@ -572,8 +514,6 @@ export const useKeyboardShortcuts = ({
           else if (s.editor.activeMaskContainerId) s.editor.setEditor({ activeMaskContainerId: null });
           else if (s.ui.activePanel === Panel.Crop) s.ui.setPanel(Panel.Adjustments);
           else if (s.ui.isFullScreen) handleToggleFullScreen();
-          else if (s.ui.activeView === 'editor') handleBackToLibrary();
-          else if (s.ui.activeView === 'library' && s.library.rootPaths?.length > 0) handleGoHome();
         },
       },
       {
@@ -604,40 +544,16 @@ export const useKeyboardShortcuts = ({
           }
         },
       },
-      {
-        match: (e: KeyboardEvent, s: any) =>
-          s.ui.activeView === 'library' && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code),
-        execute: (e: KeyboardEvent, s: any) => {
-          e.preventDefault();
-          const isNext = e.code === 'ArrowRight' || e.code === 'ArrowDown';
-          const activePath = s.library.libraryActivePath;
-          if (!activePath || sortedListRef.current.length === 0) return;
-          const currentIndex = sortedListRef.current.findIndex((img) => img.path === activePath);
-          if (currentIndex === -1) return;
-          let nextIndex = isNext ? currentIndex + 1 : currentIndex - 1;
-          if (nextIndex >= sortedListRef.current.length) nextIndex = 0;
-          if (nextIndex < 0) nextIndex = sortedListRef.current.length - 1;
-          const nextImage = sortedListRef.current[nextIndex];
-          if (nextImage) {
-            s.library.setLibrary({ libraryActivePath: nextImage.path, multiSelectedPaths: [nextImage.path] });
-            handleImageSelect(nextImage.path, false);
-          }
-        },
-      },
     ];
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const state = getStoreState();
 
       const isModalOpen =
-        state.ui.isCreateFolderModalOpen ||
-        state.ui.isRenameFolderModalOpen ||
         state.ui.isRenameFileModalOpen ||
-        state.ui.isImportModalOpen ||
         state.ui.isCopyPasteSettingsModalOpen ||
         state.ui.confirmModalState.isOpen ||
         state.ui.panoramaModalState.isOpen ||
-        state.ui.cullingModalState.isOpen ||
         state.ui.collageModalState.isOpen ||
         state.ui.denoiseModalState.isOpen ||
         state.ui.negativeModalState.isOpen;
@@ -680,11 +596,8 @@ export const useKeyboardShortcuts = ({
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [
-    handleBackToLibrary,
     handleDeleteSelected,
-    handleGoHome,
     handleImageSelect,
-    handlePasteFiles,
     handleToggleFullScreen,
     handleZoomChange,
     handleRotate,

@@ -22,6 +22,8 @@ import {
   X,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
+import { homeDir } from '@tauri-apps/api/path';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -33,7 +35,6 @@ import Switch from '../../ui/Switch';
 import Dropdown from '../../ui/Dropdown';
 import { TextVariants, TextColors, TextWeights } from '../../../types/typography';
 import { Invokes, Preset } from '../../ui/AppProperties';
-import { useLibraryStore } from '../../../store/useLibraryStore';
 import { useEditorStore } from '../../../store/useEditorStore';
 import { usePresets } from '../../../hooks/usePresets';
 import { useContextMenu } from '../../../context/ContextMenuContext';
@@ -199,7 +200,12 @@ interface TetheringPanelProps {
 
 export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: TetheringPanelProps) {
   const { t } = useTranslation();
-  const currentFolderPath = useLibraryStore((s) => s.currentFolderPath);
+  // D-043: used to write captures into whatever RapidRAW library folder was
+  // browsed (`useLibraryStore.currentFolderPath`, gone with FolderTree). Tethering
+  // still needs *some* destination on disk, so this panel now owns a one-off
+  // native folder picker instead — asked for lazily on first capture, remembered
+  // for the rest of the session (see docs/notes/colorist-strip.md §6).
+  const [captureFolder, setCaptureFolder] = useState<string | null>(null);
   const adjustments = useEditorStore((s) => s.adjustments);
   const { presets } = usePresets(adjustments);
   const { showContextMenu } = useContextMenu();
@@ -391,14 +397,22 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
   };
 
   const captureImage = async () => {
-    if (!currentFolderPath || currentFolderPath.startsWith('Album: ')) {
-      toast.warn(t('tethering.toasts.selectFolderFirst'));
-      return;
+    let destinationFolder = captureFolder;
+    if (!destinationFolder) {
+      try {
+        const selected = await open({ directory: true, multiple: false, defaultPath: await homeDir() });
+        if (typeof selected !== 'string') return;
+        destinationFolder = selected;
+        setCaptureFolder(selected);
+      } catch (e) {
+        toast.error(t('tethering.toasts.selectFolderFirst'));
+        return;
+      }
     }
 
     setTethering({ isCapturing: true });
     try {
-      const filePath: string = await invoke(Invokes.TetherCapture, { destinationFolder: currentFolderPath });
+      const filePath: string = await invoke(Invokes.TetherCapture, { destinationFolder });
 
       setTethering({ lastCapturedPath: filePath });
 

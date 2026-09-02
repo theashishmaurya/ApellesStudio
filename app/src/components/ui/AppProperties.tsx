@@ -39,14 +39,8 @@ export enum Invokes {
   CancelExport = 'cancel_export',
   CheckAIConnectorStatus = 'check_ai_connector_status',
   ClearAllSidecars = 'clear_all_sidecars',
-  ClearAiTags = 'clear_ai_tags',
-  ClearAllTags = 'clear_all_tags',
   ClearThumbnailCache = 'clear_thumbnail_cache',
-  CopyFiles = 'copy_files',
-  CreateFolder = 'create_folder',
   CreateVirtualCopy = 'create_virtual_copy',
-  CullImages = 'cull_images',
-  DeleteFolder = 'delete_folder',
   DuplicateFile = 'duplicate_file',
   EstimateExportSizes = 'estimate_export_sizes',
   ExportImages = 'export_images',
@@ -58,30 +52,20 @@ export enum Invokes {
   GenerateMaskOverlay = 'generate_mask_overlay',
   GeneratePresetPreview = 'generate_preset_preview',
   GenerateUncroppedPreview = 'generate_uncropped_preview',
-  GetFolderTree = 'get_folder_tree',
-  GetFolderChildren = 'get_folder_children',
   GetLogFilePath = 'get_log_file_path',
-  GetOrCreateInternalLibraryRoot = 'get_or_create_internal_library_root',
-  GetPinnedFolderTrees = 'get_pinned_folder_trees',
   GetSupportedFileTypes = 'get_supported_file_types',
   HandleExportPresetsToFile = 'handle_export_presets_to_file',
   HandleImportPresetsFromFile = 'handle_import_presets_from_file',
   HandleImportPresetsFromFiles = 'handle_import_presets_from_files',
   HandleImportLegacyPresetsFromFile = 'handle_import_legacy_presets_from_file',
-  ImportFiles = 'import_files',
   InvokeGenerativeReplaseWithMaskDef = 'invoke_generative_replace_with_mask_def',
   IsTetheringSupported = 'is_tethering_supported',
-  ListImagesInDir = 'list_images_in_dir',
-  ListImagesRecursive = 'list_images_recursive',
   LoadImage = 'load_image',
   LoadMetadata = 'load_metadata',
   LoadPresets = 'load_presets',
   LoadSettings = 'load_settings',
-  MoveFiles = 'move_files',
-  ReadExifForPaths = 'read_exif_for_paths',
   RemoveTagForPaths = 'remove_tag_for_paths',
   RenameFiles = 'rename_files',
-  RenameFolder = 'rename_folder',
   ResetAdjustmentsForPaths = 'reset_adjustments_for_paths',
   SaveMetadataAndUpdateThumbnail = 'save_metadata_and_update_thumbnail',
   SaveCollage = 'save_collage',
@@ -93,7 +77,6 @@ export enum Invokes {
   SetColorLabelForPaths = 'set_color_label_for_paths',
   SetRatingForPaths = 'set_rating_for_paths',
   ShowInFinder = 'show_in_finder',
-  StartBackgroundIndexing = 'start_background_indexing',
   StitchPanorama = 'stitch_panorama',
   StitchFocusStack = 'stitch_focus_stack',
   SaveFocusStack = 'save_focus_stack',
@@ -101,14 +84,7 @@ export enum Invokes {
   TestAIConnectorConnection = 'test_ai_connector_connection',
   UpdateWgpuTransform = 'update_wgpu_transform',
   UpdateExifFields = 'update_exif_fields',
-  FetchCommunityPresets = 'fetch_community_presets',
-  GenerateAllCommunityPreviews = 'generate_all_community_previews',
-  SaveCommunityPreset = 'save_community_preset',
   SaveTempFile = 'save_temp_file',
-  GetAlbums = 'get_albums',
-  SaveAlbums = 'save_albums',
-  AddToAlbum = 'add_to_album',
-  GetAlbumImages = 'get_album_images',
   TetherListCameras = 'tether_list_cameras',
   TetherConnect = 'tether_connect',
   TetherGetSettings = 'tether_get_settings',
@@ -131,7 +107,6 @@ export enum Panel {
   Masks = 'masks',
   Metadata = 'metadata',
   Presets = 'presets',
-  FolderTree = 'folderTree',
   Tethering = 'tethering',
 }
 
@@ -146,13 +121,6 @@ export enum RawStatus {
 export enum SortDirection {
   Ascending = 'asc',
   Descending = 'desc',
-}
-
-type FolderSortKey = 'name' | 'modified' | 'created' | 'imageCount';
-
-export interface FolderTreeSort {
-  key: FolderSortKey;
-  order: SortDirection;
 }
 
 export enum Theme {
@@ -200,11 +168,7 @@ export interface AppSettings {
   aiTagCount?: number;
   customAiTags?: string[];
   filterCriteria?: FilterCriteria;
-  lastFolderState?: any;
-  pinnedFolders?: any;
   lastRootPath: string | null;
-  rootFolders?: string[];
-  libraryViewMode?: LibraryViewMode;
   sortCriteria?: SortCriteria;
   theme: Theme;
   thumbnailSize?: ThumbnailSize;
@@ -216,7 +180,6 @@ export interface AppSettings {
   linuxGpuOptimization?: boolean;
   exportPresets?: ExportPreset[];
   myLenses?: any;
-  enableFolderImageCounts?: boolean;
   displayEditIcon?: boolean;
   linearRawMode?: string;
   enableXmpSync?: boolean;
@@ -233,12 +196,9 @@ export interface AppSettings {
   defaultNonRawTonemapper?: string;
   copyPasteSettings?: CopyPasteSettings;
   enableFocusMode?: boolean;
-  openTreeSections?: string[];
-  folderIcons?: Record<string, string>;
   exifOverlay?: ExifOverlay;
   language?: string;
   fontFamily?: string;
-  folderTreeSort?: FolderTreeSort;
   taggingShortcuts?: string[];
   libraryDisplayMode?: LibraryDisplayMode;
   grouping?: GroupingMode;
@@ -253,11 +213,6 @@ export interface BrushSettings {
   feather: number;
   size: number;
   tool: ToolType;
-}
-
-export enum LibraryViewMode {
-  Flat = 'flat',
-  Recursive = 'recursive',
 }
 
 export const EditedStatus = {
@@ -388,53 +343,7 @@ export interface WaveformData {
   width: number;
 }
 
-export interface CullingSettings {
-  similarityThreshold: number;
-  blurThreshold: number;
-  groupSimilar: boolean;
-  filterBlurry: boolean;
-}
-
-interface ImageAnalysisResult {
-  path: string;
-  qualityScore: number;
-  sharpnessMetric: number;
-  centerFocusMetric: number;
-  exposureMetric: number;
-  width: number;
-  height: number;
-}
-
-interface CullGroup {
-  representative: ImageAnalysisResult;
-  duplicates: ImageAnalysisResult[];
-}
-
-export interface CullingSuggestions {
-  similarGroups: CullGroup[];
-  blurryImages: ImageAnalysisResult[];
-  failedPaths: string[];
-}
-
 interface KeybindHandler {
   shouldFire?: () => boolean;
   execute: (event: KeyboardEvent) => void;
-}
-
-export type AlbumItem = Album | AlbumGroup;
-
-export interface Album {
-  type: 'album';
-  id: string;
-  name: string;
-  icon?: string;
-  images: string[];
-}
-
-export interface AlbumGroup {
-  type: 'group';
-  id: string;
-  name: string;
-  icon?: string;
-  children: AlbumItem[];
 }

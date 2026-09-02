@@ -785,5 +785,162 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   added → a `cargo clean -p RapidRAW` + dev-server restart may be needed to
   clear the stale-incremental-fingerprint issue before the commands link.
 
+- **2026-09-02** · **Strip RapidRAW's DAM/welcome/library/community shell (D-043)**
+  — the largest single divergence from upstream to date, and the first that
+  **deletes** rather than adds. Prior analysis: `docs/notes/colorist-strip.md`.
+  Overrides D-003 ("keep everything cherry-pickable") for this one layer: the
+  library/welcome/albums/culling/community code will never run again in Chroma,
+  so keeping it as dead routed code was pure noise, and the branding actively
+  misled. The **grading engine stays untouched** — wgsl shader, masks,
+  adjustments model, every `panel/right/*` panel, canvas/preview, scopes, LUT,
+  curves, wheels, `components/chroma/*` — this divergence is scoped to the
+  DAM/shell layer only.
+  · **Frontend deleted:** `components/views/LibraryView.tsx`,
+  `components/panel/MainLibrary.tsx`, `components/panel/library/` (whole dir:
+  `CullingView`, `LibraryGrid`, `LibraryHeader`, `LibraryItems`),
+  `components/panel/CommunityPage.tsx`, `components/panel/right/FolderTree.tsx`
+  (~1126 LOC — the folder-tree/album-tree "Sources" panel the owner named
+  directly), `components/modals/CullingModal.tsx`,
+  `components/modals/ImportSettingsModal.tsx` (orphaned once the import-into-folder
+  flow it served went with FolderTree). `ColumnWidths` relocated from
+  `MainLibrary.tsx` into `useLibraryStore.ts` (its only surviving consumer).
+  · **`App.tsx` gutted:** the `<LibraryView>` mount → `<ColoristEmptyState/>`
+  (new, `components/chroma/`); `activeView`-derived routing collapsed —
+  `hasMainContent` is now `!!selectedImage`, `isWgpuActive` drops the
+  `activeView === 'editor'` clause; `handleGoHome` / `handleBackToLibrary` /
+  `handleContinueSession` / `handleSelectSubfolder` / `handleSelectAlbum` /
+  `handleOpenFolder` and the folder/album drag-drop targets are gone; the
+  `hasRoots` gate on the settings overlay dropped (folder-tree state).
+  · **`useUIStore.activeView` deleted** (was `'editor' | 'library' | 'community'`
+  — collapsed to its one surviving value). Album/import/folder modal state
+  (`isCreate/RenameFolderModalOpen`, `isImportModalOpen`,
+  `isCreate/RenameAlbumModalOpen`, `albumActionTarget`, `folderActionTarget`,
+  `importSourcePaths`/`importTargetFolder`) and the now-dead `searchFocusRequest`
+  / `requestSearchFocus` (their only caller, `focus_search`, was library-only)
+  deleted. `Panel.FolderTree` removed from the switcher + default layouts.
+  · **`useLibraryStore`** — kept (27 importers, several are keepers: `Editor.tsx`,
+  `BottomBar.tsx`, `Filmstrip.tsx`, `MetadataPanel.tsx`, …) but pruned of
+  `rootPaths`, `currentFolderPath`, `expandedFolders`, `folderTrees`,
+  `pinnedFolderTrees`, `albumTree`, `activeAlbumId`, `expandedAlbumGroups`,
+  `isTreeLoading`, `libraryScrollTop`. Kept: `imageList`, `multiSelectedPaths`,
+  `libraryActivePath`, `libraryActiveAdjustments`, `imageRatings`,
+  `isViewLoading`, `sortCriteria`, `filterCriteria`, `searchCriteria` (the last
+  one is itself dead — nothing calls `setSearchCriteria` any more since
+  `LibraryHeader`'s `SearchInput` is gone with it — left alone as a follow-up,
+  not touched this pass, since `useSortedLibrary.ts`'s filtering logic still
+  reads it and wasn't in this task's file list).
+  · **Hooks gutted**, each down to what still operates on the actively-edited
+  image / filmstrip selection, independent of any library folder concept:
+  `useAppNavigation.ts` (610 → `handleImageSelect` only),
+  `useKeyboardShortcuts.ts` (`open_image` / `paste_files` / `toggle_folder_tree`
+  / `toggle_library_exif` / `focus_search` actions + the library grid-nav
+  builtin + the Escape ladder's home/back-to-library rungs deleted;
+  `activeView === 'editor'` guards simplified to `!!selectedImage`),
+  `useAppContextMenus.ts` (`buildAddToAlbumMenu`, `handleFolderTreeContextMenu`,
+  `handleAlbumTreeContextMenu`, `handleMainLibraryContextMenu` deleted; the
+  editor + thumbnail context menus survive, pruned of Add/Remove-from-Album),
+  `useLibraryActions.ts` (`refreshAllFolderTrees`, `handleTogglePinFolder`,
+  `handleCreateAlbumItem`, `handleRenameAlbumItem` deleted), `useFileOperations.ts`
+  (`handleCreateFolder`, `handleRenameFolder`, `handlePasteFiles`,
+  `startImportFiles`/`handleStartImport`/`handleImportClick` deleted —
+  import-into-library and paste-into-folder have no destination without
+  FolderTree), `useAppInitialization.ts` (pinned/root folder-tree restore on
+  launch, `libraryViewMode`, the "Continue Session" preloaded-folder-contents
+  optimization, `lastFolderState` persistence, and the folder-image-counts
+  re-fetch effect all deleted — app settings/theme/workspace/thumbnails/
+  sort-filter/language init unchanged), `useTauriListeners.ts` (`indexing-*`
+  and `import-*` event listeners deleted — their Rust emitters went with
+  `start_background_indexing` / `import_files`).
+  · **Two things the analysis didn't anticipate**, resolved consistently with
+  its intent rather than deferred: (1) `export_processing::run_headless_export`
+  calls `file_management::list_images_recursive` directly, in-process — not
+  through any frontend `invoke`, so the earlier `Invokes.*` usage audit missed
+  it. Kept as a plain internal fn (dropped `#[tauri::command]`, not registered
+  in `generate_handler!` — no longer reachable from the frontend at all).
+  (2) `TetheringPanel`'s capture button required a browsed library folder
+  (`destinationFolder: currentFolderPath`) and would always show "select a
+  folder first" with FolderTree gone; it now owns a one-off native folder
+  picker instead, asked for lazily on first capture and remembered for the
+  session — TetheringPanel stays fully functional without reintroducing the
+  DAM. Also caught: `update_rotational_disk_flag`'s only two callers
+  (`list_images_in_dir` / `list_images_recursive`) were both going away, which
+  would have silently frozen HDD-aware thumbnail throttling at its default
+  (assume-SSD) forever — moved the call into `start_thumbnail_workers`'s
+  per-thumbnail loop instead (more accurate than the old once-per-folder-browse
+  approximation, not just a preserved behaviour).
+  · **Rust removed** — Tier 1 (album/community, nothing else referenced them):
+  `fetch_community_presets`, `generate_all_community_previews`, `mod culling`
+  (`culling::cull_images`, 318 LOC), `file_management::{save_community_preset,
+  get_albums, save_albums, add_to_album, get_album_images, get_albums_path}` +
+  the `AlbumItem`/`Album`/`AlbumGroup` enum + `sort_album_tree` +
+  `sync_album_path_changes` (the last one had 3 call sites inside otherwise-kept
+  functions — `delete_files_from_disk`, `delete_files_with_associated`,
+  `rename_files` — stripped the call + the now-write-only `renames`/`deletions`
+  collections from each, kept everything else in those three). Tier 2 (the
+  FolderTree "Sources" panel decision — analysis recommended taking it in this
+  pass since it unlocks Tier 2, and that's what happened):
+  `file_management::{list_images_in_dir, get_folder_tree, get_folder_children,
+  get_pinned_folder_trees, get_folder_tree_sync, create_folder, delete_folder,
+  rename_folder, move_files, copy_files, import_files,
+  get_or_create_internal_library_root, get_internal_library_root_path}` +
+  `FolderNode`/`ImportSettings` structs + `has_subdirs`/`scan_dir_lazy` helpers;
+  `tagging::{start_background_indexing, clear_ai_tags, clear_all_tags}` +
+  their private helpers (`rrdata_source_path`, `sync_xmp_for_rrdata`) and the
+  CLIP/HSV auto-tagging cluster (`generate_tags_with_clip`, `extract_color_tags`,
+  `preprocess_clip_image`, `softmax`, `rgb_to_hsv`) — all unreachable once
+  `SettingsPanel`'s "Clear AI tags" / "Clear all tags" / "Clear sidecars" rows
+  (root-folder scoped, always-empty without FolderTree) were pruned; the whole
+  `tagging_utils/` module (`TAG_CANDIDATES` 590 entries, `TAG_HIERARCHY`) went
+  with it, and `AppState.indexing_task_handle`. Also removed as newly-orphaned:
+  `file_management::{get_cache_key_hash, get_cached_or_generate_thumbnail_image}`
+  (only caller was the deleted CLIP indexer) and, after auditing the real
+  invoke-string surface post-frontend-edits (not just trusting the
+  analysis's Tier-1/Tier-2 lists at face value — two entries there turned out
+  wrong): **kept** `tagging::{add_tag_for_paths, remove_tag_for_paths}`
+  (analysis had these as Tier 2, but the kept editor/thumbnail tagging
+  context-menu — `TaggingSubMenu` — calls them directly) and **removed**
+  `file_management::read_exif_for_paths` (analysis had this as a keeper; its
+  only real caller was the deleted `handleSelectSubfolder`'s bulk-EXIF-on-scan
+  path). `file_management.rs` net **−1366 lines** (4222 → ~2860), all via named
+  function/struct deletion — no reformatting of surviving code beyond what
+  those deletions required; `tagging.rs` **533 → 94 lines**.
+  · **Deferred, not touched this pass** (flagged, not fixed — outside this
+  task's file list, no build/test impact, just `dead_code` warnings):
+  `ai_processing.rs`'s CLIP model download/cache infra (`CLIP_MODEL_URL` +co,
+  `get_or_init_clip_models`, the `AiState.clip_models` field) — its only caller
+  was the deleted `generate_tags_with_clip`, but removing it means touching
+  `AiState`'s struct definition and other init sites, a bigger blast radius
+  than this pass's Tier-1/Tier-2 Rust list. `app/bench/replay.js` (RapidRAW's
+  own benchmark tooling) has a `back-to-library` step that's now permanently
+  dead — separate from and not gated by this task's verification.
+  · **Branding**: `tauri.conf.json` window title, `TitleBar.tsx` (unrouted,
+  kept for reference), `SettingsPanel.tsx`'s `CloudDashboard` `getrapidraw.com`
+  links (removed — the buttons were unreachable anyway, `isPro` never true per
+  D-029), the exported-file EXIF `Software` tag and the skeleton-XMP
+  `x:xmptk` attribute (`RapidRAW` → `Chroma` — these ship in every exported
+  file/sidecar, not just UI chrome) all fixed. i18n: `library.splash.*` block
+  (welcome splash — brand/version/donate/contribute/continue-session copy)
+  removed from **all 13 locale files**; every other `RapidRAW` string
+  (`settings.thanks.description`, `settings.general.nativeTitlebarDesc`, the
+  AI-connector provider blurbs, the OSS-credits list entries) renamed to
+  `Chroma` in all 13 locales; `*.rapidRawPreset` label reworded to drop the
+  brand word entirely (`"RapidRAW Preset"` → `"Preset"`, and equivalent for
+  each locale's translation) rather than just swapping the brand name in, per
+  the analysis's call. Explanatory code comments citing "RapidRAW" as the
+  upstream engine name are accurate provenance, not branding — left alone
+  (`utils/scopes.ts`, `hooks/useChromaControl.ts`, `hooks/useAiMasking.ts`,
+  `chroma/*.rs` module docs, etc. — `grep -rn "RapidRAW" app/src app/src-tauri/src`
+  is a clean list of exactly these after this pass).
+  · Verified: `cargo build --no-default-features` clean (only the pre-flagged
+  `ai_processing.rs` CLIP warnings, deferred above); `cargo test
+  --no-default-features chroma::` **54/54** (unchanged); `cd app && npx tsc
+  --noEmit` **64** (down from the 74 baseline — deleting ~7800 LOC of files that
+  carried some of the baseline errors, e.g. `FolderTree.tsx`'s own type issues,
+  lowered the count; zero *new* errors — diffed the full before/after error
+  list, not just the count); `cd app && npm run build` (vite prod) green.
+  Net: **app/src + app/src-tauri/src: 51 files changed, 363 insertions(+), 7823
+  deletions(-)** (`git diff --stat` — close to the analysis's −7000..−9000
+  estimate), plus the 13 locale-file edits.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

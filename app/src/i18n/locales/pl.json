@@ -733,7 +733,7 @@
         "importPresetsTitle": "Importuj presety",
         "legacyPreset": "Przestarzały preset",
         "presetFile": "Plik presetu",
-        "rapidRawPreset": "Preset RapidRAW"
+        "rapidRawPreset": "Preset"
       },
       "menu": {
         "configurePreset": "Konfiguruj preset",
@@ -1081,26 +1081,6 @@
       "iso": "ISO",
       "rating": "Ocena",
       "shutterSpeed": "Czas otwarcia migawki"
-    },
-    "splash": {
-      "addFolder": "Dodaj folder",
-      "brand": "RapidRAW",
-      "continueSession": "Kontynuuj sesję",
-      "contribute": "Współtwórz na GitHubie",
-      "descriptionAndroid": "Niewiarygodnie szybki, akcelerowany przez GPU edytor obrazów RAW. Otwórz bibliotekę, aby rozpocząć.",
-      "descriptionDesktop": "Niewiarygodnie szybki, akcelerowany przez GPU edytor obrazów RAW. Otwórz folder, aby rozpocząć.",
-      "donate": "Przekaż darowiznę na Ko-Fi",
-      "downloadVersion": "Kliknij, aby pobrać wersję {{version}}",
-      "goToSettings": "Przejdź do ustawień",
-      "imagesBy": "Obrazy autorstwa",
-      "latestVersion": "Posiadasz najnowszą wersję",
-      "newVersionAvailable": "Dostępna nowa wersja!",
-      "openFolder": "Otwórz folder",
-      "openLibrary": "Otwórz bibliotekę",
-      "or": "lub",
-      "version": "Wersja {{version}}",
-      "welcomeBack": "Witaj ponownie!",
-      "welcomeBackDesc": "Kontynuuj w miejscu, w którym skończyłeś, lub rozpocznij nową sesję."
     },
     "status": {
       "downloading": "Pobieranie {{status}}...",
@@ -1596,7 +1576,7 @@
       "font": "Czcionka",
       "fontDesc": "Zmień czcionkę aplikacji.",
       "nativeTitlebar": "Natywny pasek tytułu",
-      "nativeTitlebarDesc": "Użyj domyślnego paska tytułu okna twojego systemu zamiast niestandardowego w RapidRAW.",
+      "nativeTitlebarDesc": "Użyj domyślnego paska tytułu okna twojego systemu zamiast niestandardowego w Chroma.",
       "poppins": "Poppins",
       "showImageCounts": "Pokaż licznik obrazów",
       "system": "Domyślna systemowa",
@@ -1709,7 +1689,7 @@
         "connector": {
           "address": "Adres Złącza AI",
           "addressDesc": "Wprowadź adres i port swojej uruchomionej instancji Złącza AI. Wymagane dla funkcji generatywnego AI.",
-          "description": "Dla użytkowników z odpowiednią kartą graficzną, którzy pragną pełnej kontroli: połącz RapidRAW z własnym serwerem Connector. Zapewnia to całkowitą kontrolę nad przepływem pracy.",
+          "description": "Dla użytkowników z odpowiednią kartą graficzną, którzy pragną pełnej kontroli: połącz Chroma z własnym serwerem Connector. Zapewnia to całkowitą kontrolę nad przepływem pracy.",
           "failed": "Połączenie nie powiodło się.",
           "feature1": "Użyj własnej instancji ComfyUI",
           "feature2": "Darmowe, zaawansowane edycje generatywne",
@@ -1717,16 +1697,16 @@
           "success": "Połączenie powiodło się!",
           "test": "Testuj",
           "testing": "Testowanie...",
-          "title": "Własny serwer (RapidRAW AI Connector)"
+          "title": "Własny serwer (Chroma AI Connector)"
         },
         "cpu": {
-          "description": "Zintegrowane bezpośrednio z RapidRAW, te funkcje działają całkowicie na Twoim komputerze. Są szybkie, bezpłatne i nie wymagają konfiguracji, stanowiąc idealne usprawnienie dla codziennej pracy.",
+          "description": "Zintegrowane bezpośrednio z Chroma, te funkcje działają całkowicie na Twoim komputerze. Są szybkie, bezpłatne i nie wymagają konfiguracji, stanowiąc idealne usprawnienie dla codziennej pracy.",
           "feature1": "Maskowanie AI (Temat, Niebo, Pierwszy plan)",
           "feature2": "Automatyczne tagowanie obrazów",
           "feature3": "Proste zastępowanie generatywne oparte na CPU",
           "title": "Wbudowane AI (CPU)"
         },
-        "description": "AI w RapidRAW została zbudowana z myślą o elastyczności. Wybierz swój idealny przepływ pracy, od szybkich lokalnych narzędzi po potężne rozwiązania serwerowe.",
+        "description": "AI w Chroma została zbudowana z myślą o elastyczności. Wybierz swój idealny przepływ pracy, od szybkich lokalnych narzędzi po potężne rozwiązania serwerowe.",
         "providers": {
           "aiConnector": "Złącze AI",
           "cloud": "Chmura",
@@ -1845,7 +1825,7 @@
       "clearCustomTooltip": "Wyczyść listę tagów AI",
       "clearShortcutsTooltip": "Wyczyść listę skrótów do tagów",
       "customList": "Niestandardowa lista tagów AI",
-      "customListDesc": "Jeżeli ją podasz, sztuczna inteligencja wygeneruje TYLKO tagi obecne na tej liście, omijając domyślną listę RapidRAW. Tagowanie działa jedynie w języku angielskim.",
+      "customListDesc": "Jeżeli ją podasz, sztuczna inteligencja wygeneruje TYLKO tagi obecne na tej liście, omijając domyślną listę Chroma. Tagowanie działa jedynie w języku angielskim.",
       "maxAiTags": "Maksymalna liczba tagów AI",
       "maxAiTagsDesc": "Maksymalna liczba wygenerowanych tagów na jeden obraz.",
       "noCustomTags": "Brak własnych tagów (używana domyślna lista)",
@@ -1857,20 +1837,20 @@
       "title": "Tagowanie"
     },
     "thanks": {
-      "description": "Ogromne podziękowania dla następujących projektów, które były niezwykle ważne przy tworzeniu RapidRAW:",
+      "description": "Ogromne podziękowania dla następujących projektów, które były niezwykle ważne przy tworzeniu Chroma:",
       "list": {
         "darktable": "Za kilka referencyjnych implementacji, które posłużyły za wskazówki.",
         "depth": "Za zaawansowany model szacowania głębi, który włącza maskowanie oparte na głębi za pomocą AI.",
         "lama": "Za niesamowity model do inpaintingu obrazu, umożliwiający usuwanie obiektów z uwzględnieniem kontekstu.",
         "lensfun": "Za nieocenioną bibliotekę open-source z bogatą bazą obiektywów do automatycznej korekcji.",
-        "libgphoto2": "Za kompleksową bibliotekę komunikacji z aparatami, napędzającą tethering i zdalne wyzwalanie w RapidRAW.",
+        "libgphoto2": "Za kompleksową bibliotekę komunikacji z aparatami, napędzającą tethering i zdalne wyzwalanie w Chroma.",
         "negpy": "Za inspirację stojącą za rozwiązaniem do inwersji negatywów.",
-        "nind": "Za dostarczenie modeli AI, które stanowią silnik odszumiający RapidRAW.",
+        "nind": "Za dostarczenie modeli AI, które stanowią silnik odszumiający Chroma.",
         "rawler": "Za świetną bibliotekę w Rust, dostarczającą fundament dla przetwarzania plików RAW w tym projekcie.",
         "sam2": "Za dostarczenie bazowego modelu do wykrywania i wycinania obiektów za pomocą AI.",
-        "spektrafilm": "Za oparte na danych spektralnych LUT-y emulacji filmu autorstwa Andrei Volpato, napędzające wbudowane emulacje filmowe RapidRAW. Licencja CC BY-SA 4.0.",
+        "spektrafilm": "Za oparte na danych spektralnych LUT-y emulacji filmu autorstwa Andrei Volpato, napędzające wbudowane emulacje filmowe Chroma. Licencja CC BY-SA 4.0.",
         "u2net": "Za świetną architekturę używaną przez nasze modele wykrywania nieba i pierwszego planu.",
-        "you": "Za to, że używasz i wspierasz RapidRAW. Twoje zainteresowanie sprawia, że ten projekt nadal ewoluuje.",
+        "you": "Za to, że używasz i wspierasz Chroma. Twoje zainteresowanie sprawia, że ten projekt nadal ewoluuje.",
         "youLabel": "Ty"
       },
       "title": "Szczególne podziękowania"

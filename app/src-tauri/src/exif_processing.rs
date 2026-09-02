@@ -1472,7 +1472,7 @@ pub fn write_image_with_metadata(
         apply_sidecar_field_overrides(&mut metadata, &map);
     }
 
-    metadata.set_tag(ExifTag::Software("RapidRAW".to_string()));
+    metadata.set_tag(ExifTag::Software("Chroma".to_string()));
     metadata.set_tag(ExifTag::Orientation(vec![1u16]));
     metadata.set_tag(ExifTag::ColorSpace(vec![1u16]));
 

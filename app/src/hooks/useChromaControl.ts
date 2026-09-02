@@ -7,7 +7,6 @@ import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
 import { useAgentStore } from '../store/useAgentStore';
 import { useSessionStore } from '../store/useSessionStore';
-import { useUIStore } from '../store/useUIStore';
 import { useEditorActions, debouncedSetHistory } from './useEditorActions';
 import { useAiMasking } from './useAiMasking';
 import { diffAdjustments, summarizeActivity } from '../utils/agentActivity';
@@ -371,7 +370,6 @@ export function useChromaControl() {
         if (!path) return { error: 'pass a project path or name (see list_projects)' };
         const res = await useSessionStore.getState().openProject(path);
         if (!res.ok) return { error: res.error };
-        useUIStore.getState().setUI({ activeView: 'editor' });
         const st: any = await invoke('chroma_project_current');
         return { opened: st, shots: (await invoke<any>('chroma_session_list')).shots };
       },
@@ -386,7 +384,6 @@ export function useChromaControl() {
             : [];
         const res = await useSessionStore.getState().newProject(name, media);
         if (!res.ok) return { error: res.error };
-        useUIStore.getState().setUI({ activeView: 'editor' });
         return { created: await invoke('chroma_project_current') };
       },
 

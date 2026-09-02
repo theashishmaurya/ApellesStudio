@@ -33,7 +33,6 @@ export function useImageProcessing(
   const isSliderDragging = useEditorStore((state) => state.isSliderDragging);
   const setEditor = useEditorStore((state) => state.setEditor);
 
-  const activeView = useUIStore((state) => state.activeView);
   const activePanel = useUIStore((state) => state.activePanel);
   const appSettings = useSettingsStore((state) => state.appSettings);
   const multiSelectedPaths = useLibraryStore((state) => state.multiSelectedPaths);
@@ -376,13 +375,13 @@ export function useImageProcessing(
   );
 
   useEffect(() => {
-    if (activeView === 'editor' && activePanel === Panel.Crop && selectedImage?.isReady) {
+    if (activePanel === Panel.Crop && selectedImage?.isReady) {
       generateUncroppedPreview(adjustments);
     }
-  }, [activeView, adjustments, activePanel, selectedImage?.isReady, generateUncroppedPreview]);
+  }, [adjustments, activePanel, selectedImage?.isReady, generateUncroppedPreview]);
 
   useEffect(() => {
-    if (activeView === 'editor' && selectedImage?.isReady && displaySize.width > 0 && !isSliderDragging) {
+    if (selectedImage?.isReady && displaySize.width > 0 && !isSliderDragging) {
       let baseRes = calculateTargetRes();
       if (originalSize.width > 0 && originalSize.height > 0) {
         const maxRes = Math.max(originalSize.width, originalSize.height);
@@ -399,7 +398,6 @@ export function useImageProcessing(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    activeView,
     displaySize.width,
     displaySize.height,
     calculateTargetRes,
@@ -416,10 +414,6 @@ export function useImageProcessing(
 
     const targetRes = calculateTargetRes();
     const renderAdjustments = previewOverride ?? adjustments;
-
-    if (activeView !== 'editor') {
-      if (isSliderDragging) return;
-    }
 
     if (isSliderDragging) {
       if (appSettings?.enableLivePreviews !== false) {
@@ -474,7 +468,6 @@ export function useImageProcessing(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    activeView,
     adjustments,
     previewOverride,
     selectedImage?.path,

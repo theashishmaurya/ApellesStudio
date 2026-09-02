@@ -692,7 +692,7 @@
         "importPresetsTitle": "Import Presets",
         "legacyPreset": "Legacy Preset",
         "presetFile": "Preset File",
-        "rapidRawPreset": "RapidRAW Preset"
+        "rapidRawPreset": "Preset"
       },
       "menu": {
         "configurePreset": "Configure Preset",
@@ -1034,26 +1034,6 @@
       "iso": "ISO",
       "rating": "Rating",
       "shutterSpeed": "Shutter Speed"
-    },
-    "splash": {
-      "addFolder": "Add Folder",
-      "brand": "RapidRAW",
-      "continueSession": "Continue Session",
-      "contribute": "Contribute on GitHub",
-      "descriptionAndroid": "A blazingly fast, GPU-accelerated RAW image editor. Open the library to begin.",
-      "descriptionDesktop": "A blazingly fast, GPU-accelerated RAW image editor. Open a folder to begin.",
-      "donate": "Donate on Ko-Fi",
-      "downloadVersion": "Click to download version {{version}}",
-      "goToSettings": "Go to Settings",
-      "imagesBy": "Images by",
-      "latestVersion": "You are on the latest version",
-      "newVersionAvailable": "New version available!",
-      "openFolder": "Open Folder",
-      "openLibrary": "Open Library",
-      "or": "or",
-      "version": "Version {{version}}",
-      "welcomeBack": "Welcome back!",
-      "welcomeBackDesc": "Continue where you left off or start a new session."
     },
     "status": {
       "downloading": "Downloading {{status}}...",
@@ -1529,7 +1509,7 @@
       "font": "Font",
       "fontDesc": "Change the application font.",
       "nativeTitlebar": "Native Titlebar",
-      "nativeTitlebarDesc": "Use your system's default window titlebar instead of RapidRAW's custom one.",
+      "nativeTitlebarDesc": "Use your system's default window titlebar instead of Chroma's custom one.",
       "poppins": "Poppins",
       "showImageCounts": "Show Image Counts",
       "system": "System Default",
@@ -1642,7 +1622,7 @@
         "connector": {
           "address": "AI Connector Address",
           "addressDesc": "Enter the address and port of your running AI Connector instance. Required for generative AI features.",
-          "description": "For users with a capable GPU who want maximum control, connect RapidRAW to your own Connector server. This gives you full control for technical workflows.",
+          "description": "For users with a capable GPU who want maximum control, connect Chroma to your own Connector server. This gives you full control for technical workflows.",
           "failed": "Connection failed.",
           "feature1": "Use your own ComfyUI instance",
           "feature2": "Cost-free advanced generative edits",
@@ -1650,16 +1630,16 @@
           "success": "Connection successful!",
           "test": "Test",
           "testing": "Testing...",
-          "title": "Self-Hosted (RapidRAW AI Connector)"
+          "title": "Self-Hosted (Chroma AI Connector)"
         },
         "cpu": {
-          "description": "Integrated directly into RapidRAW, these features run entirely on your computer. They are fast, free, and require no setup, making them ideal for everyday workflow acceleration.",
+          "description": "Integrated directly into Chroma, these features run entirely on your computer. They are fast, free, and require no setup, making them ideal for everyday workflow acceleration.",
           "feature1": "AI Masking (Subject, Sky, Foreground)",
           "feature2": "Automatic Image Tagging",
           "feature3": "Simple CPU-based Generative Replace",
           "title": "Built-in AI (CPU)"
         },
-        "description": "RapidRAW's AI is built for flexibility. Choose your ideal workflow, from fast local tools to powerful self-hosting.",
+        "description": "Chroma's AI is built for flexibility. Choose your ideal workflow, from fast local tools to powerful self-hosting.",
         "providers": {
           "aiConnector": "AI Connector",
           "cloud": "Cloud",
@@ -1778,7 +1758,7 @@
       "clearCustomTooltip": "Clear AI Tag List",
       "clearShortcutsTooltip": "Clear Shortcuts Tag List",
       "customList": "Custom AI Tag List",
-      "customListDesc": "If provided, the AI will ONLY use tags from this list, overriding RapidRAW’s built-in list. Tagging works only in English.",
+      "customListDesc": "If provided, the AI will ONLY use tags from this list, overriding Chroma’s built-in list. Tagging works only in English.",
       "maxAiTags": "Maximum AI Tags",
       "maxAiTagsDesc": "The maximum number of tags to generate per image.",
       "noCustomTags": "No custom AI tags (Using built-in list)",
@@ -1790,20 +1770,20 @@
       "title": "Tagging"
     },
     "thanks": {
-      "description": "A huge thank you to the following projects that were very important in the development of RapidRAW:",
+      "description": "A huge thank you to the following projects that were very important in the development of Chroma:",
       "list": {
         "darktable": "For some reference implementations that guided parts of this work.",
         "depth": "For the powerful monocular depth estimation model that enables the AI depth masking capabilities.",
         "lama": "For the powerful & simple image inpainting model, which enables content-aware fill and object removal.",
         "lensfun": "For its invaluable open-source library and comprehensive database for automatic lens correction.",
-        "libgphoto2": "For the comprehensive camera communication library powering RapidRAW's tethering and remote capture subsystem.",
+        "libgphoto2": "For the comprehensive camera communication library powering Chroma's tethering and remote capture subsystem.",
         "negpy": "For the inspiration behind the negative conversion logic.",
-        "nind": "For providing AI models that power the AI noise reduction capabilities in RapidRAW.",
+        "nind": "For providing AI models that power the AI noise reduction capabilities in Chroma.",
         "rawler": "For the excellent Rust crate that provides the foundation for RAW file processing in this project.",
         "sam2": "For providing the foundation model used for the AI subject detection capabilities.",
-        "spektrafilm": "For the spectrally-based film emulation LUTs by Andrea Volpato, used to power RapidRAW's built-in film emulations. Licensed CC BY-SA 4.0.",
+        "spektrafilm": "For the spectrally-based film emulation LUTs by Andrea Volpato, used to power Chroma's built-in film emulations. Licensed CC BY-SA 4.0.",
         "u2net": "For providing the robust architecture used for the AI sky and foreground detection capabilities.",
-        "you": "For using and supporting RapidRAW. Your interest keeps this project alive and evolving.",
+        "you": "For using and supporting Chroma. Your interest keeps this project alive and evolving.",
         "youLabel": "You"
       },
       "title": "Special Thanks"

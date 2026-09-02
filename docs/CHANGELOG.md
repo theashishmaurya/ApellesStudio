@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Colorist tab is the grading editor only — RapidRAW's
+  DAM/welcome/library/community shell removed (D-043, built).** The "Sources"
+  folder-tree panel the owner flagged is gone, along with the whole photo-library
+  grid, albums, culling, the welcome/"Continue Session" home screen, and the web
+  Community presets page — Colorist now shows only the editor or a
+  `ColoristEmptyState` message. ~7800 LOC deleted across 51 files (`docs/09` D-043
+  entry has the full list); every RapidRAW branding string fixed to say Chroma,
+  including the ones baked into exported files (EXIF `Software` tag, XMP
+  `x:xmptk`), across all 13 i18n locales. `cargo test chroma::` 54/54 unchanged,
+  `tsc` errors 74 → 64 (baseline files deleted, zero new).
 - **2026-09-02** — **`@chroma/ui` → shadcn/ui + Base UI (D-042, built).** Canonical
   shadcn structure by hand (`components.json`, `src/lib/utils.ts`,
   `src/components/ui/*`, `src/index.ts`) — the CLI can't target a workspace library

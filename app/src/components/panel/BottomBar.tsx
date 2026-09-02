@@ -25,7 +25,6 @@ interface BottomBarProps {
   isCopyDisabled: boolean;
   isExportDisabled?: boolean;
   isFilmstripVisible?: boolean;
-  isLibraryView?: boolean;
   isLoading?: boolean;
   isPasted: boolean;
   isPasteDisabled: boolean;
@@ -127,7 +126,6 @@ export default function BottomBar({
   isCopied,
   isCopyDisabled,
   isFilmstripVisible,
-  isLibraryView = false,
   isLoading = false,
   isPasted,
   isPasteDisabled,
@@ -338,8 +336,8 @@ export default function BottomBar({
 
   return (
     <div className="shrink-0 bg-bg-secondary rounded-lg flex flex-col">
-      {!isLibraryView && <ShotStrip />}
-      {!isLibraryView && showFilmstrip && (
+      <ShotStrip />
+      {showFilmstrip && (
         <div
           className={clsx(
             'overflow-hidden shrink-0 relative',
@@ -379,8 +377,8 @@ export default function BottomBar({
       <div
         className={clsx(
           'shrink-0 h-12 flex items-center justify-between px-3',
-          !isLibraryView && 'border-t transition-colors duration-300',
-          !isLibraryView && showFilmstrip && isFilmstripVisible ? 'border-surface' : 'border-transparent',
+          'border-t transition-colors duration-300',
+          showFilmstrip && isFilmstripVisible ? 'border-surface' : 'border-transparent',
         )}
       >
         <div className="flex items-center gap-4">
@@ -569,7 +567,7 @@ export default function BottomBar({
         <div className="grow" />
 
         <div className="flex items-center gap-4">
-          {!isLibraryView && showZoomControls && (
+          {showZoomControls && (
             <>
               <div className="flex items-center gap-2 w-56">
                 <div
@@ -655,7 +653,6 @@ export default function BottomBar({
                         ? t('ui.bottomBar.tooltips.collapseFilmstrip')
                         : t('ui.bottomBar.tooltips.expandFilmstrip')
                     }
-                    disabled={isLibraryView}
                   />
                 )}
 

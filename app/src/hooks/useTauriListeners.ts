@@ -8,22 +8,19 @@ import { useUIStore } from '../store/useUIStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 
 interface TauriListenerProps {
-  refreshAllFolderTrees: () => void;
-  handleSelectSubfolder: (path: string, isNewRoot?: boolean, preloadedImages?: any[], expandParents?: boolean) => void;
-  refreshImageList: () => void;
   markGenerated: (path: string) => void;
 }
 
-export function useTauriListeners({
-  refreshAllFolderTrees,
-  handleSelectSubfolder,
-  refreshImageList,
-  markGenerated,
-}: TauriListenerProps) {
-  const refs = useRef({ refreshAllFolderTrees, handleSelectSubfolder, refreshImageList, markGenerated });
+// D-043: this used to also refresh the folder tree / re-list the current library
+// folder after background indexing or a folder import finished (both DAM-only
+// events, tied to Rust commands removed with FolderTree — see
+// docs/notes/colorist-strip.md §6). Every other listener here is unrelated to the
+// DAM and survives untouched.
+export function useTauriListeners({ markGenerated }: TauriListenerProps) {
+  const refs = useRef({ markGenerated });
 
   useEffect(() => {
-    refs.current = { refreshAllFolderTrees, handleSelectSubfolder, refreshImageList, markGenerated };
+    refs.current = { markGenerated };
   });
 
   const thumbnailBuffer = useRef<Record<string, string>>({});
@@ -141,22 +138,6 @@ export function useTauriListeners({
       listen('ai-model-download-finish', () => {
         if (isEffectActive) useProcessStore.getState().setProcess({ aiModelDownloadStatus: null });
       }),
-      listen('indexing-started', () => {
-        if (isEffectActive)
-          useProcessStore.getState().setProcess({ isIndexing: true, indexingProgress: { current: 0, total: 0 } });
-      }),
-      listen('indexing-progress', (event: any) => {
-        if (isEffectActive) useProcessStore.getState().setProcess({ indexingProgress: event.payload });
-      }),
-      listen('indexing-finished', () => {
-        if (isEffectActive) {
-          useProcessStore.getState().setProcess({ isIndexing: false, indexingProgress: { current: 0, total: 0 } });
-          const currentPath = useLibraryStore.getState().currentFolderPath;
-          if (currentPath) {
-            refs.current.refreshImageList();
-          }
-        }
-      }),
       listen('batch-export-progress', (event: any) => {
         if (isEffectActive) useProcessStore.getState().setExportState({ progress: event.payload });
       }),
@@ -175,39 +156,6 @@ export function useTauriListeners({
       }),
       listen('export-cancelled', () => {
         if (isEffectActive) useProcessStore.getState().setExportState({ status: Status.Cancelled });
-      }),
-      listen('import-start', (event: any) => {
-        if (isEffectActive)
-          useProcessStore.getState().setImportState({
-            errorMessage: '',
-            path: '',
-            progress: { current: 0, total: event.payload.total },
-            status: Status.Importing,
-          });
-      }),
-      listen('import-progress', (event: any) => {
-        if (isEffectActive)
-          useProcessStore.getState().setImportState({
-            path: event.payload.path,
-            progress: { current: event.payload.current, total: event.payload.total },
-          });
-      }),
-      listen('import-complete', () => {
-        if (isEffectActive) {
-          useProcessStore.getState().setImportState({ status: Status.Success });
-          refs.current.refreshAllFolderTrees();
-          const currentPath = useLibraryStore.getState().currentFolderPath;
-          if (currentPath) {
-            refs.current.handleSelectSubfolder(currentPath, false);
-          }
-        }
-      }),
-      listen('import-error', (event: any) => {
-        if (isEffectActive)
-          useProcessStore.getState().setImportState({
-            status: Status.Error,
-            errorMessage: typeof event.payload === 'string' ? event.payload : 'Unknown error',
-          });
       }),
       listen('denoise-progress', (event: any) => {
         if (isEffectActive)
@@ -353,40 +301,6 @@ export function useTauriListeners({
               isProcessing: false,
               progressMessage: null,
             },
-          }));
-        }
-      }),
-      listen('culling-start', (event: any) => {
-        if (isEffectActive) {
-          useUIStore.getState().setUI((state) => ({
-            cullingModalState: {
-              ...state.cullingModalState,
-              isOpen: true,
-              progress: { current: 0, total: event.payload, stage: 'Initializing...' },
-              suggestions: null,
-              error: null,
-            },
-          }));
-        }
-      }),
-      listen('culling-progress', (event: any) => {
-        if (isEffectActive) {
-          useUIStore
-            .getState()
-            .setUI((state) => ({ cullingModalState: { ...state.cullingModalState, progress: event.payload } }));
-        }
-      }),
-      listen('culling-complete', (event: any) => {
-        if (isEffectActive) {
-          useUIStore.getState().setUI((state) => ({
-            cullingModalState: { ...state.cullingModalState, progress: null, suggestions: event.payload },
-          }));
-        }
-      }),
-      listen('culling-error', (event: any) => {
-        if (isEffectActive) {
-          useUIStore.getState().setUI((state) => ({
-            cullingModalState: { ...state.cullingModalState, progress: null, error: String(event.payload) },
           }));
         }
       }),

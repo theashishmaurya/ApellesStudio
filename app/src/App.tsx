@@ -15,7 +15,6 @@ import {
 } from '@dnd-kit/core';
 import clsx from 'clsx';
 
-import FolderTree from './components/panel/right/FolderTree';
 import SettingsPanel from './components/panel/SettingsPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
 import GlobalTooltip from './components/ui/GlobalTooltip';
@@ -32,7 +31,7 @@ import PresetsPanel from './components/panel/right/PresetsPanel';
 import TetheringPanel from './components/panel/right/TetheringPanel';
 
 import EditorView from './components/views/EditorView';
-import LibraryView from './components/views/LibraryView';
+import ColoristEmptyState from './components/chroma/ColoristEmptyState';
 
 import { ContextMenuProvider } from './context/ContextMenuContext';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -65,44 +64,11 @@ import { useAppInitialization } from './hooks/useAppInitialization';
 import { useAndroidBackHandler } from './hooks/useAndroidBackHandler';
 import './i18n';
 
-import {
-  Invokes,
-  ImageFile,
-  LibraryViewMode,
-  Panel,
-  PanelRegion,
-  Theme,
-  ThumbnailSize,
-  ThumbnailAspectRatio,
-} from './components/ui/AppProperties';
+import { Invokes, ImageFile, Panel, PanelRegion, Theme, ThumbnailSize, ThumbnailAspectRatio } from './components/ui/AppProperties';
 
 import ImageProcessingManager from './components/managers/ImageProcessingManager';
 import ImageLoaderManager from './components/managers/ImageLoaderManager';
 
-
-const insertChildrenIntoTree = (node: any, targetPath: string, newChildren: any[]): any => {
-  if (!node) return null;
-
-  if (node.path === targetPath) {
-    const mergedChildren = newChildren.map((newChild: any) => {
-      const existingChild = node.children?.find((c: any) => c.path === newChild.path);
-      if (existingChild && existingChild.children && existingChild.children.length > 0) {
-        return { ...newChild, children: existingChild.children };
-      }
-      return newChild;
-    });
-    return { ...node, children: mergedChildren };
-  }
-
-  if (node.children && node.children.length > 0) {
-    return {
-      ...node,
-      children: node.children.map((child: any) => insertChildrenIntoTree(child, targetPath, newChildren)),
-    };
-  }
-
-  return node;
-};
 
 const imageDragModifier: Modifier = ({ active, activatorEvent, activeNodeRect, transform }) => {
   if (active?.data?.current?.type === 'library-image' && activatorEvent && activeNodeRect) {
@@ -153,7 +119,6 @@ function App() {
   );
 
   const {
-    activeView,
     isFullScreen,
     isWindowFullScreen,
     isInstantTransition,
@@ -171,7 +136,6 @@ function App() {
     movePanel,
   } = useUIStore(
     useShallow((state) => ({
-      activeView: state.activeView,
       isFullScreen: state.isFullScreen,
       isWindowFullScreen: state.isWindowFullScreen,
       isInstantTransition: state.isInstantTransition,
@@ -197,13 +161,9 @@ function App() {
   // D-037: debounced project.json + grade + thumb autosave once a project is loaded
   useProjectAutosave();
 
-  const { rootPaths, currentFolderPath, expandedFolders, multiSelectedPaths, setLibrary } = useLibraryStore(
+  const { multiSelectedPaths } = useLibraryStore(
     useShallow((state) => ({
-      rootPaths: state.rootPaths,
-      currentFolderPath: state.currentFolderPath,
-      expandedFolders: state.expandedFolders,
       multiSelectedPaths: state.multiSelectedPaths,
-      setLibrary: state.setLibrary,
     })),
   );
 
@@ -226,7 +186,6 @@ function App() {
   );
 
   const defaultThumbnailSize = osPlatform === 'android' ? ThumbnailSize.Small : ThumbnailSize.Medium;
-  const defaultLibraryViewMode = osPlatform === 'android' ? LibraryViewMode.Recursive : LibraryViewMode.Flat;
 
   const selectedImagePathRef = useRef<string | null>(null);
   useEffect(() => {
@@ -252,7 +211,6 @@ function App() {
   const currentResRef = useRef<number>(1280);
   const cachedEditStateRef = useRef<any | null>(null);
 
-  const [libraryViewMode, setLibraryViewMode] = useState<LibraryViewMode>(defaultLibraryViewMode);
   const [isResizing, setIsResizing] = useState(false);
   const [thumbnailSize, setThumbnailSize] = useState(defaultThumbnailSize);
   const [thumbnailAspectRatio, setThumbnailAspectRatio] = useState(ThumbnailAspectRatio.Cover);
@@ -260,21 +218,12 @@ function App() {
   const { requestThumbnails, clearThumbnailQueue, markGenerated } = useThumbnails();
 
   const transformWrapperRef = useRef<any>(null);
-  const preloadedDataRef = useRef<{
-    trees?: Promise<any>;
-    images?: Promise<ImageFile[]>;
-    rootPaths?: string[];
-    currentPath?: string;
-  }>({});
 
   useAppInitialization({
-    preloadedDataRef,
     thumbnailSize,
     setThumbnailSize,
     thumbnailAspectRatio,
     setThumbnailAspectRatio,
-    libraryViewMode,
-    setLibraryViewMode,
   });
 
   const isAndroid = osPlatform === 'android';
@@ -337,7 +286,6 @@ function App() {
 
   const navigationRefs = {
     transformWrapperRef,
-    preloadedDataRef,
     cachedEditStateRef,
     selectedImagePathRef,
     isBackendReadyRef,
@@ -347,15 +295,7 @@ function App() {
     prevAdjustmentsRef,
   };
 
-  const {
-    handleGoHome,
-    handleBackToLibrary,
-    handleImageSelect,
-    handleSelectSubfolder,
-    handleSelectAlbum,
-    handleOpenFolder,
-    handleContinueSession,
-  } = useAppNavigation({
+  const { handleImageSelect } = useAppNavigation({
     clearThumbnailQueue,
     refs: navigationRefs,
   });
@@ -366,59 +306,20 @@ function App() {
     finishExternalEdit,
   } = useExternalEditSession(handleImageSelect);
 
-  const {
-    handleRate,
-    handleClearSelection,
-    handleLibraryImageSingleClick,
-    handleImageClick,
-    handleSetColorLabel,
-    refreshAllFolderTrees,
-    handleTogglePinFolder,
-    handleCreateAlbumItem,
-    handleRenameAlbumItem,
-  } = useLibraryActions(handleImageSelect);
+  const { handleRate, handleClearSelection, handleLibraryImageSingleClick, handleImageClick, handleSetColorLabel } =
+    useLibraryActions(handleImageSelect);
 
   const { displayList: sortedImageList, badges: groupBadgeInfo } = useSortedLibrary();
 
-  const handleLibraryRefresh = useCallback(async () => {
-    if (currentFolderPath) {
-      if (currentFolderPath.startsWith('Album: ')) {
-        const { activeAlbumId, albumTree } = useLibraryStore.getState();
-        if (activeAlbumId) {
-          const findObj = (nodes: any[]): any => {
-            for (const n of nodes) {
-              if (n.id === activeAlbumId) return n;
-              if (n.type === 'group') {
-                const f = findObj(n.children);
-                if (f) return f;
-              }
-            }
-            return null;
-          };
-          const album = findObj(albumTree);
-          if (album) await handleSelectAlbum(album.id, album.name, album.images, true);
-        }
-      } else {
-        await handleSelectSubfolder(currentFolderPath, false, undefined, false, true);
-      }
-    }
-  }, [currentFolderPath, handleSelectSubfolder, handleSelectAlbum]);
+  // D-043: this used to reload the current library folder/album after a save
+  // elsewhere in the app (panorama/HDR/focus-stack/denoise/collage, delete, rename).
+  // There is no library view to refresh any more — kept as a no-op so those call
+  // sites don't need their own special-casing (see docs/notes/colorist-strip.md §6).
+  const noOpRefresh = useCallback(async () => {}, []);
 
-  const {
-    executeDelete,
-    handleDeleteSelected,
-    handleCreateFolder,
-    handleRenameFolder,
-    handleSaveRename,
-    handleRenameFiles,
-    handleStartImport,
-    handleImportClick,
-    handlePasteFiles,
-  } = useFileOperations(
-    handleLibraryRefresh,
-    refreshAllFolderTrees,
+  const { executeDelete, handleDeleteSelected, handleSaveRename, handleRenameFiles } = useFileOperations(
+    noOpRefresh,
     handleImageSelect,
-    handleBackToLibrary,
     sortedImageList,
   );
 
@@ -433,30 +334,16 @@ function App() {
     handleSaveCollage,
     handleStartFocusStack,
     handleSaveFocusStack,
-  } = useProductivityActions(handleLibraryRefresh);
+  } = useProductivityActions(noOpRefresh);
 
-  const {
-    handleEditorContextMenu,
-    handleThumbnailContextMenu,
-    handleFolderTreeContextMenu,
-    handleAlbumTreeContextMenu,
-    handleMainLibraryContextMenu,
-  } = useAppContextMenus({
+  const { handleEditorContextMenu, handleThumbnailContextMenu } = useAppContextMenus({
     handleImageSelect,
-    handleBackToLibrary,
-    handleLibraryRefresh,
     handleRenameFiles,
-    handleImportClick,
-    refreshAllFolderTrees,
-    refreshImageList: handleLibraryRefresh,
+    refreshImageList: noOpRefresh,
     executeDelete,
-    handleTogglePinFolder,
   });
 
   useTauriListeners({
-    refreshAllFolderTrees,
-    handleSelectSubfolder,
-    refreshImageList: handleLibraryRefresh,
     markGenerated,
   });
 
@@ -481,11 +368,8 @@ function App() {
 
   useKeyboardShortcuts({
     sortedImageList,
-    handleBackToLibrary,
     handleDeleteSelected,
-    handleGoHome,
     handleImageSelect,
-    handlePasteFiles,
     handleToggleFullScreen,
     handleZoomChange,
   });
@@ -679,55 +563,9 @@ function App() {
     [setPanel, setEditor],
   );
 
-  const handleToggleFolder = useCallback(
-    async (path: string) => {
-      const isExpanding = !expandedFolders.has(path);
-      setLibrary((state) => {
-        const newSet = new Set(state.expandedFolders);
-        if (isExpanding) {
-          newSet.add(path);
-        } else {
-          newSet.delete(path);
-        }
-        return { expandedFolders: newSet };
-      });
-      if (!isExpanding) return;
-      try {
-        const showCounts = appSettings?.enableFolderImageCounts ?? false;
-        const newChildren: any[] = await invoke(Invokes.GetFolderChildren, {
-          path,
-          showImageCounts: showCounts,
-        });
-        setLibrary((state) => ({
-          folderTrees: state.folderTrees.map((t: any) => insertChildrenIntoTree(t, path, newChildren)),
-        }));
-        setLibrary((state) => ({
-          pinnedFolderTrees: state.pinnedFolderTrees.map((tree) => insertChildrenIntoTree(tree, path, newChildren)),
-        }));
-      } catch (err) {
-        toast.error(`Failed to load folder: ${err}`);
-      }
-    },
-    [expandedFolders, appSettings?.enableFolderImageCounts, setLibrary],
-  );
-
   const renderAppPanel = useCallback(
     (panelId: Panel) => {
       switch (panelId) {
-        case Panel.FolderTree:
-          return (
-            <FolderTree
-              isResizing={isResizing}
-              onContextMenu={handleFolderTreeContextMenu}
-              onAlbumContextMenu={handleAlbumTreeContextMenu}
-              onSelectAlbum={handleSelectAlbum}
-              onFolderSelect={(path) => handleSelectSubfolder(path, false)}
-              onToggleFolder={handleToggleFolder}
-              onOpenFolder={handleOpenFolder}
-              style={{ width: '100%', height: '100%' }}
-              isInstantTransition={isInstantTransition}
-            />
-          );
         case Panel.Export:
           return (
             <ExportPanel
@@ -737,7 +575,7 @@ function App() {
               setExportState={setExportState}
               appSettings={appSettings}
               onSettingsChange={handleSettingsChange}
-              rootPaths={rootPaths}
+              rootPaths={[]}
               isVisible={true}
               onClose={() => setUI({ isLibraryExportPanelVisible: false })}
             />
@@ -753,39 +591,32 @@ function App() {
         case Panel.Ai:
           return <AIPanel />;
         case Panel.Presets:
-          return <PresetsPanel onNavigateToCommunity={() => setUI({ activeView: 'community' })} />;
+          return <PresetsPanel />;
         case Panel.Tethering:
-          return <TetheringPanel onLibraryRefresh={handleLibraryRefresh} onImageSelect={handleImageSelect} />;
+          return <TetheringPanel onLibraryRefresh={noOpRefresh} onImageSelect={handleImageSelect} />;
         default:
           return null;
       }
     },
     [
-      isResizing,
-      handleFolderTreeContextMenu,
-      handleAlbumTreeContextMenu,
-      handleSelectAlbum,
-      handleSelectSubfolder,
-      handleToggleFolder,
-      handleOpenFolder,
       setUI,
-      isInstantTransition,
       exportState,
       multiSelectedPaths,
       selectedImage,
       setExportState,
       appSettings,
       handleSettingsChange,
-      rootPaths,
+      noOpRefresh,
+      handleImageSelect,
     ],
   );
 
-  const hasRoots = rootPaths && rootPaths.length > 0;
-  const hasMainContent = hasRoots || (activeView === 'editor' && !!selectedImage);
+  // D-043: the Colorist tab has no folder-tree "Sources" panel any more — the
+  // editor pane is unconditional on a selected shot (see docs/notes/colorist-strip.md §6).
+  const hasMainContent = !!selectedImage;
 
-  const shouldHideFolderTree = useCompactPanels || useWidePanels;
+  const shouldHideLeftPanel = useCompactPanels || useWidePanels;
   const isWgpuActive =
-    activeView === 'editor' &&
     appSettings?.useWgpuRenderer !== false &&
     selectedImage?.isReady &&
     hasRenderedFirstFrame;
@@ -809,36 +640,6 @@ function App() {
 
     if (active.data.current?.type === 'layout-tab' && over?.data.current?.type === 'layout-region') {
       movePanel(active.data.current.panel as Panel, over.data.current.region as PanelRegion);
-    }
-
-    if (active.data.current?.type === 'library-image' && over?.data.current?.type === 'folder') {
-      const targetFolder = over.data.current.path;
-      const sourcePaths = activeImageDragItem?.paths || [active.data.current.path];
-
-      invoke(Invokes.MoveFiles, { sourcePaths, destinationFolder: targetFolder })
-        .then(() => {
-          refreshAllFolderTrees();
-          handleLibraryRefresh();
-          useLibraryStore.getState().setLibrary({ multiSelectedPaths: [] });
-        })
-        .catch((err) => {
-          toast.error(`Failed to move files: ${err}`);
-        });
-    }
-
-    if (active.data.current?.type === 'library-image' && over?.data.current?.type === 'album') {
-      const targetAlbumId = over.data.current.id;
-      const sourcePaths = activeImageDragItem?.paths || [active.data.current.path];
-
-      invoke(Invokes.AddToAlbum, { albumId: targetAlbumId, paths: sourcePaths })
-        .then(() => invoke(Invokes.GetAlbums))
-        .then((updatedTree: any) => {
-          useLibraryStore.getState().setLibrary({ albumTree: updatedTree, multiSelectedPaths: [] });
-          handleLibraryRefresh();
-        })
-        .catch((err) => {
-          toast.error(`Failed to add to album: ${err}`);
-        });
     }
   };
 
@@ -888,7 +689,7 @@ function App() {
             }}
           >
             <div className="flex flex-row grow h-full min-h-0">
-              {!shouldHideFolderTree && hasMainContent && (
+              {!shouldHideLeftPanel && hasMainContent && (
                 <SidePanelArea
                   side="left"
                   width={effectiveLeftWidth}
@@ -910,10 +711,7 @@ function App() {
                   />
                 )}
                 <div
-                  className={clsx(
-                    'flex-1 flex flex-col min-w-0 h-full',
-                    activeView === 'editor' && selectedImage ? 'flex' : 'hidden',
-                  )}
+                  className={clsx('flex-1 flex flex-col min-w-0 h-full', selectedImage ? 'flex' : 'hidden')}
                 >
                   {selectedImage && (
                     <EditorView
@@ -927,10 +725,8 @@ function App() {
                       sortedImageList={sortedImageList}
                       createResizeHandler={createResizeHandler}
                       createResizeResetHandler={createResizeResetHandler}
-                      handleBackToLibrary={handleBackToLibrary}
                       handleEditorContextMenu={handleEditorContextMenu}
                       handleThumbnailContextMenu={handleThumbnailContextMenu}
-                      handleMainLibraryContextMenu={handleMainLibraryContextMenu}
                       handleImageClick={handleImageClick}
                       handleClearSelection={handleClearSelection}
                       handleCopyAdjustments={handleCopyAdjustments}
@@ -944,53 +740,21 @@ function App() {
                   )}
                 </div>
                 <div
-                  className={clsx(
-                    'flex-1 flex flex-col min-w-0 h-full',
-                    activeView === 'editor' && selectedImage ? 'hidden' : 'flex',
-                  )}
+                  className={clsx('flex-1 flex flex-col min-w-0 h-full', selectedImage ? 'hidden' : 'flex')}
                 >
-                  {/* D-039: the project launcher is now shell-level (rendered by
-                      main.tsx when no project is open), not a view inside the
-                      Colorist tab. RapidRAW's LibraryView still mounts here as the
-                      fallback for the unrouted albums / culling / community nav so
-                      upstream stays cherry-pick-able. */}
-                  <LibraryView
-                    sortedImageList={sortedImageList}
-                    groupBadgeInfo={groupBadgeInfo}
-                    thumbnailSize={thumbnailSize}
-                    thumbnailAspectRatio={thumbnailAspectRatio}
-                    libraryViewMode={libraryViewMode}
-                    isAndroid={isAndroid}
-                    layoutMode={layoutMode}
-                    setThumbnailSize={setThumbnailSize}
-                    setThumbnailAspectRatio={setThumbnailAspectRatio}
-                    setLibraryViewMode={setLibraryViewMode}
-                    handleClearSelection={handleClearSelection}
-                    handleLibraryImageSingleClick={handleLibraryImageSingleClick}
-                    handleImageSelect={handleImageSelect}
-                    handleRate={handleRate}
-                    handleThumbnailContextMenu={handleThumbnailContextMenu}
-                    handleMainLibraryContextMenu={handleMainLibraryContextMenu}
-                    handleContinueSession={handleContinueSession}
-                    handleGoHome={handleGoHome}
-                    handleOpenFolder={handleOpenFolder}
-                    handleImportClick={handleImportClick}
-                    handleLibraryRefresh={handleLibraryRefresh}
-                    handleCopyAdjustments={handleCopyAdjustments}
-                    handlePasteAdjustments={handlePasteAdjustments}
-                    handleResetAdjustments={handleResetAdjustments}
-                    requestThumbnails={requestThumbnails}
-                  />
+                  {/* D-043: RapidRAW's welcome/library/community view is gone — the
+                      Colorist tab is the grading editor only. A project with no
+                      selected shot (or every shot offline) lands here; "no project
+                      at all" is handled one level up by the shell launcher. */}
+                  <ColoristEmptyState />
                 </div>
-                {isSettingsOpen && appSettings && hasRoots && (
+                {isSettingsOpen && appSettings && (
                   <div className="absolute inset-0 z-50 flex bg-bg-secondary rounded-lg">
                     <div className="w-full h-full flex flex-col p-4 lg:p-8 overflow-y-auto custom-scrollbar">
                       <SettingsPanel
                         appSettings={appSettings}
                         onBack={() => setUI({ isSettingsOpen: false })}
-                        onLibraryRefresh={handleLibraryRefresh}
                         onSettingsChange={handleSettingsChange}
-                        rootPaths={rootPaths}
                       />
                     </div>
                   </div>
@@ -1028,20 +792,15 @@ function App() {
           handleSaveFocusStack={handleSaveFocusStack}
           handleSaveHdr={handleSaveHdr}
           handleStartHdr={handleStartHdr}
-          refreshImageList={handleLibraryRefresh}
+          refreshImageList={noOpRefresh}
           handleApplyDenoise={handleApplyDenoise}
           handleBatchDenoise={handleBatchDenoise}
           handleSaveDenoisedImage={handleSaveDenoisedImage}
-          handleCreateFolder={handleCreateFolder}
-          handleRenameFolder={handleRenameFolder}
           handleSaveRename={handleSaveRename}
-          handleStartImport={handleStartImport}
           handleSetColorLabel={handleSetColorLabel}
           handleRate={handleRate}
           executeDelete={executeDelete}
           handleSaveCollage={handleSaveCollage}
-          handleCreateAlbumItem={handleCreateAlbumItem}
-          handleRenameAlbumItem={handleRenameAlbumItem}
         />
         {/* Chroma: the agent activity feed + request_human banner (D-032) */}
         <AgentActivityDock />

@@ -76,13 +76,12 @@ interface WgpuRenderState {
 }
 
 interface EditorProps {
-  onBackToLibrary(): void;
   onContextMenu(event: any): void;
   onImageSelect?(path: string, event?: any): void;
   transformWrapperRef: any;
 }
 
-export default function Editor({ onBackToLibrary, onContextMenu, onImageSelect, transformWrapperRef }: EditorProps) {
+export default function Editor({ onContextMenu, onImageSelect, transformWrapperRef }: EditorProps) {
   const appSettings = useSettingsStore((s) => s.appSettings);
   const osPlatform = useSettingsStore((s) => s.osPlatform);
   const isFullScreen = useUIStore((s) => s.isFullScreen);
@@ -2062,7 +2061,6 @@ export default function Editor({ onBackToLibrary, onContextMenu, onImageSelect, 
           canUndo={canUndo}
           isAndroid={isAndroid}
           isLoading={isLoading}
-          onBackToLibrary={onBackToLibrary}
           onImageSelect={onImageSelect}
           onRedo={redo}
           onToggleFullScreen={handleToggleFullScreen}

@@ -1,5 +1,5 @@
 import { memo, useState, useEffect, useRef, useMemo } from 'react';
-import { Eye, EyeOff, ArrowLeft, Maximize, Loader2, Undo, Redo } from 'lucide-react';
+import { Eye, EyeOff, Maximize, Loader2, Undo, Redo } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +16,6 @@ interface EditorToolbarProps {
   canUndo: boolean;
   isAndroid: boolean;
   isLoading: boolean;
-  onBackToLibrary(): void;
   onImageSelect?(path: string, event?: any): void;
   onRedo(): void;
   onToggleFullScreen(): void;
@@ -37,7 +36,6 @@ const EditorToolbar = memo(
     canUndo,
     isAndroid,
     isLoading,
-    onBackToLibrary,
     onImageSelect,
     onRedo,
     onToggleFullScreen,
@@ -359,16 +357,10 @@ const EditorToolbar = memo(
     return (
       <div className="relative shrink-0 flex items-center justify-between px-3 h-12 gap-3 z-40">
         <div className="flex items-center gap-2 shrink-0 z-40">
-          <button
-            className="bg-surface text-text-primary p-2 rounded-full hover:bg-card-active transition-colors shrink-0"
-            onClick={onBackToLibrary}
-            onKeyDown={handleButtonKeyDown}
-            data-tooltip={t('editor.toolbar.tooltips.backToLibrary')}
-            data-bench-id="back-to-library"
-          >
-            <ArrowLeft size={20} />
-          </button>
-
+          {/* D-043: the "back to library" button is gone — the Colorist tab has no
+              library to return to (see docs/notes/colorist-strip.md §6). Note this
+              also orphans `app/bench/replay.js`'s back-to-library step (RapidRAW's
+              own benchmark tooling, outside D-043's scope). */}
           <div className="hidden 2xl:flex items-center gap-2" aria-hidden="true">
             <div className="p-2 invisible pointer-events-none">
               <Undo size={20} />

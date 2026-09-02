@@ -20,21 +20,9 @@ export const KEYBIND_SECTIONS: KeybindSection[] = [
 
 export const KEYBIND_DEFINITIONS: KeybindDefinition[] = [
   {
-    action: 'open_image',
-    description: 'settings.keybinds.actions.open_image',
-    defaultCombo: ['Enter'],
-    section: 'library',
-  },
-  {
     action: 'copy_files',
     description: 'settings.keybinds.actions.copy_files',
     defaultCombo: ['ctrl', 'shift', 'KeyC'],
-    section: 'library',
-  },
-  {
-    action: 'paste_files',
-    description: 'settings.keybinds.actions.paste_files',
-    defaultCombo: ['ctrl', 'shift', 'KeyV'],
     section: 'library',
   },
   {
@@ -200,12 +188,6 @@ export const KEYBIND_DEFINITIONS: KeybindDefinition[] = [
     section: 'panels',
   },
   {
-    action: 'toggle_folder_tree',
-    description: 'settings.keybinds.actions.toggle_folder_tree',
-    defaultCombo: ['KeyL'],
-    section: 'panels',
-  },
-  {
     action: 'toggle_analytics',
     description: 'settings.keybinds.actions.toggle_analytics',
     defaultCombo: ['KeyA'],
@@ -236,21 +218,9 @@ export const KEYBIND_DEFINITIONS: KeybindDefinition[] = [
     section: 'panels',
   },
   {
-    action: 'toggle_library_exif',
-    description: 'settings.keybinds.actions.toggle_library_exif',
-    defaultCombo: ['KeyT'],
-    section: 'library',
-  },
-  {
     action: 'open_settings',
     description: 'settings.keybinds.actions.open_settings',
     defaultCombo: ['ctrl', 'Comma'],
-    section: 'library',
-  },
-  {
-    action: 'focus_search',
-    description: 'settings.keybinds.actions.focus_search',
-    defaultCombo: ['ctrl', 'KeyF'],
     section: 'library',
   },
   { action: 'undo', description: 'settings.keybinds.actions.undo', defaultCombo: ['ctrl', 'KeyZ'], section: 'editing' },

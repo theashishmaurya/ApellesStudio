@@ -1,12 +1,5 @@
 import { create } from 'zustand';
-import {
-  ImageFile,
-  Panel,
-  UiVisibility,
-  CullingSuggestions,
-  PanelRegion,
-  WorkspaceState,
-} from '../components/ui/AppProperties';
+import { ImageFile, Panel, UiVisibility, PanelRegion, WorkspaceState } from '../components/ui/AppProperties';
 
 export type SwitcherPlacement = 'bottom' | 'right' | 'left' | 'top';
 
@@ -76,17 +69,8 @@ interface NegativeConversionModalState {
   targetPaths: Array<string>;
 }
 
-interface CullingModalState {
-  isOpen: boolean;
-  suggestions: CullingSuggestions | null;
-  progress: { current: number; total: number; stage: string } | null;
-  error: string | null;
-  pathsToCull: Array<string>;
-}
-
 const ALL_PANELS: Panel[] = [
   Panel.Metadata,
-  Panel.FolderTree,
   Panel.Export,
   Panel.Tethering,
   Panel.Adjustments,
@@ -98,7 +82,6 @@ const ALL_PANELS: Panel[] = [
 
 const DEFAULT_PANEL_DEFAULT_REGIONS: Record<Panel, PanelRegion> = {
   [Panel.Metadata]: 'leftTop',
-  [Panel.FolderTree]: 'leftTop',
   [Panel.Export]: 'leftTop',
   [Panel.Tethering]: 'leftTop',
   [Panel.Adjustments]: 'rightTop',
@@ -124,13 +107,13 @@ export function reconcileWorkspace(
     leftTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     rightTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     panelLayout: {
-      leftTop: [Panel.Metadata, Panel.FolderTree, Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
+      leftTop: [Panel.Metadata, Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
       leftBottom: [],
       rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Ai, Panel.Presets],
       rightBottom: [],
     },
     activePanels: {
-      leftTop: Panel.FolderTree,
+      leftTop: Panel.Metadata,
       leftBottom: null,
       rightTop: Panel.Adjustments,
       rightBottom: null,
@@ -204,7 +187,6 @@ export function reconcileWorkspace(
 }
 
 interface UIState {
-  activeView: string;
   isFullScreen: boolean;
   isWindowFullScreen: boolean;
   isInstantTransition: boolean;
@@ -236,20 +218,9 @@ interface UIState {
   slideDirection: number;
   collapsibleSectionsState: CollapsibleSectionsState;
 
-  isCreateFolderModalOpen: boolean;
-  isRenameFolderModalOpen: boolean;
   isRenameFileModalOpen: boolean;
   renameTargetPaths: Array<string>;
-  isImportModalOpen: boolean;
   isCopyPasteSettingsModalOpen: boolean;
-  importTargetFolder: string | null;
-  importSourcePaths: Array<string>;
-  folderActionTarget: string | null;
-
-  isCreateAlbumModalOpen: boolean;
-  isCreateAlbumGroupModalOpen: boolean;
-  isRenameAlbumModalOpen: boolean;
-  albumActionTarget: string | null;
 
   confirmModalState: ConfirmModalState;
   panoramaModalState: PanoramaModalState;
@@ -257,20 +228,16 @@ interface UIState {
   hdrModalState: HdrModalState;
   negativeModalState: NegativeConversionModalState;
   denoiseModalState: DenoiseModalState;
-  cullingModalState: CullingModalState;
   collageModalState: CollageModalState;
 
   setUI: (updater: Partial<UIState> | ((state: UIState) => Partial<UIState>)) => void;
   setPanel: (panel: Panel | null) => void;
   customEscapeHandler: (() => void) | null;
   setCustomEscapeHandler: (handler: (() => void) | null) => void;
-  searchFocusRequest: number;
-  requestSearchFocus: () => void;
   resetWorkspaceLayout: (isTetheringSupported?: boolean) => WorkspaceState;
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
-  activeView: 'editor', // D-039: a project is always open when <App/> (Colorist) is mounted; the launcher is shell-level now
   isFullScreen: false,
   isWindowFullScreen: false,
   isInstantTransition: false,
@@ -287,13 +254,13 @@ export const useUIStore = create<UIState>((set, get) => ({
   compactEditorPanelHeightOverride: null,
 
   panelLayout: {
-    leftTop: [Panel.Metadata, Panel.FolderTree, Panel.Export],
+    leftTop: [Panel.Metadata, Panel.Export],
     leftBottom: [],
     rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Ai, Panel.Presets],
     rightBottom: [],
   },
   activePanels: {
-    leftTop: Panel.FolderTree,
+    leftTop: Panel.Metadata,
     leftBottom: null,
     rightTop: Panel.Adjustments,
     rightBottom: null,
@@ -316,19 +283,9 @@ export const useUIStore = create<UIState>((set, get) => ({
   slideDirection: 1,
   collapsibleSectionsState: { basic: true, color: false, curves: true, details: false, effects: false },
 
-  isCreateFolderModalOpen: false,
-  isRenameFolderModalOpen: false,
   isRenameFileModalOpen: false,
   renameTargetPaths: [],
-  isImportModalOpen: false,
   isCopyPasteSettingsModalOpen: false,
-  importTargetFolder: null,
-  importSourcePaths: [],
-  folderActionTarget: null,
-  isCreateAlbumModalOpen: false,
-  isCreateAlbumGroupModalOpen: false,
-  isRenameAlbumModalOpen: false,
-  albumActionTarget: null,
 
   confirmModalState: { isOpen: false },
   panoramaModalState: {
@@ -366,7 +323,6 @@ export const useUIStore = create<UIState>((set, get) => ({
     progressMessage: null,
     isRaw: false,
   },
-  cullingModalState: { isOpen: false, suggestions: null, progress: null, error: null, pathsToCull: [] },
   collageModalState: { isOpen: false, sourceImages: [] },
 
   setUI: (updater) => set((state) => (typeof updater === 'function' ? updater(state) : updater)),
@@ -505,6 +461,4 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   customEscapeHandler: null,
   setCustomEscapeHandler: (handler) => set({ customEscapeHandler: handler }),
-  searchFocusRequest: 0,
-  requestSearchFocus: () => set((state) => ({ searchFocusRequest: state.searchFocusRequest + 1 })),
 }));

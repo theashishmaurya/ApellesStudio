@@ -8,7 +8,6 @@ use image::{DynamicImage, GrayImage};
 use serde::{Deserialize, Serialize};
 use sysinfo::Disks;
 use tokio::sync::Mutex as TokioMutex;
-use tokio::task::JoinHandle;
 use wgpu::{Texture, TextureView};
 
 use crate::ai_processing::AiState;
@@ -152,7 +151,6 @@ pub struct AppState {
     pub panorama_result: Arc<Mutex<Option<DynamicImage>>>,
     pub focus_stack_result: Arc<Mutex<Option<DynamicImage>>>,
     pub denoise_result: Arc<Mutex<Option<DynamicImage>>>,
-    pub indexing_task_handle: Mutex<Option<JoinHandle<()>>>,
     pub lut_cache: Mutex<HashMap<String, Arc<Lut>>>,
     pub initial_file_path: Mutex<Option<String>>,
     pub pending_edit_session: Mutex<Option<ExternalEditSession>>,

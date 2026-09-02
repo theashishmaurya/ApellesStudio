@@ -4,8 +4,10 @@
 // default landing screen. A grid of saved Chroma projects (`~/Movies/Chroma/
 // *.chroma`), each a card with a cached thumbnail + name + relative timestamp;
 // click to open it in the editor. "＋ New Project" picks clips and scaffolds a
-// new `<name>.chroma`. RapidRAW's LibraryView / albums / culling still exist —
-// they're just not routed to by default (docs/09 divergence log, D-003).
+// new `<name>.chroma`. D-043 (2026-09-02) removed RapidRAW's LibraryView /
+// albums / culling / community shell outright — they no longer exist, routed
+// or not (docs/09 divergence log; overrides the D-003 "keep cherry-pickable"
+// default for this layer).
 //
 // Styling: plain elements + app colour tokens, same as ShotStrip / AgentActivityDock.
 import { useCallback, useEffect, useState } from 'react';
@@ -16,7 +18,6 @@ import { FolderOpen, Plus, Film, Loader2, X } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 import { useSessionStore } from '../../store/useSessionStore';
-import { useUIStore } from '../../store/useUIStore';
 
 const VIDEO_EXTS = ['mov', 'mp4', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'm2ts', 'mxf', 'braw', 'r3d'];
 
@@ -63,7 +64,6 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   const [paths, setPaths] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const newProject = useSessionStore((s) => s.newProject);
-  const setUI = useUIStore((s) => s.setUI);
 
   const create = useCallback(async () => {
     if (!name.trim()) {
@@ -78,8 +78,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
       return;
     }
     onClose();
-    setUI({ activeView: 'editor' });
-  }, [name, paths, newProject, onClose, setUI]);
+  }, [name, paths, newProject, onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -175,7 +174,6 @@ export default function ProjectLauncher() {
   const [dir, setDir] = useState('');
   const [showNew, setShowNew] = useState(false);
   const openProject = useSessionStore((s) => s.openProject);
-  const setUI = useUIStore((s) => s.setUI);
 
   const refresh = useCallback(async () => {
     try {
@@ -219,9 +217,8 @@ export default function ProjectLauncher() {
         toast.error(`Open failed: ${res.error}`);
         return;
       }
-      setUI({ activeView: 'editor' });
     },
-    [openProject, setUI],
+    [openProject],
   );
 
   return (
