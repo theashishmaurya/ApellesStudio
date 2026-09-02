@@ -23,7 +23,7 @@ numbers are actually calibrated).
   scrub/play preview (independent of the Colorist render path) via the shared
   `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
   persisted in the project. Multiple named timelines per project, switchable via
-  `TimelineSwitcher` (D-046). **Real audio during playback** (D-049 —
+  `TimelineSwitcher` (D-046). **Real audio during playback** (D-050 —
   `symphonia`→`rubato`→`dasp_sample`→`cpal`, single video track's embedded
   audio stream, synced-at-start-not-tightly-coupled to the video playhead). No
   multi-track or transcript cut yet.
@@ -54,18 +54,18 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
-1. ~~**Editor timeline audio playback**~~ — **done, D-049 (2026-09-03).** Real
+1. ~~**Editor timeline audio playback**~~ — **done, D-050 (2026-09-03).** Real
    `cpal` device audio during Play: `symphonia` decode → `rubato` resample →
    `dasp_sample` format-convert → `cpal` output, reusing the video track's
-   embedded audio stream (no separate audio `Track` populated — see D-049).
+   embedded audio stream (no separate audio `Track` populated — see D-050).
    A dedicated audio thread free-runs against the device clock, started from
    the same playhead frame the video `rAF` loop re-baselines from on every
    Play toggle — not a tight per-frame coupling (the real tradeoff, written
-   up in D-049). **Deferred, tracked separately:** multi-track audio mixing
+   up in D-050). **Deferred, tracked separately:** multi-track audio mixing
    (depends on real multi-track support generally — see item 2 below),
    waveform-on-clip UI (item 2), mute/volume controls, audio scrubbing while
    paused, and long-play-session drift correction between the audio/video
-   clocks (open-loop by design this pass — see D-049's sync-model note).
+   clocks (open-loop by design this pass — see D-050's sync-model note).
 2. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
    Palmier/Premiere-class editors. Today's `react-timeline-editor` embed (D-041 MVP) is
    missing table-stakes NLE interaction: zoom in/out on the ruler (scroll-wheel over the
@@ -208,6 +208,18 @@ way: fixed a latent `@react-three/fiber` × `React.ElementType` typing collision
 `package.json` `overrides` list plus a stale lockfile baking in the wrong resolution).
 Still open: a visual manifest editor, multi-manifest/scene management, render
 progress/cancel, a render-output save dialog, a packaged-build story for the engine.
+
+**Export dialog + Editor timeline audio (2026-09-03, D-049/D-050):** Export moved to
+a top-right `ExportDialog` in the Colorist tab (codec/resolution/frame-range/`.cube`
+bake/output path/real progress bar), backed by the existing `chroma_export_video`/
+`chroma_bake_lut` (D-022) — the old still-image `ExportPanel` stays routed as a
+separate, unrelated feature (its pre-existing video-brokenness is **B-010**, still
+open). Editor timeline playback gained real audio — `symphonia`→`rubato`→
+`dasp_sample`→`cpal`, a dedicated thread synced from the video `rAF` loop's playhead
+(open-loop, no drift correction yet). Found + fixed/logged along the way: B-008
+(`@react-three/fiber` × `React.ElementType` typing collision), B-009 (duplicate
+Remotion packages crashing the app), B-011 (a test-isolation gap between the export
+and relight test suites, logged not fixed).
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
