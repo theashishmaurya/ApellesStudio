@@ -65,22 +65,42 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      `shots`/`media` still not unified.
    - **Still open (pass 3):** the `shots`/`media` unification, the docked
      Sources/Library panel, the bin-tree UI, the timeline-switcher UI.
-2. **Export → a top-right button + an Export window** — move Export out of the buried
+2. **Editor timeline audio playback** — owner caught live, 2026-09-02: the Edit tab's
+   preview has no sound at all during playback, silent or muted are indistinguishable
+   from "not built yet." Known gap since the Editor MVP (D-041 said "no audio yet"
+   explicitly) but wasn't a tracked queue item until now. `packages/editor`'s preview
+   is a decode→JPEG-per-frame path (`chroma_timeline_frame`, video only, no audio
+   pipe) — needs its own audio decode/playback path (`symphonia`/`cpal`/`dasp`,
+   already named as the intended audio stack in `architecture-lock.md`, not yet built)
+   synced to the same playhead the video preview already tracks.
+3. **A mature timeline UI** — owner caught live, 2026-09-02, comparing directly against
+   Palmier/Premiere-class editors. Today's `react-timeline-editor` embed (D-041 MVP) is
+   missing table-stakes NLE interaction: zoom in/out on the ruler (scroll-wheel over the
+   timeline, not just the toolbar slider), trim-by-dragging a clip's edge (currently
+   only whole-clip drag/reorder — no edge-hover cursor, no live trim), and the general
+   multi-track visual language mature editors share (per-track height/color, waveform
+   on audio clips, snapping, ripple feedback). Scope this properly against
+   `react-timeline-editor`'s actual API before starting — some of this may already be
+   supported and just not wired (check before assuming a custom timeline is needed).
+   Depends on multiple tracks existing to matter fully (ties to item 1's `shots`/`media`
+   unification and real multi-track support, not just the current single-video-track
+   assembly).
+4. **Export → a top-right button + an Export window** — move Export out of the buried
    `ExportPanel` toggle into a proper dialog: codec, resolution (default = the D-038
    project spec), frame range, `.cube` bake toggle, output path, progress. Backed by
    the existing `chroma_export_video`/`chroma_bake_lut` (D-022). `@chroma/ui`'s
    `Select`/`Dialog` (D-042, already landed) cover the UI needs. Colorist-first, shell-level
    later (export the Edit tab's active timeline too).
-3. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
+5. **Motion tab MVP** — was missing a real queued entry until 2026-09-02; the engine's
    ready and waiting. `@remotion/player` embed of `packages/motion-engine/` + a
    manifest editor (JSON-in to start — visual editor is an open question, see
    `product-direction.md` §9). `chroma-motion` crate (manifest → render bridge) per
    `architecture-lock.md`.
-4. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
+6. **Global undo/redo** — shell-level Cmd/Ctrl-Z spanning all 3 tabs. A
    `@chroma/history` store (`{tab, label, undo(), redo(), ts}`); the Colorist's
    existing 50-deep `useEditorStore` history feeds into it (don't rebuild it); Editor
    timeline ops push before/after snapshots. Ties into the D-032 activity feed.
-5. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
+7. **Docs reconciliation** (owed under the `CLAUDE.md` hard rule) — `03-architecture.md`
    full rewrite for the 3-tab world (currently a stale banner over the pre-pivot doc);
    `00-vision.md`/`01-prd.md`/`02-scope.md` still say "grading only, not an editor";
    `BUGS.md`'s "Known engine constraints" list still names solved items (D-014/34/36).
