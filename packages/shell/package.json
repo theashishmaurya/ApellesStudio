@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "description": "Chroma app shell (D-039) — the window title bar (window chrome + the 3 tabs Edit/Motion/Colorist), a persisted tab store, Cmd/Ctrl+1/2/3 switching. Tab content is injected via a registry prop so the shell never imports the tab packages. Owns the app chrome, so it couples to Tauri.",
   "dependencies": {
+    "@chroma/ui": "*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-os": "^2.3.2",
     "lucide-react": "^1.33.0",

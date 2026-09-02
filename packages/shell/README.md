@@ -47,10 +47,11 @@ routing flag is computed in a small `Root` component in `app/src/main.tsx` from
 
 ## Deps
 
-`react` + `zustand` + `lucide-react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`.
-The Tauri coupling is deliberate and acceptable — **the shell is the app chrome
-now.** Tab content is still injected via the `tabs` registry prop, so the shell
-never imports the colorist app or the tab packages.
+`react` + `zustand` + `lucide-react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`
++ `@chroma/ui` (D-042 — the "‹ Projects" chrome button is a `@chroma/ui`
+`<Button variant="ghost">`). The Tauri coupling is deliberate and acceptable —
+**the shell is the app chrome now.** Tab content is still injected via the `tabs`
+registry prop, so the shell never imports the colorist app or the tab packages.
 
 ## Status
 

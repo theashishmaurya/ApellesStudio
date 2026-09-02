@@ -1,9 +1,9 @@
 /**
- * Re-export shim (D-039). The real component lives in `@chroma/ui`; this file
- * keeps the existing `import CollapsibleSection from '../ui/CollapsibleSection'`
- * sites working.
+ * Re-export shim. The real component lives in `@chroma/ui`; this file keeps
+ * the existing `import CollapsibleSection from '../ui/CollapsibleSection'` sites working.
  *
- * Note: the extracted `@chroma/ui` version inlines its two visibility-toggle
- * tooltip strings (English) instead of going through `react-i18next`.
+ * D-042: rebuilt on the shadcn/Base-UI `Collapsible` (Base UI drives the
+ * open/close height transition). Props unchanged; the two visibility-toggle
+ * tooltip strings stay inlined in English.
  */
 export { CollapsibleSection as default } from '@chroma/ui';

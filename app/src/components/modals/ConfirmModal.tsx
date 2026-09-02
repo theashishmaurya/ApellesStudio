@@ -2,12 +2,15 @@ import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import Button from '../ui/Button';
+import type { ButtonVariant } from '@chroma/ui';
 import Text from '../ui/Text';
 import { TextVariants } from '../../types/typography';
 
 interface ConfirmModalProps {
   cancelText?: string;
   confirmText?: string;
+  /** a `@chroma/ui` Button variant name (permissive string — the callers /
+   *  `useUIStore` pass `'primary'` | `'destructive'`); narrowed at the Button. */
   confirmVariant?: string;
   isOpen: boolean;
   message?: string;
@@ -114,7 +117,7 @@ export default function ConfirmModal({
           </Button>
           <Button
             onClick={handleConfirm}
-            variant={confirmVariant}
+            variant={confirmVariant as ButtonVariant}
             autoFocus={true}
             className="focus:outline-hidden focus:ring-0 focus:ring-offset-0"
           >

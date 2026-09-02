@@ -34,6 +34,8 @@
  */
 
 import { useEffect, type ReactNode } from 'react';
+import { ChevronLeft } from 'lucide-react';
+import { Button } from '@chroma/ui';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
 
@@ -97,14 +99,15 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProp
 
         {/* left (project open): back to the launcher */}
         {projectOpen && onCloseProject && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={onCloseProject}
             title="Close project — back to all projects"
-            className="flex items-center gap-1 px-2 h-6 rounded text-[11px] font-medium text-text-secondary hover:text-text-primary hover:bg-bg-primary/40 transition-colors"
+            className="h-6 gap-1 text-text-secondary hover:text-text-primary"
           >
-            <span aria-hidden>‹</span> Projects
-          </button>
+            <ChevronLeft className="size-3" /> Projects
+          </Button>
         )}
 
         {/* centre: the tabs, absolutely centred (only while a project is open) */}
@@ -125,9 +128,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProp
                   onClick={() => setActiveTab(tab.id)}
                   className={
                     'relative flex items-center gap-1.5 px-3 text-xs font-medium transition-colors ' +
-                    (isActive
-                      ? 'text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary')
+                    (isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary')
                   }
                 >
                   {tab.icon}
@@ -156,19 +157,13 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject }: ShellProp
         {tabs.map((tab) => {
           const isActive = projectOpen && tab.id === active;
           return (
-            <div
-              key={tab.id}
-              role="tabpanel"
-              className={isActive ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}
-            >
+            <div key={tab.id} role="tabpanel" className={isActive ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
               {tab.element}
             </div>
           );
         })}
 
-        {!projectOpen && (
-          <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>
-        )}
+        {!projectOpen && <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>}
       </div>
     </div>
   );

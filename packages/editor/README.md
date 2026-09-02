@@ -6,9 +6,10 @@ remove edits.
 
 - `EditorTab` — the tab: preview pane (top) + `@xzdarcy/react-timeline-editor`
   strip (bottom), or an empty state when no project is open. The transport
-  (`SkipBack` / `Play`–`Pause` / `SkipForward`) and toolbar (`Scissors` split,
-  `Trash2` remove) use `lucide-react` icons; the empty-state action is a
-  `@chroma/ui` `<Button>`.
+  (`SkipBack` / `Play`–`Pause` / `SkipForward`) uses `lucide-react` icons; the
+  timeline toolbar (`Scissors` split, `Trash2` remove) and the empty-state action
+  are `@chroma/ui` `<Button>`s, the toolbar buttons wrapped in `@chroma/ui`
+  `<Tooltip>` (D-042).
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
   `load()`, `applyOp()`, `setPlayhead()`. Optimistic ops → debounced
   `chroma_timeline_set` → `chroma_timeline_get` refetch. Lives here for now; a

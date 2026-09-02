@@ -1,8 +1,10 @@
 /**
- * Re-export shim (D-039). The real component lives in `@chroma/ui`; this file
- * keeps the existing `import Switch from '../ui/Switch'` sites working.
+ * Re-export shim. The real component lives in `@chroma/ui`; this file keeps the
+ * existing `import Switch from '../ui/Switch'` sites working.
  *
- * Note: the extracted `@chroma/ui` version slides the knob with a CSS transform
- * transition instead of the original `framer-motion` spring.
+ * D-042: `@chroma/ui`'s `Switch` is now the bare shadcn/Base-UI switch. The
+ * row-style toggle these ~13 call sites use (`<Switch label=… checked=…
+ * onChange={fn} />`) is `LabeledSwitch`, rebuilt on that same Base UI switch —
+ * so the framer-motion spring the D-039 extraction had to drop is back.
  */
-export { Switch as default } from '@chroma/ui';
+export { LabeledSwitch as default } from '@chroma/ui';

@@ -10,7 +10,7 @@ code lives today — the packages below are extracted from it incrementally.
 | package | exists? | what it will hold |
 |---|---|---|
 | `@chroma/tokens` | **yes (stub)** | design tokens + light/dark theme, from RapidRAW's CSS vars |
-| `@chroma/ui` | **yes** — `Button` / `Input` / `Text` / `Switch` / `CollapsibleSection` + `typography` (D-039 step 6b) | shared component kit from RapidRAW `components/ui/`; app-side files are re-export shims. react + clsx + lucide only — `Slider` + app-coupled components still in `app/` |
+| `@chroma/ui` | **yes** — shadcn/ui on Base UI (D-042): ~18 structural components (Button, Dialog, DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, ScrollArea, Separator, Input, Label, Sonner) + the 5 rebuilt RapidRAW primitives (Text, LabeledSwitch, CollapsibleSection, Button, Input) | shared component kit; app-side files are re-export shims. Themed onto the existing `--app-*`/`--color-*` tokens (one source, `src/styles.css`). Craft-specific grading components (ColorWheel, LUTControl, DepthRangePicker, grading Slider) stay in `app/`. See `ui/README.md` |
 | `@chroma/bridge` | **yes (stub)** | typed Tauri command bindings + zustand stores + the control-bridge hook `useChromaControl` (D-020) |
 | `@chroma/editor` | **yes (stub)** | the **Editing tab** (new) — timeline strip (`react-timeline-editor`), transcript pane, trim/ripple UI |
 | `@chroma/motion` | **yes (stub)** | the **Motion tab** — `@remotion/player` embed + manifest editor |
@@ -35,5 +35,13 @@ code lives today — the packages below are extracted from it incrementally.
   (`WindowChrome.tsx`); `@chroma/ui` made real with the safe subset (`Button`,
   `Input`, `Text`, `Switch`, `CollapsibleSection`) + app-side re-export shims;
   `@chroma/editor` transport/toolbar switched to `lucide-react` icons +
-  `@chroma/ui`. `@chroma/tokens` + `@chroma/bridge` + the rest of the kit are
-  still later passes.
+  `@chroma/ui`.
+- **D-042 (2026-09-02):** `@chroma/ui` moved onto **shadcn/ui + Base UI**
+  (`@base-ui/react`). Canonical shadcn structure (`components.json`, `lib/utils`,
+  `components/ui/*`), ~18 structural components added, the 5 hand-extracted
+  primitives rebuilt on the new base, themed onto the existing `--app-*` tokens
+  (one `@theme` source in `src/styles.css`, `--accent` collision resolved by
+  keeping RapidRAW's brand `--color-accent` and swapping shadcn's hover state to
+  `bg-muted`). `@chroma/shell` ("‹ Projects" button) + `@chroma/editor` (timeline
+  toolbar → `Button` + `Tooltip`) migrated. `@chroma/tokens` + `@chroma/bridge`
+  are still later passes.

@@ -52,12 +52,14 @@ commit.
   mounted under the launcher so the MCP control bridge keeps running. Follow-ups: reopen
   the last project on launch (no persisted "last project" today); moving `ProjectLauncher`
   + the session store into `@chroma/bridge` / a `@chroma/project` fe package.
-- [ ] **`@chroma/ui` on shadcn/ui + Base UI** (D-042, 2026-09-02) — **do before player /
-  media-pool / export**. shadcn copy-in components (Dialog, DropdownMenu, ContextMenu,
-  Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, Button…)
-  on Base UI primitives, themed to RapidRAW's `--color-*` tokens; rebuild the 5
-  hand-extracted components on it (shims stay); keep RapidRAW's domain components
-  (ColorWheel / LUT / DepthRangePicker / grading sliders) in `app/`.
+- [x] **`@chroma/ui` on shadcn/ui + Base UI** (D-042, built 2026-09-02) — canonical
+  shadcn (`components.json`, `lib/utils`, `components/ui/*`), 18 structural components on
+  Base UI (`@base-ui/react` 1.7.0), themed to the `--app-*` tokens (one `@theme` source,
+  `--color-accent` kept as brand / shadcn hover → `bg-muted`). 5 hand-extracted rebuilt
+  (shims stay; Switch shim → new `LabeledSwitch`). `@chroma/shell` + `@chroma/editor`
+  toolbar migrated. RapidRAW's domain components (ColorWheel / LUT / DepthRangePicker /
+  grading sliders) stay in `app/`. Deferred: typography unification, Colorist panel
+  migration (`Dropdown` → `Select`/`DropdownMenu`).
 - [ ] **D-043 — Colorist tab = grading editor only; strip RapidRAW's DAM/welcome/library
   shell** (owner directive 2026-09-02). RapidRAW's photo-manager shell still leaks
   through the Colorist tab: the "Welcome back / Continue Session / Add Folder" home

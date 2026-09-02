@@ -5,10 +5,20 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma shared component kit (D-039) — the generic, dependency-light primitives (Button, Input, Text, Switch, CollapsibleSection) extracted from RapidRAW's components/ui/. react + clsx + lucide-react only; the app-coupled / heavy components stay in app/.",
+  "description": "Chroma shared component kit (D-042) — shadcn/ui components on Base UI primitives, themed onto the app's --app-*/--color-* tokens. Structural + generic components (Button, Dialog, DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, ScrollArea, Separator, Input, Label, Sonner) plus the 5 rebuilt RapidRAW primitives. Domain / grading components stay in app/.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
   "dependencies": {
-    "clsx": "^2.1.1",
+    "@base-ui/react": "1.7.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "cmdk": "1.1.1",
     "lucide-react": "^1.33.0",
-    "react": "^19.2.8"
+    "react": "^19.2.8",
+    "react-resizable-panels": "4.12.3",
+    "sonner": "2.0.8",
+    "tailwind-merge": "3.6.0"
   }
 }

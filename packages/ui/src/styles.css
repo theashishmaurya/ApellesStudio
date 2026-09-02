@@ -1,0 +1,58 @@
+/**
+ * @chroma/ui — the shadcn/Base-UI token layer (D-042).
+ *
+ * This file is the SINGLE definition of the shadcn token names (`--color-background`,
+ * `--color-primary`, …). It is `@import`ed by `app/src/styles.css` right after
+ * `@import 'tailwindcss'`, so the app's Tailwind-v4 build sees these `@theme` entries.
+ * It is also what `components.json` points `tailwind.css` at.
+ *
+ * ONE token source: every shadcn token is an alias of an existing RapidRAW
+ * `--app-*` var (set at runtime by `app/src/utils/themes.ts`) or of an existing
+ * `--color-*` / `--radius-*` entry from the app's own `@theme`. No parallel palette,
+ * no colour literals in component source.
+ *
+ *   --accent collision (D-042): RapidRAW's `--color-accent` is the brand colour
+ *   (white on dark). shadcn's components want `accent` to mean "hover surface".
+ *   We DO NOT redefine `--color-accent`. The copied component source is edited so
+ *   its hover/highlight state uses `bg-muted` / `text-foreground` instead of
+ *   `bg-accent` / `text-accent-foreground`. `--color-accent-foreground` is still
+ *   mapped below as a harmless safety net (the fork never uses that utility).
+ */
+
+@theme {
+  /* surfaces */
+  --color-background: var(--app-bg-primary);
+  --color-foreground: var(--app-text-primary);
+  --color-card: var(--app-surface);
+  --color-card-foreground: var(--app-text-primary);
+  --color-popover: var(--app-surface);
+  --color-popover-foreground: var(--app-text-primary);
+
+  /* brand / primary — RapidRAW's accent IS the brand (white on dark) */
+  --color-primary: var(--app-accent);
+  --color-primary-foreground: var(--app-button-text);
+
+  /* secondary + muted both map to the app's secondary background */
+  --color-secondary: var(--app-bg-secondary);
+  --color-secondary-foreground: var(--app-text-primary);
+  --color-muted: var(--app-bg-secondary);
+  --color-muted-foreground: var(--app-text-secondary);
+
+  /* accent: `--color-accent` is left as the fork defines it (brand). Only the
+     -foreground half is added, as a safety net for any missed source edit. */
+  --color-accent-foreground: var(--app-text-primary);
+
+  /* lines + fields + focus ring */
+  --color-border: var(--app-border-color);
+  --color-input: var(--app-border-color);
+  --color-ring: var(--app-accent);
+
+  /* destructive — the one place a colour value is pinned; it is a token here,
+     never a literal in a component. A red that reads on the dark theme and is
+     close to the fork's existing `text-red-400` error colour. */
+  --color-destructive: rgb(229, 72, 77);
+  --color-destructive-foreground: var(--app-text-primary);
+
+  /* radius: reuse the fork's existing scale, don't add a third one */
+  --radius: var(--radius-md);
+}

@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **`@chroma/ui` → shadcn/ui + Base UI (D-042, built).** Canonical
+  shadcn structure by hand (`components.json`, `src/lib/utils.ts`,
+  `src/components/ui/*`, `src/index.ts`) — the CLI can't target a workspace library
+  package. 18 structural components on Base UI (`@base-ui/react` 1.7.0): button,
+  dialog, dropdown-menu, context-menu, tooltip, popover, tabs, select, command,
+  resizable, sheet, slider, switch, scroll-area, separator, input, label, sonner.
+  The 5 hand-extracted primitives rebuilt: `Button` (superset of the old API —
+  `variant="primary"` alias, `className` still wins via tailwind-merge), `Input`
+  (`bgClassName` kept), `Switch` → bare shadcn switch + new `LabeledSwitch` composite
+  (Base UI restores the knob animation), `CollapsibleSection` on Base UI `Collapsible`,
+  `Text` unchanged. Theme: one `@theme` source (`packages/ui/src/styles.css`,
+  `@import`ed by `app/src/styles.css`), every shadcn token an alias of an existing
+  `--app-*` var; the `--accent` collision resolved by keeping RapidRAW's brand
+  `--color-accent` and editing shadcn's hover state to `bg-muted`;
+  `--color-destructive` the one pinned value. Migrated: `@chroma/shell` "‹ Projects"
+  button, `@chroma/editor` timeline toolbar → `Button` + `Tooltip`. Colorist panels
+  untouched (later). `tsc` app = 74 (baseline unchanged), `vite build` green, `cargo
+  check` untouched. Deferred: typography unification, Colorist `Dropdown` migration.
+
 - **2026-09-02** — **Project launcher is the app entry screen (D-039 migration
   log).** The app opens on the D-037 launcher with no tab bar — just the chrome
   bar. Opening/creating a project sets `useSessionStore.projectPath` (or

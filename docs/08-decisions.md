@@ -1775,6 +1775,62 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
 - **Order:** this lands **before** `@chroma/player` / media-pool / Export-window (all of
   which want dialogs + dropdowns).
 
+### Built (2026-09-02)
+
+- **Setup — manual, not the CLI.** `packages/ui/components.json` is present and
+  canonical (`style: new-york`, `baseColor: neutral`, `cssVariables: true`,
+  `rsc: false`, aliases → `@chroma/ui/*`), but the shadcn CLI can't target a
+  workspace **library** package cleanly, so every component was **hand-placed
+  from shadcn's published source**: the Base UI variant JSX (shadcn ships Radix +
+  Base UI trees in parallel) with the classic token-based utility classes from
+  the `new-york-v4` tree. Structure is exact: `src/lib/utils.ts` (`cn`),
+  `src/components/ui/<name>.tsx`, `src/index.ts` barrel, `src/hooks/use-mobile.ts`.
+- **Package rename.** Base UI reached stable and renamed `@base-ui-components/react`
+  → **`@base-ui/react`** (pinned `1.7.0`). Deps added to `packages/ui/package.json`:
+  `@base-ui/react` 1.7.0, `class-variance-authority` 0.7.1, `clsx` 2.1.1,
+  `tailwind-merge` 3.6.0, `cmdk` 1.1.1, `react-resizable-panels` 4.12.3 (v4 API:
+  `Group`/`Panel`/`Separator`), `sonner` 2.0.8, `lucide-react` ^1.33.0.
+- **Components landed (18):** `button`, `dialog`, `dropdown-menu`, `context-menu`,
+  `tooltip`, `popover`, `tabs`, `select`, `command`, `resizable`, `sheet`,
+  `slider`, `switch`, `scroll-area`, `separator`, `input`, `label`, `sonner`.
+  `sonner`'s `next-themes` dependency dropped (theme via the mapped CSS vars —
+  RapidRAW has no next-themes).
+- **The 5 rebuilt:** `Button` (shadcn `button` + `buttonVariants` cva, kept a
+  superset of the old API — `variant="primary"` alias, `className` still wins via
+  `tailwind-merge` so the old `bg-surface` hack needs no special case);
+  `Input` (+ `bgClassName` prop kept); `Switch` → the bare shadcn switch, and a
+  new `LabeledSwitch` composite (the row-toggle the ~13 call sites use) rebuilt on
+  it — Base UI gives the knob animation back; `CollapsibleSection` rebuilt on Base
+  UI `Collapsible` (drives the height transition); `Text` unchanged. The
+  `app/src/components/ui/*` shims stay — only `Switch.tsx` changed target
+  (`LabeledSwitch as default`).
+- **Theme — one source.** `packages/ui/src/styles.css` is the single definition of
+  the shadcn token names, each an alias of an existing `--app-*` / `--color-*` /
+  `--radius-*` var; `app/src/styles.css` `@import`s it right after
+  `@import 'tailwindcss'`. All three RapidRAW themes drive it at runtime. Mapping
+  table: `packages/ui/README.md`.
+- **The `--accent` collision — decision (a).** `--color-accent` is **not**
+  redefined (it stays RapidRAW's brand white). The copied component source is
+  edited: `hover/focus/data-highlighted/data-[selected]:bg-accent` (+
+  `text-accent-foreground`) → `bg-muted` / `text-foreground`.
+  `--color-accent-foreground` is still mapped as a harmless safety net.
+  `--color-destructive` is the one pinned colour value (`rgb(229,72,77)`), in the
+  theme block. `--radius` → `--radius-md` (no third radius scale).
+- **Migrations done:** `@chroma/shell` "‹ Projects" button → `Button variant="ghost"`
+  (new `@chroma/ui` dep); `@chroma/editor` timeline toolbar (Split / Remove) →
+  `Button variant="ghost"` wrapped in `Tooltip` + `TooltipProvider`. The Colorist
+  app's panels are **not** touched (later, per this decision).
+- **Verified:** `npm install` clean (38 packages, hoisted); `packages/ui` `tsc
+  --noEmit` clean; `app` `tsc --noEmit` = **74**, byte-identical to baseline;
+  `packages/shell` `tsc` clean, `packages/editor` `tsc` = 1 pre-existing error
+  (a `.css` side-effect import, not new); `app` `npm run build` (vite prod) green,
+  every component bundles (verified with a temporary all-exports probe, removed);
+  `cargo check --no-default-features` clean (no Rust touched); dev-server HMR
+  applied the changes with no new errors.
+- **Deferred:** typography unification (`app/src/types/typography.ts` ↔
+  `packages/ui/src/typography.ts` still two copies); Colorist panel migration
+  (esp. `Dropdown` → `Select` / `DropdownMenu`); `@chroma/tokens` + `@chroma/bridge`.
+
 ---
 
 ## D-043 — The Colorist tab is the grading editor ONLY; RapidRAW's DAM / welcome / library shell is removed
