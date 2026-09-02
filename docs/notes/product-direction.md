@@ -292,3 +292,54 @@ Palmier → closed. Diffusion Studio → MPL core + paid "advanced." Gausian →
 paid "advanced." **Every AI-video startup is "open core + paid pro."** A genuinely,
 fully-open (AGPL/MPL, no commercial-feature gate) + local + Rust-fast three-tab tool
 is an unoccupied position.
+
+## The 2026 market — updated 2026-09-02 (owner asked "who's going big on AI editing")
+
+**"Agentic video editing" became a named category in 2026**, with real money behind it —
+this is validation the space is real, and a signal the window for "unclaimed" is closing.
+
+- **a16z published "It's time for agentic video editing"** — a thesis piece, i.e. VCs are
+  actively hunting this category.
+- **Cardboard** (YC W2026, `cardboard.ai`) — describe a cut in plain English, the agent
+  assembles a multi-track timeline. **Highest-upvoted HN launch in its whole YC batch.**
+  Built on WebCodecs + Claude Sonnet, browser-based, **commercial/paid, not open**.
+- **Mobbi AI** (Vega Labs) — "vibe editing," chains Seedance 2.0 / Sora 2 / Kling 3.0 /
+  Veo 3.1 generation models into one conversational workflow. Generation-first, not
+  grading/editing-craft-first.
+- **Avid** — even the 40-year-old incumbent (Media Composer 2026.8) shipped "agentic
+  capabilities" at IBC2026. When the legacy pro tool moves, the category is mainstream.
+- **Runway** — not a direct editor competitor, but $544.5M raised total (+$300M more,
+  Nvidia/General Atlantic/SoftBank), the ambient signal of how much capital is in
+  adjacent AI-video.
+
+**Open-source / local players emerged too — this directly narrows Chroma's "unclaimed"
+claim, read carefully:**
+- **`MartinDelophy/ai-video-editor`** — "creators and AI agents edit the same real
+  timeline," open-source, local-first. **This is Chroma's D-020 shared-state thesis,
+  independently arrived at by someone else.**
+- **OpenReel Video** (`openreel.video`, MIT) — chat with an agent that controls the full
+  timeline, free, local-first.
+- **OpenMontage** (`calesthio/OpenMontage`) — "world's first open-source agentic video
+  *production* system" — 12 pipelines, 100+ tools, 700+ agent skill/knowledge files,
+  local generation models (WAN 2.1, Hunyuan), offline TTS (Piper). Reads as an
+  **agent-skills framework** (closer in shape to this repo's own `videoAgent` skills)
+  than a GUI app.
+- **LTX Desktop** — free/open/local NLE built around the LTX-Video generation model.
+
+**What still differentiates Chroma against all of the above (verified — none of them do
+this):**
+1. **Colorist depth.** Every one of these is cut-assembly-first or generation-first.
+   None have a real grade pipeline — a GPU shader stack, scopes, `match_to_reference`,
+   depth-based haze/relight, mask keyframes. That craft depth is still Chroma's alone.
+2. **Rust-native, not browser/WebCodecs.** Cardboard and OpenReel are browser-based
+   (the class of engine the owner explicitly rejected, D-039's constraint lock). Nobody
+   surveyed is building the wgpu-native compositor Chroma's architecture calls for.
+3. **One integrated studio, not a point tool.** Edit + Motion + Colorist sharing one
+   project is a different shape than "an editor" or "a generator" alone.
+4. **MCP, an open standard** — works with any MCP client (Claude Code included), not a
+   bespoke chat UI bolted onto one app.
+
+**Read on the timing:** the window to be *first* at "open + local + agentic" is closing —
+`MartinDelophy/ai-video-editor` already claims the exact thesis. The window to be *best*
+at "open + local + agentic + real colour science + Rust-fast" is still open, because
+nobody surveyed is doing the colorist part seriously. That's the wedge to actually defend.
