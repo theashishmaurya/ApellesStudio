@@ -200,9 +200,12 @@ decide name/license/headline — D-002/D-007/D-010).
       `<name>.chroma` dir (`project.json` + `thumb.jpg` + `grades/`), a project
       launcher replacing RapidRAW's Library view as the home screen, media
       referenced in place + relink for offline media, debounced autosave. Clip
-      in/out points still open. Deferred polish: project rename/delete/duplicate
-      + search from the launcher, drag-to-import, a Settings-panel folder row,
-      batched open-time decode.
+      in/out points still open. The reserved per-project `settings` field is now
+      a typed output spec — resolution / fps / colour space (**D-038,
+      2026-09-02**; colour space stored + surfaced only, colour management stays
+      D-004). Deferred polish: project rename/delete/duplicate + search from the
+      launcher, drag-to-import, a Settings-panel folder row, batched open-time
+      decode.
 - [ ] Video canvas + transport in the GUI (play/scrub/step, playhead, in/out)
 - [x] Shot strip (selector) — `components/chroma/ShotStrip.tsx` (D-033, 2026-09-02)
 - [ ] Scopes: waveform, RGB parade, vectorscope, histogram (WGSL compute)
@@ -277,7 +280,9 @@ decide name/license/headline — D-002/D-007/D-010).
       (`project.json` + `thumb.jpg` + `grades/`), a launcher home screen
       replacing RapidRAW's Library view, media referenced in place + relink,
       debounced autosave, MCP `list_projects` / `open_project` / `new_project` /
-      `save_project`. Completes D-033's deferred session persistence. Deferred
+      `save_project`. Completes D-033's deferred session persistence. The
+      reserved `settings` field is now a typed per-project output spec
+      (resolution / fps / colour space) — **D-038, 2026-09-02**. Deferred
       polish: launcher rename/delete/duplicate/search, drag-to-import, a
       SettingsPanel folder row, batched open-time per-shot decode.
 - [ ] Multi-subject **batch** tracking (D-017) — one SAM propagation pass for N objects (`max_obj_num > 1`, `obj_ids` per mask) instead of one pass each; deferred from round 3 (2026-09-02) as a perf-only optimization

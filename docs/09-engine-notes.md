@@ -28,7 +28,7 @@ Recorded as **B-001** in `BUGS.md`.
 
 | File | LOC | What it is |
 |---|---:|---|
-| `lib.rs` | 2435 | Tauri app setup, **115 `#[tauri::command]`s** — the app's whole API surface |
+| `lib.rs` | 2436 | Tauri app setup, **116 `#[tauri::command]`s** — the app's whole API surface |
 | `gpu_processing.rs` | 2021 | **the wgpu pipeline** — device/queue, textures, the grade compute passes. Core of what we're extending. |
 | `image_processing.rs` | 3439 | adjustment/grade logic — the params → shader-uniform translation, the ordering |
 | `mask_generation.rs` | 1511 | mask model — shape masks, AI mask plumbing, `generate_mask_overlay` |
@@ -703,6 +703,50 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   `py_compile` + `import server` clean, 37 tools. Launcher grid / New-Project /
   autosave / reopen / media-offline+relink are an open manual smoke test
   (`docs/notes/project-model.md`).
+
+- **2026-09-02** · **Per-project `settings` = a typed output spec (D-038)** —
+  D-037's reserved free-form `settings: Value` gets a real shape:
+  `ProjectSettings { width?, height?, fps?, color_space? }`, all optional. Absent
+  settings = clip-derived everywhere (byte-identical exports), so it is purely
+  additive; `chroma.project/1` schema major is unchanged.
+  · `src/chroma/project.rs` — new `ProjectSettings` struct + `merge_patch()` +
+  `infer_settings_from_clip()`; `ProjectManifest.settings` is now typed
+  (`#[serde(default)]`, deserializes leniently from legacy `{}` / `{fps:24}`);
+  `ProjectOpenDto.settings` typed; `new_project_in` seeds settings by probing the
+  first shot's clip; new command `chroma_project_set_settings(path?, partial)`
+  (partial merge → save `project.json` → return merged). 5 new tests
+  (**49 → 54**): typed round-trip, legacy `{fps:24}` still loads, empty/absent
+  → all `None`, `merge_patch` semantics, new-project infers from an ffmpeg-made
+  clip; + a gated `export_resolution_override` test in `export.rs`.
+  · `src/chroma/export.rs` — `ExportOpts` gains `out_width` / `out_height`; when
+  set, the graded composite (rendered at clip res) is Lanczos3-resized to that
+  as the last step before the encoder (a few lines at the existing dimension
+  read). `chroma_export_video` reads the loaded project's `settings` and feeds
+  `width`/`height` → resize and `fps` → the existing `fps_override` path (an
+  explicit `fps_override` arg still wins). No project / no settings ⇒ the resize
+  is skipped, output is unchanged. `color_space` is stored + surfaced only —
+  encoder pass-through / display transform deferred to D-004.
+  · **Upstream-file edits:** `lib.rs` +1 (`chroma_project_set_settings` in
+  `generate_handler!`). Nothing else in Rust core.
+  · Chroma-only frontend: `store/useSessionStore.ts` += `ProjectSettings` type,
+  `projectSettings` state (hydrated from `_hydrateOpenDto`'s `dto.settings`),
+  `setProjectSettings(partial)` thunk. `hooks/useChromaControl.ts` +=
+  `get_state().project.settings` + op `set_project_settings`. New
+  `components/chroma/ProjectSettingsModal.tsx` (resolution / fps presets +
+  custom + "match first clip", colour-space dropdown with a "metadata only"
+  hint). `components/chroma/ShotStrip.tsx` += a "Settings" gear (real projects
+  only) opening the modal.
+  · `mcp/server.py` +1 tool → **38** (`set_project_settings`). `mcp/README.md`
+  + `docs/07-mcp-surface.md` updated.
+  · Verified: `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **54/54**. `npx tsc --noEmit` 74 pre-existing
+  (baseline unchanged via `git stash -u`), none in a new/touched file.
+  `py_compile` + `import server` clean, **38** tools. Editor "Project settings"
+  modal, a 1080p-override export, a clear-to-clip-res export, and MCP
+  `set_project_settings` + `get_state` are an open manual smoke test
+  (`docs/notes/project-model.md`) — the `useEffect([])` bridge listener does not
+  hot-reload; a stale cargo fingerprint may need `cargo clean -p RapidRAW` + a
+  dev-server restart to link the new command.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

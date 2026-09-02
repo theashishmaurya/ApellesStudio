@@ -395,6 +395,41 @@ def save_project() -> str:
     return json.dumps(_op("save_project"), indent=2, default=str)
 
 
+@mcp.tool()
+def set_project_settings(
+    width: int | None = None,
+    height: int | None = None,
+    fps: float | None = None,
+    color_space: str | None = None,
+) -> str:
+    """Set the open project's output spec (D-038): one resolution / frame rate /
+    colour space for the whole (possibly multi-shot) project instead of deriving
+    everything from whichever clip is loaded.
+
+    Partial merge — only the arguments you pass are changed; the rest are left
+    as-is. A project with no settings behaves exactly as clip-derived (the
+    default). Export uses width+height (the graded composite is resized to it as
+    the final step) and fps (encoder timebase). `color_space` (`rec709` /
+    `rec2020` / `dci-p3` / `srgb`) is **stored + surfaced only** — a real
+    colour-managed pipeline is D-004, not this. Returns the merged settings.
+
+    Needs a saved project loaded (open_project / new_project first)."""
+    import json
+
+    args: dict[str, Any] = {}
+    if width is not None:
+        args["width"] = width
+    if height is not None:
+        args["height"] = height
+    if fps is not None:
+        args["fps"] = fps
+    if color_space is not None:
+        args["colorSpace"] = color_space
+    if not args:
+        return json.dumps({"error": "pass at least one of width, height, fps, color_space"})
+    return json.dumps(_op("set_project_settings", **args), indent=2, default=str)
+
+
 # --------------------------------------------------------------------------- #
 # masks
 # --------------------------------------------------------------------------- #

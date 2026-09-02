@@ -29,7 +29,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 ### Session / inventory  — *call `get_state` once at session start; re-read after an out-of-band change (the user edited by hand). Modelled on Palmier's `get_media` + `get_timeline`.*
 | Tool | Params | Returns |
 |---|---|---|
-| `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Chroma vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]` |
+| `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Chroma vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]`, the multi-shot `session`, and the loaded `project` (`{name, path, dirty, settings}` — `settings` is the D-038 output spec, `null` for Untitled / no explicit settings) |
 | `open` ✅ (D-024) | `path` (absolute) | loads a still or video into the editor headlessly, `{path, ready, size, video}`. Sets `selectedImage`; `useImageLoader` decodes + populates the transport store |
 | `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` — Phase 1 shot model |
 | `list_shots` / `select_shot` | … | Phase 1 |
@@ -38,6 +38,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 | `open_project` ✅ (D-037) | `name_or_path` | load a project's shots + per-shot grades into the session, enter the editor; a missing source is flagged "media offline" |
 | `new_project` ✅ (D-037) | `name`, `media_paths?` | scaffold `<name>.chroma` (media referenced in place) + open it |
 | `save_project` ✅ (D-037) | — | force-write `project.json` + the active shot's grade + `thumb.jpg` (autosave does this on a debounce) |
+| `set_project_settings` ✅ (D-038) | `width?`, `height?`, `fps?`, `color_space?` | partial-merge the open project's output spec → the merged `{width,height,fps,colorSpace}`. Export resizes the graded composite to `width×height` (final step) + uses `fps`; `color_space` (`rec709`/`rec2020`/`dci-p3`/`srgb`) is stored + surfaced only pending colour management (D-004). Needs a saved project loaded. |
 
 ### Render / inspect (read-only)  — *the agent's eyes. `inspect_color` is the primary one — grade by the numbers.*
 | Tool | Params | Returns |

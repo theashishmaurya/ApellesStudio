@@ -41,15 +41,16 @@ claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools (v1) — 37
+## Tools (v1) — 38
 
 | tool | what it does |
 |---|---|
-| `get_state` | loaded image/video, primary adjustments, mask summary, **the multi-shot `session`**, **the loaded `project`** (`{name, path, dirty}` or null for an Untitled session) — reflects manual edits |
+| `get_state` | loaded image/video, primary adjustments, mask summary, **the multi-shot `session`**, **the loaded `project`** (`{name, path, dirty, settings}` or null for an Untitled session) — reflects manual edits |
 | `list_projects` | every saved `<name>.chroma` project in the projects folder (`~/Movies/Chroma` default), newest first — `{projects: [{name, path, modified, shotCount}], folder}` (D-037) |
 | `open_project(name_or_path)` | open a project — loads its shots + per-shot grades into the session, enters the editor; a missing source file is flagged "media offline" (D-037) |
 | `new_project(name, media_paths?)` | scaffold `<name>.chroma` from the given media (referenced in place, never copied) + open it (D-037) |
 | `save_project()` | force an immediate write of project.json + the active shot's grade.json + the launcher thumb (autosave does this on a debounce otherwise) (D-037) |
+| `set_project_settings(width?, height?, fps?, color_space?)` | partial-merge the open project's output spec — resolution + timebase + colour space. Export resizes the graded composite to width×height and uses fps; `color_space` is stored + surfaced only pending colour management (D-038) |
 | `list_masks` | every mask container + sub-masks (ids, type, per-mask adjustments, tracked?) |
 | `list_shots` | every shot in the session + which is active — a grading job is N shots, each keeps its own grade + activity feed (D-033) |
 | `set_active_shot(index?, path?)` | switch the active shot — saves the current shot's grade, restores the target's, scopes the activity feed. Grade shot by shot in one session (D-033) |

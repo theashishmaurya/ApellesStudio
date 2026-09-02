@@ -1365,3 +1365,86 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
   New-Project flow, autosave, reopen, and media-offline/relink are an open
   **manual** smoke test (the `useEffect([])` bridge listener doesn't hot-reload
   and the running app was not driven) — listed in `docs/notes/project-model.md`.
+
+## D-038 — Per-project `settings` = a typed output spec (resolution / fps / colour space); colour space is store-only pending D-004
+**decided (2026-09-02) · built (2026-09-02)**
+
+- **Context:** D-037 gave `ProjectManifest` a `settings: Value` field and left it
+  `empty_obj()` — reserved, unused. A multi-shot project had no output spec of
+  its own: resolution, frame rate and colour interpretation were all derived from
+  whichever clip happened to be loaded. A grading job that mixes a 4K hero clip
+  with 1080p coverage should export to **one** spec, not per-clip.
+
+- **Decision.** `settings` becomes a typed `ProjectSettings`, every field
+  **optional**:
+  - `width: Option<u32>`, `height: Option<u32>` — output resolution
+  - `fps: Option<f64>` — project timebase
+  - `color_space: Option<String>` — `"rec709"` (default when `None`) / `"rec2020"`
+    / `"dci-p3"` / `"srgb"`
+  A project with **no explicit settings behaves exactly as before** — output is
+  clip-derived, exports are byte-identical. This is purely additive.
+
+- **Colour space is stored + surfaced only.** It round-trips through
+  `project.json`, shows in the "Project settings" UI, and is exposed on
+  `get_state().project.settings` and the MCP tool. It does **not** change grade
+  math, working space, or the output display transform — the grade still renders
+  display-referred Rec.709. A real colour-managed pipeline (OCIO, ACEScg working
+  space, PQ/HLG output, encoder colour-primaries/transfer/matrix tagging) is
+  **D-004**, its own phase. D-038 only reserves the field with a real type so the
+  UI and the manifest are ready for it.
+
+- **Backward compatibility.** `chroma.project/1` schema major is **unchanged**
+  (additive, non-breaking). `ProjectSettings` deserializes leniently — each field
+  is `#[serde(default)]`, so a legacy `settings: {}` or `settings: { "fps": 24 }`
+  (the shape the D-037 round-trip test wrote) still loads: `fps` is picked up,
+  unknown keys are ignored, an absent `settings` key → all `None`. The schema doc
+  notes the addition.
+
+- **Defaults on new-project.** `chroma_project_new` probes the **first shot's
+  clip** (`chroma::video::probe`) and seeds `width` / `height` / `fps` from it, so
+  a fresh project has a sensible, editable spec. `color_space` defaults to `None`
+  (→ treated as rec709). A clip that won't probe (offline / not a video) leaves
+  settings unset — the project is then clip-derived, same as a no-settings
+  project.
+
+- **The setter.** A dedicated `chroma_project_set_settings(path?, partial)`
+  command (cleaner for the MCP tool + the UI than folding into
+  `chroma_project_save`'s payload). `partial` is a JSON `{ width?, height?, fps?,
+  colorSpace? }`: a **present** key is applied, an explicit `null` clears the
+  field back to clip-derived, an **absent** key is left as-is. It merges, saves
+  `project.json`, and returns the merged `ProjectSettings`.
+
+- **Export uses it** (`chroma/export.rs`). `chroma_export_video` reads the loaded
+  project's `settings`:
+  - `width` + `height` set → the graded composite (rendered at clip res, as
+    always) is **Lanczos3-resized to the project resolution as the final step
+    before the encoder**. This is a few lines at the existing `frame.dimensions()`
+    read — `ExportOpts` gains `out_width` / `out_height`; when they equal the clip
+    dims the resize path is skipped entirely (zero-copy, byte-identical output).
+  - `fps` set → feeds the existing `fps_override: Option<f64>` path. An explicit
+    `fps_override` argument (the export dialog) still wins over the project's fps.
+  - `color_space` → carried on the settings, **not** passed to ffmpeg yet (see
+    "store-only" above).
+  A project with no settings → the export is byte-identical to pre-D-038
+  (regression-guarded by `export_resolution_override`, which asserts the
+  no-override path keeps clip dims).
+
+- **Fork hygiene (D-003):** all new logic in `src/chroma/project.rs` +
+  `export.rs` + new frontend files. Upstream footprint: `lib.rs` +1
+  `generate_handler!` line. Full divergence entry in `docs/09`.
+
+- **Explicitly out of scope:** playhead-position persistence (owner said not
+  needed), and the other deferred D-037 items (rename / delete / duplicate,
+  drag-import, a Projects-folder row in the big SettingsPanel).
+
+- **Verified:** `cargo check --no-default-features` clean; `cargo test
+  --no-default-features chroma::` **54/54** (49 + 5: typed settings round-trip,
+  legacy `{fps:24}` still loads, empty/absent settings → all `None`,
+  `merge_patch` semantics, new-project infers from an ffmpeg-synthesised clip; +
+  a gated `export_resolution_override` in `export.rs`). `tsc --noEmit` baseline
+  unchanged (74, none in new/touched files — `git stash -u` verified).
+  `py_compile` + `import server` clean, **38** tools. The "Project settings"
+  modal, a 1080p-override export, a clear-to-clip-res export, and MCP
+  `set_project_settings` + `get_state` are an open **manual** smoke test (the
+  `useEffect([])` bridge listener doesn't hot-reload and the running app was not
+  driven) — listed in `docs/notes/project-model.md`.

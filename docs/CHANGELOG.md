@@ -4,6 +4,28 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-02** — **Per-project output spec (D-038)**. D-037's reserved,
+  unused `settings` field on `project.json` gets a real typed shape:
+  `ProjectSettings { width?, height?, fps?, color_space? }`, all optional. A
+  multi-shot project now has **one** output spec instead of everything being
+  derived from whichever clip is loaded. A fresh project seeds
+  width/height/fps by probing the first shot's clip; a project with no settings
+  behaves exactly as before (clip-derived, byte-identical exports). Export
+  resizes the graded composite (Lanczos3) to the project resolution as the final
+  step before the encoder and uses the project fps as the timebase. `color_space`
+  (`rec709`/`rec2020`/`dci-p3`/`srgb`) is **stored + surfaced only** — a real
+  colour-managed pipeline stays D-004. `chroma.project/1` schema major unchanged
+  (additive; legacy `settings: {}` / `{fps:24}` still load). New
+  `chroma_project_set_settings(path?, partial)` command (partial merge), a
+  "Project settings" modal off the shot-strip gear, `get_state().project.settings`,
+  MCP `set_project_settings` — **37 → 38** tools. All new logic in
+  `chroma/project.rs` + `export.rs` + new frontend files; `lib.rs` +1 line.
+  Verified: `cargo check` clean, `cargo test chroma::` **54/54** (49 + 5),
+  `tsc --noEmit` baseline unchanged (74, none in new/touched files),
+  `py_compile` + `import server` clean (38 tools). The settings modal + a
+  resolution-override export + MCP round-trip are an open manual smoke test.
+  Detail: `docs/notes/project-model.md`, `D-038`.
+
 - **2026-09-02** — **Project launcher + `<name>.chroma` project model (D-037)**.
   The home screen was still RapidRAW's inherited Library view — a folder tree,
   photo grid, albums, culling. Replaced with a **project launcher**: a grid of

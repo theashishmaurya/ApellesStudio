@@ -24,6 +24,7 @@ discipline as `grade.rs`.
 | `chroma_project_relink(path?, shotId, newPath)` | rewrite that shot's `sourcePath` in the manifest, then reopen. |
 | `chroma_project_current()` | `{name, path}` of the loaded project, or `null` — backs `get_state().project`. |
 | `chroma_project_settings_dir()` / `chroma_project_set_dir(dir)` | read / set the projects-folder override (persisted to `~/.chroma/config.json`). |
+| `chroma_project_set_settings(path?, partial)` | **(D-038)** partial-merge `partial` (`{width?, height?, fps?, colorSpace?}`; explicit `null` clears a field) into the manifest's `settings`, save `project.json`, return the merged `ProjectSettings`. |
 
 `state.rs` gains a `ProjectRef { path, name }` module-global (`set_project` /
 `current_project`) so save knows where to write. `current_video()` is unchanged.
@@ -53,15 +54,26 @@ Upstream footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines.
   editor "back" button (`useAppNavigation`) returns to `'projects'`.
 - **`hooks/useChromaControl.ts`** — ops `list_projects` (READ_ONLY),
   `open_project` / `new_project` (NAV), `save_project` (READ_ONLY);
-  `get_state().project`.
+  `get_state().project`. **(D-038)** op `set_project_settings` (READ_ONLY);
+  `get_state().project.settings`.
 - **`components/chroma/ShotStrip.tsx`** — offline shots render as amber "media
   offline" cards with a Relink button; a "Save project" pill when the session is
-  Untitled.
+  Untitled. **(D-038)** a "Settings" gear (real projects only) opens
+  `ProjectSettingsModal`.
+- **`components/chroma/ProjectSettingsModal.tsx`** **(D-038)** — resolution
+  (preset / custom W×H / "match first clip"), fps (preset / custom / match),
+  colour-space dropdown with a "display / metadata only for now" hint. Calls
+  `setProjectSettings(partial)`.
+- **`store/useSessionStore.ts`** **(D-038)** — `ProjectSettings` type,
+  `projectSettings` state (hydrated from `_hydrateOpenDto`'s `dto.settings`),
+  `setProjectSettings(partial)` thunk (→ `chroma_project_set_settings`).
 
 ### MCP — `mcp/server.py`
 
 `list_projects` / `open_project(name_or_path)` / `new_project(name,
-media_paths?)` / `save_project()`. **33 → 37 tools.**
+media_paths?)` / `save_project()` (D-037). **(D-038)**
+`set_project_settings(width?, height?, fps?, color_space?)` — partial merge.
+**33 → 37 → 38 tools.**
 
 ## The v1 project shape
 
@@ -85,12 +97,30 @@ media_paths?)` / `save_project()`. **33 → 37 tools.**
     { "id": "9f1c…", "sourcePath": "/Volumes/RAID/beach/A001.mov", "frame": 0, "name": "A001.mov" }
   ],
   "activeShot": 0,
-  "settings": {}
+  "settings": {
+    // D-038 — per-project output spec. Every field optional; absent/omitted =
+    // clip-derived (the pre-D-038 behaviour everywhere). A fresh project seeds
+    // width/height/fps by probing the first shot's clip.
+    "width": 3840,
+    "height": 2160,
+    "fps": 23.976,
+    "colorSpace": "rec709"   // stored + surfaced ONLY — colour management is D-004
+  }
 }
 ```
 
 - Versioned + a `chroma.project/<major>` gate (untagged → v1; newer major →
-  "Upgrade Chroma"), same as `grade.json`.
+  "Upgrade Chroma"), same as `grade.json`. **D-038's `settings` shape is additive
+  — schema major stays `1`.** `ProjectSettings` deserializes leniently: a legacy
+  `settings: {}` or `settings: { "fps": 24 }` still loads (missing keys → `None`,
+  unknown keys ignored).
+- **`settings` (D-038)** — `{ width?, height?, fps?, colorSpace? }`, all optional.
+  Export resizes the graded composite to `width`×`height` as its final step and
+  uses `fps` as the encoder timebase; with no settings the export is
+  byte-identical to before. `colorSpace` (`rec709`/`rec2020`/`dci-p3`/`srgb`) is
+  stored + shown in the "Project settings" modal but does not affect grade math —
+  a colour-managed pipeline is D-004. Set via `chroma_project_set_settings` /
+  MCP `set_project_settings` / the shot-strip gear.
 - **Media is referenced, never copied.** `sourcePath` is absolute.
 - **Grades live in the project** (`grades/<shotId>.grade.json`), not beside the
   clip — the grade belongs to the project, the media might be read-only / shared.
@@ -134,6 +164,20 @@ not driven — verify by hand:
    `new_project("test", ["/x.mov"])` → created + opened; `save_project()` → ok.
 10. MCP `open("/loose/clip.mov")` with no project → `get_state().project` is
     `{name:"Untitled", …}`; seek / export still work.
+11. **(D-038)** New Project from a 4K clip → open the shot-strip **Settings**
+    gear → resolution/fps are pre-filled from that clip, colour space `Rec.709`.
+12. **(D-038)** Set resolution to `1920 × 1080`, Save → `project.json`
+    `settings.width/height` = `1920/1080`. Export a short range → the output MP4
+    is 1920×1080 (`ffprobe`).
+13. **(D-038)** Set resolution back to "Match first clip", Save → `settings.width`
+    gone → export matches the clip's native resolution again.
+14. **(D-038)** MCP `set_project_settings(fps=25)` → merged settings returned;
+    `get_state().project.settings.fps` = 25; an export with no explicit fps uses
+    25 as the encoder rate.
+
+> If a fresh `chroma_project_set_settings` isn't reachable from the running app,
+> the dev binary has a stale cargo incremental fingerprint — `cargo clean -p
+> RapidRAW` + restart the dev server.
 
 ## Deferred (roadmap follow-ups)
 
