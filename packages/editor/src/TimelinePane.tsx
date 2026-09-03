@@ -162,17 +162,35 @@ export function TimelinePane() {
     editorRef.current?.setTime(playhead / fps);
   }, [playhead, fps]);
 
-  // Scroll-wheel zoom (D-051) — the library has no wheel handling of its own
-  // (checked before writing this), so this is a plain native listener rather
-  // than React's `onWheel` (which React attaches passively by default,
-  // silently ignoring `preventDefault`, letting the page scroll underneath
-  // the zoom). Any wheel tick over the edit area zooms; there is no
-  // separate pan-vs-zoom modifier key — the library's own horizontal
-  // scrollbar (drag or shift-scroll, standard browser behaviour) covers pan.
+  // Scroll-wheel zoom (D-051, pan/zoom split D-072) — the library has no
+  // wheel handling of its own (checked before writing this), so this is a
+  // plain native listener rather than React's `onWheel` (which React
+  // attaches passively by default, silently ignoring `preventDefault`,
+  // letting the page scroll underneath the zoom).
+  //
+  // D-051 originally treated *every* wheel tick as zoom, reasoning "the
+  // library's own horizontal scrollbar covers pan" — true for a mouse
+  // (drag the scrollbar, or shift-scroll), wrong for a trackpad: a plain
+  // two-finger scroll and a pinch are two different physical gestures on a
+  // trackpad, and this made both do the same thing (zoom), so an owner
+  // trying to scroll the timeline on a trackpad couldn't. The fix is the
+  // standard web convention, not a new one: a real pinch gesture (trackpad)
+  // — and an explicit Ctrl+scroll, the same shortcut most web/canvas apps
+  // already use for a mouse — both arrive as a `wheel` event with
+  // `ctrlKey: true`, synthesized by the browser itself, regardless of
+  // whether a physical Ctrl key is actually held. A plain two-finger
+  // scroll arrives with `ctrlKey: false`. So: zoom only on `ctrlKey`;
+  // everything else is left alone (no `preventDefault`, nothing handled
+  // here) and falls through to the library's own scrollable edit-area
+  // container (`overflow: overlay` in its bundled CSS — real native
+  // browser scroll, not something this file has to reimplement), which is
+  // exactly what a plain two-finger scroll (or a physical mouse wheel) is
+  // supposed to do: pan.
   useEffect(() => {
     const el = editAreaRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
       setPxPerSec((w) => clampPxPerSec(w * factor));

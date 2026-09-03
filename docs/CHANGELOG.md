@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Edit-tab timeline: plain trackpad scroll now pans,
+  only a real pinch/Ctrl+scroll zooms (D-072).** D-051's scroll-wheel zoom
+  treated every wheel tick as zoom, so a plain two-finger scroll (a
+  different physical gesture from a pinch) couldn't scroll the timeline at
+  all. Now gated on `ctrlKey` — the standard convention browsers already
+  use to mark a real pinch gesture — everything else falls through to the
+  library's own native scrollable container untouched.
+
 - **2026-09-03** — **Colorist wasn't actually live-synced to the Edit tab —
   a real gap D-070 left behind (D-071, B-020).** Owner's immediate retest:
   a clip dragged onto the Edit tab's timeline never showed up in Colorist,

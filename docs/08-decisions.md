@@ -5494,3 +5494,35 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   noted honestly, not glossed over; the owner's next real drag-then-switch
   is the actual confirmation, same standing gap every interaction-level fix
   this session has had.
+
+## D-072 — Edit-tab timeline: plain trackpad scroll now pans, only a real pinch (or Ctrl+scroll) zooms
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live: "when i scroll instead of scrolling its zooming
+  in and out... two things with track pad, one is scroll and one is zoom,
+  both have different gesture" — a trackpad's plain two-finger scroll and a
+  pinch are two distinct physical gestures; D-051's original scroll-wheel
+  zoom treated every `wheel` event the same, so scrolling was impossible.
+- **Fix — the standard web convention, not a new one.** A real pinch
+  (trackpad) and an explicit Ctrl+scroll (the same shortcut most web/canvas
+  apps already give mouse users) both arrive as a `wheel` event with
+  `ctrlKey: true` — synthesized by the browser itself for a pinch,
+  regardless of whether a physical Ctrl key is actually held. A plain
+  two-finger scroll arrives with `ctrlKey: false`. `TimelinePane.tsx`'s
+  wheel listener now only zooms on `ctrlKey`; everything else returns
+  immediately (no `preventDefault`, nothing handled), falling through to
+  the library's own scrollable edit-area container (`overflow: overlay` in
+  its bundled CSS — real native browser scroll D-051's own doc already
+  correctly identified as available, just never actually reachable because
+  the zoom handler was intercepting every wheel event first regardless of
+  `ctrlKey`).
+- **Verification.** `tsc --noEmit`: `packages/editor` 0/0, `app` 64/64
+  unchanged baseline. `vitest run` in `packages/editor`: 35/35, unchanged
+  (this is a native DOM listener on a live component, not something this
+  codebase's established pattern unit-tests directly — see `TimelinePane.tsx`
+  itself, never covered by the pure-logic vitest suite). No live click test
+  this pass — noted honestly; the owner's own next real trackpad scroll is
+  the actual confirmation (their "yes worked" the same session was D-071's
+  live-sync fix, confirmed *before* this one was even written — not to be
+  conflated with it).
