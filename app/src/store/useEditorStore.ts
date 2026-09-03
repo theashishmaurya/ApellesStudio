@@ -70,6 +70,8 @@ interface EditorState {
   // D-054: "Bake Depth" (the static single-frame fallback) is in flight —
   // mirrors `isGeneratingAiMask` below, scoped to just this one button.
   isBakingRelightDepth: boolean;
+  // D-077: "Bake Normals" (MoGe-2, real surface normals) is in flight.
+  isBakingRelightNormals: boolean;
   activeAiPatchContainerId: string | null;
   activeAiSubMaskId: string | null;
   isMaskControlHovered: boolean;
@@ -115,6 +117,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   activeMaskId: null,
   activeRelightLightId: null,
   isBakingRelightDepth: false,
+  isBakingRelightNormals: false,
   activeAiPatchContainerId: null,
   activeAiSubMaskId: null,
 

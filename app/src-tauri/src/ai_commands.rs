@@ -206,6 +206,101 @@ pub async fn generate_full_image_depth_map(
     Ok(format!("data:image/png;base64,{}", base64_str))
 }
 
+fn relight_sidecar_base_url() -> String {
+    let port = std::env::var("CHROMA_AI_PORT").unwrap_or_else(|_| "8765".to_string());
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Relight surface normals (D-077, follow-up to D-046/D-076): a single-frame
+/// bake via MoGe-2 (Python sidecar, `ai/vendor/moge/` — see that dir's
+/// README for the model choice/licence). Mirrors
+/// [`generate_full_image_depth_map`]'s shape exactly (same warped-image
+/// source, same `data:image/png;base64,...` return convention, same
+/// "quick single-frame bake" tier the Relight panel already has for depth)
+/// — the one real difference is this runs through the AI sidecar over HTTP
+/// (a real trained normal-estimation network, not the in-process Rust ONNX
+/// Depth-Anything-V2 path) rather than in-process, same reason D-036's video
+/// depth track needs the sidecar and the static depth bake doesn't: this
+/// model isn't vendored as ONNX, it's a PyTorch model.
+#[tauri::command]
+pub async fn generate_full_image_normal_map(
+    js_adjustments: serde_json::Value,
+    state: tauri::State<'_, AppState>,
+) -> Result<RelightGeometryBake, String> {
+    let warped_image = crate::get_cached_full_warped_image(&state, &js_adjustments)?;
+
+    let image_b64 = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        warped_image
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(buf.get_ref()))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/generate_normal_map", relight_sidecar_base_url()))
+        .json(&serde_json::json!({ "image_b64": image_b64 }))
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| {
+            let msg = format!(
+                "Chroma AI sidecar unreachable ({e}). The app auto-starts it (D-028) — check \
+                 the app log for '[sidecar]' lines (CHROMA_AI_NO_SPAWN=1 disables the \
+                 auto-start; manual start: cd ai && ./run.sh). The first normal bake also \
+                 lazy-downloads the MoGe-2 checkpoint (~140 MB) into ai/models/."
+            );
+            log::error!("[relight] generate_full_image_normal_map: sidecar unreachable: {msg}");
+            msg
+        })?;
+
+    let status = response.status();
+    let text = response.text().await.map_err(|e| {
+        log::error!("[relight] generate_full_image_normal_map: couldn't read sidecar response body: {e}");
+        e.to_string()
+    })?;
+    if !status.is_success() {
+        log::error!("[relight] generate_full_image_normal_map: sidecar returned HTTP {status}: {text}");
+        return Err(format!("sidecar returned HTTP {status}: {text}"));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        log::error!("[relight] generate_full_image_normal_map: bad sidecar response JSON: {e} (body: {text})");
+        e.to_string()
+    })?;
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        log::error!("[relight] generate_full_image_normal_map: sidecar returned an error: {err}");
+        return Err(err.to_string());
+    }
+    let normal_b64 = v
+        .get("normal_b64")
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| "sidecar response missing normal_b64".to_string())?;
+    let depth_b64 = v
+        .get("depth_b64")
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| "sidecar response missing depth_b64".to_string())?;
+    Ok(RelightGeometryBake {
+        normal: format!("data:image/png;base64,{normal_b64}"),
+        depth: format!("data:image/png;base64,{depth_b64}"),
+    })
+}
+
+/// D-077 follow-up ("real light and real depth" — the owner's own framing):
+/// MoGe-2's normal and depth come from the SAME coherent inference pass, so
+/// they're returned together and meant to be written together
+/// (`relightNormalsBake` + `relightDepthBake`) — using this model's own
+/// depth here instead of the separate Depth-Anything-V2 bake keeps the two
+/// geometrically consistent rather than mixing two independent models'
+/// estimates of the same face.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelightGeometryBake {
+    pub normal: String,
+    pub depth: String,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn generate_ai_subject_mask(

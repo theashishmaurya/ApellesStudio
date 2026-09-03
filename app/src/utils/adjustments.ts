@@ -243,6 +243,16 @@ export interface Adjustments {
    *  with no track run yet, shade positional lights instead of staying
    *  inert. `null` until "Bake Depth" is run. */
   relightDepthBake: string | null;
+  /** Real per-pixel surface-normal bake (D-077, follow-up to D-076) — an
+   *  RGB-encoded normal-map data URL from MoGe-2 (`generate_full_image_
+   *  normal_map`, via the AI sidecar's `/generate_normal_map`,
+   *  `ai/vendor/moge/`), a single frame like `relightDepthBake` — NOT the
+   *  same model, a real trained surface-normal estimator instead of a
+   *  finite-difference-of-depth approximation. When present, `apply_relight`
+   *  shades against this instead of its depth-derived normal — real facial
+   *  contours instead of a flat wash. `null` until "Bake Normals" is run;
+   *  everything renders exactly as it did before D-077 until then. */
+  relightNormalsBake: string | null;
   orientationSteps: number;
   rotation: number;
   saturation: number;
@@ -382,15 +392,16 @@ export interface RelightLight {
   /** 0–100, % of the longer frame dimension — screen-space falloff size only.
    *  Ignored for kind === 'ambient'. */
   radius: number;
-  /** 0–100. How far the light is held off the subject's surface *toward the
-   *  camera*, in the depth map's own normalized units (D-076, found live-
-   *  testing: "distance is not radius but the z index, the depth actually").
-   *  A light with distance ~0 sits flush on whatever surface it was dropped
-   *  on and produces almost no directional shading (surface normal and light
-   *  direction are both ~straight-on) — this was the *only* behavior before
-   *  D-076, which is why relight looked like it did nothing. `radius` never
-   *  substituted for this: it only ever controlled the 2D falloff ring size.
-   *  Ignored for kind === 'ambient'. */
+  /** 0–100. The light's own absolute position in the depth map's normalized
+   *  "bright = near" space (D-076, found live-testing: "distance is not
+   *  radius but the z index, the depth actually") — an independent z dial,
+   *  compared directly against each shaded pixel's own depth. Deliberately
+   *  NOT sampled from whatever the depth map shows directly behind the
+   *  puck's own x/y: an earlier version did that, which broke the moment the
+   *  puck sat off the subject over open background (a completely normal
+   *  place to park a point light) — the background caught light, the
+   *  subject didn't. `radius` never substituted for this either: it only
+   *  ever controlled the 2D falloff ring size. Ignored for kind === 'ambient'. */
   distance: number;
   /** 0–200 UI percentage; 100 = the shader's baseline light strength. */
   intensity: number;
@@ -622,6 +633,7 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
   relightLights: [],
   relightDepthDir: null,
   relightDepthBake: null,
+  relightNormalsBake: null,
   orientationSteps: 0,
   rotation: 0,
   saturation: 0,

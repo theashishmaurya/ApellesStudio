@@ -54,7 +54,7 @@ import { parseKeyframes, upsertKeyframe, removeKeyframe, clearKeyframes } from '
 
 export default function RelightPanel() {
   const { setAdjustments } = useEditorActions();
-  const { handleTrackRelightDepth, handleBakeRelightDepth } = useAiMasking();
+  const { handleTrackRelightDepth, handleBakeRelightDepth, handleBakeRelightNormals } = useAiMasking();
   const videoInfo = useChromaStore((s) => s.videoInfo);
   const currentFrame = useChromaStore((s) => s.currentFrame);
   const depthTrackProgress = useChromaStore((s) => s.depthTrackProgress);
@@ -62,7 +62,9 @@ export default function RelightPanel() {
   const lights = useEditorStore((s) => s.adjustments.relightLights) || [];
   const relightDepthDir = useEditorStore((s) => s.adjustments.relightDepthDir);
   const relightDepthBake = useEditorStore((s) => s.adjustments.relightDepthBake);
+  const relightNormalsBake = useEditorStore((s) => s.adjustments.relightNormalsBake);
   const isBakingRelightDepth = useEditorStore((s) => s.isBakingRelightDepth);
+  const isBakingRelightNormals = useEditorStore((s) => s.isBakingRelightNormals);
   const activeLightId = useEditorStore((s) => s.activeRelightLightId);
   const setEditor = useEditorStore((s) => s.setEditor);
 
@@ -239,6 +241,69 @@ export default function RelightPanel() {
         </div>
       )}
 
+      {/* Real surface normals (D-077) — an optional quality upgrade on top of
+          depth, not a requirement: positional lights already shade with the
+          depth-derived normal above once a depth source exists. This is a
+          deliberate action (not auto-fired like Bake Depth) since it hits the
+          AI sidecar over HTTP for a real trained model, not the fast
+          in-process ONNX depth path — closer to Track Depth's "heavier, ask
+          first" tier than Bake Depth's "instant, just do it" one. Gated on
+          having a depth source already (a normal alone still can't shade
+          without `pixel_depth` for the light's z-comparison, see
+          `apply_relight`). */}
+      {positionalLights.length > 0 && (relightDepthDir || relightDepthBake) && (
+        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+          {isBakingRelightNormals ? (
+            <>
+              <Loader2 size={12} className="animate-spin shrink-0" />
+              <span>Computing real surface shape (first run downloads a model, ~15s)…</span>
+            </>
+          ) : relightNormalsBake ? (
+            <>
+              <span className="flex-1">Real surface shading on — lights follow facial contours.</span>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={handleBakeRelightNormals}
+                      >
+                        <RotateCw size={12} />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent side="top" align="end">
+                    Re-bake at the current frame
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </>
+          ) : (
+            <>
+              <span className="flex-1">Shading uses an approximation — for real facial contours, bake real surface normals.</span>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button variant="secondary" size="xs" onClick={handleBakeRelightNormals}>
+                        Bake Normals
+                      </Button>
+                    }
+                  />
+                  <TooltipContent side="top" align="end">
+                    Runs a real AI model (MoGe-2, local) to compute actual surface geometry —
+                    light wraps around contours instead of a flat colour wash. A few seconds,
+                    single frame, not video-tracked.
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Bottom tab strip: Preset / Ambient / Light 1 / Light 2 / … / + Add Light */}
       <div className="flex items-center gap-1.5 flex-wrap border-t border-b border-border-color py-2">
         <Button
@@ -357,18 +422,21 @@ export default function RelightPanel() {
 
           {activeLight.kind !== 'ambient' && (
             <>
-              {/* Distance (D-076) — how far the light is held off the
-                  subject's surface toward the camera (the depth map's own
-                  z, not a screen-space size). This is the control that
-                  actually makes a positional light shade anything: at
-                  distance 0 the light sits flush on whatever surface it was
-                  dropped on and the shader's light direction collapses to
-                  ~in-plane, so `dot(normal, lightDir)` reads ~0 almost
-                  everywhere on a real (relatively flat) face/torso — this
-                  read as "nothing is getting applied at all" before this
-                  field existed. Was previously (mis)labeled "Distance" but
-                  wired to `radius` (screen-space falloff size, below) —
-                  that slider never touched depth at all. */}
+              {/* Distance (D-076) — the light's own absolute position in the
+                  depth map's normalized space (the z, not a screen-space
+                  size), compared directly against each pixel's own depth.
+                  Deliberately NOT sampled from whatever's directly behind
+                  the puck's own x/y — a first version did that, which
+                  anchored the light's z to whatever was under the puck: fine
+                  if dropped right on the subject, broken the moment it was
+                  parked beside them over open background (a normal way to
+                  place a point light) — the background caught light, the
+                  subject didn't. Defaults high (85) since it's absolute, not
+                  relative: a low default would sit "behind" a typical
+                  near-camera subject regardless of where the puck is. Was
+                  previously (mis)labeled "Distance" but wired to `radius`
+                  (screen-space falloff size, below) — that slider never
+                  touched depth at all. */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-text-secondary">Distance</span>

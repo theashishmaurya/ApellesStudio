@@ -173,9 +173,9 @@ struct MaskAdjustments {
 // `RelightLightGpu` in image_processing.rs field-for-field — 9 real f32s + 3
 // pad f32s, three 16-byte rows. `kind`: 0.0 = positional (key/fill/rim,
 // shaded by depth-normal + falloff), 1.0 = ambient (uniform tint, no
-// position/normal/falloff). `distance`: how far the light is held off the
-// shaded surface toward the camera, in the depth map's own normalized units
-// — feeds the z-component of the light direction, see `apply_relight`.
+// position/normal/falloff). `distance`: the light's own absolute position in
+// the depth map's normalized "bright = near" space — NOT sampled from
+// whatever's directly behind the puck's own x/y, see `apply_relight`.
 struct RelightLight {
     pos_x: f32,
     pos_y: f32,
@@ -203,7 +203,11 @@ struct AllAdjustments {
     relight_lights: array<RelightLight, 8>,
     relight_light_count: u32,
     relight_depth_layer: i32,
-    _relight_pad1: u32,
+    // D-077. First of THREE consecutive mask_textures layers (X, +1=Y, +2=Z)
+    // holding a real MoGe-2 surface-normal bake. -1 = none bound (fall back
+    // to the depth finite-difference normal). See image_processing.rs's
+    // matching field doc for the full story.
+    relight_normal_layer: i32,
     _relight_pad2: u32,
 }
 
@@ -1495,18 +1499,45 @@ fn relight_falloff(dist: f32, radius: f32) -> f32 {
     return f * f;
 }
 
+/// Real per-pixel surface normal from a MoGe-2 baked normal map (D-077) —
+/// three consecutive `mask_textures` layers (X, Y, Z), each encoded the
+/// standard tangent-space way `(n + 1) / 2` (see the sidecar's
+/// `_normal_to_b64`, `ai/server.py`). This is the model-estimated geometry
+/// `relight_normal`'s finite-difference-of-depth trick only ever
+/// approximated — real facial contours instead of a flat, blob-like read on
+/// smooth depth regions (owner, live, comparing to it: "that not light
+/// that's just color").
+fn sample_relight_baked_normal(coord: vec2<i32>, layer: i32, dims: vec2<i32>) -> vec3<f32> {
+    let c = clamp(coord, vec2<i32>(0), dims - vec2<i32>(1));
+    let x = textureLoad(mask_textures, c, layer, 0).r;
+    let y = textureLoad(mask_textures, c, layer + 1, 0).r;
+    let z = textureLoad(mask_textures, c, layer + 2, 0).r;
+    let n = vec3<f32>(x, y, z) * 2.0 - vec3<f32>(1.0);
+    let len = length(n);
+    if (len < 0.001) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    return n / len;
+}
+
 /// Accumulate every active light's contribution onto `base_color` (linear
 /// light). `depth_layer < 0` (no depth bound) still lets ambient lights
 /// through — they need no position/normal/falloff — but positional lights
 /// (key/fill/rim) contribute nothing without a depth source to shade against.
+/// `normal_layer >= 0` (D-077) swaps in the real baked normal for the
+/// shading term; `depth_layer` is still required either way — it drives
+/// `pixel_depth` for the light-direction z-comparison (D-076), a separate
+/// concern from the surface normal itself.
 fn apply_relight(
     base_color: vec3<f32>,
     coord: vec2<u32>,
     dims: vec2<f32>,
     depth_layer: i32,
+    normal_layer: i32,
     light_count: u32
 ) -> vec3<f32> {
     let has_depth = depth_layer >= 0;
+    let has_baked_normal = normal_layer >= 0;
     let dims_i = vec2<i32>(dims);
     let coord_i = vec2<i32>(coord);
     let uv = vec2<f32>(coord) / dims;
@@ -1515,7 +1546,11 @@ fn apply_relight(
     var n = vec3<f32>(0.0, 0.0, 1.0);
     var pixel_depth = 0.0;
     if (has_depth) {
-        n = relight_normal(coord_i, depth_layer, dims_i);
+        if (has_baked_normal) {
+            n = sample_relight_baked_normal(coord_i, normal_layer, dims_i);
+        } else {
+            n = relight_normal(coord_i, depth_layer, dims_i);
+        }
         pixel_depth = sample_relight_depth(coord_i, depth_layer, dims_i);
     }
 
@@ -1526,8 +1561,11 @@ fn apply_relight(
         let light_color = vec3<f32>(light.color_r, light.color_g, light.color_b);
 
         if (light.kind > 0.5) {
-            // Ambient: uniform tint, no position/normal/falloff, works with no depth.
-            added += light_color * light.intensity;
+            // Ambient: uniform tint, no position/normal/falloff, works with no
+            // depth. Same screen-blend treatment as positional lights below
+            // (D-078) — see the comment there for why.
+            let so_far = clamp(base_color + added, vec3<f32>(0.0), vec3<f32>(1.0));
+            added += light_color * light.intensity * (vec3<f32>(1.0) - so_far);
             continue;
         }
         if (!has_depth) {
@@ -1535,33 +1573,99 @@ fn apply_relight(
         }
 
         let light_uv = vec2<f32>(light.pos_x, light.pos_y);
-        let light_depth = sample_relight_depth(vec2<i32>(light_uv * dims), depth_layer, dims_i);
 
         // Screen-space light direction: xy from the puck's 2D offset
         // (aspect-corrected so the falloff radius reads as a circle
-        // regardless of frame aspect); z from the depth delta between the
-        // light's *elevated* position and this pixel. `light.distance`
-        // (D-076) is added to the surface depth sampled at the light's own
-        // anchor point — without it the light sits flush on whatever
-        // surface it was dropped on (distance == 0), so for any pixel on
-        // that same roughly-flat surface `light_depth - pixel_depth` is
-        // ~0 and `light_dir` ends up almost purely in-plane. Since
-        // `relight_normal` is close to straight-on (z ~1) on a flat-ish
-        // surface, `dot(n, light_dir)` collapses to ~0 nearly everywhere —
-        // this was the root cause of relight looking like it did nothing.
-        // `distance` gives the light a real, explicit elevation off the
-        // surface toward the camera, same relative-depth space
-        // `relight_normal`'s finite-difference already reads (hence the
-        // matching RELIGHT_NORMAL_STRENGTH-equivalent scale below).
+        // regardless of frame aspect); z from `light.distance` (D-076),
+        // an ABSOLUTE coordinate in the same normalized depth space this
+        // pass reads everywhere else ("bright = near"), compared directly
+        // against this pixel's own depth. Deliberately NOT sampled from the
+        // depth map at the puck's own (x, y) — an earlier version did that,
+        // which meant a puck dropped beside the subject (over background,
+        // the way a real point-light control lets you place a light in
+        // open space next to someone) anchored the light's z to the
+        // BACKGROUND's depth instead of the subject's, so the subject
+        // never caught any light at all: found live, puck parked to the
+        // subject's side in a real shot — background lit up, face stayed
+        // completely dark. `distance` is now a free-standing "how close to
+        // camera is this light" dial, independent of whatever happens to
+        // be directly behind the puck on screen — same relative-depth
+        // space `relight_normal`'s finite-difference already reads (hence
+        // the matching RELIGHT_NORMAL_STRENGTH-equivalent scale below).
         let delta_uv = vec2<f32>((light_uv.x - uv.x) * aspect, light_uv.y - uv.y);
-        let delta_z = ((light_depth + light.distance) - pixel_depth) * 3.0;
-        let light_dir = normalize(vec3<f32>(delta_uv, delta_z));
+        let delta_z = (light.distance - pixel_depth) * 3.0;
 
-        let dist = length(vec2<f32>(coord) - light_uv * dims) / max(dims.x, dims.y);
-        let fall = relight_falloff(dist, light.radius);
+        // D-079: `delta_z` feeds TWO different things below, and they need
+        // different strengths. Full-strength `delta_z` also drives `dist3d`
+        // (falloff/brightness, below) — that's correct, "distance" SHOULD
+        // make the light stronger/tighter as it comes closer. But a real
+        // face has genuine depth variation (nose vs. cheek vs. ear), and
+        // feeding that same full-strength `delta_z` into the light's
+        // DIRECTION meant every pixel's incidence angle shifted together as
+        // `distance` changed — nose-depth pixels swing toward frontal light
+        // while ear-depth pixels swing toward grazing/rim light, and which
+        // pixels land in which camp keeps changing. Owner, live, sliding
+        // Distance: "instead of light coming closer and going in depth, we
+        // are getting like rounding angle changing" — exactly this: the
+        // light visibly SWEEPS/rotates around the face instead of reading
+        // as "moving nearer or farther." Real light-distance mostly changes
+        // brightness and spread, not incidence angle, so the direction
+        // vector gets a heavily damped copy of `delta_z` instead — distance
+        // still shapes the light believably (it's not literally flattened
+        // to zero), it just no longer dominates which side of the face
+        // looks lit.
+        let delta_z_dir = delta_z * 0.15;
+        let light_dir = normalize(vec3<f32>(delta_uv, delta_z_dir));
+
+        // Falloff (D-078, corrected D-079): `radius` stays a PURE
+        // screen-space circle, exactly as it always was — `xy_for_falloff`
+        // re-derives the screen offset in the SAME "fraction of the longer
+        // frame dimension" units `light.radius` has always used (not
+        // `delta_uv`'s height-normalized, aspect-corrected units above,
+        // only right for a direction vector). An earlier version of this
+        // fix folded the FULL-strength z offset directly into the same
+        // distance compared against `radius` — which meant a `distance`
+        // meaningfully different from a surface's own depth (the entire
+        // point of the `distance` control, D-076) could make the z
+        // component alone exceed `radius` and zero the light out
+        // completely, even directly under the puck. Found by this file's
+        // own `positional_light_needs_nonzero_distance_to_shade_a_flat_
+        // surface` test failing after the D-079 direction-damping change —
+        // the bug predated that change but nothing had exercised this
+        // exact distance/depth/radius combination yet. Depth-awareness is
+        // now a SEPARATE, gentle multiplier (`z_falloff`, below) that dims
+        // but never fully zeroes, instead of being radius-gated.
+        let xy_for_falloff = vec2<f32>((light_uv.x - uv.x) * dims.x, (light_uv.y - uv.y) * dims.y) / max(dims.x, dims.y);
+        let xy_dist = length(xy_for_falloff);
+        let fall = relight_falloff(xy_dist, light.radius);
+
+        // A light whose `distance` sits far from this pixel's own depth
+        // reads dimmer than one at matching depth — e.g. a background far
+        // behind where the light is "floating" shouldn't catch the same
+        // full strength as the subject it's actually next to — but this
+        // NEVER fully zeroes (unlike folding z into the radius-gated
+        // falloff above did): `1 / (1 + z_mismatch^2 * 0.3)` decays
+        // smoothly with no hard cutoff, so radius alone still decides
+        // whether a pixel is lit at all.
+        let z_mismatch = delta_z;
+        let z_falloff = 1.0 / (1.0 + z_mismatch * z_mismatch * 0.3);
 
         let ndotl = max(0.0, dot(n, light_dir));
-        added += light_color * light.intensity * fall * ndotl;
+        let strength = fall * z_falloff * ndotl * light.intensity;
+
+        // Screen blend instead of flat additive colour (D-078): owner,
+        // live, on an earlier build of this same light: "the light is so
+        // fake that's not what light look like." Straight `added +=
+        // light_color * strength` paints a uniformly saturated colour wash
+        // over everything inside the falloff radius regardless of what's
+        // already there — reads as a translucent gel, not light. `(1 -
+        // so_far)` means an already-bright pixel (a highlight, the
+        // subject's own key light) picks up proportionally less extra
+        // colour, and a dark/shadowed pixel picks up more — the direction
+        // a fill/accent light actually behaves, and it can never blow a
+        // channel past 1.0 the way flat addition could.
+        let so_far = clamp(base_color + added, vec3<f32>(0.0), vec3<f32>(1.0));
+        added += light_color * strength * (vec3<f32>(1.0) - so_far);
     }
 
     return max(base_color + added, vec3<f32>(0.0));
@@ -1989,6 +2093,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             absolute_coord,
             full_dims,
             adjustments.relight_depth_layer,
+            adjustments.relight_normal_layer,
             adjustments.relight_light_count
         );
     }

@@ -290,6 +290,17 @@ fn grade_frame(
         adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
         mask_bitmaps.push(depth_bitmap);
     }
+    // D-077 follow-up, same reasoning as the depth wiring just above: an
+    // export must get the real baked normal too, not silently degrade to the
+    // depth-derived approximation just because it's a different code path
+    // from live preview.
+    if adjustments.relight_light_count > 0
+        && let Some(normal_bitmaps) =
+            crate::mask_generation::resolve_relight_normal_bitmap(js, w, h, 1.0, (0.0, 0.0))
+    {
+        adjustments.relight_normal_layer = mask_bitmaps.len() as i32;
+        mask_bitmaps.extend(normal_bitmaps);
+    }
     let lut = js
         .get("lutPath")
         .and_then(|p| p.as_str())

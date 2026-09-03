@@ -5678,3 +5678,297 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   packages/editor`: 0/0. `vitest run` in `packages/editor`: 35/35. No live
   click test yet this pass — the owner's next live drag/light session is the
   real confirmation that positional lights now visibly shade real footage.
+
+## D-077 — Relight: a real AI-estimated surface normal (MoGe-2), not a depth finite-difference
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** After D-076 made positional lights visible at all, the owner's
+  live read was blunt: "instead of putting relight feels like a light blob —
+  that not light that's just color," followed by "are we using proper model?
+  to relight? or just CSS in front an overlay?" — a fair challenge, since
+  `apply_relight`'s `relight_normal()` was never a real surface reconstruction:
+  it finite-differences the depth *texture itself* (a heightfield trick on one
+  blurry monocular depth channel) to fake a normal. On a real face — locally
+  flat in depth away from strong edges — that normal barely varies, so the
+  N·L shading term barely varies either: the light reads as a falloff-masked
+  colour wash, not directional light.
+- **Research (not guessed).** Confirmed relight IS real-time-achievable
+  locally, same as this app: DaVinci Resolve's Relight FX computes an actual
+  neural-network surface-normal map (its Neural Engine), then does real-time
+  GPU light physics against it — same "AI bakes a map once, shader shades
+  live against it" shape D-036's depth track already established here, not a
+  slow diffusion pass (ClipDrop/IC-Light-class tools paint the whole image
+  via diffusion, seconds per frame — a different, much heavier category, not
+  viable for a live draggable puck on video).
+  - **DSINE (Bae & Davison, CVPR 2024)** — the natural fast, non-diffusion
+    single-image normal estimator — was evaluated and **rejected**: Imperial
+    College London's licence is academic/non-commercial only, and Chroma
+    ships as a real product (same bar D-036's video-depth vendoring already
+    applies).
+  - **Microsoft MoGe-2 (CVPR 2025)** — MIT licence (DINOv2 backbone
+    Apache-2.0, Meta), plain PyTorch ops (no CUDA-only kernels), a small
+    35M-param `-normal` checkpoint (`Ruicheng/moge-2-vits-normal`,
+    Hugging-Hub-hosted). MoGe-**3** (the newer default) was ruled out
+    separately — it hard-depends on `flex-gemm`/Triton, which publishes no
+    macOS wheels, dead on arrival on this Apple-Silicon stack; MoGe-2 has no
+    such dependency.
+  - Verified end to end on this machine BEFORE writing any integration code
+    (house discipline: no plumbing built on an unverified model): loads and
+    infers on MPS, ~0.65s warm at 1080p, ~0.8s at 4K — one real MPS-specific
+    bug found and worked around (`infer(..., use_fp16=True)`, the default,
+    crashes with "Input type (c10::Half) and bias type (float) should be the
+    same" — an autocast dtype bug in MoGe-2's own fp32-output-projection path
+    on MPS, not a device-selection issue on our side; fixed by always passing
+    `use_fp16=False`).
+- **Integration — vendored, not pip-installed**, same rationale + shape as
+  `ai/vendor/video_depth_anything/` (D-036): a clean diff, the licence travels
+  with the code, and MoGe's own published package unconditionally pulls in
+  `flex-gemm`/Triton/gradio/trimesh deps for its v1/v3 code paths we don't
+  use and can't even install on macOS. `ai/vendor/moge/` keeps only
+  `model/v2.py` and its real import closure (see `ai/vendor/README.md`'s
+  `moge/` entry for the exact file list and what was trimmed).
+- **Pipeline (mirrors D-054's depth-bake shape throughout):**
+  - `ai/server.py`: new `/generate_normal_map` endpoint (single frame,
+    synchronous — no job/poll, unlike `/depth_track`, since inference is
+    under a second) — lazy-loads MoGe-2, runs it with `use_fp16=False`,
+    returns an RGB-encoded normal-map PNG. Encoding: `(n + 1) / 2 * 255` per
+    channel, Z **flipped first** so the sign matches this codebase's own
+    existing convention (Z+ = toward camera, same as `relight_normal`'s
+    existing finite-difference output) rather than MoGe's native OpenCV
+    camera-space convention (Z+ = into the scene).
+  - `app/src-tauri/src/ai_commands.rs`: new `generate_full_image_normal_map`
+    Tauri command — same warped-image source
+    (`get_cached_full_warped_image`) and `data:image/png;base64,...` return
+    convention as `generate_full_image_depth_map`, but POSTs to the sidecar
+    over HTTP instead of running in-process ONNX (MoGe-2 isn't vendored as
+    ONNX — same reason D-036's video depth needs the sidecar and the static
+    depth bake doesn't).
+  - `app/src/utils/adjustments.ts`: new `relightNormalsBake: string | null`
+    field, `null` until "Bake Normals" runs — everything renders exactly as
+    before D-077 until then.
+  - `RelightLightGpu`/`AllAdjustments` (`image_processing.rs`) +
+    the WGSL mirror structs: new `relight_normal_layer: i32` field
+    (repurposed from an existing pad field, `_relight_pad1`, so no new
+    padding/alignment work) — the first of **three** consecutive
+    `mask_textures` array layers (X, Y, Z). One index, not three, because
+    `mask_generation::resolve_relight_normal_bitmap` always pushes them as a
+    contiguous block. `mask_textures` is single-channel throughout (every
+    other consumer reads one `.r` per layer) — three layers per normal map
+    rather than a new texture format, matching that existing constraint
+    rather than fighting it. `-1` default (same "0 is a valid index, -1
+    means none" convention `relight_depth_layer` already established); a
+    project with 29+ existing masks *could* theoretically overflow
+    `MAX_MASKS` (32) once relight's depth (1) + normal (3) layers are added
+    on top — a pre-existing risk class D-054's depth layer already carries,
+    now worse by 3x. Not fixed here (would need a real capacity-management
+    pass), noted honestly.
+  - `shader.wgsl`'s `apply_relight`: new `sample_relight_baked_normal()`
+    reads the three layers and decodes back to a unit vector; `apply_relight`
+    uses it in place of `relight_normal()`'s finite-difference whenever
+    `normal_layer >= 0`, otherwise falls back exactly as before D-077.
+    `pixel_depth` (for D-076's light-distance z-comparison) still comes from
+    the depth layer regardless — the baked normal replaces the *shading
+    normal* only, not the depth signal.
+  - `RelightPanel.tsx`: "Bake Normals" is a **deliberate action** (a button
+    + tooltip, not auto-fired like Bake Depth) — it hits the AI sidecar over
+    HTTP for a real trained model (can take ~15s cold, first-run model
+    download) rather than the instant in-process ONNX depth path, closer to
+    Track Depth's "heavier, ask first" tier. Gated on a depth source already
+    existing (a normal alone still can't shade — `apply_relight` needs
+    `pixel_depth` regardless).
+- **Verification.** Two new real-GPU regression tests in `relight.rs`
+  (skip, don't fail, with no GPU adapter — same convention every other
+  GPU-touching test here uses): `positional_light_needs_nonzero_distance_...`
+  and `positional_light_shades_subject_even_when_puck_sits_over_background`
+  updated for the corrected absolute-distance semantics (see below);
+  `baked_normal_layer_changes_shading_vs_the_depth_derived_fallback` proves
+  `relight_normal_layer` is actually read by the real shader (identical
+  lights/depth, differing only in whether a baked normal is bound — asserts
+  the renders differ), not just that it compiles.
+  `resolve_normals_bake`/`distance_field_parses_and_defaults` etc. covered
+  by ordinary unit tests. `cargo test --manifest-path
+  app/src-tauri/Cargo.toml chroma::`: **142 passed, 0 failed, 1 ignored**.
+  `cargo build`: clean. `tsc --noEmit -p app`: 64/64 unchanged baseline.
+  Sidecar endpoint verified independently via `curl` before any Rust glue
+  was written (`/health` reports `relight_normals`, `/generate_normal_map`
+  round-tripped a real image, decoded output cross-checked byte-for-byte
+  against the expected `(n+1)/2*255` encoding by hand). No live in-app
+  confirmation yet this pass — pending the owner's next live test.
+
+## D-076 (correction, same day) — `distance` is an absolute z-coordinate, not an offset from the puck's own anchor depth
+
+The D-076 entry above was written and shipped once, then found to still fail
+live: owner, screenshot, puck parked beside the subject on open background —
+"just so you know nothing is getting applied at all" persisted. Root cause:
+that first fix computed `delta_z` as `(light_depth_at_the_pucks_own_xy +
+distance) - pixel_depth` — the puck's own anchor pixel still set the
+*baseline* depth, so a puck dropped over background (not on the subject)
+anchored the light to the *background's* depth. Adding `distance` on top
+wasn't enough to bridge a background-to-subject depth gap.
+
+**Fix:** `distance` is now the light's own absolute position in the depth
+map's normalized space, full stop — `delta_z = (light.distance -
+pixel_depth) * 3.0`, no dependency on whatever's behind the puck's `(x, y)`
+at all. Puck position now *only* drives the screen-space direction
+(`delta_uv`) and the falloff radius, matching how a real point light in a 3D
+scene is positioned (a genuine coordinate, not "wherever this happens to be
+dropped on the depth map"). Default bumped from 40 to **85** (out of 0–100)
+accordingly — low defaults meant "behind" any typical near-camera subject
+regardless of distance now being absolute, since there's no per-shot
+calibration for what a "typical" depth value even is. Verified with a new
+two-region-depth GPU test
+(`positional_light_shades_subject_even_when_puck_sits_over_background`) that
+reproduces the exact reported scenario: puck over a synthetic "background"
+region, shading checked on a separate synthetic "subject" region the puck
+never touches.
+
+## D-077 (addendum, same day) — MoGe-2's own depth, not a separate Depth-Anything-V2 bake
+
+Owner, live, after D-077's normal fix shipped: "Real light and real depth" —
+a sharp catch. `/generate_normal_map`'s MoGe-2 inference already computes a
+real `depth` field in the SAME forward pass as `normal` (confirmed via a
+standalone Python check: `out.keys()` includes `depth`, previously just left
+unused). Pairing that normal against the separate Depth-Anything-V2 bake
+meant two independently-trained models' estimates of the same face, with no
+guarantee they agree — the normal and the depth `apply_relight` shades
+against could describe subtly different geometry.
+
+**Fix.** `/generate_normal_map` (`ai/server.py`) now returns both
+`normal_b64` and `depth_b64` from the one inference call. MoGe-2's `depth`
+is real metric depth (larger = FARTHER, +inf for pixels the model has no
+confidence in) — the OPPOSITE convention from every depth bitmap this
+codebase already reads ("bright = near", the Depth-Anything-V2/Video-Depth-
+Anything convention `sample_relight_depth` assumes everywhere). `_depth_to_b64`
+inverts via `1/depth` (also turns `+inf` into exactly `0.0` for free — no
+separate invalid-pixel masking needed) then min-max normalizes to 0–255, the
+same normalization `run_depth_anything_model` (Rust) already does, so the
+Rust/shader side never needs to know which model produced a given bake.
+`generate_full_image_normal_map` (`ai_commands.rs`) now returns a small
+`RelightGeometryBake { normal, depth }` struct instead of a bare string;
+`handleBakeRelightNormals` (`useAiMasking.ts`) writes both
+`relightNormalsBake` and `relightDepthBake` from the one response. A real
+depth track (`relightDepthDir`, D-036) still wins if one exists —
+unchanged precedence — so this only replaces the *static single-frame* depth
+source, not a temporally-tracked one.
+
+## D-078 — Relight shading: 2D-only falloff + flat additive colour read as a "fake glow," not light
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live, after the D-076/D-077 fixes made positional
+  lights visibly affect the frame for the first time all session: "this does
+  not look like light... the depth is real but the light is so fake that's
+  not what light look like." Screenshots showed a soft, saturated,
+  radially-symmetric colour wash centered on the puck — reading as a
+  translucent gel laid over the scene, not directional illumination.
+- **Two real, fixable causes, both now using data this session already
+  built rather than needing another model:**
+  1. **Falloff was still 2D-only.** `dist` for `relight_falloff` was pure
+     screen-space distance from the puck (`length(coord - light_uv*dims)`)
+     — it never looked at depth at all, even though `pixel_depth` and
+     `light.distance` (D-076) were already being computed two lines away
+     for the *direction* vector. A background sitting at a completely
+     different depth from the light got an identical soft falloff circle to
+     a subject at the light's own depth, painting a flat 2D disc over
+     whatever happened to be behind the puck on screen regardless of how
+     far away it actually was in the scene.
+  2. **Pure additive colour.** `added += light_color * intensity * fall *
+     ndotl` paints a uniformly saturated wash over the entire falloff
+     radius, with no relationship to what's already there — an
+     already-bright highlight and a shadowed fold get the exact same colour
+     added, and a strong light can push a channel straight past 1.0 into a
+     flat, clipped colour. Reads as a coloured film over the image, not a
+     light source interacting with a lit scene.
+- **Fix.**
+  - Falloff distance is now the real 3D offset: screen xy (re-derived in
+    the SAME "fraction of the longer frame dimension" units `light.radius`
+    has always used — NOT `delta_uv`'s aspect-corrected, height-normalized
+    units, which are only meaningful for a direction vector, not an
+    absolute distance) combined with `delta_z` at the same relative scale
+    already used for the direction vector. Something far from the light in
+    depth now falls off faster even when it's screen-adjacent to the puck.
+  - Compositing switched from flat addition to a **screen blend**: `added
+    += light_color * strength * (1 - so_far)`, where `so_far` is
+    `base_color + added` so far this pass, clamped 0–1. An already-bright
+    pixel receives proportionally less additional colour; a dark/shadowed
+    pixel receives more — the direction a real fill/accent light actually
+    behaves — and a channel can never blow straight past 1.0 from relight
+    alone. Applied to ambient lights too (same "the pixel isn't a blank
+    canvas" reasoning), not just positional ones.
+  - `light.radius`'s meaning on the screen plane is unchanged (same units,
+    same existing saved values still mean what they meant before) — only
+    the *depth* dimension of falloff and the *blend* changed.
+- **Verification.** `cargo test --manifest-path app/src-tauri/Cargo.toml
+  chroma::relight::` — all existing GPU-shader regression tests (D-076's
+  distance tests, D-077's baked-normal test) re-verified passing under the
+  new blend math, since they assert *whether* a render differs, not exact
+  pixel values, so they remain valid regression guards through this change.
+  `cargo build`: clean. **Live-confirmed** — owner, next screenshot, blue
+  light now falls only on the subject with the background reading
+  correctly dim: "light only falls on me which i do like :D."
+
+## D-079 — Relight `distance`: the light was sweeping/rotating across the face instead of moving nearer or farther
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live, sliding Distance across several values (23 → 35
+  → higher) with screenshots at each: "see the distance right working
+  weirdly instead of light coming closer and going in depth, we are getting
+  like rounding angle changing." A precise, correct read of the actual
+  behavior.
+- **Cause.** `delta_z = (light.distance - pixel_depth) * 3.0` fed BOTH the
+  falloff/brightness calculation (via `dist3d`, D-078 — correct, distance
+  should change brightness/spread) AND the light's DIRECTION vector
+  (`light_dir = normalize(vec3(delta_uv, delta_z))`). A real face has real
+  depth variation (nose nearer than ears/cheeks) — feeding the SAME
+  full-strength `delta_z` into direction meant every change to `distance`
+  shifted the incidence angle across every part of the face *simultaneously
+  and unevenly*: nose-depth pixels swing toward frontal light while
+  ear-depth pixels swing toward grazing/rim light as the single global
+  `distance` value moves past each pixel's own depth. The visible result is
+  exactly what the owner described — the lit "side" of the face appears to
+  rotate/sweep as distance changes, instead of the whole face reading
+  uniformly brighter or dimmer.
+- **Fix, part 1 (direction damping).** Split `delta_z` into two uses with
+  different strengths: full strength still drives falloff (distance
+  genuinely should make the light stronger and tighter as it comes closer),
+  but the copy that feeds the direction vector is heavily damped
+  (`delta_z_dir = delta_z * 0.15`) — distance still shapes the light
+  believably (not flattened to literally zero angle variation), it just no
+  longer dominates which side of the face looks lit as the slider moves.
+- **Fix, part 2 (a real D-078 bug this surfaced).** Re-running the GPU test
+  suite after part 1 caught a second, separate, pre-existing bug:
+  `positional_light_needs_nonzero_distance_to_shade_a_flat_surface` failed —
+  a light with `distance: 95` on a flat depth of `180/255` rendered
+  byte-identical to no light at all, anywhere, including directly under the
+  puck. D-078's `dist3d` folded the FULL-strength z offset into the exact
+  same distance compared against `radius` — so a `distance` meaningfully
+  different from a surface's own depth (the entire *point* of `distance`,
+  D-076) could make the z component alone exceed `radius` and zero the
+  light out completely, everywhere, regardless of screen position. Fixed by
+  decoupling: `radius`/`fall` goes back to being a pure screen-space circle
+  (exactly what it was before D-078 touched it), and depth-awareness
+  becomes a separate multiplier, `z_falloff = 1 / (1 + z_mismatch² × 0.3)`
+  — dims a pixel far from the light's own depth, but never fully zeroes it
+  the way folding z into the radius-gated distance did.
+- **Verification.** `cargo test --manifest-path app/src-tauri/Cargo.toml
+  chroma::relight::`: 16/16 (all passing, including the test that caught
+  part 2's bug). `cargo test ... chroma::`: 143 passed, 0 failed, 1
+  ignored. `cargo build`: clean (after resolving a concurrent-cargo-process
+  build corruption unrelated to this specific change — see the build-
+  tooling note below). `tsc --noEmit -p app`: 64/64 unchanged baseline.
+  Live-confirmed for the OTHER two D-078/D-079 fixes already
+  (falloff/blend: "light only falls on me which i do like :D"); this
+  specific distance-sweep + radius-zeroing combination fix is pending the
+  owner's next live retest.
+
+**Build-tooling note (not a product change):** repeatedly hit a real,
+reproducible linker corruption (`nalgebra::geometry::reflection` anonymous
+LLVM symbols going missing at final link) whenever a manual `cargo
+build`/`cargo test` ran concurrently with `cargo tauri dev`'s own background
+`cargo run` against the same `target/` directory — not incremental-cache
+flakiness (clearing `target/debug/incremental` alone didn't fix it; a full
+`rm -rf target/debug` did). Going forward this session: never run a manual
+cargo command while the dev app's own build/watch process might be active;
+check `ps aux | grep cargo` first.

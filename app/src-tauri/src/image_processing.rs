@@ -1574,14 +1574,18 @@ pub const MAX_MASKS: usize = 32;
 /// fractions (UI percentages divided by 100 in `parse_relight_lights_gpu`);
 /// `color_*` are linear-ish 0–1 straight from the UI hex swatch (not
 /// colour-managed — a cheap tint, matching the rest of this v1's "not
-/// photoreal" scope, see D-046). `distance` is how far the light is held off
-/// the shaded surface *toward the camera*, in the depth map's own normalized
-/// units — NOT screen-space like `pos_x`/`pos_y`/`radius`; it feeds the
-/// z-component of the light direction in `apply_relight` (D-076: without it,
-/// positional lights sampled their own z straight off the surface they were
-/// dropped on and produced near-zero directional shading everywhere — "nothing
-/// is getting applied at all"). See `shaders/shader.wgsl`'s mirror struct +
-/// `apply_relight`.
+/// photoreal" scope, see D-046). `distance` is the light's own absolute
+/// position in the depth map's normalized "bright = near" space (D-076) —
+/// NOT screen-space like `pos_x`/`pos_y`/`radius`, and deliberately NOT
+/// sampled from whatever the depth map shows directly behind the puck's
+/// `pos_x`/`pos_y` either (an earlier version did that, which meant a puck
+/// parked beside the subject — over open background, exactly how you'd
+/// place a real point light next to someone — anchored the light's z to
+/// the background's depth, so the subject caught no light at all:
+/// confirmed live, background lit up, face stayed dark. It's a
+/// free-standing "how close to camera" dial compared directly against
+/// each shaded pixel's own depth in `apply_relight`. See
+/// `shaders/shader.wgsl`'s mirror struct + `apply_relight`.
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct RelightLightGpu {
@@ -1619,6 +1623,23 @@ pub struct AllAdjustments {
     pub relight_lights: [RelightLightGpu; MAX_RELIGHT_LIGHTS],
     pub relight_light_count: u32,
     pub relight_depth_layer: i32,
+    /// D-077. The first of THREE consecutive `mask_textures` array layers
+    /// holding a real per-pixel surface-normal map (X at `relight_normal_layer`,
+    /// Y at `+1`, Z at `+2`) — MoGe-2's single-frame bake
+    /// (`generate_full_image_normal_map`, `chroma::relight::resolve_normals_bake`),
+    /// NOT the finite-difference-of-depth normal `relight_normal()` in
+    /// shader.wgsl computes as a fallback. One `i32` index (not three) because
+    /// the three channels are always pushed as a contiguous block by
+    /// `mask_generation::resolve_relight_normal_bitmap` — see that function.
+    /// `-1` when absent (no bake yet, or the sidecar/model unavailable):
+    /// `apply_relight` then falls back to the depth-derived normal exactly as
+    /// before D-077, same graceful-degradation shape `relight_depth_layer`
+    /// already has. Defaults to `-1` in `get_all_adjustments_from_json`, same
+    /// as `relight_depth_layer` — see that field's doc for why `0`
+    /// (`..Default::default()`'s zero-value, e.g. `export_processing.rs`'s
+    /// `build_single_mask_adjustments`) is harmless: `relight_light_count: 0`
+    /// gates the whole relight pass off regardless.
+    pub relight_normal_layer: i32,
     // `pub(crate)`, not private: `export_processing.rs`'s
     // `build_single_mask_adjustments` constructs a full `AllAdjustments` via
     // `..Default::default()` from outside this module — Rust's struct-update
@@ -1626,7 +1647,6 @@ pub struct AllAdjustments {
     // construction site even when using `..base`, so a fully-private pad
     // field would make that (valid, cross-module) construction a compile
     // error. Still not `pub` — no meaning outside the crate, purely alignment.
-    pub(crate) _relight_pad1: u32,
     pub(crate) _relight_pad2: u32,
 }
 
@@ -2560,7 +2580,8 @@ pub fn get_all_adjustments_from_json(
         // it, so an un-wired path just renders ambient-only relight, never a
         // wrong depth layer.
         relight_depth_layer: -1,
-        _relight_pad1: 0,
+        // Same reasoning as relight_depth_layer above — D-077.
+        relight_normal_layer: -1,
         _relight_pad2: 0,
     }
 }

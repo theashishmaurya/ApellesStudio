@@ -4,6 +4,36 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Relight shading overhaul (D-078/D-079): real light, not
+  a coloured gel.** Falloff was 2D-screen-only and colour was flat additive
+  — read as a translucent wash, live-confirmed fixed by switching to a
+  screen blend (respects existing highlights/shadows) plus real 3D falloff.
+  Then found `distance` was sweeping the lit side of the face instead of
+  moving the light nearer/farther (a real face's own depth variation was
+  feeding the light's *direction*, not just its brightness) — direction now
+  uses a heavily damped copy of the depth delta. That same investigation
+  caught a second real bug: a `distance` far from a surface's depth could
+  silently zero the light out completely (folded into the same radius-gated
+  falloff) — depth-based dimming is now a separate, non-zeroing multiplier.
+- **2026-09-03** — **Relight uses one coherent AI geometry pass now, not
+  two mismatched ones (D-077 addendum).** "Bake Normals" now also writes
+  MoGe-2's own real depth (computed in the same inference call as the
+  normal), instead of pairing the normal against a separate
+  Depth-Anything-V2 bake — the two are guaranteed geometrically consistent.
+
+- **2026-09-03** — **Relight: real AI surface normals instead of a depth
+  finite-difference (D-077).** "Feels like a light blob, that's not light
+  that's just color" was accurate — the old normal was a crude heightfield
+  trick on the depth map, not real geometry. New "Bake Normals" action runs
+  MoGe-2 (MIT-licensed, vendored, verified on MPS) for a real per-pixel
+  surface normal; DSINE was evaluated first and rejected (academic-only
+  licence). Depth-derived fallback unchanged when no bake exists.
+- **2026-09-03** — **Relight `distance` correction (D-076 follow-up):** the
+  first fix still failed live because a light's z was partly anchored to
+  whatever the depth map showed *behind the puck's own position* — broken
+  the moment the puck sat over open background instead of on the subject.
+  `distance` is now a true absolute z-coordinate, independent of puck
+  placement; default bumped 40 → 85.
 - **2026-09-03** — **Relight positional lights actually shade footage now
   (D-076, B-022).** Root cause of "nothing is getting applied at all": there
   was no real z/depth control for a light, only screen-space x/y/radius — a

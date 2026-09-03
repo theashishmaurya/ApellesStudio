@@ -8,3 +8,7 @@ transformers>=4.40,<5
 # Video Depth Anything — Small (vendored in ai/vendor/, D-036): temporal video depth
 einops>=0.4
 easydict>=1.10
+# MoGe-2 (vendored in ai/vendor/, D-077): real surface-normal estimation for Relight
+scipy>=1.11
+huggingface_hub>=0.20
+utils3d_moge @ git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37

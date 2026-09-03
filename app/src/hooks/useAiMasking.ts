@@ -495,6 +495,44 @@ export function useAiMasking() {
     }
   };
 
+  // D-077 (follow-up to D-076): "Bake Normals" — a single-frame REAL
+  // surface-normal map via MoGe-2 (the AI sidecar, `ai/vendor/moge/`), not
+  // the depth-derived approximation `apply_relight` falls back to without
+  // one. Mirrors `handleBakeRelightDepth` exactly (same warped-image source
+  // via `generate_full_image_normal_map`, same "works on a still too" — the
+  // model runs on a single frame either way), one real difference: this
+  // command hits the sidecar over HTTP (a trained PyTorch model, not the
+  // in-process Rust ONNX Depth-Anything-V2 path Bake Depth uses), so it can
+  // fail with "sidecar unreachable" the way Track Depth already can.
+  const handleBakeRelightNormals = async () => {
+    const { selectedImage, adjustments } = useEditorStore.getState();
+    if (!selectedImage?.path) return { error: 'no image loaded' };
+    setEditor({ isBakingRelightNormals: true });
+    try {
+      const transformAdjustments = getTransformAdjustments(adjustments);
+      // D-077 follow-up ("real light and real depth"): MoGe-2 returns both a
+      // normal AND a depth map from the SAME inference pass — writing both
+      // keeps them geometrically consistent, instead of pairing this normal
+      // against a separately-estimated Depth-Anything-V2 bake.
+      const { normal, depth }: { normal: string; depth: string } = await invoke(
+        'generate_full_image_normal_map',
+        { jsAdjustments: transformAdjustments },
+      );
+      setAdjustments((prev: Adjustments) => ({
+        ...prev,
+        relightNormalsBake: normal,
+        relightDepthBake: depth,
+      }));
+      useChromaStore.getState().bumpFrameNonce();
+      return { baked: true };
+    } catch (err: any) {
+      toast.error(`Bake Normals failed: ${err?.message || String(err)}`);
+      return { error: err?.message || String(err) };
+    } finally {
+      setEditor({ isBakingRelightNormals: false });
+    }
+  };
+
   const handleGenerateAiDepthMask = async (subMaskId: string, parameters: any) => {
     const { selectedImage, adjustments, patchesSentToBackend } = useEditorStore.getState();
     if (!selectedImage?.path) return;
@@ -711,5 +749,6 @@ export function useAiMasking() {
     handleTrackDepth,
     handleTrackRelightDepth,
     handleBakeRelightDepth,
+    handleBakeRelightNormals,
   };
 }

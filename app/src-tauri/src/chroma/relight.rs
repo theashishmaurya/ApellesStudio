@@ -54,12 +54,14 @@ pub struct RelightLightSpec {
     /// 0–100, percentage of the longer frame dimension — screen-space
     /// falloff size only.
     pub radius: f32,
-    /// 0–100. How far the light is held off the shaded surface *toward the
-    /// camera*, in the depth map's own normalized units (D-076). See
-    /// `RelightLightGpu`'s doc comment in `image_processing.rs` for why this
-    /// exists — without it, positional lights collapsed to near-zero
-    /// directional shading on any roughly-flat surface, which is why relight
-    /// looked like it did nothing.
+    /// 0–100. The light's own absolute position in the depth map's
+    /// normalized "bright = near" space (D-076) — an independent z dial, NOT
+    /// sampled from whatever's directly behind the puck's own x/y. See
+    /// `RelightLightGpu`'s doc comment in `image_processing.rs` for the full
+    /// history: a first version derived z from the depth *at the puck's own
+    /// anchor*, which broke as soon as the puck sat off the subject (over
+    /// open background, a completely normal place to park a point light) —
+    /// the background caught light, the subject didn't.
     pub distance: f32,
     /// 0–200 UI percentage; 100 = the shader's baseline light strength.
     pub intensity: f32,
@@ -74,7 +76,7 @@ impl Default for RelightLightSpec {
             x: 50.0,
             y: 50.0,
             radius: 35.0,
-            distance: 40.0,
+            distance: 85.0,
             intensity: 100.0,
             color: [1.0, 1.0, 1.0],
         }
@@ -213,6 +215,21 @@ pub fn resolve_depth_bake(js_adjustments: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `adjustments.relightNormalsBake` (D-077) — a single-frame, RGB-encoded
+/// surface-normal-map PNG (data URL) from MoGe-2, via
+/// `generate_full_image_normal_map` (the AI sidecar's `/generate_normal_map`,
+/// `ai/vendor/moge/`). `None` when absent/empty, same absent/empty contract
+/// [`resolve_depth_bake`] and [`resolve_depth_dir`] already have — the caller
+/// then falls back to `apply_relight`'s depth-derived normal, unchanged from
+/// before D-077.
+pub fn resolve_normals_bake(js_adjustments: &Value) -> Option<String> {
+    js_adjustments
+        .get("relightNormalsBake")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,11 +307,11 @@ mod tests {
         });
         let lights = parse_relight_lights(&adj);
         assert_eq!(lights[0].distance, 75.0);
-        assert_eq!(lights[1].distance, 40.0);
+        assert_eq!(lights[1].distance, 85.0);
 
         let (gpu, _) = parse_relight_lights_gpu(&adj);
         assert_eq!(gpu[0].distance, 0.75);
-        assert_eq!(gpu[1].distance, 0.4);
+        assert_eq!(gpu[1].distance, 0.85);
     }
 
     #[test]
@@ -338,6 +355,18 @@ mod tests {
         assert_eq!(
             resolve_depth_bake(&json!({ "relightDepthBake": "data:image/png;base64,abc" })),
             Some("data:image/png;base64,abc".to_string())
+        );
+    }
+
+    /// D-077: the normals-bake resolver mirrors the depth one's absent/empty
+    /// contract exactly — same shape, different field.
+    #[test]
+    fn normals_bake_absent_or_empty_is_none() {
+        assert!(resolve_normals_bake(&json!({})).is_none());
+        assert!(resolve_normals_bake(&json!({ "relightNormalsBake": "" })).is_none());
+        assert_eq!(
+            resolve_normals_bake(&json!({ "relightNormalsBake": "data:image/png;base64,xyz" })),
+            Some("data:image/png;base64,xyz".to_string())
         );
     }
 
@@ -564,12 +593,207 @@ mod tests {
         );
 
         let elevated = render_with(json!({
-            "kind": "key", "x": 50.0, "y": 50.0, "radius": 60.0, "distance": 70.0,
+            "kind": "key", "x": 50.0, "y": 50.0, "radius": 60.0, "distance": 95.0,
             "intensity": 150.0, "color": "#ffffff", "visible": true,
         }));
         assert_ne!(
             elevated, unlit,
             "a light with real distance still made no visible difference on a flat surface"
+        );
+    }
+
+    /// D-076 follow-up regression test, added after the first `distance` fix
+    /// still failed live: a puck dropped beside the subject, over open
+    /// background (a completely normal place to park a point light, and
+    /// exactly what the owner did), must still shade the subject. An earlier
+    /// version of the fix sampled the depth map *at the puck's own anchor
+    /// pixel* and added `distance` on top of that — which meant the puck's
+    /// z was implicitly whatever was directly behind it on screen: fine if
+    /// dropped right on the subject, but a puck over background anchored the
+    /// light to the *background's* depth, so the actual subject (elsewhere
+    /// in frame, much nearer to camera) got zero shading regardless of
+    /// `distance`. This test uses a depth map with two distinct flat
+    /// regions — a far "background" (left half, low depth) where the puck
+    /// sits, and a near "subject" (right half, high depth) where shading is
+    /// checked — and asserts the subject region differs from unlit even
+    /// though the puck never touches it.
+    #[test]
+    fn positional_light_shades_subject_even_when_puck_sits_over_background() {
+        use crate::gpu_processing::RenderRequest;
+        use crate::image_processing::get_all_adjustments_from_json;
+        use crate::render_core::{self, OwnedRenderCaches};
+        use image::{DynamicImage, GrayImage, Luma, RgbImage};
+
+        let Ok(ctx) = render_core::init_gpu_context() else {
+            eprintln!(
+                "skip: no GPU adapter available for positional_light_shades_subject_even_when_puck_sits_over_background"
+            );
+            return;
+        };
+
+        const W: u32 = 64;
+        const H: u32 = 64;
+
+        let base = DynamicImage::ImageRgb8(RgbImage::from_fn(W, H, |x, y| {
+            image::Rgb([((x * 4) % 255) as u8, ((y * 4) % 255) as u8, 128])
+        }));
+
+        // Left half (x < W/2, where the puck sits at x=15%) is far
+        // background (low depth); right half (x >= W/2, checked for
+        // shading) is a near subject (high depth). Both halves individually
+        // flat, so any shading difference there is purely from `distance`,
+        // not from an in-region depth gradient.
+        let two_region_depth = GrayImage::from_fn(W, H, |x, _y| {
+            if x < W / 2 { Luma([40]) } else { Luma([220]) }
+        });
+
+        let render_with = |light_json: Value| -> Vec<u8> {
+            let js = json!({ "relightLights": [light_json] });
+            let mut adjustments = get_all_adjustments_from_json(&js, false, None);
+            let mut mask_bitmaps = Vec::new();
+            adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
+            mask_bitmaps.push(two_region_depth.clone());
+
+            render_core::render(
+                &ctx,
+                OwnedRenderCaches::default().as_ref(),
+                &base,
+                1,
+                RenderRequest {
+                    adjustments,
+                    mask_bitmaps: &mask_bitmaps,
+                    lut: None,
+                    roi: None,
+                },
+                "relight_puck_over_background_test",
+                false,
+                None,
+            )
+            .expect("relight render")
+            .to_rgba8()
+            .into_raw()
+        };
+
+        // Puck at x=15% (left half — over the "background"), a large radius
+        // so falloff alone doesn't explain any lack of effect on the right
+        // half, and the default distance (85) an "Add Light" would actually
+        // ship with.
+        let lit = render_with(json!({
+            "kind": "key", "x": 15.0, "y": 50.0, "radius": 90.0, "distance": 85.0,
+            "intensity": 150.0, "color": "#ffffff", "visible": true,
+        }));
+        let unlit = render_with(json!({
+            "kind": "key", "x": 15.0, "y": 50.0, "radius": 90.0, "distance": 85.0,
+            "intensity": 0.0, "color": "#ffffff", "visible": true,
+        }));
+
+        // Compare only the right half (the "subject" the puck never sits
+        // over) — the left half legitimately differs too, that's not what
+        // this test is checking.
+        let rgba = |buf: &[u8]| -> Vec<[u8; 4]> {
+            buf.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect()
+        };
+        let lit_px = rgba(&lit);
+        let unlit_px = rgba(&unlit);
+        let mut subject_half_differs = false;
+        for y in 0..H {
+            for x in (W / 2)..W {
+                let i = (y * W + x) as usize;
+                if lit_px[i] != unlit_px[i] {
+                    subject_half_differs = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            subject_half_differs,
+            "a light parked over background produced zero shading on the subject elsewhere in frame"
+        );
+    }
+
+    /// D-077 regression test: `relight_normal_layer` actually changes the
+    /// shading in the real shader, not just compiles. Builds two renders with
+    /// IDENTICAL lights and depth, differing only in whether a baked normal
+    /// (X/Y/Z, three extra `mask_bitmaps` layers) is bound — a flat depth map
+    /// (so the depth-derived fallback normal is uniformly straight-on) paired
+    /// with a baked normal that leans hard to one side proves the shader is
+    /// really reading the baked layers, not silently falling back.
+    #[test]
+    fn baked_normal_layer_changes_shading_vs_the_depth_derived_fallback() {
+        use crate::gpu_processing::RenderRequest;
+        use crate::image_processing::get_all_adjustments_from_json;
+        use crate::render_core::{self, OwnedRenderCaches};
+        use image::{DynamicImage, GrayImage, Luma, RgbImage};
+
+        let Ok(ctx) = render_core::init_gpu_context() else {
+            eprintln!(
+                "skip: no GPU adapter available for baked_normal_layer_changes_shading_vs_the_depth_derived_fallback"
+            );
+            return;
+        };
+
+        const W: u32 = 64;
+        const H: u32 = 64;
+
+        let base = DynamicImage::ImageRgb8(RgbImage::from_fn(W, H, |x, y| {
+            image::Rgb([((x * 4) % 255) as u8, ((y * 4) % 255) as u8, 128])
+        }));
+        // Flat depth: the fallback normal (`relight_normal`'s finite
+        // difference) is uniformly (0, 0, 1) — straight at the camera.
+        let flat_depth = GrayImage::from_pixel(W, H, Luma([180]));
+        // A baked normal leaning hard toward +X (right), encoded the same
+        // way `ai/server.py`'s `_normal_to_b64` does: (n + 1) / 2 * 255.
+        // (nx, ny, nz) = (0.8, 0.0, 0.6), a real unit vector, clearly NOT
+        // straight-on — if the shader reads this instead of the flat
+        // fallback, the render must differ.
+        let normal_x = GrayImage::from_pixel(W, H, Luma([((0.8 + 1.0) / 2.0 * 255.0) as u8]));
+        let normal_y = GrayImage::from_pixel(W, H, Luma([((0.0 + 1.0) / 2.0 * 255.0) as u8]));
+        let normal_z = GrayImage::from_pixel(W, H, Luma([((0.6 + 1.0) / 2.0 * 255.0) as u8]));
+
+        let light_js = json!({
+            "relightLights": [
+                { "kind": "key", "x": 30.0, "y": 50.0, "radius": 80.0, "distance": 85.0,
+                  "intensity": 150.0, "color": "#ffffff", "visible": true },
+            ]
+        });
+
+        let render = |with_baked_normal: bool| -> Vec<u8> {
+            let mut adjustments = get_all_adjustments_from_json(&light_js, false, None);
+            let mut mask_bitmaps = vec![flat_depth.clone()];
+            adjustments.relight_depth_layer = 0;
+            if with_baked_normal {
+                adjustments.relight_normal_layer = mask_bitmaps.len() as i32;
+                mask_bitmaps.push(normal_x.clone());
+                mask_bitmaps.push(normal_y.clone());
+                mask_bitmaps.push(normal_z.clone());
+            }
+
+            render_core::render(
+                &ctx,
+                OwnedRenderCaches::default().as_ref(),
+                &base,
+                1,
+                RenderRequest {
+                    adjustments,
+                    mask_bitmaps: &mask_bitmaps,
+                    lut: None,
+                    roi: None,
+                },
+                "relight_baked_normal_test",
+                false,
+                None,
+            )
+            .expect("relight render")
+            .to_rgba8()
+            .into_raw()
+        };
+
+        let with_fallback_normal = render(false);
+        let with_baked_normal = render(true);
+        assert_ne!(
+            with_fallback_normal, with_baked_normal,
+            "binding a baked normal map produced identical output to the depth-derived \
+             fallback — relight_normal_layer isn't actually being read"
         );
     }
 }

@@ -74,6 +74,12 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-023 — Relight `distance` swept the lit side of the face instead of moving the light nearer/farther; some distance/radius combos silently zeroed the light entirely
+status: fixed (2026-09-03, D-079) · severity: high (positional lights unreliable/confusing to use even after B-022/D-076 made them work at all) · area: `app/src-tauri/src/shaders/shader.wgsl`
+- **found:** owner, live, sliding Distance through several values with screenshots at each: "see the distance right working weirdly instead of light coming closer and going in depth, we are getting like rounding angle changing."
+- **cause (two, compounding):** (1) the depth delta driving the light's *direction* used the same full strength as the one driving falloff/brightness — since a real face has real depth variation (nose vs. ears), a single global `distance` value shifted every pixel's incidence angle non-uniformly as it changed, reading as the light rotating around the face. (2) fixing (1) surfaced a second, independent bug: D-078's 3D falloff compared the raw z-offset directly against `radius`, so a `distance` meaningfully different from a surface's depth (the entire point of the control) could make z alone exceed `radius` and zero the light out completely, even directly under the puck.
+- **fix:** direction now uses a heavily damped copy of the depth delta (`× 0.15`) while falloff keeps the full-strength one; depth-based dimming is now a separate, gentle, never-fully-zeroing multiplier instead of being folded into the same radius-gated distance. Full writeup: D-079 in `docs/08-decisions.md`.
+
 ## B-022 — Relight positional lights rendered zero visible effect on real footage, even fully configured
 status: fixed (2026-09-03, D-076) · severity: blocker (the entire key/fill/rim relight feature never worked, on any footage, at any point this session — see the B-018 note below) · area: `app/src-tauri/src/chroma/relight.rs`, `app/src-tauri/src/image_processing.rs`, `app/src-tauri/src/shaders/shader.wgsl`, `app/src/components/chroma/RelightPanel.tsx`
 - **found:** owner, live, with a fully-configured positional light (color set,

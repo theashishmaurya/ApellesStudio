@@ -228,7 +228,10 @@ class SegmentReq(BaseModel):
 def health():
     return {"ok": True, "device": DEVICE, "models": os.listdir(MODELS_DIR),
             "vitmatte": VITMATTE_ID,
-            "video_depth": os.path.exists(os.path.join(MODELS_DIR, VDA_CKPT_NAME))}
+            "video_depth": os.path.exists(os.path.join(MODELS_DIR, VDA_CKPT_NAME)),
+            "relight_normals": os.path.isdir(
+                os.path.join(MODELS_DIR, "models--" + MOGE_REPO.replace("/", "--"))
+            )}
 
 
 def _segment_array(rgb: np.ndarray, box=None, pts=None, auto_person=True,
@@ -824,3 +827,104 @@ def depth_track(req: DepthTrackReq):
 @app.get("/depth_track/{job_id}")
 def depth_track_status(job_id: str):
     return _jobs.get(job_id, {"state": "unknown"})
+
+
+# ---------------------------------------------------------------------------
+# Relight surface normals (D-077, follow-up to D-046/D-076) — MoGe-2
+# (vendored, ai/vendor/moge/), a real per-pixel surface-normal model.
+# Single-frame only — "Bake Normals" in the Relight panel occupies the same
+# quick/per-frame tier as Bake Depth, NOT a whole-video job like Track Depth.
+# `apply_relight`'s normal used to be a finite-difference of the depth
+# texture — flat and blob-like on real footage (owner, live: "that not
+# light that's just color"). See ai/vendor/README.md's `moge/` entry for the
+# model choice (DSINE rejected — academic-only licence) and the MPS
+# `use_fp16` gotcha this loader works around.
+# ---------------------------------------------------------------------------
+
+MOGE_REPO = "Ruicheng/moge-2-vits-normal"
+
+_moge = None  # loaded MoGeModel, on DEVICE, eval()
+
+
+def moge():
+    global _moge
+    if _moge is None:
+        from moge.model.v2 import MoGeModel
+
+        _moge = MoGeModel.from_pretrained(MOGE_REPO, cache_dir=MODELS_DIR).to(DEVICE).eval()
+    return _moge
+
+
+class NormalMapReq(BaseModel):
+    image_b64: str
+
+
+def _normal_to_b64(normal: np.ndarray) -> str:
+    """normal: HxWx3 float32, OpenCV camera coords (X right, Y down, Z INTO
+    the scene) -> a standard RGB-encoded normal-map PNG (each channel
+    (n+1)/2 * 255). Z is flipped first so the encoding matches this
+    codebase's own convention everywhere else (Z+ = TOWARD the camera, same
+    sign `relight_normal`'s finite-difference normals already use in
+    shader.wgsl)."""
+    n = normal.copy()
+    n[..., 2] *= -1.0
+    n = np.clip((n + 1.0) * 0.5, 0.0, 1.0)
+    rgb = (n * 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(rgb, mode="RGB").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _depth_to_b64(depth: np.ndarray) -> str:
+    """depth: HxW float32, MoGe-2's own metric depth (LARGER = FARTHER,
+    invalid/unknown pixels are +inf) -> a single-channel "bright = near" PNG,
+    the SAME orientation `run_depth_anything_model` (Rust, `ai_processing.rs`)
+    and Video Depth Anything's track both already use everywhere else this
+    codebase reads a depth bitmap — a different convention from MoGe-2's own
+    raw output, deliberately converted here so the Rust/shader side never
+    needs to know which model produced a given depth bake.
+
+    Inverted via 1/depth (standard metric-depth -> disparity conversion) —
+    this ALSO turns +inf (invalid pixels) into exactly 0.0 for free, pushing
+    unknown regions to "as far as possible" with no separate masking step,
+    then min-max normalized to 0-255 the same way the Rust DA-V2 path does."""
+    inv = 1.0 / np.clip(depth, 1e-6, None)
+    inv = np.nan_to_num(inv, nan=0.0, posinf=0.0, neginf=0.0)
+    lo, hi = float(inv.min()), float(inv.max())
+    span = hi - lo
+    normalized = ((inv - lo) / span) if span > 1e-6 else np.zeros_like(inv)
+    gray = np.clip(normalized * 255.0, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(gray, mode="L").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+@app.post("/generate_normal_map")
+def generate_normal_map(req: NormalMapReq):
+    """Returns BOTH a real surface-normal map AND a real depth map from the
+    SAME MoGe-2 inference pass (D-077 follow-up: "real light and real
+    depth" — using this model's own coherent depth here too, not a separate
+    Depth-Anything-V2 bake, so the two are geometrically consistent with
+    each other rather than two independent models that might disagree)."""
+    with _GPU:
+        try:
+            img = _b64_to_image(req.image_b64)
+            arr = np.asarray(img).astype(np.float32) / 255.0
+            tensor = torch.tensor(arr, device=DEVICE).permute(2, 0, 1)
+            with torch.no_grad():
+                # use_fp16=False: MoGe-2's own fp32-output-projection path
+                # crashes under MPS autocast with the default True (see
+                # ai/vendor/README.md's `moge/` entry) — a bug in this
+                # model's own autocast handling on MPS, not a device
+                # mismatch we introduced.
+                out = moge().infer(tensor, use_fp16=False)
+            normal = out["normal"].detach().cpu().numpy()
+            depth = out["depth"].detach().cpu().numpy()
+            return {
+                "normal_b64": _normal_to_b64(normal),
+                "depth_b64": _depth_to_b64(depth),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+        finally:
+            _free_gpu()

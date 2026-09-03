@@ -1440,6 +1440,58 @@ pub fn resolve_relight_depth_bitmap(
     generate_relight_depth_bitmap_static(&depth_base64, width, height, scale, crop_offset)
 }
 
+/// Interactive relight real surface normals (D-077, follow-up to D-054's
+/// static-bake pattern): resolves `adjustments.relightNormalsBake` (an
+/// RGB-encoded normal-map PNG from MoGe-2, `chroma::relight::resolve_normals_bake`)
+/// into three warped single-channel bitmaps (X, Y, Z), one per
+/// `mask_textures` array layer — that array is single-channel throughout
+/// (every other consumer, `get_mask_influence`/`sample_relight_depth`, reads
+/// one `.r` component per layer), so a 3-channel normal takes three
+/// consecutive layers rather than a new texture format. Reuses
+/// `generate_ai_bitmap_from_full_mask` — the *exact* warp path
+/// depth/mask bakes already go through — once per channel, so crop/scale
+/// alignment matches the depth bitmap pixel-for-pixel. `None` if no bake
+/// exists yet or the data URL fails to decode.
+pub fn resolve_relight_normal_bitmap(
+    js_adjustments: &Value,
+    width: u32,
+    height: u32,
+    scale: f32,
+    crop_offset: (f32, f32),
+) -> Option<[GrayImage; 3]> {
+    let normals_base64 = crate::chroma::relight::resolve_normals_bake(js_adjustments)?;
+    let b64_data = match normals_base64.find(',') {
+        Some(idx) => &normals_base64[idx + 1..],
+        None => &normals_base64,
+    };
+    let decoded = general_purpose::STANDARD.decode(b64_data).ok()?;
+    let rgb = image::load_from_memory(&decoded).ok()?.to_rgb8();
+    let (src_w, src_h) = rgb.dimensions();
+
+    let mut channels = [
+        GrayImage::new(src_w, src_h),
+        GrayImage::new(src_w, src_h),
+        GrayImage::new(src_w, src_h),
+    ];
+    for (x, y, p) in rgb.enumerate_pixels() {
+        for (c, ch) in channels.iter_mut().enumerate() {
+            ch.put_pixel(x, y, Luma([p[c]]));
+        }
+    }
+
+    let tf = TransformParams {
+        rotation: 0.0,
+        flip_horizontal: false,
+        flip_vertical: false,
+        orientation_steps: 0,
+        width,
+        height,
+        scale,
+        crop_offset,
+    };
+    Some(channels.map(|ch| generate_ai_bitmap_from_full_mask(&ch, &tf)))
+}
+
 pub fn generate_mask_bitmap(
     mask_def: &MaskDefinition,
     width: u32,

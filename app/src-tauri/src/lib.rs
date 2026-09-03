@@ -509,6 +509,23 @@ fn process_preview_job(
         final_adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
         mask_bitmaps.push(depth_bitmap);
     }
+    // D-077 follow-up: a real per-pixel surface-normal bake (MoGe-2), three
+    // more consecutive mask_textures layers — see `apply_relight`'s doc and
+    // `resolve_relight_normal_bitmap`. `None` (no bake yet) leaves
+    // `relight_normal_layer` at its `-1` default, and `apply_relight` falls
+    // back to the depth-derived normal exactly as before this decision.
+    if final_adjustments.relight_light_count > 0
+        && let Some(normal_bitmaps) = crate::mask_generation::resolve_relight_normal_bitmap(
+            &adjustments_clone,
+            preview_width,
+            preview_height,
+            effective_scale,
+            scaled_crop_offset,
+        )
+    {
+        final_adjustments.relight_normal_layer = mask_bitmaps.len() as i32;
+        mask_bitmaps.extend(normal_bitmaps);
+    }
     let lut_path = adjustments_clone["lutPath"].as_str();
     let lut = lut_path.and_then(|p| lut_processing::get_or_load_lut(&state, p).ok());
 
@@ -2192,6 +2209,7 @@ pub fn run() {
             ai_commands::check_ai_connector_status,
             ai_commands::test_ai_connector_connection,
             ai_commands::generate_full_image_depth_map,
+            ai_commands::generate_full_image_normal_map,
             inpainting::invoke_generative_replace_with_mask_def,
             inpainting::generate_manual_cleanup_patch,
             inpainting::generate_liquify_patch,
