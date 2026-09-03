@@ -227,10 +227,21 @@ export function videoTrackIndex(tl: Timeline): number {
  *  `dragLine` (D-051), just for this drag, which the library has no
  *  cross-drag-type concept of.
  *
- *  Returns `null` for a drop that's neither a real snapped edge nor an open
- *  gap — a genuinely ambiguous mid-clip drop, far from any edge, which
- *  isn't a valid "insert between two clips" gesture; the caller should fall
- *  back to a plain append in that case. */
+ *  D-100 — a third case, found live: hovering somewhere in the MIDDLE of an
+ *  existing clip, too far from either of ITS OWN edges for the snap above
+ *  to catch, with no open gap there either. Owner: "when i try to add a
+ *  clip between two which was already added does not work" — when two
+ *  clips are already touching (zero gap, the ordinary state for a real
+ *  edit, not an edge case), the ONLY way into the snap branch above was a
+ *  pixel-precise hit on the seam between them; everywhere else on either
+ *  clip's own body fell through to "no open gap" and silently appended at
+ *  the track's end instead — which reads as "does not work," not "needs a
+ *  wider gap." Falls back to whichever HALF of the clip currently under
+ *  `frame` is closer — insert before it if `frame`'s in its first half,
+ *  after it if its second — so the clip's own full body becomes a real,
+ *  unambiguous insertion target instead of a dead zone. `null` is now only
+ *  a drop in a genuinely empty region too far from anything to mean
+ *  anything specific — the caller falls back to plain append there. */
 export function computeInsertion(
   tr: Track,
   frame: number,
@@ -263,6 +274,14 @@ export function computeInsertion(
   }
 
   if (fitsNoOverlap(frame)) return { startFrame: Math.max(0, frame), ripple: false };
+
+  const covering = clips.find((c) => frame >= c.start_frame && frame < endFrame(c));
+  if (covering) {
+    const mid = covering.start_frame + covering.duration / 2;
+    const pos = frame < mid ? covering.start_frame : endFrame(covering);
+    return fitsNoOverlap(pos) ? { startFrame: pos, ripple: false } : { startFrame: pos, ripple: true };
+  }
+
   return null;
 }
 

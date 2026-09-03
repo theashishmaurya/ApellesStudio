@@ -187,6 +187,33 @@ roadmap structure.
   Phase 3 is genuinely unblocked now, just not started this pass (would
   need `TimelinePane.tsx`, which the drag-and-drop work above was actively
   using for this entire dispatch) — a real next step, not a re-scope.
+- ✅ **Unified clip move onto ONE mechanism — the real root cause of D-098's
+  stuck-ghost/blocked-drag cluster** — done, **D-100/B-029** (drafted as
+  D-099; renumbered — a concurrent session claimed that number first for
+  the Global Inspector entry above, see D-100's own note on this). Four
+  owner reports right after D-098 shipped, the sharpest being an
+  escalation that same-track drag — solid since D-051 — was now completely
+  blocked. Real root cause: `TrackDropZone`'s `pointer-events-auto` never
+  needed to be conditional at all (dnd-kit's own collision detection is
+  pure rect-math, checked in its bundled source, not native hit-testing)
+  — when `activeDrag` got stuck after an interrupted drag, that flag
+  silently intercepted every click/drag on the whole track row forever.
+  Fixed unconditionally, AND unified same-track + cross-track clip move
+  onto one `useDraggable` (`ClipBody`, the whole clip, library's own
+  move-drag disabled via `movable: false`, edge-trim untouched) per the
+  owner's own explicit redirect — no more two systems racing for one
+  gesture. Found and fixed a genuine dnd-kit-internal-state bug along the
+  way (an interrupted drag left the NEXT drag on the same pointer silently
+  inert — fixed with a real synthetic `pointercancel` dispatch on window
+  blur, not just local state). Also folded in: `computeInsertion`/
+  `nearestEdge` now treat a whole clip's body as a real insertion target
+  (fixes ripple-insert between already-touching clips), click-outside-to-
+  deselect, and selected-clip contrast (a ring, not a background/text-
+  colour swap using the wrong token). 91/91 tests, `tsc`/`vite build`
+  clean; verified via real `PointerEvent`/`DragEvent` sequences against
+  the real component, including the exact interrupted-drag-then-new-drag
+  sequence that exposed the deeper bug — still not a real WKWebView
+  window, flagged as such.
 
 ---
 

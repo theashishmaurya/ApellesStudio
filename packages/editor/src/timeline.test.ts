@@ -169,9 +169,45 @@ describe('computeInsertion (D-095)', () => {
     expect(computeInsertion(track, 3, 20, 10)).toEqual({ startFrame: 0, ripple: true });
   });
 
-  it('returns null for a genuinely mid-clip drop far from any edge', () => {
+  // D-100 — the real "does not work" bug: hovering over the MIDDLE of an
+  // existing clip (far from either of ITS edges, no snap) used to fall
+  // through to `null` — a dead zone covering almost the whole clip's body
+  // whenever two clips were already touching, since that's the ONLY case
+  // where "far from any edge" is unavoidable (there's no open gap to fall
+  // back into either). Now resolves to whichever half of the covering clip
+  // is closer, so the clip's own full body is a real insertion target.
+  it('resolves a mid-clip drop to the covering clip\'s nearer edge — first half inserts before it', () => {
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
-    expect(computeInsertion(track, 50, 30, 10)).toBeNull();
+    // frame 20 is in A's first half (mid=50) — insert before A, rippling it forward.
+    expect(computeInsertion(track, 20, 30, 10)).toEqual({ startFrame: 0, ripple: true });
+  });
+
+  it('resolves a mid-clip drop to the covering clip\'s nearer edge — second half inserts after it', () => {
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
+    // frame 80 is in A's second half — insert right after A; nothing else
+    // on the track, so this is a clean append, no ripple needed.
+    expect(computeInsertion(track, 80, 30, 10)).toEqual({ startFrame: 100, ripple: false });
+  });
+
+  it('the whole-clip-body fallback covers the entire span of two touching clips, not just their shared seam', () => {
+    // a:[0,100) b:[100,200), zero gap — the actual live-reported scenario:
+    // dropping ANYWHERE on either clip's body (not just within snapFrames
+    // of the exact 100-frame seam) must resolve to a real ripple insert.
+    const track: Track = { kind: 'video', clips: backToBack() };
+    // deep inside A (first half) -> insert before A, ripple both A and B forward.
+    expect(computeInsertion(track, 20, 15, 10)).toEqual({ startFrame: 0, ripple: true });
+    // deep inside A (second half) -> insert after A / before B, ripple B forward.
+    expect(computeInsertion(track, 80, 15, 10)).toEqual({ startFrame: 100, ripple: true });
+    // deep inside B (second half, far from the track's own open end) -> insert after B.
+    expect(computeInsertion(track, 180, 15, 10)).toEqual({ startFrame: 200, ripple: false });
+  });
+
+  it('still returns null for a drop in a genuinely empty region with no covering clip and no fitting gap', () => {
+    // a:[0,50) then a real but too-small gap, b:[60,160) — frame 55 is in
+    // the gap (not covering any clip) but a 30-frame clip there would
+    // overlap b — genuinely ambiguous, out of this function's scope.
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 60, duration: 100 })] };
+    expect(computeInsertion(track, 55, 30, 3)).toBeNull();
   });
 
   it('always fits with no ripple on an empty track', () => {

@@ -7515,3 +7515,154 @@ as such rather than picking whichever count looked better.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-100 — Unified clip move onto ONE mechanism; the real root cause of D-098's stuck-ghost/blocked-drag cluster (B-029)
+
+Four owner reports landed in quick succession right after D-098 shipped: a stuck
+ghost overlay ("track overlapping."), an escalation that the SAME symptom was now
+blocking same-track drag entirely ("can't drag and drop in the same track to
+shuffle the position between clips" — a previously solid, D-051-era feature),
+"add a clip between two which was already added does not work" (ripple-insert),
+and two smaller selection-UX findings ("clicking outside does not make it
+undeselected," "white selected color is not visible"). The owner's own diagnosis,
+which turned out to be exactly right: two independently-built move systems (the
+timeline library's native `interact.js` drag, still owning same-track reposition,
+and D-098's dnd-kit system for cross-track) racing for the same gesture on the
+same clip element — "we should have the whole thing draggable and single drag
+point handling all the drag related work." This entry is that unification, plus
+the two smaller findings folded in since they're the same file/feature.
+
+**The actual blocking mechanism, found before assuming the fix, not guessed:**
+`TrackDropZone` (D-098's per-track droppable overlay) toggled `pointer-events-
+auto`/`none` based on `activeDrag`, on the assumption dnd-kit needed real pointer-
+event hit-testing to find a drop target. Checked dnd-kit's own bundled source
+instead of assuming: its default collision detection (`rectIntersection`) works
+purely off MEASURED RECTS in a `droppableRects` map — never native DOM pointer-
+event hit-testing — so `pointer-events-auto` was never actually needed. If
+`activeDrag` ever got stuck `{type:'clip',...}` (an interrupted drag whose
+`onDragEnd`/`onDragCancel` never fired), that flag stayed `true` forever, which
+meant a FULL-ROW, `z-20` overlay kept `pointer-events-auto` forever too — silently
+intercepting every click/drag/resize on that entire row, clip underneath included.
+That's what "can't drag in the same track any more" actually was — not same-track
+drag breaking, a different system's leftover state physically covering it. Fix:
+`pointer-events-none` UNCONDITIONALLY now — removes the whole bug class regardless
+of why `activeDrag` gets stuck, not just the one trigger found.
+
+**Why `activeDrag` got stuck — verified live via real `PointerEvent` sequences
+against the real rendered component (this session's own established harness
+technique, `app/harness.html`/`harness-main.tsx`, scratch, deleted after use),
+not assumed:** dispatched a real drag-start on one clip, then simulated the pointer
+effectively "leaving" the app (a real, plausible desktop-app scenario — another
+app/dialog steals focus while the mouse button is conceptually still down,
+never delivering a completing event to the webview) via `window.blur()`, with NO
+`pointerup`/`pointercancel` ever firing. Confirmed via the store: no mutation
+happened (a clean cancel) — but a re-verification round after implementing a FIRST
+version of the fix (reset `activeDrag` on blur, nothing else) surfaced a real,
+deeper bug: the very NEXT real drag attempt on a DIFFERENT clip, same `pointerId`,
+silently failed to apply anything at all, even though this app's own UI had
+already reset and looked completely idle. Root cause: dnd-kit's own
+`AbstractPointerSensor` registers its OWN `pointercancel`/`pointermove`/`pointerup`
+listeners on `document` and keeps internal state for whichever `pointerId` started
+a drag — resetting only `activeDrag` (this app's own downstream state) never told
+dnd-kit's own sensor the interrupted pointer was released. Real fix: the `blur`
+handler now dispatches a genuine synthetic `pointercancel` event on `document` —
+confirmed in dnd-kit's bundled source that `AbstractPointerSensor` explicitly
+listens for that exact event type as its own cancel path — which correctly
+releases dnd-kit's internal state too, not just this app's; `setActiveDrag(null)`
+stays as a defensive fallback alongside it. Re-verified the EXACT failure sequence
+(interrupted drag → blur → a second real drag on a different clip, same
+`pointerId`) after this fix: the second drag now applies correctly.
+
+**The unification itself.** `ClipBody` (module scope, replacing D-098's separate
+top-strip `ClipMoveHandle`) wraps the clip's ENTIRE rendered content — Waveform +
+label — as the one real `useDraggable` source, for both same-track and cross-track
+move. Safe to cover the full clip now, unlike D-098's inset strip: `buildRows` sets
+`movable: false` on every library `TimelineAction` — confirmed in the library's own
+bundled source (`enableDragging: !disabled && movable`) that this fully disables
+its native `interact.js` move-drag, while `enableResizing` never reads `movable` at
+all, so `flexible: true` (edge-trim) is completely unaffected — trim stays exactly
+the library's own native mechanism, genuinely a different gesture in any real NLE,
+correctly out of scope for this unification per the owner's own explicit
+instruction. With `movable: false`, there is no second system left on this element
+to race for a `pointerdown` — D-098's own capture-vs-bubble same-element ordering
+bug (the `onPointerDownCapture` incident) simply doesn't apply any more, so
+`ClipBody` needs no `stopPropagation` gymnastics at all, just a plain
+`{...attributes} {...listeners}` spread. `onDndDragEnd`'s existing same-track-vs-
+cross-track branch — built for D-096/B-027's own regression fix — needed NO
+changes for this unification; it was already exactly the right shape (resolve
+purely from `event.over`'s track vs. the clip's own starting track). The dead
+`onActionMoveEndCb`/`onActionMoveEnd` wiring (the library's own move-end callback,
+which `movable: false` means never fires any more) was removed rather than kept as
+unreachable code, per this repo's "no dead code" rule.
+
+**Ripple-insert "does not work."** `computeInsertion`/`nearestEdge` only ever
+resolved a drop within a tight snap radius of an existing clip edge, or inside a
+genuinely open gap. When two clips are already touching (the ordinary state for a
+real edit, not an edge case), the ONLY way into a real ripple-insert was a pixel-
+precise hit on their shared seam — everywhere else on either clip's own body fell
+through to a silent plain-append at the track's end, which reads as "does not
+work," not "needs a wider gap." Both functions gained a third case: hovering over
+the MIDDLE of an existing clip now resolves to whichever half of that clip is
+closer (insert before it / after it), making its whole body a real target instead
+of a dead zone; `null` is now only a genuinely ambiguous empty region, out of
+scope. `INSERT_SNAP_PX` also widened 10→16px as a secondary, smaller precision
+improvement — the primary fix is the whole-body fallback, this threshold no longer
+gates whether snapping works AT ALL.
+
+**Two smaller selection-UX findings, same file, folded in per the coordinator's
+own instruction (lightweight relative to the drag work):** (1) a plain `onClick`
+on the edit area now clears `selected` unless the click's target is inside
+`.timeline-editor-action` (the library's own class for a clip, checked in its
+bundled source) — bubble-order safe: the library's own `onClickAction` (an
+innermost-target handler) fires first on a real clip click, this handler runs
+after and only clears when no action ancestor is found, so a real selection click
+never reaches the clearing branch. (2) selection no longer swaps a clip's
+background to `var(--color-accent)` — that swap was paired with the WRONG text
+token too (`text-text-primary`, meant for the app's default background, used
+specifically on the SELECTED/accent-background case, backwards from
+`text-button-text` — this app's own established "readable against `bg-accent`"
+token, confirmed against `ExportPresetsList.tsx`/`ProjectLauncher.tsx`'s own
+`bg-accent text-button-text` pairing) — together, exactly "white selected color is
+not visible." Fix: `text-button-text` unconditionally now (already proven
+readable against the plain clip colours too, no prior complaints there), and the
+existing `ring-2 ring-accent` outline (already the right token per `CLAUDE.md`'s
+own "no magic colours, use `--color-*`" rule) is now the ONLY selection indicator
+— a real outline, not a background-colour gamble.
+
+**Renumbering note:** this entry was originally drafted as D-099 (all the code
+comments written during this pass said so) — by the time it was ready to commit, a
+concurrent agent session had already claimed D-099 for an unrelated Global
+Inspector pass. Renumbered to D-100 (a `sed` pass across the touched files) rather
+than leave a collision; a live `cargo tauri dev` rebuild and several untracked
+`packages/motion/` files confirmed the concurrent session was real, not a stale
+process — this file, `BUGS.md`, `CHANGELOG.md`, and `04-roadmap.md` were only ever
+touched with a full re-read immediately before each edit for the same reason.
+
+Verification: `ps aux | grep cargo` showed a live rebuild from the concurrent
+session throughout this pass — no manual cargo command was run at any point (this
+pass is pure frontend, zero Rust touched). `cd packages/editor && npx vitest run`
+— 91/91 (was 88; one D-095 test updated to reflect the new whole-clip-body
+fallback instead of returning `null`, four new tests added covering it directly).
+`npx tsc --noEmit -p packages/editor` and `-p app` clean (64-error `app` baseline
+unchanged, confirmed none of those 64 trace to this pass's files). `cd app && npx
+vite build` — clean; the React Compiler bailout on `TimelinePane.tsx` briefly
+changed from D-098's "existing memoization could not be preserved" to "cannot
+access variable before it is declared" (the two new safety-net effects referenced
+`insertPreview`'s setter before that state's own declaration, textually — safe at
+runtime since effect bodies only run after the whole render completes, but the
+compiler's own stricter analysis flagged it) — fixed properly by reordering rather
+than left as an accepted bailout, back to the same benign class D-098 already had.
+Every fix in this entry was verified against the real rendered `TimelinePane`
+component via real `PointerEvent`/`DragEvent` sequences with real
+`requestAnimationFrame` waits between steps (both real-timing lessons this
+session's own D-098 entry already established) — same-track move, cross-track
+move (including landing as a real overlapping layer per D-096), edge-trim
+untouched, click-to-select, click-outside-to-deselect, the ripple-insert whole-
+clip fallback, both safety nets including the exact interrupted-drag-then-new-
+drag sequence that exposed the deeper dnd-kit-internal-state bug — not just the
+Chromium-harness-only bar this session's own D-098 entry flagged as insufficient
+after the fact. Still not a real Tauri/WKWebView window; the owner's own hands-on
+check remains the only thing that fully closes that loop.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

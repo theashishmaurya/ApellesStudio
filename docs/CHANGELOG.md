@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Unified clip move onto ONE mechanism; fixed the real
+  root cause of D-098's stuck-ghost/blocked-drag cluster (D-100, B-029).**
+  A stuck `activeDrag` after an interrupted drag left `TrackDropZone`'s
+  `pointer-events-auto` on forever, silently blocking every click/drag on
+  that whole track row — that's what "can't drag in the same track"
+  actually was, not same-track drag itself breaking. Fixed by making that
+  overlay `pointer-events-none` unconditionally (never needed for dnd-kit's
+  own rect-based collision detection) and unifying same-track + cross-track
+  clip move onto ONE `useDraggable` covering the whole clip (`ClipBody`),
+  with the library's native move-drag disabled (`movable: false`, edge-trim
+  untouched) — no more two systems racing for one gesture. Also: a real
+  dnd-kit-internal-state bug (an interrupted drag left the NEXT real drag
+  on the same pointer silently inert; fixed with a genuine synthetic
+  `pointercancel` dispatch on window blur, not just local state reset);
+  `computeInsertion`/`nearestEdge` now resolve a drop anywhere on an
+  existing clip's body (not just a pixel-precise seam), fixing
+  ripple-insert between already-touching clips; click-outside-to-deselect;
+  selected-clip contrast (a ring, not a background/text-colour swap that
+  was using the wrong token). 91/91 tests, `tsc`/`vite build` clean.
 - **2026-09-04** — **Track reorder + cross-track clip move moved onto
   `@dnd-kit/core`/`@dnd-kit/sortable` (D-098, B-028).** Native HTML5 drag
   failed live a second time (cross-track clip move, after track reorder)

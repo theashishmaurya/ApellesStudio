@@ -136,7 +136,7 @@
  * bundled source before writing this).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
@@ -161,7 +161,6 @@ import {
   Eye,
   EyeOff,
   Film,
-  GripHorizontal,
   GripVertical,
   Lock,
   Scissors,
@@ -255,8 +254,13 @@ const START_LEFT_PX = 20;
  *  drop needs to land to an existing clip edge to snap to it for a ripple
  *  insert, and how close to the bottom of the last track row it needs to
  *  land to trigger the "drop past the last row creates a new track"
- *  affordance instead of landing on the last real one. */
-const INSERT_SNAP_PX = 10;
+ *  affordance instead of landing on the last real one. D-100: widened from
+ *  10 — a real, if secondary, contributor to "insert between two touching
+ *  clips doesn't work": the primary fix is `computeInsertion`'s new whole-
+ *  clip-body fallback (this threshold no longer gates whether snapping
+ *  works AT ALL), but 10px was still a tight, easy-to-miss target for a
+ *  real mouse specifically aiming for the exact seam between two clips. */
+const INSERT_SNAP_PX = 16;
 /** D-097 — how wide the "insert a new track here" hit-zone is on EACH side
  *  of the boundary line between two existing track rows, in px, independent
  *  of `ROW_HEIGHT`'s own value. Deliberately a thin band, not half the row:
@@ -287,8 +291,25 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
       start: clip.start_frame / fps,
       end: endFrame(clip) / fps,
       effectId: EFFECT_ID,
+      // D-100 — `movable: false`: the library's own native move-drag
+      // (`interact.js`, `enableDragging` in its bundled source — confirmed
+      // by reading it, not guessed) is now permanently disabled for every
+      // clip. Owner: "there are two drag sources, one is handle and one is
+      // clip itself... we should have the whole thing draggable and single
+      // drag point handling all the drag related work" — two independently
+      // implemented move systems on the same element (this library's native
+      // drag, and the dnd-kit-based system D-098 added for cross-track)
+      // were racing for the same gesture, the real root cause of that
+      // whole session's stuck-overlay/broken-drag cluster, not two
+      // unrelated bugs. `flexible: true` (edge-trim) is UNCHANGED and
+      // fully independent of `movable` in the library's own source
+      // (`enableResizing` never reads `movable`) — trim stays exactly as
+      // it's worked since D-051, genuinely a different gesture in any real
+      // NLE, not part of this unification. `ClipBody` (module scope,
+      // below) is now the ONLY thing that moves a clip, same-track or
+      // cross-track alike.
       flexible: true,
-      movable: true,
+      movable: false,
     }));
     return { id: String(ti), actions };
   });
@@ -454,18 +475,45 @@ function SortableTrackHeader({
   );
 }
 
-/** D-098 — the cross-track clip-move handle, now a real `useDraggable`
- *  source (replacing D-094/D-096's native HTML5 `draggable` top strip).
- *  Module-scope for the same remount-safety reason as `SortableTrackHeader`
- *  above. Still a small, physically distinct DOM element inset past the
- *  10px edge-trim zones — the safety property that let this coexist with
- *  the timeline library's own same-track `interact.js` drag was never
- *  about native-vs-dnd-kit, it was about being a separate hit target, which
- *  this still is. `opacity-0` while dragging — the real element hides in
- *  place, `DragOverlay` (rendered once, in `TimelinePane`) shows the
- *  floating ghost instead, a real cursor-follow preview HTML5's frozen
- *  drag-image (B-027) never gave us. */
-function ClipMoveHandle({ track, clipId }: { track: number; clipId: string }) {
+/** D-100 — the clip body itself, now the ONE real drag source for both
+ *  same-track reposition and cross-track move (replacing D-098's separate
+ *  top-strip `ClipMoveHandle` AND the timeline library's own native
+ *  `interact.js` move-drag — see `buildRows`'s `movable: false` doc for the
+ *  real story: two independently-built move systems on one element were
+ *  racing for the same gesture, the actual root cause of a whole session's
+ *  stuck-overlay/broken-drag reports, not separate bugs). Module-scope for
+ *  the same remount-safety reason as `SortableTrackHeader`/`TrackDropZone`.
+ *
+ *  Safe to cover the FULL clip now, unlike D-098's inset strip: with
+ *  `movable: false`, the library's own `interact.js` move listener is never
+ *  even initialized for this action (confirmed in its bundled source,
+ *  `enableDragging: !disabled && movable`) — there's no second system left
+ *  to race for the same `pointerdown`, so no `stopPropagation` gymnastics
+ *  are needed either (D-098's own capture-vs-bubble same-element ordering
+ *  bug simply doesn't apply once there's only one listener on this element
+ *  to begin with). The library's own edge-trim resize handles
+ *  (`.timeline-editor-action-{left,right}-stretch`) are unaffected — they're
+ *  siblings rendered by the library itself, outside this component
+ *  entirely, and `enableResizing` never reads `movable`.
+ *
+ *  `onDndDragEnd` (in `TimelinePane`) already resolves same-track vs.
+ *  cross-track purely from WHERE this lands (`event.over`'s track vs. this
+ *  clip's own starting track) — that logic was built for D-098's own
+ *  same-track regression fix and needed no changes for this unification,
+ *  it was already exactly the right shape. */
+function ClipBody({
+  track,
+  clipId,
+  className,
+  style,
+  children,
+}: {
+  track: number;
+  clipId: string;
+  className: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `clip:${track}:${clipId}`,
     data: { type: 'clip' as const, track, clipId },
@@ -473,38 +521,12 @@ function ClipMoveHandle({ track, clipId }: { track: number; clipId: string }) {
   return (
     <div
       ref={setNodeRef}
-      className={
-        'absolute left-[11px] right-[11px] top-0 z-20 flex h-2.5 cursor-grab items-center justify-center rounded-t text-button-text/60 hover:bg-white/10 hover:text-button-text active:cursor-grabbing ' +
-        (isDragging ? 'opacity-0' : '')
-      }
+      className={className + ' cursor-grab active:cursor-grabbing ' + (isDragging ? 'opacity-30' : '')}
+      style={style}
       {...attributes}
       {...listeners}
-      // D-098 — same intent as D-094's original stopPropagation: keep this
-      // press from ever reaching the library's own interact.js listener,
-      // bound natively (not via React) to the action wrapper, an ANCESTOR
-      // of this element. A SEPARATE capture-phase `onPointerDownCapture`
-      // calling `stopPropagation()` was tried first and empirically broke
-      // dnd-kit's own drag (verified live: the handle stopped responding to
-      // real pointer events entirely) — React's synthetic dispatch runs
-      // capture-then-bubble handlers as ONE ordered sequence and appears to
-      // honor `stopPropagation()` across that whole sequence, not just
-      // "propagation to other elements" the way native
-      // `Event.stopPropagation()` does — so it was also skipping
-      // `listeners.onPointerDown` (a bubble-phase handler on this SAME
-      // element). Fixed by composing into ONE handler instead of two
-      // separate props: stop propagation first (still real,
-      // native-DOM-level — this is what actually keeps interact.js on the
-      // ancestor from ever seeing the press), then explicitly call dnd-kit's
-      // own `listeners.onPointerDown` — no reliance on React's same-element
-      // multi-handler ordering at all.
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        listeners?.onPointerDown?.(e);
-      }}
-      title="Drag to move to another track"
-      aria-label="Drag to move to another track"
     >
-      <GripHorizontal size={10} />
+      {children}
     </div>
   );
 }
@@ -521,11 +543,28 @@ function ClipMoveHandle({ track, clipId }: { track: number; clipId: string }) {
  *  correctly, but `onDragEnd`'s `event.over` never resolved, so the drop
  *  silently didn't move anything). Kept permanently mounted instead —
  *  `useDroppable`'s registration/measurement then happens at real mount
- *  time, long before any drag starts — and `pointer-events` is toggled by
- *  `active` instead of existence, so it's still fully inert (zero chance
- *  of intercepting a normal click/same-track-drag/resize) outside a
- *  clip-type drag. Module-scope for the same remount-safety reason as the
- *  other two. */
+ *  time, long before any drag starts.
+ *
+ *  D-100 — `pointer-events` is now `none` UNCONDITIONALLY, not toggled by
+ *  `active`. This was the real root cause of the live "stuck ghost /
+ *  same-track drag completely blocked" report: dnd-kit's own collision
+ *  detection (`rectIntersection`, checked in its bundled source) works
+ *  purely off MEASURED RECTS, never off native DOM pointer-event hit-
+ *  testing — this element never needed `pointer-events-auto` for dnd-kit
+ *  to find it as a drop target, that was a wrong assumption when D-098
+ *  wrote it. If `activeDrag` ever got stuck `{type:'clip',...}` (an
+ *  interrupted drag whose `onDragEnd`/`onDragCancel` never fired — a real,
+ *  plausible gap in a desktop app if the pointer effectively leaves the
+ *  window), `active` stayed `true` forever, which meant this FULL-ROW,
+ *  `z-20` overlay kept `pointer-events-auto` forever too — silently
+ *  intercepting every click/drag/resize on that entire track row,
+ *  including the clip underneath, which is exactly what "can't drag in
+ *  the same track any more" was. Making this permanently inert removes
+ *  the whole bug class regardless of why `activeDrag` got stuck, not just
+ *  the one trigger that happened to be found. The `isOver`-driven
+ *  highlight still only shows during a real clip drag (`active` still
+ *  gates the CSS, just not interactivity) — visual-only, harmless if
+ *  ever stuck now instead of a functional blocker. */
 function TrackDropZone({ track, top, height, active }: { track: number; top: number; height: number; active: boolean }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `track-drop:${track}`,
@@ -535,8 +574,7 @@ function TrackDropZone({ track, top, height, active }: { track: number; top: num
     <div
       ref={setNodeRef}
       className={
-        (active ? 'pointer-events-auto' : 'pointer-events-none') +
-        ' absolute left-0 right-0 z-20 ' +
+        'pointer-events-none absolute left-0 right-0 z-20 ' +
         (active && isOver ? 'bg-accent/10 outline outline-accent/60 -outline-offset-1' : '')
       }
       style={{ top, height }}
@@ -643,7 +681,7 @@ export function TimelinePane() {
   const [dragOver, setDragOver] = useState(false);
   // D-098 — track reorder and cross-track clip move are now real
   // `@dnd-kit/core`/`@dnd-kit/sortable` drags, not native HTML5 `draggable`
-  // (see the module doc on `SortableTrackHeader`/`ClipMoveHandle` for why —
+  // (see the module doc on `SortableTrackHeader`/`ClipBody` for why —
   // reported live as unreliable on Tauri's WKWebView). `activeDrag` is the
   // one shared `<DndContext>`'s notion of "what's currently being dragged"
   // — drives the `DragOverlay` ghost and whether `TrackDropZone` overlays
@@ -652,6 +690,41 @@ export function TimelinePane() {
     { type: 'track'; index: number } | { type: 'clip'; track: number; clipId: string } | null
   >(null);
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  // D-100 — a safety net, not the primary mechanism: dnd-kit's own sensors
+  // already listen at `document` level for the events that normally end a
+  // drag (`pointerup`/`pointercancel`, Escape), which is what `onDragEnd`/
+  // `onDragCancel` (below) rely on. But a real desktop app can plausibly
+  // lose those entirely mid-drag — the pointer effectively "leaves" the
+  // window (another app/dialog steals focus while the button is still
+  // down) without the webview ever seeing a completing event — and this
+  // session's live reports (a stuck ghost overlay, then same-track drag
+  // itself becoming unreachable — see `TrackDropZone`'s own doc for the
+  // real mechanism that made a stuck `activeDrag` a functional blocker,
+  // not just cosmetic) are consistent with exactly that. `window.blur` is
+  // a real, working signal for "the app lost focus" regardless of why.
+  //
+  // Dispatching a real, synthetic `pointercancel` on `document` — not just
+  // resetting `activeDrag` directly — matters: verified live (this
+  // session's harness) that resetting only our OWN state left dnd-kit's
+  // own `AbstractPointerSensor` still internally tracking the interrupted
+  // pointer (it registers its own `pointercancel`/`pointermove`/`pointerup`
+  // listeners on `document`, read in its bundled source, not guessed) —
+  // the very NEXT real drag attempt afterward silently failed to apply,
+  // even though our own UI had already reset and looked idle. A real
+  // `pointercancel` event goes through dnd-kit's own normal cancel path
+  // (it explicitly listens for that event type), which is what actually
+  // releases its internal state, not just ours — `setActiveDrag` here is
+  // now a defensive fallback in case no drag was active for it to cancel.
+  useEffect(() => {
+    const onBlur = () => {
+      document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true }));
+      setActiveDrag((prev) => (prev === null ? prev : null));
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, []);
+
   /** D-095/D-096/D-097 — live feedback for a Sources-panel drag: `'edge'`
    *  shows an insertion line snapped to the nearest clip boundary on the row
    *  under the pointer (the dragged clip's real duration is unreadable
@@ -667,6 +740,26 @@ export function TimelinePane() {
   const [insertPreview, setInsertPreview] = useState<
     { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
   >(null);
+
+  // D-100 — the equivalent safety net for the OTHER drag system in this
+  // file, the native-HTML5 Sources-panel drag (`onDragOver`/`onDrop`
+  // below): `onDrop` is the only place `dragOver`/`insertPreview` reset,
+  // and `drop` never fires at all if a native drag ends outside a valid
+  // target (dropped somewhere that isn't this component, or cancelled).
+  // `dragend`, per spec, ALWAYS fires exactly once on the element that
+  // received `dragstart` when a native drag concludes — success, failure,
+  // or cancellation — and it bubbles, so a `document`-level listener here
+  // catches it regardless of which draggable item started the drag,
+  // without needing any cross-component wiring into `SourcesPanel` (a
+  // different package under D-039's layer rules) at all.
+  useEffect(() => {
+    const onGlobalDragEnd = () => {
+      setDragOver((prev) => (prev ? false : prev));
+      setInsertPreview((prev) => (prev === null ? prev : null));
+    };
+    document.addEventListener('dragend', onGlobalDragEnd);
+    return () => document.removeEventListener('dragend', onGlobalDragEnd);
+  }, []);
 
   /** D-097 — the `0..tracksLength` insertion boundary near `y`
    *  (`editAreaRef`-relative, ruler/scroll already subtracted), or `null` if
@@ -717,10 +810,13 @@ export function TimelinePane() {
     return Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
   };
 
-  /** D-095 — nearest clip edge (start/end of any clip on `track`, or 0) to
-   *  `frame`, within `INSERT_SNAP_PX` at the current zoom — or `null` if
-   *  nothing's close enough. See `insertPreview`'s own doc for why this is
-   *  the preview-time approximation, not the real `computeInsertion` call. */
+  /** D-095/D-100 — nearest clip edge (start/end of any clip on `track`, or
+   *  0) to `frame`, within `INSERT_SNAP_PX` at the current zoom; if nothing
+   *  edge-snaps, falls back to whichever half of the clip CURRENTLY UNDER
+   *  `frame` is closer (mirrors `computeInsertion`'s own D-100 fallback
+   *  exactly — the live preview and the real drop-time decision must never
+   *  disagree, or the snap line lies about where the clip will actually
+   *  land). `null` only for a drop with nothing nearby at all. */
   const nearestEdge = (track: Track, frame: number): number | null => {
     const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
     const edges = new Set<number>([0]);
@@ -737,7 +833,13 @@ export function TimelinePane() {
         best = edge;
       }
     });
-    return best;
+    if (best !== null) return best;
+    const covering = track.clips.find((c) => frame >= c.start_frame && frame < endFrame(c));
+    if (covering) {
+      const mid = covering.start_frame + covering.duration / 2;
+      return frame < mid ? covering.start_frame : endFrame(covering);
+    }
+    return null;
   };
 
   /** D-080: which track a Sources-panel drop lands on, from the drop
@@ -913,18 +1015,26 @@ export function TimelinePane() {
       const isRippled = rippled.has(action.id);
       const pxWidth = (action.end - action.start) * pxPerSec;
       return (
-        <div
+        <ClipBody
+          track={ti}
+          clipId={action.id}
           className={
             'relative h-full w-full overflow-hidden rounded ' +
             (isSel ? 'ring-2 ring-accent ' : '') +
             (isRippled ? 'ring-2 ring-accent animate-pulse ' : '')
           }
           style={{
-            background: isSel
-              ? 'var(--color-accent)'
-              : track?.kind === 'audio'
-                ? 'rgba(120,170,110,0.55)'
-                : 'rgba(90,120,180,0.55)',
+            // D-100 — selection no longer swaps the background to
+            // `var(--color-accent)`. Owner: "this make it hard to read...
+            // white selected color is not visible" — the background swap
+            // paired with the WRONG text-color token for it (see the label
+            // below) made selected clips genuinely low-contrast. The clip's
+            // own kind-based colour now stays constant; the `ring-2 ring-
+            // accent` above (already existed, already the right token per
+            // `CLAUDE.md`'s "no magic colours, use `--color-*`") is the
+            // ONLY selection indicator now — a real outline, not a
+            // background-colour gamble.
+            background: track?.kind === 'audio' ? 'rgba(120,170,110,0.55)' : 'rgba(90,120,180,0.55)',
           }}
         >
           {clip && track?.kind === 'video' && (
@@ -950,30 +1060,23 @@ export function TimelinePane() {
               handle pointerdown before interact.js ever saw it. That's why
               edge-trim visually did nothing — not a `flexible`/`dragLine`
               problem (D-051 was right about the library's own mechanism), a
-              hit-testing problem in what we paint on top of it. */}
-          <div
-            className={
-              'relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none ' +
-              (isSel ? 'text-text-primary' : 'text-button-text')
-            }
-          >
+              hit-testing problem in what we paint on top of it.
+              D-100 — always `text-button-text` now, not conditional on
+              `isSel`. That token is this app's own established "readable
+              against `bg-accent`" colour (matches `ExportPresetsList.tsx`/
+              `ProjectLauncher.tsx`'s own `bg-accent text-button-text`
+              pairing, checked, not guessed) — the OLD code used it only
+              for the non-selected case and switched to `text-text-primary`
+              (meant for the app's default background, not an accent one)
+              specifically when selected, which was backwards and the real
+              other half of the contrast bug alongside the background
+              swap above. `button-text` already reads fine against the
+              plain video/audio clip colours too (no complaints there
+              before this pass), so one token now covers both states. */}
+          <div className="relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none text-button-text">
             {clip?.name ?? action.id}
           </div>
-          {/* D-098 — cross-track clip-move handle, now a real
-              `@dnd-kit/core` drag source (`ClipMoveHandle`, module-scope
-              component above) — native HTML5 `draggable` (D-094/D-096) was
-              reported live as unreliable on Tauri's WKWebView twice in one
-              session (this handle, then the track-reorder one) despite
-              passing every check this session's Chromium-based harness
-              could run; see `docs/08-decisions.md` D-098 for the real
-              investigation. Still a full-width top strip, still a distinct
-              hit target from the rest of the clip body inset past the 10px
-              edge-trim zones — that safety property was always about being
-              a separate element from the library's own interact.js-bound
-              action wrapper, not about which drag API sat underneath it.
-              Only shown with more than one track. */}
-          {tracks.length > 1 && <ClipMoveHandle track={ti} clipId={action.id} />}
-        </div>
+        </ClipBody>
       );
     },
     [tracks, selected, rippled, pxPerSec, fps],
@@ -990,23 +1093,12 @@ export function TimelinePane() {
     setScrollLeft(sl);
   }, []);
 
-  const onActionMoveEndCb = useCallback(
-    ({ action, row, start }: { action: TimelineAction; row: TimelineRow; start: number }) => {
-      // D-058/D-080: a clip-body drag repositions it within its own row
-      // (`move`, overlap-rejected — mirrors `chroma-timeline::Timeline::
-      // move_clip`'s same-track case) — the library has no cross-row action
-      // drag (see the module doc), so `fromTrack` and `toTrack` are always
-      // the same here; a real cross-track move goes through the "Move to ▾"
-      // toolbar action instead.
-      const ti = Number(row.id);
-      const i = idxOf(ti, action.id);
-      if (i < 0) return;
-      const startFrame = Math.max(0, s2f(start));
-      applyOp({ kind: 'move', fromTrack: ti, toTrack: ti, clip: i, startFrame });
-    },
-    [tracks, fps, applyOp],
-  );
-
+  // D-100 — the library's own `onActionMoveEnd` callback is gone: with
+  // `movable: false` (see `buildRows`), the library never fires it at all
+  // any more — `ClipBody`/`onDndDragEnd` is the only thing that moves a
+  // clip now, same-track or cross-track alike. Kept as dead code this would
+  // violate `CLAUDE.md`'s own "no dead code" rule, so it's removed rather
+  // than left unused.
   const onActionResizeEndCb = useCallback(
     ({
       action,
@@ -1190,7 +1282,12 @@ export function TimelinePane() {
         return;
       }
 
-      // clip
+      // clip — D-100: the ONLY move mechanism now, same-track or
+      // cross-track alike (see `buildRows`'s `movable: false` doc and
+      // `ClipBody`'s own doc for why the library's native move-drag is
+      // gone). `over`'s track vs. this clip's own starting track is what
+      // decides which case this is — no separate code path per gesture,
+      // just a different `startFrame` computation.
       const { track: fromTrack, clipId } = data;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
@@ -1199,19 +1296,22 @@ export function TimelinePane() {
       const toTrack = overData.track;
       const clip = clipsOf(fromTrack)[i];
       if (toTrack === fromTrack) {
-        // D-096/B-027's own fix, ported: a same-track drop via this handle
-        // is a real reposition (matching what the library's own
-        // `onActionMoveEndCb` would do), not a no-op — which mechanism
-        // actually caught the gesture must never change the outcome.
-        // `event.delta.x` is the net pointer movement for the whole drag,
-        // in screen px — converts to frames the same way `xToFrame` does,
-        // just relative rather than absolute (no `rect`/`clientX` needed).
+        // Same track: a real reposition (D-096/B-027's own fix, now the
+        // ONLY path for this, not a fallback) — `event.delta.x` is the net
+        // pointer movement for the whole drag, in screen px, converted to
+        // frames the same way `xToFrame` does, just relative rather than
+        // absolute (no `rect`/`clientX` needed).
         const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
         const startFrame = Math.max(0, clip.start_frame + deltaFrames);
         applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame });
-        return;
+      } else {
+        // Cross-track: keeps its own `start_frame` (D-094's original
+        // behaviour), overlap allowed (D-096).
+        applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame: clip.start_frame });
       }
-      applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame: clip.start_frame });
+      // A drag also selects the clip it moved — same-track or cross-track —
+      // matching normal NLE expectations (dragging a clip is also picking
+      // it), not just the old cross-track-only behaviour.
       setSelected({ track: toTrack, id: clipId });
     },
     [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps],
@@ -1581,7 +1681,24 @@ export function TimelinePane() {
         <ResizableHandle />
 
         <ResizablePanel className="relative min-h-0 overflow-hidden">
-          <div ref={editAreaRef} data-bench-id="timeline-edit-area" className="relative h-full overflow-hidden">
+          <div
+            ref={editAreaRef}
+            data-bench-id="timeline-edit-area"
+            className="relative h-full overflow-hidden"
+            // D-100 — owner: "clicking outside does not make it
+            // undeselected." A click anywhere in this area that ISN'T on a
+            // clip (`.timeline-editor-action`, the library's own class for
+            // one — checked in its bundled source, not guessed) clears
+            // selection. Bubble-order safety, not a race: the library's own
+            // `onClickAction` (set via the `onClickAction` prop below) fires
+            // on the action itself first, since it's the innermost target;
+            // THIS handler runs after, on the same click, and only clears
+            // when `closest` finds no action ancestor — a real clip click
+            // never reaches the clearing branch.
+            onClick={(e) => {
+              if (!(e.target as HTMLElement).closest('.timeline-editor-action')) setSelected(null);
+            }}
+          >
             <TimelineEditor
               ref={editorRef}
               editorData={editorData}
@@ -1603,7 +1720,6 @@ export function TimelinePane() {
               }}
               onCursorDrag={(time) => setPlayhead(s2f(time))}
               onChange={() => false}
-              onActionMoveEnd={onActionMoveEndCb}
               onActionResizeEnd={onActionResizeEndCb}
             />
             {/* D-095/D-096/D-097 — the live drop-preview overlay: an
