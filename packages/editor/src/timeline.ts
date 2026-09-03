@@ -208,6 +208,66 @@ export function videoTrackIndex(tl: Timeline): number {
   return i >= 0 ? i : 0;
 }
 
+/** D-095 — where a new clip of `duration` frames should land on `tr` if
+ *  dropped at `frame`, and whether making room requires shifting anything.
+ *
+ *  Real NLEs distinguish two cases when a Sources-panel clip is dropped over
+ *  an existing track: dropped into an open gap big enough to hold it (no
+ *  other clip moves — consistent with this model's normal "explicit
+ *  position, overlap rejected" contract, D-054/D-058) or dropped where
+ *  there's no room (between two touching/too-close clips, or before the
+ *  first) — a real ripple insert, the one place this model intentionally
+ *  gains ripple behaviour (`applyOp`'s `add_clip` case is the only thing
+ *  that ever shifts another clip's `start_frame` out from under it;
+ *  `remove`/`trim_start`/`trim_end`/`split`/`move` all stay explicit-
+ *  position-only, by design — see their own doc comments).
+ *
+ *  Snaps `frame` to the nearest clip edge (start or end of any clip already
+ *  on `tr`, or 0) within `snapFrames`, so a visually "between these two"
+ *  drop doesn't need pixel-perfect aim — mirrors the snap-assist
+ *  `TimelinePane` already gets for free from the timeline library's own
+ *  `dragLine` (D-051), just for this drag, which the library has no
+ *  cross-drag-type concept of.
+ *
+ *  Returns `null` for a drop that's neither a real snapped edge nor an open
+ *  gap — a genuinely ambiguous mid-clip drop, far from any edge, which
+ *  isn't a valid "insert between two clips" gesture; the caller should fall
+ *  back to a plain append in that case. */
+export function computeInsertion(
+  tr: Track,
+  frame: number,
+  duration: number,
+  snapFrames: number,
+): { startFrame: number; ripple: boolean } | null {
+  const clips = tr.clips;
+  if (clips.length === 0) return { startFrame: Math.max(0, frame), ripple: false };
+
+  const fitsNoOverlap = (pos: number) => !clips.some((c) => pos < endFrame(c) && pos + duration > c.start_frame);
+
+  const edges = new Set<number>([0]);
+  for (const c of clips) {
+    edges.add(c.start_frame);
+    edges.add(endFrame(c));
+  }
+  let snapped: number | null = null;
+  let bestDist = snapFrames + 1;
+  edges.forEach((e) => {
+    const d = Math.abs(e - frame);
+    if (d <= snapFrames && d < bestDist) {
+      bestDist = d;
+      snapped = e;
+    }
+  });
+
+  if (snapped !== null) {
+    const pos: number = snapped;
+    return fitsNoOverlap(pos) ? { startFrame: pos, ripple: false } : { startFrame: pos, ripple: true };
+  }
+
+  if (fitsNoOverlap(frame)) return { startFrame: Math.max(0, frame), ripple: false };
+  return null;
+}
+
 /** Where a new clip appended to `tr` should start — right after the
  *  furthest-out clip already on it (0 for an empty track). Mirrors what
  *  `backfill_legacy_positions` reconstructs for a legacy back-to-back track,
@@ -255,8 +315,15 @@ export type EditOp =
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
    *  `chroma_timeline_create`), a video track is created to hold it.
    *  `start_frame` (D-058) is computed by `applyOp` itself — always the end
-   *  of whatever's already on the target track, i.e. a plain append. */
-  | { kind: 'add_clip'; track: number; clip: NewClipFields; atIndex?: number }
+   *  of whatever's already on the target track, i.e. a plain append, UNLESS
+   *  `startFrame` is given (D-095 — a drop snapped to a specific insertion
+   *  point, computed by `computeInsertion` at drop time). `ripple: true`
+   *  means every clip on `track` at/after `startFrame` shifts later by the
+   *  new clip's `duration` to make room — the one place this model
+   *  intentionally gains ripple behaviour, see `computeInsertion`'s own doc
+   *  for why (this is NOT extended to `remove`/`trim`/`split`/`move`, all of
+   *  which stay explicit-position-only by design, D-054). */
+  | { kind: 'add_clip'; track: number; clip: NewClipFields; atIndex?: number; startFrame?: number; ripple?: boolean }
   /** D-058/D-080 — reposition a clip in time, and optionally onto a
    *  different track (`fromTrack !== toTrack`) — the "move to another
    *  track" affordance in the panel's toolbar, since
@@ -396,13 +463,30 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (next.tracks.length === 0) next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN });
     const trackIdx = op.track < next.tracks.length ? op.track : 0;
     const track = next.tracks[trackIdx];
-    // D-058 — always an append: the position a dragged clip lands at is
-    // "after everything already on this track," computed here (the only
-    // place that has both the target track's real contents and the new
-    // clip at once), never left for the clip to arrive without one.
-    const startFrame = nextAppendFrame(track);
+    let startFrame: number;
+    if (op.startFrame !== undefined) {
+      // D-095 — an explicit insertion point (the caller already resolved
+      // this via `computeInsertion` at drop time, snapping to a real clip
+      // edge). `ripple: true` shifts every clip at/after it later by the new
+      // clip's own duration to make room — `false` means it was already
+      // confirmed to fit in an open gap, so nothing else moves.
+      startFrame = Math.max(0, op.startFrame);
+      if (op.ripple) {
+        const dur = op.clip.duration;
+        for (const c of track.clips) {
+          if (c.start_frame >= startFrame) c.start_frame += dur;
+        }
+      }
+    } else {
+      // D-058 — always an append: the position a dragged clip lands at is
+      // "after everything already on this track," computed here (the only
+      // place that has both the target track's real contents and the new
+      // clip at once), never left for the clip to arrive without one.
+      startFrame = nextAppendFrame(track);
+    }
     const clip: Clip = { ...op.clip, start_frame: startFrame };
-    const at = Math.min(Math.max(op.atIndex ?? track.clips.length, 0), track.clips.length);
+    const defaultAt = track.clips.filter((c) => c.start_frame < startFrame).length;
+    const at = Math.min(Math.max(op.atIndex ?? defaultAt, 0), track.clips.length);
     track.clips.splice(at, 0, clip);
     return next;
   }

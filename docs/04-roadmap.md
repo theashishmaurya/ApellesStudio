@@ -102,6 +102,23 @@ roadmap structure.
   baseline unchanged), `npx vite build` clean (3181 modules, no new
   bailouts). Live drag-gesture verification not possible this session (no
   native-window automation available) — flagged, not silently skipped.
+- ✅ **Four real gaps in D-094, found by immediate live testing** — done,
+  **D-095/B-026**. Owner tested D-094 live and found: (1) a new clip
+  dragged from Sources didn't snap/insert between two existing clips —
+  fixed with `computeInsertion` (`timeline.ts`), a real ripple-insert (the
+  one place this model intentionally gains ripple behavior) plus a live
+  insertion-line preview; (2) the track-reorder drag "does not work" —
+  built a real isolated-component browser harness (scratch, deleted after
+  use) that proved the drag logic/wiring is actually correct (a real
+  Chromium drag reordered tracks exactly right); the real gap is Tauri's
+  macOS WKWebView specifically (untestable this session, different engine
+  than this session's Chromium tooling) — shipped real hit-target/WebKit-
+  hint defensive fixes, honestly flagged as not fully closed-loop
+  verified; (3) "remove these [add-track] buttons... added when we drop
+  the clip" — the manual add-track toolbar buttons are gone, dropping past
+  the last row now auto-creates one; (4) the Sources-panel drag ghost was
+  full media-card size regardless of zoom — now a small name pill via
+  `setDragImage`. 88/88 tests (+9 new), `tsc` + `vite build` clean.
 
 ---
 

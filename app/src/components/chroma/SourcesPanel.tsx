@@ -162,6 +162,41 @@ function isMediaDrag(e: DragEvent): boolean {
   return e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME);
 }
 
+/** D-097 — a compact custom drag image for a Sources-panel item, replacing
+ *  the browser's default drag image (a live snapshot of the actual card DOM:
+ *  full thumbnail + name + buttons). Without this, `setDragImage` is never
+ *  called, so the default is whatever size the card's own CSS renders at —
+ *  fixed, oblivious to the *timeline's* zoom, and absurdly oversized next to
+ *  how small a clip actually looks at a low `pxPerSec` (reported live: at
+ *  18% zoom the drag ghost was still the full media-pool card). Per the
+ *  HTML5 DnD spec a drag image is captured once at `dragstart` and can't be
+ *  resized as the pointer moves — "shrinks as you approach a low-zoom
+ *  timeline" isn't achievable natively, so this is a small, fixed-size pill
+ *  (name only) instead, proportionate at any zoom rather than technically
+ *  accurate to it. Builds a real, briefly-attached DOM node (`setDragImage`
+ *  needs one actually rendered, not just constructed) and removes it on the
+ *  next tick. */
+function setCompactDragImage(e: DragEvent, label: string): void {
+  const el = document.createElement('div');
+  el.textContent = label;
+  Object.assign(el.style, {
+    position: 'fixed',
+    top: '-1000px',
+    left: '-1000px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    background: 'rgba(20,20,24,0.95)',
+    color: '#eee',
+    fontSize: '11px',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+  });
+  document.body.appendChild(el);
+  e.dataTransfer.setDragImage(el, 8, 8);
+  setTimeout(() => el.remove(), 0);
+}
+
 function FolderRow({
   node,
   depth,
@@ -541,6 +576,7 @@ export function SourcesPanel() {
                             frameCount: it.video?.frameCount ?? null,
                           }),
                         );
+                        setCompactDragImage(e, it.name);
                       }}
                       onClick={() => selecting && toggleSelected(it.id)}
                       title={it.sourcePath}

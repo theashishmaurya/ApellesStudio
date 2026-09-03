@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyOp,
   clipFromDraggedMedia,
+  computeInsertion,
   endFrame,
   labelForOp,
   nextAppendFrame,
@@ -134,6 +135,85 @@ describe('add_clip (D-058)', () => {
   it('nextAppendFrame matches what add_clip actually computes', () => {
     const track: Track = { kind: 'video', clips: backToBack() };
     expect(nextAppendFrame(track)).toBe(200);
+  });
+});
+
+// D-095 — computeInsertion + add_clip's ripple-insert path (`startFrame`/
+// `ripple`). Real drop-position math, not the plain-append default above —
+// this is what fixes the live-reported "hovering a new clip between two
+// existing ones doesn't snap/insert" gap (B-026).
+describe('computeInsertion (D-095)', () => {
+  it('snaps to the boundary between two touching clips and reports a ripple', () => {
+    const track: Track = { kind: 'video', clips: backToBack() }; // a:[0,100) b:[100,200)
+    const insertion = computeInsertion(track, 97, 30, 10); // dropped near frame 100, snap radius 10
+    expect(insertion).toEqual({ startFrame: 100, ripple: true });
+  });
+
+  it('snaps to a clip edge but reports no ripple when the gap after it is big enough', () => {
+    // a:[0,100) then open space — a 30-frame clip dropped right at a's end
+    // fits with no need to move anything else.
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 })] };
+    const insertion = computeInsertion(track, 100, 30, 10);
+    expect(insertion).toEqual({ startFrame: 100, ripple: false });
+  });
+
+  it('places a clip directly in an open gap with no snap and no ripple', () => {
+    // a:[0,100) then a big gap, b:[500,600) — dropping at 250 (far from
+    // either edge) with a 30-frame clip fits cleanly.
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 500 })] };
+    expect(computeInsertion(track, 250, 30, 10)).toEqual({ startFrame: 250, ripple: false });
+  });
+
+  it('snaps to 0 and ripples everything when dropped before the first clip', () => {
+    const track: Track = { kind: 'video', clips: backToBack() };
+    expect(computeInsertion(track, 3, 20, 10)).toEqual({ startFrame: 0, ripple: true });
+  });
+
+  it('returns null for a genuinely mid-clip drop far from any edge', () => {
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
+    expect(computeInsertion(track, 50, 30, 10)).toBeNull();
+  });
+
+  it('always fits with no ripple on an empty track', () => {
+    expect(computeInsertion({ kind: 'video', clips: [] }, 42, 30, 10)).toEqual({ startFrame: 42, ripple: false });
+  });
+});
+
+describe('add_clip ripple insert (D-095)', () => {
+  it('shifts every clip at/after the insertion point later by the new clip duration', () => {
+    const before = tl(backToBack()); // a:[0,100) b:[100,200)
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: clip('c', 'Inserted', { duration: 30, source_len: 30 }),
+      startFrame: 100,
+      ripple: true,
+    });
+    const [a, c, b] = after.tracks[0].clips;
+    expect(a.start_frame).toBe(0); // untouched — before the insertion point
+    expect(c.start_frame).toBe(100); // the new clip lands exactly where dropped
+    expect(endFrame(c)).toBe(130);
+    expect(b.start_frame).toBe(130); // rippled forward by the new clip's 30 frames
+  });
+
+  it('does not move anything when ripple is false, even with an explicit startFrame', () => {
+    const before = tl([clip('a', 'A', { start_frame: 0, duration: 100 }), clip('b', 'B', { start_frame: 500, duration: 100 })]);
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: clip('c', 'C', { duration: 30, source_len: 30 }),
+      startFrame: 250,
+      ripple: false,
+    });
+    expect(after.tracks[0].clips.find((c) => c.id === 'a')?.start_frame).toBe(0);
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')?.start_frame).toBe(500);
+    expect(after.tracks[0].clips.find((c) => c.id === 'c')?.start_frame).toBe(250);
+  });
+
+  it('falls back to a plain append when startFrame is omitted, unchanged from before D-095', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, { kind: 'add_clip', track: 0, clip: clip('c', 'C', { duration: 30 }) });
+    expect(after.tracks[0].clips[2].start_frame).toBe(200);
   });
 });
 

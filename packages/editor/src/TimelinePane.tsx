@@ -127,7 +127,7 @@
  * bundled source before writing this).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
@@ -141,7 +141,6 @@ import {
   Film,
   GripVertical,
   Lock,
-  Plus,
   Scissors,
   SlidersHorizontal,
   Trash2,
@@ -179,6 +178,7 @@ import {
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_TRACK_GAIN,
   clipFromDraggedMedia,
+  computeInsertion,
   endFrame,
   timelineFps,
   videoTrackIndex,
@@ -221,6 +221,20 @@ const HEADER_MAX_WIDTH = 340;
  *  (D-080) needs to know exactly where row 0 actually starts on screen to
  *  convert a drop's `clientY` into a track index. */
 const RULER_AND_MARGIN_PX = 42;
+/** The library's own `startLeft` prop (px before frame 0) — kept as a named
+ *  constant (D-095) since `xToFrame` below needs the exact same value the
+ *  `<TimelineEditor startLeft={...}>` prop uses to convert a drop's
+ *  `clientX` into a timeline frame; mirrors the library's own `Pt()`
+ *  left-px→seconds helper (`(left - startLeft) / scaleWidth * scale`, which
+ *  reduces to `/ pxPerSec` since `scaleWidth = tickSeconds * pxPerSec` —
+ *  checked against its bundled source, not guessed). */
+const START_LEFT_PX = 20;
+/** D-095/D-096 — how close (in px, independent of zoom) a Sources-panel
+ *  drop needs to land to an existing clip edge to snap to it for a ripple
+ *  insert, and how close to the bottom of the last track row it needs to
+ *  land to trigger the "drop past the last row creates a new track"
+ *  affordance instead of landing on the last real one. */
+const INSERT_SNAP_PX = 10;
 
 function clampPxPerSec(w: number): number {
   return Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, w));
@@ -283,6 +297,12 @@ export function TimelinePane() {
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
+  // D-095 — horizontal scroll, needed alongside `scrollTop` to convert a
+  // drop's `clientX` into a timeline frame (`xToFrame` below); the library
+  // reports both through the same `onScroll` callback (`OnScrollParams`,
+  // `react-virtualized`), `scrollTop` just never needed `scrollLeft` before
+  // this pass since nothing read a horizontal drop position.
+  const [scrollLeft, setScrollLeft] = useState(0);
 
   const editorRef = useRef<TimelineState>(null);
   const editAreaRef = useRef<HTMLDivElement>(null);
@@ -373,6 +393,50 @@ export function TimelinePane() {
   // here only actually dispatches when the value would change.
   const [draggedTrack, setDraggedTrack] = useState<number | null>(null);
   const [dragOverTrack, setDragOverTrack] = useState<number | null>(null);
+  /** D-095/D-096 — live feedback for a Sources-panel drag: `'edge'` shows an
+   *  insertion line snapped to the nearest clip boundary on the row under
+   *  the pointer (the dragged clip's real duration is unreadable until drop
+   *  — HTML5 `dataTransfer.getData` is drop-only, see `onDragOver`'s own
+   *  doc — so this can only show *where* it'll snap, not yet whether that's
+   *  an open gap or a ripple; `onDrop` resolves that for real via
+   *  `computeInsertion`), `'new_track'` shows the ghost row below the last
+   *  real track. Cleared on drag-leave/drop; never set for a cross-track
+   *  clip-move drag (that path doesn't ripple/insert). */
+  const [insertPreview, setInsertPreview] = useState<{ kind: 'edge'; track: number; frame: number } | { kind: 'new_track' } | null>(
+    null,
+  );
+
+  /** D-095 — a drop's `clientX` to a timeline frame, mirroring the library's
+   *  own `Pt()` left-px→seconds helper exactly (checked against its bundled
+   *  source — see `START_LEFT_PX`'s own doc for why this reduces to a plain
+   *  `/ pxPerSec` divide rather than needing `scale`/`scaleWidth`). */
+  const xToFrame = (e: DragEvent, rect: DOMRect): number => {
+    const contentX = e.clientX - rect.left + scrollLeft;
+    return Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
+  };
+
+  /** D-095 — nearest clip edge (start/end of any clip on `track`, or 0) to
+   *  `frame`, within `INSERT_SNAP_PX` at the current zoom — or `null` if
+   *  nothing's close enough. See `insertPreview`'s own doc for why this is
+   *  the preview-time approximation, not the real `computeInsertion` call. */
+  const nearestEdge = (track: Track, frame: number): number | null => {
+    const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+    const edges = new Set<number>([0]);
+    for (const c of track.clips) {
+      edges.add(c.start_frame);
+      edges.add(endFrame(c));
+    }
+    let best: number | null = null;
+    let bestDist = snapFrames + 1;
+    edges.forEach((edge) => {
+      const d = Math.abs(edge - frame);
+      if (d <= snapFrames && d < bestDist) {
+        bestDist = d;
+        best = edge;
+      }
+    });
+    return best;
+  };
 
   /** D-080: which track a Sources-panel drop lands on, from the drop
    *  event's `clientY` — see the module doc's "Dropping a Sources-panel
@@ -405,14 +469,52 @@ export function TimelinePane() {
   // `.types.includes(...)`, never reads the payload until `onDrop`.
   const onDragOver = (e: DragEvent) => {
     const isClipMove = e.dataTransfer.types.includes(CHROMA_CLIP_MOVE_MIME);
-    if (!isClipMove && !e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME)) return;
+    const isMediaDrag = e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME);
+    if (!isClipMove && !isMediaDrag) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = isClipMove ? 'move' : 'copy';
     setDragOver((prev) => (prev ? prev : true));
+
+    // D-095/D-096 — live insertion/new-track preview, Sources-panel drags
+    // only (see `insertPreview`'s own doc — a cross-track clip move doesn't
+    // ripple/insert, so it never sets this).
+    if (!isMediaDrag) {
+      setInsertPreview((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const rect = editAreaRef.current?.getBoundingClientRect();
+    if (!rect || tracks.length === 0) {
+      setInsertPreview((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+    if (y >= tracks.length * ROW_HEIGHT) {
+      setInsertPreview((prev) => (prev?.kind === 'new_track' ? prev : { kind: 'new_track' }));
+      return;
+    }
+    if (y < 0) {
+      setInsertPreview((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const track = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
+    const edge = nearestEdge(tracks[track], xToFrame(e, rect));
+    setInsertPreview((prev) =>
+      edge === null
+        ? prev === null
+          ? prev
+          : null
+        : prev?.kind === 'edge' && prev.track === track && prev.frame === edge
+          ? prev
+          : { kind: 'edge', track, frame: edge },
+    );
   };
-  const onDragLeave = () => setDragOver((prev) => (prev ? false : prev));
+  const onDragLeave = () => {
+    setDragOver((prev) => (prev ? false : prev));
+    setInsertPreview((prev) => (prev === null ? prev : null));
+  };
   const onDrop = (e: DragEvent) => {
     setDragOver(false);
+    setInsertPreview(null);
     // D-094 — cross-track clip move, checked first: a clip's drag handle
     // carries `CHROMA_CLIP_MOVE_MIME`, never `CHROMA_MEDIA_DRAG_MIME`, so
     // there's no ambiguity between the two branches.
@@ -447,7 +549,40 @@ export function TimelinePane() {
     }
     const clip = clipFromDraggedMedia(media);
     if (!clip) return; // unprobed / offline media has no known length — nothing to place
-    applyOp({ kind: 'add_clip', track: dropTargetTrack(e), clip });
+
+    const rect = editAreaRef.current?.getBoundingClientRect();
+    const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop : -1;
+    if (rect && tracks.length > 0 && y >= tracks.length * ROW_HEIGHT) {
+      // D-096 — dropped past the last real track: create one to receive it,
+      // rather than silently landing on whatever the last track happens to
+      // be (the pre-D-096 behaviour — `dropTargetTrack` clamps to the last
+      // row). The new track is always the next array index (`add_track`
+      // appends — `chroma_timeline::Timeline::add_track`), computed from
+      // this render's own `tracks.length` since both ops below run
+      // synchronously in the same handler, before either the store or this
+      // component re-renders.
+      const newTrackIdx = tracks.length;
+      applyOp({ kind: 'add_track', trackKind: 'video' });
+      applyOp({ kind: 'add_clip', track: newTrackIdx, clip });
+      return;
+    }
+
+    const track = dropTargetTrack(e);
+    const trackData = tracks[track];
+    // D-095 — snap to a real insertion point (an open gap, or a ripple
+    // between two clips / before the first) when there's a real track/rect
+    // to compute one against; `computeInsertion` returning `null` (an
+    // ambiguous mid-clip drop far from any edge — see its own doc) falls
+    // back to the pre-D-095 plain append, same as no `rect`/track at all.
+    const insertion =
+      rect && trackData
+        ? computeInsertion(trackData, xToFrame(e, rect), clip.duration, Math.round((INSERT_SNAP_PX / pxPerSec) * fps))
+        : null;
+    if (insertion) {
+      applyOp({ kind: 'add_clip', track, clip, startFrame: insertion.startFrame, ripple: insertion.ripple });
+    } else {
+      applyOp({ kind: 'add_clip', track, clip });
+    }
   };
 
   const clipsOf = (track: number): Track['clips'] => tracks[track]?.clips ?? [];
@@ -544,7 +679,16 @@ export function TimelinePane() {
               otherwise, same gating `otherTracks`/"Move to ▾" already use. */}
           {tracks.length > 1 && (
             <div
-              className="absolute left-3 top-0.5 z-20 flex size-3.5 cursor-grab items-center justify-center rounded-sm text-button-text/70 hover:text-button-text active:cursor-grabbing"
+              // D-097 — grown from `size-3.5` (14px, reported unreliable to
+              // grab with a real mouse — see the doc below) to a real
+              // ~20px hit target; `-webkit-user-drag: element` is an
+              // explicit hint for WebKit (Tauri's macOS webview, a
+              // different engine than Chromium — untestable in this
+              // session's own browser-automation tooling, which only
+              // drives Chromium) that this specific element is a drag
+              // source, rather than relying on `draggable` alone.
+              className="absolute left-3 top-0.5 z-20 flex size-5 cursor-grab items-center justify-center rounded-sm text-button-text/70 hover:text-button-text hover:bg-black/20 active:cursor-grabbing"
+              style={{ WebkitUserDrag: 'element' } as CSSProperties}
               draggable
               onMouseDown={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
@@ -571,7 +715,10 @@ export function TimelinePane() {
     [],
   );
 
-  const onTimelineScroll = useCallback(({ scrollTop: st }: { scrollTop: number }) => setScrollTop(st), []);
+  const onTimelineScroll = useCallback(({ scrollTop: st, scrollLeft: sl }: { scrollTop: number; scrollLeft: number }) => {
+    setScrollTop(st);
+    setScrollLeft(sl);
+  }, []);
 
   const onActionMoveEndCb = useCallback(
     ({ action, row, start }: { action: TimelineAction; row: TimelineRow; start: number }) => {
@@ -676,7 +823,11 @@ export function TimelinePane() {
     setSelected({ track: toTrack, id: selected.id });
   };
 
-  const doAddTrack = (kind: 'video' | 'audio') => applyOp({ kind: 'add_track', trackKind: kind });
+  // D-096 — no more explicit "add track" buttons (removed per owner
+  // feedback, D-080's toolbar affordance): a track is now created implicitly
+  // by dropping a Sources-panel clip past the last real row — see `onDrop`'s
+  // "new_track" branch, which calls `applyOp({ kind: 'add_track', ... })`
+  // directly rather than through a named wrapper like this one used to be.
 
   const doRemoveTrack = (track: number) => {
     applyOp({ kind: 'remove_track', track });
@@ -996,32 +1147,6 @@ export function TimelinePane() {
             </Popover>
           )}
 
-          <div className="mx-1 h-4 w-px bg-border-color" />
-
-          {/* D-080: add tracks. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button variant="ghost" size="sm" onClick={() => doAddTrack('video')} aria-label="Add video track">
-                  <Plus />
-                  <Film />
-                </Button>
-              }
-            />
-            <TooltipContent>Add a video track</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button variant="ghost" size="sm" onClick={() => doAddTrack('audio')} aria-label="Add audio track">
-                  <Plus />
-                  <AudioLines />
-                </Button>
-              }
-            />
-            <TooltipContent>Add an audio track</TooltipContent>
-          </Tooltip>
-
           <div className="ml-auto flex items-center gap-0.5">
             <Tooltip>
               <TooltipTrigger
@@ -1115,9 +1240,23 @@ export function TimelinePane() {
                         `move_track(from, to)` is the same op the old
                         buttons wrote; the drop target is whichever row
                         the pointer is over at drop time (`onDrop` above),
-                        not just an adjacent index. */}
+                        not just an adjacent index.
+                        D-097 — real `move_track` behaviour was verified
+                        correct against a real (Chromium, via this
+                        session's own browser-automation harness) native
+                        drag; reported not to work in the actual app,
+                        which runs on Tauri's macOS WKWebView (a different
+                        engine, untestable this session). `p-1` grows the
+                        actual hit target from the bare 12px icon to a
+                        real ~20px one (a small `size-3` glyph with no
+                        padding is a plausible real-mouse miss target even
+                        where the underlying drag/drop wiring is correct),
+                        and `-webkit-user-drag: element` is an explicit
+                        hint WebKit is documented to need more often than
+                        Chromium for a custom `draggable` source. */}
                     <div
-                      className="cursor-grab text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
+                      className="cursor-grab p-1 -m-1 text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
+                      style={{ WebkitUserDrag: 'element' } as CSSProperties}
                       draggable
                       onDragStart={(e) => {
                         e.dataTransfer.effectAllowed = 'move';
@@ -1196,7 +1335,7 @@ export function TimelinePane() {
               scale={tickSeconds}
               scaleWidth={libScaleWidth}
               getScaleRender={(sec) => formatTimecode(sec, fps, tickSeconds)}
-              startLeft={20}
+              startLeft={START_LEFT_PX}
               rowHeight={ROW_HEIGHT}
               autoScroll
               dragLine
@@ -1213,6 +1352,33 @@ export function TimelinePane() {
               onActionMoveEnd={onActionMoveEndCb}
               onActionResizeEnd={onActionResizeEndCb}
             />
+            {/* D-095/D-096 — the live drop-preview overlay: an insertion
+                line snapped to a clip edge, or a ghost row past the last
+                track. `pointer-events-none` so it never steals the drag's
+                own dragover/drop targeting from the library/edit-area
+                underneath — purely visual, positioned in the same
+                `editAreaRef`-relative coordinate space `xToFrame`/
+                `dropTargetTrack` already compute against. */}
+            {insertPreview?.kind === 'edge' && (
+              <div
+                className="pointer-events-none absolute z-30 bg-accent"
+                style={{
+                  left: START_LEFT_PX + (insertPreview.frame / fps) * pxPerSec - scrollLeft,
+                  top: RULER_AND_MARGIN_PX + insertPreview.track * ROW_HEIGHT - scrollTop,
+                  width: 2,
+                  height: ROW_HEIGHT,
+                }}
+              />
+            )}
+            {insertPreview?.kind === 'new_track' && (
+              <div
+                className="pointer-events-none absolute left-0 right-0 z-30 border-2 border-dashed border-accent/70 bg-accent/10"
+                style={{
+                  top: RULER_AND_MARGIN_PX + tracks.length * ROW_HEIGHT - scrollTop,
+                  height: ROW_HEIGHT,
+                }}
+              />
+            )}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Four real gaps in D-094's drag-and-drop, found live
+  (D-095, B-026).** Sources-panel drops now snap/ripple-insert between
+  existing clips (`computeInsertion`, `timeline.ts` — the one place this
+  model intentionally gains ripple behavior) with a live insertion-line/
+  new-track-ghost preview; dropping a clip past the last track row auto-
+  creates one (the manual "+ 🎞"/"+ 🎵" toolbar buttons are gone); both
+  drag handles' hit targets grew + got an explicit `-webkit-user-drag`
+  hint for Tauri's WKWebView (D-094's track-reorder logic was verified
+  correct via a real Chromium drag against a new isolated-component
+  harness, but couldn't be closed-loop-verified on WKWebView itself); the
+  Sources-panel drag ghost is now a small name pill instead of the full
+  media card. 88/88 tests (+9), `tsc` + `vite build` clean.
 - **2026-09-03** — **Real drag-and-drop for the NLE timeline + resizable
   header sidebar (D-094).** `TimelinePane.tsx`: track reorder is now a
   `GripVertical` drag handle per header row (replacing D-090's up/down

@@ -6951,3 +6951,143 @@ D-092 already documented.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-095 — Four real gaps in D-094's drag-and-drop, found live: ripple-insert, track-reorder reliability, auto-track-on-drop, drag-ghost size
+
+Owner, live-testing D-094 (`d0d7bf1`) immediately after it landed, four
+separate reports in one session (see **B-026** for the full findings):
+no snap/insert when hovering a new clip between two existing ones; the new
+track-reorder drag "does not work"; a request to remove the manual
+add-track buttons in favor of drop-past-the-last-row auto-create; the
+Sources-panel drag ghost image staying full media-card size regardless of
+timeline zoom. All four in the same file family D-094 touched
+(`packages/editor/src/{TimelinePane.tsx,timeline.ts}`,
+`app/src/components/chroma/SourcesPanel.tsx`) — one dispatch, one entry,
+per the coordinator's own scoping call (avoid three more forks colliding on
+the same files this late in the session).
+
+**1. Ripple-insert (`computeInsertion`, `timeline.ts`).** Root cause:
+`add_clip`'s `applyOp` case always computed `start_frame` via
+`nextAppendFrame` — a drop's `clientX` was read only to pick a *track*
+(`dropTargetTrack`), never converted into a timeline *position*. Real NLEs
+distinguish two cases dropping into an existing track: an open gap big
+enough to hold the clip (place it there, nothing else moves — this model's
+existing "explicit position, overlap rejected" contract, D-054/D-058 stays
+intact) or no room (between two touching/too-close clips, or before the
+first) — a genuine ripple insert. `computeInsertion(track, frame, duration,
+snapFrames)` is the pure decision function: snaps `frame` to the nearest
+real clip edge (start/end of any clip, or 0) within `snapFrames`, checks
+whether `[snapped, snapped+duration)` overlaps anything, and returns either
+`{startFrame, ripple:false}` (fits — plain placement) or
+`{startFrame, ripple:true}` (needs room). Returns `null` for a drop that's
+neither a real snapped edge nor an open gap (a genuinely ambiguous mid-clip
+drop far from any edge) — out of scope for this pass, the caller falls back
+to the pre-D-095 plain append rather than guessing a split point.
+
+**This is the one place the model intentionally gains ripple behaviour** —
+`add_clip`'s new `startFrame`/`ripple` fields on the `EditOp`, applied by
+shifting every clip on the target track with `start_frame >= startFrame`
+later by the new clip's own duration when `ripple` is set. Deliberately NOT
+extended to `remove`/`trim_start`/`trim_end`/`split`/`move` — all five stay
+explicit-position-only, exactly as D-054/D-058 designed (this file's own
+`remove` doc: "a lift, not a ripple delete"; `split`'s test comments note
+the pre-D-054 ripple-close behaviour was deliberately removed). One
+narrow, well-scoped exception for one specific gesture, not a philosophy
+change.
+
+**Real HTML5 constraint that shaped the design**: `dataTransfer.getData`
+is unreadable during `dragover` (only `.types` is, per spec — already
+noted in this file's own `onDragOver` doc from D-080/D-094) — so the
+dragged clip's real `duration` is unknown until drop. The live insertion
+preview (`insertPreview` state, a `pointer-events-none` overlay: a 2px
+accent line snapped to the nearest edge, or a dashed ghost row past the
+last track) can therefore only show *where* it'll snap during drag-over,
+via a separate lighter `nearestEdge` helper that doesn't need a duration —
+the real ripple-vs-fits decision happens at drop, when `computeInsertion`
+runs with the real duration now readable.
+
+**2. Track-reorder reliability.** D-094's own report explicitly flagged
+this as unverified ("no browser-automation tool in this session can drive
+the actual native Tauri window"). Built a real isolated-component browser
+harness this pass specifically to close that gap for future drag work, not
+just this bug: a scratch Vite entry (`app/harness.html` +
+`app/src/harness-main.tsx`, deleted after use — never committed) mounting
+`TimelinePane` standalone against a hand-seeded `useEditorTimelineStore`
+fixture, sidestepping the full app's deep Tauri-IPC boot chain (confirmed
+by directly trying it first: loading the real app in a plain Chrome tab
+crashes immediately in `<WindowControls>` reading Tauri window metadata
+that doesn't exist outside the native shell — stubbing enough of
+`window.__TAURI_INTERNALS__` to reach a real open project turned out to be
+a much deeper rabbit hole than the timeline UI itself, not worth it for a
+one-off verification). Against the harness, a real Chromium-driven native
+drag (`mcp__chrome-devtools__drag`, CDP's own drag simulation) correctly
+reordered tracks — `move_track(0,2)` on `[[a,b],[c],[d]]` produced exactly
+`[[c],[d],[a,b]]`, matching `Vec::remove`+`insert` semantics. **The
+underlying logic and DOM event wiring are confirmed correct.** The gap is
+real-mouse ergonomics on Tauri's macOS **WKWebView** specifically — a
+different rendering/DnD engine than the Chromium this session's tooling
+can actually drive, so this could not be fully closed-loop verified. Two
+real, standard defensive fixes applied regardless: grew both drag handles'
+actual hit target (the header's `size-3` icon had literally zero padding —
+a real, independently-plausible real-mouse-miss target regardless of engine
+— now `p-1 -m-1`, ~20px; the clip cross-track handle `size-3.5` → `size-5`)
+and added `-webkit-user-drag: element` (WebKit is documented to sometimes
+need an explicit per-element drag-source hint that Chromium doesn't).
+Flagged honestly rather than claimed fixed with certainty — needs the
+owner's own hands-on check in the real window.
+
+**3. Auto-track-on-drop.** Owner: "remove these tracks would with be....
+added when we drop the clip" — read as: drop a Sources-panel clip past the
+last real track row, get a new track to receive it, rather than requiring
+an explicit "+" click first (the standard NLE pattern). Removed the "+
+🎞"/"+ 🎵" toolbar buttons and the `doAddTrack` wrapper entirely (the
+`add_track` op itself is unchanged, just called directly from `onDrop`'s
+new branch). `dropTargetTrack`'s existing clamp-to-last-row behavior stays
+for the *cross-track clip-move* path (repositioning an existing clip) —
+only the *Sources-panel add* path gained the "past the last row" branch,
+computing `y >= tracks.length * ROW_HEIGHT` directly rather than routing
+through the shared helper, since only this path needs "beyond every row"
+to mean something different from "clamp to the last one." A dashed
+ghost-row preview (same `insertPreview` overlay as the ripple-insert line)
+shows during drag-over.
+
+**4. Drag-ghost size.** Owner, screenshot at 18% timeline zoom: the drag
+image was the full Sources-panel media card (thumbnail + name + buttons),
+absurdly large next to how small a clip renders at that zoom. Root cause:
+`SourcesPanel.tsx`'s card `onDragStart` never called `setDragImage`, so the
+browser fell back to its default (a live DOM snapshot of the card, sized by
+that panel's own CSS, with zero awareness of the timeline's zoom). Per the
+HTML5 spec a drag image is captured once at `dragstart` and can't resize as
+the pointer moves — "shrinks as you approach a low-zoom drop target" isn't
+achievable natively, so `setCompactDragImage` builds a small, fixed-size
+name-only pill (briefly attached off-screen — `setDragImage` needs an
+actually-rendered element, not just a constructed one — then removed on
+the next tick) instead: proportionate at any zoom rather than technically
+accurate to the real drop size.
+
+Verification: `ps aux | grep cargo` clean throughout (pure frontend). `cd
+packages/editor && npx vitest run` — 88/88 (was 79; 9 new tests for
+`computeInsertion` and the ripple-insert `applyOp` path — real fixtures:
+touching clips ripple, a big-enough gap doesn't, dropping before the first
+clip ripples everything, a genuinely ambiguous mid-clip drop returns
+`null`, `ripple:false` moves nothing even with an explicit `startFrame`).
+`npx tsc --noEmit -p packages/editor` clean. `npx tsc --noEmit -p app` —
+exactly 64 pre-existing errors (confirmed by diffing against the same
+baseline D-094 recorded; the harness files transiently added 8 more
+`TS6059 rootDir` errors while present, gone once deleted). `cd app && npx
+vite build` — clean, 3181 modules (unchanged from D-094), no new React
+Compiler bailouts. The ripple-insert and auto-track-on-drop logic were both
+verified end-to-end against the real rendered `TimelinePane` component
+(not just unit tests) via the harness described above — synthetic
+`DataTransfer`-carrying `dragover`/`drop` `DragEvent`s dispatched at real
+computed coordinates, store state read back after each: a clip dropped at
+the boundary between two touching clips correctly rippled the trailing one
+forward by exactly the new clip's duration; a drop past the last row
+correctly created a 4th track and placed the clip on it; the insertion-line
+overlay rendered at the exact expected pixel position once the harness's
+missing `--app-accent` CSS variable (set at runtime by the real app's theme
+init, never invoked by the standalone harness) was patched in for the
+screenshot.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
