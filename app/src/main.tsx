@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab } from '@chroma/shell';
 import { EditorTab, useEditorTimelineStore } from '@chroma/editor';
 import { MotionTab } from '@chroma/motion';
-import { useMediaPoolStore } from '@chroma/bridge';
+import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
@@ -33,6 +33,20 @@ installFrontendLogBridge();
 function Root() {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
   const activeTab = useActiveTab();
+
+  // D-093: tab switches are the cheapest, highest-signal "what is the owner
+  // actually doing right now" event, and `useShellStore` (`@chroma/shell`)
+  // must not depend on `@chroma/bridge` (see that store's own file-header
+  // note) — so this is tracked here, at the composition root, same layering
+  // reasoning as the B-007/D-062 bridges just above/below. Skips the very
+  // first render (mounting on `edit` isn't a "switch").
+  const previousTab = useRef<string | null>(null);
+  useEffect(() => {
+    if (previousTab.current !== null && previousTab.current !== activeTab) {
+      trackEvent('tab_switch', { from: previousTab.current, to: activeTab });
+    }
+    previousTab.current = activeTab;
+  }, [activeTab]);
 
   useEffect(() => {
     if (!projectOpen) return;

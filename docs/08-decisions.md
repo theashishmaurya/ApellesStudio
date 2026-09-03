@@ -6772,3 +6772,60 @@ part of any build) — nothing to `tsc`/`cargo build` here.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-093 — Local-only user-action telemetry infrastructure
+
+Owner: "where we can we should hook up the telemetry so we can check
+everything as we build things... all the user actions etc."
+
+Built the real, adoptable infrastructure rather than a one-off instrumentation
+pass: `trackEvent(event, props?)`, exported from `@chroma/bridge`
+(`packages/bridge/src/telemetry.ts`) since that package is the one place below
+every tab package (D-039) that isn't `@chroma/shell` itself (`packages/shell/src/store.ts`'s
+own header explicitly forbids that store depending on bridge). No network call,
+no analytics SDK — reuses the existing, already-registered `frontend_log` Tauri
+command (`app/src-tauri/src/lib.rs`, forwards to `log::info!`) with a
+`[telemetry]` sub-prefix and a JSON payload (`{event, ts, props?}`), landing in
+the same `app_log_dir()/app.log` this whole project already tails. Fire-and-
+forget, never throws — a telemetry call must never be the reason a click
+handler fails.
+
+Deliberately separate call path from `app/src/utils/frontendLogBridge.ts`
+(console-interception for debugging, not user-action telemetry) even though
+both end up in the same file via the same command — that bridge's dedupe/
+truncation/error-serialization logic is built for console noise, not small
+structured events.
+
+Wired into a representative set of high-value surfaces, not everything:
+
+- Tab switches (`app/src/main.tsx`'s `Root()`, watching `useActiveTab()` — kept
+  out of `@chroma/shell`'s own store for the layering reason above).
+- Project lifecycle: open/new/close (`app/src/store/useSessionStore.ts`, one
+  choke point in the store actions rather than each call site).
+- Relight actions: add/delete light, apply preset (`RelightPanel.tsx`); bake
+  depth, bake normals, track depth (`useAiMasking.ts`, fired on real success,
+  not on click).
+
+**Scope change mid-flight**: the coordinator flagged that another fork was
+starting a real drag-and-drop rework of `packages/editor/src/TimelinePane.tsx`
+concurrently — skipped instrumenting NLE track/clip actions (lock/hide/mute/
+rearrange/transform/keyframe UI) to avoid colliding with that work. Documented
+as an explicit follow-up (with the exact choke-point recommendation) in
+`docs/notes/telemetry.md` rather than silently leaving it uncovered. Motion tab,
+media pool, and export actions are likewise real, tracked gaps, not oversights —
+see that doc's "not yet instrumented" section.
+
+Full design, the `app.log` query recipe, and the adoption checklist for a new
+surface: `docs/notes/telemetry.md`.
+
+Verification: `npx tsc --noEmit -p packages/bridge` clean; `-p packages/editor`
+clean (untouched by this change, checked anyway); `-p app` still exactly 64
+pre-existing errors (confirmed the 4 nearby `useAiMasking.ts` hits are the
+same pre-existing `TS2698` lines, unrelated to the edits here). `cd
+packages/editor && npx vitest run` — 79/79 passed (untouched by this change).
+No `cargo` command needed — no Rust changed, `frontend_log` already existed
+and is unmodified. Checked `ps aux | grep cargo` before touching anything
+regardless, per this session's standing discipline; none running.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

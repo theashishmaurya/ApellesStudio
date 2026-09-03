@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Local-only user-action telemetry infrastructure
+  (D-093).** New `trackEvent(event, props?)` in `@chroma/bridge`, reusing
+  the existing `frontend_log` Tauri command (`[telemetry]` prefix, JSON
+  payload, lands in `app.log` — no network call, no new storage). Wired
+  into tab switches, project open/new/close, and relight actions (add/
+  delete light, apply preset, bake depth/normals, track depth). NLE track/
+  clip actions deliberately deferred — a concurrent fork is reworking
+  `TimelinePane.tsx`'s drag-and-drop — tracked as a follow-up in
+  `docs/notes/telemetry.md`, which also has the adoption checklist for
+  wiring up a new surface.
+
 - **2026-09-03** — **Sidecar memory: real observability + TTL auto-unload
   (D-087).** Diagnosed a reported 5.78 GB sidecar process — not a leak (the
   process itself was already gone; `_free_gpu()`, B-002, is correctly

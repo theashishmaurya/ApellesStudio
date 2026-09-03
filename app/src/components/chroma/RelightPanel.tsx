@@ -42,6 +42,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Diamond, Info, Loader2, Plus, RotateCw, Trash2, Eye, EyeOff, Video, X } from 'lucide-react';
 import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@chroma/ui';
+import { trackEvent } from '@chroma/bridge';
 
 import { useEditorStore } from '../../store/useEditorStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
@@ -131,6 +132,7 @@ export default function RelightPanel() {
     const light = createRelightLight('ambient');
     updateLights((ls) => [...ls, light]);
     setEditor({ activeRelightLightId: light.id });
+    trackEvent('relight_light_add', { kind: 'ambient' });
   }, [ambientLight, updateLights, setEditor]);
 
   const addPositionalLight = useCallback(() => {
@@ -141,6 +143,7 @@ export default function RelightPanel() {
     const light = createRelightLight(kind);
     updateLights((ls) => [...ls, light]);
     setEditor({ activeRelightLightId: light.id });
+    trackEvent('relight_light_add', { kind });
   }, [positionalLights.length, updateLights, setEditor]);
 
   // D-054: apply a built-in preset — REPLACES `relightLights` through the
@@ -153,6 +156,7 @@ export default function RelightPanel() {
       updateLights(() => newLights);
       setEditor({ activeRelightLightId: newLights[0]?.id ?? null });
       setShowPresets(false);
+      trackEvent('relight_preset_apply', { preset: preset.id });
     },
     [updateLights, setEditor],
   );
@@ -161,6 +165,7 @@ export default function RelightPanel() {
     (id: string) => {
       updateLights((ls) => ls.filter((l) => l.id !== id));
       if (activeLightId === id) setEditor({ activeRelightLightId: null });
+      trackEvent('relight_light_delete', {});
     },
     [updateLights, activeLightId, setEditor],
   );

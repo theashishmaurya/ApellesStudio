@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import { v4 as uuidv4 } from 'uuid';
+import { trackEvent } from '@chroma/bridge';
 import { useEditorStore } from '../store/useEditorStore';
 import { useEditorActions } from './useEditorActions';
 import {
@@ -455,6 +456,7 @@ export function useAiMasking() {
         setAdjustments((prev: Adjustments) => ({ ...prev, relightDepthDir: dir }));
       }
       useChromaStore.getState().bumpFrameNonce();
+      trackEvent('relight_track_depth');
       return { dir };
     } catch (err: any) {
       toast.error(`Track Depth failed: ${err?.message || String(err)}`);
@@ -486,6 +488,7 @@ export function useAiMasking() {
       });
       setAdjustments((prev: Adjustments) => ({ ...prev, relightDepthBake: b64 }));
       useChromaStore.getState().bumpFrameNonce();
+      trackEvent('relight_bake_depth');
       return { baked: true };
     } catch (err: any) {
       toast.error(`Bake Depth failed: ${err?.message || String(err)}`);
@@ -524,6 +527,7 @@ export function useAiMasking() {
         relightDepthBake: depth,
       }));
       useChromaStore.getState().bumpFrameNonce();
+      trackEvent('relight_bake_normals');
       return { baked: true };
     } catch (err: any) {
       toast.error(`Bake Normals failed: ${err?.message || String(err)}`);

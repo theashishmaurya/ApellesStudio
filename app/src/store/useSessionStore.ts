@@ -40,6 +40,7 @@
 // "explicitly deferred" case.
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { trackEvent } from '@chroma/bridge';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -682,6 +683,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const dto = await invoke<ProjectOpenDto>('chroma_project_open', { path });
       await get()._hydrateOpenDto(dto);
+      trackEvent('project_open', { shotCount: get().shots.length });
       return { ok: true, hasShots: get().shots.length > 0 || get().offlineShots.length > 0 };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
@@ -692,6 +694,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   closeProject: async () => {
     const { projectPath, projectName, dirty } = get();
+    trackEvent('project_close', { hadUnsavedChanges: dirty });
     // best-effort final flush for a dirty, named project (Untitled autosave is
     // already skipped, so an Untitled session is just discarded)
     if (projectPath && projectName !== 'Untitled' && dirty) {
@@ -729,6 +732,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths });
       await get()._hydrateOpenDto(dto);
+      trackEvent('project_new', { mediaCount: mediaPaths.length });
       // write an initial thumb.jpg from the active shot
       void get().saveProject({ force: true });
       return { ok: true };

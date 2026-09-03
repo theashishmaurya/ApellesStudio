@@ -75,6 +75,15 @@ roadmap structure.
   to check instead of three. Honestly flagged: no tool this session can
   drive the native Tauri window, so no compiler-on/off numbers were
   captured — the harness is ready, running it is a manual next step.
+- ✅ **User-action telemetry infrastructure** — done, **D-093**. Real
+  `trackEvent(event, props?)` in `@chroma/bridge`, local-only (no network),
+  reusing the existing `frontend_log` Tauri command with a `[telemetry]`
+  prefix — lands in the same `app.log` this project already tails, no new
+  storage. Wired into tab switches, project open/new/close, and relight
+  actions (add/delete light, apply preset, bake depth/normals, track
+  depth). NLE track/clip actions deliberately deferred (concurrent
+  `TimelinePane.tsx` drag-and-drop rework) — tracked as a follow-up, along
+  with Motion/media-pool/export gaps, in `docs/notes/telemetry.md`.
 
 ---
 
