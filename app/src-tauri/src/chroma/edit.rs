@@ -135,7 +135,14 @@ fn build_from_shots(manifest: &project::ProjectManifest) -> Timeline {
 /// and that `active_timeline` points at a valid entry. `persist` controls
 /// whether a freshly-built timeline is written back to `project.json` (get
 /// does this; the per-frame decode does not, matching the old behaviour).
-fn ensure_timeline(
+///
+/// `pub(crate)` (unify-clip-model doc): `chroma::project::open_manifest` also
+/// calls this, before sourcing the Colorist shot strip from the active
+/// timeline's clips — a project opened for the first time since ever (no
+/// `timelines` key at all) must still get one built from its legacy `shots`,
+/// exactly as `chroma_timeline_get` always lazily did, or the strip would
+/// show nothing until the user happened to visit the Edit tab first.
+pub(crate) fn ensure_timeline(
     dir: &Path,
     mut manifest: project::ProjectManifest,
     persist: bool,

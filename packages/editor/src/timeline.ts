@@ -35,6 +35,13 @@
  * neighbor clamp, `split`'s `start_frame` on the right half, `add_clip`'s
  * append-at-track-end position) so what this file computes and what
  * `chroma-timeline::lib.rs` would compute for the same input agree.
+ *
+ * D-070 (unified clip identity, `docs/notes/unified-clip-model.md`):
+ * `Clip.media_id` mirrors the Rust crate's new field — `clipFromDraggedMedia`
+ * sets it from the dragged Sources-panel item's id, so a clip created by
+ * dragging onto this timeline already carries the pool-item link
+ * `chroma::project`'s grade-file migration and "add to grading" convenience
+ * both key off.
  */
 
 export interface Rational {
@@ -46,6 +53,11 @@ export interface Rational {
 export interface Clip {
   id: string;
   shot_id?: string | null;
+  /** Pool-item back-link (D-070) — mirrors `chroma_timeline::Clip::media_id`.
+   *  Set by `clipFromDraggedMedia` for a clip dropped from the Sources
+   *  panel; absent/`null` for a clip built before D-070 (`Timeline::
+   *  from_shots`), which only ever set `shot_id`. */
+  media_id?: string | null;
   name: string;
   source_path: string;
   source_start: number;
@@ -111,6 +123,10 @@ export function clipFromDraggedMedia(media: DraggedMedia): NewClipFields | null 
   return {
     id: `${media.id}-${Date.now().toString(36)}`,
     shot_id: null,
+    // D-070: the pool-item link — this is the one real place a Clip gets
+    // built from a known media pool item on the frontend (a Sources-panel
+    // drag), so it's the one place that can set this for free.
+    media_id: media.id,
     name: media.name,
     source_path: media.sourcePath,
     source_start: 0,

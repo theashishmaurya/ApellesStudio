@@ -2126,6 +2126,8 @@ pub fn run() {
             chroma::project::chroma_media_create_folder,
             chroma::project::chroma_media_folders,
             chroma::project::chroma_project_add_shot,
+            chroma::project::chroma_project_add_shot_paths,
+            chroma::project::chroma_project_remove_clip,
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
             chroma::edit::chroma_timeline_frame,

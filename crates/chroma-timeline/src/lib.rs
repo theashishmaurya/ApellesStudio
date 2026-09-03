@@ -141,8 +141,28 @@ pub struct Clip {
     #[serde(default)]
     pub id: String,
     /// Back-link to the `ProjectShot` this clip came from (`from_shots`), if any.
+    /// Legacy (pre-unify-clip-model) — a clip built directly (drag-from-
+    /// Sources, or `chroma::project::append_media_clip`) never sets this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shot_id: Option<String>,
+    /// Back-link to the `MediaItem` (pool item) this clip's `source_path`
+    /// comes from, if known (unify-clip-model doc,
+    /// `docs/notes/unified-clip-model.md`). Additive/nullable — a clip can
+    /// exist before its source has round-tripped through
+    /// `chroma_media_import` at all (`source_path` stays the ground truth,
+    /// this is an index/link only), same "reference, don't require"
+    /// discipline `MediaItem::folder`/D-045 already uses. `#[serde(default)]`
+    /// so legacy JSON with no `media_id` key deserializes to `None`, not an
+    /// error — no migration needed for existing `project.json`. Set by
+    /// whatever op creates a clip that *does* know its pool item: dragging a
+    /// Sources-panel item onto the Edit-tab timeline
+    /// (`@chroma/editor`'s `clipFromDraggedMedia`), or the Colorist "add to
+    /// grading" convenience (`chroma::project::append_media_clip`). A clip
+    /// built by `Timeline::from_shots`/legacy migration never sets this
+    /// (`None`) — `chroma::project`'s grade-file migration falls back to
+    /// `shot_id`/`source_path` matching for those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_id: Option<String>,
     pub name: String,
     pub source_path: String,
     pub source_start: i64,
@@ -214,6 +234,7 @@ impl Timeline {
                 Clip {
                     id: id.clone(),
                     shot_id: Some(id.clone()),
+                    media_id: None,
                     name: name.clone(),
                     source_path: path.clone(),
                     source_start: 0,
@@ -1195,5 +1216,87 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Timeline = serde_json::from_str(&json).unwrap();
         assert_eq!(back.tracks[0].gain, 0.5);
+    }
+
+    // --- Clip::media_id (unify-clip-model doc) -------------------------------
+
+    /// A clip built directly (not through `from_shots`) can set `media_id`
+    /// and get it back unchanged — the "settable/gettable via whatever op
+    /// creates a clip" requirement.
+    #[test]
+    fn clip_media_id_is_settable_and_gettable() {
+        let clip = Clip {
+            id: "c1".into(),
+            media_id: Some("m1".into()),
+            name: "A".into(),
+            source_path: "/a.mov".into(),
+            duration: 10,
+            source_len: 10,
+            start_frame: 0,
+            ..Default::default()
+        };
+        assert_eq!(clip.media_id.as_deref(), Some("m1"));
+    }
+
+    /// `media_id` round-trips through serde (present -> present, `None` ->
+    /// omitted from the wire rather than serialized as `null`, matching
+    /// `shot_id`'s existing `skip_serializing_if` convention).
+    #[test]
+    fn clip_media_id_round_trips_through_serde() {
+        let with_media = Clip {
+            id: "c1".into(),
+            media_id: Some("m1".into()),
+            name: "A".into(),
+            source_path: "/a.mov".into(),
+            duration: 10,
+            source_len: 10,
+            start_frame: 0,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&with_media).unwrap();
+        assert!(json.contains("\"media_id\":\"m1\""), "{json}");
+        let back: Clip = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.media_id.as_deref(), Some("m1"));
+
+        let without_media = Clip {
+            media_id: None,
+            ..with_media
+        };
+        let json2 = serde_json::to_string(&without_media).unwrap();
+        assert!(
+            !json2.contains("media_id"),
+            "None omits the key entirely (skip_serializing_if): {json2}"
+        );
+    }
+
+    /// Legacy JSON (every pre-unify-clip-model `project.json` clip, and every
+    /// clip `Timeline::from_shots` builds) has no `media_id` key at all —
+    /// must deserialize to `None`, not error, and no migration is needed.
+    #[test]
+    fn clip_media_id_defaults_to_none_on_legacy_json() {
+        let j = r#"{"id":"c1","name":"old","source_path":"/o.mov","source_start":0,"duration":40,"start_frame":0}"#;
+        let c: Clip = serde_json::from_str(j).unwrap();
+        assert_eq!(c.media_id, None);
+    }
+
+    /// `Timeline::from_shots` (the legacy shots -> timeline builder) never
+    /// sets `media_id` — it predates the pool-item link and only knows the
+    /// shot id (see `shot_id`); `chroma::project`'s grade migration falls
+    /// back to `shot_id`/`source_path` matching for these clips.
+    #[test]
+    fn from_shots_leaves_media_id_unset() {
+        let t = Timeline::from_shots(&shots());
+        assert!(t.tracks[0].clips.iter().all(|c| c.media_id.is_none()));
+    }
+
+    /// `split` clones the left clip's `media_id` onto the right half — a
+    /// trim never changes which pool item a clip references.
+    #[test]
+    fn split_preserves_media_id() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[1].media_id = Some("m-b".into());
+        t.split(0, 1, 120).unwrap();
+        assert_eq!(t.tracks[0].clips[1].media_id.as_deref(), Some("m-b"));
+        assert_eq!(t.tracks[0].clips[2].media_id.as_deref(), Some("m-b"));
     }
 }

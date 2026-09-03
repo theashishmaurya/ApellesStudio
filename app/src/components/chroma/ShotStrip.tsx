@@ -6,6 +6,13 @@
 // shot's grade onto the next one. Replaces RapidRAW's folder-oriented library
 // browser for the clip-oriented workflow (docs/09 "replace with a shot strip").
 //
+// D-070 (unified clip identity, `docs/notes/unified-clip-model.md`): for a
+// real project, each `shot` here is backed by a `chroma_timeline::Clip` on
+// the active Edit-tab timeline (`useSessionStore.shots`, keyed by
+// `shot.id` — a clip id, not a path — see that store's module doc); "+"
+// appends a new clip, "×" removes one from the timeline. Same visual shape
+// as before this decision.
+//
 // Styling: plain elements + app colour tokens, same as ChromaTimeline /
 // AgentActivityDock. Deferred (D-033 follow-ups): drag-drop reorder, a
 // copy-to-any-shot picker, session-file persistence.
@@ -43,12 +50,12 @@ export default function ShotStrip() {
 
   useEffect(() => {
     shots.forEach((shot, i) => {
-      if (thumbs[shot.path] || fetching.current.has(shot.path)) return;
-      fetching.current.add(shot.path);
+      if (thumbs[shot.id] || fetching.current.has(shot.id)) return;
+      fetching.current.add(shot.id);
       invoke<string>('chroma_session_thumbnail', { index: i, height: 96 })
-        .then((url) => setThumbs((t) => ({ ...t, [shot.path]: url })))
+        .then((url) => setThumbs((t) => ({ ...t, [shot.id]: url })))
         .catch(() => {})
-        .finally(() => fetching.current.delete(shot.path));
+        .finally(() => fetching.current.delete(shot.id));
     });
   }, [shots, thumbs]);
 
@@ -132,11 +139,11 @@ export default function ShotStrip() {
       {showSettings && <ProjectSettingsModal onClose={() => setShowSettings(false)} />}
       {shots.map((shot, i) => {
         const active = i === activeIndex;
-        const grade = active ? liveAdjustments : grades[shot.path];
+        const grade = active ? liveAdjustments : grades[shot.id];
         const hasGrade = isNonNeutralGrade(grade);
         return (
           <div
-            key={shot.path}
+            key={shot.id}
             onClick={() => !active && !busy && switchToShot(i).then((r) => !r.ok && r.error && toast.error(r.error))}
             title={shot.path}
             className={[
@@ -145,8 +152,8 @@ export default function ShotStrip() {
             ].join(' ')}
           >
             <div className="relative h-16 bg-bg-primary">
-              {thumbs[shot.path] ? (
-                <img src={thumbs[shot.path]} draggable={false} className="w-full h-full object-cover pointer-events-none" />
+              {thumbs[shot.id] ? (
+                <img src={thumbs[shot.id]} draggable={false} className="w-full h-full object-cover pointer-events-none" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <Loader2 size={14} className="animate-spin text-text-secondary" />

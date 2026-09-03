@@ -299,7 +299,9 @@ export function useChromaControl() {
               path: sh.path,
               name: sh.name,
               frameCount: sh.frameCount,
-              hasGrade: !!useSessionStore.getState().grades[sh.path] &&
+              // D-070: `grades` keys off the shot's `id` (a clip id for a
+              // real project) now, not its source path.
+              hasGrade: !!useSessionStore.getState().grades[sh.id] &&
                 i !== useSessionStore.getState().activeIndex,
             })),
             active: useSessionStore.getState().activeIndex,

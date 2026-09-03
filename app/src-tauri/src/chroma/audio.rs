@@ -1389,6 +1389,7 @@ mod tests {
         let clip = chroma_timeline::Clip {
             id: "clip1".into(),
             shot_id: None,
+            media_id: None,
             name: "test".into(),
             source_path: video_path.to_string(),
             source_start: 0,
@@ -1407,6 +1408,7 @@ mod tests {
                 clips: vec![chroma_timeline::Clip {
                     id: "audio-clip1".into(),
                     shot_id: None,
+                    media_id: None,
                     name: "audio-track-test".into(),
                     source_path: audio_path.to_string(),
                     source_start: 0,
@@ -1430,6 +1432,7 @@ mod tests {
             modified: String::new(),
             shots: Vec::new(),
             active_shot: 0,
+            active_clip_id: None,
             settings: Default::default(),
             timelines: vec![timeline],
             active_timeline: 0,

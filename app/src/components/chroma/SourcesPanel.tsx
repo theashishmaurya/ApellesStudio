@@ -21,9 +21,14 @@
 // icon otherwise) — drag a grid item onto the Edit tab's timeline to add it
 // as a clip (`@chroma/editor`'s `CHROMA_MEDIA_DRAG_MIME` contract, plain
 // HTML5 drag/drop, not a shared DnD context — see `TimelinePane`'s doc). A
-// "+" on each item is the explicit "add to grading" action
-// (`chroma_project_add_shot`), distinct from import: importing is pool-only
-// by design, grading is opt-in per item.
+// "+" on each item is a **convenience** that does the same thing server-side
+// (D-070, `docs/notes/unified-clip-model.md`): `chroma_project_add_shot`
+// appends a real `chroma_timeline::Clip` to the active timeline referencing
+// this pool item — the exact same "this clip exists in my project" action as
+// the drag, just reachable from the Colorist tab without switching to Edit
+// first. It no longer creates a separate `ProjectShot` (retired as of D-070
+// — see `chroma::project`'s module doc); "grading" and "on the Edit
+// timeline" are the same thing now, there's no second list to opt into.
 //
 // Deletion (D-060/D-061): right-click → "Remove from pool" (D-060) plus two
 // faster paths added the same session once the owner flagged right-click
@@ -361,9 +366,11 @@ export function SourcesPanel() {
   const addToGrading = async (id: string) => {
     setAddingId(id);
     try {
-      // `chroma_project_add_shot` returns the exact same `ProjectOpenDto`
-      // shape `chroma_project_open`/`_new`/`_relink` do, which
-      // `_hydrateOpenDto` already knows how to consume.
+      // D-070: `chroma_project_add_shot` appends a `chroma_timeline::Clip`
+      // to the active timeline referencing this pool item (the same action
+      // as a drag onto the Edit tab), then returns the exact same
+      // `ProjectOpenDto` shape `chroma_project_open`/`_new`/`_relink` do,
+      // which `_hydrateOpenDto` already knows how to consume.
       const dto = await invoke<ProjectOpenDto>('chroma_project_add_shot', { mediaId: id });
       await useSessionStore.getState()._hydrateOpenDto(dto);
       toast.success('Added to grading');

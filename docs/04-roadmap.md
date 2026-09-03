@@ -255,21 +255,32 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    we have the same clip, not multiple" (Resolve comparison), triggered by
    the owner's own live repro (a clip dragged onto the Edit tab's timeline
    didn't show up in Colorist at all). **Full scoping doc:
-   `docs/notes/unified-clip-model.md`.** Real finding: this is a *four*-way
-   split today (`state::Shot`, `useSessionStore.shots`/`.grades`,
-   `ProjectShot`, `chroma-timeline::Clip` — each with its own keying
-   scheme, verified against real code, not assumed), not the two-list gap
-   it first looked like. Target: `chroma-timeline::Clip` becomes the single
-   source of truth (gains `media_id`), `ProjectShot` retired, grades key off
-   `Clip.id`, Colorist grades whichever clip wins the Edit tab's active
-   playhead (reusing D-056's `resolve_video_clip_at` once Phase D lands
-   multiple video tracks — not new logic). **Sequenced before item 6's
-   Phase D and item 7's Inspector** — both would otherwise be built against
-   a model this migration replaces. **Not yet started** — scoping doc
-   written, no code yet; the risky step (migrating the owner's real
-   `grade.json` files against `~/Movies/Chroma/New.chroma`) needs testing
-   against that real project before this is called done, not just
-   synthetic fixtures.
+   `docs/notes/unified-clip-model.md`; built as D-070 in
+   `docs/08-decisions.md`.** Real finding: this was a *four*-way split
+   (`state::Shot`, `useSessionStore.shots`/`.grades`, `ProjectShot`,
+   `chroma-timeline::Clip` — each with its own keying scheme, verified
+   against real code, not assumed), not the two-list gap it first looked
+   like. **Done, 2026-09-03** — `chroma-timeline::Clip` gained `media_id`
+   and is the single source of truth Colorist's shot strip reads;
+   `ProjectShot` retired as the persisted grading list (kept read-only, for
+   the one-time grade migration to read — see D-070 for why full removal
+   wasn't the right call); grades key off `Clip.id`; Colorist's active-clip
+   resolution now calls D-056's `resolve_video_clip_at` (a real second call
+   site, not a duplicate — `top_wins_clip_index`). One outcome the scoping
+   doc didn't predict: the matching rule for the grade migration needed
+   `Clip.shot_id` as a third signal alongside `media_id`/`source_path` —
+   the owner's real project had a shot with a dangling `media_id` that only
+   `shot_id` could still resolve correctly (see D-070's own writeup for the
+   detail). Verified against a scratch copy of the owner's real
+   `~/Movies/Chroma/New.chroma`: 3 shots, 0 renamed (one was already a
+   no-op), 2 warned (never dragged onto the Edit tab, correctly left
+   alone), nothing lost. **State::Shot's own possible retirement stays
+   explicitly deferred**, as scoped — the decode session is still path-
+   keyed underneath; `useSessionStore.ts` attaches clip identity on top of
+   it rather than the decode session carrying it natively (see D-070's
+   "known limit" note on two clips sharing one source path). **Was
+   sequenced before item 6's Phase D and item 7's Inspector** — both now
+   build against the real model instead of the old split.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

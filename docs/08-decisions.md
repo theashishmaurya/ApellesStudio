@@ -5192,3 +5192,225 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   live click through the actual UI is still the real end-to-end
   confirmation and hasn't happened yet as of this entry — noted honestly,
   not claimed.
+
+## D-070 — Unified clip identity: `chroma_timeline::Clip` replaces `ProjectShot`, grades key off it, Colorist's "active clip" routes through D-056's top-wins resolver
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Full scoping in `docs/notes/unified-clip-model.md` (owner,
+  2026-09-03: "we have one clip we add, we can move to LUTs and color and
+  we have the same clip, not multiple" — a Resolve comparison, triggered by
+  the owner's own repro: a clip dragged onto the Edit tab's timeline didn't
+  show up in Colorist at all). The doc's own investigation found a
+  **four**-way split, not the two-list gap it first looked like:
+  `state::Shot` (decode session, path-keyed), `useSessionStore.shots`/
+  `.grades` (mirrors it), `ProjectShot` (the persisted grading list,
+  `<gradeDir>/<shot.id>.grade.json`), and `chroma_timeline::Clip` (the Edit
+  tab's real timeline, no structural link to any of the other three). This
+  entry is that migration.
+- **`Clip` gains `media_id: Option<String>`** (`crates/chroma-timeline/src/lib.rs`)
+  — additive, `#[serde(default, skip_serializing_if = "Option::is_none")]`.
+  Set by whatever op creates a clip that knows its pool item:
+  `@chroma/editor`'s `clipFromDraggedMedia` (`packages/editor/src/timeline.ts`,
+  a Sources-panel drag onto the Edit tab) and `chroma::project::append_media_clip`
+  (the Colorist-side "add to grading" convenience). A clip built by
+  `Timeline::from_shots` (every clip in every `project.json` saved before
+  today) never sets it — only `shot_id`. 5 real unit tests in the crate:
+  settable/gettable, serde round-trip (present → present, `None` → key
+  omitted), legacy-JSON-defaults-to-`None`, `from_shots` never sets it,
+  `split` clones it onto both halves.
+- **`ProjectShot` retires as the persisted grading list — kept read-only,
+  not removed.** Decision, not a default: the struct and
+  `ProjectManifest.shots`/`.active_shot` still deserialize (so an old
+  `project.json` keeps loading and `migrate_legacy_shots` keeps running),
+  but nothing constructs a new one any more — `new_project_in`, the
+  repurposed `chroma_project_add_shot`, and the new
+  `chroma_project_add_shot_paths`/`chroma_project_remove_clip` all build
+  `chroma_timeline::Clip`s via a new `append_media_clip` instead. Kept
+  (not deleted) because it's the one thing the grade-file migration below
+  needs to read on a project's first open after this ships — deleting it
+  would mean a fresh clone of this repo could never migrate an existing
+  owner's grades again. `ProjectManifest.active_clip_id: Option<String>`
+  (new field) replaces `active_shot` as the persisted "which clip is
+  Colorist grading" pointer — a clip id, stable across a reorder, unlike
+  the old index. `resolve_active_clip_index`
+  (`app/src-tauri/src/chroma/project.rs`) falls back to the legacy
+  `active_shot`/`shots` pair exactly once, the first time a pre-migration
+  project is opened.
+- **`chroma_project_add_shot`'s job: repurposed, not retired.** Chose
+  "becomes a convenience that does the drag for you server-side" over
+  "goes away" — the Sources panel's "+" (`SourcesPanel.tsx`) is a real,
+  frequently-used affordance and forcing every add through a literal HTML5
+  drag to the Edit tab would be a UX regression for no real gain. It now
+  calls `append_media_clip` (probe the source, append a full-length clip
+  to the end of the active timeline's first video track, creating one if
+  needed, make it `active_clip_id`) instead of pushing a `ProjectShot`.
+  Its wire signature (`{ mediaId }` in, `ProjectOpenDto` out) is
+  unchanged, so `SourcesPanel.tsx`'s call site needed no code change, only
+  its doc comment (and the module doc at the top of the file). Two new
+  siblings: `chroma_project_add_shot_paths` (probe/pool a batch of raw
+  paths and append a clip each, one manifest save — the ShotStrip "+"
+  button's project-backed path) and `chroma_project_remove_clip` (drop a
+  clip from the active timeline by id — the ShotStrip "×" button's
+  project-backed path).
+- **Grade-file migration — `migrate_shot_grades_to_clips`
+  (`app/src-tauri/src/chroma/project.rs`), called once inside
+  `open_manifest` on every project open (idempotent, so "once" isn't load-
+  bearing).** For each legacy `ProjectShot`, rename
+  `<gradeDir>/<shot.id>.grade.json` → `<gradeDir>/<clip.id>.grade.json`
+  for the one active-timeline clip `shot_matches_clip` says continues it.
+  Zero or several matches ⇒ the file is left exactly where it is and a
+  human-readable warning is logged (`GradeMigrationReport{ migrated,
+  warnings: Vec<String> }`) — never guessed, never dropped. **Deviation
+  from the scoping doc, found by testing against the real project, not
+  guessed:** the doc says match by `media_id`/`source_path`; I added
+  `Clip::shot_id` as the **first**, highest-priority signal
+  (`shot_matches_clip`'s doc explains why in detail). The real
+  `~/Movies/Chroma/New.chroma/project.json` has exactly the case that
+  requires it — shot `8022aef1…`'s `mediaId` points at a pool item whose
+  `sourcePath` had gone dangling (cleared to `""`, `resolve_shot` → `"
+  (missing media)"`), so neither `media_id` nor `source_path` matching
+  would find its one true timeline clip, which still carries the clip's
+  own `shot_id: "8022aef1…"` backlink verbatim (that clip's `id` also
+  happens to equal `8022aef1…`, since it was built by `Timeline::from_shots`
+  before this decision). Matching by `media_id`/`source_path` alone would
+  have misclassified this real, currently-graded shot as "no matching
+  clip" and warned instead of recognizing it — updated
+  `docs/notes/unified-clip-model.md` in this same commit to record the
+  deviation rather than silently diverge. Mask mattes need no rename: a
+  grade's `<name>.mattes/` sibling directory and its `$matte`/`$trackDir`/
+  `$depthDir` references are named after the file's stem *at save time*
+  and resolved against the grade file's parent directory at load time —
+  read `grade.rs`'s `save_grade`/`load_grade` to confirm this before
+  writing the migration, not assumed. 6 real unit tests: the clean 1:1
+  rename, the "shot exists but no matching clip" warn-not-drop case, an
+  ambiguous 2-match warn case, idempotency (running twice does nothing the
+  second time), the "clip id already equals shot id" true no-op (the
+  common `from_shots`-built-timeline shape — nothing is actually renamed,
+  correctly not counted as `migrated`), and a "both old and new already
+  exist" don't-clobber case.
+- **Colorist's "active clip" now genuinely routes through D-056's
+  `resolve_video_clip_at`, not a second copy of top-wins logic — confirmed
+  by grep, not assumed.** `top_wins_clip_index` (`project.rs`) takes the
+  candidate clip `resolve_active_clip_index` picked (persisted
+  `active_clip_id`, or the legacy fallback) and re-resolves it through
+  `manifest.timelines[active_timeline].resolve_video_clip_at(candidate.start_frame)`
+  — the exact function `chroma::edit::resolve_video_position` already
+  calls for the Edit-tab preview and `chroma::audio`'s mixer (D-056). For
+  every project shape that exists today (one video track) this is a
+  provable no-op (the crate's own
+  `resolve_video_clip_at_matches_single_track_behavior` test); it starts
+  doing real work once Phase D lands a second video track, so Colorist
+  always grades the clip actually visible at that position, matching what
+  the preview would show at the same frame. Two real unit tests:
+  `top_wins_clip_index_prefers_the_real_compositing_winner` (a two-track
+  manifest where the candidate is fully obscured — re-resolves to the
+  clip that wins) and `top_wins_clip_index_is_a_noop_on_a_single_video_track`.
+- **`chroma_project_save` shrinks — no more `shots`/`active_shot`
+  params.** The timeline (persisted separately by `chroma_timeline_set`,
+  called whenever the Edit-tab timeline actually changes) is the only
+  durable clip list now; this command's job is just persisting
+  `active_clip_id`, touching `modified`, and regenerating `thumb.jpg`.
+  `ProjectShotInput` (the old wire type) is deleted — genuinely dead once
+  nothing sends it. `chroma_project_relink` (`shot_id` param) had the
+  **same latent bug the old shot-strip-sourcing would have had**: it
+  looked up `manifest.shots.iter().find(|s| s.id == shot_id)`, which
+  silently finds nothing for any clip not also backed by a legacy shot —
+  found and fixed in the same pass (renamed to `clip_id`, resolves against
+  the active timeline's clips directly, re-points the clip's own
+  `source_path`/`name` — its own ground truth, not solely derived through
+  `media_id` the way `ProjectShot` was — plus the underlying `MediaItem`
+  if one exists). `useSessionStore.ts`'s `relinkShot` sends `clipId` now
+  (was `shotId`); its own exported call signature (`relinkShot(shotId,
+  newPath)`, `ShotStrip.tsx`'s call site) is unchanged.
+- **`useSessionStore.ts` rewrite.** No new IPC surface invented beyond the
+  three project-mutating commands above — `chroma_project_open`'s existing
+  `ProjectOpenDto` already carried enough once `open_manifest` sources it
+  from clips (checked what was already wired before adding anything, per
+  the dispatch). `SessionShot` gained `id` (a clip id for a real project,
+  a plain path for an in-memory "Untitled" session); `grades` keys off it.
+  The decode session (`chroma::session`, path-keyed) is **not** retired
+  this pass — deliberately, matching the scoping doc's "explicitly
+  deferred" list — so `id` is attached on top of a raw
+  `chroma_session_list()` read by matching source path against the
+  project's clip list (`reattachIds`/the `pathToClipId` map in
+  `_hydrateOpenDto`), never carried by the decode session itself.
+  **Documented, known limit of not retiring it:** two *different* clips
+  sharing the exact same `source_path` (two trims of one file — the
+  doc's own flagged "genuinely new complexity") collapse onto one decode-
+  session entry (upsert-by-path), so only one is independently
+  switchable/viewable in the Colorist tab at a time today; their grade
+  files still stay genuinely separate on disk (keyed by clip id), this
+  only affects which one's pixels are currently shown. `addShots`/
+  `removeShot` branch on whether a real project is loaded: project-backed
+  now calls `chroma_project_add_shot_paths`/`chroma_project_remove_clip` +
+  `_hydrateOpenDto` (real timeline mutation); an in-memory Untitled
+  session keeps the old plain `chroma_session_add`/`_remove` path
+  unchanged. `shotIds: Record<path, id>` (the old bridging map) is deleted
+  — genuinely dead once `SessionShot.id` carries the id directly (grepped
+  the whole app first to confirm nothing else read it).
+  `ShotStrip.tsx`/`SourcesPanel.tsx`/`useChromaControl.ts`'s
+  `get_state.session.shots[].hasGrade` all updated to key off `shot.id`.
+- **Verification — real numbers, not vibes.**
+  - `cargo test -p chroma-timeline`: **37/37** (32 baseline + 5 new
+    `media_id` tests).
+  - `cargo test --manifest-path app/src-tauri/Cargo.toml chroma::`:
+    **135 passed, 0 failed, 1 ignored** (126 baseline + 10 net new: 2
+    rewritten-in-place `new_project_in`/`chroma_project_save` tests kept
+    their names but changed bodies; net *additions* are the 6 grade-
+    migration tests, `remove_clip_by_id_lifts_it_and_clears_active_clip`,
+    `resolve_active_clip_index_prefers_…`, and the 2 `top_wins_clip_index`
+    tests — 1 ignored is the real-project harness below, by design, not a
+    skipped failure).
+  - `cargo build --workspace`: clean (only pre-existing, unrelated
+    `ai_processing.rs` dead-code warnings).
+  - `npx tsc --noEmit -p app`: **64 errors — byte-for-byte the same set**
+    as the pre-existing baseline (diffed the two error lists, zero new,
+    zero fixed). `npx tsc --noEmit -p packages/editor`: **0 errors**.
+    `npx vitest run` in `packages/editor`: **35/35** (2 new
+    `clipFromDraggedMedia` tests added to `timeline.test.ts`).
+  - **The mandatory real-project verification
+    (`chroma::project::tests::migration_against_the_real_owner_project`,
+    `#[ignore]`d by default — machine-specific, run with `--ignored`).**
+    Copies `~/Movies/Chroma/New.chroma/project.json` + `grades/` into a
+    scratch `tempdir` (never touches the live path — confirmed after the
+    run: the live `grades/` dir's file list is unchanged, byte-identical
+    file names, mtimes only advanced on `e4d7b687-*.grade.json` from the
+    owner's own concurrent live use of the app, not from this test). Real
+    output from a real run against the real file, this session: **3
+    `ProjectShot`s, 2 timelines (`active_timeline=0`), 3 video clips on
+    the active timeline; `migrated=0`, `warnings=2`.** Both warnings are
+    real "no matching clip on the active timeline" cases (shots
+    `e4d7b687…` and `786f86bf…` — graded but never dragged onto the Edit
+    tab). The third shot (`8022aef1…`) needed **zero** renaming: its one
+    matching clip (found via the `shot_id` backlink — see above) already
+    has the identical id, since `Timeline::from_shots` copied it verbatim
+    — a genuine no-op, not a bug. **Nothing lost:** 5 grade files / 41,846
+    bytes total before, 5 files / 41,846 bytes after — asserted by the
+    test itself (byte-count and filename-set equality), not eyeballed.
+  - **Live `npm run tauri:dev` boot: not attempted, honestly.** Port 1420
+    was occupied (`lsof -ti:1420` returned two PIDs — the main checkout's
+    own dev server, per the dispatch's own instruction not to fight it),
+    and this sandbox has no screen-recording/window-capture access to a
+    native Tauri window regardless of port (the same standing limitation
+    D-046/D-051/D-058/D-064 each already hit) — an alternate-port boot
+    would only prove "it compiles and starts," which `cargo build
+    --workspace` already proves, not "Colorist shows the right clip,"
+    which is what would actually matter and can't be observed here. The
+    scratch-copy migration test above is the real, non-optional
+    verification; this is the honestly-skipped bonus, not a silent gap.
+- **Process note.** `rustfmt --edition 2024` given a crate-root file
+  (`app/src-tauri/src/lib.rs`) alongside leaf files in the same command
+  reformatted the *entire* reachable module tree (13 files this session
+  never touched — `session.rs`, `state.rs`, `grade.rs`, `commands.rs`,
+  `decode_pipe.rs`, `depth.rs`, `export.rs`, `load.rs`, `mask.rs`,
+  `playback.rs`, `sidecar.rs`, `video.rs`, `mask_generation.rs`) —
+  caught immediately via `git status --short` right after running it,
+  before building or testing on top of it, and reverted with `git
+  checkout HEAD --` for exactly those 13 files (kept the formatting on
+  the 5 files actually touched this pass). Same class of trap this
+  repo's own CLAUDE.md now calls out by name (a bare crate-tree
+  `rustfmt`/`cargo fmt` reformats far more than intended) — worth a
+  second data point that it also triggers when a crate-root file is
+  merely *one of several* paths passed to `rustfmt`, not just via a
+  no-args invocation.
