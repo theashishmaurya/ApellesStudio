@@ -6637,3 +6637,75 @@ lock, hide, mute (D-080), rearrange, selection (D-080), keyframes.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-091 — React Compiler enabled on the app's Vite build
+
+React 19.2 is already the version in use (`@tauri-apps/cli` v2 + Vite has no
+React-version constraint of its own), but React 19 does **not** turn the
+compiler on by itself — it's a separate, opt-in build-time transform. Wired
+it up per the real `react.dev/learn/react-compiler/installation` docs for
+this exact stack.
+
+**Why this needed real investigation, not just adding the plugin**:
+`@vitejs/plugin-react` v6 dropped its bundled Babel (moved to oxc/Rust), so
+the old inline `react({ babel: { plugins: [...] } })` config from the
+official examples doesn't exist anymore in this version. The real path is a
+separate Babel-transform stage: `@rolldown/plugin-babel` running the
+plugin's own `reactCompilerPreset()` as a preset. Added
+`@rolldown/plugin-babel` + `babel-plugin-react-compiler` as devDependencies
+and wired it into `app/vite.config.mjs`'s single plugin array — this one
+config change covers every workspace package consumed as source in this
+build (editor/motion/shell/ui/player/history/bridge/tokens, all
+`main: ./src/index.ts`), plus any `motion-engine` primitive file that gets
+imported directly as source rather than only through its own separate
+Remotion/webpack bundler.
+
+**The real bug was in my own verification, not the setup.** First build
+showed the transform running (201 files, ~5.3s of real work) but grepping
+the output bundle for the compiler's runtime import path
+(`"react/compiler-runtime"`) and even the runtime's own internal function
+name (`useMemoCache`) found nothing conclusive — because neither survives
+Rolldown's bundling: the import path string disappears once the module is
+resolved and inlined, and `useMemoCache` only ever appears inside the
+runtime module itself, never at a compiled component's call site (the
+compiled code calls the aliased `_c(N)`, not `useMemoCache` directly) —  and
+after `esbuild` minification even `_c` gets renamed. Chased two dead ends
+before finding this: (1) instrumented the actual installed
+`@rolldown/plugin-babel` transform handler to confirm `loadedOptions.
+plugins.length` — always 1 (`react-forget`) for every file checked, so the
+per-file `code` regex filter some `reactCompilerPreset()` versions apply
+was never excluding anything; (2) confirmed the transform's own `result.
+code` for a known-good test file (`packages/motion/src/Button.tsx`, already
+proven to compile cleanly in an isolated `@babel/core` harness) came back
+byte-identical in shape to an uncompiled file when checked the wrong way.
+
+**The correct verification** is the compiler's own `logger.logEvent`
+hook (its documented API for exactly this), not bundle-content grepping.
+Wired a temporary logger into `reactCompilerPreset()`'s options and ran a
+real build: **265 `CompileSuccess` events across 110 unique files**, 120
+`CompileError` (bailout, not build-failure) events across 45 files, with
+legitimate, expected reasons — mostly `try/finally` (a documented compiler
+limitation, 40 occurrences), refs read during render (32), pre-existing
+hand-written memoization the compiler can't safely fold in (13), a few
+disabled-ESLint-rule and JSX-edge-case bailouts. None of these are setup
+bugs; a bailout just leaves that one component's existing code untouched —
+no build error, no regression.
+
+**Kept a permanent, quiet version of the logger** in the checked-in
+config (`event.kind !== 'CompileError'` early-return, so only real bailouts
+print, as a `console.warn`) rather than deleting it — gives ongoing
+visibility into compiler coverage on every build without spamming success
+events, cheap given the alternative (bundle-grepping) is unreliable by
+construction.
+
+Verification: `npx vite build` (both minified and `TAURI_ENV_DEBUG=1`
+unminified) clean, 265/45 success/bailout split confirmed via the logger on
+both. Live `cargo tauri dev` process (the one the owner is testing against)
+was never touched — all checks used one-off `npx vite build` / `tsc`/`node`
+runs; the one temporary edit made to investigate transform internals
+(`node_modules/@rolldown/plugin-babel/dist/index.mjs`, gitignored, not a
+tracked file) was reverted from a byte-for-byte backup before this entry was
+written.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

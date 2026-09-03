@@ -1179,3 +1179,14 @@ _(none — pre-v1)_
   `clipKeyframes.ts`. No new inline props into the timeline library's own
   render path (D-083 discipline held). 11 new tests (79/79 across
   `packages/editor`), `tsc --noEmit` clean both packages, clean app boot.
+- **2026-09-03** — **React Compiler enabled (D-091).** `app/vite.config.mjs`
+  now runs `babel-plugin-react-compiler` via `@rolldown/plugin-babel` +
+  `reactCompilerPreset()` (the real v6 wiring, not the removed inline
+  `react({ babel: {...} })` option) across every source package this build
+  consumes. Verified via the compiler's own `logger.logEvent` API (bundle-
+  grepping for its runtime import/function names is unreliable post-bundle/
+  minify — chased that dead end first): 265 `CompileSuccess` events across
+  110 unique files, 120 legitimate bailouts (mostly `try/finally`, a
+  documented compiler limitation) across 45 files, no build errors. A quiet
+  bailout-only `console.warn` logger stays wired in permanently for ongoing
+  visibility.

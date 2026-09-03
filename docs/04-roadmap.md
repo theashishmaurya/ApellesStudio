@@ -56,6 +56,14 @@ roadmap structure.
   lock; `POST /unload` for a manual reclaim alongside it. Verified live
   end to end (loaded MoGe-2, watched it auto-unload after the TTL, confirmed
   via `/memory` and real RSS numbers the whole way).
+- ✅ **React Compiler enabled** — done, **D-091**. Real v6 wiring
+  (`@rolldown/plugin-babel` + `reactCompilerPreset()`, not the removed
+  inline `react({ babel: {...} })` option) across every source package this
+  build consumes. Verified via the compiler's own `logger.logEvent` API
+  (bundle-grepping its runtime import/function name is unreliable post-
+  bundle/minify): 265 `CompileSuccess` across 110 unique files, 120
+  legitimate bailouts (mostly `try/finally`) across 45 files, no build
+  errors. Quiet bailout-only logger stays wired in permanently.
 
 ---
 
