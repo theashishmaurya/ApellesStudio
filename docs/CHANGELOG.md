@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Unified clip identity, Edit ↔ Colorist: `ProjectShot`
+  retired, `chroma_timeline::Clip` is the single source of truth (D-070).**
+  Colorist's shot strip now reads the active Edit-tab timeline's clips
+  directly (`Clip.media_id`, new) instead of a separate persisted
+  `ProjectShot` list, so a clip dragged onto the Edit tab shows up in
+  Colorist immediately — no more "add to grading" as a second step.
+  One-time grade-file migration renames `<gradeDir>/<shotId>.grade.json` →
+  `<gradeDir>/<clipId>.grade.json`, warning (never dropping) any grade that
+  can't be matched to exactly one clip. Colorist's active-clip resolution
+  now shares D-056's `resolve_video_clip_at`, not a second copy. Verified
+  against a scratch copy of the owner's real project: 3 shots, 0 renamed
+  (already-migrated no-op), 2 warned (never dragged onto the Edit tab),
+  nothing lost. `cargo test -p chroma-timeline` 37/37, `chroma::` 135/135
+  (+10, 1 ignored real-project harness by design). `tsc -p app` 64 errors,
+  unchanged baseline.
 - **2026-09-03** — **Sources panel delete (single + batch), edge-trim
   cursor, timeline-switcher width fix (D-060/D-061).** New
   `chroma_media_remove(ids: Vec<String>)` — right-click "Remove from

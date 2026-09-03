@@ -5,7 +5,16 @@
 // frontend/backend model mismatch introduced by D-054 that nothing had
 // re-verified until this pass — see D-058 in docs/08-decisions.md).
 import { describe, expect, it } from 'vitest';
-import { applyOp, endFrame, labelForOp, nextAppendFrame, type Clip, type Timeline, type Track } from './timeline';
+import {
+  applyOp,
+  clipFromDraggedMedia,
+  endFrame,
+  labelForOp,
+  nextAppendFrame,
+  type Clip,
+  type Timeline,
+  type Track,
+} from './timeline';
 
 function clip(id: string, name: string, overrides: Partial<Clip> = {}): Clip {
   return {
@@ -210,5 +219,21 @@ describe('move (D-058)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, { kind: 'move', track: 0, clip: 0, startFrame: -1 });
     expect(after).toBe(before);
+  });
+});
+
+describe('clipFromDraggedMedia (D-070)', () => {
+  it('sets media_id from the dragged Sources-panel item, not shot_id', () => {
+    const built = clipFromDraggedMedia({ id: 'media-1', sourcePath: '/a.mov', name: 'a.mov', frameCount: 240 });
+    expect(built).not.toBeNull();
+    expect(built!.media_id).toBe('media-1');
+    expect(built!.shot_id).toBeNull();
+    expect(built!.source_path).toBe('/a.mov');
+    expect(built!.duration).toBe(240);
+  });
+
+  it('returns null for media with no known frame count (unprobed/offline)', () => {
+    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov', frameCount: null })).toBeNull();
+    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov' })).toBeNull();
   });
 });

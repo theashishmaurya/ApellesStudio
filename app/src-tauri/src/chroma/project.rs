@@ -83,10 +83,47 @@
 //! explicitly-created, possibly-still-empty bin paths (new: [`chroma_media_create_folder`])
 //! alongside the existing "folders are implied by items' `folder` strings" model —
 //! see the D-059 decision for why a full bin-hierarchy entity wasn't needed.
+//!
+//! **Unified clip identity, Edit ↔ Colorist (D-070, `docs/notes/unified-clip-model.md`).**
+//! [`ProjectShot`] **retires as the persisted grading list** — Colorist's
+//! shot strip now reads the active `chroma_timeline::Timeline`'s clips
+//! directly (see [`open_manifest`]), the same clips the Edit tab drags onto
+//! the timeline. The struct itself, and [`ProjectManifest::shots`]/
+//! [`ProjectManifest::active_shot`], are kept **read-only** — still
+//! deserialized (so an old `project.json` still parses and its legacy
+//! migration still runs), never written by anything new — purely so
+//! [`migrate_shot_grades_to_clips`] has a legacy list to migrate grade files
+//! *from* on a project's first open after this decision. Nothing pushes a
+//! `ProjectShot` any more: [`new_project_in`], the repurposed
+//! [`chroma_project_add_shot`] (now "append a clip to the active timeline
+//! referencing this pool item," the Colorist-side counterpart of a
+//! Sources-panel drag onto the Edit tab), and the new
+//! [`chroma_project_add_shot_paths`]/[`chroma_project_remove_clip`] all
+//! operate on `chroma_timeline::Clip` via [`append_media_clip`] instead.
+//! [`ProjectManifest::active_clip_id`] replaces `active_shot` as the
+//! persisted "which clip is Colorist grading" pointer — stable across
+//! reorders (a clip id, not an index); [`resolve_active_clip_index`] falls
+//! back to the legacy `active_shot`/`shots` pair exactly once, the first
+//! time a pre-migration project is opened. [`chroma_project_save`] no
+//! longer takes a `shots` list at all (the timeline, persisted separately by
+//! `chroma::edit`'s `chroma_timeline_set`, is the only durable clip list
+//! now) — it just persists `active_clip_id` + regenerates `thumb.jpg`.
+//! `Clip::media_id` (the crate-side half of this decision) is the new
+//! pool-item back-link `ProjectShot::media_id` used to be; a clip built
+//! before this decision (via `Timeline::from_shots`, i.e. every clip in
+//! every project.json saved before today) never has it, so matching falls
+//! back to `Clip::shot_id` (an exact backlink, when the clip was built from
+//! a legacy shot) and then `source_path` — see [`shot_matches_clip`]'s own
+//! doc for why `shot_id` is used even though the scoping doc only named
+//! `media_id`/`source_path`: the real `~/Movies/Chroma/New.chroma` project
+//! has a shot whose `media_id` is dangling but whose one true timeline clip
+//! still carries the exact `shot_id` backlink, which would otherwise
+//! misclassify a real, currently-graded shot as "no matching clip."
 
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
+use chroma_timeline::{Clip, Timeline, TrackKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -106,6 +143,15 @@ const CURRENT_MAJOR: u64 = 1;
 
 /// A pool item currently being graded (D-046: references a [`MediaItem`] by
 /// id rather than duplicating its `source_path`/`name` — see the module doc).
+///
+/// **Legacy / read-only as of D-070.** No longer the persisted grading list
+/// — `chroma_timeline::Clip` (+ its new `media_id`) is now the single source
+/// of truth for what's gradable, see the module doc's "Unified clip
+/// identity" section. This struct, and [`ProjectManifest::shots`]/
+/// [`ProjectManifest::active_shot`], still deserialize (so an old
+/// `project.json` keeps loading and [`migrate_legacy_shots`] keeps running)
+/// but nothing constructs a new one any more — kept only as the input to
+/// [`migrate_shot_grades_to_clips`]'s one-time grade-file migration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectShot {
@@ -181,10 +227,23 @@ pub struct ProjectManifest {
     pub created: String,
     #[serde(default)]
     pub modified: String,
+    /// Legacy / read-only as of D-070 — see [`ProjectShot`]'s doc.
     #[serde(default)]
     pub shots: Vec<ProjectShot>,
+    /// Legacy / read-only as of D-070 — superseded by
+    /// [`ProjectManifest::active_clip_id`]. Frozen at whatever value a
+    /// pre-D-070 build last wrote (or `0` for a project created after);
+    /// [`resolve_active_clip_index`] reads it exactly once, as a fallback,
+    /// on a project's first open after this decision.
     #[serde(default)]
     pub active_shot: usize,
+    /// D-070 — the persisted "which clip is Colorist grading" pointer,
+    /// replacing `active_shot`. A clip id (stable across a reorder/move),
+    /// not an index. `None` on a project never opened since this decision
+    /// landed; [`resolve_active_clip_index`] falls back to `active_shot`/
+    /// `shots` for that one-time case, then to the first clip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_clip_id: Option<String>,
     /// Per-project output spec (D-038). Deserializes leniently: a legacy
     /// `settings: {}` or `settings: { "fps": 24 }` still loads (unknown keys
     /// ignored, missing keys → `None`); an absent `settings` key → all `None`.
@@ -243,6 +302,7 @@ impl ProjectManifest {
             modified: now,
             shots: Vec::new(),
             active_shot: 0,
+            active_clip_id: None,
             settings: ProjectSettings::default(),
             timelines: Vec::new(),
             active_timeline: 0,
@@ -562,6 +622,332 @@ fn find_or_create_media(
 }
 
 // --------------------------------------------------------------------------- //
+// unified clip identity (D-070, docs/notes/unified-clip-model.md) — the
+// `ProjectShot` -> `chroma_timeline::Clip` migration: appending a new
+// gradable clip, and matching a legacy shot to the clip that continues it.
+// --------------------------------------------------------------------------- //
+
+/// Append a full-length clip referencing pool item `media_id` to the end of
+/// `timeline`'s first video track (creating one if the timeline has none),
+/// and make it `manifest.active_clip_id`. The pure-model half of the
+/// repurposed [`chroma_project_add_shot`] — split out so it's testable
+/// without a `tauri::State` (same convention `add_media` already uses; see
+/// `open_manifest`'s doc for why the state-taking commands themselves stay
+/// integration-tested against the real project instead). Errors (leaving
+/// `manifest` unchanged) if `media_id` isn't in the pool, or `timeline_idx`
+/// is out of range.
+fn append_media_clip(
+    manifest: &mut ProjectManifest,
+    timeline_idx: usize,
+    media_id: &str,
+) -> Result<Clip, String> {
+    let item = manifest
+        .media_for(media_id)
+        .ok_or_else(|| format!("no media item with id {media_id}"))?
+        .clone();
+    if timeline_idx >= manifest.timelines.len() {
+        return Err(format!("timeline index {timeline_idx} out of range"));
+    }
+    let frames = super::edit::probe_cached(Path::new(&item.source_path))
+        .map(|i| i.frame_count as i64)
+        .unwrap_or(0);
+    let duration = frames.max(1);
+
+    let tl = &mut manifest.timelines[timeline_idx];
+    let track_idx = tl
+        .tracks
+        .iter()
+        .position(|t| t.kind == TrackKind::Video)
+        .unwrap_or_else(|| tl.add_track(TrackKind::Video));
+    let start_frame = tl.tracks[track_idx].duration();
+
+    let clip = Clip {
+        id: uuid::Uuid::new_v4().to_string(),
+        shot_id: None,
+        media_id: Some(media_id.to_string()),
+        name: item.name.clone(),
+        source_path: item.source_path.clone(),
+        source_start: 0,
+        duration,
+        source_len: frames.max(0),
+        start_frame,
+    };
+    tl.tracks[track_idx].clips.push(clip.clone());
+    manifest.active_clip_id = Some(clip.id.clone());
+    Ok(clip)
+}
+
+/// Remove the clip with `clip_id` from wherever it sits on `timeline_idx`
+/// (any track). Errors (leaving `manifest` unchanged) if no clip on that
+/// timeline has that id. Clears `active_clip_id` if it pointed at the
+/// removed clip (the caller/`open_manifest` picks a fresh one on the next
+/// open); does not touch its grade file — same "offline is flagged, not
+/// deleted" discipline the rest of this module uses, a removed clip's grade
+/// simply stops being reachable through the strip, it isn't destroyed.
+fn remove_clip_by_id(
+    manifest: &mut ProjectManifest,
+    timeline_idx: usize,
+    clip_id: &str,
+) -> Result<(), String> {
+    if timeline_idx >= manifest.timelines.len() {
+        return Err(format!("timeline index {timeline_idx} out of range"));
+    }
+    let tl = &mut manifest.timelines[timeline_idx];
+    for ti in 0..tl.tracks.len() {
+        if let Some(ci) = tl.tracks[ti].clips.iter().position(|c| c.id == clip_id) {
+            tl.remove(ti, ci).map_err(|e| e.to_string())?;
+            if manifest.active_clip_id.as_deref() == Some(clip_id) {
+                manifest.active_clip_id = None;
+            }
+            return Ok(());
+        }
+    }
+    Err(format!("no clip with id {clip_id} on the active timeline"))
+}
+
+/// Does `clip` continue `shot` — i.e. is it the clip whose grade file the
+/// shot's `<shot.id>.grade.json` should migrate to? Three signals, in
+/// priority order:
+///
+/// 1. **`clip.shot_id == Some(shot.id)`** — an exact backlink, set by
+///    `Timeline::from_shots` for every clip built from a project's legacy
+///    `shots` list (the common case: a project opened for the first time
+///    since ever, or one that was never touched on the Edit tab).
+/// 2. **`clip.media_id == Some(shot.media_id)`** — the new pool-item link,
+///    for a clip built after D-070 (drag-from-Sources, or the repurposed
+///    `chroma_project_add_shot`) that happens to reference the same pool
+///    item a legacy shot graded.
+/// 3. **`resolve_shot(shot).0 == clip.source_path`** (non-empty only) — the
+///    scoping doc's documented fallback, for a clip that predates both
+///    `shot_id` and `media_id` (neither set) but demonstrably points at the
+///    same file.
+///
+/// `shot_id` is checked first even though the scoping doc only names
+/// `media_id`/`source_path`: the real `~/Movies/Chroma/New.chroma` project
+/// has a shot (`8022aef1…`) whose `media_id` is dangling (its pool item's
+/// `sourcePath` was cleared) but whose one true timeline clip still carries
+/// the exact `shot_id` backlink — matching on `media_id`/`source_path` alone
+/// would misclassify a real, currently-graded shot as "no matching clip" and
+/// warn instead of recognizing it. See D-070.
+fn shot_matches_clip(manifest: &ProjectManifest, shot: &ProjectShot, clip: &Clip) -> bool {
+    if clip.shot_id.as_deref() == Some(shot.id.as_str()) {
+        return true;
+    }
+    if let Some(cm) = &clip.media_id {
+        if cm == &shot.media_id {
+            return true;
+        }
+    }
+    let (source_path, _) = resolve_shot(manifest, shot);
+    !source_path.is_empty() && source_path == clip.source_path
+}
+
+/// Every video-track clip on `manifest`'s active timeline, flattened across
+/// tracks and ordered by `start_frame` — what `open_manifest` sources the
+/// Colorist shot strip from, and what [`migrate_shot_grades_to_clips`]
+/// matches legacy shots against. `None` active timeline (an empty
+/// `timelines` list — should not happen after `chroma::edit::ensure_timeline`
+/// has run, but this function doesn't assume that) yields an empty `Vec`.
+fn active_timeline_video_clips(manifest: &ProjectManifest) -> Vec<Clip> {
+    let Some(tl) = manifest.timelines.get(manifest.active_timeline) else {
+        return Vec::new();
+    };
+    let mut clips: Vec<Clip> = tl
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Video)
+        .flat_map(|t| t.clips.iter().cloned())
+        .collect();
+    clips.sort_by_key(|c| c.start_frame);
+    clips
+}
+
+/// Outcome of [`migrate_shot_grades_to_clips`] — nothing is ever silently
+/// dropped: `migrated` counts a real rename, everything else that couldn't
+/// be migrated unambiguously shows up in `warnings` with the original file
+/// path still in place.
+#[derive(Debug, Default, PartialEq)]
+pub struct GradeMigrationReport {
+    /// grade files actually renamed this call (excludes the "already at the
+    /// right name" no-op case, since nothing was renamed there either).
+    pub migrated: usize,
+    /// one human-readable line per shot that couldn't be migrated
+    /// unambiguously (0 or 2+ matching clips) or whose rename itself failed.
+    pub warnings: Vec<String>,
+}
+
+/// D-070, one-time migration: for each legacy [`ProjectShot`], rename
+/// `<grade_dir>/<shot.id>.grade.json` to `<grade_dir>/<clip.id>.grade.json`
+/// for the one active-timeline video clip [`shot_matches_clip`] says
+/// continues it. Zero or several matches ⇒ the grade file (a real, possibly
+/// irreplaceable piece of graded work) is left exactly where it is and a
+/// warning is added — never guessed, never dropped.
+///
+/// **Mask mattes / tracked-matte dirs need no rename.** A grade's static
+/// mask mattes live in a sibling `<name>.mattes/` dir named after the
+/// *file's own stem* at save time (`grade::grade_name`), and the JSON's
+/// `$matte`/`$trackDir`/`$depthDir` references are relative paths **stored
+/// literally in the file**, resolved by `grade::load_grade` against the
+/// grade file's *parent directory*, never re-derived from its current
+/// filename. Renaming only the `.grade.json` file (not its `.mattes`
+/// sibling) is therefore correct on its own — verified by reading
+/// `grade.rs`'s `save_grade`/`load_grade` before writing this, not assumed.
+///
+/// Idempotent — safe to call on every project open, not just the first:
+/// - A shot with no grade file at all (`old_path` doesn't exist — never
+///   graded, or already migrated by a previous call) is silently skipped:
+///   not a warning, not counted in `migrated`.
+/// - A shot whose one matching clip's id happens to equal the shot's own id
+///   (the common case for a clip built by `Timeline::from_shots`, which
+///   copies the shot id verbatim) has `old_path == new_path` — a true
+///   no-op, not renamed, not warned, not counted (there is nothing to do).
+/// - A shot whose `new_path` already exists but differs from `old_path`
+///   (both files present — a previous migration that didn't finish, or a
+///   hand-copied file) is left alone with a warning rather than overwritten.
+///
+/// Pure I/O against `grade_dir`; does not mutate `manifest` (nothing about a
+/// grade *file's name* is part of the manifest) — `open_manifest` calls this
+/// and just logs `warnings`.
+pub fn migrate_shot_grades_to_clips(
+    manifest: &ProjectManifest,
+    grade_dir: &Path,
+) -> GradeMigrationReport {
+    let mut report = GradeMigrationReport::default();
+    if manifest.shots.is_empty() {
+        return report;
+    }
+    let clips = active_timeline_video_clips(manifest);
+
+    for shot in &manifest.shots {
+        let old_path = grade_dir.join(format!("{}.grade.json", shot.id));
+        if !old_path.is_file() {
+            continue; // nothing graded for this shot, or already migrated
+        }
+        let matches: Vec<&Clip> = clips
+            .iter()
+            .filter(|c| shot_matches_clip(manifest, shot, c))
+            .collect();
+        match matches.as_slice() {
+            [clip] => {
+                let new_path = grade_dir.join(format!("{}.grade.json", clip.id));
+                if new_path == old_path {
+                    continue; // already at the right name — nothing to do
+                }
+                if new_path.exists() {
+                    report.warnings.push(format!(
+                        "shot {} ({}): both {} and {} already exist — left the legacy file in \
+                         place rather than overwrite {}",
+                        shot.id,
+                        shot.media_id,
+                        old_path.display(),
+                        new_path.display(),
+                        new_path.display()
+                    ));
+                    continue;
+                }
+                match std::fs::rename(&old_path, &new_path) {
+                    Ok(()) => report.migrated += 1,
+                    // rename can fail across filesystems/devices — fall back
+                    // to copy + remove so a real filesystem boundary can't
+                    // silently lose the grade.
+                    Err(_) => match std::fs::copy(&old_path, &new_path) {
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(&old_path);
+                            report.migrated += 1;
+                        }
+                        Err(e) => report.warnings.push(format!(
+                            "shot {} ({}): failed to migrate grade file {} -> {}: {e}",
+                            shot.id,
+                            shot.media_id,
+                            old_path.display(),
+                            new_path.display()
+                        )),
+                    },
+                }
+            }
+            [] => report.warnings.push(format!(
+                "shot {} ({}) has no matching clip on the active timeline — its grade file \
+                 at {} was left untouched",
+                shot.id,
+                shot.media_id,
+                old_path.display()
+            )),
+            many => report.warnings.push(format!(
+                "shot {} ({}) matches {} clips on the active timeline — ambiguous, its grade \
+                 file at {} was left untouched",
+                shot.id,
+                shot.media_id,
+                many.len(),
+                old_path.display()
+            )),
+        }
+    }
+    report
+}
+
+/// Resolve which clip Colorist should open, in priority order: the
+/// persisted [`ProjectManifest::active_clip_id`]; else the legacy
+/// `active_shot`/`shots` pair resolved to whichever clip continues it (a
+/// one-time fallback — the first open of a pre-D-070 project, before
+/// `active_clip_id` has ever been written); else the first clip; `0` if
+/// `clips` is empty (the caller must itself handle "no clips at all").
+/// Returns an **index into `clips`**, matching `ProjectOpenDto::active_shot`'s
+/// existing "index into the returned `shots` array" contract.
+fn resolve_active_clip_index(manifest: &ProjectManifest, clips: &[Clip]) -> usize {
+    if clips.is_empty() {
+        return 0;
+    }
+    if let Some(id) = &manifest.active_clip_id {
+        if let Some(i) = clips.iter().position(|c| &c.id == id) {
+            return i;
+        }
+    }
+    if let Some(shot) = manifest.shots.get(manifest.active_shot) {
+        if let Some(i) = clips
+            .iter()
+            .position(|c| shot_matches_clip(manifest, shot, c))
+        {
+            return i;
+        }
+    }
+    0
+}
+
+/// D-070/D-056: re-resolve a candidate active-clip index (from
+/// [`resolve_active_clip_index`] — "which clip the user/legacy state
+/// picked") through `chroma_timeline::Timeline::resolve_video_clip_at` at
+/// that clip's own `start_frame` — the **same** opaque-top-wins function the
+/// Edit-tab preview and `chroma::audio`'s mixer already call
+/// ([`edit::resolve_video_position`], D-056), not a second copy of the
+/// selection logic. For every project shape that exists today (one video
+/// track) this is a pure no-op: `resolve_video_clip_at` on a single video
+/// track is proven equivalent to a plain position lookup — see
+/// `chroma-timeline`'s own `resolve_video_clip_at_matches_single_track_behavior`
+/// test. It starts mattering once Phase D lands a second video track: if a
+/// higher-priority track has a clip covering the same position, Colorist
+/// grades **that** clip — "whichever clip you'd actually see," matching
+/// what the Edit-tab preview shows at the same frame, never a clip a
+/// lower-priority track's gap happens to leave selected underneath it.
+/// Falls back to `candidate` unchanged if there's no active timeline, no
+/// clip at `candidate`, or (shouldn't happen — the winner came from `clips`
+/// itself) the winning clip's id isn't found in `clips`.
+fn top_wins_clip_index(manifest: &ProjectManifest, clips: &[Clip], candidate: usize) -> usize {
+    let Some(candidate_clip) = clips.get(candidate) else {
+        return candidate;
+    };
+    let Some(tl) = manifest.timelines.get(manifest.active_timeline) else {
+        return candidate;
+    };
+    match tl.resolve_video_clip_at(candidate_clip.start_frame) {
+        Some((_, winner, _)) => clips
+            .iter()
+            .position(|c| c.id == winner.id)
+            .unwrap_or(candidate),
+        None => candidate,
+    }
+}
+
+// --------------------------------------------------------------------------- //
 // where projects live
 // --------------------------------------------------------------------------- //
 
@@ -859,16 +1245,24 @@ pub fn new_project_in(
         .map_err(|e| format!("create {}: {e}", project_dir.display()))?;
 
     let mut manifest = ProjectManifest::fresh(&clean);
-    // D-046: every seed path lands in the pool first (find-or-create, probed),
-    // then a shot referencing it — this is the "add to grading" flow's entry
-    // point, same choke point `chroma_project_save`/`_relink` use.
-    for p in media_paths {
-        let media_id = find_or_create_media(&mut manifest, p, None);
-        manifest.shots.push(ProjectShot {
+    // D-070: every seed path lands in the pool first (find-or-create, probed),
+    // then a `chroma_timeline::Clip` referencing it on a fresh timeline — the
+    // Edit tab's timeline is the single source of truth for what's gradable
+    // now, not a separate `ProjectShot` list (see the module doc).
+    if !media_paths.is_empty() {
+        let timeline = Timeline {
             id: uuid::Uuid::new_v4().to_string(),
-            media_id,
-            frame: 0,
-        });
+            name: clean.clone(),
+            rate: None,
+            tracks: Vec::new(),
+        };
+        manifest.timelines.push(timeline);
+        manifest.active_timeline = manifest.timelines.len() - 1;
+        let idx = manifest.active_timeline;
+        for p in media_paths {
+            let media_id = find_or_create_media(&mut manifest, p, None);
+            append_media_clip(&mut manifest, idx, &media_id)?;
+        }
     }
 
     // D-038: seed the project's output spec from the first shot's clip so a
@@ -1001,6 +1395,18 @@ pub struct ProjectOpenDto {
     pub settings: ProjectSettings,
 }
 
+/// D-070: `manifest.shots` (legacy `ProjectShot`) is no longer where
+/// Colorist's shot strip comes from — see the module doc's "Unified clip
+/// identity" section. This function is the one integration point tying
+/// together `chroma::edit::ensure_timeline` (build a timeline from legacy
+/// shots on a project's very first open, same fallback `chroma_timeline_get`
+/// always had), [`migrate_shot_grades_to_clips`] (one-time grade-file
+/// rename), and [`active_timeline_video_clips`]/[`resolve_active_clip_index`]
+/// (source the DTO from the active timeline's clips). Not unit-tested
+/// directly (needs a real `tauri::State`, same as every other state-taking
+/// command in this module) — its pieces each have real unit tests of their
+/// own, and the whole path is verified against the owner's actual
+/// `~/Movies/Chroma/New.chroma` project (see `docs/08-decisions.md`'s D-070).
 async fn open_manifest(
     project_dir: PathBuf,
     manifest: ProjectManifest,
@@ -1009,27 +1415,52 @@ async fn open_manifest(
     // start from a clean session — a project open replaces whatever was loaded
     state::set_current_video(None);
 
-    let shot_count = manifest.shots.len();
-    let active_shot = manifest.active_shot.min(shot_count.saturating_sub(1));
+    let mut manifest = super::edit::ensure_timeline(&project_dir, manifest, true)?;
+
+    let grade_dir = project_dir.join("grades");
+    let migration = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+    for w in &migration.warnings {
+        log::warn!("[chroma::project] grade migration: {w}");
+    }
+    if migration.migrated > 0 || !migration.warnings.is_empty() {
+        log::info!(
+            "[chroma::project] grade migration: {} file(s) migrated, {} warning(s)",
+            migration.migrated,
+            migration.warnings.len()
+        );
+    }
+
+    let clips = active_timeline_video_clips(&manifest);
+    // D-056/D-070: the candidate clip (persisted active_clip_id, or the
+    // legacy active_shot fallback) is re-resolved through the same top-wins
+    // function the preview path uses — see `top_wins_clip_index`'s doc.
+    let candidate_shot = resolve_active_clip_index(&manifest, &clips);
+    let active_shot = top_wins_clip_index(&manifest, &clips, candidate_shot);
 
     let mut online_paths: Vec<PathBuf> = Vec::new();
-    let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(manifest.shots.len());
+    let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(clips.len());
 
-    for shot in &manifest.shots {
-        let (source_path, name) = resolve_shot(&manifest, shot);
+    for clip in &clips {
+        let source_path = clip.source_path.clone();
+        let name = if clip.name.trim().is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            clip.name.clone()
+        };
         let online = !source_path.is_empty() && media_item_is_online(&source_path);
+        let frame = clip.source_start.max(0) as u64;
 
         if online {
             let src = PathBuf::from(&source_path);
-            match load::load_video_frame(&src, &source_path, shot.frame, state).await {
+            match load::load_video_frame(&src, &source_path, frame, state).await {
                 Ok(_) => online_paths.push(src),
                 Err(e) => {
-                    log::warn!("[chroma::project] shot {source_path} failed to load: {e}");
+                    log::warn!("[chroma::project] clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
-                        id: shot.id.clone(),
+                        id: clip.id.clone(),
                         source_path,
                         name,
-                        frame: shot.frame,
+                        frame,
                         offline: true,
                     });
                     continue;
@@ -1038,20 +1469,19 @@ async fn open_manifest(
         }
 
         dtos.push(ProjectShotDto {
-            id: shot.id.clone(),
+            id: clip.id.clone(),
             source_path,
             name,
-            frame: shot.frame,
+            frame,
             offline: !online,
         });
     }
 
-    // put the active shot in front on the canvas (if it's online)
+    // put the active clip in front on the canvas (if it's online)
     if !online_paths.is_empty() {
-        let want = manifest
-            .shots
-            .get(manifest.active_shot)
-            .map(|s| PathBuf::from(resolve_shot(&manifest, s).0));
+        let want = clips
+            .get(active_shot)
+            .map(|c| PathBuf::from(&c.source_path));
         let active_online = want
             .and_then(|w| online_paths.iter().position(|p| p == &w))
             .unwrap_or(0);
@@ -1060,6 +1490,12 @@ async fn open_manifest(
         let _ = super::commands::seek_and_install(frame, None, state).await;
     }
 
+    // persist the resolved active clip id so it's stable on the next open,
+    // independent of the (now-frozen) legacy `active_shot` fallback.
+    manifest.active_clip_id = clips.get(active_shot).map(|c| c.id.clone());
+    manifest.modified = now_rfc3339();
+    save_manifest(&project_dir, &manifest)?;
+
     state::set_project(Some(ProjectRef {
         path: project_dir.clone(),
         name: manifest.name.clone(),
@@ -1067,29 +1503,18 @@ async fn open_manifest(
 
     Ok(ProjectOpenDto {
         project_path: project_dir.to_string_lossy().to_string(),
-        name: manifest.name,
-        grade_dir: project_dir.join("grades").to_string_lossy().to_string(),
-        schema: manifest.schema,
+        name: manifest.name.clone(),
+        grade_dir: grade_dir.to_string_lossy().to_string(),
+        schema: manifest.schema.clone(),
         shots: dtos,
         active_shot,
-        settings: manifest.settings,
+        settings: manifest.settings.clone(),
     })
 }
 
 // --------------------------------------------------------------------------- //
 // save  (the live session -> the manifest + thumb)
 // --------------------------------------------------------------------------- //
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectShotInput {
-    pub id: String,
-    pub source_path: String,
-    #[serde(default)]
-    pub frame: u64,
-    #[serde(default)]
-    pub name: Option<String>,
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1166,11 +1591,20 @@ pub async fn chroma_project_new(
     open_manifest(dir, manifest, &state).await
 }
 
+/// D-070: no longer takes a `shots` list — `chroma_timeline::Clip`s are the
+/// durable clip list now, persisted separately by `chroma::edit`'s
+/// `chroma_timeline_set` (called whenever the Edit-tab timeline actually
+/// changes). This command's job shrinks to what the frontend's
+/// `saveProject()` genuinely still needs on every debounced autosave tick:
+/// persist which clip Colorist is grading (`active_clip_id` — stable across
+/// a reorder, unlike the old index-based `active_shot`), touch `modified`,
+/// regenerate `thumb.jpg` from whatever frame is currently decoded. Grade
+/// files themselves are written separately, straight from the frontend, via
+/// `chroma_save_grade` (unchanged).
 #[tauri::command]
 pub async fn chroma_project_save(
     path: Option<String>,
-    shots: Vec<ProjectShotInput>,
-    active_shot: usize,
+    active_clip_id: Option<String>,
 ) -> Result<ProjectSaveDto, String> {
     let dir = path
         .map(PathBuf::from)
@@ -1192,21 +1626,7 @@ pub async fn chroma_project_save(
     if let Some(stem) = dir.file_stem() {
         manifest.name = stem.to_string_lossy().to_string();
     }
-    // D-046: the wire shape (`ProjectShotInput`) is unchanged — still
-    // id/sourcePath/frame/name — so the frontend session store didn't need to
-    // change for this pass. Each incoming shot resolves (find-or-create) a
-    // pool item via `find_or_create_media` before becoming a `ProjectShot`.
-    let mut new_shots = Vec::with_capacity(shots.len());
-    for s in shots {
-        let media_id = find_or_create_media(&mut manifest, &s.source_path, s.name.as_deref());
-        new_shots.push(ProjectShot {
-            id: s.id,
-            media_id,
-            frame: s.frame,
-        });
-    }
-    manifest.shots = new_shots;
-    manifest.active_shot = active_shot.min(manifest.shots.len().saturating_sub(1));
+    manifest.active_clip_id = active_clip_id;
     save_manifest(&dir, &manifest)?;
 
     state::set_project(Some(ProjectRef {
@@ -1238,16 +1658,25 @@ pub fn chroma_project_current() -> Option<Value> {
         .map(|p| serde_json::json!({ "name": p.name, "path": p.path.to_string_lossy() }))
 }
 
-/// Re-point one shot at a new source path and reopen the project. D-046:
-/// updates the shot's underlying pool item in place (so any other shot/timeline
-/// clip sharing that `media_id` re-points too, by design — a relink is "this
-/// same logical media now lives here"); if the shot's `media_id` is dangling
-/// (its pool item was removed), find-or-creates one at `new_path` instead and
-/// repoints the shot to it.
+/// Re-point one clip at a new source path and reopen the project. D-070:
+/// operates on the active timeline's `chroma_timeline::Clip` (by id) now,
+/// not the retired `ProjectShot` — a clip's `source_path` is its own ground
+/// truth (Colorist's shot strip reads it directly), not solely derived
+/// through `media_id`/`MediaItem` the way `ProjectShot` used to be, so the
+/// old shot-id-keyed version would silently find nothing for any clip that
+/// isn't also backed by a legacy shot. If the clip has a `media_id`, the
+/// underlying pool item is re-pointed too (so any other clip sharing that
+/// `media_id` re-points as a side effect, by design — a relink is "this
+/// same logical media now lives here"); a clip with no `media_id` (or a
+/// dangling one) gets one via find-or-create at `new_path`. Does **not**
+/// touch the clip's trim window (`source_start`/`duration`/`source_len`) —
+/// the pre-D-070 version had the same limitation (a probe refresh never
+/// reconciled a shot's remembered `frame` either); re-trimming to match a
+/// differently-lengthed replacement file is a real, separate follow-up.
 #[tauri::command]
 pub async fn chroma_project_relink(
     path: Option<String>,
-    shot_id: String,
+    clip_id: String,
     new_path: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<ProjectOpenDto, String> {
@@ -1256,16 +1685,26 @@ pub async fn chroma_project_relink(
         .or_else(|| state::current_project().map(|p| p.path))
         .ok_or("no project loaded")?;
     let mut manifest = load_manifest(&dir)?;
+    let idx = manifest.active_timeline;
+
     let media_id = manifest
-        .shots
+        .timelines
+        .get(idx)
+        .ok_or("no active timeline")?
+        .tracks
         .iter()
-        .find(|s| s.id == shot_id)
-        .ok_or_else(|| format!("shot {shot_id} is not in this project"))?
+        .flat_map(|t| t.clips.iter())
+        .find(|c| c.id == clip_id)
+        .ok_or_else(|| format!("clip {clip_id} is not on the active timeline"))?
         .media_id
         .clone();
 
-    match manifest.media.iter_mut().find(|m| m.id == media_id) {
-        Some(m) => {
+    let resolved_media_id = match media_id
+        .as_deref()
+        .and_then(|mid| manifest.media.iter().position(|m| m.id == mid))
+    {
+        Some(pos) => {
+            let m = &mut manifest.media[pos];
             m.source_path = new_path.clone();
             m.name = Path::new(&new_path)
                 .file_name()
@@ -1276,14 +1715,28 @@ pub async fn chroma_project_relink(
                 .flatten()
                 .as_ref()
                 .map(MediaVideoInfo::from);
+            manifest.media[pos].id.clone()
         }
-        None => {
-            let new_media_id = find_or_create_media(&mut manifest, &new_path, None);
-            if let Some(s) = manifest.shots.iter_mut().find(|s| s.id == shot_id) {
-                s.media_id = new_media_id;
-            }
+        None => find_or_create_media(&mut manifest, &new_path, None),
+    };
+
+    let name = Path::new(&new_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| new_path.clone());
+    let tl = manifest
+        .timelines
+        .get_mut(idx)
+        .ok_or("no active timeline")?;
+    for track in &mut tl.tracks {
+        if let Some(clip) = track.clips.iter_mut().find(|c| c.id == clip_id) {
+            clip.source_path = new_path.clone();
+            clip.name = name;
+            clip.media_id = Some(resolved_media_id);
+            break;
         }
     }
+
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
     open_manifest(dir, manifest, &state).await
@@ -1493,38 +1946,75 @@ pub async fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     Ok(manifest.media.iter().map(MediaItemDto::from).collect())
 }
 
-/// Pure model half of [`chroma_project_add_shot`] — push a new shot
-/// referencing `media_id` and make it active, or error if the id isn't in
-/// the pool. Split out so it's testable without a `tauri::State` (no other
-/// test in this module drives the state-taking commands directly — see
-/// `open_manifest`'s callers — this keeps that convention).
-fn add_shot_for_media(manifest: &mut ProjectManifest, media_id: &str) -> Result<(), String> {
-    if manifest.media_for(media_id).is_none() {
-        return Err(format!("no media item with id {media_id}"));
-    }
-    manifest.shots.push(ProjectShot {
-        id: uuid::Uuid::new_v4().to_string(),
-        media_id: media_id.to_string(),
-        frame: 0,
-    });
-    manifest.active_shot = manifest.shots.len() - 1;
-    Ok(())
-}
-
-/// Create a graded shot referencing an existing pool item (D-046) — the
-/// Sources panel's explicit "add to grading" action, distinct from a plain
-/// `chroma_media_import` (pool-only, no shot). Errors if `media_id` isn't in
-/// the pool. The new shot becomes active; returns the same `ProjectOpenDto`
-/// shape `chroma_project_open`/`_new`/`_relink` do, so the frontend hydrates
-/// it through the exact same `_hydrateOpenDto` path.
+/// D-070: repurposed — "add to grading" now means "append a clip to the
+/// active timeline referencing this pool item," the Colorist-side
+/// equivalent of dragging the same Sources-panel card onto the Edit tab's
+/// timeline (`@chroma/editor`'s `clipFromDraggedMedia`); it no longer
+/// pushes a `ProjectShot` (see the module doc). Ensures a timeline exists
+/// first (same lazy-build fallback every other timeline-touching command
+/// has). Errors if `media_id` isn't in the pool. The new clip becomes
+/// `active_clip_id`; returns the same `ProjectOpenDto` shape
+/// `chroma_project_open`/`_new`/`_relink` do, so the frontend hydrates it
+/// through the exact same `_hydrateOpenDto` path — this command's own wire
+/// signature (`{ mediaId }` in, `ProjectOpenDto` out) is unchanged, so
+/// `SourcesPanel.tsx`'s call site needed no update, only its doc comment.
 #[tauri::command]
 pub async fn chroma_project_add_shot(
     media_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<ProjectOpenDto, String> {
     let dir = require_open_project()?;
+    let manifest = load_manifest(&dir)?;
+    let mut manifest = super::edit::ensure_timeline(&dir, manifest, false)?;
+    let idx = manifest.active_timeline;
+    append_media_clip(&mut manifest, idx, &media_id)?;
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    open_manifest(dir, manifest, &state).await
+}
+
+/// D-070 — the ShotStrip "+" button's project-backed path: probe/pool each
+/// of `paths` (find-or-create, same as `chroma_media_import`) and append a
+/// full-length clip for each to the active timeline in one round trip,
+/// mirroring `chroma_media_import`'s "one batch, one manifest save" shape.
+/// The `useSessionStore.addShots` counterpart for an in-memory "Untitled"
+/// session (no project) stays a plain `chroma_session_add` — see
+/// `useSessionStore.ts`'s doc.
+#[tauri::command]
+pub async fn chroma_project_add_shot_paths(
+    paths: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProjectOpenDto, String> {
+    if paths.is_empty() {
+        return Err("no paths given".into());
+    }
+    let dir = require_open_project()?;
+    let manifest = load_manifest(&dir)?;
+    let mut manifest = super::edit::ensure_timeline(&dir, manifest, false)?;
+    let idx = manifest.active_timeline;
+    for p in &paths {
+        let media_id = find_or_create_media(&mut manifest, p, None);
+        append_media_clip(&mut manifest, idx, &media_id)?;
+    }
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    open_manifest(dir, manifest, &state).await
+}
+
+/// D-070 — remove one clip (by id) from the active timeline; the ShotStrip
+/// "×" button's project-backed path. Errors if no clip with that id is on
+/// the active timeline. Does not delete its grade file (see
+/// `remove_clip_by_id`'s doc). Returns the fresh `ProjectOpenDto`, same
+/// `_hydrateOpenDto` path as every other project-mutating command here.
+#[tauri::command]
+pub async fn chroma_project_remove_clip(
+    clip_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProjectOpenDto, String> {
+    let dir = require_open_project()?;
     let mut manifest = load_manifest(&dir)?;
-    add_shot_for_media(&mut manifest, &media_id)?;
+    let idx = manifest.active_timeline;
+    remove_clip_by_id(&mut manifest, idx, &clip_id)?;
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
     open_manifest(dir, manifest, &state).await
@@ -1559,6 +2049,8 @@ mod tests {
 
     #[test]
     fn new_project_creates_dir_and_manifest() {
+        // D-070: a fresh project's seed media lands on the new timeline as
+        // clips, not `ProjectShot`s — see the module doc.
         let root = tmp("new");
         let (dir, manifest) =
             new_project_in(&root, "My Shoot", &["/a.mov".into(), "/b.mov".into()]).unwrap();
@@ -1566,10 +2058,21 @@ mod tests {
         assert!(dir.join("project.json").is_file());
         assert!(dir.join("grades").is_dir());
         assert_eq!(manifest.schema, SCHEMA);
-        assert_eq!(manifest.shots.len(), 2);
-        assert_eq!(manifest.active_shot, 0);
-        assert_ne!(manifest.shots[0].id, manifest.shots[1].id);
-        assert_eq!(resolve_shot(&manifest, &manifest.shots[0]).1, "a.mov");
+        assert!(
+            manifest.shots.is_empty(),
+            "no ProjectShot is created any more"
+        );
+        assert_eq!(manifest.timelines.len(), 1);
+        let clips = &manifest.timelines[0].tracks[0].clips;
+        assert_eq!(clips.len(), 2);
+        assert_ne!(clips[0].id, clips[1].id);
+        assert_eq!(clips[0].name, "a.mov");
+        assert_eq!(
+            manifest.active_clip_id.as_deref(),
+            Some(clips[1].id.as_str()),
+            "the most recently appended clip is active — matches the old \
+             add_shot_for_media semantics (last added = active)"
+        );
 
         // creating it again is refused
         assert!(new_project_in(&root, "My Shoot", &[]).is_err());
@@ -1581,8 +2084,6 @@ mod tests {
         let root = tmp("roundtrip");
         let (dir, mut manifest) =
             new_project_in(&root, "grade-job", &["/shoot/A001.mov".into()]).unwrap();
-        manifest.shots[0].frame = 120;
-        manifest.active_shot = 0;
         // D-038: typed per-project output spec round-trips
         manifest.settings = ProjectSettings {
             width: Some(1920),
@@ -1594,12 +2095,10 @@ mod tests {
 
         let reloaded = load_manifest(&dir).unwrap();
         assert_eq!(reloaded.name, "grade-job");
-        assert_eq!(reloaded.shots.len(), 1);
-        assert_eq!(reloaded.shots[0].frame, 120);
-        assert_eq!(
-            resolve_shot(&reloaded, &reloaded.shots[0]).0,
-            "/shoot/A001.mov"
-        );
+        assert!(reloaded.shots.is_empty());
+        let clip = &reloaded.timelines[0].tracks[0].clips[0];
+        assert_eq!(clip.source_path, "/shoot/A001.mov");
+        assert_eq!(reloaded.active_clip_id.as_deref(), Some(clip.id.as_str()));
         assert_eq!(reloaded.settings.width, Some(1920));
         assert_eq!(reloaded.settings.height, Some(1080));
         assert_eq!(reloaded.settings.fps, Some(24.0));
@@ -2048,7 +2547,11 @@ mod tests {
         let path_a = root.join("a.mov").to_string_lossy().to_string();
         let path_b = root.join("b.mov").to_string_lossy().to_string();
         let path_c = root.join("c.mov").to_string_lossy().to_string();
-        add_media(&mut manifest, &[path_a.clone(), path_b.clone(), path_c.clone()], None);
+        add_media(
+            &mut manifest,
+            &[path_a.clone(), path_b.clone(), path_c.clone()],
+            None,
+        );
         let id_a = manifest.media[0].id.clone();
         let id_b = manifest.media[1].id.clone();
         let id_c = manifest.media[2].id.clone();
@@ -2086,10 +2589,20 @@ mod tests {
         .expect("an unknown id in the batch should be skipped, not fail the whole call");
 
         let reloaded = load_manifest(&dir).unwrap();
-        assert_eq!(reloaded.media.len(), 1, "only the untouched item should remain");
+        assert_eq!(
+            reloaded.media.len(),
+            1,
+            "only the untouched item should remain"
+        );
         assert_eq!(reloaded.media[0].id, id_c);
-        assert!(!cache_a.exists(), "a's cached thumbnail should be cleaned up too");
-        assert!(!cache_b.exists(), "b's cached thumbnail should be cleaned up too");
+        assert!(
+            !cache_a.exists(),
+            "a's cached thumbnail should be cleaned up too"
+        );
+        assert!(
+            !cache_b.exists(),
+            "b's cached thumbnail should be cleaned up too"
+        );
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
@@ -2691,31 +3204,52 @@ mod tests {
     // --- shots/media unification (D-046) ------------------------------------
 
     #[test]
-    fn new_project_shots_reference_pool_items_not_paths() {
+    fn new_project_clips_reference_pool_items_not_paths() {
+        // D-070: a fresh project no longer creates a `ProjectShot` — the
+        // seed media lands directly on the new timeline as a `Clip`
+        // referencing the pool item via `media_id`.
         let root = tmp("unify_new_project");
         let a = root.join("a.mov").to_string_lossy().to_string();
         let (_dir, manifest) = new_project_in(&root, "unify", &[a.clone()]).unwrap();
         assert_eq!(manifest.media.len(), 1, "the seed path lands in the pool");
-        assert_eq!(manifest.shots.len(), 1);
-        assert_eq!(
-            manifest.shots[0].media_id, manifest.media[0].id,
-            "the shot references the pool item, not the path directly"
+        assert!(
+            manifest.shots.is_empty(),
+            "no ProjectShot is created any more"
         );
-        let (path, name) = resolve_shot(&manifest, &manifest.shots[0]);
-        assert_eq!(path, a);
-        assert_eq!(name, "a.mov");
+        assert_eq!(manifest.timelines.len(), 1);
+        let clip = &manifest.timelines[0].tracks[0].clips[0];
+        assert_eq!(
+            clip.media_id.as_deref(),
+            Some(manifest.media[0].id.as_str()),
+            "the clip references the pool item, not the path directly"
+        );
+        assert_eq!(clip.source_path, a);
+        assert_eq!(clip.name, "a.mov");
+        assert_eq!(
+            manifest.active_clip_id.as_deref(),
+            Some(clip.id.as_str()),
+            "the seeded clip becomes active"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn shot_survives_its_media_item_being_renamed_and_moved() {
         // renaming/re-filing the pool item (not the shot) is exactly what
-        // "the pool is the source of truth" buys — the shot still resolves
-        // correctly with zero shot-side changes.
+        // "the pool is the source of truth" buys — a (legacy, hand-built)
+        // shot still resolves correctly with zero shot-side changes.
+        // `ProjectShot` is read-only/legacy as of D-070 (see the module
+        // doc), so this test builds one directly rather than via
+        // `new_project_in` (which no longer produces any).
         let root = tmp("unify_rename");
         let a = root.join("a.mov").to_string_lossy().to_string();
-        let (_dir, mut manifest) = new_project_in(&root, "unify-rename", &[a]).unwrap();
-        let shot = manifest.shots[0].clone();
+        let mut manifest = ProjectManifest::fresh("unify-rename");
+        let media_id = find_or_create_media(&mut manifest, &a, None);
+        let shot = ProjectShot {
+            id: "s1".into(),
+            media_id: media_id.clone(),
+            frame: 0,
+        };
         assert_eq!(resolve_shot(&manifest, &shot).1, "a.mov");
 
         manifest.media[0].name = "Hero take".into();
@@ -2845,7 +3379,11 @@ mod tests {
     }
 
     #[test]
-    fn chroma_project_save_attaches_a_new_shot_to_the_pool() {
+    fn chroma_project_save_persists_active_clip_id() {
+        // D-070: chroma_project_save no longer takes a `shots` list — it
+        // just persists `active_clip_id`, touches `modified`, and (best
+        // effort) regenerates thumb.jpg. Clips themselves are the timeline's
+        // job (`chroma_timeline_set`), not this command's.
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = tmp("unify_save");
         let (dir, manifest) = new_project_in(&root, "unify-save", &[]).unwrap();
@@ -2855,13 +3393,6 @@ mod tests {
             name: "unify-save".into(),
         }));
 
-        let clip_path = root.join("clip.mov").to_string_lossy().to_string();
-        let shots = vec![ProjectShotInput {
-            id: "shot-1".into(),
-            source_path: clip_path.clone(),
-            frame: 12,
-            name: Some("clip.mov".into()),
-        }];
         // chroma_project_save is async; drive it on a tiny local runtime
         // rather than pulling tokio::test into this otherwise-sync module.
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -2869,71 +3400,119 @@ mod tests {
             .unwrap();
         rt.block_on(chroma_project_save(
             Some(dir.to_string_lossy().to_string()),
-            shots,
-            0,
+            Some("clip-xyz".into()),
         ))
         .unwrap();
 
         let reloaded = load_manifest(&dir).unwrap();
-        assert_eq!(reloaded.shots.len(), 1);
-        assert_eq!(reloaded.media.len(), 1, "the new shot's path is pooled");
-        assert_eq!(reloaded.media[0].source_path, clip_path);
-        assert_eq!(reloaded.shots[0].media_id, reloaded.media[0].id);
-        assert_eq!(reloaded.shots[0].frame, 12);
+        assert_eq!(reloaded.active_clip_id.as_deref(), Some("clip-xyz"));
+        assert!(
+            reloaded.shots.is_empty(),
+            "save never creates a ProjectShot any more"
+        );
 
-        // saving the same source path again does not duplicate the pool item
-        let shots2 = vec![ProjectShotInput {
-            id: "shot-1".into(),
-            source_path: clip_path.clone(),
-            frame: 30,
-            name: Some("clip.mov".into()),
-        }];
+        // saving again with a different (or no) active clip id updates it
         rt.block_on(chroma_project_save(
             Some(dir.to_string_lossy().to_string()),
-            shots2,
-            0,
+            None,
         ))
         .unwrap();
         let reloaded2 = load_manifest(&dir).unwrap();
-        assert_eq!(reloaded2.media.len(), 1, "re-saving the same path dedupes");
-        assert_eq!(reloaded2.shots[0].frame, 30);
+        assert_eq!(reloaded2.active_clip_id, None);
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn add_shot_for_media_references_an_existing_pool_item() {
-        // the sync model half of `chroma_project_add_shot` — the Sources
-        // panel's "add to grading" action on a pool-only item. The
-        // state-taking command wrapper itself (open_manifest integration) is
-        // verified live against the real project, same as the other
-        // state-taking commands in this module (none are unit-tested
-        // directly — see `open_manifest`'s doc).
+    fn append_media_clip_references_an_existing_pool_item() {
+        // the sync model half of the repurposed `chroma_project_add_shot` —
+        // the Sources panel's "add to grading" action on a pool-only item.
+        // The state-taking command wrapper itself (open_manifest
+        // integration) is verified live against the real project, same as
+        // the other state-taking commands in this module (none are
+        // unit-tested directly — see `open_manifest`'s doc).
         let root = tmp("unify_add_shot");
         let (_dir, mut manifest) = new_project_in(&root, "unify-add-shot", &[]).unwrap();
+        assert!(manifest.timelines.is_empty(), "no media seeded yet");
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "unify-add-shot".into(),
+            rate: None,
+            tracks: Vec::new(),
+        });
+        manifest.active_timeline = 0;
+
         let path = root.join("pool-only.mov").to_string_lossy().to_string();
         add_media(&mut manifest, &[path.clone()], None);
         assert!(
-            manifest.shots.is_empty(),
-            "a plain pool import creates no shot"
+            manifest.timelines[0].tracks.is_empty(),
+            "a plain pool import creates no clip"
         );
         let media_id = manifest.media[0].id.clone();
 
-        add_shot_for_media(&mut manifest, &media_id).unwrap();
-        assert_eq!(manifest.shots.len(), 1);
-        assert_eq!(manifest.shots[0].media_id, media_id);
-        assert_eq!(manifest.active_shot, 0);
-        assert_eq!(resolve_shot(&manifest, &manifest.shots[0]).0, path);
-
-        // an unknown media id errors rather than creating a dangling shot
-        assert!(add_shot_for_media(&mut manifest, "no-such-media").is_err());
+        let clip = append_media_clip(&mut manifest, 0, &media_id).unwrap();
         assert_eq!(
-            manifest.shots.len(),
+            manifest.timelines[0].tracks.len(),
             1,
-            "the failed add did not append a shot"
+            "a video track is created"
+        );
+        assert_eq!(manifest.timelines[0].tracks[0].clips.len(), 1);
+        assert_eq!(clip.media_id.as_deref(), Some(media_id.as_str()));
+        assert_eq!(clip.start_frame, 0);
+        assert_eq!(
+            manifest.active_clip_id.as_deref(),
+            Some(clip.id.as_str()),
+            "the appended clip becomes active"
+        );
+        assert_eq!(manifest.media_for(&media_id).unwrap().source_path, path);
+
+        // a second append lands back-to-back after the first, not on top of it
+        let clip2 = append_media_clip(&mut manifest, 0, &media_id).unwrap();
+        assert_eq!(
+            clip2.start_frame, clip.duration,
+            "appended after the first clip"
+        );
+        assert_eq!(manifest.timelines[0].tracks[0].clips.len(), 2);
+
+        // an unknown media id errors rather than creating a dangling clip
+        assert!(append_media_clip(&mut manifest, 0, "no-such-media").is_err());
+        assert_eq!(
+            manifest.timelines[0].tracks[0].clips.len(),
+            2,
+            "the failed append did not add a clip"
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_clip_by_id_lifts_it_and_clears_active_clip() {
+        let root = tmp("unify_remove_clip");
+        let (_dir, mut manifest) = new_project_in(&root, "unify-remove-clip", &[]).unwrap();
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: Vec::new(),
+        });
+        manifest.active_timeline = 0;
+        let path = root.join("a.mov").to_string_lossy().to_string();
+        let media_id = find_or_create_media(&mut manifest, &path, None);
+        let clip = append_media_clip(&mut manifest, 0, &media_id).unwrap();
+        assert_eq!(manifest.active_clip_id.as_deref(), Some(clip.id.as_str()));
+
+        remove_clip_by_id(&mut manifest, 0, &clip.id).unwrap();
+        assert!(manifest.timelines[0].tracks[0].clips.is_empty());
+        assert_eq!(
+            manifest.active_clip_id, None,
+            "removing the active clip clears the pointer"
+        );
+
+        assert!(
+            remove_clip_by_id(&mut manifest, 0, &clip.id).is_err(),
+            "already gone"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2952,5 +3531,514 @@ mod tests {
         // another parallel test may have set its own project; just assert ours
         // is not still the active one
         assert!(state::current_project().map(|p| p.path) != Some(mine.path));
+    }
+
+    // --- unified clip identity (D-070) — grade-file migration ---------------
+
+    fn write_grade_stub(grade_dir: &Path, id: &str) {
+        std::fs::create_dir_all(grade_dir).unwrap();
+        std::fs::write(
+            grade_dir.join(format!("{id}.grade.json")),
+            format!(r#"{{"schema":"chroma.grade/1","shot":{{"source":"{id}"}},"adjustments":{{"exposure":0.4}},"notes":""}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn migrate_shot_grades_to_clips_migrates_the_clean_1to1_case() {
+        let root = tmp("unify_migrate_clean");
+        let grade_dir = root.join("grades");
+        write_grade_stub(&grade_dir, "shot-1");
+
+        let mut manifest = ProjectManifest::fresh("x");
+        manifest.shots.push(ProjectShot {
+            id: "shot-1".into(),
+            media_id: "m1".into(),
+            frame: 0,
+        });
+        manifest.media.push(MediaItem {
+            id: "m1".into(),
+            source_path: "/a.mov".into(),
+            name: "a.mov".into(),
+            added: String::new(),
+            video: None,
+            folder: None,
+        });
+        // a clip built after D-070 (drag-from-Sources): its own fresh id,
+        // linked to the same pool item via media_id — not shot_id.
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: vec![chroma_timeline::Track {
+                kind: TrackKind::Video,
+                gain: 1.0,
+                clips: vec![Clip {
+                    id: "clip-xyz".into(),
+                    media_id: Some("m1".into()),
+                    name: "a.mov".into(),
+                    source_path: "/a.mov".into(),
+                    duration: 10,
+                    source_len: 10,
+                    start_frame: 0,
+                    ..Default::default()
+                }],
+            }],
+        });
+
+        let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(report.migrated, 1);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(!grade_dir.join("shot-1.grade.json").exists());
+        assert!(grade_dir.join("clip-xyz.grade.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_shot_grades_to_clips_warns_and_keeps_the_file_when_no_clip_matches() {
+        // the real-world case: a shot was graded but never dragged onto the
+        // Edit tab's timeline — zero matching clips. Must warn, not error,
+        // not drop the grade file.
+        let root = tmp("unify_migrate_unmatched");
+        let grade_dir = root.join("grades");
+        write_grade_stub(&grade_dir, "shot-1");
+
+        let mut manifest = ProjectManifest::fresh("x");
+        manifest.shots.push(ProjectShot {
+            id: "shot-1".into(),
+            media_id: "m1".into(),
+            frame: 0,
+        });
+        manifest.media.push(MediaItem {
+            id: "m1".into(),
+            source_path: "/a.mov".into(),
+            name: "a.mov".into(),
+            added: String::new(),
+            video: None,
+            folder: None,
+        });
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: Vec::new(),
+        });
+
+        let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(report.migrated, 0);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0].contains("shot-1"),
+            "{:?}",
+            report.warnings
+        );
+        assert!(
+            grade_dir.join("shot-1.grade.json").exists(),
+            "the grade file is left exactly where it was — nothing dropped"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_shot_grades_to_clips_warns_on_ambiguous_multiple_matches() {
+        let root = tmp("unify_migrate_ambiguous");
+        let grade_dir = root.join("grades");
+        write_grade_stub(&grade_dir, "shot-1");
+
+        let mut manifest = ProjectManifest::fresh("x");
+        manifest.shots.push(ProjectShot {
+            id: "shot-1".into(),
+            media_id: "m1".into(),
+            frame: 0,
+        });
+        manifest.media.push(MediaItem {
+            id: "m1".into(),
+            source_path: "/a.mov".into(),
+            name: "a.mov".into(),
+            added: String::new(),
+            video: None,
+            folder: None,
+        });
+        let clip = |id: &str| Clip {
+            id: id.into(),
+            media_id: Some("m1".into()),
+            name: "a.mov".into(),
+            source_path: "/a.mov".into(),
+            duration: 10,
+            source_len: 10,
+            start_frame: 0,
+            ..Default::default()
+        };
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: vec![chroma_timeline::Track {
+                kind: TrackKind::Video,
+                gain: 1.0,
+                clips: vec![clip("clip-a"), clip("clip-b")],
+            }],
+        });
+
+        let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(report.migrated, 0);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(
+            report.warnings[0].contains("2 clips"),
+            "{:?}",
+            report.warnings
+        );
+        assert!(grade_dir.join("shot-1.grade.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrate_shot_grades_to_clips_is_idempotent() {
+        let root = tmp("unify_migrate_idempotent");
+        let grade_dir = root.join("grades");
+        write_grade_stub(&grade_dir, "shot-1");
+
+        let mut manifest = ProjectManifest::fresh("x");
+        manifest.shots.push(ProjectShot {
+            id: "shot-1".into(),
+            media_id: "m1".into(),
+            frame: 0,
+        });
+        manifest.media.push(MediaItem {
+            id: "m1".into(),
+            source_path: "/a.mov".into(),
+            name: "a.mov".into(),
+            added: String::new(),
+            video: None,
+            folder: None,
+        });
+        manifest.timelines.push(Timeline {
+            id: "t1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: vec![chroma_timeline::Track {
+                kind: TrackKind::Video,
+                gain: 1.0,
+                clips: vec![Clip {
+                    id: "clip-xyz".into(),
+                    media_id: Some("m1".into()),
+                    name: "a.mov".into(),
+                    source_path: "/a.mov".into(),
+                    duration: 10,
+                    source_len: 10,
+                    start_frame: 0,
+                    ..Default::default()
+                }],
+            }],
+        });
+
+        let first = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(first.migrated, 1);
+
+        // running it again: the shot's old grade file no longer exists —
+        // real no-op, no warning, nothing (re-)migrated.
+        let second = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(second.migrated, 0);
+        assert!(second.warnings.is_empty(), "{:?}", second.warnings);
+        assert!(grade_dir.join("clip-xyz.grade.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A clip built by `Timeline::from_shots` (the common "project opened
+    /// for the first time" case) copies the shot id verbatim as the clip
+    /// id — the grade file is already at the right name, a true no-op, not
+    /// a warning.
+    #[test]
+    fn migrate_shot_grades_to_clips_noop_when_clip_id_already_equals_shot_id() {
+        let root = tmp("unify_migrate_same_id");
+        let grade_dir = root.join("grades");
+        write_grade_stub(&grade_dir, "shot-1");
+
+        let mut manifest = ProjectManifest::fresh("x");
+        manifest.shots.push(ProjectShot {
+            id: "shot-1".into(),
+            media_id: "m1".into(),
+            frame: 0,
+        });
+        manifest.media.push(MediaItem {
+            id: "m1".into(),
+            source_path: "/a.mov".into(),
+            name: "a.mov".into(),
+            added: String::new(),
+            video: None,
+            folder: None,
+        });
+        let tuples = vec![(
+            "shot-1".to_string(),
+            "/a.mov".to_string(),
+            "a.mov".to_string(),
+            10i64,
+        )];
+        manifest.timelines.push(Timeline::from_shots(&tuples));
+
+        let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        assert_eq!(report.migrated, 0, "nothing was actually renamed");
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(grade_dir.join("shot-1.grade.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_active_clip_index_prefers_active_clip_id_then_legacy_active_shot_then_first() {
+        let clips = vec![
+            Clip {
+                id: "c1".into(),
+                media_id: Some("m1".into()),
+                name: "A".into(),
+                source_path: "/a.mov".into(),
+                duration: 5,
+                source_len: 5,
+                start_frame: 0,
+                ..Default::default()
+            },
+            Clip {
+                id: "c2".into(),
+                media_id: Some("m2".into()),
+                name: "B".into(),
+                source_path: "/b.mov".into(),
+                duration: 5,
+                source_len: 5,
+                start_frame: 5,
+                ..Default::default()
+            },
+        ];
+
+        // active_clip_id wins outright when it matches a clip
+        let mut m = ProjectManifest::fresh("x");
+        m.active_clip_id = Some("c2".into());
+        assert_eq!(resolve_active_clip_index(&m, &clips), 1);
+
+        // a stale active_clip_id (matches nothing) falls through to the
+        // legacy active_shot/shots fallback
+        let mut m2 = ProjectManifest::fresh("x");
+        m2.active_clip_id = Some("no-such-clip".into());
+        m2.shots.push(ProjectShot {
+            id: "s1".into(),
+            media_id: "m2".into(),
+            frame: 0,
+        });
+        m2.active_shot = 0;
+        assert_eq!(
+            resolve_active_clip_index(&m2, &clips),
+            1,
+            "resolved via media_id match"
+        );
+
+        // neither present -> the first clip
+        let m3 = ProjectManifest::fresh("x");
+        assert_eq!(resolve_active_clip_index(&m3, &clips), 0);
+
+        // no clips at all -> 0 (caller handles the empty case)
+        assert_eq!(resolve_active_clip_index(&m3, &[]), 0);
+    }
+
+    /// D-056/D-070: `top_wins_clip_index` re-resolves a candidate through
+    /// `Timeline::resolve_video_clip_at` — the same real function requirement
+    /// #6 of the D-070 dispatch calls for, not a second copy of top-wins
+    /// logic. A candidate that's obscured at its own position by a
+    /// higher-priority video track's clip is remapped to the clip that
+    /// actually wins there.
+    #[test]
+    fn top_wins_clip_index_prefers_the_real_compositing_winner() {
+        let bottom = Clip {
+            id: "bottom".into(),
+            name: "Bottom".into(),
+            source_path: "/b.mov".into(),
+            duration: 100,
+            source_len: 100,
+            start_frame: 0,
+            ..Default::default()
+        };
+        let top = Clip {
+            id: "top".into(),
+            name: "Top".into(),
+            source_path: "/t.mov".into(),
+            duration: 100,
+            source_len: 100,
+            start_frame: 0,
+            ..Default::default()
+        };
+        let mut m = ProjectManifest::fresh("x");
+        m.timelines.push(Timeline {
+            id: "tl1".into(),
+            name: "x".into(),
+            rate: None,
+            tracks: vec![
+                // track 0 (higher priority) fully covers track 1's clip
+                chroma_timeline::Track {
+                    kind: TrackKind::Video,
+                    gain: 1.0,
+                    clips: vec![top.clone()],
+                },
+                chroma_timeline::Track {
+                    kind: TrackKind::Video,
+                    gain: 1.0,
+                    clips: vec![bottom.clone()],
+                },
+            ],
+        });
+        m.active_timeline = 0;
+
+        // the flattened `clips` list (what open_manifest builds) — order
+        // depends only on start_frame, both are at 0, so either order is
+        // possible; find each by id rather than assuming index.
+        let clips = active_timeline_video_clips(&m);
+        let bottom_idx = clips.iter().position(|c| c.id == "bottom").unwrap();
+        let top_idx = clips.iter().position(|c| c.id == "top").unwrap();
+
+        // candidate = the bottom (obscured) clip -> re-resolves to top
+        assert_eq!(top_wins_clip_index(&m, &clips, bottom_idx), top_idx);
+        // candidate = the top (winning) clip -> stays put
+        assert_eq!(top_wins_clip_index(&m, &clips, top_idx), top_idx);
+    }
+
+    /// The common, only-real-shape-today case (one video track):
+    /// `top_wins_clip_index` is a pure no-op, matching
+    /// `chroma-timeline`'s own single-track-behavior guarantee.
+    #[test]
+    fn top_wins_clip_index_is_a_noop_on_a_single_video_track() {
+        let root = tmp("unify_top_wins_single");
+        let (_dir, manifest) = new_project_in(&root, "x", &["/a.mov".into()]).unwrap();
+        let clips = active_timeline_video_clips(&manifest);
+        assert_eq!(top_wins_clip_index(&manifest, &clips, 0), 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- the mandatory real-project verification (D-070) ---------------------
+    //
+    // Not run by default `cargo test` (machine-specific: needs the owner's
+    // real `~/Movies/Chroma/New.chroma`, which won't exist on another
+    // checkout or in CI) — run explicitly with
+    // `cargo test -p chroma --lib chroma::project::tests::migration_against_the_real_owner_project -- --ignored --nocapture`.
+    // Operates on a scratch **copy**; never touches the live project.
+
+    fn copy_dir_recursive(src: &Path, dst: &Path) {
+        std::fs::create_dir_all(dst).unwrap();
+        for entry in std::fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            let from = entry.path();
+            let to = dst.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_dir_recursive(&from, &to);
+            } else {
+                std::fs::copy(&from, &to).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "machine-specific: needs the owner's real ~/Movies/Chroma/New.chroma"]
+    fn migration_against_the_real_owner_project() {
+        let home = std::env::var("HOME").expect("HOME");
+        let real_dir = PathBuf::from(&home).join("Movies/Chroma/New.chroma");
+        assert!(
+            real_dir.join("project.json").is_file(),
+            "expected {} to exist — this test is a manual, one-off verification, \
+             see the D-070 decision writeup for its recorded output",
+            real_dir.display()
+        );
+
+        // copy into a fresh scratch dir — never touch the live project.
+        let scratch = tmp("unify_real_project_migration");
+        copy_dir_recursive(&real_dir, &scratch);
+
+        let original_grade_files: std::collections::BTreeSet<String> =
+            std::fs::read_dir(scratch.join("grades"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+        let original_total_bytes: u64 = original_grade_files
+            .iter()
+            .map(|f| {
+                std::fs::metadata(scratch.join("grades").join(f))
+                    .unwrap()
+                    .len()
+            })
+            .sum();
+
+        let manifest = load_manifest(&scratch).expect("load the real project.json");
+        eprintln!(
+            "[D-070 real-project migration] {} ProjectShot(s), {} timeline(s), active_timeline={}",
+            manifest.shots.len(),
+            manifest.timelines.len(),
+            manifest.active_timeline
+        );
+
+        let manifest = super::super::edit::ensure_timeline(&scratch, manifest, false)
+            .expect("ensure_timeline");
+        let clips = active_timeline_video_clips(&manifest);
+        eprintln!(
+            "[D-070 real-project migration] active timeline has {} video clip(s)",
+            clips.len()
+        );
+
+        let grade_dir = scratch.join("grades");
+        let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
+        eprintln!(
+            "[D-070 real-project migration] migrated={} warnings={}",
+            report.migrated,
+            report.warnings.len()
+        );
+        for w in &report.warnings {
+            eprintln!("[D-070 real-project migration] WARNING: {w}");
+        }
+
+        // nothing lost: every original grade file's bytes are still present
+        // *somewhere* under grades/ (either at its old name — untouched, a
+        // warned/no-clip case — or renamed to a clip id, or unchanged
+        // because old_path == new_path).
+        let final_total_bytes: u64 = std::fs::read_dir(&grade_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+        assert_eq!(
+            final_total_bytes, original_total_bytes,
+            "total grade-file bytes under grades/ must be unchanged — nothing lost"
+        );
+        let final_grade_files: std::collections::BTreeSet<String> = std::fs::read_dir(&grade_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            final_grade_files.len(),
+            original_grade_files.len(),
+            "same number of grade files before and after — none deleted, none duplicated"
+        );
+
+        // every warned shot's original grade file must still exist untouched
+        for shot in &manifest.shots {
+            let old_name = format!("{}.grade.json", shot.id);
+            if original_grade_files.contains(&old_name) {
+                let still_has_a_grade_file = final_grade_files.contains(&old_name)
+                    || active_timeline_video_clips(&manifest)
+                        .iter()
+                        .any(|c| final_grade_files.contains(&format!("{}.grade.json", c.id)));
+                assert!(
+                    still_has_a_grade_file,
+                    "shot {} had a grade file before migration but it's unaccounted for after",
+                    shot.id
+                );
+            }
+        }
+
+        eprintln!(
+            "[D-070 real-project migration] verified: {} grade file(s), {} byte(s) total, \
+             none lost across migration",
+            final_grade_files.len(),
+            final_total_bytes
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 }

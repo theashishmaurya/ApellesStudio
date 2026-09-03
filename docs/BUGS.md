@@ -74,6 +74,15 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-019 — A clip dragged onto the Edit-tab timeline never showed up in Colorist at all — "add to grading" was a separate, silently-required second step
+status: fixed (2026-09-03, D-070) · severity: high (reads as "the app lost my clip," not just missing polish) · area: `app/src-tauri/src/chroma/project.rs`, `app/src/store/useSessionStore.ts`, `app/src/components/chroma/ShotStrip.tsx`
+- **found:** owner's own live repro, 2026-09-03 — "Colorist shows nothing even though I have a shot selected [on the Edit tab]," while looking at Resolve for comparison ("we have one clip we add ... not multiple").
+- **repro:** open a project, drag any Sources-panel item onto the Edit tab's timeline.
+- **expected:** the clip is immediately gradable in Colorist, same clip, same identity — no separate step.
+- **actual (pre-fix):** nothing in Colorist changed at all. The shot strip (`ShotStrip.tsx`, via `useSessionStore`) read `ProjectManifest.shots` (`ProjectShot`, a separate persisted list keyed by pool-item id), which only `chroma_project_add_shot` ("+" in the Sources panel) ever appended to. A drag onto the Edit tab created a `chroma_timeline::Clip` on an entirely different list, with no structural link back to `ProjectShot` at all — the two "this clip exists in my project" actions never talked to each other.
+- **cause:** not one bug in either list — both `ProjectShot` and `chroma_timeline::Clip` did exactly what they were each individually built to do (D-046, D-054). The gap was structural: **four** independent representations of "a clip" existed at once (`state::Shot`, `useSessionStore.shots`/`.grades`, `ProjectShot`, `chroma_timeline::Clip`), each with its own keying scheme, none aware of the others. Full trace in `docs/notes/unified-clip-model.md`.
+- **fix:** `chroma_timeline::Clip` becomes the single source of truth (`Clip.media_id`, new); Colorist's shot strip now reads the active Edit-tab timeline's clips directly, so a dragged clip is immediately visible and gradable — no second "add to grading" step required (though the "+" button stays, now as a convenience that does the same append server-side). `ProjectShot` retired as the persisted grading list. Full writeup, matching/migration detail, and real numbers: D-070 in `docs/08-decisions.md`.
+
 ## B-015 — Colorist preview flashes to a blank/stale image on every shot switch, with no loading indication
 status: fixed (2026-09-03, D-063) · severity: medium (no data loss; reads as broken, not just unpolished — this is what the owner reported as "a refresh/flicker") · area: `app/src/components/panel/Editor.tsx`, `app/src/store/useSessionStore.ts`
 - **found:** owner's own hands-on testing, 2026-09-03 — clicking a different shot in the strip, or "add to grading" from Sources, showed a brief flash with nothing telling them whether it was loading or had actually failed.
