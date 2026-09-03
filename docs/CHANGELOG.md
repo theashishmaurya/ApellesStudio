@@ -4,6 +4,35 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Multi-track NLE Phase B1: opaque top-wins video-track
+  resolution (D-056).** Real finding: opaque "top wins" compositing needed
+  **no new rendering/GPU code** — with no alpha in play, the top-priority
+  track's clip fully obscures whatever's below, so this was a track-
+  **selection** problem, not a pixel-compositing one (confirms the phase
+  brief's hypothesis rather than assuming it). Landed as
+  `chroma_timeline::Timeline::resolve_video_clip_at` — pure model logic,
+  video tracks walked in `Vec` index order (lower index = higher priority,
+  "on top" — matches Palmier Pro's own track convention and every existing
+  project's single-track behavior), first track with a clip (not a gap) at
+  the position wins, falls through to the next only on a gap. `edit.rs`'s
+  `resolve_video_position` (shared by `chroma_timeline_frame` and the audio
+  path) is now a thin wrapper around it that probes the winning clip.
+  `cargo test -p chroma-timeline` 30/30 (+7 new tests: both-tracks-have-
+  content, only-top, only-bottom, neither, top-gap-falls-through, no-video-
+  tracks, single-track-behavior-unchanged-regression); `cargo test
+  --manifest-path app/src-tauri/Cargo.toml chroma::` 113/113 (+1 real-clip
+  integration test exercising the Tauri command path end to end); `tsc
+  --noEmit` 64/64, unaffected (no frontend file touched). GUI boot not
+  performed this session — port 1420 was already held by the main
+  checkout's own dev server — so the regression proof instead rests on the
+  real-media integration test hitting the exact `chroma_timeline_frame`
+  command plus a test proving the new resolution path is identical to the
+  old one for every single-track position (see D-056). Phase B2 (N tracks)
+  is now mostly "confirm it generalizes," since the same walk already has no
+  hardcoded track count. Phase B3 (real blend modes/opacity, the genuinely
+  new GPU work) is next for the compositor. See D-056,
+  `docs/notes/multi-track-nle.md`.
+
 - **2026-09-03** — **Multi-track NLE Phase A: `Clip.start_frame` + gap-aware
   edit ops + track management (D-054).** `chroma-timeline::Clip` gained an
   explicit, timeline-absolute `start_frame: i64` (not a `Gap` item — see

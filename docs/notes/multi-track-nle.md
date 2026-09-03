@@ -80,10 +80,29 @@ work — a 2-track compositor and an N-track one are nearly the same engineering
 part is the compositing math/pipeline itself, not "how many."
 
 **Sub-phasing this, since it's the long pole:**
-- B1 — two tracks, opaque only (no blend modes, top track with content just wins) —
-  proves the actual rendering pipeline end to end, smallest real slice.
-- B2 — N tracks, still opaque-wins.
-- B3 — real blend modes / opacity (needed for anything beyond simple video-over-video).
+- ~~B1 — two tracks, opaque only~~ — **done, D-056 (2026-09-03).** Real finding:
+  opaque top-wins compositing needed **no new rendering/GPU code** — with no
+  alpha in play, the top track (when it has a clip at the position) fully
+  obscures whatever's below, so this reduced entirely to a track-**priority-
+  selection** problem, not a compositing one. Landed as
+  `chroma_timeline::Timeline::resolve_video_clip_at` (pure model logic: video
+  tracks walked in index order, lower index = higher priority/"on top", first
+  one with a clip — not a gap — at the position wins, falling through only on
+  a gap), with `edit.rs`'s `resolve_video_position` (shared by
+  `chroma_timeline_frame` and the audio path) as a thin wrapper that probes
+  the winning clip's source. `cargo test -p chroma-timeline` 30/30 (+7 for the
+  new resolution logic); `cargo test --manifest-path app/src-tauri/Cargo.toml
+  chroma::` 113/113 (+1 real-clip integration test). Still nothing in the app
+  populates a second video track (Phase D territory) — this phase proved the
+  resolution logic against a `cargo test` fixture built with Phase A's real
+  ops (`add_track`/`move_clip`), same as Phase A itself proved its ops against
+  tests rather than a UI. See D-056 for the full write-up.
+- B2 — N tracks, still opaque-wins. Per D-056: the same walk in
+  `resolve_video_clip_at` is a plain filtered `Vec` iteration with no
+  hardcoded track count, so it already generalizes past 2 tracks with zero
+  additional code — B2 is now mostly "test/confirm N>2," not new engineering.
+- B3 — real blend modes / opacity (needed for anything beyond simple video-over-video)
+  — this is where the genuinely new GPU/pixel-compositing work still is.
 
 ### Phase C — Audio mixing
 Extend `chroma::audio`'s `cpal` pipeline to sum N tracks with per-track gain instead of
@@ -118,9 +137,13 @@ to attach to.
 
 ## Status
 
-Scoped 2026-09-03. **Phase A done, D-054 (2026-09-03)** — see that phase's
-own section above for what landed. B and C are next (independent of each
-other; B is the long pole). D/E/F remain blocked on B. This note is the
-scoping record — update it (or promote pieces of it into `D-NNN` entries) as
-each phase actually lands, the same discipline every other feature this week
-has followed.
+Scoped 2026-09-03. **Phase A done, D-054.** **Phase B1 done, D-056
+(2026-09-03)** — see that phase's own section above for what landed and the
+load-bearing finding (opaque top-wins needed no new rendering code, just
+track-priority selection). Phase C (audio mixing) is running concurrently in
+a separate worktree. **B2/B3 are next for the compositor** — B2 is now mostly
+a confirm-at-N>2 pass per B1's finding; B3 (real blend modes) is where the
+actual new GPU/pixel-compositing work still is. D/E/F remain blocked on B
+fully landing. This note is the scoping record — update it (or promote pieces
+of it into `D-NNN` entries) as each phase actually lands, the same discipline
+every other feature this week has followed.

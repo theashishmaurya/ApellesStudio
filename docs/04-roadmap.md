@@ -144,6 +144,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      compositor, no audio — those are Phases B/C/D, still not started. **Phase
      B is next** (the real long pole — see above); C is independent and can
      run in parallel.
+   - ~~**Phase B1 — two video tracks, opaque compositing**~~ — **done, D-056
+     (2026-09-03).** Real finding, worth flagging since it reshapes how big
+     B2/B3 looked from the outside: opaque top-wins compositing needed **no
+     new rendering/GPU code at all** — with no alpha to blend, showing the
+     top track's content fully hides whatever's below, so this is a
+     track-**selection** problem (which one source do we decode and show),
+     not a pixel-compositing one. Landed as `Timeline::resolve_video_clip_at`
+     in `chroma-timeline` (pure model logic — video tracks walked in index
+     order, lower index = higher priority/"on top", first one with a clip,
+     not a gap, at the position wins; falls through only on a gap), with
+     `edit.rs`'s `resolve_video_position` (shared by `chroma_timeline_frame`
+     and the audio path) as a thin wrapper that probes the winning clip.
+     Real multi-texture GPU blending stays Phase B3's job, unstarted. Phase
+     B2 (N tracks) is now essentially free — the same walk already
+     generalizes past 2 tracks without more work, just untested at N>2 yet.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

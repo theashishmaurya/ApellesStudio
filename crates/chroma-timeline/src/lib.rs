@@ -22,6 +22,17 @@
 //! track's clips back to back). N-track compositing/rendering, audio mixing,
 //! and the multi-track UI are separate, later phases (B/C/D) — see that note.
 //!
+//! **Opaque top-wins video-track resolution (D-056, Phase B1):**
+//! `Timeline::resolve_video_clip_at` picks which single video track/clip is
+//! showing at a position — video tracks in index order (lower index = higher
+//! priority), first one with a clip (not a gap) there wins, falling through
+//! to a lower-priority track only on a gap. This crate still does no
+//! rendering/compositing of its own (that stays media-layer work in
+//! `app/src-tauri`); this method only adds the **selection** logic, which
+//! turned out to be all "opaque, top wins" needs — there's no pixel blending
+//! to compute when the winner fully obscures everything below it. Real
+//! multi-texture GPU blending is Phase B3.
+//!
 //! **Status:** D-041 — the MVP edit model: `Timeline::from_shots`, position
 //! helpers (`Track::clip_at`, `Timeline::duration`) and the edit ops
 //! (`reorder` / `trim_start` / `trim_end` / `split` / `remove`), each
@@ -204,6 +215,34 @@ impl Timeline {
     /// Total timeline length in frames — the longest track.
     pub fn duration(&self) -> i64 {
         self.tracks.iter().map(Track::duration).max().unwrap_or(0)
+    }
+
+    /// Resolve timeline position `pos` under **opaque, top-track-wins**
+    /// compositing (D-056, Phase B1 of `docs/notes/multi-track-nle.md`):
+    /// video tracks are checked in priority order — **`tracks` index order,
+    /// lower index = higher priority** ("on top") — and the first one whose
+    /// `Track::clip_at(pos)` returns `Some` (a real clip there, not a gap)
+    /// wins outright. For purely opaque compositing there is no pixel-level
+    /// blend to compute: this is a track-**selection** problem, not a
+    /// rendering one, so the result is just "which single track/clip is
+    /// showing," never a merge of two. Falls through to the next
+    /// lower-priority video track only when a higher one has a gap at this
+    /// exact position; returns `None` once every video track has a gap (or
+    /// there are no video tracks at all) at `pos`.
+    ///
+    /// Deterministic by construction: iterates `self.tracks` (a `Vec`, not a
+    /// `HashMap`) in its stored order every time — no hidden
+    /// iteration-order dependency.
+    ///
+    /// Returns `(track_index, clip, source_frame)` — the track index lets a
+    /// caller report/log which track actually won, though nothing in this
+    /// crate needs it for the resolution itself.
+    pub fn resolve_video_clip_at(&self, pos: i64) -> Option<(usize, &Clip, i64)> {
+        self.tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == TrackKind::Video)
+            .find_map(|(i, t)| t.clip_at(pos).map(|(c, sf)| (i, c, sf)))
     }
 
     /// Reconstruct real positions for any clip loaded from pre-D-054 JSON
@@ -1001,5 +1040,107 @@ mod tests {
             t.move_clip(0, 0, 0, -1),
             Err(TimelineError::NegativePosition(-1))
         );
+    }
+
+    // --- opaque top-wins video-track resolution (D-056, Phase B1) -----------
+
+    /// Build a 2-video-track timeline the same way the app would: start from
+    /// `from_shots` (real op) then `add_track` + `move_clip` (both real,
+    /// tested Phase-A ops) to get a second video track with its own clip,
+    /// rather than hand-rolling a `Timeline` struct literal.
+    ///
+    /// Layout after setup:
+    /// - track 0 (top / higher priority): "A" at `[0, 100)` only — clip "C"
+    ///   (originally at `[150, 350)`) is moved off to make room for the gap
+    ///   cases below, so track 0 is `[0,100)` clip, then a gap to infinity.
+    /// - track 1 (bottom / lower priority): "B" at `[0, 50)`, "C" at
+    ///   `[100, 300)` — chosen so track 1 has content both where track 0 has
+    ///   a clip (`[0,50)`, fully shadowed) and where track 0 has a gap
+    ///   (`[100,300)`, shows through).
+    fn two_video_track_timeline() -> Timeline {
+        let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
+        t.add_track(TrackKind::Video); // track 1, empty
+        t.move_clip(0, 1, 1, 0).unwrap(); // B: track0 -> track1 @ [0,50)
+        t.move_clip(0, 1, 1, 100).unwrap(); // C: track0 -> track1 @ [100,300)
+        t
+    }
+
+    #[test]
+    fn resolve_video_clip_at_top_track_wins_when_both_have_content() {
+        let t = two_video_track_timeline();
+        // frame 10: track 0 has A [0,100), track 1 has B [0,50) — top wins.
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(10).unwrap();
+        assert_eq!(track_idx, 0);
+        assert_eq!(clip.name, "A");
+        assert_eq!(source_frame, 10);
+    }
+
+    #[test]
+    fn resolve_video_clip_at_only_top_has_content() {
+        let t = two_video_track_timeline();
+        // frame 60: track 0 still has A [0,100); track 1's B ended at 50, C
+        // doesn't start until 100 — track 1 has a gap too, but it doesn't
+        // matter, track 0 alone already resolves it.
+        let (track_idx, clip, _) = t.resolve_video_clip_at(60).unwrap();
+        assert_eq!(track_idx, 0);
+        assert_eq!(clip.name, "A");
+    }
+
+    #[test]
+    fn resolve_video_clip_at_only_bottom_has_content() {
+        let t = two_video_track_timeline();
+        // frame 150: track 0's A ended at 100 (nothing after — no clip was
+        // left there), track 1 has C [100,300) — bottom shows through.
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(150).unwrap();
+        assert_eq!(track_idx, 1);
+        assert_eq!(clip.name, "C");
+        assert_eq!(source_frame, 50, "150 - C's start_frame (100)");
+    }
+
+    #[test]
+    fn resolve_video_clip_at_top_gap_falls_through_to_bottom() {
+        let t = two_video_track_timeline();
+        // frame 100: track 0 has nothing (A ended at 100, exclusive), track 1
+        // has C starting exactly at 100 — this is the literal gap-fallthrough
+        // case: a higher-priority track's gap yields to the track below it.
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(100).unwrap();
+        assert_eq!(track_idx, 1);
+        assert_eq!(clip.name, "C");
+        assert_eq!(source_frame, 0);
+    }
+
+    #[test]
+    fn resolve_video_clip_at_neither_track_has_content() {
+        let t = two_video_track_timeline();
+        // frame 400 is past everything on both tracks (A ends at 100, C ends
+        // at 300) — a real dead zone, not just a gap on one side.
+        assert!(t.resolve_video_clip_at(400).is_none());
+        // and a negative position is never resolvable on any track.
+        assert!(t.resolve_video_clip_at(-1).is_none());
+    }
+
+    #[test]
+    fn resolve_video_clip_at_no_video_tracks_is_none() {
+        let t = Timeline::default();
+        assert!(t.resolve_video_clip_at(0).is_none());
+    }
+
+    /// A single-video-track timeline (today's only real shape, D-054's
+    /// baseline) behaves exactly as `Track::clip_at` alone always did —
+    /// resolution through the new multi-track path is a strict superset,
+    /// not a behavior change, for the case every existing project is in.
+    #[test]
+    fn resolve_video_clip_at_matches_single_track_behavior() {
+        let t = Timeline::from_shots(&shots());
+        for pos in [0i64, 99, 100, 149, 150, 349, 350, -1] {
+            let via_track = t.tracks[0].clip_at(pos).map(|(c, sf)| (c.name.clone(), sf));
+            let via_resolve = t
+                .resolve_video_clip_at(pos)
+                .map(|(idx, c, sf)| (idx, c.name.clone(), sf));
+            match via_track {
+                Some((name, sf)) => assert_eq!(via_resolve, Some((0, name, sf))),
+                None => assert_eq!(via_resolve, None),
+            }
+        }
     }
 }
