@@ -9,6 +9,50 @@ numbers are actually calibrated).
 
 ---
 
+## In flight right now (2026-09-03 evening) — 4 parallel background agents
+
+Owner asked to track this live so it's clear what's shipping and where things stand.
+Update this block as each agent lands (move it to a real `D-NNN`/`CHANGELOG` line and
+strike it here, or replace "in progress" with the landed commit) — don't let it go
+stale once everything's actually done, this section is a snapshot, not permanent
+roadmap structure.
+
+- ✅ **Drag-drop freeze in the Edit tab** — done, `b627aa3` (**D-083/B-024**). Root
+  cause: 5 inline-function props to `<TimelineEditor>` got new identity every render;
+  native `dragover` fires continuously, so every tick forced a full re-render
+  (including every track's waveform canvas) — cheap with 1 row, a real freeze once
+  D-080 made cost scale with track count. Fixed with `useCallback` + gating the
+  redundant `setDragOver` call.
+- 🔄 **Full NLE — P0** (owner: "scope it out frontend backend and work till its
+  perfect," referencing Palmier Pro as the feature bar). Real video-track
+  compositing (V1/V2 actually stacked, not opaque top-wins), track lock/hide (mute
+  already existed, D-057), rearrange (track z-order), clip transform
+  (position/scale/rotation/opacity) + keyframes reusing the existing D-034 keyframe
+  engine. In progress — data model (`chroma-timeline::Clip`/`Track` new fields) +
+  a real CPU compositor in `app/src-tauri/src/chroma/edit.rs` are the two hard
+  pieces; UI (track header icons, rearrange, a transform editor on the selected
+  clip) rides on top. No commit yet.
+- 🔄 **Edit tab stuck on "No project open"** — owner reported the click to open a
+  project feels stuck, and landing on the Edit tab right after shows the empty
+  state persistently even though the project genuinely opened (confirmed via
+  `app.log` — Colorist's own preview rendered fine in the same session). Likely the
+  same staleness class D-071 fixed for Colorist (a tab not refreshing when a
+  project opens elsewhere) — `EditorTab.tsx` only refetches on mount + OS window
+  `focus`, no in-app tab-switch trigger. In progress, mirroring D-071's fix pattern
+  in `app/src/main.tsx`.
+- 🔄 **Sidecar memory: diagnostics + TTL auto-unload** — owner: a Python process at
+  5.78GB, "we have a memory leak somewhere... we need some kind of TTL to offload
+  them or else it will be a nightmare." Diagnosing whether this is a real leak or
+  expected cumulative footprint (5 real models loaded into one long-lived process
+  across tonight's session: SAM2, YOLO, ViTMatte, Video-Depth-Anything, MoGe-2 —
+  none ever unloaded before now), building a real `/memory`-style diagnostic
+  endpoint, and — per the owner's explicit follow-up — a real TTL-based automatic
+  idle-unload (per-model last-used timestamp + a background sweep freeing anything
+  idle past the TTL, safe against the existing `_GPU` lock), not just a manual
+  unload endpoint. In progress, `ai/server.py`.
+
+---
+
 ## Now — what's live, by tab
 
 - **Colorist** — the full pre-pivot grade pipeline: primary/curves/wheels/LUT, masks
