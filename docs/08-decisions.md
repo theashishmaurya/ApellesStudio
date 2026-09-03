@@ -6163,3 +6163,55 @@ check `ps aux | grep cargo` first.
   exception after). **No live interactive click-through this pass** — same
   tool limitation D-080 hit: no way to drive the native Tauri window
   without the owner present; pending their next session.
+
+## D-083 — Edit-tab timeline: dragging a clip froze the UI (B-024)
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live, screenshot: "when i drag and drop the UI
+  freezes up this is not performant at all." Dispatched as a separate,
+  scoped fork rather than investigated in the main session, since D-080
+  (this same file's own multi-track rewrite, same day) was the prime
+  suspect and needed a clean read of the code, not a guess.
+- **Root cause.** `TimelinePane.tsx` passed `getActionRender`,
+  `onClickAction`, `onActionMoveEnd`, `onActionResizeEnd`, and `onScroll` to
+  `<TimelineEditor>` as **inline arrow functions written directly in the
+  JSX** — a brand-new function identity on every render of `TimelinePane`.
+  A native HTML5 drag fires `dragover` continuously (many times a second)
+  for its whole duration; the drag handler called `setDragOver(true)`
+  unconditionally on every tick, and each resulting `TimelinePane` render
+  hands `@xzdarcy/react-timeline-editor` a fresh, never-`===`-equal copy of
+  all five of those props. A component rendering many items (every action,
+  across every track) typically uses exactly that kind of prop-identity
+  change as its signal to skip re-rendering an item it's already rendered —
+  handing it a new one every tick defeats that, forcing a full re-render of
+  every visible clip (including canvas recreation for every `Waveform`,
+  D-051) on every single dragover tick. **This exact pattern predates
+  D-080** — confirmed via `git show` against the pre-D-080 revision
+  (830b815), the same inline-function shape was already there — but with a
+  single hardcoded video row, the cost of re-rendering "everything" was
+  small enough to never be felt. D-080 turned the same latent inefficiency
+  into a real, reported freeze simply by making "everything" scale with
+  track count.
+- **Fix.** The five props are now `useCallback`-wrapped with real
+  dependency arrays (`tracks`, `selected`, `rippled`, `pxPerSec`, `fps`,
+  `applyOp` as appropriate) instead of being redefined every render — moved
+  above the component's early returns (`if (!timeline) return null` etc.)
+  since Hooks must run unconditionally; `clipsOf`/`idxOf`/`s2f` moved up
+  alongside them since the callbacks close over them. `setDragOver` and
+  `setDragOver`'s counterpart in `onDragLeave` are also now gated
+  (`prev ? prev : true` / `prev ? false : prev`) as defense-in-depth, so a
+  `setState` call that wouldn't change the value never dispatches at all,
+  regardless of the deeper fix above.
+- **Verification.** `tsc --noEmit -p packages/editor`: 0 errors (unchanged
+  baseline). `vitest run` in `packages/editor`: 45/45 (unchanged — this is
+  a rendering-performance fix, not a change to any pure logic the existing
+  suite covers). `tsc --noEmit -p app`: 64/64, unchanged baseline (no
+  Rust/app-level surface touched). No `cargo` command run for this fix at
+  all — pure TypeScript/React, and a concurrent Rust session's own
+  `cargo tauri dev` was active at the time (confirmed via `ps aux` before
+  starting, per this session's own established discipline for avoiding the
+  `target/` build corruption hit earlier tonight). No live interactive
+  click-through this pass — dispatched while the owner was actively
+  reporting other issues live; the owner's own next drag-and-drop attempt
+  is the real confirmation.

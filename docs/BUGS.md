@@ -74,6 +74,12 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-024 — Edit-tab timeline: dragging a clip froze the UI
+status: fixed (2026-09-03, D-083) · severity: high (drag-and-drop is a core, constant-use interaction) · area: `packages/editor/src/TimelinePane.tsx`
+- **found:** owner, live, screenshot: "when i drag and drop the UI freezes up this is not performant at all."
+- **cause:** `getActionRender`/`onClickAction`/`onActionMoveEnd`/`onActionResizeEnd`/`onScroll` were inline arrow functions in the `<TimelineEditor>` JSX — a new identity every render. A native drag fires `dragover` continuously, and the unconditional `setDragOver(true)` on every tick meant `@xzdarcy/react-timeline-editor` got a brand-new copy of all five props on every tick, defeating whatever per-item skip-rendering it does and forcing a full re-render (including canvas recreation for every `Waveform`) across every track on every single tick. The same inline-function pattern predates D-080 (confirmed via `git show` against the pre-D-080 revision) but re-rendering one hardcoded row was cheap enough to never be felt — D-080's multi-row rewrite made the cost scale with track count, turning it into a real freeze.
+- **fix:** the five props are now `useCallback`-wrapped with real dependency arrays instead of redefined every render; `setDragOver` is gated to only dispatch when the value would actually change. Full writeup: D-083 in `docs/08-decisions.md`.
+
 ## B-023 — Relight `distance` swept the lit side of the face instead of moving the light nearer/farther; some distance/radius combos silently zeroed the light entirely
 status: fixed (2026-09-03, D-079) · severity: high (positional lights unreliable/confusing to use even after B-022/D-076 made them work at all) · area: `app/src-tauri/src/shaders/shader.wgsl`
 - **found:** owner, live, sliding Distance through several values with screenshots at each: "see the distance right working weirdly instead of light coming closer and going in depth, we are getting like rounding angle changing."

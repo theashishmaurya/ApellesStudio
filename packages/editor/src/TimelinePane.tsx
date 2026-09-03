@@ -116,7 +116,7 @@
  * bundled source before writing this).
  */
 
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
@@ -329,13 +329,19 @@ export function TimelinePane() {
     return Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
   };
 
+  // B-024: `dragover` fires continuously (many times/sec) for the whole
+  // duration of a native drag — `setDragOver` is now gated to only actually
+  // dispatch when the value would change, instead of unconditionally on
+  // every single tick. Real, defensive fix regardless of the deeper cause
+  // below (a `setState` call that doesn't change the value still goes
+  // through React's update/scheduler machinery on every call).
   const onDragOver = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-    setDragOver(true);
+    setDragOver((prev) => (prev ? prev : true));
   };
-  const onDragLeave = () => setDragOver(false);
+  const onDragLeave = () => setDragOver((prev) => (prev ? false : prev));
   const onDrop = (e: DragEvent) => {
     setDragOver(false);
     const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
@@ -351,6 +357,145 @@ export function TimelinePane() {
     if (!clip) return; // unprobed / offline media has no known length — nothing to place
     applyOp({ kind: 'add_clip', track: dropTargetTrack(e), clip });
   };
+
+  const clipsOf = (track: number): Track['clips'] => tracks[track]?.clips ?? [];
+  const idxOf = (track: number, actionId: string) => clipsOf(track).findIndex((c) => (c.id || '') === actionId);
+
+  const s2f = (sec: number) => Math.round(sec * fps);
+
+  // B-024 (root cause of the reported freeze during drag-and-drop): these 5
+  // props were previously inline arrow functions in the `<TimelineEditor>`
+  // JSX below — a brand new function identity on EVERY render of
+  // `TimelinePane`, including every `setDragOver`/`setScrollTop` tick a
+  // native drag fires many times a second. `@xzdarcy/react-timeline-editor`
+  // renders every visible action across every row through these props; a
+  // changed `getActionRender`/`onActionMoveEnd`/etc. identity is exactly the
+  // kind of thing a component rendering many items typically uses to decide
+  // whether to skip re-rendering a given item — passing a fresh one on every
+  // tick defeats that, forcing a full re-render (canvas recreation for every
+  // `Waveform`, DOM diffing for every action across every track) on every
+  // single dragover tick. This got dramatically worse with D-080: the same
+  // inline-function pattern existed before D-080 too (checked via `git show`
+  // against the pre-D-080 revision), but re-rendering 1 hardcoded row's
+  // worth of actions was cheap enough to never be felt — re-rendering N
+  // tracks' worth on every tick is what actually froze the UI. `useCallback`
+  // with real dependency arrays keeps these stable across renders that don't
+  // actually change anything these functions read.
+  const getActionRender = useCallback(
+    (action: TimelineAction, row: TimelineRow) => {
+      const ti = Number(row.id);
+      const track = tracks[ti];
+      const i = idxOf(ti, action.id);
+      const clip = i >= 0 ? clipsOf(ti)[i] : null;
+      const isSel = selected?.track === ti && selected.id === action.id;
+      const isRippled = rippled.has(action.id);
+      const pxWidth = (action.end - action.start) * pxPerSec;
+      return (
+        <div
+          className={
+            'relative h-full w-full overflow-hidden rounded ' +
+            (isSel ? 'ring-2 ring-accent ' : '') +
+            (isRippled ? 'ring-2 ring-accent animate-pulse ' : '')
+          }
+          style={{
+            background: isSel
+              ? 'var(--color-accent)'
+              : track?.kind === 'audio'
+                ? 'rgba(120,170,110,0.55)'
+                : 'rgba(90,120,180,0.55)',
+          }}
+        >
+          {clip && track?.kind === 'video' && (
+            <Waveform
+              sourcePath={clip.source_path}
+              startSecs={clip.source_start / fps}
+              durationSecs={clip.duration / fps}
+              width={pxWidth}
+              height={ROW_HEIGHT}
+            />
+          )}
+          {/* D-058/B-013: `pointer-events-none` is load-bearing, not
+              decorative. This label's `z-10` (needed so it paints above the
+              Waveform canvas) has no isolating stacking context between it
+              and the library's own absolutely-positioned
+              `.timeline-editor-action-{left,right}-stretch` resize handles
+              (siblings of this whole content block, rendered *after* it in
+              the DOM but `z-index: auto`) — a block-level, unconstrained-
+              width div, this label silently spans the clip's full width,
+              including both 10px edge zones, and (confirmed live: a real
+              pointer event at the handle's coordinates hit-tested to *this*
+              div, not the handle, until this was added) ate every resize-
+              handle pointerdown before interact.js ever saw it. That's why
+              edge-trim visually did nothing — not a `flexible`/`dragLine`
+              problem (D-051 was right about the library's own mechanism), a
+              hit-testing problem in what we paint on top of it. */}
+          <div
+            className={
+              'relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none ' +
+              (isSel ? 'text-text-primary' : 'text-button-text')
+            }
+          >
+            {clip?.name ?? action.id}
+          </div>
+        </div>
+      );
+    },
+    [tracks, selected, rippled, pxPerSec, fps],
+  );
+
+  const onClickAction = useCallback(
+    (_e: unknown, { action, row }: { action: TimelineAction; row: TimelineRow }) =>
+      setSelected({ track: Number(row.id), id: action.id }),
+    [],
+  );
+
+  const onTimelineScroll = useCallback(({ scrollTop: st }: { scrollTop: number }) => setScrollTop(st), []);
+
+  const onActionMoveEndCb = useCallback(
+    ({ action, row, start }: { action: TimelineAction; row: TimelineRow; start: number }) => {
+      // D-058/D-080: a clip-body drag repositions it within its own row
+      // (`move`, overlap-rejected — mirrors `chroma-timeline::Timeline::
+      // move_clip`'s same-track case) — the library has no cross-row action
+      // drag (see the module doc), so `fromTrack` and `toTrack` are always
+      // the same here; a real cross-track move goes through the "Move to ▾"
+      // toolbar action instead.
+      const ti = Number(row.id);
+      const i = idxOf(ti, action.id);
+      if (i < 0) return;
+      const startFrame = Math.max(0, s2f(start));
+      applyOp({ kind: 'move', fromTrack: ti, toTrack: ti, clip: i, startFrame });
+    },
+    [tracks, fps, applyOp],
+  );
+
+  const onActionResizeEndCb = useCallback(
+    ({
+      action,
+      row,
+      start,
+      end,
+      dir,
+    }: {
+      action: TimelineAction;
+      row: TimelineRow;
+      start: number;
+      end: number;
+      dir: 'left' | 'right';
+    }) => {
+      const ti = Number(row.id);
+      const i = idxOf(ti, action.id);
+      if (i < 0) return;
+      const c = clipsOf(ti)[i];
+      if (dir === 'left') {
+        const delta = s2f(start) - c.start_frame;
+        if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
+      } else {
+        const delta = s2f(end) - endFrame(c);
+        if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
+      }
+    },
+    [tracks, fps, applyOp],
+  );
 
   if (!timeline) return null;
 
@@ -374,11 +519,6 @@ export function TimelinePane() {
       </div>
     );
   }
-
-  const clipsOf = (track: number): Track['clips'] => tracks[track]?.clips ?? [];
-  const idxOf = (track: number, actionId: string) => clipsOf(track).findIndex((c) => (c.id || '') === actionId);
-
-  const s2f = (sec: number) => Math.round(sec * fps);
 
   // D-080: split now requires a selection — with N tracks, "at the
   // playhead" alone no longer says which track's clip. Standard-NLE
@@ -620,100 +760,17 @@ export function TimelinePane() {
             autoScroll
             dragLine
             style={{ width: '100%', height: '100%' }}
-            onScroll={({ scrollTop: st }) => setScrollTop(st)}
-            getActionRender={(action, row) => {
-              const ti = Number(row.id);
-              const track = tracks[ti];
-              const i = idxOf(ti, action.id);
-              const clip = i >= 0 ? clipsOf(ti)[i] : null;
-              const isSel = selected?.track === ti && selected.id === action.id;
-              const isRippled = rippled.has(action.id);
-              const pxWidth = (action.end - action.start) * pxPerSec;
-              return (
-                <div
-                  className={
-                    'relative h-full w-full overflow-hidden rounded ' +
-                    (isSel ? 'ring-2 ring-accent ' : '') +
-                    (isRippled ? 'ring-2 ring-accent animate-pulse ' : '')
-                  }
-                  style={{
-                    background: isSel
-                      ? 'var(--color-accent)'
-                      : track?.kind === 'audio'
-                        ? 'rgba(120,170,110,0.55)'
-                        : 'rgba(90,120,180,0.55)',
-                  }}
-                >
-                  {clip && track?.kind === 'video' && (
-                    <Waveform
-                      sourcePath={clip.source_path}
-                      startSecs={clip.source_start / fps}
-                      durationSecs={clip.duration / fps}
-                      width={pxWidth}
-                      height={ROW_HEIGHT}
-                    />
-                  )}
-                  {/* D-058/B-013: `pointer-events-none` is load-bearing, not
-                      decorative. This label's `z-10` (needed so it paints
-                      above the Waveform canvas) has no isolating stacking
-                      context between it and the library's own absolutely-
-                      positioned `.timeline-editor-action-{left,right}-stretch`
-                      resize handles (siblings of this whole content block,
-                      rendered *after* it in the DOM but `z-index: auto`) — a
-                      block-level, unconstrained-width div, this label
-                      silently spans the clip's full width, including both
-                      10px edge zones, and (confirmed live: a real pointer
-                      event at the handle's coordinates hit-tested to *this*
-                      div, not the handle, until this was added) ate every
-                      resize-handle pointerdown before interact.js ever saw
-                      it. That's why edge-trim visually did nothing — not a
-                      `flexible`/`dragLine` problem (D-051 was right about the
-                      library's own mechanism), a hit-testing problem in what
-                      we paint on top of it. */}
-                  <div
-                    className={
-                      'relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none ' +
-                      (isSel ? 'text-text-primary' : 'text-button-text')
-                    }
-                  >
-                    {clip?.name ?? action.id}
-                  </div>
-                </div>
-              );
-            }}
-            onClickAction={(_e, { action, row }) => setSelected({ track: Number(row.id), id: action.id })}
+            onScroll={onTimelineScroll}
+            getActionRender={getActionRender}
+            onClickAction={onClickAction}
             onClickTimeArea={(time) => {
               setPlayhead(s2f(time));
               return true;
             }}
             onCursorDrag={(time) => setPlayhead(s2f(time))}
             onChange={() => false}
-            onActionMoveEnd={({ action, row, start }) => {
-              // D-058/D-080: a clip-body drag repositions it within its own
-              // row (`move`, overlap-rejected — mirrors `chroma-timeline::
-              // Timeline::move_clip`'s same-track case) — the library has
-              // no cross-row action drag (see the module doc), so `fromTrack`
-              // and `toTrack` are always the same here; a real cross-track
-              // move goes through the "Move to ▾" toolbar action instead.
-              const ti = Number(row.id);
-              const i = idxOf(ti, action.id);
-              if (i < 0) return;
-              const startFrame = Math.max(0, s2f(start));
-              applyOp({ kind: 'move', fromTrack: ti, toTrack: ti, clip: i, startFrame });
-            }}
-            onActionResizeEnd={({ action, row, start, end, dir }) => {
-              const ti = Number(row.id);
-              const i = idxOf(ti, action.id);
-              if (i < 0) return;
-              const c = clipsOf(ti)[i];
-              if (dir === 'left') {
-                const delta = s2f(start) - c.start_frame;
-                if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
-              } else {
-                const delta = s2f(end) - endFrame(c);
-                if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
-              }
-            }}
+            onActionMoveEnd={onActionMoveEndCb}
+            onActionResizeEnd={onActionResizeEndCb}
           />
         </div>
       </div>

@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Fixed: dragging a clip in the Edit-tab timeline froze
+  the UI (D-083, B-024).** Five callback props to the timeline library were
+  inline arrow functions (new identity every render); a native drag fires
+  `dragover` continuously, so every tick forced a full re-render of every
+  clip across every track. `useCallback`-wrapped with real dependency
+  arrays; a pre-existing pattern that only became a felt freeze once
+  multi-track (D-080) made the cost scale with track count.
 - **2026-09-03** — **Global Inspector, Phase 1: Motion tab gets a real
   scene/layer sidebar (D-081).** Wrote a real scoping doc first
   (`docs/notes/global-inspector.md` — a 4-phase build + the complete
