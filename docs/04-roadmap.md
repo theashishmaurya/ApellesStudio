@@ -9,231 +9,6 @@ numbers are actually calibrated).
 
 ---
 
-## In flight right now (2026-09-03 evening) — 4 parallel background agents
-
-Owner asked to track this live so it's clear what's shipping and where things stand.
-Update this block as each agent lands (move it to a real `D-NNN`/`CHANGELOG` line and
-strike it here, or replace "in progress" with the landed commit) — don't let it go
-stale once everything's actually done, this section is a snapshot, not permanent
-roadmap structure.
-
-- ✅ **Drag-drop freeze in the Edit tab** — done, `b627aa3` (**D-083/B-024**). Root
-  cause: 5 inline-function props to `<TimelineEditor>` got new identity every render;
-  native `dragover` fires continuously, so every tick forced a full re-render
-  (including every track's waveform canvas) — cheap with 1 row, a real freeze once
-  D-080 made cost scale with track count. Fixed with `useCallback` + gating the
-  redundant `setDragOver` call.
-- ✅ **Full NLE — P0** (owner: "scope it out frontend backend and work till its
-  perfect," referencing Palmier Pro as the feature bar). **Done, all 4 phases:**
-  data model (`bc6af05`, D-086), real alpha-over multi-layer compositor
-  (`b17eaa3`, D-088 — V1/V2 actually stacked, not opaque top-wins), TS mirror
-  (`2224e7b`, D-089), UI — lock/hide/rearrange/transform popover/keyframing
-  (`d240a40`, D-090). Real end to end: V1/V2 stacked compositing, A1/A2 audio
-  separation (pre-existing D-057), track lock/hide/mute/rearrange/selection/
-  keyframes. Original trade-off (rearrange was up/down buttons, not native
-  drag) since superseded — see D-094 below. 58+143+150+68+79 tests across
-  the 4 phases, `tsc` clean, live app boot confirmed clean (no click-through
-  — no native-window automation available this session).
-- ✅ **Edit tab stuck on "No project open"** — done, `cec1a2b` (**D-085/B-025**).
-  Real root cause of the "stuck in the click" half: `ProjectLauncher.tsx` had zero
-  loading feedback during a genuinely multi-second open, inviting a second click
-  that hit the `busy` guard and surfaced a confusing "session busy" toast instead
-  — fixed with a real per-card loading state + disable-while-opening. The
-  "No project open" persistence half: the existing B-007-style refetch in
-  `main.tsx` looked structurally correct on inspection but wasn't landing
-  reliably by live report — made defensive (retries once, 500ms later, if it
-  lands on an error) rather than claiming a fully-proven root cause. `tsc`
-  verification was starved to ~0% CPU by the other 3 parallel agents' cargo
-  work and could not complete — flagged honestly in the write-up, not skipped
-  silently.
-- ✅ **Sidecar memory: diagnostics + TTL auto-unload** — done, **D-087**. Not a
-  leak — the specific 5.78GB process was already gone by the time it was
-  investigated; the real gap was that loaded models (SAM2/YOLO/ViTMatte/
-  Video-Depth-Anything/MoGe-2) never got released. Shipped `GET /memory`
-  (RSS + per-model loaded/idle status) and a background TTL sweep
-  auto-unloading anything idle past 5 min, safe against the existing `_GPU`
-  lock; `POST /unload` for a manual reclaim alongside it. Verified live
-  end to end (loaded MoGe-2, watched it auto-unload after the TTL, confirmed
-  via `/memory` and real RSS numbers the whole way).
-- ✅ **React Compiler enabled** — done, **D-091**. Real v6 wiring
-  (`@rolldown/plugin-babel` + `reactCompilerPreset()`, not the removed
-  inline `react({ babel: {...} })` option) across every source package this
-  build consumes. Verified via the compiler's own `logger.logEvent` API
-  (bundle-grepping its runtime import/function name is unreliable post-
-  bundle/minify): 265 `CompileSuccess` across 110 unique files, 120
-  legitimate bailouts (mostly `try/finally`) across 45 files, no build
-  errors. Quiet bailout-only logger stays wired in permanently.
-- ✅ **`app/bench` UI perf harness revived** — done, **D-092**. Was stale
-  (targeted the removed RapidRAW library/slider flow, D-043); retargeted at
-  the Edit-tab multi-track timeline with new `pan`/`dragover`/`move`
-  phases — `dragover` directly stress-tests the D-083 freeze scenario, the
-  most relevant probe for whether D-091's React Compiler actually helps.
-  Also wrote `docs/notes/performance-instrumentation.md` inventorying every
-  other real timing mechanism in the codebase (Rust `Instant::now()`,
-  sidecar `time.time()` + `GET /memory`) so "are we faster" has one place
-  to check instead of three. Honestly flagged: no tool this session can
-  drive the native Tauri window, so no compiler-on/off numbers were
-  captured — the harness is ready, running it is a manual next step.
-- ✅ **User-action telemetry infrastructure** — done, **D-093**. Real
-  `trackEvent(event, props?)` in `@chroma/bridge`, local-only (no network),
-  reusing the existing `frontend_log` Tauri command with a `[telemetry]`
-  prefix — lands in the same `app.log` this project already tails, no new
-  storage. Wired into tab switches, project open/new/close, and relight
-  actions (add/delete light, apply preset, bake depth/normals, track
-  depth). NLE track/clip actions deliberately deferred (concurrent
-  `TimelinePane.tsx` drag-and-drop rework) — tracked as a follow-up, along
-  with Motion/media-pool/export gaps, in `docs/notes/telemetry.md`.
-- ✅ **Timeline drag-and-drop rework** — done, **D-094**. Owner: "instead of
-  button the timeline should be drag and drop and also instead of arrow for
-  tracks we should have drag handles to reshuffle" + "all the windows should
-  be resizable" (now a standing `CLAUDE.md` rule). Three changes in
-  `TimelinePane.tsx`: (1) track reorder is a real `GripVertical` drag handle
-  per header row (plain HTML5 drag/drop, generalized `move_track`
-  selection-follow math, not the old adjacent-only swap), replacing D-090's
-  up/down buttons; (2) cross-track clip move is a real drag handle on each
-  clip (`CHROMA_CLIP_MOVE_MIME`, same drop mechanism as the existing
-  Sources-panel drop, `onMouseDown`/`onPointerDown` `stopPropagation` so it
-  never races the library's own same-track action-drag) — the D-080 "Move
-  to ▾" dropdown is kept as a fallback affordance, not removed, since this
-  couldn't be exercised against the live native window this session; (3)
-  the track-header sidebar is now a real `ResizablePanel` (was a fixed
-  `width: 156px`), the first live use of `@chroma/ui`'s `resizable.tsx`.
-  79/79 `packages/editor` tests, `tsc` clean (editor + app, 64-error app
-  baseline unchanged), `npx vite build` clean (3181 modules, no new
-  bailouts). Live drag-gesture verification not possible this session (no
-  native-window automation available) — flagged, not silently skipped.
-- ✅ **Four real gaps in D-094, found by immediate live testing** — done,
-  **D-095/B-026**. Owner tested D-094 live and found: (1) a new clip
-  dragged from Sources didn't snap/insert between two existing clips —
-  fixed with `computeInsertion` (`timeline.ts`), a real ripple-insert (the
-  one place this model intentionally gains ripple behavior) plus a live
-  insertion-line preview; (2) the track-reorder drag "does not work" —
-  built a real isolated-component browser harness (scratch, deleted after
-  use) that proved the drag logic/wiring is actually correct (a real
-  Chromium drag reordered tracks exactly right); the real gap is Tauri's
-  macOS WKWebView specifically (untestable this session, different engine
-  than this session's Chromium tooling) — shipped real hit-target/WebKit-
-  hint defensive fixes, honestly flagged as not fully closed-loop
-  verified; (3) "remove these [add-track] buttons... added when we drop
-  the clip" — the manual add-track toolbar buttons are gone, dropping past
-  the last row now auto-creates one; (4) the Sources-panel drag ghost was
-  full media-card size regardless of zoom — now a small name pill via
-  `setDragImage`. 88/88 tests (+9 new), `tsc` + `vite build` clean.
-- ✅ **Mid-stack track insert, kind inference, real cross-track clip-move
-  handle, cross-track overlap allowed** — done, **D-096/B-027**. Owner kept
-  testing D-095 live, immediately: (1) "how do i insert between video 1
-  and video 2" — `trackInsertBoundary` generalizes auto-track-on-drop to
-  ANY boundary (above the first, between two, past the last), not just
-  past-the-last, reusing `trackIndexAfterMove`'s selection-follow math for
-  the resulting `move_track`; (2) an auto-created track was hardcoded
-  `'video'` — now infers kind from the adjacent track (verified
-  `DraggedMedia` has no real audio/video signal to derive from directly,
-  so context is the best real signal available); (3) "i should be able to
-  drag A001 to video_1" — the cross-track clip-move handle is now a
-  full-width top strip, not a small corner icon (deliberately NOT the
-  whole clip body — would race the timeline library's own same-track
-  drag, the same risk class as D-074's relight-puck incident); (4)
-  `move`/`move_clip` now allow cross-track overlap (a real composited
-  layer since D-088), same-track overlap still rejected. **Caught its own
-  live regression in the same pass**: the wider handle made an ordinary
-  same-track drag an easy accidental grab of the cross-track mechanism,
-  which used to silently no-op on a same-track drop — fixed to handle it
-  as a real reposition instead, verified live. Also scoped (not built) the
-  owner's `@dnd-kit` steer — `docs/notes/dnd-kit-migration.md`: MIT,
-  active repo, but no npm release since 2024-12 and an open
-  React-19-StrictMode issue against the in-progress rewrite that this
-  app's `<StrictMode>` root is actually exposed to (confirmed by reading
-  `main.tsx`). Rust `chroma-timeline` 59/59, `packages/editor` 88/88,
-  `tsc` + `vite build` clean.
-- ✅ **Track reorder + cross-track clip move moved onto `@dnd-kit/core`/
-  `@dnd-kit/sortable`** — done, **D-098/B-028**. Cross-track clip move
-  (D-096's full-width strip) still failed live — "not able to drag video 2
-  to video 1" — the SECOND drag interaction this session to pass the
-  Chromium harness but fail in the real Tauri/WKWebView window. Re-checked
-  D-064's `dragDropEnabled` fix first (still globally set, ruled out), then
-  implemented the dnd-kit scoping doc's phase 1 plan for real: track
-  reorder onto `@dnd-kit/sortable`'s `SortableContext`/`useSortable`,
-  cross-track clip move onto `@dnd-kit/core`'s `useDraggable`/
-  `useDroppable`/`DragOverlay` — same-track drag/trim/resize untouched
-  (the timeline library's own native mechanism, never what was broken).
-  Two real bugs found and fixed live during implementation: a React-
-  synthetic-event same-element-handler ordering issue (a capture-phase
-  `stopPropagation` was silently also blocking dnd-kit's own bubble-phase
-  listener on the same element — fixed by composing into one handler), and
-  a droppable-registration timing issue (a conditionally-mounted droppable
-  wasn't measured in time for its own first drag — fixed by mounting it
-  permanently, toggling interactivity via a prop instead). Verified against
-  the real component under real `<StrictMode>` with real `PointerEvent`
-  sequences (the usual CDP native-drag tool doesn't trigger dnd-kit at
-  all) — dnd-kit's own open StrictMode issue does not reproduce on the
-  installed version; still explicitly not a real WKWebView window,
-  flagged as such rather than claimed closed. `tsc`/vitest/vite build
-  clean (88/88 tests, 64-error app baseline unchanged, one new safe
-  React-Compiler bailout accounted for).
-- ✅ **Global Inspector, Phase 2 (Motion property panel)** — done, **D-099**.
-  Dispatched separately, scoped to `packages/motion`/`packages/motion-engine`
-  only, zero overlap with the drag-and-drop work above. Real typed form
-  bound to the layer-list selection (`InspectorPanel.tsx` + `propCatalog.ts`,
-  the full 8-primitive schema-extraction pass) with a JSON fallback for
-  content-shaped props and a real keyframe-list editor for both cameras;
-  `manifestEdit.ts` (18 tests, `packages/motion`'s first test harness) reads/
-  writes immutably and never throws on a stale/unrecognized selection — the
-  real backward-compat mechanism behind the owner's "should also work on our
-  current videos" requirement, verified live against the real `sample.ts`
-  manifest via a scratch Chrome-driven harness (deleted before commit).
-  Right-hand panel cluster is now a real resizable `PanelGroup`. **Real
-  finding surfaced while updating this doc**: Phase 3 (NLE half) was scoped
-  as "blocked on Phase B3" — B3 actually shipped tonight too (D-088), so
-  Phase 3 is genuinely unblocked now, just not started this pass (would
-  need `TimelinePane.tsx`, which the drag-and-drop work above was actively
-  using for this entire dispatch) — a real next step, not a re-scope.
-- ✅ **Unified clip move onto ONE mechanism — the real root cause of D-098's
-  stuck-ghost/blocked-drag cluster** — done, **D-100/B-029** (drafted as
-  D-099; renumbered — a concurrent session claimed that number first for
-  the Global Inspector entry above, see D-100's own note on this). Four
-  owner reports right after D-098 shipped, the sharpest being an
-  escalation that same-track drag — solid since D-051 — was now completely
-  blocked. Real root cause: `TrackDropZone`'s `pointer-events-auto` never
-  needed to be conditional at all (dnd-kit's own collision detection is
-  pure rect-math, checked in its bundled source, not native hit-testing)
-  — when `activeDrag` got stuck after an interrupted drag, that flag
-  silently intercepted every click/drag on the whole track row forever.
-  Fixed unconditionally, AND unified same-track + cross-track clip move
-  onto one `useDraggable` (`ClipBody`, the whole clip, library's own
-  move-drag disabled via `movable: false`, edge-trim untouched) per the
-  owner's own explicit redirect — no more two systems racing for one
-  gesture. Found and fixed a genuine dnd-kit-internal-state bug along the
-  way (an interrupted drag left the NEXT drag on the same pointer silently
-  inert — fixed with a real synthetic `pointercancel` dispatch on window
-  blur, not just local state). Also folded in: `computeInsertion`/
-  `nearestEdge` now treat a whole clip's body as a real insertion target
-  (fixes ripple-insert between already-touching clips), click-outside-to-
-  deselect, and selected-clip contrast (a ring, not a background/text-
-  colour swap using the wrong token). 91/91 tests, `tsc`/`vite build`
-  clean; verified via real `PointerEvent`/`DragEvent` sequences against
-  the real component, including the exact interrupted-drag-then-new-drag
-  sequence that exposed the deeper bug — still not a real WKWebView
-  window, flagged as such.
-
-- ✅ **Real sidecar ownership** — done, **D-101** (see "Next" item 9 below
-  for the full writeup). Content-hash staleness detection, refuse-and-warn
-  policy, live 10s re-poll, a real "AI Sidecar" Settings card. Live-
-  verified against the session's own genuinely-stale (~6hr) sidecar.
-
-- ✅ **Global Inspector, Phase 3 (NLE half)** — done, **D-102** (see "Next"
-  item 7 above for the full writeup). Drafted as D-101, renumbered after
-  finding the sidecar-ownership pass above had already claimed it — the
-  second real D-number collision this session (D-100 was the first, same
-  root cause: several agents working this queue in parallel tonight).
-  `ClipInspectorPanel.tsx` — a persistent transform + keyframes panel
-  replacing D-090's popover outright (same fields/ops, better UX, no
-  reason to keep both), added to `TimelinePane.tsx`'s resizable panel
-  group only after the concurrent drag-and-drop work (D-100) finished and
-  freed the file. Backward-compat verified against a scratch harness AND
-  the owner's own real `~/Movies/Chroma/New.chroma/project.json`.
-
----
-
 ## Now — what's live, by tab
 
 - **Colorist** — the full pre-pivot grade pipeline: primary/curves/wheels/LUT, masks
@@ -761,6 +536,56 @@ open). Editor timeline playback gained real audio — `symphonia`→`rubato`→
 (`@react-three/fiber` × `React.ElementType` typing collision), B-009 (duplicate
 Remotion packages crashing the app), B-011 (a test-isolation gap between the export
 and relight test suites, logged not fixed).
+
+**Relight goes real (2026-09-03 evening, D-077/078/079):** real surface normals via
+MoGe-2 replaced depth-finite-difference fakes, 3D falloff + screen-blend compositing
+replaced flat 2D additive, `distance` decoupled from direction-sweep into a proper
+non-zeroing depth-mismatch multiplier — three live-tested passes fixing "light doesn't
+look like light."
+
+**Full NLE, P0 (2026-09-03 night, D-086/088/089/090):** real alpha-over multi-layer
+compositor (V1/V2 actually stacked, not opaque top-wins), track lock/hide/mute/
+rearrange, clip transform (position/scale/rotation/opacity) + keyframes end to end,
+`chroma-timeline` gains real fields for all of it. Alongside: the Edit tab's
+stuck-on-open bug fixed (D-085/B-025), sidecar model memory gets a TTL auto-unload +
+`GET /memory`/`POST /unload` (D-087), React Compiler enabled for real on the v6
+Rolldown-Babel toolchain (D-091), the stale `app/bench` perf harness revived and
+retargeted at the Edit-tab timeline (D-092), local-only user-action telemetry wired
+into `@chroma/bridge` (D-093).
+
+**The NLE drag-and-drop saga (2026-09-03 night → 2026-09-04, D-094 through D-100,
+B-026/027/028/029):** six live-tested rounds chasing the owner's real-time bug reports
+on the timeline UI — cross-track clip move, track reorder, ripple-insert-on-drop,
+mid-stack track insertion with kind inference, an oversized drag-ghost image — first
+built on raw HTML5 drag-and-drop, then twice caught passing a Chromium test harness
+while failing live in the real Tauri/WKWebView window. Root-caused and fixed for real
+in the end (D-100): a stuck `pointer-events` flag was silently blocking all
+interaction on a track row after an interrupted drag, and two competing drag systems
+(the timeline library's native same-track drag + a new dnd-kit cross-track mechanism)
+were racing for one gesture — unified onto a single `ClipBody`/`useDraggable` covering
+same-track and cross-track move alike, library's own move-drag disabled, edge-trim
+untouched. `docs/notes/dnd-kit-migration.md` has the real license/maintenance/
+StrictMode-risk evaluation behind the library choice.
+
+**Global Inspector, both halves (2026-09-04 early morning, D-099/D-102):** a real
+typed property panel for Motion's 8 primitives (`InspectorPanel.tsx`/`propCatalog.ts`,
+bound to D-081's selection model) and a persistent NLE clip-properties panel
+(`ClipInspectorPanel.tsx`, replacing D-090's transform popover outright) — both
+verified against real backward-compat cases, the NLE half against the owner's actual
+`~/Movies/Chroma/New.chroma/project.json`. Phase 4 (one shared, tab-agnostic panel
+shell) is the remaining piece, unblocked.
+
+**Real sidecar ownership (2026-09-04 early morning, D-101):** content-hash staleness
+detection (`ai/server.py`'s own bytes, SHA256) replacing "trust the first `/health`
+response forever" — refuse-and-warn policy, a live 10s re-poll, a real "AI Sidecar"
+Settings card as `chroma_ai_status`'s first UI consumer. Live-verified against the
+session's own genuinely ~6-hour-stale sidecar.
+
+**Deliberately deferred, not abandoned:** the deeper crate-extraction migration
+(`chroma-gpu`/`chroma-media`/`chroma-project`, eventually `chroma-compositor`) — the
+roadmap's own "Then" section already flags it as a bigger, no-urgency structural bet
+best done with isolated worktrees once underway, not rushed through in the same
+overnight pass as everything above.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
