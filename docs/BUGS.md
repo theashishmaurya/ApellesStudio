@@ -74,6 +74,12 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-020 — Colorist never actually picked up Edit-tab timeline changes; a deleted clip lingered forever as a "ghost" shot
+status: fixed (2026-09-03, D-071) · severity: high (undermines D-070's whole point — same session, immediate retest) · area: `app/src-tauri/src/chroma/project.rs`, `app/src-tauri/src/chroma/state.rs`, `app/src/store/useSessionStore.ts`, `app/src/main.tsx`
+- **found:** owner's own live retest of D-070, immediately after it landed — dragged a clip onto the Edit tab's timeline, switched to Colorist, the clip wasn't there. Separately spotted a clip already deleted from the media pool still showing as a shot in the Colorist strip.
+- **cause:** `chroma_timeline_set` (the Edit tab's own save path) never calls `open_manifest`, the one function that refreshes Colorist's clip list — nothing else was ever wired to do it either (`syncFromRust`, the function whose name suggests this exact job, was dead code, never called anywhere). Separately, `state::Session` (the in-memory decode session backing the shot strip) was never pruned by anything short of a full reset on a full project open — a removed clip just stayed forever.
+- **fix:** new `chroma_project_resync_clips` command diffs the active timeline's real clips against the session, decodes new ones, prunes stale ones, and — the reason this isn't just "call `chroma_project_open` again" — only re-picks the active clip if it was one of the pruned ones, so a manual selection in the shot strip survives a resync that doesn't actually affect it. Triggered on Colorist tab focus. Full writeup: D-071 in `docs/08-decisions.md`.
+
 ## B-018 — Track Depth silently did nothing: a 2-day-stale AI sidecar process, 404ing, silently accepted as success
 status: fixed (2026-09-03, D-069) · severity: high (the entire Relight key/fill/rim feature was unusable — this is the actual root cause behind every "no light shows" report this session) · area: `app/src-tauri/src/chroma/depth.rs`, the external `ai/` sidecar process, `chroma::sidecar::spawn_and_supervise`
 - **found:** owner: "clicked track depth multiple time" — real logging (D-067, this same session) made it diagnosable immediately: `app.log` showed `chroma_depth_track: job started, response: {"detail":"Not Found"}` on every click.

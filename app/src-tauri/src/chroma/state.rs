@@ -81,6 +81,26 @@ impl Session {
         Ok(())
     }
 
+    /// D-071: drop every shot whose path isn't in `keep` — the Edit-tab
+    /// timeline resync's cleanup pass, so a clip removed from the timeline
+    /// stops lingering forever as a "ghost" shot in the session (nothing
+    /// pruned this before; only a full `set_current_video(None)` reset
+    /// cleared the whole session at once, on a full project open). Iterates
+    /// from the end so each `remove`'s own index stays valid as items drop.
+    /// Returns the dropped paths, for the caller's own logging.
+    pub fn prune_except(&mut self, keep: &std::collections::HashSet<PathBuf>) -> Vec<PathBuf> {
+        let mut dropped = Vec::new();
+        let mut i = self.shots.len();
+        while i > 0 {
+            i -= 1;
+            if !keep.contains(&self.shots[i].path) {
+                dropped.push(self.shots[i].path.clone());
+                let _ = self.remove(i);
+            }
+        }
+        dropped
+    }
+
     /// Remove shot `index`. The active index clamps toward 0 so it keeps
     /// pointing at the same shot where possible. Returns the new active shot, or
     /// `None` when the session is now empty.
@@ -188,6 +208,25 @@ pub fn set_current_frame(frame: u64) {
 pub fn session_shots() -> (Vec<Shot>, usize) {
     let s = lock();
     (s.shots.clone(), s.active)
+}
+
+/// D-071: drop every session shot whose path isn't in `keep` — see
+/// `Session::prune_except`'s doc for why this exists at all. Resets the
+/// thumb cache + decode pipe only if the *active* shot was one of the ones
+/// dropped (mirrors `session_set_active`'s own invalidation rule — an
+/// unrelated shot disappearing from the list doesn't invalidate anything
+/// bound to the still-active one).
+pub fn prune_session_except(keep: &std::collections::HashSet<PathBuf>) -> Vec<PathBuf> {
+    let mut s = lock();
+    let before = s.active_path();
+    let dropped = s.prune_except(keep);
+    let changed = s.active_path() != before;
+    drop(s);
+    if changed {
+        *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        super::decode_pipe::reset();
+    }
+    dropped
 }
 
 /// Make shot `index` active. Resets the thumb cache + decode pipe if the active
@@ -355,4 +394,60 @@ mod tests {
         s.remove(2).unwrap(); // drop C (after active)
         assert_eq!(s.active_shot().unwrap().path, PathBuf::from("/clips/B.mov"));
     }
+
+    // --- D-071: prune_except (the Edit-tab timeline resync's cleanup) -----
+
+    #[test]
+    fn prune_except_drops_only_shots_outside_keep() {
+        let mut s = Session::default();
+        s.upsert(shot("A", 0));
+        s.upsert(shot("B", 0));
+        s.upsert(shot("C", 0));
+        let keep: std::collections::HashSet<PathBuf> =
+            [PathBuf::from("/clips/A.mov"), PathBuf::from("/clips/C.mov")].into();
+        let mut dropped = s.prune_except(&keep);
+        dropped.sort();
+        assert_eq!(dropped, vec![PathBuf::from("/clips/B.mov")]);
+        let remaining: Vec<_> = s.shots.iter().map(|sh| sh.path.clone()).collect();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.contains(&PathBuf::from("/clips/A.mov")));
+        assert!(remaining.contains(&PathBuf::from("/clips/C.mov")));
+    }
+
+    #[test]
+    fn prune_except_keeps_the_active_shot_active_when_it_survives() {
+        let mut s = Session::default();
+        s.upsert(shot("A", 0));
+        s.upsert(shot("B", 0));
+        s.upsert(shot("C", 0));
+        s.set_active(1).unwrap(); // B
+        let keep: std::collections::HashSet<PathBuf> =
+            [PathBuf::from("/clips/A.mov"), PathBuf::from("/clips/B.mov")].into();
+        s.prune_except(&keep); // drops C, which is after the active index
+        assert_eq!(s.active_shot().unwrap().path, PathBuf::from("/clips/B.mov"));
+    }
+
+    #[test]
+    fn prune_except_is_a_real_no_op_when_everything_is_kept() {
+        let mut s = Session::default();
+        s.upsert(shot("A", 0));
+        s.upsert(shot("B", 0));
+        s.set_active(1).unwrap();
+        let keep: std::collections::HashSet<PathBuf> =
+            [PathBuf::from("/clips/A.mov"), PathBuf::from("/clips/B.mov")].into();
+        let dropped = s.prune_except(&keep);
+        assert!(dropped.is_empty());
+        assert_eq!(s.shots.len(), 2);
+        assert_eq!(s.active_shot().unwrap().path, PathBuf::from("/clips/B.mov"));
+    }
+    // `prune_session_except` itself (the module-level wrapper around the
+    // static global `SESSION`) is intentionally not unit-tested here — every
+    // other test in this file operates on a local `Session::default()`
+    // specifically to stay parallel-test-safe against that global, and this
+    // module has no existing lock for tests that need to touch it for real
+    // (unlike `project.rs`'s `PROJECT_STATE_LOCK`). The wrapper itself is a
+    // thin lock+call+cache-invalidate pass-through over `prune_except`,
+    // which is fully covered above; real end-to-end coverage of the whole
+    // resync path (including this wrapper) lives in `project.rs`'s
+    // `chroma_project_resync_clips` integration test instead.
 }

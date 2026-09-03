@@ -2128,6 +2128,7 @@ pub fn run() {
             chroma::project::chroma_project_add_shot,
             chroma::project::chroma_project_add_shot_paths,
             chroma::project::chroma_project_remove_clip,
+            chroma::project::chroma_project_resync_clips,
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
             chroma::edit::chroma_timeline_frame,

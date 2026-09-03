@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { toast } from 'react-toastify';
-import { Shell } from '@chroma/shell';
+import { Shell, useActiveTab } from '@chroma/shell';
 import { EditorTab, useEditorTimelineStore } from '@chroma/editor';
 import { MotionTab } from '@chroma/motion';
 import { useMediaPoolStore } from '@chroma/bridge';
@@ -32,10 +32,29 @@ installFrontendLogBridge();
  */
 function Root() {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
+  const activeTab = useActiveTab();
 
   useEffect(() => {
     if (projectOpen) useEditorTimelineStore.getState().load();
   }, [projectOpen]);
+
+  // D-071: `chroma_timeline_set` (the Edit tab's own save path, fired on
+  // every drag/trim/split) never runs `open_manifest`, so nothing else
+  // tells Colorist a clip was added or removed on the timeline — confirmed
+  // live: a clip dragged onto the Edit tab never showed up in the Colorist
+  // shot strip, and a removed clip lingered there forever as a "ghost."
+  // Same bridge shape as the B-007 fix above (app owns the tab-switch
+  // signal, `useSessionStore` owns the resync) — re-syncs every time the
+  // owner switches *to* Colorist, not on every keystroke on the Edit tab,
+  // since `chroma_project_resync_clips` is specifically built to leave the
+  // currently-active clip untouched when nothing relevant changed, making
+  // a slightly-stale-until-the-next-tab-switch window an acceptable
+  // trade-off against re-syncing on every single timeline edit.
+  useEffect(() => {
+    if (projectOpen && activeTab === 'colorist') {
+      void useSessionStore.getState().resyncClips();
+    }
+  }, [projectOpen, activeTab]);
 
   // D-062: a Motion render used to just write a file and print its path as
   // plain text — nothing put it anywhere usable. `MotionTab` can't import

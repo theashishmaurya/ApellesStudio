@@ -188,6 +188,14 @@ interface SessionState {
   /** re-read the Rust session and reconcile the store. Also scopes the agent
    *  feed to the active shot. Call after the normal open flow. */
   syncFromRust: () => Promise<void>;
+  /** D-071: pick up clips added/removed on the Edit tab's timeline since the
+   *  project was last opened — `chroma_timeline_set` (the Edit tab's own
+   *  save path) never runs `open_manifest`, so nothing else refreshes this.
+   *  Unlike a full re-open, this never disturbs whichever clip is currently
+   *  active in the strip if it's still on the timeline (see
+   *  `chroma_project_resync_clips`'s doc). A no-op for an in-memory
+   *  "Untitled" session (no project on disk, no Edit-tab timeline concept). */
+  resyncClips: () => Promise<void>;
   /** stash the live editor grade under the currently-active shot's id */
   stashActiveGrade: () => void;
   /** switch the active shot: stash the current grade, load the target, restore
@@ -599,6 +607,72 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     } finally {
       set({ busy: false });
+    }
+  },
+
+  // D-071: `chroma_project_resync_clips`'s whole point is NOT disturbing the
+  // active clip when it's unaffected, so this deliberately does not set
+  // `busy` (that flag drives `Editor.tsx`'s full-screen loading spinner —
+  // D-063 — which should only show for a real clip switch, not a
+  // background poll that usually changes nothing).
+  resyncClips: async () => {
+    const { projectPath, projectName, busy } = get();
+    if (!projectPath || projectName === 'Untitled' || busy) return;
+    let dto: ProjectOpenDto;
+    try {
+      dto = await invoke<ProjectOpenDto>('chroma_project_resync_clips');
+    } catch {
+      return; // best-effort background sync — no toast for a quiet no-op failure
+    }
+
+    let list: SessionDto;
+    try {
+      list = await invoke<SessionDto>('chroma_session_list');
+    } catch {
+      return;
+    }
+    const onlineDtoShots = dto.shots.filter((s) => !s.offline);
+    const pathToClipId = new Map(onlineDtoShots.map((s) => [s.sourcePath, s.id]));
+    const shotsWithId: SessionShot[] = list.shots.map((sh) => ({
+      ...sh,
+      id: pathToClipId.get(sh.path) ?? sh.path,
+    }));
+    const offlineShots: OfflineShot[] = dto.shots
+      .filter((s) => s.offline)
+      .map((s) => ({ id: s.id, sourcePath: s.sourcePath, name: s.name }));
+
+    const prevActive = get().shots[get().activeIndex];
+    const newActive = shotsWithId[list.active];
+    // Rust already decided whether the active clip needed to change (see
+    // `chroma_project_resync_clips`'s doc) — this just detects that outcome
+    // rather than re-deciding it, so the frontend and backend can't disagree.
+    const activeChanged = prevActive?.id !== newActive?.id;
+
+    set({ shots: shotsWithId, activeIndex: list.active, offlineShots });
+
+    if (activeChanged && newActive) {
+      const { grades } = get();
+      let grade = grades[newActive.id];
+      if (!grade) {
+        try {
+          const g: any = await invoke('chroma_load_grade', {
+            path: `${dto.gradeDir}/${newActive.id}.grade.json`,
+          });
+          grade = normalizeLoadedAdjustments(g?.adjustments ?? INITIAL_ADJUSTMENTS);
+        } catch {
+          grade = { ...INITIAL_ADJUSTMENTS };
+        }
+        set({ grades: { ...get().grades, [newActive.id]: grade } });
+      }
+      // `loaded: null` is fine here — `applyLoaded` falls back to the
+      // decode-session's own width/height/etc when there's no fresher
+      // `LoadImageResult`, and the pixels themselves were already installed
+      // server-side inside `chroma_project_resync_clips` (it calls the same
+      // `seek_and_install` `open_manifest` does) — re-fetching via
+      // `chroma_session_set_active` here would just re-decode the exact
+      // frame Rust already decoded, for no benefit.
+      applyLoaded(newActive, null, grade);
+      useAgentStore.getState().scopeToShot(newActive.path);
     }
   },
 

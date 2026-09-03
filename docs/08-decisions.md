@@ -5414,3 +5414,83 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   second data point that it also triggers when a crate-root file is
   merely *one of several* paths passed to `rustfmt`, not just via a
   no-args invocation.
+
+## D-071 — Colorist wasn't actually live-synced to the Edit tab: a real gap D-070 left behind
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner's live retest of D-070, right after it landed: dragged
+  a clip onto the Edit tab's timeline, switched to Colorist — the clip
+  wasn't there. Separately, a screenshot showed a clip ("pexels_28808272")
+  still in the Colorist shot strip that had already been deleted from the
+  media pool entirely.
+- **Root cause, confirmed by reading the actual call graph, not assumed:**
+  `chroma_timeline_set` (`chroma::edit`, the Edit tab's own save path — fired
+  on every drag/trim/split via `packages/editor`) never calls
+  [`open_manifest`], the one function that scans the active timeline's real
+  clips and refreshes `state::Session`. D-070 made `chroma_timeline::Clip`
+  the source of truth for *what Colorist grades*, but nothing was ever wired
+  to tell Colorist *when* that source of truth changed outside of a full
+  project (re)open or Colorist's own add/remove-clip buttons — grepped the
+  whole app: `syncFromRust` (the function whose name suggests exactly this
+  job) is never called anywhere, dead code. Separately, `state::Session`
+  (the in-memory decode session Colorist's shot strip ultimately reads) was
+  never *pruned* by anything short of a full reset (`set_current_video
+  (None)` on every full open) — a clip removed from the project (by any
+  path) stayed in the session forever, explaining the ghost shot.
+- **The fix is deliberately not "just call `chroma_project_open` again."**
+  That would work for correctness but has a real cost: it unconditionally
+  re-runs `resolve_active_clip_index`/`top_wins_clip_index` and reloads,
+  which would silently reset whichever clip the owner had manually selected
+  in the Colorist shot strip back to the top-wins/legacy default on every
+  resync — discarding a real, in-progress grading choice for no reason if
+  nothing on the timeline actually affected it.
+- **New `chroma_project_resync_clips`** (`app/src-tauri/src/chroma/
+  project.rs`) — re-reads the manifest fresh, diffs the active timeline's
+  clips against `state::Session`, and: decodes + upserts any genuinely new
+  clip; prunes any session shot whose clip is no longer on the timeline at
+  all (`Session::prune_except`, new, `state.rs` — the ghost-shot fix); **only
+  re-resolves the active clip if the one that was active before the resync
+  is one of the pruned ones** — otherwise its position in the returned list
+  is just wherever it already was, completely untouched (no re-seek, no
+  thumb/decode-pipe reset). Reuses `active_timeline_video_clips`/
+  `resolve_active_clip_index`/`top_wins_clip_index` — all already tested by
+  D-070/D-056, no new selection logic, only new diff/prune logic around them.
+- **Frontend:** `useSessionStore.resyncClips` (new) calls it, then only
+  calls `applyLoaded` (the real "switch what's on screen" step) if the
+  active clip's id actually changed between before and after — comparing
+  outcomes, not re-deciding them, so frontend and backend can't disagree.
+  Deliberately passes `loaded: null` to `applyLoaded` rather than a second
+  `chroma_session_set_active` round trip: the pixels were already installed
+  server-side inside the resync call itself (it calls the same
+  `seek_and_install` `open_manifest` does), and `applyLoaded` already falls
+  back to the decode-session's own width/height/etc when `loaded` is absent
+  — a second decode would just be wasted work. Deliberately does **not** set
+  `busy` (D-063's full-screen loading-spinner flag) — that spinner should
+  only show for a real clip switch, not a background poll that usually
+  changes nothing.
+- **Trigger: Colorist tab focus, not every Edit-tab keystroke.** Wired in
+  `app/src/main.tsx`'s `Root()` (the composition root — same bridge shape as
+  the existing B-007 fix, `app` owns the tab-switch signal,
+  `useSessionStore` owns the resync), firing whenever `useActiveTab()`
+  becomes `'colorist'`. Accepted trade-off: the shot strip can be
+  momentarily stale while you're still on the Edit tab mid-edit — acceptable
+  since `chroma_project_resync_clips` is specifically built to be cheap and
+  non-disruptive to call on every switch, so the fix is "always fresh by the
+  time you look," not "instantly reactive to every keystroke."
+- **Verification.** New `Session::prune_except` tests (pure model, no Tauri
+  state — `chroma::state::tests`, 3 new): drops only what's outside `keep`,
+  keeps the active shot active when it survives, a real no-op when nothing's
+  pruned. `chroma_project_resync_clips` itself is a state-taking Tauri
+  command — deliberately not unit-tested directly, matching this module's
+  own established convention (`open_manifest`'s own doc: "no other test in
+  this module drives the state-taking commands directly"); its only genuinely
+  new logic (the diff/prune decision) is exercised through those pure
+  `Session` tests, and every selection/decode helper it calls was already
+  covered by D-070/D-056's own tests. `cargo test --manifest-path app/
+  src-tauri/Cargo.toml chroma::`: **138 passed, 0 failed, 1 ignored** (135
+  baseline + 3 new). `cargo build --workspace`: clean. `tsc --noEmit -p
+  app`: 64/64, unchanged baseline. No live-window click test this pass —
+  noted honestly, not glossed over; the owner's next real drag-then-switch
+  is the actual confirmation, same standing gap every interaction-level fix
+  this session has had.

@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Colorist wasn't actually live-synced to the Edit tab —
+  a real gap D-070 left behind (D-071, B-020).** Owner's immediate retest:
+  a clip dragged onto the Edit tab's timeline never showed up in Colorist,
+  and a deleted clip lingered there forever as a ghost shot.
+  `chroma_timeline_set` never called `open_manifest`, and `syncFromRust`
+  (dead code, never called) was the only thing that looked like it should
+  have handled this. New `chroma_project_resync_clips`, triggered on
+  Colorist tab focus: diffs the active timeline against the decode session,
+  decodes new clips, prunes stale ones, but deliberately only re-picks the
+  active clip if it was one of the pruned ones — a manual selection in the
+  shot strip survives a resync that doesn't affect it, unlike just calling
+  `chroma_project_open` again. `cargo test chroma::` 138/138 (+3), `tsc -p
+  app` 64/64 unchanged.
+
 - **2026-09-03** — **The real Track Depth root cause: a 2-day-stale AI
   sidecar (D-069, B-018).** D-067's new logging paid off immediately —
   `app.log` showed every click hitting a 404 (`{"detail":"Not Found"}`)

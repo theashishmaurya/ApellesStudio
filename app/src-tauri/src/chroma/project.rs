@@ -1512,6 +1512,145 @@ async fn open_manifest(
     })
 }
 
+/// D-071 — a lighter re-sync than a full [`chroma_project_open`], for
+/// Colorist to call when its tab gains focus. The Edit tab's timeline
+/// (`chroma_timeline_set`, `chroma::edit`) never calls [`open_manifest`], so
+/// nothing told Colorist a clip was added or removed until a full project
+/// reopen — confirmed live: a clip dragged onto the Edit tab's timeline
+/// never appeared in the Colorist shot strip, and a clip removed from the
+/// timeline kept showing there forever as a "ghost" shot, since nothing
+/// ever pruned `state::Session` except a full reset on a full open.
+///
+/// This re-reads the manifest fresh (the Edit tab already persisted its
+/// change there via `chroma_timeline_set`), diffs the active timeline's
+/// clips against what's actually decoded in `state::Session`, and:
+/// - decodes + upserts any clip that's genuinely new;
+/// - prunes any session shot whose clip is no longer on the active
+///   timeline at all — the ghost-shot fix;
+/// - **leaves the currently-active session shot exactly as it is if it's
+///   still on the timeline** — no re-pick, no re-seek, no thumb/decode-pipe
+///   reset. This is the whole reason this isn't just "call
+///   `chroma_project_open` again": that would re-run
+///   `resolve_active_clip_index`/`top_wins_clip_index` unconditionally and
+///   silently reset whichever clip the owner had manually selected in the
+///   Colorist shot strip back to the top-wins/legacy default, discarding a
+///   real in-progress grading choice.
+///
+/// Only re-resolves (and persists) a new `active_clip_id` if the
+/// previously-active clip was one of the pruned ones.
+#[tauri::command]
+pub async fn chroma_project_resync_clips(
+    state: tauri::State<'_, AppState>,
+) -> Result<ProjectOpenDto, String> {
+    let dir = require_open_project()?;
+    let manifest = load_manifest(&dir)?;
+    let mut manifest = super::edit::ensure_timeline(&dir, manifest, false)?;
+    let grade_dir = dir.join("grades");
+
+    let clips = active_timeline_video_clips(&manifest);
+    let clip_paths: std::collections::HashSet<PathBuf> = clips
+        .iter()
+        .filter(|c| !c.source_path.is_empty())
+        .map(|c| PathBuf::from(&c.source_path))
+        .collect();
+
+    let (session_shots_before, session_active_before) = state::session_shots();
+    let active_path_before = session_shots_before
+        .get(session_active_before)
+        .map(|s| s.path.clone());
+
+    let dropped = state::prune_session_except(&clip_paths);
+    if !dropped.is_empty() {
+        log::info!(
+            "[chroma::project] resync: dropped {} stale session shot(s) no longer on the active timeline: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+
+    let (session_shots_after, _) = state::session_shots();
+    let known_paths: std::collections::HashSet<PathBuf> =
+        session_shots_after.iter().map(|s| s.path.clone()).collect();
+
+    let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(clips.len());
+    for clip in &clips {
+        let source_path = clip.source_path.clone();
+        let name = if clip.name.trim().is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            clip.name.clone()
+        };
+        let online = !source_path.is_empty() && media_item_is_online(&source_path);
+        let frame = clip.source_start.max(0) as u64;
+
+        if online {
+            let src = PathBuf::from(&source_path);
+            if !known_paths.contains(&src) {
+                // genuinely new — decode it in. Upserts into the session;
+                // does not disturb whichever shot is currently active
+                // unless this path happens to already be it (a re-add).
+                if let Err(e) = load::load_video_frame(&src, &source_path, frame, &state).await {
+                    log::warn!("[chroma::project] resync: clip {source_path} failed to load: {e}");
+                    dtos.push(ProjectShotDto {
+                        id: clip.id.clone(),
+                        source_path,
+                        name,
+                        frame,
+                        offline: true,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        dtos.push(ProjectShotDto {
+            id: clip.id.clone(),
+            source_path,
+            name,
+            frame,
+            offline: !online,
+        });
+    }
+
+    // Only re-resolve the active clip if the one active *before* this
+    // resync is no longer on the timeline at all — otherwise its own
+    // position in `clips`/`dtos` is its index, untouched.
+    let active_still_on_timeline = active_path_before
+        .as_ref()
+        .is_some_and(|p| clip_paths.contains(p));
+    let active_shot = if active_still_on_timeline {
+        let p = active_path_before.expect("checked Some above");
+        clips
+            .iter()
+            .position(|c| PathBuf::from(&c.source_path) == p)
+            .unwrap_or(0)
+    } else {
+        let candidate = resolve_active_clip_index(&manifest, &clips);
+        let idx = top_wins_clip_index(&manifest, &clips, candidate);
+        let want = clips.get(idx).map(|c| PathBuf::from(&c.source_path));
+        let (shots_now, _) = state::session_shots();
+        if let Some(i) = want.and_then(|w| shots_now.iter().position(|s| s.path == w)) {
+            let _ = state::session_set_active(i);
+            let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
+            let _ = super::commands::seek_and_install(frame, None, &state).await;
+        }
+        manifest.active_clip_id = clips.get(idx).map(|c| c.id.clone());
+        manifest.modified = now_rfc3339();
+        save_manifest(&dir, &manifest)?;
+        idx
+    };
+
+    Ok(ProjectOpenDto {
+        project_path: dir.to_string_lossy().to_string(),
+        name: manifest.name.clone(),
+        grade_dir: grade_dir.to_string_lossy().to_string(),
+        schema: manifest.schema.clone(),
+        shots: dtos,
+        active_shot,
+        settings: manifest.settings.clone(),
+    })
+}
+
 // --------------------------------------------------------------------------- //
 // save  (the live session -> the manifest + thumb)
 // --------------------------------------------------------------------------- //
