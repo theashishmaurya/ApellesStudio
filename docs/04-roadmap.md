@@ -268,9 +268,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    (`chroma-timeline::Clip` — no position/scale/rotation/opacity/fade) —
    the Inspector's NLE half needs new compositor work, which is the same
    work as Phase B (specifically B3) in item 6's multi-track effort, not a
-   separate track. **Not yet started** — no dedicated notes doc; scoped
-   inline here and in item 8 below pending real Inspector-only detail once
-   item 8 lands.
+   separate track. **Full scoping doc now exists:
+   `docs/notes/global-inspector.md`** (written 2026-09-03, after item 6's
+   Phase D shipped) — a real 4-phase build (1: selection model + layer
+   list; 2: Motion property panel; 3: NLE half, blocked on B3; 4: shared
+   panel shell), plus the complete verified prop catalog for all 8
+   registered primitives (not "7ish" — `text`, `emphasis`, `matrix`,
+   `graph`, `layers`, `particleflow`, `labelbox`, `layerstack`, transcribed
+   straight from each primitive's own inline prop type, not guessed).
+   **Phase 1 done, D-081 (2026-09-03)** — `LayerList.tsx`, a real
+   scene/layer sidebar in the Motion tab wired to a `Selection` model and
+   seeking the `@remotion/player` preview to whatever's selected via new
+   `sceneStartFrame`/`sceneDurationFrames` helpers (`build.ts`) that mirror
+   `<Series>`'s own back-to-back scene layout math exactly. Real,
+   standalone-useful navigation even before Phase 2's property panel
+   exists. `tsc` clean on `packages/motion`/`motion-engine`/`app`
+   (unchanged baseline). No dedicated test harness exists yet for either
+   package (neither had one before this pass) — not set up this pass,
+   flagged rather than silently skipped. **Phase 2 (the actual property
+   panel) is next**, unblocked, no backend work needed.
 8. **Unify clip identity, Edit ↔ Colorist (Resolve-shaped)** — owner,
    2026-09-03: "we have one clip we add, we can move to LUTs and color and
    we have the same clip, not multiple" (Resolve comparison), triggered by

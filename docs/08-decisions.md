@@ -6091,3 +6091,75 @@ check `ps aux | grep cargo` first.
   erroring on a Tauri-only API — unrelated to this feature, a genuine tool
   limitation, not skipped out of laziness). Real drag/drop/click-through
   verification is pending the owner's own next session.
+
+## D-081 — Global Inspector, Phase 1: a real selection model + layer list for the Motion tab
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Still working while the owner was away, per their "don't sit
+  idle" instruction. Item 7 (Global Inspector) is next in the roadmap's own
+  sequencing after D-080's Phase D shipped, but — unlike Phase D — it had
+  no dedicated scoping doc, only an inline roadmap note. Read the actual
+  code first rather than guess at scope: the Motion tab
+  (`packages/motion/src/MotionTab.tsx`) is a raw JSON `<textarea>`
+  (`ManifestEditor.tsx`, D-046 — "JSON-in, on purpose") next to a
+  `@remotion/player` preview, with **no selection model or layer list of
+  any kind** — before any property panel makes sense, something has to be
+  selectable first. That's a bigger, more foundational prerequisite than
+  "add property sliders," and building the actual panel blind against no
+  spec (unlike Phase D, which had `multi-track-nle.md` to execute against
+  precisely) risked producing something that doesn't match what's wanted.
+- **Wrote a real scoping doc first** (`docs/notes/global-inspector.md`,
+  mirroring `multi-track-nle.md`'s rigor): verified the manifest schema's
+  `.passthrough()` gap (`schema.ts`'s `layer` only types `use`/`at`/`dur`/
+  `active` — every primitive-specific prop passes through untyped), verified
+  `chroma_timeline::Clip` has zero transform fields (the NLE half is
+  genuinely blocked on Phase B3, not a separate problem), and extracted a
+  complete, verified prop catalog for all 8 registered primitives straight
+  from each one's own inline `React.FC<{...}>` type — not the manifest's
+  terse/adapted form, the real thing. 4 phases: 1 (selection + layer list),
+  2 (Motion property panel, unblocked), 3 (NLE half, blocked on B3), 4
+  (shared panel shell, last).
+- **Built Phase 1** — the concretely-scoped, low-risk, genuinely unblocked
+  piece, same pattern as verifying Phase B2 before building Phase D's UI on
+  top of it:
+  - `packages/motion/src/LayerList.tsx` (new) — a real expand-per-scene
+    sidebar: scene → its 2D `camera` (if present) → `layers[]`, or its
+    `scene3d` camera + `children[]` for a 3D scene. `Selection =
+    {sceneIndex, target}`, a plain local `useState` in `MotionTab.tsx` — the
+    same "no dedicated store package" weight `TimelinePane.tsx`'s own
+    `Selection` (D-080) established as right for this kind of thing.
+  - Selecting a row seeks the player to that scene's start frame —
+    `@remotion/player`'s own imperative `PlayerRef.seekTo`, forwarded
+    through a new optional `playerRef` prop on `MotionPreview.tsx`. New
+    `sceneStartFrame`/`sceneDurationFrames` helpers in `build.ts` compute
+    exactly the same per-scene frame math `<Series>` (`Video.tsx`) already
+    uses to lay scenes back to back — not a second, possibly-drifting guess
+    at it.
+  - Real, standalone-useful scene/layer navigation even before Phase 2 (an
+    actual property panel bound to the selection) exists — not just inert
+    plumbing for a future feature.
+  - `LayerList.tsx` deliberately does not import `@chroma/ui` — `Button.tsx`
+    in the same package already documents a real, specific conflict
+    (`@react-three/fiber`'s global JSX augmentation, pulled in transitively
+    via `Scene3D`/`ParticleFlow`, breaks `@chroma/ui`'s `Text` export's
+    polymorphic typing in the same `tsc` program) — plain elements on the
+    app's own `--color-*` tokens, matching every other file in this package.
+- **Not built this pass:** Phase 2 (the property panel itself) and
+  click-to-select directly on the `MotionPreview` canvas (would need each
+  primitive to report its own screen-space bounds back to the player
+  wrapper — Remotion has no built-in mechanism for that) — both real,
+  separate next steps, not silently folded into this one.
+- **Verification.** `tsc --noEmit` clean on `packages/motion`,
+  `packages/motion-engine`, and `app` (`app`'s own 64/64 baseline
+  unchanged). No automated test — neither `packages/motion` nor
+  `packages/motion-engine` has a test harness set up at all (no vitest
+  config, no existing test file in either), unlike `packages/editor`'s
+  established suite; not set up this pass, flagged honestly rather than
+  silently skipped, since standing up a first test harness for two
+  packages is real scope beyond this specific increment. Vite HMR applied
+  every change to the running dev app without error (`chroma-tauri-dev`
+  log — `hmr update .../MotionPreview.tsx`, `.../MotionTab.tsx`, no
+  exception after). **No live interactive click-through this pass** — same
+  tool limitation D-080 hit: no way to drive the native Tauri window
+  without the owner present; pending their next session.

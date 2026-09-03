@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Global Inspector, Phase 1: Motion tab gets a real
+  scene/layer sidebar (D-081).** Wrote a real scoping doc first
+  (`docs/notes/global-inspector.md` — a 4-phase build + the complete
+  verified prop catalog for all 8 primitives), since unlike the multi-track
+  UI this had none. Built the genuinely unblocked prerequisite: a
+  `LayerList` sidebar + selection model, wired to seek the preview player to
+  whatever scene/layer is selected — real navigation on its own, ahead of
+  the actual property panel (Phase 2, next).
+
 - **2026-09-03** — **Multi-track timeline UI (D-080, Phase D of the
   multi-track NLE effort).** The Edit tab now shows a real lane per track —
   custom header sidebar (kind icon, per-kind label, mute toggle, remove),

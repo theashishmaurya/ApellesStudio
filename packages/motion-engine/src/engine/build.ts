@@ -16,6 +16,23 @@ export const parseManifest = (raw: unknown): Manifest => manifestSchema.parse(ra
 export const totalFrames = (m: Manifest): number =>
   m.scenes.reduce((sum, s) => sum + Math.max(1, Math.round(s.dur * m.fps)), 0);
 
+/** A scene's own duration in frames — the exact per-scene term `totalFrames`
+ *  sums, and what `<Series.Sequence durationInFrames={...}>` (`Video.tsx`)
+ *  is given per scene — kept here so nothing computes this independently. */
+export const sceneDurationFrames = (m: Manifest, sceneIndex: number): number =>
+  Math.max(1, Math.round(m.scenes[sceneIndex].dur * m.fps));
+
+/** Composition-absolute start frame of `m.scenes[sceneIndex]` — mirrors
+ *  exactly how `<Series>` (`Video.tsx`) lays scenes back to back (each
+ *  scene's `durationInFrames` is this same `sceneDurationFrames` term), so a
+ *  UI that wants to seek the player to a specific scene/layer never
+ *  reinvents this math. */
+export const sceneStartFrame = (m: Manifest, sceneIndex: number): number => {
+  let start = 0;
+  for (let i = 0; i < sceneIndex; i++) start += sceneDurationFrames(m, i);
+  return start;
+};
+
 /** for Composition.calculateMetadata — props ARE the manifest */
 export const metadataFromManifest = (raw: unknown) => {
   const m = parseManifest(raw);
