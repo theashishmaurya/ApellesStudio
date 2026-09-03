@@ -228,26 +228,48 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      in `tauri.conf.json`; confirmed by the owner dragging a real clip in
      the real window, the project's first non-proxy drag-and-drop
      confirmation.
-7. **Motion property-editor GUI** — owner, 2026-09-03: not yet scoped.
-   Motion is currently 100% raw JSON manifest + live preview by design
-   (D-047 explicitly punted "a visual editor" as an open question). Owner
-   wants real per-primitive property controls (position/timing/text/camera
-   keyframes across all 7 primitives — text, emphasis, matrix, graph,
-   layers, scene3d, particleflow — plus scene/layer selection) so AI
-   drafts the manifest and a human refines it through a GUI, not raw JSON.
-   Considered buying Remotion's official **Editor Starter**
-   (remotion.dev/docs/editor-starter) as the frontend — checked: it's a
-   **paid product** (one-time purchase for individuals/small companies, a
-   "Company License" subscription for larger ones; ~$600 per the owner's
-   own check of the actual price, not published on the docs page) and a
-   **template to adopt and customize**, not a component library to
-   integrate into an existing app — real rework either way to speak our
-   manifest schema instead of its own internal data model. Owner's call:
-   not worth it, build our own — but its feature list (Layout/Position/
-   Dimensions/Rotation, Typography, Fill, Stroke, a proper layers timeline)
-   is a real reference for scoping this properly, same discipline as the
-   multi-track NLE effort (`docs/notes/multi-track-nle.md`) — write the
-   scope down before building. **Not yet started** — no notes doc yet.
+7. **Global Inspector — Motion + NLE, one shared panel, not two** — owner,
+   2026-09-03: reframed from "Motion property-editor GUI" once scoping
+   started. Both tabs need real property controls (position/timing/text/
+   camera keyframes for Motion's 7 primitives; position/scale/rotation/
+   opacity/fades for Edit-tab clips), and the owner's explicit direction is
+   one shared Inspector component, not a Motion-only build — referencing
+   Remotion's official **Editor Starter** (remotion.dev/docs/editor-starter)
+   as the section-layout target (Source/Layout/Fill/Video/Audio/Captions),
+   checked and rejected as a base to build *on* (paid, ~$600 per the
+   owner's own price check, and a template to adopt/customize rather than
+   a component library — real rework either way), but a real reference for
+   this doc's own section shape. **Verified, not assumed:** Motion's per-
+   primitive props already exist (scattered across each primitive's own TS,
+   the manifest schema is `.passthrough()` so nothing declares them
+   centrally yet) — an Inspector here is UI + a schema-extraction pass, no
+   backend blocker. **NLE's clips have zero transform fields today**
+   (`chroma-timeline::Clip` — no position/scale/rotation/opacity/fade) —
+   the Inspector's NLE half needs new compositor work, which is the same
+   work as Phase B (specifically B3) in item 6's multi-track effort, not a
+   separate track. **Not yet started** — no dedicated notes doc; scoped
+   inline here and in item 8 below pending real Inspector-only detail once
+   item 8 lands.
+8. **Unify clip identity, Edit ↔ Colorist (Resolve-shaped)** — owner,
+   2026-09-03: "we have one clip we add, we can move to LUTs and color and
+   we have the same clip, not multiple" (Resolve comparison), triggered by
+   the owner's own live repro (a clip dragged onto the Edit tab's timeline
+   didn't show up in Colorist at all). **Full scoping doc:
+   `docs/notes/unified-clip-model.md`.** Real finding: this is a *four*-way
+   split today (`state::Shot`, `useSessionStore.shots`/`.grades`,
+   `ProjectShot`, `chroma-timeline::Clip` — each with its own keying
+   scheme, verified against real code, not assumed), not the two-list gap
+   it first looked like. Target: `chroma-timeline::Clip` becomes the single
+   source of truth (gains `media_id`), `ProjectShot` retired, grades key off
+   `Clip.id`, Colorist grades whichever clip wins the Edit tab's active
+   playhead (reusing D-056's `resolve_video_clip_at` once Phase D lands
+   multiple video tracks — not new logic). **Sequenced before item 6's
+   Phase D and item 7's Inspector** — both would otherwise be built against
+   a model this migration replaces. **Not yet started** — scoping doc
+   written, no code yet; the risky step (migrating the owner's real
+   `grade.json` files against `~/Movies/Chroma/New.chroma`) needs testing
+   against that real project before this is called done, not just
+   synthetic fixtures.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

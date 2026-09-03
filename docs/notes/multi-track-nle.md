@@ -133,6 +133,11 @@ full writeup (mixing architecture, the three headroom options considered, where
 Track lanes, headers (mute/lock/solo), drag-between-tracks in `TimelinePane.tsx`.
 **Genuinely blocked on B and C existing** — no point building UI for tracks that can't
 render or mix. Once B/C land, back to the "wiring/UI-from-kit" bucket — fast.
+**Also sequenced after `docs/notes/unified-clip-model.md`'s migration** (owner-
+directed 2026-09-03): once multiple video tracks exist, "which clip is Colorist
+grading" needs to resolve to whichever clip wins compositing at the playhead — that
+migration builds the shared resolution path Phase D's UI and Colorist both need,
+so building Phase D against the current pre-migration model would mean rework.
 
 ### Phase E — Transitions
 A cross-dissolve is two clips composited with a time-varying blend — rides directly on
