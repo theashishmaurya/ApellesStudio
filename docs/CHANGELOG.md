@@ -4,6 +4,33 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Timeline UI fixes from real hands-on testing (D-056,
+  B-012/B-013).** Drag-from-Sources and edge-trim were both silently broken:
+  `packages/editor/src/timeline.ts`'s frontend edit-op mirror (authoritative
+  for real saves, since `chroma_timeline_set` stores verbatim) never picked
+  up D-054's `Clip.start_frame` — a dropped clip had no real position, and a
+  left-edge trim visibly moved the wrong edge. Ported D-054's model into
+  `timeline.ts` field-for-field against the Rust ops (`trim_start`/
+  `trim_end`'s neighbor clamps, `split`'s right-half position, `add_clip`'s
+  append position, a new overlap-rejected `move` op replacing the now-inert
+  `reorder`-as-position-change); `TimelinePane.tsx` renders from each clip's
+  real `start_frame` instead of re-deriving it from summed durations. **A
+  second, independent trim bug found via real live pointer testing** (not
+  code reading): the clip-name label's `z-10` had no isolating stacking
+  context, so it silently covered the resize handles' hitboxes across the
+  library's own DOM, swallowing every edge-trim `pointerdown` before
+  `interact.js` ever saw it — `pointer-events-none` on the label, one line,
+  fixes it. `TimelineSwitcher` rebuilt as a `@chroma/ui` `Tabs` strip (tabs +
+  a `+` tab) replacing the dropdown-plus-button. Timeline ruler: real
+  `HH:MM:SS`/`HH:MM:SS:FF` timecode + an adaptive "nice numbers" tick
+  interval (`ruler.ts`, new) instead of a hardcoded 1-tick-per-second scale.
+  Real op + formatting unit tests (33, `timeline.test.ts`/`ruler.test.ts`);
+  drag-and-drop and trim both additionally confirmed against the real
+  running app — a real Chrome tab on the plain Vite dev server (Tauri
+  mocked), real native drag events and real synthetic pointer events at the
+  actual DOM coordinates, real resulting store/JSON state checked — see
+  D-056 for the full method and honest caveats.
+
 - **2026-09-03** — **Multi-track NLE Phase A: `Clip.start_frame` + gap-aware
   edit ops + track management (D-054).** `chroma-timeline::Clip` gained an
   explicit, timeline-absolute `start_frame: i64` (not a `Gap` item — see

@@ -24,12 +24,18 @@ numbers are actually calibrated).
   scrub/play preview (independent of the Colorist render path) via the shared
   `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
   persisted in the project. Multiple named timelines per project, switchable via
-  `TimelineSwitcher` (D-046). **Real audio during playback** (D-050 —
+  a **tab-strip `TimelineSwitcher`** (D-046, rebuilt on `@chroma/ui` `Tabs`,
+  D-056). **Real audio during playback** (D-050 —
   `symphonia`→`rubato`→`dasp_sample`→`cpal`, single video track's embedded
   audio stream, synced-at-start-not-tightly-coupled to the video playhead).
   **Mature single-track timeline UI** (D-051) — scroll-wheel + toolbar zoom,
-  native edge-drag trim + snap-to-clip-edge/playhead, a Rust-computed waveform
-  on the clip, ripple-shift flash. No multi-track or transcript cut yet.
+  edge-drag trim + snap-to-clip-edge/playhead, a Rust-computed waveform on the
+  clip, ripple-shift flash, an **adaptive-density real-timecode ruler**
+  (D-056). Clip **position is a real, explicit `start_frame` the frontend
+  edit model now actually maintains** (D-056, closing a gap D-054's backend
+  model had opened) — drag-from-Sources and edge-trim were both silently
+  broken by that gap until the owner's live testing caught it and this pass
+  fixed it (**B-012**/**B-013**). No multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
@@ -74,6 +80,18 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    snapping (to adjacent clip edges + the playhead) turned out to already be fully
    native** (`flexible: true` + `dragLine: true`, both already set since D-041) — zero
    new code for either, just verified by reading the library's bundled source.
+   **Real-interaction gap found + closed, D-056 (2026-09-03, same day):** the
+   owner's own hands-on testing found edge-trim actually broken live, plus
+   drag-from-Sources — a genuine `D-054` regression (D-054 changed
+   `trim_start`'s real semantics hours after D-051 verified the library's
+   mechanics were native — D-051's own verification was and remains correct,
+   what changed was what the frontend's op computed from it) compounded by a
+   pre-existing position-derivation bug D-054 exposed, **plus a third,
+   independent bug found only by real live pointer testing**: the clip-name
+   label's `z-10` had no isolating stacking context and silently covered the
+   resize handles, eating every trim `pointerdown` before `interact.js` ever
+   saw it — so edge-trim's real pre-fix symptom was "nothing happens," not
+   "the wrong edge moves." See D-056 / **B-012**/**B-013**.
    **Custom, built this pass:** scroll-wheel zoom over the timeline (native `wheel`
    listener + toolbar zoom buttons — the library has no wheel handling at all), a
    Rust-computed waveform (`chroma_audio_waveform`, `chroma::audio` — one-shot
@@ -144,6 +162,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      compositor, no audio — those are Phases B/C/D, still not started. **Phase
      B is next** (the real long pole — see above); C is independent and can
      run in parallel.
+     - **Follow-up, same day (D-056):** Phase A's own "no frontend" scoping
+       left the *existing* single-track Editor UI's local edit model
+       (`packages/editor/src/timeline.ts`, which `chroma_timeline_set`'s
+       verbatim-storage contract makes authoritative for what a real edit
+       actually persists) silently out of sync with the new `start_frame`
+       field — not a Phase D (multi-track UI) task, just the pre-existing
+       single-track UI needing to speak the new model correctly. Fixed;
+       see D-056 / **B-012**/**B-013**. Phase D (an actual multi-track UI —
+       multiple visible lanes, track headers) is still not started.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
