@@ -65,8 +65,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the same playhead frame the video `rAF` loop re-baselines from on every
    Play toggle — not a tight per-frame coupling (the real tradeoff, written
    up in D-050). **Deferred, tracked separately:** multi-track audio mixing
-   (depends on real multi-track support generally — see item 2 below),
-   waveform-on-clip UI (item 2), mute/volume controls, audio scrubbing while
+   (**now done — item 6's Phase C / D-056**), waveform-on-clip UI (item 2),
+   mute/volume controls, audio scrubbing while
    paused, and long-play-session drift correction between the audio/video
    clocks (open-loop by design this pass — see D-050's sync-model note).
 2. ~~**A mature timeline UI**~~ — **done, D-051 (2026-09-03).** Scoped against
@@ -144,6 +144,28 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      compositor, no audio — those are Phases B/C/D, still not started. **Phase
      B is next** (the real long pole — see above); C is independent and can
      run in parallel.
+   - ~~**Phase C — real audio mixing**~~ — **done, D-056 (2026-09-03).**
+     `chroma::audio`'s `cpal` pipeline now sums N sources — the baseline
+     video-embedded audio (unchanged, unity gain, D-050's existing behaviour)
+     plus every genuine `TrackKind::Audio` clip overlapping the play
+     position — instead of playing exactly one stream. New
+     `chroma_timeline::Track::gain: f32` (default `1.0`) is per-track volume,
+     read (for genuine audio tracks; the video track's own embedded audio
+     stays hardcoded at unity this pass) by a new `mix_sources` mixer: sum
+     the active (nonzero-gain) sources, then a soft (`tanh`) limiter — chosen
+     over a hard clamp (real clipping distortion) or a blanket `1/N`
+     pre-scale (needlessly quiet when sources rarely peak together) — with
+     the single- or all-zero-active-source case bypassing summation/limiting
+     entirely, which is what keeps the pre-existing single-embedded-track
+     case byte-identical and makes "mute via `gain: 0.0`" an exact,
+     checkable property, not an approximation. Pan/stereo positioning
+     deliberately scoped out (mono gain scaling covers this phase's actual
+     goal). `chroma-timeline` 25/25, `chroma::audio` 29/29 (new: real,
+     deterministic mixing-math tests against two distinct real decoded
+     files, plus live-`cpal` end-to-end 2-track tests), `chroma::` wide
+     122/122, `tsc` 64/64 unchanged (no frontend touched — Phase D still
+     blocked on this + Phase B). See D-056 for the full mixing-architecture
+     and headroom-choice writeup.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

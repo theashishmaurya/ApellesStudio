@@ -35,7 +35,12 @@
 //! same way `build_from_shots` already sets `name`. D-054 (Phase A) gave
 //! `Clip` an explicit `start_frame`, added `add_track` / `remove_track` /
 //! `move_clip`, and a `backfill_legacy_positions` migration for pre-D-054
-//! `project.json` files whose clips have no position field.
+//! `project.json` files whose clips have no position field. D-056 (Phase C,
+//! `docs/notes/multi-track-nle.md`) added `Track.gain: f32` (default `1.0`)
+//! — a plain numeric multiplier, still no media/rendering reached from this
+//! crate; `chroma::audio` (`app/src-tauri`) is what actually reads it to
+//! scale a track's contribution to the mixed output. See D-056 for why it
+//! lives on `Track` here rather than in `chroma::audio` itself.
 
 use serde::{Deserialize, Serialize};
 
@@ -59,10 +64,27 @@ pub struct Timeline {
 }
 
 /// One track: a typed, ordered lane of clips.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub kind: TrackKind,
     pub clips: Vec<Clip>,
+    /// Linear volume multiplier applied to this track's contribution to the
+    /// mixed audio output (D-056, Phase C of `docs/notes/multi-track-nle.md`)
+    /// — `1.0` is unity (no change), `0.0` is a full mute, `> 1.0` boosts.
+    /// This crate never reads it (no media/rendering here — see the module
+    /// doc); `chroma::audio`'s mixer is the actual consumer. `#[serde(default
+    /// = "default_track_gain")]` so a pre-D-056 `project.json` track with no
+    /// `gain` key deserializes to unity rather than `0.0` (a real
+    /// `#[serde(default)]` would silently mute every track in every existing
+    /// project on load, since `f32::default() == 0.0` — this is a deliberate
+    /// non-zero migration default, not laziness). No pan/stereo-positioning
+    /// field — deliberately scoped out of Phase C, see D-056.
+    #[serde(default = "default_track_gain")]
+    pub gain: f32,
+}
+
+fn default_track_gain() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +219,7 @@ impl Timeline {
             tracks: vec![Track {
                 kind: TrackKind::Video,
                 clips,
+                gain: default_track_gain(),
             }],
         }
     }
@@ -226,11 +249,12 @@ impl Timeline {
     }
 
     /// Add a new, empty track of `kind`, appended after the last existing
-    /// track. Returns its index.
+    /// track, at unity gain (D-056). Returns its index.
     pub fn add_track(&mut self, kind: TrackKind) -> usize {
         self.tracks.push(Track {
             kind,
             clips: Vec::new(),
+            gain: default_track_gain(),
         });
         self.tracks.len() - 1
     }
@@ -672,6 +696,7 @@ mod tests {
         let mut t = Timeline::default();
         t.tracks.push(Track {
             kind: TrackKind::Video,
+            gain: default_track_gain(),
             clips: vec![
                 Clip {
                     id: "a".into(),
@@ -829,6 +854,7 @@ mod tests {
         let mut t2 = Timeline::default();
         t2.tracks.push(Track {
             kind: TrackKind::Video,
+            gain: default_track_gain(),
             clips: vec![
                 Clip {
                     id: "x".into(),
@@ -915,6 +941,10 @@ mod tests {
         assert_eq!(t.tracks.len(), 2);
         assert_eq!(t.tracks[1].kind, TrackKind::Audio);
         assert!(t.tracks[1].clips.is_empty());
+        assert_eq!(
+            t.tracks[1].gain, 1.0,
+            "D-056: a new track starts at unity gain"
+        );
 
         t.remove_track(0).unwrap();
         assert_eq!(t.tracks.len(), 1);
@@ -1001,5 +1031,28 @@ mod tests {
             t.move_clip(0, 0, 0, -1),
             Err(TimelineError::NegativePosition(-1))
         );
+    }
+
+    // --- per-track gain (D-056, Phase C) -------------------------------------
+
+    /// A track built before D-056 (`project.json` on disk with no `gain` key
+    /// at all — the shape of every real project saved to date) must load at
+    /// unity gain, not `0.0` — a real `#[serde(default)]` would silently mute
+    /// every existing project's audio the first time it's opened after this
+    /// change.
+    #[test]
+    fn legacy_track_json_without_gain_defaults_to_unity() {
+        let j = r#"{"name":"x","tracks":[{"kind":"video","clips":[]}]}"#;
+        let t: Timeline = serde_json::from_str(j).unwrap();
+        assert_eq!(t.tracks[0].gain, 1.0);
+    }
+
+    #[test]
+    fn track_gain_round_trips_through_serde() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].gain = 0.5;
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tracks[0].gain, 0.5);
     }
 }

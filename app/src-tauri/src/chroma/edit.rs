@@ -17,7 +17,11 @@
 //!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG);
 //!   `chroma_timeline_add_track`/`_remove_track`/`_move_clip` (D-054, Phase A
 //!   of `docs/notes/multi-track-nle.md`) manage tracks and reposition/move
-//!   clips (including across tracks) on the active timeline.
+//!   clips (including across tracks) on the active timeline;
+//!   `resolve_audio_track_positions` (D-056, Phase C) is the audio-track
+//!   counterpart of `resolve_video_position`, resolving every genuine
+//!   `TrackKind::Audio` clip overlapping a position for `chroma::audio`'s
+//!   mixer.
 //! What it does NOT do: no `wgpu`, no colour grade, no compositing — the editor
 //!   preview is deliberately independent of the Colorist's `AppState` render
 //!   path (grade-in-preview + multi-layer compositing are a later
@@ -155,8 +159,10 @@ fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectM
 }
 
 /// The open project's **active** timeline (D-045) — its persisted one, or a
-/// fresh build from its shots the first time.
-fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
+/// fresh build from its shots the first time. `pub(crate)` (D-056): also how
+/// `chroma::audio`'s mixer enumerates every genuine `TrackKind::Audio` track
+/// on the active timeline (`resolve_audio_track_positions`, below).
+pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
     let (_dir, manifest) = load_and_ensure_timeline(persist)?;
     Ok(manifest.timelines[manifest.active_timeline].clone())
 }
@@ -185,6 +191,41 @@ pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, Vide
     }
     let info = probe_cached(Path::new(&clip.source_path))?;
     Ok(Some((clip.clone(), source_frame.max(0) as u64, info)))
+}
+
+/// Resolve every genuine `TrackKind::Audio` clip on the active timeline that
+/// overlaps `pos` to `(source path, source start in seconds, that track's
+/// gain)` — the Phase C (D-056) counterpart to [`resolve_video_position`]'s
+/// single video-track lookup, feeding `chroma::audio`'s mixer the extra
+/// sources to sum in alongside the baseline video-embedded audio. Uses
+/// [`chroma_timeline::Track::clip_at`] exactly like the video path — a track
+/// with nothing covering `pos` (a gap, or an empty track, which today is
+/// every `Audio` track since nothing in the app populates one yet — see
+/// `chroma::audio`'s module doc) contributes nothing, silently, same "not an
+/// error" contract `resolve_video_position` already has. A clip whose source
+/// turns out to have no audio stream is skipped the same way.
+pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<(PathBuf, f64, f32)>, String> {
+    let timeline = resolve_timeline(false)?;
+    let mut out = Vec::new();
+    for track in timeline
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Audio)
+    {
+        let Some((clip, source_frame)) = track.clip_at(pos as i64) else {
+            continue;
+        };
+        if clip.source_path.is_empty() {
+            continue;
+        }
+        let info = probe_cached(Path::new(&clip.source_path))?;
+        if !info.has_audio {
+            continue;
+        }
+        let start_secs = info.frame_to_secs(source_frame.max(0) as u64);
+        out.push((PathBuf::from(&clip.source_path), start_secs, track.gain));
+    }
+    Ok(out)
 }
 
 // --------------------------------------------------------------------------- //
@@ -357,7 +398,9 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     };
 
     let path = PathBuf::from(&clip.source_path);
-    let scale = max_long_edge.and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
+    let scale = max_long_edge.and_then(|le| {
+        decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
+    });
 
     let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
         .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;

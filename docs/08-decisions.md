@@ -3951,3 +3951,205 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   the permanent suite) rather than a real UI-triggered bake — a live
   `chroma_export_video` run using the real "Bake Depth" output was not
   performed, for the same click-access reason.
+
+## D-056 — Multi-track NLE Phase C: real audio mixing — sum-then-soft-limit headroom, `Track.gain` lives on the domain model
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** `docs/notes/multi-track-nle.md` scoped Phase C as "extend
+  `chroma::audio`'s `cpal` pipeline to sum N tracks with per-track gain
+  instead of playing one embedded stream" — independent of Phase B (the
+  compositor, still not started), riding on Phase A's (D-054) `Timeline`/
+  `Track`/`Clip` model and D-050's existing `symphonia`→`rubato`→
+  `dasp_sample`→`cpal` pipeline. Before this pass, `chroma::audio` played
+  exactly one stream: the active video clip's own embedded audio, resolved
+  via `edit::resolve_video_position`. `TrackKind::Audio` existed in the model
+  (D-041) but nothing populated or read one (D-050's own module doc explains
+  why, at the time — "a real, separate audio `Track` only earns its keep once
+  there is something genuinely audio-only to put on it").
+
+- **Where per-track gain lives: `chroma_timeline::Track::gain: f32`, default
+  `1.0`, not a side table in `chroma::audio` or `chroma::project`.**
+  `chroma-timeline`'s own module doc draws its boundary at "no media, no
+  rendering, no compositing, no reaching media" — a numeric mix-level
+  multiplier is none of those; it's a plain editorial property of a track,
+  the same category as `Clip::start_frame` (D-054), which the domain model
+  already owns. Putting it there means it persists with the project
+  automatically (no new persistence code needed) and a future Phase D
+  mute/volume UI has one real field to read and write instead of a parallel
+  structure `chroma::audio` would have to keep in sync across every
+  add/remove-track op. `chroma::audio` still owns *interpreting* the number —
+  the actual mixing math and any media/`cpal` access stay in `chroma::audio`,
+  matching its existing ownership of "reads media, drives the device."
+  `#[serde(default = "default_track_gain")]` (not a bare `#[serde(default)]`,
+  which would resolve to `f32::default() == 0.0`) so every pre-D-056
+  `project.json` track loads at unity, not silently muted.
+
+- **Headroom approach — three real options, chosen: sum active sources, then
+  a soft (`tanh`) limiter, applied only when 2+ sources are genuinely
+  active.**
+  - **Pre-scale every source by `1/N`.** Rejected as the default: guarantees
+    no clipping, but permanently quietens a mix even when sources are never
+    simultaneously near full scale — the common real case (dialogue and a
+    music bed rarely peak together) — which is a worse default than this
+    tool's users would expect from a mixer.
+  - **Hard `clamp(-1.0, 1.0)`.** Rejected: avoids the `1/N` loudness tax but
+    produces true digital clipping (audible distortion) the moment multiple
+    loud sources really do sum past unity — exactly the failure mode the
+    brief called out to avoid.
+  - **Sum, then `soft_limit(x) = tanh(x)` (chosen).** Passes small-magnitude
+    input through with negligible distortion (`tanh'(0) == 1`, error is
+    third-order in `x` — inaudible at real dialogue/music amplitudes, well
+    under ±0.3) and compresses smoothly only as a mix approaches or exceeds
+    full scale, instead of clipping. `|soft_limit(x)| <= 1.0` for any finite
+    `x` — mathematically `tanh(x)` is strictly `< 1`, and at `f32` precision
+    an extreme `x` (far beyond anything a real mix produces) rounds to
+    exactly `1.0`, never past it, so the property that actually matters
+    (never exceeding full scale) holds either way.
+  - **The regression-safety refinement, and the reason the single-source case
+    is provably unaffected:** `mix_sources(buffers, gains, len)` first drops
+    any source whose gain is exactly `0.0` (a muted track contributes
+    nothing, so it shouldn't count toward "how many sources are active"),
+    then, if **one or zero** sources remain active, returns that source's
+    buffer untouched (`gain == 1.0`) or scaled (`gain != 1.0`) — **no
+    summation, no limiter call, at all** — and only sums + soft-limits when
+    **two or more** are genuinely active. This makes two things exactly
+    true, not approximately: (1) the pre-D-056 single-embedded-audio-track
+    case (D-050 — still the only real scenario until a project actually gets
+    a populated audio track) takes a **provably identical code path** with
+    **byte-identical output**, asserted directly by
+    `mix_sources_single_source_unity_gain_is_a_byte_identical_passthrough`;
+    (2) muting one of two active tracks (`gains = [1.0, 0.0]`) makes the mix
+    **exactly** equal to the other source alone — the checkable "mute via
+    gain" property the brief asked for, asserted both as a pure unit test
+    (`mix_sources_muting_one_of_two_sources_equals_the_other_alone`) and
+    against real decoded PCM from two distinct real files
+    (`real_decoded_sources_mix_and_mute_correctly`).
+
+- **Streaming architecture: one audio thread, N `DecodedSource`s pulled in
+  lockstep by a fixed-size window, not N threads or N ring buffers.**
+  `chroma_audio_play` now resolves every active source at `start_frame` —
+  the baseline video-embedded audio (always unity gain — see below) via the
+  unchanged `edit::resolve_video_position`, plus every genuine
+  `TrackKind::Audio` clip overlapping that position via the new
+  `edit::resolve_audio_track_positions` (mirrors `resolve_video_position`'s
+  own "gap/no-source is not an error" contract) — into a
+  `Vec<AudioSourceSpec>`. `run_session` opens one `cpal` output stream (as
+  before) and one `DecodedSource` per spec (`open_source`, factored out of
+  the old single-source `run_session` body — same symphonia open/probe/seek
+  setup, now shared across N sources instead of one). Each `DecodedSource`
+  buffers its own variable-sized `symphonia`/`rubato` output into a small
+  `carry: VecDeque<f32>` so every source can be asked for exactly the same
+  fixed-size window (`DecodedSource::take`) regardless of its own internal
+  packet/chunk sizes — that's what lets `mix_sources` sum them index-aligned.
+  A source exhausted mid-session contributes silence for the rest (via
+  `take`'s padding) without ending the session — the session only idles once
+  **every** source is done (`decoded.iter().all(DecodedSource::is_done)`),
+  generalizing D-050's own "keep the device open, drain to silence" EOF
+  behaviour from one source to N.
+  - **The baseline video-embedded-audio source stays hardcoded at unity gain
+    this pass** — `chroma_audio_play` does not read the video track's own
+    `Track::gain` into the mix. Deliberate, narrow scoping: the brief's own
+    wording is "a way to set a gain/volume multiplier per **audio** track,"
+    and wiring the video track's gain in too would need an extra timeline
+    fetch for no scoped requirement. Easy future work if Phase D's UI ever
+    wants to expose a video-track volume control too.
+  - **If the baseline source (`sources[0]`) fails to open, that's a real
+    error** — the same contract `run_session` always had for its one source.
+    **If a later source (an audio-track clip) fails to open, it's logged and
+    dropped, not fatal** — a broken/offline music-bed clip shouldn't take
+    down a session that would otherwise have played the video's dialogue
+    fine.
+
+- **Scoped out, deliberately: stereo pan/positioning per track.** Mono gain
+  scaling (every source is already collapsed to the output device's channel
+  count via the existing `adapt_channels`, regardless of source channel
+  count) covers Phase C's actual goal. A real pan law (equal-power vs.
+  linear, mid/side handling once more than stereo is in play) is real extra
+  scope nothing in `docs/notes/multi-track-nle.md`'s Phase C description
+  asks for — revisit if/when Phase D's UI wants a pan control. No mute/solo
+  UI either (Phase D, blocked on this landing) — only the underlying
+  gain-mixing capability, per the brief.
+
+- **Test fixture — no committed binary audio fixture in this repo (every
+  existing audio/video test is env-var-gated to a real file already on this
+  machine, not something checked in, per D-050's own convention).** Reused
+  `CHROMA_TEST_AUDIO_VIDEO` (`~/Downloads/A001_08302215_C019.MOV`, HEVC+AAC
+  48 kHz/2ch — D-050's own fixture) as the video track's embedded audio, and
+  synthesized a second, genuinely distinct 440 Hz tone via `ffmpeg`'s `sine`
+  test source (`synth_test_tone`, AAC-in-MP4 to match this crate's enabled
+  `symphonia` features — `isomp4`+`aac`, no `wav`/`pcm` support) at test time
+  into a tempdir, at the same 48 kHz rate so both decode sample-index-aligned
+  without needing `rubato` inside the test itself. `ffmpeg` is already a hard
+  pipeline dependency (`video.rs`'s own doc), so this mirrors the existing
+  "real file, not a binary fixture in git" convention rather than adding one.
+  `open_test_project_with_audio_track` extends D-050's `open_test_project`
+  helper with an optional second, genuine `TrackKind::Audio` track holding a
+  clip at `start_frame: 0` overlapping the video clip — exactly the fixture
+  shape the brief asked for.
+
+- **Verified.**
+  - `cargo test -p chroma-timeline`: **25/25** (was 23; +2:
+    `legacy_track_json_without_gain_defaults_to_unity`,
+    `track_gain_round_trips_through_serde`; `add_and_remove_track_round_trip`
+    also gained a gain=1.0 assertion on a freshly-added track).
+  - `cargo test -p RapidRAW chroma::audio`: **29/29**, including the real,
+    non-simulated proof this task asked for: `real_decoded_sources_mix_and_mute_correctly`
+    (deterministic — decodes both real files via `decode_mono_range`, no
+    `cpal`, no live device, no wall-clock — mixes them are the exact sum, not
+    silence, not either alone; muting either one via `gain: 0.0` reproduces
+    the other's decode output bit-for-bit) plus two live-device end-to-end
+    tests through the real `chroma_audio_play`/`chroma_audio_level`/
+    `chroma_audio_stop` command surface with a genuine 2-track `Timeline`
+    (`chroma_audio_play_mixes_a_genuine_audio_track_with_the_video_track`,
+    `chroma_audio_play_with_a_muted_audio_track_still_plays_the_video`) —
+    both logged non-silent `peak` from a real `cpal` output stream. All of
+    D-050/D-051's existing tests (single-source playback, the no-audio silent
+    no-op, waveform extraction) still pass unchanged, pinning the regression
+    contract.
+  - `cargo test --manifest-path app/src-tauri/Cargo.toml chroma::`:
+    **122/122** (was 110 at D-054; +12: the mixing/gain tests above; zero
+    regressions elsewhere).
+  - `cargo clippy -p RapidRAW --lib` / `cargo clippy -p chroma-timeline`:
+    **zero warnings on any file this change touched** (`audio.rs`, `edit.rs`,
+    `chroma-timeline/src/lib.rs`). Pre-existing `-D warnings` failures
+    elsewhere in the workspace (`mask.rs`, `project.rs`, `session.rs`, none
+    touched by this change) are unrelated lint debt predating this pass, not
+    introduced by it.
+  - `cargo fmt`: formatted only the 3 files this change touched. **Caught
+    live:** `cargo fmt -p RapidRAW -- <files>` did not actually restrict
+    itself to the given file list and reformatted a further 13 unrelated
+    files across `app/src-tauri/src` — a real gotcha given this repo's
+    HARD RULE against broad `cargo fmt` — caught via `git status` before
+    committing and reverted with `git checkout --` on every file this change
+    didn't touch; the 3 real diffs were confirmed (`git diff` hunk-by-hunk)
+    to align exactly with this change's own edits, not stray reformatting.
+  - `tsc --noEmit` in `app/`: **64/64, unchanged** from D-050/D-054's own
+    recorded baseline in this worktree — expected and confirmed, since this
+    pass touched zero frontend/TS files.
+  - **Real boot, with an honest gap.** `cargo build -p RapidRAW --lib`
+    succeeded cleanly (confirms the restructured `chroma::audio` — the new
+    `DecodedSource`/`open_source`/multi-source `run_session` — links and
+    builds with no new warnings, the same bar D-050's own boot check aimed
+    for). Driving the actual Tauri window (`npm run tauri:dev`) was not
+    possible in this session: port 1420 (Vite's `strictPort: true` fixed
+    port) was already bound by a pre-existing, unrelated `vite` process
+    running out of the **main** checkout (`~/my_projects/chroma`, not either
+    concurrent worktree) — not something this task owns or should kill
+    blind, and changing the hardcoded dev port would mean editing
+    `app/vite.config.mjs`, out of this change's scope. Fell back to the same
+    kind of proof D-050 itself used when a live UI click-through wasn't
+    available: the real, live `chroma_audio_play`/`chroma_audio_level`/
+    `chroma_audio_stop` integration tests above, which call the exact same
+    command surface `PreviewPane.tsx` does, against real files, with a real
+    `cpal` output stream logging non-silent levels.
+
+- **Deferred (explicitly out of scope this phase, per
+  `docs/notes/multi-track-nle.md`):** no UI to add an audio track or place a
+  clip on one (Phase D, blocked on B and C both); no mute/solo/pan controls
+  (pan scoped out of the model entirely this pass, see above); no export-path
+  mixing (export doesn't use the timeline model yet — a separate, later
+  phase); the video/audio sync model (D-050's open-loop lockstep-at-start
+  design) untouched, as directed; re-resolving active sources mid-session
+  (a clip beginning after a gap won't be picked up until the next Play/seek
+  — matches D-050's existing "no re-seek mid-play" design).

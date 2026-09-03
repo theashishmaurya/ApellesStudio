@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Multi-track NLE Phase C: real audio mixing (D-056).**
+  `chroma::audio`'s `cpal` pipeline now sums N sources instead of playing
+  exactly one — the baseline video-embedded audio (unchanged, unity gain)
+  plus every genuine `TrackKind::Audio` clip overlapping the play position.
+  New `chroma_timeline::Track::gain: f32` (default `1.0`) is per-track
+  volume; a new `mix_sources`/`soft_limit` mixer sums active (nonzero-gain)
+  sources through a `tanh` soft limiter (chosen over a hard clamp's real
+  clipping or a `1/N` pre-scale's needless quietening), bypassing
+  summation/limiting entirely with ≤1 active source — which keeps the
+  pre-existing single-track case byte-identical and makes "mute via
+  `gain: 0.0`" an exact property. Pan scoped out. `chroma-timeline` 25/25,
+  `chroma::audio` 29/29 (new deterministic + live-`cpal` 2-track tests),
+  `chroma:: ` wide 122/122, `tsc` 64/64 unchanged, real `cargo build`
+  boot confirmed (live Tauri UI boot blocked by an unrelated port-1420
+  process already running from the main checkout, not this task's to
+  kill — see D-056).
+
 - **2026-09-03** — **Multi-track NLE Phase A: `Clip.start_frame` + gap-aware
   edit ops + track management (D-054).** `chroma-timeline::Clip` gained an
   explicit, timeline-absolute `start_frame: i64` (not a `Gap` item — see
