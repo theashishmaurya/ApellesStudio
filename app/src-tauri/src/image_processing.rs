@@ -1566,15 +1566,22 @@ pub struct MaskAdjustments {
 
 pub const MAX_MASKS: usize = 32;
 
-/// Interactive relight (D-046). One virtual light, GPU-uniform layout — 8 `f32`s,
-/// two 16-byte rows, no padding needed. `kind` is `0.0` for a positional light
-/// (key/fill/rim — shaded by the depth-derived normal + falloff) or `1.0` for
-/// ambient (uniform tint, no position/normal/falloff). `pos_x`/`pos_y`/`radius`
-/// are 0–1 fractions (UI percentages divided by 100 in
-/// `parse_relight_lights_gpu`); `color_*` are linear-ish 0–1 straight from the
-/// UI hex swatch (not colour-managed — a cheap tint, matching the rest of this
-/// v1's "not photoreal" scope, see D-046). See `shaders/shader.wgsl`'s mirror
-/// struct + `apply_relight`.
+/// Interactive relight (D-046, `distance` field added D-076). One virtual
+/// light, GPU-uniform layout — 9 real `f32`s + 3 `f32` pad, three 16-byte
+/// rows. `kind` is `0.0` for a positional light (key/fill/rim — shaded by the
+/// depth-derived normal + falloff) or `1.0` for ambient (uniform tint, no
+/// position/normal/falloff). `pos_x`/`pos_y`/`radius`/`distance` are 0–1
+/// fractions (UI percentages divided by 100 in `parse_relight_lights_gpu`);
+/// `color_*` are linear-ish 0–1 straight from the UI hex swatch (not
+/// colour-managed — a cheap tint, matching the rest of this v1's "not
+/// photoreal" scope, see D-046). `distance` is how far the light is held off
+/// the shaded surface *toward the camera*, in the depth map's own normalized
+/// units — NOT screen-space like `pos_x`/`pos_y`/`radius`; it feeds the
+/// z-component of the light direction in `apply_relight` (D-076: without it,
+/// positional lights sampled their own z straight off the surface they were
+/// dropped on and produced near-zero directional shading everywhere — "nothing
+/// is getting applied at all"). See `shaders/shader.wgsl`'s mirror struct +
+/// `apply_relight`.
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable, Default)]
 #[repr(C)]
 pub struct RelightLightGpu {
@@ -1586,6 +1593,10 @@ pub struct RelightLightGpu {
     pub color_g: f32,
     pub color_b: f32,
     pub kind: f32,
+    pub distance: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
 }
 
 pub const MAX_RELIGHT_LIGHTS: usize = 8;

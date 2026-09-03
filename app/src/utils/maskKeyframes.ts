@@ -34,7 +34,7 @@ export const GEOMETRY_KEYS: Record<string, string[]> = {
   // is used directly by `RelightPanel`/`RelightPuckLayer` (the light object
   // itself is the "parameters" every function above operates on), not looked
   // up via `isKeyframeableMaskType`/`snapshotGeometry`'s sub-mask-type path.
-  relight: ['x', 'y', 'radius'],
+  relight: ['x', 'y', 'radius', 'distance'],
 };
 
 /** The geometry keyframes are only meaningful for these sub-mask types. */

@@ -379,8 +379,19 @@ export interface RelightLight {
   kind: 'key' | 'fill' | 'rim' | 'ambient';
   x: number;
   y: number;
-  /** 0–100, % of the longer frame dimension. Ignored for kind === 'ambient'. */
+  /** 0–100, % of the longer frame dimension — screen-space falloff size only.
+   *  Ignored for kind === 'ambient'. */
   radius: number;
+  /** 0–100. How far the light is held off the subject's surface *toward the
+   *  camera*, in the depth map's own normalized units (D-076, found live-
+   *  testing: "distance is not radius but the z index, the depth actually").
+   *  A light with distance ~0 sits flush on whatever surface it was dropped
+   *  on and produces almost no directional shading (surface normal and light
+   *  direction are both ~straight-on) — this was the *only* behavior before
+   *  D-076, which is why relight looked like it did nothing. `radius` never
+   *  substituted for this: it only ever controlled the 2D falloff ring size.
+   *  Ignored for kind === 'ambient'. */
+  distance: number;
   /** 0–200 UI percentage; 100 = the shader's baseline light strength. */
   intensity: number;
   /** `#rrggbb`, straight off an `<input type="color">` swatch. */

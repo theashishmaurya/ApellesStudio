@@ -5,12 +5,15 @@
 // and below it either the Preset picker (D-054) or the selected light's
 // Color / Power / Distance controls plus a keyframe affordance (reuses the
 // D-034 mask-keyframe mechanism via `utils/maskKeyframes.ts` —
-// `GEOMETRY_KEYS.relight`, not a new keyframe system), a "Track Depth" button
-// (D-036's `chroma_depth_track` job, wired to the top-level `relightDepthDir`
-// instead of a mask's parameters — see `useAiMasking.ts`'s
-// `handleTrackRelightDepth`) and a "Bake Depth" button (D-054's static
-// single-frame fallback, `handleBakeRelightDepth` — the depth-less-clip
-// parity D-024's AI-Depth mask already has).
+// `GEOMETRY_KEYS.relight`, not a new keyframe system). Two depth sources
+// (D-073 UX): Bake Depth (D-054's static single-frame fallback,
+// `useAiMasking.ts`'s `handleBakeRelightDepth` — a few seconds) now fires
+// itself automatically the moment it's needed, surfaced only as a status
+// line + a manual re-bake affordance; Track Depth (D-036's real per-frame
+// `chroma_depth_track` job over the whole clip, minutes not seconds,
+// `handleTrackRelightDepth`) is its own clearly-labeled "finalize" section
+// at the bottom of the panel, not a button sitting next to Bake Depth as if
+// the two were equal-weight choices.
 //
 // The canvas puck drag lives in `RelightPuckLayer` (ImageCanvas.tsx); this
 // panel is the numeric-control half of the same interaction, matching the
@@ -22,9 +25,23 @@
 // inconsistent with the rest of the app ("feels like it's not from this
 // app"). Interaction logic (tab selection, preset apply, keyframe ops) is
 // untouched — this pass only changes what renders it, not what it does.
-import { useCallback, useMemo, useState } from 'react';
-import { Diamond, Plus, Trash2, Eye, EyeOff, X } from 'lucide-react';
-import { Button, Slider } from '@chroma/ui';
+//
+// Depth-source UX (D-073): Bake Depth (single-frame, a few seconds) now
+// fires automatically the moment a positional light exists with no depth
+// source yet — the owner's own live testing found "no live feedback kills
+// the purpose of relight": Track Depth (the OTHER depth source, a real
+// per-frame pass over the *entire* clip, minutes not seconds, and heavy
+// enough to have crashed the AI sidecar once tonight processing a 12k-frame
+// 4K clip) was sitting next to Bake Depth as two equal-weight buttons with
+// no guidance on which to reach for — a user reasonably tries the one
+// listed first. Bake is now invisible machinery (a status line, not a
+// button a user has to know to click) with a small manual "Re-bake"
+// affordance for after a scrub; Track Depth moves to its own section below
+// every light control, visually separated and labeled as the deliberate
+// "finalize for the whole video" action it actually is.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Diamond, Info, Loader2, Plus, RotateCw, Trash2, Eye, EyeOff, Video, X } from 'lucide-react';
+import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@chroma/ui';
 
 import { useEditorStore } from '../../store/useEditorStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
@@ -57,6 +74,36 @@ export default function RelightPanel() {
   const ambientLight = useMemo(() => lights.find((l) => l.kind === 'ambient'), [lights]);
   const positionalLights = useMemo(() => lights.filter((l) => l.kind !== 'ambient'), [lights]);
   const activeLight = useMemo(() => lights.find((l) => l.id === activeLightId) ?? null, [lights, activeLightId]);
+
+  // D-073: fire Bake Depth automatically — a positional light with no depth
+  // source at all renders as an ambient-only no-op (per `resolve_relight_
+  // depth_bitmap`), which read as "broken" until the owner explicitly
+  // clicked a button most people wouldn't know to reach for first. Only
+  // fires once per "genuinely no depth yet" state (the effect's own deps
+  // naturally gate re-firing — adding a second/third light, or toggling
+  // between lights, doesn't re-trigger it once a bake exists), and never
+  // fights `Track Depth`: `relightDepthDir` winning over `relightDepthBake`
+  // at render time is unchanged (`resolve_relight_depth_bitmap`'s existing
+  // precedence), so a track in progress or already finished is left alone.
+  useEffect(() => {
+    if (
+      positionalLights.length > 0 &&
+      !relightDepthDir &&
+      !relightDepthBake &&
+      !isBakingRelightDepth &&
+      !depthTrackProgress
+    ) {
+      void handleBakeRelightDepth();
+    }
+    // `handleBakeRelightDepth` is deliberately not a dependency — it's a
+    // plain (non-`useCallback`) function from `useAiMasking()`, a new
+    // reference every render, so including it would re-fire this effect on
+    // any unrelated re-render rather than only on a real state change. The
+    // real guard is `isBakingRelightDepth`, which `handleBakeRelightDepth`
+    // itself sets synchronously (via `setEditor`) before its first `await`
+    // — this effect can't re-enter mid-bake.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionalLights.length, relightDepthDir, relightDepthBake, isBakingRelightDepth, depthTrackProgress]);
 
   const updateLights = useCallback(
     (fn: (lights: RelightLight[]) => RelightLight[]) => {
@@ -156,49 +203,41 @@ export default function RelightPanel() {
         </div>
       </div>
 
-      {/* Depth source -------------------------------------------------------
-          "Track Depth" (D-036, per-frame, video only) always wins when both
-          exist; "Bake Depth" (D-054) is the fallback — a static single-frame
-          bake, parity with D-024's AI-Depth mask — works on a still image
-          too, since a still has no temporal track to run in the first place. */}
-      <div className="flex flex-col gap-1.5 text-xs text-text-secondary">
-        <div className="flex items-center gap-2 flex-wrap">
-          {videoInfo?.isVideo && (
-            <Button
-              variant="secondary"
-              size="xs"
-              onClick={handleTrackRelightDepth}
-              disabled={!!depthTrackProgress}
-            >
-              {relightDepthDir ? 'Re-track depth' : 'Track Depth'}
-            </Button>
-          )}
-          <Button
-            variant="secondary"
-            size="xs"
-            onClick={handleBakeRelightDepth}
-            disabled={isBakingRelightDepth}
-            title="Static single-frame depth bake — fallback for a clip with no depth track"
-          >
-            {isBakingRelightDepth ? 'Baking…' : relightDepthBake ? 'Re-bake depth' : 'Bake Depth'}
-          </Button>
-          {depthTrackProgress && (
-            <span className="tabular-nums">
-              {depthTrackProgress.total
-                ? `${depthTrackProgress.done}/${depthTrackProgress.total}`
-                : 'starting…'}
-            </span>
+      {/* Depth status (D-073) ------------------------------------------------
+          No button here any more for the common case — Bake Depth (a few
+          seconds, single frame) fires automatically the moment a positional
+          light needs it (see the effect above). This is just the live status
+          + a small manual "Re-bake" for after a scrub to a different frame.
+          "Track Depth" (the heavy, whole-clip, minutes-long pass) moved to
+          its own section below every light control — see there. */}
+      {positionalLights.length > 0 && (
+        <div className="flex items-center gap-1.5 text-xs text-text-secondary">
+          {isBakingRelightDepth ? (
+            <>
+              <Loader2 size={12} className="animate-spin shrink-0" />
+              <span>Generating a quick depth preview…</span>
+            </>
+          ) : relightDepthDir ? (
+            <span>Full video depth ready — lights follow camera motion.</span>
+          ) : relightDepthBake ? (
+            <>
+              <span className="flex-1">Quick preview ready (single frame — won&apos;t follow camera motion).</span>
+              {videoInfo?.isVideo && (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={handleBakeRelightDepth}
+                  title="Re-bake the depth preview at the current frame"
+                >
+                  <RotateCw size={12} />
+                </Button>
+              )}
+            </>
+          ) : (
+            <span>Ambient works now; positional lights need depth — starting a quick preview…</span>
           )}
         </div>
-        {!depthTrackProgress &&
-          (relightDepthDir ? (
-            <span>Depth track ready — key/fill/rim lights shade the frame.</span>
-          ) : relightDepthBake ? (
-            <span>Static depth bake ready — key/fill/rim lights shade the frame (won&apos;t follow camera motion).</span>
-          ) : (
-            <span>Key/fill/rim lights need a depth track or bake (ambient works without one).</span>
-          ))}
-      </div>
+      )}
 
       {/* Bottom tab strip: Preset / Ambient / Light 1 / Light 2 / … / + Add Light */}
       <div className="flex items-center gap-1.5 flex-wrap border-t border-b border-border-color py-2">
@@ -318,9 +357,35 @@ export default function RelightPanel() {
 
           {activeLight.kind !== 'ambient' && (
             <>
+              {/* Distance (D-076) — how far the light is held off the
+                  subject's surface toward the camera (the depth map's own
+                  z, not a screen-space size). This is the control that
+                  actually makes a positional light shade anything: at
+                  distance 0 the light sits flush on whatever surface it was
+                  dropped on and the shader's light direction collapses to
+                  ~in-plane, so `dot(normal, lightDir)` reads ~0 almost
+                  everywhere on a real (relatively flat) face/torso — this
+                  read as "nothing is getting applied at all" before this
+                  field existed. Was previously (mis)labeled "Distance" but
+                  wired to `radius` (screen-space falloff size, below) —
+                  that slider never touched depth at all. */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-text-secondary">Distance</span>
+                  <span className="text-text-primary tabular-nums">{activeLight.distance}</span>
+                </div>
+                <Slider
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={activeLight.distance}
+                  onValueChange={(v) => updateActiveLight({ distance: sliderValue(v) })}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-text-secondary">Radius</span>
                   <span className="text-text-primary tabular-nums">{activeLight.radius}</span>
                 </div>
                 <Slider
@@ -332,7 +397,7 @@ export default function RelightPanel() {
                 />
               </div>
 
-              {/* Keyframes (D-034 reuse) — position/radius only, video only. */}
+              {/* Keyframes (D-034 reuse) — position/radius/distance only, video only. */}
               {videoInfo?.isVideo && (
                 <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none pt-1">
                   <Button
@@ -345,6 +410,7 @@ export default function RelightPanel() {
                           x: activeLight.x,
                           y: activeLight.y,
                           radius: activeLight.radius,
+                          distance: activeLight.distance,
                         }),
                       )
                     }
@@ -382,6 +448,60 @@ export default function RelightPanel() {
               )}
             </>
           )}
+        </div>
+      )}
+
+      {/* Track Depth — the deliberate "finalize" action (D-073).
+          Always at the bottom, video-only (a still has no temporal track to
+          run — Bake Depth already covers it), not gated on having a
+          positional light yet (tracking ahead of adding one is a real,
+          reasonable workflow). Compact by design (owner: "keep the track
+          full depth at right bottom with I icon instead of so much text") —
+          the explanation lives in a real `@chroma/ui` `Tooltip` (D-042,
+          `render={<Button/>}` — the same pattern `TimelinePane.tsx`'s
+          toolbar already establishes) instead of always-visible paragraph
+          text; only the compact progress readout stays inline while a track
+          is actually running, since that's live status, not explanation. */}
+      {videoInfo?.isVideo && (
+        <div className="flex items-center justify-end gap-1.5 mt-1 pt-2 border-t border-border-color">
+          {depthTrackProgress && (
+            <span className="text-[10px] text-text-secondary tabular-nums mr-auto">
+              Tracking… {depthTrackProgress.total ? `${depthTrackProgress.done}/${depthTrackProgress.total}` : 'starting…'}
+            </span>
+          )}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="text-text-secondary/50 hover:text-text-secondary cursor-help">
+                    <Info size={13} />
+                  </span>
+                }
+              />
+              <TooltipContent side="top" align="end">
+                Finalize for the whole video: tracks real depth across every frame so lights follow
+                camera motion — a real per-frame pass, minutes not seconds for a long or high-res clip.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  onClick={handleTrackRelightDepth}
+                  disabled={!!depthTrackProgress}
+                  aria-label={relightDepthDir ? 'Re-track depth (full video)' : 'Track Depth (full video)'}
+                >
+                  {depthTrackProgress ? <Loader2 size={14} className="animate-spin" /> : <Video size={14} />}
+                </Button>
+              }
+            />
+            <TooltipContent side="top" align="end">
+              {relightDepthDir ? 'Re-track depth (full video)' : 'Track Depth (full video)'}
+            </TooltipContent>
+          </Tooltip>
         </div>
       )}
     </div>

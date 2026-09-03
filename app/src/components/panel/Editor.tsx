@@ -784,6 +784,19 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // D-074: this handler is `onPointerDownCapture` on an ancestor of the
+      // relight puck layer (`RelightPuckLayer.tsx`) — capture phase fires
+      // strictly *before* the puck's own `onPointerDown` (bubble phase), so
+      // nothing that component does with `stopPropagation()` can prevent
+      // this pan/zoom logic from already having started tracking the same
+      // pointer by the time it runs. Confirmed live: dragging a relight
+      // puck also scrubbed the video frame — this handler's own pan-start
+      // (`setIsPanningState(true)`, `activePointers`) was racing the
+      // puck's drag for the same pointer. A target check, not a
+      // propagation fix, is the only place this can actually be stopped —
+      // see the marker attribute's own doc in `RelightPuckLayer.tsx`.
+      if ((e.target as HTMLElement).closest('[data-relight-puck]')) return;
+
       wasPanningDisabledOnDown.current = isPanningDisabled;
 
       const isBrushActiveLocal =

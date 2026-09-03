@@ -74,6 +74,47 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-022 — Relight positional lights rendered zero visible effect on real footage, even fully configured
+status: fixed (2026-09-03, D-076) · severity: blocker (the entire key/fill/rim relight feature never worked, on any footage, at any point this session — see the B-018 note below) · area: `app/src-tauri/src/chroma/relight.rs`, `app/src-tauri/src/image_processing.rs`, `app/src-tauri/src/shaders/shader.wgsl`, `app/src/components/chroma/RelightPanel.tsx`
+- **found:** owner, live, with a fully-configured positional light (color set,
+  Power=200, Distance=55, puck positioned on the subject, depth bake
+  confirmed ready): "just so you know nothing is getting applied at all."
+- **cause:** the "Distance" slider on the panel was bound to `radius` (2D
+  falloff size) — there was no real z/depth field anywhere in
+  `RelightLight`. In the shader, a light's z was derived only by comparing
+  the depth value at the light's *own* anchor pixel against each shaded
+  pixel's depth — on real footage (relatively flat depth near wherever a
+  light is actually dropped, e.g. a face) that delta is ~0 everywhere, so
+  the shading term (`dot(normal, light_dir)`) collapsed to ~0 almost
+  everywhere the light could matter. The light was always flush against
+  whatever surface it was dropped on; nothing ever elevated it.
+- **relationship to B-018:** B-018 (same session, fixed earlier) diagnosed a
+  real, separate bug — a 2-day-stale sidecar silently 404ing "Track Depth" —
+  and its own writeup claimed to be "the actual root cause behind every 'no
+  light shows' report this session." That fix was real and necessary, but
+  not sufficient: this bug was still present underneath it the entire time.
+  No live confirmation of a visible relight effect had occurred at any point
+  in this session, including after B-018 landed.
+- **fix:** added a real `distance` field end-to-end (data model → Rust
+  parsing → GPU uniform → shader z-computation → a correctly-labeled UI
+  slider), defaulting to a nonzero value so a fresh light is immediately
+  lit rather than needing the owner to discover a slider first. Full
+  writeup, including the exact shader math and the new GPU-render
+  regression test that reproduces the bug on a flat synthetic depth map:
+  D-076 in `docs/08-decisions.md`.
+
+## B-021 — Dragging a relight light puck on the Colorist canvas also scrubbed the video frame
+status: fixed (2026-09-03, D-074) · severity: medium · area: `app/src/components/panel/Editor.tsx`, `app/src/components/panel/editor/RelightPuckLayer.tsx`
+- **found:** owner, live, screenshot: "when i move this the frame is moving as well please fix it."
+- **cause:** `Editor.tsx`'s pan/zoom handler is `onPointerDownCapture` on an
+  ancestor of the puck — capture phase fires before the puck's own
+  bubble-phase handler, so the puck's existing `stopPropagation()` couldn't
+  undo it.
+- **fix:** the puck carries `data-relight-puck="true"`; `Editor.tsx`'s
+  capture-phase handler checks for it via `closest()` and returns
+  immediately if found, before doing anything else. Full writeup: D-074 in
+  `docs/08-decisions.md`.
+
 ## B-020 — Colorist never actually picked up Edit-tab timeline changes; a deleted clip lingered forever as a "ghost" shot
 status: fixed (2026-09-03, D-071) · severity: high (undermines D-070's whole point — same session, immediate retest) · area: `app/src-tauri/src/chroma/project.rs`, `app/src-tauri/src/chroma/state.rs`, `app/src/store/useSessionStore.ts`, `app/src/main.tsx`
 - **found:** owner's own live retest of D-070, immediately after it landed — dragged a clip onto the Edit tab's timeline, switched to Colorist, the clip wasn't there. Separately spotted a clip already deleted from the media pool still showing as a shot in the Colorist strip.

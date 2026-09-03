@@ -169,10 +169,13 @@ struct MaskAdjustments {
     _pad_end7: f32,
 }
 
-// Interactive relight (D-046). Mirrors `RelightLightGpu` in image_processing.rs
-// field-for-field — 8 f32s, no padding needed (two 16-byte rows already).
-// `kind`: 0.0 = positional (key/fill/rim, shaded by depth-normal + falloff),
-// 1.0 = ambient (uniform tint, no position/normal/falloff). See `apply_relight`.
+// Interactive relight (D-046, `distance` added D-076). Mirrors
+// `RelightLightGpu` in image_processing.rs field-for-field — 9 real f32s + 3
+// pad f32s, three 16-byte rows. `kind`: 0.0 = positional (key/fill/rim,
+// shaded by depth-normal + falloff), 1.0 = ambient (uniform tint, no
+// position/normal/falloff). `distance`: how far the light is held off the
+// shaded surface toward the camera, in the depth map's own normalized units
+// — feeds the z-component of the light direction, see `apply_relight`.
 struct RelightLight {
     pos_x: f32,
     pos_y: f32,
@@ -182,6 +185,10 @@ struct RelightLight {
     color_g: f32,
     color_b: f32,
     kind: f32,
+    distance: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 const MAX_RELIGHT_LIGHTS: u32 = 8u;
@@ -1532,13 +1539,22 @@ fn apply_relight(
 
         // Screen-space light direction: xy from the puck's 2D offset
         // (aspect-corrected so the falloff radius reads as a circle
-        // regardless of frame aspect), z from the depth delta between the
-        // light's own anchor point and this pixel — puts the light "at"
-        // whatever surface depth it was dropped on, same relative-depth
-        // space `relight_normal`'s finite-difference already reads (hence
-        // the matching RELIGHT_NORMAL_STRENGTH-equivalent scale below).
+        // regardless of frame aspect); z from the depth delta between the
+        // light's *elevated* position and this pixel. `light.distance`
+        // (D-076) is added to the surface depth sampled at the light's own
+        // anchor point — without it the light sits flush on whatever
+        // surface it was dropped on (distance == 0), so for any pixel on
+        // that same roughly-flat surface `light_depth - pixel_depth` is
+        // ~0 and `light_dir` ends up almost purely in-plane. Since
+        // `relight_normal` is close to straight-on (z ~1) on a flat-ish
+        // surface, `dot(n, light_dir)` collapses to ~0 nearly everywhere —
+        // this was the root cause of relight looking like it did nothing.
+        // `distance` gives the light a real, explicit elevation off the
+        // surface toward the camera, same relative-depth space
+        // `relight_normal`'s finite-difference already reads (hence the
+        // matching RELIGHT_NORMAL_STRENGTH-equivalent scale below).
         let delta_uv = vec2<f32>((light_uv.x - uv.x) * aspect, light_uv.y - uv.y);
-        let delta_z = (light_depth - pixel_depth) * 3.0;
+        let delta_z = ((light_depth + light.distance) - pixel_depth) * 3.0;
         let light_dir = normalize(vec3<f32>(delta_uv, delta_z));
 
         let dist = length(vec2<f32>(coord) - light_uv * dims) / max(dims.x, dims.y);

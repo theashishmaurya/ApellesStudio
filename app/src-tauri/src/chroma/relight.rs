@@ -51,8 +51,16 @@ pub struct RelightLightSpec {
     /// 0–100, percentage of frame width/height. Ignored for `kind == "ambient"`.
     pub x: f32,
     pub y: f32,
-    /// 0–100, percentage of the longer frame dimension.
+    /// 0–100, percentage of the longer frame dimension — screen-space
+    /// falloff size only.
     pub radius: f32,
+    /// 0–100. How far the light is held off the shaded surface *toward the
+    /// camera*, in the depth map's own normalized units (D-076). See
+    /// `RelightLightGpu`'s doc comment in `image_processing.rs` for why this
+    /// exists — without it, positional lights collapsed to near-zero
+    /// directional shading on any roughly-flat surface, which is why relight
+    /// looked like it did nothing.
+    pub distance: f32,
     /// 0–200 UI percentage; 100 = the shader's baseline light strength.
     pub intensity: f32,
     /// `#rrggbb`, straight off the `<input type="color">` swatch.
@@ -66,6 +74,7 @@ impl Default for RelightLightSpec {
             x: 50.0,
             y: 50.0,
             radius: 35.0,
+            distance: 40.0,
             intensity: 100.0,
             color: [1.0, 1.0, 1.0],
         }
@@ -138,6 +147,7 @@ pub fn parse_relight_lights(js_adjustments: &Value) -> Vec<RelightLightSpec> {
                 x: get_f32("x", default.x),
                 y: get_f32("y", default.y),
                 radius: get_f32("radius", default.radius).max(0.0),
+                distance: get_f32("distance", default.distance),
                 intensity: get_f32("intensity", default.intensity),
                 color: light
                     .get("color")
@@ -167,6 +177,10 @@ pub fn parse_relight_lights_gpu(
             color_g: spec.color[1],
             color_b: spec.color[2],
             kind: if spec.kind == "ambient" { 1.0 } else { 0.0 },
+            distance: spec.distance / 100.0,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         };
     }
     (lights, specs.len() as u32)
@@ -261,11 +275,33 @@ mod tests {
         assert_eq!(parse_relight_lights(&adj).len(), MAX_RELIGHT_LIGHTS);
     }
 
+    /// D-076. `distance` defaults to a nonzero value (40.0) when absent —
+    /// distance == 0 is the degenerate "flush on the surface" case that
+    /// caused relight to look like it did nothing, so a light with no
+    /// explicit `distance` field (older saved grades, or a bare test
+    /// fixture) still gets real directional shading.
+    #[test]
+    fn distance_field_parses_and_defaults() {
+        let adj = json!({
+            "relightLights": [
+                { "kind": "key", "distance": 75.0 },
+                { "kind": "fill" },
+            ]
+        });
+        let lights = parse_relight_lights(&adj);
+        assert_eq!(lights[0].distance, 75.0);
+        assert_eq!(lights[1].distance, 40.0);
+
+        let (gpu, _) = parse_relight_lights_gpu(&adj);
+        assert_eq!(gpu[0].distance, 0.75);
+        assert_eq!(gpu[1].distance, 0.4);
+    }
+
     #[test]
     fn gpu_conversion_scales_percentages_to_unit_range() {
         let adj = json!({
             "relightLights": [
-                { "kind": "key", "x": 50.0, "y": 25.0, "radius": 40.0, "intensity": 100.0, "color": "#ffffff" },
+                { "kind": "key", "x": 50.0, "y": 25.0, "radius": 40.0, "distance": 60.0, "intensity": 100.0, "color": "#ffffff" },
                 { "kind": "ambient", "intensity": 20.0, "color": "#0000ff" },
             ]
         });
@@ -274,6 +310,7 @@ mod tests {
         assert_eq!(lights[0].pos_x, 0.5);
         assert_eq!(lights[0].pos_y, 0.25);
         assert_eq!(lights[0].radius, 0.4);
+        assert_eq!(lights[0].distance, 0.6);
         assert_eq!(lights[0].intensity, 1.0);
         assert_eq!(lights[0].kind, 0.0);
         assert_eq!(lights[1].kind, 1.0);
@@ -446,6 +483,93 @@ mod tests {
         assert_ne!(
             a, unlit,
             "relight lights made no visible difference to the render"
+        );
+    }
+
+    /// D-076 regression test. `relight_render_is_deterministic` above uses a
+    /// strong radial depth gradient across the *whole* frame, which is enough
+    /// depth variation to mask the bug this test targets: real footage (a
+    /// face, a torso) is relatively FLAT in depth near where a light actually
+    /// gets dropped, and on a flat depth surface `distance == 0` (the only
+    /// value that existed before D-076) makes `ndotl` collapse to exactly
+    /// zero everywhere — "nothing is getting applied at all", confirmed live
+    /// on real footage. This test uses a perfectly flat depth bitmap (the
+    /// worst case for the old code) and asserts a light with `distance == 0`
+    /// renders byte-identical to no light at all, while a light with a real
+    /// `distance` produces a visibly different image — proving `distance` is
+    /// what makes positional lights actually shade a flat/near-flat surface.
+    #[test]
+    fn positional_light_needs_nonzero_distance_to_shade_a_flat_surface() {
+        use crate::gpu_processing::RenderRequest;
+        use crate::image_processing::get_all_adjustments_from_json;
+        use crate::render_core::{self, OwnedRenderCaches};
+        use image::{DynamicImage, GrayImage, Luma, RgbImage};
+
+        let Ok(ctx) = render_core::init_gpu_context() else {
+            eprintln!(
+                "skip: no GPU adapter available for positional_light_needs_nonzero_distance_to_shade_a_flat_surface"
+            );
+            return;
+        };
+
+        const W: u32 = 64;
+        const H: u32 = 64;
+
+        let base = DynamicImage::ImageRgb8(RgbImage::from_fn(W, H, |x, y| {
+            image::Rgb([((x * 4) % 255) as u8, ((y * 4) % 255) as u8, 128])
+        }));
+
+        // Perfectly flat depth — every pixel the same value, like a plain
+        // patch of a face or torso far from any background depth edge.
+        let flat_depth = GrayImage::from_pixel(W, H, Luma([180]));
+
+        let render_with = |light_json: Value| -> Vec<u8> {
+            let js = json!({ "relightLights": [light_json] });
+            let mut adjustments = get_all_adjustments_from_json(&js, false, None);
+            let mut mask_bitmaps = Vec::new();
+            adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
+            mask_bitmaps.push(flat_depth.clone());
+
+            render_core::render(
+                &ctx,
+                OwnedRenderCaches::default().as_ref(),
+                &base,
+                1,
+                RenderRequest {
+                    adjustments,
+                    mask_bitmaps: &mask_bitmaps,
+                    lut: None,
+                    roi: None,
+                },
+                "relight_flat_surface_distance_test",
+                false,
+                None,
+            )
+            .expect("relight render")
+            .to_rgba8()
+            .into_raw()
+        };
+
+        let flush = render_with(json!({
+            "kind": "key", "x": 50.0, "y": 50.0, "radius": 60.0, "distance": 0.0,
+            "intensity": 150.0, "color": "#ffffff", "visible": true,
+        }));
+        let unlit = render_with(json!({
+            "kind": "key", "x": 50.0, "y": 50.0, "radius": 60.0, "distance": 0.0,
+            "intensity": 0.0, "color": "#ffffff", "visible": true,
+        }));
+        assert_eq!(
+            flush, unlit,
+            "a light at distance == 0 shaded a flat surface — expected exactly zero contribution"
+        );
+
+        let elevated = render_with(json!({
+            "kind": "key", "x": 50.0, "y": 50.0, "radius": 60.0, "distance": 70.0,
+            "intensity": 150.0, "color": "#ffffff", "visible": true,
+        }));
+        assert_ne!(
+            elevated, unlit,
+            "a light with real distance still made no visible difference on a flat surface"
         );
     }
 }

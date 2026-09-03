@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Relight positional lights actually shade footage now
+  (D-076, B-022).** Root cause of "nothing is getting applied at all": there
+  was no real z/depth control for a light, only screen-space x/y/radius — a
+  light always sat flush on whatever surface it was dropped on, which
+  collapses the shading math to ~zero on real (relatively flat) footage.
+  Added a real `distance` field end-to-end (UI slider → Rust → GPU uniform →
+  shader), defaulting nonzero so a fresh light is lit immediately. New
+  GPU-render regression test proves it (renders through the real shader
+  against a flat depth map, asserts distance=0 is byte-identical to no
+  light at all).
+- **2026-09-03** — **Relight panel: Bake Depth fires itself, Track Depth
+  moved to a compact bottom "finalize" action (D-073).** No more picking
+  between two equal-weight depth buttons — the cheap single-frame bake now
+  fires automatically the moment a positional light needs it; the heavy
+  whole-clip track (confirmed capable of crashing the AI sidecar) is a
+  deliberate, tooltip-explained action at the bottom of the panel.
+- **2026-09-03** — **Fixed: dragging a relight light puck also scrubbed the
+  video frame (D-074, B-021).** A capture-phase pan handler on an ancestor
+  fired before the puck's own drag handler could stop it; the puck now
+  marks itself so the ancestor skips it entirely.
 - **2026-09-03** — **Edit-tab timeline: plain trackpad scroll now pans,
   only a real pinch/Ctrl+scroll zooms (D-072).** D-051's scroll-wheel zoom
   treated every wheel tick as zoom, so a plain two-finger scroll (a

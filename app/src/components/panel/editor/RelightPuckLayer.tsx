@@ -82,6 +82,13 @@ export default function RelightPuckLayer({
     (e: React.PointerEvent<HTMLDivElement>) => {
       const id = draggingId.current;
       if (!id) return;
+      // D-074 defense-in-depth: the real fix for "dragging a puck also
+      // scrubs the frame" is Editor.tsx's own capture-phase handler
+      // recognizing `data-relight-puck` and skipping itself entirely (see
+      // that file) — this alone can't fix a capture-phase race, but stops
+      // this event from bubbling to any *other* bubble-phase ancestor
+      // listener regardless, now that a real drag is confirmed active.
+      e.stopPropagation();
       const container = (e.currentTarget as HTMLElement).closest('[data-relight-surface]') as HTMLElement | null;
       if (!container) return;
       const { xPct, yPct } = screenToImagePct(e.clientX, e.clientY, container);
@@ -94,6 +101,7 @@ export default function RelightPuckLayer({
     (e: React.PointerEvent<HTMLDivElement>) => {
       const id = draggingId.current;
       if (!id) return;
+      e.stopPropagation();
       draggingId.current = null;
       const container = (e.currentTarget as HTMLElement).closest('[data-relight-surface]') as HTMLElement | null;
       if (container) {
@@ -131,8 +139,21 @@ export default function RelightPuckLayer({
                   opacity: isActive ? 0.55 : 0.25,
                 }}
               />
-              {/* The draggable puck. */}
+              {/* The draggable puck. `data-relight-puck` is a target marker
+                  `Editor.tsx`'s own pan/zoom `handlePointerDown` checks for
+                  (D-074) — that handler is `onPointerDownCapture` on an
+                  ancestor, which fires in the CAPTURE phase, strictly
+                  *before* this element's own `onPointerDown` (bubble phase)
+                  ever runs. That ordering means this component's own
+                  `e.stopPropagation()` (below, in `handlePointerDown`)
+                  cannot undo pan-tracking state Editor's capture-phase
+                  handler already set by the time it fires — the only
+                  reliable fix is Editor recognizing a puck-originated event
+                  and skipping its own logic entirely, via this attribute
+                  and `e.target.closest(...)`, not via propagation control
+                  from here. */}
               <div
+                data-relight-puck="true"
                 className="absolute rounded-full pointer-events-auto cursor-grab active:cursor-grabbing shadow-md"
                 style={{
                   left: cx,
