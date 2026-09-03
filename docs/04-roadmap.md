@@ -281,6 +281,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    "known limit" note on two clips sharing one source path). **Was
    sequenced before item 6's Phase D and item 7's Inspector** — both now
    build against the real model instead of the old split.
+9. **Real sidecar ownership — detect a stale external AI process instead of
+   deferring to it forever** — owner, 2026-09-03, found while root-causing
+   D-069 (Track Depth silently 404ing against a process that had been
+   running since Sept 1, over two days stale). **Full scoping:
+   `docs/notes/sidecar-lifecycle.md`'s "TODO — real ownership" section.**
+   `chroma::sidecar::spawn_and_supervise` (D-028) makes its owned-vs-
+   external call exactly once, at app boot, from a bare `GET /health` — an
+   external process that answers is trusted forever, never re-verified,
+   never restarted even once confirmed dead. Needs real design work, not
+   scoped in detail yet: a version/capability marker in `/health`'s
+   response so a genuinely stale process is detected rather than silently
+   trusted; a real policy for what happens on a detected mismatch (refuse +
+   warn vs. offer to take over — killing a process the app didn't start is
+   not a silent default); whether to re-poll for a version match mid-
+   session, not just for liveness, so an externally-restarted sidecar gets
+   picked up without a full app restart; surfacing `chroma_ai_status`'s
+   existing `managed`/`healthy` fields somewhere in the UI (today: nothing
+   consumes them). **Not yet started.**
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
