@@ -1053,7 +1053,7 @@ export function TimelinePane() {
           </div>
         </div>
 
-        <div ref={editAreaRef} className="relative flex-1 min-h-0 overflow-hidden">
+        <div ref={editAreaRef} data-bench-id="timeline-edit-area" className="relative flex-1 min-h-0 overflow-hidden">
           <TimelineEditor
             ref={editorRef}
             editorData={editorData}

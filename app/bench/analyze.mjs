@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 const START_MARKER = 'BENCH_RESULT_JSON_START';
 const END_MARKER = 'BENCH_RESULT_JSON_END';
 
-const PHASES = ['scroll', 'open', 'edit'];
+const PHASES = ['pan', 'dragover', 'move'];
 const METRICS = [
   ['durationMs', 'ms', false],
   ['avgFps', 'fps', true],

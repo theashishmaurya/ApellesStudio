@@ -6709,3 +6709,66 @@ written.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-092 — Revived `app/bench` UI perf harness, targeted at the Edit-tab timeline
+
+Owner: "do we have any performance matrix setup to know the difference? Or
+will we be doing just blindly? Also we need perf metric for all the things
+right or else we will be just shooting in dark."
+
+`app/bench/` already existed — a real, well-designed self-measuring frame-
+timing harness (`requestAnimationFrame`/`performance.now()`, fixed
+synthetic input, repeated iterations with median/p95/stdev, per-phase
+attribution) — but it was stale: its three phases (`scroll`, `open`,
+`edit`) targeted RapidRAW's library grid and editor sliders, both removed
+when the DAM shell was stripped (D-043). Rewrote its interaction target
+rather than its measurement design, which was already sound.
+
+New phases in `bench/replay.js`, against the Edit tab's multi-track
+timeline:
+
+- `pan` — plain (non-`ctrlKey`) wheel events, which `TimelinePane.tsx`'s
+  handler (D-072) falls through to the timeline library's native
+  horizontal scroll.
+- `dragover` — sustained native `dragover` ticks held over the timeline
+  with no `drop`, simulating a Sources-panel drag in progress. This is a
+  direct regression probe for **D-083** (a real, live-reported freeze:
+  every `dragover` tick forced a full re-render including every track's
+  waveform canvas, cost scaling with track count) — the highest-value new
+  phase, since it's exactly the interaction class the just-enabled React
+  Compiler (D-091) should help with.
+- `move` — select an existing clip, drag it (`onActionMoveEnd` → the
+  `move` EditOp), drag it back so the next iteration starts from a stable
+  layout.
+
+Updated `bench/analyze.mjs`'s hardcoded `PHASES` array and
+`bench/README.md`'s usage instructions + phase descriptions + selector
+docs to match. Also wrote `docs/notes/performance-instrumentation.md`, an
+inventory of every other real timing mechanism already in the codebase
+(Rust `Instant::now()`/`elapsed()` + `log::info!` across playback/export/
+sidecar-startup/GPU-processing/panorama-stitching; sidecar `time.time()`
+per-call timing plus D-087's `GET /memory`) — so "are we faster" has one
+place that points at all three layers instead of needing to be
+rediscovered by grep each time.
+
+**Honestly flagged, not worked around**: no tool available in this session
+can drive the actual native Tauri window (browser-automation tools only
+reach a plain Chrome tab, which hard-fails on `window.__TAURI__` being
+undefined, confirmed earlier this session) — so **no compiler-on-vs-off
+comparison numbers were captured**. The script and analyzer are ready and
+correct; running the two paste-and-save cycles by hand is a real next step
+for whoever has a live window open, not something to fabricate a number
+for. Documented this limitation in both `bench/README.md`'s own text (it
+already documented the general "no CI/headless runner" gap) and in
+`performance-instrumentation.md`.
+
+Verification: read `bench/replay.js`/`analyze.mjs`/`README.md` in full
+before editing; confirmed via `grep` that `.timeline-editor-action`
+(library-owned) and the newly-added `data-bench-id="timeline-edit-area"`
+(the one app-owned hook, on `TimelinePane.tsx`'s `editAreaRef` wrapper div)
+are the only selectors the new phases need. No Rust/TS compile step
+involved (`replay.js`/`analyze.mjs` are plain Node/browser scripts, not
+part of any build) — nothing to `tsc`/`cargo build` here.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

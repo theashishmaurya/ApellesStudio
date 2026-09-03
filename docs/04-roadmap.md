@@ -64,6 +64,17 @@ roadmap structure.
   bundle/minify): 265 `CompileSuccess` across 110 unique files, 120
   legitimate bailouts (mostly `try/finally`) across 45 files, no build
   errors. Quiet bailout-only logger stays wired in permanently.
+- ✅ **`app/bench` UI perf harness revived** — done, **D-092**. Was stale
+  (targeted the removed RapidRAW library/slider flow, D-043); retargeted at
+  the Edit-tab multi-track timeline with new `pan`/`dragover`/`move`
+  phases — `dragover` directly stress-tests the D-083 freeze scenario, the
+  most relevant probe for whether D-091's React Compiler actually helps.
+  Also wrote `docs/notes/performance-instrumentation.md` inventorying every
+  other real timing mechanism in the codebase (Rust `Instant::now()`,
+  sidecar `time.time()` + `GET /memory`) so "are we faster" has one place
+  to check instead of three. Honestly flagged: no tool this session can
+  drive the native Tauri window, so no compiler-on/off numbers were
+  captured — the harness is ready, running it is a manual next step.
 
 ---
 

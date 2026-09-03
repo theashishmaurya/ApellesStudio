@@ -1,7 +1,8 @@
-// Deterministic UI perf benchmark. Paste into the browser devtools Console
-// of a running RapidRAW build (right-click -> Inspect) and press Enter.
+// Deterministic UI perf benchmark — Edit-tab multi-track timeline.
+// Paste into the browser devtools Console of a running Chroma build
+// (right-click -> Inspect) and press Enter.
 //
-// Drives the same scroll/open/slider-drag interaction with fixed synthetic
+// Drives the same pan/dragover/clip-move interaction with fixed synthetic
 // timing, repeated over several iterations (with a discarded warmup
 // iteration) so results carry median/p95/stdev instead of a single noisy
 // sample. Frame timing is attributed per interaction phase so you can tell
@@ -16,8 +17,12 @@
 // and copied to the clipboard if the console supports copy(). Save it to
 // bench/out/<name>.json (gitignored) and diff two runs with analyze.mjs.
 //
-// Requirements: library open with at least one image, at the default
-// Adjustments panel (so two sliders are present to drag).
+// Requirements: a project open on the Edit tab, with a timeline that has at
+// least one clip on the first video track. Ideally 2+ tracks with several
+// clips each -- the `dragover` phase (below) is a direct regression test for
+// D-083 (a real freeze bug where cost scaled with track count), so more
+// tracks give a stronger signal; one track/clip still runs, just measures a
+// cheaper case.
 
 (async function bench() {
   const ITERATIONS = 10;
@@ -29,12 +34,14 @@
       new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, ...opts }),
     );
 
-  const THUMBNAIL_SELECTOR = '[data-bench-id="thumbnail"], .aspect-square.bg-surface.rounded-md.overflow-hidden.cursor-pointer';
-  const SCROLL_CONTAINER_SELECTOR = '.custom-scrollbar';
-  const SLIDER_SELECTOR = '.slider-input';
-  const BACK_TO_LIBRARY_SELECTOR = '[data-bench-id="back-to-library"]';
-  const UNDO_SELECTOR = '[data-bench-id="undo"]';
-  const FIRST_FRAME_SELECTOR = '[data-bench-id="editor-first-frame"]';
+  // `.timeline-editor-*` classes are @xzdarcy/react-timeline-editor's own
+  // bundled CSS class names (see TimelinePane.tsx's doc comment) -- stable
+  // across our own restyles since we don't own them, so used directly rather
+  // than adding app-side data-bench-id hooks for library-rendered elements.
+  // `[data-bench-id="timeline-edit-area"]` is the one app-owned hook (the
+  // wrapper div around <TimelineEditor>, added alongside this script).
+  const EDIT_AREA_SELECTOR = '[data-bench-id="timeline-edit-area"]';
+  const ACTION_SELECTOR = '.timeline-editor-action';
 
   // --- continuous frame-timing capture -------------------------------------------
   // One rAF loop runs for the whole benchmark; phase attribution happens
@@ -87,113 +94,93 @@
   }
 
   // --- interaction steps -----------------------------------------------------
-  async function scrollLibrary() {
-    const container = document.querySelector(SCROLL_CONTAINER_SELECTOR);
-    if (!container) throw new Error(`bench: scroll container not found (${SCROLL_CONTAINER_SELECTOR})`);
-    // Reset to the top so every iteration scrolls the same distance through the
-    // same content -- without this, iteration 2+ would start wherever the
-    // previous iteration's scroll left off (e.g. pinned at the bottom, making
-    // the phase a near no-op) instead of repeating the same interaction.
-    container.scrollTop = 0;
-    container.dispatchEvent(new Event('scroll', { bubbles: true }));
-    await wait(50);
+
+  // `pan`: plain (non-ctrl) wheel events over the timeline -- per D-072,
+  // `TimelinePane.tsx`'s own wheel handler only intercepts (zooms) on
+  // `ctrlKey: true`, so a plain wheel tick falls through to the library's
+  // native horizontal scroll. Analogous to the old library-view `scroll`
+  // phase: a sustained, cheap, very-frequent-event interaction.
+  async function panTimeline() {
+    const area = document.querySelector(EDIT_AREA_SELECTOR);
+    if (!area) throw new Error(`bench: timeline edit area not found (${EDIT_AREA_SELECTOR})`);
+    const rect = area.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
     const start = performance.now();
     const steps = 30;
     for (let i = 0; i < steps; i++) {
-      container.scrollTop += 40;
-      container.dispatchEvent(new Event('scroll', { bubbles: true }));
+      area.dispatchEvent(
+        new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: x, clientY: y, deltaY: 40, deltaX: 0, ctrlKey: false }),
+      );
       await wait(16);
     }
     return { start, end: performance.now() };
   }
 
-  async function openFirstImage() {
-    const thumb = document.querySelector(THUMBNAIL_SELECTOR);
-    if (!thumb) throw new Error(`bench: no thumbnail found (${THUMBNAIL_SELECTOR})`);
+  // `dragover`: sustained native `dragover` ticks over the timeline, with no
+  // corresponding `drop` -- simulating a Sources-panel drag held in progress
+  // over a multi-track timeline. This is the EXACT scenario D-083 (a real,
+  // live-reported freeze bug: every native dragover tick forced a full
+  // re-render, cost scaling with track count) fixed -- the single highest-
+  // value phase in this rewrite, a direct regression test for that fix and
+  // for whether the React Compiler (D-091) measurably helps this class of
+  // interaction. A real Sources-panel drag also carries a
+  // `application/x-chroma-media` DataTransfer type
+  // (`CHROMA_MEDIA_DRAG_MIME`, `timeline.ts`) that a synthetic `DragEvent`
+  // built in a console context can't fully replicate (DataTransfer
+  // construction is restricted outside a trusted user gesture in most
+  // engines) -- this still exercises the real `onDragOver` handler and its
+  // downstream re-render cost, just without a real payload triggering the
+  // `add_clip` branch on drop, which is fine: this phase measures sustained
+  // per-tick cost, not the drop itself.
+  async function dragOverTimeline() {
+    const area = document.querySelector(EDIT_AREA_SELECTOR);
+    if (!area) throw new Error(`bench: timeline edit area not found (${EDIT_AREA_SELECTOR})`);
+    const rect = area.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
     const start = performance.now();
-    const rect = thumb.getBoundingClientRect();
-    dispatchMouse(thumb, 'dblclick', rect.left + rect.width / 2, rect.top + rect.height / 2);
-
-    // Wait for the actual decoded preview, not just the editor UI mounting.
-    // `.slider-input` appears as soon as the Controls panel mounts, which
-    // happens well before the image is decoded/rendered -- polling on that
-    // made this phase read as ~0-1ms after the first iteration (Controls
-    // mounts near-instantly on every open) instead of measuring real open
-    // latency. `[data-bench-id="editor-first-frame"]` renders once either
-    // real render signal fires -- `hasRenderedFirstFrame` (wgpu path) or
-    // `finalPreviewUrl` (CPU path) -- see Editor.tsx.
-    const timeoutMs = 8000;
-    const pollMs = 50;
-    let waited = 0;
-    while (!document.querySelector(FIRST_FRAME_SELECTOR) && waited < timeoutMs) {
-      await wait(pollMs);
-      waited += pollMs;
-    }
-    if (waited >= timeoutMs) {
-      throw new Error(
-        'bench: editor did not report a rendered preview within 8s ' +
-          `(${FIRST_FRAME_SELECTOR} never appeared).`,
-      );
+    // ~60 ticks over ~1s -- real browsers fire dragover at a similar
+    // cadence (roughly display refresh rate) while a drag is held over an
+    // element.
+    const steps = 60;
+    for (let i = 0; i < steps; i++) {
+      const x = rect.left + (rect.width * (i % steps)) / steps;
+      const evt = new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: x, clientY: y });
+      area.dispatchEvent(evt);
+      await wait(16);
     }
     return { start, end: performance.now() };
   }
 
-  async function dragSlider(slider, totalDeltaPx) {
-    const rect = slider.getBoundingClientRect();
+  // `move`: select an existing clip, drag its body to a new horizontal
+  // position (`onActionMoveEnd` -> the `move` EditOp), then drag it back so
+  // the next iteration starts from the same layout. Analogous to the old
+  // `edit` phase (dragging two adjustment sliders) -- a real, sustained,
+  // library-owned drag interaction, not just a synthetic event storm.
+  async function moveClip() {
+    const action = document.querySelector(ACTION_SELECTOR);
+    if (!action) throw new Error(`bench: no timeline clip/action found (${ACTION_SELECTOR})`);
+    const rect = action.getBoundingClientRect();
     const startX = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
+    const deltaPx = 60;
 
-    dispatchMouse(slider, 'mousedown', startX, y);
-    await wait(16);
-
-    const steps = 30;
-    for (let i = 1; i <= steps; i++) {
-      const x = startX + (totalDeltaPx * i) / steps;
-      dispatchMouse(window, 'mousemove', x, y);
-      await wait(16);
-    }
-
-    dispatchMouse(window, 'mouseup', startX + totalDeltaPx, y);
-    await wait(16);
-  }
-
-  async function editTwoSliders() {
-    const sliders = document.querySelectorAll(SLIDER_SELECTOR);
-    if (sliders.length < 2) throw new Error(`bench: fewer than 2 sliders found (${sliders.length})`);
     const start = performance.now();
-    await dragSlider(sliders[0], 80);
-    await wait(200);
-    await dragSlider(sliders[1], -60);
-    return { start, end: performance.now() };
-  }
-
-  async function undoSliderEdits() {
-    // editTwoSliders makes two history entries; undo both so the next
-    // iteration's drag starts from the same pre-edit adjustment state
-    // instead of compounding on top of the previous iteration's edits.
-    const button = document.querySelector(UNDO_SELECTOR);
-    if (!button) throw new Error(`bench: undo button not found (${UNDO_SELECTOR})`);
-    for (let i = 0; i < 2; i++) {
-      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const drag = async (totalDeltaPx) => {
+      dispatchMouse(action, 'mousedown', startX, y);
+      await wait(16);
+      const steps = 20;
+      for (let i = 1; i <= steps; i++) {
+        const x = startX + (totalDeltaPx * i) / steps;
+        dispatchMouse(window, 'mousemove', x, y);
+        await wait(16);
+      }
+      dispatchMouse(window, 'mouseup', startX + totalDeltaPx, y);
       await wait(150);
-    }
-  }
-
-  async function backToLibrary() {
-    const button = document.querySelector(BACK_TO_LIBRARY_SELECTOR);
-    if (!button) throw new Error(`bench: back-to-library button not found (${BACK_TO_LIBRARY_SELECTOR})`);
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-    const timeoutMs = 8000;
-    const pollMs = 50;
-    let waited = 0;
-    while (!document.querySelector(SCROLL_CONTAINER_SELECTOR) && waited < timeoutMs) {
-      await wait(pollMs);
-      waited += pollMs;
-    }
-    if (waited >= timeoutMs) {
-      throw new Error('bench: library did not reappear within 8s of back-to-library click');
-    }
+    };
+    await drag(deltaPx);
+    await drag(-deltaPx); // drag back -- keeps layout stable across iterations
+    return { start, end: performance.now() };
   }
 
   // --- stats -------------------------------------------------------------------
@@ -234,26 +221,22 @@
     startMeasuring();
     for (let i = 0; i < ITERATIONS; i++) {
       const warmup = i < WARMUP_ITERATIONS;
-      const scrollWindow = await scrollLibrary();
-      await wait(300);
-      const openWindow = await openFirstImage();
-      await wait(300);
-      const editWindow = await editTwoSliders();
+      const panWindow = await panTimeline();
+      await wait(200);
+      const dragoverWindow = await dragOverTimeline();
+      await wait(200);
+      const moveWindow = await moveClip();
       await wait(200);
 
       iterations.push({
         index: i,
         warmup,
         phases: {
-          scroll: summarizeWindow(scrollWindow.start, scrollWindow.end),
-          open: summarizeWindow(openWindow.start, openWindow.end),
-          edit: summarizeWindow(editWindow.start, editWindow.end),
+          pan: summarizeWindow(panWindow.start, panWindow.end),
+          dragover: summarizeWindow(dragoverWindow.start, dragoverWindow.end),
+          move: summarizeWindow(moveWindow.start, moveWindow.end),
         },
       });
-
-      await undoSliderEdits();
-      await backToLibrary();
-      await wait(300);
     }
     stopMeasuring();
   } catch (err) {
@@ -264,9 +247,9 @@
 
   const measuredIterations = iterations.filter((it) => !it.warmup);
   const summary = {
-    scroll: summarizePhaseAcrossIterations(measuredIterations, 'scroll'),
-    open: summarizePhaseAcrossIterations(measuredIterations, 'open'),
-    edit: summarizePhaseAcrossIterations(measuredIterations, 'edit'),
+    pan: summarizePhaseAcrossIterations(measuredIterations, 'pan'),
+    dragover: summarizePhaseAcrossIterations(measuredIterations, 'dragover'),
+    move: summarizePhaseAcrossIterations(measuredIterations, 'move'),
   };
 
   const result = {
@@ -287,7 +270,7 @@
   console.log(json);
   console.log('BENCH_RESULT_JSON_END');
   try {
-    copy(json);  
+    copy(json);
     console.log('bench: result copied to clipboard. Paste into bench/out/<name>.json');
   } catch {
     console.log('bench: clipboard copy() unavailable in this console, copy the JSON above manually');

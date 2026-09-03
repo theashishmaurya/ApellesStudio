@@ -1190,3 +1190,16 @@ _(none — pre-v1)_
   documented compiler limitation) across 45 files, no build errors. A quiet
   bailout-only `console.warn` logger stays wired in permanently for ongoing
   visibility.
+- **2026-09-03** — **`app/bench` UI perf harness revived, retargeted at the
+  Edit-tab timeline (D-092).** Its old `scroll`/`open`/`edit` phases
+  targeted RapidRAW's library grid/editor sliders, removed by the D-043 DAM
+  strip-out — replaced with `pan`/`dragover`/`move` phases against the
+  multi-track timeline. `dragover` directly stress-tests the D-083 freeze
+  scenario (sustained native `dragover` ticks over the timeline), the most
+  relevant probe for whether the new React Compiler (D-091) helps. Also
+  added `docs/notes/performance-instrumentation.md`, inventorying every
+  other real timing mechanism already in the codebase (Rust
+  `Instant::now()`/`log::info!`, sidecar `time.time()` + `GET /memory`).
+  Honestly flagged, not faked: no tool this session can drive the native
+  Tauri window, so no compiler-on/off numbers were captured — the script's
+  ready, running it by hand is the next step.
