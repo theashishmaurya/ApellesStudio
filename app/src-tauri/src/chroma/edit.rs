@@ -18,18 +18,22 @@
 //!   `chroma_timeline_add_track`/`_remove_track`/`_move_clip` (D-054, Phase A
 //!   of `docs/notes/multi-track-nle.md`) manage tracks and reposition/move
 //!   clips (including across tracks) on the active timeline.
-//! What it does NOT do: no `wgpu`, no colour grade, no compositing — the editor
-//!   preview is deliberately independent of the Colorist's `AppState` render
-//!   path (grade-in-preview + multi-layer compositing are a later
-//!   `chroma-compositor` step). Still no audio tracks / transitions /
-//!   transcript cut / OTIO export / MCP. `chroma_timeline_frame` still only
-//!   ever reads the **first** video track (D-054 gave the model multiple
-//!   tracks and gaps; nothing composites them yet — that's Phase B). No
-//!   timeline-switcher UI yet (D-045 pass 2 is model + commands only; "active
-//!   timeline" is a Rust-side concept the frontend doesn't need to know about
-//!   for the existing single-timeline Edit tab to keep working) — pass 3. No
-//!   multi-track UI either (D-054 is model + commands only — Phase D, blocked
-//!   on Phases B/C).
+//! What it does NOT do: no `wgpu`, no colour grade, no pixel-level
+//!   compositing — the editor preview is deliberately independent of the
+//!   Colorist's `AppState` render path (grade-in-preview + real multi-texture
+//!   blending are a later `chroma-compositor` step, Phase B3). Still no audio
+//!   tracks / transitions / transcript cut / OTIO export / MCP.
+//!   `resolve_video_position` (shared by `chroma_timeline_frame` and the
+//!   audio path) now resolves **N video tracks under opaque, top-wins
+//!   compositing** (D-056, Phase B1) — video tracks in index order, first one
+//!   with a clip (not a gap) at the position wins, via
+//!   `chroma_timeline::Timeline::resolve_video_clip_at`; this needed no new
+//!   rendering code, since opaque top-wins is a track-**selection** problem,
+//!   not a pixel-blending one. No timeline-switcher UI yet (D-045 pass 2 is
+//!   model + commands only; "active timeline" is a Rust-side concept the
+//!   frontend doesn't need to know about for the existing single-timeline
+//!   Edit tab to keep working) — pass 3. No multi-track UI either (Phase D,
+//!   blocked on Phase C landing alongside this).
 //!
 //! The timelines are persisted **inside the `.chroma` project**:
 //!   `ProjectManifest.timelines: Vec<Timeline>` + `active_timeline: usize`
@@ -161,23 +165,34 @@ fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
     Ok(manifest.timelines[manifest.active_timeline].clone())
 }
 
-/// Resolve timeline position `pos` on the **active** timeline's video track
-/// to its clip, the corresponding **source** frame, and that clip's probed
-/// [`VideoInfo`] (D-049) — the shared first half of both the video preview's
-/// [`chroma_timeline_frame`] and the audio path's `audio::chroma_audio_play`:
-/// both read from the same clip at the same position, one for pixels, one for
-/// samples. `Ok(None)` when `pos` is past the end of the video track (or
-/// before it) or the clip's source path is empty/offline — the same "just
-/// show/play nothing" case both callers already handle, not an error.
+/// Resolve timeline position `pos` on the **active** timeline to the single
+/// winning clip under **opaque, top-track-wins** compositing (D-056, Phase B1
+/// of `docs/notes/multi-track-nle.md`), the corresponding **source** frame,
+/// and that clip's probed [`VideoInfo`] (D-049) — the shared first half of
+/// both the video preview's [`chroma_timeline_frame`] and the audio path's
+/// `audio::chroma_audio_play`: both read from the same clip at the same
+/// position, one for pixels, one for samples.
+///
+/// The track-priority walk itself (video tracks in index order, first one
+/// with a clip — not a gap — at `pos` wins) is
+/// [`chroma_timeline::Timeline::resolve_video_clip_at`] — pure model logic,
+/// no media involved, unit-tested at the `chroma-timeline` crate level. This
+/// function is the thin media-layer wrapper around it: probe the winning
+/// clip's source so the caller gets pixel dimensions/frame-rate too, which
+/// `chroma-timeline` itself never touches.
+///
+/// `Ok(None)` when every video track has a gap at `pos` (or `pos` is
+/// negative / past everything) or the winning clip's source path is
+/// empty/offline — the same "just show/play nothing" case both callers
+/// already handle, not an error. Still errors if the timeline has no video
+/// track at all (distinct from "every video track has a gap here").
 pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, VideoInfo)>, String> {
     let timeline = resolve_timeline(false)?;
-    let track = timeline
-        .tracks
-        .iter()
-        .find(|t| t.kind == TrackKind::Video)
-        .ok_or("timeline has no video track")?;
+    if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
+        return Err("timeline has no video track".to_string());
+    }
 
-    let Some((clip, source_frame)) = track.clip_at(pos as i64) else {
+    let Some((_track_idx, clip, source_frame)) = timeline.resolve_video_clip_at(pos as i64) else {
         return Ok(None);
     };
     if clip.source_path.is_empty() {
@@ -357,7 +372,9 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     };
 
     let path = PathBuf::from(&clip.source_path);
-    let scale = max_long_edge.and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
+    let scale = max_long_edge.and_then(|le| {
+        decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
+    });
 
     let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
         .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;

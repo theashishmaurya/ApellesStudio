@@ -1438,7 +1438,7 @@ mod tests {
     #[test]
     fn new_project_infers_settings_from_first_clip() {
         // needs ffmpeg to synthesise a probe-able clip; skip cleanly without it.
-        let Some(clip) = make_test_clip("infer", 176, 144, "25") else {
+        let Some(clip) = make_test_clip("infer", 176, 144, "25", 1) else {
             eprintln!("skip: ffmpeg not on PATH");
             return;
         };
@@ -1463,7 +1463,11 @@ mod tests {
     }
 
     /// synthesise a tiny `testsrc` clip with ffmpeg; `None` if ffmpeg is absent.
-    fn make_test_clip(tag: &str, w: u32, h: u32, rate: &str) -> Option<PathBuf> {
+    /// `duration_s` (D-056): most callers just need *a* probe-able clip and
+    /// pass `1`; the Phase B1 multi-track resolution test needs two clips of
+    /// **different** lengths (so a query position can land past one track's
+    /// clip but still inside the other's), hence the parameter.
+    fn make_test_clip(tag: &str, w: u32, h: u32, rate: &str, duration_s: u32) -> Option<PathBuf> {
         let out =
             std::env::temp_dir().join(format!("chroma_infer_{tag}_{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
@@ -1477,7 +1481,9 @@ mod tests {
                 "lavfi",
                 "-i",
             ])
-            .arg(format!("testsrc=size={w}x{h}:rate={rate}:duration=1"))
+            .arg(format!(
+                "testsrc=size={w}x{h}:rate={rate}:duration={duration_s}"
+            ))
             .args(["-pix_fmt", "yuv420p"])
             .arg(&out)
             .status()
@@ -1600,7 +1606,7 @@ mod tests {
     #[test]
     fn add_media_probes_a_real_clip() {
         // needs ffmpeg to synthesise a probe-able clip; skip cleanly without it.
-        let Some(clip) = make_test_clip("media_probe", 320, 240, "30") else {
+        let Some(clip) = make_test_clip("media_probe", 320, 240, "30", 1) else {
             eprintln!("skip: ffmpeg not on PATH");
             return;
         };
@@ -2137,6 +2143,110 @@ mod tests {
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- opaque top-wins video-track resolution (D-056, Phase B1) -----------
+
+    /// End-to-end through the real Tauri command path (`resolve_video_position`
+    /// / `chroma_timeline_frame`, not just the pure `chroma-timeline` crate
+    /// logic already unit-tested there): two *real*, ffmpeg-probed clips of
+    /// different lengths, laid onto two video tracks via the actual
+    /// `add_track`/`move_clip` commands, then queried at positions covering
+    /// every case from the brief — both tracks have content (top wins), only
+    /// top has content, only bottom has content, neither, and top-has-a-gap
+    /// fallthrough to bottom.
+    #[test]
+    fn track_resolution_opaque_top_wins_across_two_video_tracks() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // needs ffmpeg to synthesise probe-able clips; skip cleanly without it.
+        let (Some(clip_a), Some(clip_b)) = (
+            make_test_clip("d056_a", 64, 64, "25", 1), // ~25 frames
+            make_test_clip("d056_b", 64, 64, "25", 3), // ~75 frames — longer
+        ) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+
+        let root = tmp("d056_track_resolution");
+        let (dir, manifest) = new_project_in(
+            &root,
+            "track-res",
+            &[
+                clip_a.to_string_lossy().to_string(),
+                clip_b.to_string_lossy().to_string(),
+            ],
+        )
+        .unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "track-res".into(),
+        }));
+
+        // lazily built: track 0 has A (short) at [0, durA) then B (long) at
+        // [durA, durA+durB), back to back (from_shots' usual layout).
+        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(tl.tracks.len(), 1);
+        assert_eq!(tl.tracks[0].clips.len(), 2);
+        let dur_a = tl.tracks[0].clips[0].duration;
+        let dur_b = tl.tracks[0].clips[1].duration;
+        assert!(
+            dur_b > dur_a,
+            "the 3s clip must probe longer than the 1s clip \
+             (dur_a={dur_a}, dur_b={dur_b}) for this test's positions to be meaningful"
+        );
+
+        // add a second video track and move B onto it at frame 0 — leaves
+        // track 0 with just A at [0, dur_a), track 1 with B at [0, dur_b).
+        let new_idx =
+            super::super::edit::chroma_timeline_add_track(chroma_timeline::TrackKind::Video)
+                .unwrap();
+        assert_eq!(new_idx, 1);
+        super::super::edit::chroma_timeline_move_clip(0, 1, 1, 0).unwrap();
+
+        let tl2 = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(tl2.tracks[0].clips.len(), 1, "only A left on track 0");
+        assert_eq!(tl2.tracks[1].clips.len(), 1, "B landed on track 1");
+
+        // both tracks have content at frame 0 — track 0 (higher priority) wins.
+        let (clip, _, _) = super::super::edit::resolve_video_position(0)
+            .unwrap()
+            .expect("frame 0 has content on track 0");
+        assert_eq!(clip.name, tl.tracks[0].clips[0].name, "top track wins");
+
+        // top-gap fallthrough: past A's end (dur_a), still inside B's range
+        // (dur_b > dur_a) — track 0 has nothing there, track 1 shows through.
+        let (clip, source_frame, _) = super::super::edit::resolve_video_position(dur_a as u64)
+            .unwrap()
+            .expect("track 1 shows through track 0's gap");
+        assert_eq!(clip.name, tl.tracks[0].clips[1].name, "bottom track B");
+        assert_eq!(
+            source_frame, dur_a as u64,
+            "B's own source frame at this timeline position (it starts at 0)"
+        );
+
+        // neither track has content past B's end.
+        assert!(
+            super::super::edit::resolve_video_position(dur_b as u64)
+                .unwrap()
+                .is_none(),
+            "past everything on both tracks"
+        );
+
+        // and the real preview command doesn't error and returns a real (not
+        // blank) frame for the top-wins position, a blank one past the end.
+        let jpeg = super::super::edit::chroma_timeline_frame(0, None).unwrap();
+        assert!(jpeg.starts_with("data:image/jpeg;base64,"));
+        let blank = super::super::edit::chroma_timeline_frame(dur_b as u64, None).unwrap();
+        assert!(
+            blank.starts_with("data:image/png;base64,"),
+            "blank frame past the end"
+        );
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip_a);
+        let _ = std::fs::remove_file(&clip_b);
     }
 
     // --- shots/media unification (D-046) ------------------------------------

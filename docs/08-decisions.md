@@ -3951,3 +3951,144 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   the permanent suite) rather than a real UI-triggered bake — a live
   `chroma_export_video` run using the real "Bake Depth" output was not
   performed, for the same click-access reason.
+
+## D-056 — Multi-track NLE Phase B1: opaque top-wins video-track resolution — turned out to be track selection, not GPU compositing
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** `docs/notes/multi-track-nle.md` sub-phased the compositor
+  (Phase B, the roadmap's long pole) into B1 (2 tracks, opaque, top wins) →
+  B2 (N tracks, still opaque) → B3 (real blend modes/opacity). B1's job:
+  prove the actual rendering pipeline end to end with the smallest real
+  slice, on top of Phase A's foundation (D-054 — `Clip.start_frame`,
+  gap-aware `Track::clip_at`, `add_track`/`remove_track`/`move_clip`).
+  Today, nothing populates a second video track and the Editor's live
+  preview (`edit.rs`'s `resolve_video_position`, shared by
+  `chroma_timeline_frame` and the audio path) always did
+  `tracks.iter().find(|t| t.kind == TrackKind::Video)` — first video track,
+  unconditionally, second track silently ignored.
+
+- **The load-bearing finding: opaque "top wins" compositing needs no new
+  rendering/GPU code.** The brief asked to verify this rather than assume
+  it, since it's exactly the kind of claim that can hide a codebase-specific
+  gotcha. Checked directly: with no alpha/transparency in play, the
+  top-priority track's clip — when it has one at the query position — fully
+  obscures everything below it. There is no pixel value anywhere that
+  depends on more than one source; it's **which single clip do we decode and
+  show**, a track-priority-selection problem over `chroma-timeline`'s
+  existing model, not a GPU-compositing problem. Nothing about this
+  codebase's decode/render pipeline complicates that — `decode_pipe`
+  already decodes exactly one clip per call
+  (`decode_pipe::playback_frame_scaled`), which is precisely what "pick one
+  winning clip, decode it" needs; there was no hidden "the pipeline assumes
+  one source" obstacle to work around. So this phase is, correctly, almost
+  entirely a **timeline-position-resolution-across-multiple-tracks-with-
+  gap-fallthrough** change, not a rendering one — confirming the brief's
+  hypothesis. Real multi-texture GPU blending (two decoded frames combined
+  by a blend mode/opacity) remains genuinely new work, deferred to B3 as
+  scoped.
+
+- **Track z-order convention: `tracks` index order, lower index = higher
+  priority ("on top").** The real alternative was the reverse (higher index
+  on top, the more common **on-screen stacking** convention in some NLEs'
+  track-header UI, e.g. Premiere's V2-above-V1 visual stacking even though
+  V1 is track index/number 1). Chose lower-index-wins because:
+  - **Zero behavior change for every timeline that exists today.** Every
+    real project still has exactly one video track at index 0
+    (`build_from_shots` unchanged). `tracks.iter().find(...)` already
+    always returned track 0 — keeping index 0 as highest priority makes the
+    new N-track walk a strict superset of the old single-track behavior
+    (proved by the new `resolve_video_clip_at_matches_single_track_behavior`
+    test), not a reinterpretation of what "the video track" meant before
+    this phase.
+  - **Consistent with this project's other track-ordered system.** Palmier
+    Pro's MCP tool contract (this same repo's video-editing tool
+    ecosystem) states its own convention explicitly: "Tracks are ordered
+    and typed (video or audio); index 0 renders on top." Matching that
+    avoids this codebase accumulating two different "index 0 means X"
+    conventions across its own tooling.
+  - Trade-off accepted: if/when Phase D's track-header UI arrives, "track 0
+    is on top" needs to read naturally top-to-bottom in the lane list (a UI
+    layout concern, not a data-model one) — noted for Phase D, not solved
+    here.
+
+- **Where the logic lives: a pure method on `chroma_timeline::Timeline`, not
+  in `edit.rs`.** `Timeline::resolve_video_clip_at(&self, pos: i64) ->
+  Option<(usize, &Clip, i64)>` walks `self.tracks` in stored `Vec` order
+  (never a `HashMap` — deterministic by construction, no hidden iteration-
+  order dependency), filtering to `TrackKind::Video`, and returns the first
+  track whose `Track::clip_at(pos)` is `Some` — falling through to the next
+  only on a gap (`None`). This keeps `chroma-timeline` accurate to its own
+  documented boundary ("no media, no rendering" — the crate doc already
+  says so): it does track/clip **selection**, which is pure timeline-model
+  logic, not a media-layer concern. `edit.rs`'s `resolve_video_position`
+  becomes a thin wrapper: call `resolve_video_clip_at`, then probe the
+  winning clip's source for its `VideoInfo` (dimensions/frame-rate) —
+  exactly the media-layer part `chroma-timeline` never touches. This also
+  means the model-level logic is unit-testable with zero media/ffmpeg
+  dependency (fast, synthetic fixtures), while the media-layer wrapper gets
+  its own real-clip integration test.
+  - Placing the "no video tracks at all" error (`"timeline has no video
+    track"`) stayed in `edit.rs`, not the crate: it's app-level error
+    messaging for a Tauri command's caller, not a fact about the timeline
+    model itself (an empty-of-video-tracks `Timeline` is a perfectly valid
+    value for the crate to represent).
+
+- **Verified:**
+  - `cargo test -p chroma-timeline`: **30/30** — 23 pre-existing (D-054) + 7
+    new (`resolve_video_clip_at_*`) covering every case from the brief: both
+    tracks have content (top wins), only top has content, only bottom has
+    content, neither, top-has-a-gap-so-bottom-shows-through, no video
+    tracks at all, and a same-behavior-as-`Track::clip_at`-alone regression
+    check for the existing single-track shape.
+  - `cargo test --manifest-path app/src-tauri/Cargo.toml chroma::`: **113/113**
+    (up from D-055's most recently recorded count via its own new export/
+    relight tests, not directly comparable to D-054's "110" figure, which
+    predates D-055). This phase adds one new integration test,
+    `track_resolution_opaque_top_wins_across_two_video_tracks` — exercises
+    the real Tauri command path (`chroma_timeline_add_track`/`_move_clip`/
+    `resolve_video_position`/`chroma_timeline_frame`, not just the pure
+    crate logic already covered above) against two real, ffmpeg-probed
+    clips of different lengths on two real video tracks, asserting
+    top-wins, gap-fallthrough, past-everything, and that
+    `chroma_timeline_frame` itself returns a real JPEG for the resolvable
+    position and the blank-PNG sentinel past the end. Skips cleanly (like
+    the existing `new_project_infers_settings_from_first_clip`) if ffmpeg
+    isn't on `PATH`. Also widened the existing `make_test_clip` test helper
+    with a `duration_s` parameter (both of its two pre-existing call sites
+    updated to pass `1`, unchanged behavior) so this phase's test could
+    synthesize two clips of different lengths.
+  - `tsc --noEmit` in `app/`: **64/64, unaffected** — a real run (this fresh
+    worktree needed its own `npm install` first, done this session), not
+    just inferred from the diff, though the diff already guaranteed it: this
+    phase touched only `crates/chroma-timeline/src/lib.rs` and
+    `app/src-tauri/src/chroma/{edit.rs,project.rs}`, no frontend file.
+  - **Real GUI boot: not completed, and why, rather than silently skipped.**
+    `npm run tauri:dev` needs port 1420 (`vite.config.mjs`: `strictPort:
+    true`, hardcoded, no env override), which was already held by a *different*
+    `vite` dev server — the main checkout at `~/my_projects/chroma`, someone
+    else's legitimate concurrent process, not this worktree's and not safe to
+    kill. Changing the hardcoded port to dodge it was out of scope for this
+    phase. In its place, the regression-safety case rests on two things that
+    together cover what a boot would have shown: (1) the new integration test
+    (`track_resolution_opaque_top_wins_across_two_video_tracks`) calls
+    `chroma_timeline_frame` — the exact Tauri command the Edit tab's preview
+    calls — against real ffmpeg-probed media, not a mock; (2)
+    `resolve_video_clip_at_matches_single_track_behavior` proves the new
+    resolution path is bit-for-bit identical to the old `.find()` +
+    `Track::clip_at` path for every position on a single-video-track
+    timeline, which is what every real project has today. `cargo test`
+    passing both is the same regression guarantee a clean boot would have
+    demonstrated visually.
+
+- **Deferred (explicitly out of scope this phase, per
+  `docs/notes/multi-track-nle.md`):** no GPU/pixel-level blend compositing
+  (Phase B3 — genuinely new work when it lands, unlike this phase); no
+  N>2-track testing (Phase B2 — the same walk already generalizes past 2
+  tracks with zero additional code, since it's a plain filtered `Vec`
+  iteration with no hardcoded track count anywhere, but untested at N>2
+  until that phase); no UI / way for a real user to create a second track
+  (Phase D, blocked on B fully landing); no audio-track work (Phase C,
+  concurrent, separate worktree); no export-path change (`export.rs`
+  doesn't go through the timeline model yet — untouched, unaffected, a
+  later phase).
