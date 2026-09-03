@@ -325,17 +325,16 @@ export type EditOp =
    *  which stay explicit-position-only by design, D-054). */
   | { kind: 'add_clip'; track: number; clip: NewClipFields; atIndex?: number; startFrame?: number; ripple?: boolean }
   /** D-058/D-080 — reposition a clip in time, and optionally onto a
-   *  different track (`fromTrack !== toTrack`) — the "move to another
-   *  track" affordance in the panel's toolbar, since
-   *  `@xzdarcy/react-timeline-editor` has no native cross-row drag (checked
-   *  its bundled types before building this — `onActionMoveEnd` only ever
-   *  reports the row the drag started in). Mirrors
+   *  different track (`fromTrack !== toTrack`) — the drag handle / "move to
+   *  another track" affordance in the panel. Mirrors
    *  `chroma-timeline::Timeline::move_clip(from_track, from_idx, to_track,
-   *  to_start_frame)` exactly, same-track being the `fromTrack === toTrack`
-   *  case: rejected (no-op) rather than clamped if the destination would
-   *  overlap another clip already on `toTrack` — same "just don't do it"
-   *  contract the crate uses, so this file never invents an overlap the
-   *  crate wouldn't also refuse. */
+   *  to_start_frame)` field-for-field. Overlap is rejected (no-op) ONLY for
+   *  a same-track move (`fromTrack === toTrack`) — two clips can't occupy
+   *  the same frame on ONE track. A cross-track move is allowed to overlap
+   *  another clip already on `toTrack` (D-096) — since D-088's real
+   *  multi-layer compositor, that's a normal composited-layer stack, not an
+   *  error state; the earlier blanket rejection was stale "top wins" logic
+   *  from before D-088 existed. */
   | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number }
   /** D-080 — append a new empty track. Mirrors `chroma_timeline::Timeline::
    *  add_track`: always succeeds, no validation to mirror. */
@@ -582,14 +581,28 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (src.locked || dest.locked) return tl;
     if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
     const newEnd = op.startFrame + c.duration;
-    // the clip being moved never counts as overlapping itself, and only on
-    // its OWN track — a same-id clip could coincidentally exist on the
-    // destination track in theory, but index identity (not id) is what the
-    // Rust op excludes, so this mirrors that exactly.
-    const overlaps = dest.clips.some((other, i) => {
-      if (op.fromTrack === op.toTrack && i === op.clip) return false;
-      return op.startFrame < endFrame(other) && newEnd > other.start_frame;
-    });
+    // D-096 — overlap is only ever rejected for a SAME-TRACK move now.
+    // Before D-088's real multi-layer compositor, only one video track's
+    // clip was ever visible per frame ("top wins"), so two clips
+    // overlapping in time on DIFFERENT tracks would have been meaningless —
+    // rejecting cross-track overlap made sense then. D-088 shipped
+    // `resolve_visible_video_layers_at`, which composites every visible
+    // track together — two clips overlapping in time across tracks is now
+    // the NORMAL, intended shape of a real edit (that's the entire point of
+    // V1/V2 stacking), not an error state, so continuing to reject it here
+    // was stale behaviour left over from the pre-compositing model, not a
+    // deliberate safety rule (confirmed live: dragging a clip from one
+    // track onto another that already held something in the same time
+    // range silently no-op'd instead of landing it as a new layer). WITHIN
+    // one track, two clips overlapping in time still makes no sense (a
+    // single track can't show two different things at once) — that
+    // rejection is unchanged.
+    const overlaps =
+      op.fromTrack === op.toTrack &&
+      dest.clips.some((other, i) => {
+        if (i === op.clip) return false;
+        return op.startFrame < endFrame(other) && newEnd > other.start_frame;
+      });
     if (overlaps) return tl;
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);

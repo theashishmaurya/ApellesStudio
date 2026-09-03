@@ -119,6 +119,32 @@ roadmap structure.
   the last row now auto-creates one; (4) the Sources-panel drag ghost was
   full media-card size regardless of zoom — now a small name pill via
   `setDragImage`. 88/88 tests (+9 new), `tsc` + `vite build` clean.
+- ✅ **Mid-stack track insert, kind inference, real cross-track clip-move
+  handle, cross-track overlap allowed** — done, **D-096/B-027**. Owner kept
+  testing D-095 live, immediately: (1) "how do i insert between video 1
+  and video 2" — `trackInsertBoundary` generalizes auto-track-on-drop to
+  ANY boundary (above the first, between two, past the last), not just
+  past-the-last, reusing `trackIndexAfterMove`'s selection-follow math for
+  the resulting `move_track`; (2) an auto-created track was hardcoded
+  `'video'` — now infers kind from the adjacent track (verified
+  `DraggedMedia` has no real audio/video signal to derive from directly,
+  so context is the best real signal available); (3) "i should be able to
+  drag A001 to video_1" — the cross-track clip-move handle is now a
+  full-width top strip, not a small corner icon (deliberately NOT the
+  whole clip body — would race the timeline library's own same-track
+  drag, the same risk class as D-074's relight-puck incident); (4)
+  `move`/`move_clip` now allow cross-track overlap (a real composited
+  layer since D-088), same-track overlap still rejected. **Caught its own
+  live regression in the same pass**: the wider handle made an ordinary
+  same-track drag an easy accidental grab of the cross-track mechanism,
+  which used to silently no-op on a same-track drop — fixed to handle it
+  as a real reposition instead, verified live. Also scoped (not built) the
+  owner's `@dnd-kit` steer — `docs/notes/dnd-kit-migration.md`: MIT,
+  active repo, but no npm release since 2024-12 and an open
+  React-19-StrictMode issue against the in-progress rewrite that this
+  app's `<StrictMode>` root is actually exposed to (confirmed by reading
+  `main.tsx`). Rust `chroma-timeline` 59/59, `packages/editor` 88/88,
+  `tsc` + `vite build` clean.
 
 ---
 

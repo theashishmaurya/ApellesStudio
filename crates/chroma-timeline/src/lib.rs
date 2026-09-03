@@ -536,9 +536,16 @@ impl Timeline {
     ///
     /// Errors, none of which mutate the timeline: `NoSuchTrack`/`NoSuchClip`
     /// for an out-of-range source or destination track/clip index,
-    /// `NegativePosition` for `to_start_frame < 0`, `Overlap` if the
-    /// destination range would intersect any *other* clip already on
-    /// `to_track` (the clip being moved never counts as overlapping itself).
+    /// `NegativePosition` for `to_start_frame < 0`, `Overlap` if this is a
+    /// SAME-TRACK move (`from_track == to_track`) and the destination range
+    /// would intersect any *other* clip already there (the clip being moved
+    /// never counts as overlapping itself) — a cross-track move is allowed
+    /// to overlap another clip already on `to_track` (D-096): since
+    /// `resolve_visible_video_layers_at` composites every visible track
+    /// together, two clips overlapping in time on DIFFERENT tracks is the
+    /// normal, intended shape of a layered edit, not an error state. Only
+    /// within ONE track does an overlap still make no sense (a single track
+    /// can't show two different things at the same frame).
     pub fn move_clip(
         &mut self,
         from_track: usize,
@@ -570,12 +577,15 @@ impl Timeline {
         if dest.locked {
             return Err(TimelineError::TrackLocked(to_track));
         }
-        let overlaps = dest.clips.iter().enumerate().any(|(i, c)| {
-            if from_track == to_track && i == from_idx {
-                return false; // the clip being moved never overlaps itself
-            }
-            to_start_frame < c.end_frame() && new_end > c.start_frame
-        });
+        // D-096 — only a same-track move ever rejects an overlap; see this
+        // fn's own doc for why cross-track overlap is now allowed.
+        let overlaps = from_track == to_track
+            && dest.clips.iter().enumerate().any(|(i, c)| {
+                if i == from_idx {
+                    return false; // the clip being moved never overlaps itself
+                }
+                to_start_frame < c.end_frame() && new_end > c.start_frame
+            });
         if overlaps {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
@@ -1250,6 +1260,27 @@ mod tests {
         assert_eq!(moved.id, moved_id, "identity preserved across the move");
         assert_eq!(moved.start_frame, 500);
         assert_eq!(moved.duration, 50, "duration/source window untouched");
+    }
+
+    #[test]
+    fn move_clip_allows_overlap_across_tracks_but_not_within_one() {
+        // D-096 — a cross-track move may land directly on top of another
+        // clip's time range (a real, intended composited-layer stack since
+        // D-088); a same-track move still can't (covered separately by
+        // `move_clip_rejects_overlap`, unchanged).
+        let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
+        t.add_track(TrackKind::Video);
+        t.move_clip(0, 1, 1, 0).unwrap(); // B -> track 1 at [0,50)
+        // C is now track 0's clip index 1 (A stayed at 0); move it onto
+        // track 1 at frame 0 too — directly overlapping B's [0,50) range.
+        t.move_clip(0, 1, 1, 0).unwrap();
+        assert_eq!(
+            t.tracks[1].clips.len(),
+            2,
+            "both clips land on track 1, overlapping in time — not rejected"
+        );
+        let starts: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.start_frame).collect();
+        assert_eq!(starts, vec![0, 0], "genuinely overlapping, not shifted apart");
     }
 
     #[test]

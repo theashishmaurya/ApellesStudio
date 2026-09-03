@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Mid-stack track insert, kind inference, a real
+  cross-track clip-move handle, cross-track overlap allowed (D-096,
+  B-027).** Continuing D-095's own live-testing session: a track can now
+  be inserted at ANY boundary (above the first, between two, or past the
+  last), not just past-the-last; an auto-created track infers its kind
+  from the adjacent track instead of a hardcoded `'video'` literal
+  (verified `DraggedMedia` carries no real audio/video signal to derive
+  from directly); the cross-track clip-move handle is now a full-width
+  top strip instead of a small corner icon; `move`/`move_clip` now allow
+  cross-track overlap (a real composited layer since D-088), same-track
+  overlap still rejected. **Caught and fixed a live regression in the same
+  pass**: the wider handle made an ordinary same-track drag an easy
+  accidental grab of the cross-track mechanism, which used to silently
+  no-op on a same-track drop — now handles it as a real reposition
+  instead. Also: `docs/notes/dnd-kit-migration.md`, a real scoping doc
+  (not implemented) for the owner's `@dnd-kit` steer — MIT, active repo,
+  but no npm release since 2024-12 and an open React-19-StrictMode issue
+  against the in-progress rewrite, which this app's `<StrictMode>` root is
+  actually exposed to. Rust `chroma-timeline` 59/59, `packages/editor`
+  88/88, `tsc` + `vite build` clean.
 - **2026-09-03** — **Four real gaps in D-094's drag-and-drop, found live
   (D-095, B-026).** Sources-panel drops now snap/ripple-insert between
   existing clips (`computeInsertion`, `timeline.ts` — the one place this

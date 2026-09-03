@@ -7091,3 +7091,119 @@ screenshot.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-096 — Mid-stack track insert, kind inference, a real cross-track clip-move handle, cross-track overlap allowed — and a live regression this same pass caused and fixed
+
+Continuing D-095's own live-testing session, four more real findings (**B-027**), all in
+the same file family (`packages/editor/src/{TimelinePane.tsx,timeline.ts}`,
+`crates/chroma-timeline/src/lib.rs`) — folded into one entry per the coordinator's own call
+("it's the same feature, caught before you'd finished it"), not a fresh D-NNN per finding.
+
+**1. Mid-stack / above-first-track insert.** Owner: "how do i insert between video 1 and
+video 2." D-095's auto-track-on-drop only handled `y >= tracks.length * ROW_HEIGHT` (past
+the last row). `trackInsertBoundary(y, tracksLength)` generalizes this to any of the
+`0..tracksLength` boundaries — above the first track, between any two, or past the last —
+each (except past-the-last, which stays unconditional, unchanged from D-095) only within
+`TRACK_INSERT_BAND_PX` (~22% of `ROW_HEIGHT` on each side, ~44% combined — most of each row
+still resolves to "drop onto this track" normally) of the line where two rows meet, so an
+ordinary same-row drop doesn't accidentally trigger a track insert. `add_track` always
+appends at the end (`chroma_timeline::Timeline::add_track`) — a mid-stack insert follows
+with `move_track`, reusing `trackIndexAfterMove`'s exact selection-follow math the D-094
+track-reorder drag already has (not a second version of it, per the coordinator's explicit
+instruction). The ghost-row preview (`insertPreview`) generalizes the same way: past-the-end
+sits flush below the last row (unchanged), every other boundary centers on the boundary
+line, half-overlapping each neighboring row — the standard "squeeze a new row in here" NLE
+affordance.
+
+**2. Auto-created tracks were hardcoded `'video'`.** Owner (garbled dictation, real bug
+underneath): "it takes video if i drop to audio... we need to fix that." Confirmed (not
+assumed) `DraggedMedia`/`MediaItem` (`@chroma/bridge`) carry **no real audio-vs-video signal
+on the dragged item itself** — `MediaItem`'s only probed-info field is `video?:
+MediaVideoInfo`, no `MediaAudioInfo`/`mediaType`, and `clipFromDraggedMedia` can't even build
+a clip without a `frameCount` — today's Sources-panel drag flow has no audio-only-media path
+at all. Deriving the new track's kind from the dragged item itself would need a real backend
+media-probing model change (a `MediaAudioInfo`/`mediaType` field, `chroma::project`'s import
+probe extended to non-video files) — out of scope here, noted honestly rather than guessed
+around. `inferNewTrackKind(index)` instead derives from drop CONTEXT: the track directly
+above the insertion boundary (or, at the very top, directly below it) — continuing whatever
+kind cluster the insertion point is adjacent to, a real signal instead of a hardcoded
+literal.
+
+**3. Cross-track clip-move handle widened to a full-width top strip** (from D-095's `size-5`
+corner icon) — owner, a screenshot trying to grab the clip BODY itself: "i should be able to
+drag A001 to video_1 :o or vise versa." Considered making the whole clip body draggable
+cross-track; rejected: the timeline library's own same-track drag is ALSO pointer-based
+(interact.js) on the same action wrapper, and native `draggable=true` on that same element
+would race the two systems for one `mousedown` with no reliable winner — precisely the class
+of risk this session's own D-074 relight-puck capture/bubble-phase incident already taught
+this codebase to respect, not a hypothetical. Chose the middle ground instead: a full-width
+strip across the clip's top ~10px (`left-[11px] right-[11px]`, still horizontally inset past
+the two 10px edge-trim zones — verified live, zero pixel overlap with
+`.timeline-editor-action-left-stretch`, not just reasoned about) — a much bigger, far more
+discoverable hit target than a corner icon, while staying a physically distinct DOM element
+from the rest of the clip body (same safe `stopPropagation` mechanism D-094 already used,
+just wider).
+
+**Real regression this same pass caused, found live immediately, fixed before considering
+any of this done**: the wider strip made an ordinary same-track horizontal drag an easy
+ACCIDENTAL grab of the cross-track-move handle instead of the library's own drag — and that
+handle's `onDrop` explicitly no-op'd a same-track drop ("the library's own action-drag
+already owns same-row repositioning," true before the strip was full-width, false once it
+was easy to hit by accident). Owner, live, immediately: "its overlapping and not able to
+move horizontally in the same v1." Root cause confirmed (not assumed) by reasoning through
+the exact interaction, then fixed: a same-track drop via the strip's mechanism now computes
+`xToFrame(e, rect)` and issues the same `move` op the library's own `onActionMoveEndCb` would
+— so which system actually caught the gesture no longer changes the outcome. Verified live
+via the harness technique below: grabbed the strip, dropped elsewhere on the SAME track,
+clip repositioned correctly (was previously a silent no-op).
+
+**4. Cross-track overlap now allowed** (`move`/`move_clip`, same-track overlap still
+rejected) — owner, trying the new strip: dragging a clip onto a track that already held one
+covering the same time range should land it as a new composited layer, not silently
+no-op. Confirmed this was genuinely stale, not a deliberate safety rule: the destination-
+overlap rejection predates D-088's real multi-layer compositor — when only one video track's
+clip was ever visible per frame ("top wins"), two clips overlapping in time on different
+tracks would have been meaningless, so rejecting it made sense THEN. D-088 shipped
+`resolve_visible_video_layers_at` (composites every visible track together) without this
+rule being revisited — this pass closes that gap, in both `timeline.ts`'s `move` op (the
+one the real frontend actually uses) AND `chroma-timeline::Timeline::move_clip` (Rust — a
+registered Tauri command, `chroma_timeline_move_clip`, unused by the current frontend but
+real and reachable, kept in sync per this file's own "TS mirrors Rust field-for-field"
+discipline rather than let the two silently diverge). WITHIN one track, overlap is still
+rejected — a single track genuinely can't show two things at once.
+
+**Scoping-only, not implemented**: the owner's follow-up steer to evaluate replacing native
+HTML5 drag/drop with `@dnd-kit/core`+`@dnd-kit/sortable` throughout this file (raw
+`dataTransfer` drag "not very quick and free") is real and well-reasoned — a full write-up
+lives at `docs/notes/dnd-kit-migration.md`: real license/maintenance check (MIT, not
+archived, active repo — but no new npm release since 2024-12, and the in-progress rewrite
+has an OPEN React-19-StrictMode issue, #2116, against an architecture this app's `main.tsx`
+IS already exposed to — `<React.StrictMode>`, confirmed by reading it, not assumed), what
+should move (cross-track clip move, track reorder) versus what shouldn't (same-track drag/
+trim — that's the timeline library's own, unrelated-to-tonight's-complaints mechanism), and
+a phased plan starting with an isolated coexistence spike. Recommendation: real, scoped, not
+started this pass — a library swap this central deserves its own dedicated dispatch, not a
+same-night addition to an already-large one.
+
+Verification: `ps aux | grep cargo` checked before the Rust edit; a live rebuild the owner's
+own running `cargo tauri dev` triggered via its file-watcher (reacting to this pass's saved
+edit to `crates/chroma-timeline/src/lib.rs`) overlapped briefly with a manually-run
+`cargo test -p chroma-timeline` — caught via `ps aux`, not missed; both completed cleanly
+(confirmed via `app.log`'s own fresh boot line, no panics) and `cargo test -p chroma-timeline`
+— 59/59 (was 59; existing `move_clip_rejects_overlap` unchanged/still same-track-scoped,
+one new `move_clip_allows_overlap_across_tracks_but_not_within_one`). `cd packages/editor &&
+npx vitest run` — 88/88 (one existing test updated — `move (D-058/D-080)`'s cross-track-
+overlap test now asserts the move succeeds, not rejects, matching the new behaviour). `npx
+tsc --noEmit -p packages/editor` and `-p app` clean (64-error `app` baseline unchanged).
+`cd app && npx vite build` — clean, 3181 modules, same 4 pre-existing bailouts, no new ones.
+Every new interaction (mid-boundary insert at 3 real positions — above track 0, between two
+existing tracks, past the end; kind inference in each case; the widened strip's real
+Chromium-driven cross-track AND same-track drag; the strip's real zero-pixel-overlap with
+the resize-stretch zones) was verified against the real rendered `TimelinePane` component via
+the same isolated-harness technique D-095 built (`app/harness.html`/`harness-main.tsx`,
+scratch, deleted after each use, never committed) — real synthetic `DragEvent`s and one real
+CDP-driven native drag, store state read back after each, not just unit tests of the pure
+logic in isolation.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

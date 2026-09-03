@@ -347,7 +347,12 @@ describe('move (D-058/D-080)', () => {
     expect(moved.source_path).toBe('/media/b.mov');
   });
 
-  it('rejects (no-op) a cross-track move that would overlap a clip already on the destination track', () => {
+  // D-096: a cross-track move is now ALLOWED to overlap another clip
+  // already on the destination track — since D-088's real multi-layer
+  // compositor, that's a normal composited-layer stack (the whole point of
+  // V1/V2), not an error state. Only a SAME-track overlap is still rejected
+  // (see the test above) — two clips can't occupy one track at once.
+  it('allows a cross-track move to overlap a clip already on the destination track', () => {
     const before: Timeline = {
       id: 't1',
       name: 'Timeline',
@@ -358,7 +363,11 @@ describe('move (D-058/D-080)', () => {
     };
     // moving `a` (duration 100) to start at 100 on track 1 -> [100,200), overlaps [50,150)
     const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100 });
-    expect(after).toBe(before);
+    expect(after.tracks[0].clips).toHaveLength(0);
+    expect(after.tracks[1].clips.map((c) => ({ id: c.id, start: c.start_frame }))).toEqual([
+      { id: 'x', start: 50 },
+      { id: 'a', start: 100 },
+    ]);
   });
 
   it('a same-track, same-position move is a real no-op', () => {

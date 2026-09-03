@@ -139,6 +139,7 @@ import {
   Eye,
   EyeOff,
   Film,
+  GripHorizontal,
   GripVertical,
   Lock,
   Scissors,
@@ -235,6 +236,17 @@ const START_LEFT_PX = 20;
  *  land to trigger the "drop past the last row creates a new track"
  *  affordance instead of landing on the last real one. */
 const INSERT_SNAP_PX = 10;
+/** D-097 — how wide the "insert a new track here" hit-zone is on EACH side
+ *  of the boundary line between two existing track rows, in px, independent
+ *  of `ROW_HEIGHT`'s own value. Deliberately a thin band, not half the row:
+ *  most of each row still resolves to "drop onto this existing track" (the
+ *  pre-D-097 behaviour) — only hovering close to where two rows actually
+ *  meet offers the mid-stack insert. ~22% of `ROW_HEIGHT` on each side
+ *  (~44% combined) was picked as the deliberate trade-off between "reliably
+ *  offers the affordance without pixel-perfect aim" and "doesn't eat so
+ *  much of each row that an ordinary same-track drop near an edge
+ *  accidentally triggers it." */
+const TRACK_INSERT_BAND_PX = Math.round(ROW_HEIGHT * 0.22);
 
 function clampPxPerSec(w: number): number {
   return Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, w));
@@ -393,18 +405,61 @@ export function TimelinePane() {
   // here only actually dispatches when the value would change.
   const [draggedTrack, setDraggedTrack] = useState<number | null>(null);
   const [dragOverTrack, setDragOverTrack] = useState<number | null>(null);
-  /** D-095/D-096 — live feedback for a Sources-panel drag: `'edge'` shows an
-   *  insertion line snapped to the nearest clip boundary on the row under
-   *  the pointer (the dragged clip's real duration is unreadable until drop
-   *  — HTML5 `dataTransfer.getData` is drop-only, see `onDragOver`'s own
-   *  doc — so this can only show *where* it'll snap, not yet whether that's
-   *  an open gap or a ripple; `onDrop` resolves that for real via
-   *  `computeInsertion`), `'new_track'` shows the ghost row below the last
-   *  real track. Cleared on drag-leave/drop; never set for a cross-track
-   *  clip-move drag (that path doesn't ripple/insert). */
-  const [insertPreview, setInsertPreview] = useState<{ kind: 'edge'; track: number; frame: number } | { kind: 'new_track' } | null>(
-    null,
-  );
+  /** D-095/D-096/D-097 — live feedback for a Sources-panel drag: `'edge'`
+   *  shows an insertion line snapped to the nearest clip boundary on the row
+   *  under the pointer (the dragged clip's real duration is unreadable
+   *  until drop — HTML5 `dataTransfer.getData` is drop-only, see
+   *  `onDragOver`'s own doc — so this can only show *where* it'll snap, not
+   *  yet whether that's an open gap or a ripple; `onDrop` resolves that for
+   *  real via `computeInsertion`), `'new_track'` shows the ghost row at
+   *  insertion boundary `index` — `0..tracks.length` (D-097: any internal
+   *  boundary or above the first track, not just past the last one — see
+   *  `trackInsertBoundary`). Cleared on drag-leave/drop; never set for a
+   *  cross-track clip-move drag (that path doesn't ripple/insert or create
+   *  tracks). */
+  const [insertPreview, setInsertPreview] = useState<
+    { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
+  >(null);
+
+  /** D-097 — the `0..tracksLength` insertion boundary near `y`
+   *  (`editAreaRef`-relative, ruler/scroll already subtracted), or `null` if
+   *  `y` isn't close to one. `tracksLength` itself (past the last row) is
+   *  unconditional — there's nothing else there to resolve to (D-096's
+   *  original behaviour, unchanged). Every OTHER boundary (0 = above the
+   *  first track, 1..tracksLength-1 = between two existing tracks) only
+   *  counts within `TRACK_INSERT_BAND_PX` of the line where two rows
+   *  actually meet — see that constant's own doc for why. Shared by
+   *  `onDragOver` (preview) and `onDrop` (the real op) so they can never
+   *  disagree about where a drop actually lands. */
+  const trackInsertBoundary = (y: number, tracksLength: number): number | null => {
+    if (tracksLength === 0) return null;
+    if (y >= tracksLength * ROW_HEIGHT) return tracksLength;
+    if (y < 0) return null;
+    const b = Math.round(y / ROW_HEIGHT);
+    if (b >= 0 && b <= tracksLength && Math.abs(y - b * ROW_HEIGHT) <= TRACK_INSERT_BAND_PX) return b;
+    return null;
+  };
+
+  /** D-097 — what kind a track created at insertion boundary `index` should
+   *  be. `DraggedMedia`/`MediaItem` (`timeline.ts` / `@chroma/bridge`)
+   *  carry NO real audio-vs-video signal today — checked, not assumed
+   *  (`MediaItem`'s only probed-info field is `video?: MediaVideoInfo`,
+   *  there's no `MediaAudioInfo`/`mediaType`; `clipFromDraggedMedia` itself
+   *  can't build a clip at all without a `frameCount`, i.e. today's
+   *  Sources-panel drag flow doesn't support audio-only media landing on
+   *  the timeline in the first place) — so this can't derive the new
+   *  track's kind from the dragged item itself without a real backend model
+   *  change (out of scope here). The next-best real signal is drop
+   *  *context*: continue whatever kind cluster the insertion point is
+   *  adjacent to — the track directly above the boundary (or, at the very
+   *  top, the track directly below it) — rather than a hardcoded literal
+   *  (the actual pre-D-097 bug: every auto-created track was unconditionally
+   *  `'video'`, regardless of where the drop landed). */
+  const inferNewTrackKind = (index: number): 'video' | 'audio' => {
+    if (index > 0 && tracks[index - 1]) return tracks[index - 1].kind;
+    if (tracks[index]) return tracks[index].kind;
+    return 'video';
+  };
 
   /** D-095 — a drop's `clientX` to a timeline frame, mirroring the library's
    *  own `Pt()` left-px→seconds helper exactly (checked against its bundled
@@ -488,8 +543,11 @@ export function TimelinePane() {
       return;
     }
     const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
-    if (y >= tracks.length * ROW_HEIGHT) {
-      setInsertPreview((prev) => (prev?.kind === 'new_track' ? prev : { kind: 'new_track' }));
+    const boundary = trackInsertBoundary(y, tracks.length);
+    if (boundary !== null) {
+      setInsertPreview((prev) =>
+        prev?.kind === 'new_track' && prev.index === boundary ? prev : { kind: 'new_track', index: boundary },
+      );
       return;
     }
     if (y < 0) {
@@ -530,9 +588,27 @@ export function TimelinePane() {
       const i = idxOf(payload.track, payload.id);
       if (i < 0) return;
       const toTrack = dropTargetTrack(e);
-      // Same-track drop: the library's own action-drag already owns
-      // same-row repositioning (`onActionMoveEndCb`) — nothing to do here.
-      if (toTrack === payload.track) return;
+      if (toTrack === payload.track) {
+        // D-096 — a real regression, found live immediately after the
+        // strip went full-width (B-027): this used to be an intentional
+        // no-op ("the library's own action-drag already owns same-row
+        // repositioning") because the old small corner grip was a near-
+        // impossible accidental grab. A full-width strip is an EASY
+        // accidental grab for an ordinary horizontal same-track drag —
+        // and this branch silently doing nothing read as "stuck, can't
+        // move it," a real reported break of a working D-051 feature.
+        // Fix: handle a same-track drop here too, the same way the
+        // library's own `onActionMoveEndCb` would — a plain reposition to
+        // wherever the pointer now is, through the normal `move` op
+        // (same-track overlap is still rejected, unchanged) — so which
+        // mechanism actually caught the gesture no longer matters to the
+        // outcome.
+        const rect = editAreaRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const startFrame = Math.max(0, xToFrame(e, rect));
+        applyOp({ kind: 'move', fromTrack: payload.track, toTrack, clip: i, startFrame });
+        return;
+      }
       const clip = clipsOf(payload.track)[i];
       applyOp({ kind: 'move', fromTrack: payload.track, toTrack, clip: i, startFrame: clip.start_frame });
       setSelected({ track: toTrack, id: payload.id });
@@ -552,18 +628,30 @@ export function TimelinePane() {
 
     const rect = editAreaRef.current?.getBoundingClientRect();
     const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop : -1;
-    if (rect && tracks.length > 0 && y >= tracks.length * ROW_HEIGHT) {
-      // D-096 — dropped past the last real track: create one to receive it,
-      // rather than silently landing on whatever the last track happens to
-      // be (the pre-D-096 behaviour — `dropTargetTrack` clamps to the last
-      // row). The new track is always the next array index (`add_track`
-      // appends — `chroma_timeline::Timeline::add_track`), computed from
-      // this render's own `tracks.length` since both ops below run
-      // synchronously in the same handler, before either the store or this
-      // component re-renders.
+    const boundary = rect && tracks.length > 0 ? trackInsertBoundary(y, tracks.length) : null;
+    if (boundary !== null) {
+      // D-096/D-097 — dropped at a real track-insertion boundary: past the
+      // last row, above the first, or between two existing ones. `add_track`
+      // always appends at the end (`chroma_timeline::Timeline::add_track`),
+      // computed from this render's own `tracks.length` since every op
+      // below runs synchronously in this one handler, before either the
+      // store or this component re-renders — so a brand-new track is
+      // reliably at that index the instant it's created.
       const newTrackIdx = tracks.length;
-      applyOp({ kind: 'add_track', trackKind: 'video' });
-      applyOp({ kind: 'add_clip', track: newTrackIdx, clip });
+      const kind = inferNewTrackKind(boundary);
+      applyOp({ kind: 'add_track', trackKind: kind });
+      if (boundary !== newTrackIdx) {
+        // D-097 — not a plain append: reposition the just-created track into
+        // place with the SAME `move_track` + selection-follow math the
+        // track-reorder drag already uses (`trackIndexAfterMove`), not a
+        // second version of that logic.
+        applyOp({ kind: 'move_track', from: newTrackIdx, to: boundary });
+        if (selected) {
+          const followed = trackIndexAfterMove(selected.track, newTrackIdx, boundary);
+          if (followed !== selected.track) setSelected({ track: followed, id: selected.id });
+        }
+      }
+      applyOp({ kind: 'add_clip', track: boundary, clip });
       return;
     }
 
@@ -664,30 +752,39 @@ export function TimelinePane() {
           >
             {clip?.name ?? action.id}
           </div>
-          {/* D-094 — cross-track clip-move drag handle. Deliberately a
-              small, inset hit-target (not the whole clip body): the 10px
-              left-edge resize zone (`.timeline-editor-action-left-stretch`,
-              siblings of this content, see the B-013 note above) needs to
-              stay reachable, so this sits to the right of it and only in
-              the top strip. `onMouseDown`/`onPointerDown` stop propagation
-              so the library's own interact.js listener on the action
-              wrapper (bound for same-track move-drag) never sees this
-              press — the native HTML5 `dragstart` this triggers and the
-              library's own pointer-drag are mutually exclusive per
-              gesture, not competing over the same one. Only shown with
-              more than one track — nothing to cross-track-move to
-              otherwise, same gating `otherTracks`/"Move to ▾" already use. */}
+          {/* D-094/D-096 — cross-track clip-move drag handle: a FULL-WIDTH
+              top strip, not a small corner icon (D-094's original design,
+              grown once already in D-095 to a ~20px icon — still reported
+              live as hard to find/grab: "i should be able to drag A001 to
+              video_1... or vise versa," a real screenshot of trying to grab
+              the clip BODY itself, not hunting for an icon). Deliberately
+              did NOT make the whole clip body draggable to get there — the
+              library's own interact.js same-track drag is ALSO bound to
+              this same action wrapper via plain mousedown/pointermove (not
+              native HTML5 `draggable`), and setting `draggable=true` on the
+              clip body itself would race the two drag systems for the same
+              initial mousedown with no reliable winner (confirmed by
+              reasoning through the library's own event model before
+              building this, not guessed) — precisely the class of bug this
+              session's own D-074 relight-puck capture/bubble-phase incident
+              already taught this codebase to take seriously. A full-width
+              *strip*, still a distinct DOM element from the rest of the
+              clip body (same safe mechanism D-094 already used, just much
+              bigger), gets most of the ergonomic win — "grab anywhere along
+              the top of the clip" — without that risk. Horizontally inset
+              `left-[11px] right-[11px]` (not `left-0 right-0`) so it never
+              overlaps the 10px left/right edge resize zones
+              (`.timeline-editor-action-{left,right}-stretch`, siblings of
+              this content, full clip HEIGHT per the library's own bundled
+              CSS) — the exact B-013 hit-testing mistake this file already
+              paid for once, not worth risking again for a wider strip.
+              `onMouseDown`/`onPointerDown` stop propagation so interact.js
+              never sees this press. Only shown with more than one track —
+              nothing to cross-track-move to otherwise, same gating
+              `otherTracks`/"Move to ▾" already use. */}
           {tracks.length > 1 && (
             <div
-              // D-097 — grown from `size-3.5` (14px, reported unreliable to
-              // grab with a real mouse — see the doc below) to a real
-              // ~20px hit target; `-webkit-user-drag: element` is an
-              // explicit hint for WebKit (Tauri's macOS webview, a
-              // different engine than Chromium — untestable in this
-              // session's own browser-automation tooling, which only
-              // drives Chromium) that this specific element is a drag
-              // source, rather than relying on `draggable` alone.
-              className="absolute left-3 top-0.5 z-20 flex size-5 cursor-grab items-center justify-center rounded-sm text-button-text/70 hover:text-button-text hover:bg-black/20 active:cursor-grabbing"
+              className="absolute left-[11px] right-[11px] top-0 z-20 flex h-2.5 cursor-grab items-center justify-center rounded-t text-button-text/60 hover:bg-white/10 hover:text-button-text active:cursor-grabbing"
               style={{ WebkitUserDrag: 'element' } as CSSProperties}
               draggable
               onMouseDown={(e) => e.stopPropagation()}
@@ -700,7 +797,7 @@ export function TimelinePane() {
               title="Drag to move to another track"
               aria-label="Drag to move to another track"
             >
-              <GripVertical size={11} />
+              <GripHorizontal size={10} />
             </div>
           )}
         </div>
@@ -1352,12 +1449,12 @@ export function TimelinePane() {
               onActionMoveEnd={onActionMoveEndCb}
               onActionResizeEnd={onActionResizeEndCb}
             />
-            {/* D-095/D-096 — the live drop-preview overlay: an insertion
-                line snapped to a clip edge, or a ghost row past the last
-                track. `pointer-events-none` so it never steals the drag's
-                own dragover/drop targeting from the library/edit-area
-                underneath — purely visual, positioned in the same
-                `editAreaRef`-relative coordinate space `xToFrame`/
+            {/* D-095/D-096/D-097 — the live drop-preview overlay: an
+                insertion line snapped to a clip edge, or a ghost row at a
+                track-insertion boundary. `pointer-events-none` so it never
+                steals the drag's own dragover/drop targeting from the
+                library/edit-area underneath — purely visual, positioned in
+                the same `editAreaRef`-relative coordinate space `xToFrame`/
                 `dropTargetTrack` already compute against. */}
             {insertPreview?.kind === 'edge' && (
               <div
@@ -1374,7 +1471,18 @@ export function TimelinePane() {
               <div
                 className="pointer-events-none absolute left-0 right-0 z-30 border-2 border-dashed border-accent/70 bg-accent/10"
                 style={{
-                  top: RULER_AND_MARGIN_PX + tracks.length * ROW_HEIGHT - scrollTop,
+                  // D-097 — past the last row (`index === tracks.length`)
+                  // there's no row below to overlap into, so the ghost sits
+                  // flush under the last real row, unchanged from D-096.
+                  // Every other boundary (above the first track, or between
+                  // two existing ones) centers the ghost ON the boundary
+                  // line, half-overlapping each neighboring row — the
+                  // standard "squeeze a new row in here" NLE affordance.
+                  top:
+                    RULER_AND_MARGIN_PX +
+                    insertPreview.index * ROW_HEIGHT -
+                    (insertPreview.index === tracks.length ? 0 : ROW_HEIGHT / 2) -
+                    scrollTop,
                   height: ROW_HEIGHT,
                 }}
               />
