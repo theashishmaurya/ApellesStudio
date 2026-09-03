@@ -14,15 +14,22 @@
 //!   `timelines` list itself; `chroma_timeline_frame` resolves a timeline
 //!   position on the active timeline to `(clip, source frame)` via
 //!   [`chroma_timeline::Track::clip_at`] and decodes that source frame with the
-//!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG).
+//!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG);
+//!   `chroma_timeline_add_track`/`_remove_track`/`_move_clip` (D-054, Phase A
+//!   of `docs/notes/multi-track-nle.md`) manage tracks and reposition/move
+//!   clips (including across tracks) on the active timeline.
 //! What it does NOT do: no `wgpu`, no colour grade, no compositing — the editor
 //!   preview is deliberately independent of the Colorist's `AppState` render
 //!   path (grade-in-preview + multi-layer compositing are a later
-//!   `chroma-compositor` step). No multi-track / audio / transitions /
-//!   transcript cut / OTIO export / MCP — MVP only (D-041). No
+//!   `chroma-compositor` step). Still no audio tracks / transitions /
+//!   transcript cut / OTIO export / MCP. `chroma_timeline_frame` still only
+//!   ever reads the **first** video track (D-054 gave the model multiple
+//!   tracks and gaps; nothing composites them yet — that's Phase B). No
 //!   timeline-switcher UI yet (D-045 pass 2 is model + commands only; "active
 //!   timeline" is a Rust-side concept the frontend doesn't need to know about
-//!   for the existing single-timeline Edit tab to keep working) — pass 3.
+//!   for the existing single-timeline Edit tab to keep working) — pass 3. No
+//!   multi-track UI either (D-054 is model + commands only — Phase D, blocked
+//!   on Phases B/C).
 //!
 //! The timelines are persisted **inside the `.chroma` project**:
 //!   `ProjectManifest.timelines: Vec<Timeline>` + `active_timeline: usize`
@@ -271,6 +278,60 @@ pub fn chroma_timeline_set_active(id: String) -> Result<(), String> {
         .position(|tl| tl.id == id)
         .ok_or_else(|| format!("no timeline with id {id}"))?;
     manifest.active_timeline = idx;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)
+}
+
+// --------------------------------------------------------------------------- //
+// track management + cross-track move (D-054, Phase A of the multi-track NLE
+// note — model + commands only, no frontend consumer yet: see
+// docs/notes/multi-track-nle.md).
+// --------------------------------------------------------------------------- //
+
+/// Add a new, empty track of `kind` to the **active** timeline and persist.
+/// Returns the new track's index. No UI populates a second track yet (Phase
+/// D) — this makes the capability reachable for a script/test/future UI.
+#[tauri::command]
+pub fn chroma_timeline_add_track(kind: TrackKind) -> Result<usize, String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    let track_idx = manifest.timelines[idx].add_track(kind);
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)?;
+    Ok(track_idx)
+}
+
+/// Remove `track` (and every clip on it — see
+/// `chroma_timeline::Timeline::remove_track`'s doc) from the **active**
+/// timeline and persist. Errors on an out-of-range index.
+#[tauri::command]
+pub fn chroma_timeline_remove_track(track: usize) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    manifest.timelines[idx]
+        .remove_track(track)
+        .map_err(|e| e.to_string())?;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)
+}
+
+/// Move the clip at `(from_track, from_idx)` on the **active** timeline onto
+/// `to_track` at timeline-absolute `to_start_frame`, and persist. Works for a
+/// same-track reposition too (`from_track == to_track`). Errors (leaving the
+/// timeline unchanged) for an out-of-range track/clip index, a negative
+/// position, or a destination that would overlap an existing clip.
+#[tauri::command]
+pub fn chroma_timeline_move_clip(
+    from_track: usize,
+    from_idx: usize,
+    to_track: usize,
+    to_start_frame: i64,
+) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    manifest.timelines[idx]
+        .move_clip(from_track, from_idx, to_track, to_start_frame)
+        .map_err(|e| e.to_string())?;
     manifest.modified = now_rfc3339();
     project::save_manifest(&dir, &manifest)
 }

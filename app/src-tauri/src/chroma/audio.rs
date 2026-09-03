@@ -976,6 +976,7 @@ mod tests {
             source_start: 0,
             duration: 100_000, // longer than any real test clip; exact value is irrelevant here
             source_len: 100_000,
+            start_frame: 0, // D-054: the only clip on its track
         };
         let timeline = chroma_timeline::Timeline {
             id: "tl1".into(),

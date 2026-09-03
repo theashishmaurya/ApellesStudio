@@ -128,8 +128,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    tracks together, feed both preview and export) is the real long pole, sub-phased
    B1 (2 tracks, opaque)→B2 (N tracks)→B3 (blend modes) rather than attempted whole.
    **D** (multi-track timeline UI), **E** (transitions), **F** (export through the
-   real timeline) all sit downstream of B and shouldn't start earlier. Phase A is the
-   first dispatch.
+   real timeline) all sit downstream of B and shouldn't start earlier.
+   - ~~**Phase A — data model foundation**~~ — **done, D-054 (2026-09-03).**
+     `chroma-timeline::Clip` gained an explicit `start_frame: i64`
+     (timeline-absolute), not the OTIO-style `Gap` item — see D-054 for the
+     full rationale (it maps directly onto `@xzdarcy/react-timeline-editor`'s
+     own start/end-time item model, which the Edit tab's UI already uses).
+     Every existing op (`reorder`/`trim_start`/`trim_end`/`split`/`remove`)
+     reworked for gaps + no-overlap invariants; `add_track`/`remove_track`/
+     `move_clip` added; `chroma_timeline_add_track`/`_remove_track`/
+     `_move_clip` Tauri commands wired in `edit.rs`. Legacy `project.json`
+     migration (`Timeline::backfill_legacy_positions`) verified against the
+     real `~/Movies/Chroma/New.chroma/project.json`. No frontend/UI, no
+     compositor, no audio — those are Phases B/C/D, still not started. **Phase
+     B is next** (the real long pole — see above); C is independent and can
+     run in parallel.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
