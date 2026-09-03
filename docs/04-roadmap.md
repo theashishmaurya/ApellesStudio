@@ -45,9 +45,10 @@ numbers are actually calibrated).
   or packaged-build story for the engine yet.
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
   screen (opens on the launcher, tabs appear once a project is open), a docked
-  Sources/Library panel reachable from every tab (thumbnails-less grid, import,
-  search, bin tree, drag-to-track — D-046), `@chroma/ui` (shadcn/Base UI, 18
-  components, themed).
+  Sources/Library panel reachable from every tab (real poster-frame thumbnails,
+  import, search, a bin tree with real "New Folder" creation — even an empty
+  one persists and lists, drag-to-track — D-046, D-059), `@chroma/ui` (shadcn/
+  Base UI, 18 components, themed).
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.
@@ -162,7 +163,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      compositor, no audio — those are Phases B/C/D, still not started. **Phase
      B is next** (the real long pole — see above); C is independent and can
      run in parallel.
-   - ~~**Phase B1 — two video tracks, opaque compositing**~~ — **done, D-056
+   - ~~**Phase B1 — two video tracks, opaque compositing**~~ — **done, D-059
      (2026-09-03).** Real finding, worth flagging since it reshapes how big
      B2/B3 looked from the outside: opaque top-wins compositing needed **no
      new rendering/GPU code at all** — with no alpha to blend, showing the

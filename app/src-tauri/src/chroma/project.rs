@@ -66,6 +66,23 @@
 //! doc for why this migration didn't need the `migrate_legacy_*` pattern)
 //! to reconstruct real positions for clips from pre-D-054 `project.json`
 //! files. See the D-054 decision and `docs/notes/multi-track-nle.md`.
+//!
+//! **Sources panel fixes (D-059):** [`chroma_media_list`], [`chroma_media_import`],
+//! and [`chroma_media_move`] are now `async fn` (B-014 — they used to be plain
+//! `fn`, which Tauri runs *inline on the main UI thread*; that's fine for a
+//! sub-millisecond call but stalls the native file-picker dialog behind
+//! whichever one is in flight the moment "Import" is clicked). `chroma_media_import`
+//! additionally moves its per-path `ffprobe` probing onto Tokio's blocking pool
+//! (`spawn_blocking`), matching `chroma_frame_thumbnails`/`chroma_session_thumbnail`'s
+//! existing convention for `ffmpeg`/`ffprobe` subprocess work. [`probe_media_item`]
+//! also generates + caches a poster-frame thumbnail per item (reusing
+//! `video::extract_thumb`, the same extractor the Colorist shot-strip uses) to
+//! `<video_dir>/.chroma/thumbs/<mediaId>.jpg` — the same "cache lives beside the
+//! source, keyed and referenced not copied" convention `mask.rs`/`depth.rs` use
+//! for mattes/depth. [`ProjectManifest::folders`] is a small additive list of
+//! explicitly-created, possibly-still-empty bin paths (new: [`chroma_media_create_folder`])
+//! alongside the existing "folders are implied by items' `folder` strings" model —
+//! see the D-059 decision for why a full bin-hierarchy entity wasn't needed.
 
 use std::path::{Path, PathBuf};
 
@@ -201,6 +218,19 @@ pub struct ProjectManifest {
     /// pre-D-044.
     #[serde(default)]
     pub media: Vec<MediaItem>,
+    /// Explicitly-created bin paths (D-059), independent of whether any
+    /// [`MediaItem::folder`] currently names them — the one piece of state
+    /// that lets a just-created, still-empty folder show up in the Sources
+    /// panel's tree (a folder implied only by items' `folder` strings, D-045's
+    /// original model, disappears the moment its last item is moved out or
+    /// removed; this list is what keeps a deliberately-created one around).
+    /// Additive/optional, same defaulting convention as `media`/`timelines`.
+    /// [`chroma_media_create_folder`] appends to it; [`chroma_media_import`]/
+    /// [`chroma_media_move`] also register whatever `folder` they're given, so
+    /// an implicitly-created folder (naming a not-yet-used path on import/move,
+    /// D-045's original behaviour) is remembered too, not just an explicit one.
+    #[serde(default)]
+    pub folders: Vec<String>,
 }
 
 impl ProjectManifest {
@@ -217,6 +247,7 @@ impl ProjectManifest {
             timelines: Vec::new(),
             active_timeline: 0,
             media: Vec::new(),
+            folders: Vec::new(),
         }
     }
 }
@@ -299,6 +330,13 @@ pub struct MediaItemDto {
     /// the bin path this item is filed in; `None` = pool root (D-045)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// `data:image/jpeg;base64,…` poster-frame thumbnail (D-059), read live
+    /// from `<video_dir>/.chroma/thumbs/<id>.jpg` — same "computed live, not
+    /// stored on the model" discipline `offline` uses. `None` when nothing has
+    /// been cached yet (thumbnail generation failed at import time, or the
+    /// item predates D-059 and hasn't been re-imported).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<String>,
 }
 
 /// `true` if `path` is a readable video file right now — the same cheap check
@@ -318,6 +356,7 @@ impl From<&MediaItem> for MediaItemDto {
             video: m.video.clone(),
             offline: !media_item_is_online(&m.source_path),
             folder: m.folder.clone(),
+            thumb: read_cached_thumb(&m.source_path, &m.id),
         }
     }
 }
@@ -332,22 +371,95 @@ fn normalize_folder(folder: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+// --------------------------------------------------------------------------- //
+// media thumbnails (D-059/B-014) — a poster-frame JPEG per MediaItem, cached
+// beside the source video, same `<video_dir>/.chroma/<kind>/<key>/…` layout
+// `mask.rs`'s mattes and `depth.rs`'s per-frame depth already use (keyed by
+// the item's own id instead of a params hash — a media item only ever needs
+// one thumbnail, not one per set of track parameters). Reuses
+// `video::extract_thumb` — the same extractor the Colorist shot-strip / the
+// project launcher's card thumbnail (`regen_thumb`, above) already call —
+// rather than a second decode path.
+// --------------------------------------------------------------------------- //
+
+/// `None` when `source_path` has no parent directory (a bare filename) — an
+/// edge case that just means "don't cache," not an error.
+fn thumb_cache_path(source_path: &str, media_id: &str) -> Option<PathBuf> {
+    let parent = Path::new(source_path).parent()?;
+    Some(
+        parent
+            .join(".chroma")
+            .join("thumbs")
+            .join(format!("{media_id}.jpg")),
+    )
+}
+
+/// Extract a mid-clip frame (not frame 0 — often a black/fade-in frame) via
+/// `video::extract_thumb`, decode its data-URL payload back to raw bytes (same
+/// `rsplit_once(',')` + base64-decode `regen_thumb` uses), and cache it.
+/// Best-effort: a probe/decode failure just leaves the item without a cached
+/// thumbnail, same "offline is flagged, not fatal" discipline as the rest of
+/// this module — the Sources panel falls back to its placeholder icon.
+fn generate_media_thumb(source_path: &str, info: &video::VideoInfo, media_id: &str) {
+    let Some(cache_path) = thumb_cache_path(source_path, media_id) else {
+        return;
+    };
+    let frame = info.frame_count / 2;
+    match video::extract_thumb(Path::new(source_path), info, frame, 150) {
+        Ok(data_url) => {
+            let b64 = data_url
+                .rsplit_once(',')
+                .map(|(_, b)| b)
+                .unwrap_or(&data_url);
+            match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+                Ok(bytes) => {
+                    if let Some(dir) = cache_path.parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    if let Err(e) = std::fs::write(&cache_path, bytes) {
+                        log::warn!("[chroma::project] writing media thumb for {source_path}: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[chroma::project] decoding media thumb for {source_path}: {e}")
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("[chroma::project] media thumb generation failed for {source_path}: {e}")
+        }
+    }
+}
+
+/// Read `<video_dir>/.chroma/thumbs/<id>.jpg` back as a `data:` URL, if cached.
+fn read_cached_thumb(source_path: &str, media_id: &str) -> Option<String> {
+    let path = thumb_cache_path(source_path, media_id)?;
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
 /// Probe `path` and build a [`MediaItem`] for it, filed into `folder` (a bin
 /// path, created implicitly by being named here — D-045). Never fails
 /// outright — a probe failure (offline / not decodable) just leaves
-/// `video: None`.
+/// `video: None` and no cached thumbnail.
 fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
-    let video = media_item_is_online(path)
+    let id = uuid::Uuid::new_v4().to_string();
+    let probed = media_item_is_online(path)
         .then(|| video::probe(Path::new(path)).ok())
-        .flatten()
-        .as_ref()
-        .map(MediaVideoInfo::from);
+        .flatten();
+    if let Some(info) = &probed {
+        generate_media_thumb(path, info, &id);
+    }
+    let video = probed.as_ref().map(MediaVideoInfo::from);
     MediaItem {
-        id: uuid::Uuid::new_v4().to_string(),
+        id,
         source_path: path.to_string(),
         name,
         added: now_rfc3339(),
@@ -378,7 +490,25 @@ fn add_media(
         .map(|p| probe_media_item(p, folder))
         .collect();
     manifest.media.extend(added.iter().cloned());
+    if !added.is_empty() {
+        register_folder(manifest, folder);
+    }
     added
+}
+
+/// Add `folder` to [`ProjectManifest::folders`] if it isn't already known
+/// (dedup — `manifest.folders` is a set in spirit, a `Vec` on the wire for a
+/// stable/simple JSON shape). A no-op for `None`/blank (the pool root isn't a
+/// folder). Shared by [`add_media`]/[`chroma_media_move`] (which register a
+/// folder implicitly, D-045's original behaviour) and
+/// [`chroma_media_create_folder`] (which registers one explicitly, D-059).
+fn register_folder(manifest: &mut ProjectManifest, folder: Option<&str>) {
+    let Some(f) = normalize_folder(folder) else {
+        return;
+    };
+    if !manifest.folders.iter().any(|existing| existing == &f) {
+        manifest.folders.push(f);
+    }
 }
 
 // --------------------------------------------------------------------------- //
@@ -1201,8 +1331,22 @@ fn require_open_project() -> Result<PathBuf, String> {
 /// re-file it). The frontend wires this to a native multi-select file dialog
 /// (`@tauri-apps/plugin-dialog`'s `open({ multiple: true })`, same pattern as
 /// the project launcher's `pickClips`).
+///
+/// **`async` + `spawn_blocking` (D-059/B-014).** Probing each path shells out
+/// to `ffprobe` (`video::probe`) and now also `ffmpeg` for a thumbnail
+/// (`generate_media_thumb`) — real, potentially slow (many files, a network
+/// or spinning-disk source) blocking work. A plain (non-`async`) `#[tauri::command]`
+/// runs *inline on the main UI thread* (confirmed against `tauri-macros`'
+/// `ExecutionContext::Blocking` — the default for a non-`async fn` — which
+/// calls the command body directly rather than dispatching it through
+/// `respond_async_serialized`/the async runtime); an `async fn` command does
+/// not. Wrapping the actual probing in `spawn_blocking` additionally keeps it
+/// off the async-runtime's own worker threads (same convention
+/// `chroma_frame_thumbnails`/`chroma_session_thumbnail` already use for their
+/// `ffmpeg` calls) rather than just moving the blocking off the main thread
+/// and onto a runtime thread that other `async fn` commands share.
 #[tauri::command]
-pub fn chroma_media_import(
+pub async fn chroma_media_import(
     paths: Vec<String>,
     folder: Option<String>,
 ) -> Result<Vec<MediaItemDto>, String> {
@@ -1210,21 +1354,29 @@ pub fn chroma_media_import(
         return Err("no paths given".into());
     }
     let dir = require_open_project()?;
-    let mut manifest = load_manifest(&dir)?;
-    let added = add_media(&mut manifest, &paths, folder.as_deref());
-    if !added.is_empty() {
-        manifest.modified = now_rfc3339();
-        save_manifest(&dir, &manifest)?;
-    }
+    let added = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
+        let mut manifest = load_manifest(&dir)?;
+        let added = add_media(&mut manifest, &paths, folder.as_deref());
+        if !added.is_empty() {
+            manifest.modified = now_rfc3339();
+            save_manifest(&dir, &manifest)?;
+        }
+        Ok(added)
+    })
+    .await
+    .map_err(|e| format!("import task panicked: {e}"))??;
     Ok(added.iter().map(MediaItemDto::from).collect())
 }
 
 /// Re-file an existing pool item into a different bin path (D-045) — pass
 /// `folder: None` (or an empty/blank string) to move it back to the pool
-/// root. No separate "create bin" command: naming a not-yet-used path here
-/// creates it implicitly, same as `chroma_media_import`'s `folder` arg.
+/// root. Naming a not-yet-used path here creates/registers it implicitly,
+/// same as `chroma_media_import`'s `folder` arg (D-059: registers into
+/// [`ProjectManifest::folders`] too, not just the item's own `folder`).
+/// `async` (D-059/B-014) — see [`chroma_media_import`]'s doc for why a
+/// manifest-touching command must not be a plain blocking `fn`.
 #[tauri::command]
-pub fn chroma_media_move(id: String, folder: Option<String>) -> Result<MediaItemDto, String> {
+pub async fn chroma_media_move(id: String, folder: Option<String>) -> Result<MediaItemDto, String> {
     let dir = require_open_project()?;
     let mut manifest = load_manifest(&dir)?;
     let item = manifest
@@ -1233,18 +1385,69 @@ pub fn chroma_media_move(id: String, folder: Option<String>) -> Result<MediaItem
         .find(|m| m.id == id)
         .ok_or_else(|| format!("no media item with id {id}"))?;
     item.folder = normalize_folder(folder.as_deref());
-    let dto = MediaItemDto::from(&*item);
+    register_folder(&mut manifest, folder.as_deref());
+    let dto = manifest
+        .media
+        .iter()
+        .find(|m| m.id == id)
+        .map(MediaItemDto::from)
+        .expect("just looked this item up above");
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
     Ok(dto)
 }
 
-/// The open project's full media pool, offline-checked live. For a future
-/// pass's Sources panel to consume — no UI built against it yet (D-044). Each
-/// item carries its `folder` (D-045); the frontend derives the bin tree from
-/// the flat list of folder path strings — no separate bin-hierarchy API.
+/// Register a new, possibly-still-empty bin path (D-059) — the Sources
+/// panel's explicit "New Folder" action. Idempotent (creating an
+/// already-known folder is a no-op, not an error) and does not require the
+/// folder to hold any items, unlike D-045's original "folders are implied by
+/// items' `folder` strings" model (see the D-059 decision for why this small
+/// additive list, not a full bin-hierarchy entity, was the right amount of
+/// complexity). Returns the full, deduped, sorted folder list — union of
+/// `manifest.folders` and every item's `folder` — so the frontend can just
+/// replace its tree state, same "return the fresh state" convention
+/// `chroma_media_import`/`_move` use.
 #[tauri::command]
-pub fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
+pub async fn chroma_media_create_folder(path: String) -> Result<Vec<String>, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("folder name is empty".into());
+    }
+    let dir = require_open_project()?;
+    let mut manifest = load_manifest(&dir)?;
+    register_folder(&mut manifest, Some(trimmed));
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    Ok(all_folders(&manifest))
+}
+
+/// Union of [`ProjectManifest::folders`] and every media item's `folder`,
+/// deduped + sorted — what the Sources panel's bin tree is actually built
+/// from (D-059; items alone were D-045's whole story).
+fn all_folders(manifest: &ProjectManifest) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = manifest.folders.iter().cloned().collect();
+    set.extend(manifest.media.iter().filter_map(|m| m.folder.clone()));
+    set.into_iter().collect()
+}
+
+/// The open project's known bin paths (D-059) — see [`all_folders`]. A
+/// separate command rather than folding into [`chroma_media_list`]'s response
+/// so that DTO's wire shape stays untouched (same reasoning D-046 gave for
+/// keeping `ProjectShotDto` stable through the shots/media unification).
+#[tauri::command]
+pub async fn chroma_media_folders() -> Result<Vec<String>, String> {
+    let dir = require_open_project()?;
+    let manifest = load_manifest(&dir)?;
+    Ok(all_folders(&manifest))
+}
+
+/// The open project's full media pool, offline-checked live. Each item
+/// carries its `folder` (D-045) and cached `thumb` if one exists (D-059); the
+/// frontend derives the bin tree from the flat list of folder path strings
+/// plus [`chroma_media_folders`] — no separate bin-hierarchy API. `async`
+/// (D-059/B-014) — see [`chroma_media_import`]'s doc.
+#[tauri::command]
+pub async fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     let dir = require_open_project()?;
     let manifest = load_manifest(&dir)?;
     Ok(manifest.media.iter().map(MediaItemDto::from).collect())
@@ -1463,7 +1666,7 @@ mod tests {
     }
 
     /// synthesise a tiny `testsrc` clip with ffmpeg; `None` if ffmpeg is absent.
-    /// `duration_s` (D-056): most callers just need *a* probe-able clip and
+    /// `duration_s` (D-059): most callers just need *a* probe-able clip and
     /// pass `1`; the Phase B1 multi-track resolution test needs two clips of
     /// **different** lengths (so a query position can land past one track's
     /// clip but still inside the other's), hence the parameter.
@@ -1765,20 +1968,161 @@ mod tests {
             name: "media-move".into(),
         }));
 
-        let moved = chroma_media_move(id.clone(), Some("Interviews".into())).unwrap();
+        // chroma_media_move is async (D-059/B-014); drive it on a tiny local
+        // runtime, same convention `chroma_project_save_attaches_a_new_shot_to_the_pool`
+        // uses for `chroma_project_save`.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        let moved = rt
+            .block_on(chroma_media_move(id.clone(), Some("Interviews".into())))
+            .unwrap();
         assert_eq!(moved.folder.as_deref(), Some("Interviews"));
         let reloaded = load_manifest(&dir).unwrap();
         assert_eq!(reloaded.media[0].folder.as_deref(), Some("Interviews"));
+        assert!(
+            reloaded.folders.iter().any(|f| f == "Interviews"),
+            "moving into a not-yet-known folder registers it (D-059)"
+        );
 
         // moving back to the root clears the folder
-        let back = chroma_media_move(id, None).unwrap();
+        let back = rt.block_on(chroma_media_move(id, None)).unwrap();
         assert_eq!(back.folder, None);
 
         // an unknown id errors rather than silently no-op-ing
-        assert!(chroma_media_move("no-such-id".into(), Some("X".into())).is_err());
+        assert!(
+            rt.block_on(chroma_media_move("no-such-id".into(), Some("X".into())))
+                .is_err()
+        );
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- Sources panel fixes (D-059/B-014) -----------------------------------
+
+    #[test]
+    fn chroma_media_create_folder_lists_even_with_zero_items() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("create_folder");
+        let (dir, manifest) = new_project_in(&root, "create-folder", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "create-folder".into(),
+        }));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        // create an empty folder — no items reference it yet
+        let folders = rt
+            .block_on(chroma_media_create_folder("B-roll".into()))
+            .unwrap();
+        assert_eq!(folders, vec!["B-roll".to_string()]);
+        let listed = rt.block_on(chroma_media_folders()).unwrap();
+        assert_eq!(
+            listed,
+            vec!["B-roll".to_string()],
+            "an empty folder is listed even though nothing is filed in it"
+        );
+
+        // idempotent — creating it again is a no-op, not a duplicate/error
+        let again = rt
+            .block_on(chroma_media_create_folder("B-roll".into()))
+            .unwrap();
+        assert_eq!(again, vec!["B-roll".to_string()]);
+
+        // blank/whitespace-only names are rejected
+        assert!(
+            rt.block_on(chroma_media_create_folder("   ".into()))
+                .is_err()
+        );
+
+        // importing a real item into it associates it correctly, and the
+        // folder is still exactly one entry (no duplicate from the item side)
+        let clip = root.join("shot.mov").to_string_lossy().to_string();
+        std::fs::write(root.join("shot.mov"), b"not a real video").unwrap();
+        let added = rt
+            .block_on(chroma_media_import(
+                vec![clip.clone()],
+                Some("B-roll".into()),
+            ))
+            .unwrap();
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0].folder.as_deref(), Some("B-roll"));
+        let final_folders = rt.block_on(chroma_media_folders()).unwrap();
+        assert_eq!(final_folders, vec!["B-roll".to_string()]);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn media_import_generates_and_caches_a_real_thumbnail() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(clip) = make_test_clip("thumb", 64, 64, "10", 1) else {
+            eprintln!("skipping media_import_generates_and_caches_a_real_thumbnail: no ffmpeg");
+            return;
+        };
+        let root = tmp("media_thumb");
+        let (dir, manifest) = new_project_in(&root, "media-thumb", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "media-thumb".into(),
+        }));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let added = rt
+            .block_on(chroma_media_import(
+                vec![clip.to_string_lossy().to_string()],
+                None,
+            ))
+            .unwrap();
+        assert_eq!(added.len(), 1);
+        let item = &added[0];
+        assert!(item.video.is_some(), "a real clip probes successfully");
+        let thumb = item
+            .thumb
+            .as_deref()
+            .expect("a cached thumbnail data URL is returned for a real, probed clip");
+        assert!(
+            thumb.starts_with("data:image/jpeg;base64,"),
+            "thumb is a JPEG data URL, got: {}",
+            &thumb[..thumb.len().min(40)]
+        );
+
+        // the cache file this data URL was read from is a real, decodable
+        // JPEG — not just "a file exists" (per the ask: verify the bytes).
+        let cache_path = thumb_cache_path(&item.source_path, &item.id).unwrap();
+        assert!(cache_path.exists(), "thumbnail cached to {cache_path:?}");
+        let bytes = std::fs::read(&cache_path).unwrap();
+        assert!(!bytes.is_empty());
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+            .expect("cached thumbnail bytes decode as a real JPEG frame");
+        assert!(
+            decoded.width() > 0 && decoded.height() > 0,
+            "decoded thumbnail has real dimensions: {}x{}",
+            decoded.width(),
+            decoded.height()
+        );
+
+        // and chroma_media_list re-reads the same cached file live
+        let listed = rt.block_on(chroma_media_list()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].thumb.as_deref(), Some(thumb));
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip);
+        if let Some(cache_dir) = cache_path.parent() {
+            let _ = std::fs::remove_dir_all(cache_dir);
+        }
     }
 
     // --- multiple timelines (D-045) -----------------------------------------

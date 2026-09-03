@@ -1,5 +1,4 @@
-// Chroma — the Sources / Library panel (D-046, roadmap "media pool + import +
-// multiple timelines" pass 3).
+// Chroma — the Sources / Library panel (D-046 pass 3, D-059 pass 4).
 //
 // Docked in the shell (via `Shell`'s `sourcesPanel` prop, wired in
 // `app/src/main.tsx`) so it's reachable from every tab, not nested inside one
@@ -12,27 +11,44 @@
 //
 // Contents: an Import button (native multi-select picker, same `pickClips`
 // dialog `ProjectLauncher`'s "New Project" flow uses), a client-side search
-// filter, a collapsible bin tree derived from `MediaItem.folder` path strings
-// (drag an item onto a folder to re-file it — `chroma_media_move`), and a
-// thumbnail-less grid of the pool (a real thumbnail strip is a later pass —
-// see the D-046 decision) — drag a grid item onto the Edit tab's timeline to
-// add it as a clip (`@chroma/editor`'s `CHROMA_MEDIA_DRAG_MIME` contract,
-// plain HTML5 drag/drop, not a shared DnD context — see `TimelinePane`'s
-// doc). A "+" on each item is the explicit "add to grading" action
+// filter, a collapsible bin tree built from `useMediaPoolStore.folders`
+// (D-059 — the union of explicitly-created folders and folders implied by
+// `MediaItem.folder` strings, so a just-created empty folder shows up too;
+// drag an item onto a folder to re-file it — `chroma_media_move`; right-click
+// the tree or a folder row for "New Folder" — `chroma_media_create_folder`),
+// and a grid of the pool with a real poster-frame thumbnail per item when one
+// has been cached (D-059 — `MediaItem.thumb`; falls back to a placeholder
+// icon otherwise) — drag a grid item onto the Edit tab's timeline to add it
+// as a clip (`@chroma/editor`'s `CHROMA_MEDIA_DRAG_MIME` contract, plain
+// HTML5 drag/drop, not a shared DnD context — see `TimelinePane`'s doc). A
+// "+" on each item is the explicit "add to grading" action
 // (`chroma_project_add_shot`), distinct from import: importing is pool-only
 // by design, grading is opt-in per item.
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
-import { ChevronRight, Film, Folder, FolderOpen, Plus, Search, WifiOff } from 'lucide-react';
-import { Button, Input, cn } from '@chroma/ui';
-import { useMediaPoolStore, type MediaItem } from '@chroma/bridge';
+import { ChevronRight, Film, Folder, FolderOpen, FolderPlus, Plus, Search, WifiOff } from 'lucide-react';
+import {
+  Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  cn,
+} from '@chroma/ui';
+import { useMediaPoolStore } from '@chroma/bridge';
 import { CHROMA_MEDIA_DRAG_MIME } from '@chroma/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
 
-// --- bin tree, derived client-side from the flat `folder` path strings -----
+// --- bin tree, built from the known folder-path strings (D-059) ------------
 
 interface FolderNode {
   name: string;
@@ -40,14 +56,13 @@ interface FolderNode {
   children: FolderNode[];
 }
 
-function buildFolderTree(items: MediaItem[]): FolderNode[] {
+function buildFolderTree(folders: string[]): FolderNode[] {
   const root: FolderNode[] = [];
   const byPath = new Map<string, FolderNode>();
-  for (const it of items) {
-    if (!it.folder) continue;
+  for (const folder of folders) {
     let path = '';
     let siblings = root;
-    for (const seg of it.folder.split('/').filter(Boolean)) {
+    for (const seg of folder.split('/').filter(Boolean)) {
       path = path ? `${path}/${seg}` : seg;
       let node = byPath.get(path);
       if (!node) {
@@ -61,6 +76,61 @@ function buildFolderTree(items: MediaItem[]): FolderNode[] {
   return root;
 }
 
+/** "Name this folder" prompt for both root-level and nested "New Folder"
+ *  (D-059) — reached from the header button or either context menu. `@chroma/ui`'s
+ *  `Dialog` (D-042 shadcn/Base UI), same controlled-`open` pattern
+ *  `ExportDialog` already uses, rather than a bespoke modal. */
+function NewFolderDialog({
+  parentPath,
+  onClose,
+  onCreate,
+}: {
+  parentPath: string | null;
+  onClose: () => void;
+  onCreate: (fullPath: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    const fullPath = parentPath ? `${parentPath}/${trimmed}` : trimmed;
+    await onCreate(fullPath);
+    setCreating(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-xs">
+        <DialogHeader>
+          <DialogTitle>New folder{parentPath ? ` in ${parentPath}` : ''}</DialogTitle>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submit();
+            if (e.key === 'Escape') onClose();
+          }}
+          placeholder="Folder name"
+          className="h-8 text-[12px]"
+        />
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={() => void submit()} disabled={!name.trim() || creating}>
+            Create
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function isMediaDrag(e: DragEvent): boolean {
   return e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME);
 }
@@ -71,12 +141,14 @@ function FolderRow({
   activeFolder,
   setActiveFolder,
   onDropMedia,
+  onNewFolder,
 }: {
   node: FolderNode;
   depth: number;
   activeFolder: string | null;
   setActiveFolder: (p: string | null) => void;
   onDropMedia: (mediaId: string, folder: string) => void;
+  onNewFolder: (parentPath: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const [dragOver, setDragOver] = useState(false);
@@ -84,54 +156,63 @@ function FolderRow({
 
   return (
     <div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setActiveFolder(activeFolder === node.path ? null : node.path)}
-        onDragOver={(e) => {
-          if (!isMediaDrag(e)) return;
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          setDragOver(false);
-          const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
-          if (!raw) return;
-          e.preventDefault();
-          try {
-            const media = JSON.parse(raw) as { id: string };
-            onDropMedia(media.id, node.path);
-          } catch {
-            /* ignore malformed payload */
-          }
-        }}
-        className={cn(
-          'flex items-center gap-1 py-1 pr-2 rounded text-[11px] cursor-pointer select-none',
-          activeFolder === node.path
-            ? 'bg-accent/15 text-text-primary'
-            : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-          dragOver && 'ring-1 ring-accent bg-accent/10',
-        )}
-        style={{ paddingLeft: 6 + depth * 14 }}
-      >
-        <span
-          onClick={(e) => {
-            if (!hasChildren) return;
-            e.stopPropagation();
-            setOpen((o) => !o);
-          }}
-          className={cn('shrink-0', !hasChildren && 'opacity-0')}
-        >
-          <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-        </span>
-        {activeFolder === node.path ? (
-          <FolderOpen className="size-3 shrink-0" />
-        ) : (
-          <Folder className="size-3 shrink-0" />
-        )}
-        <span className="truncate">{node.name}</span>
-      </div>
+      <ContextMenu>
+        <ContextMenuTrigger>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setActiveFolder(activeFolder === node.path ? null : node.path)}
+            onDragOver={(e) => {
+              if (!isMediaDrag(e)) return;
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              setDragOver(false);
+              const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
+              if (!raw) return;
+              e.preventDefault();
+              try {
+                const media = JSON.parse(raw) as { id: string };
+                onDropMedia(media.id, node.path);
+              } catch {
+                /* ignore malformed payload */
+              }
+            }}
+            className={cn(
+              'flex items-center gap-1 py-1 pr-2 rounded text-[11px] cursor-pointer select-none',
+              activeFolder === node.path
+                ? 'bg-accent/15 text-text-primary'
+                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+              dragOver && 'ring-1 ring-accent bg-accent/10',
+            )}
+            style={{ paddingLeft: 6 + depth * 14 }}
+          >
+            <span
+              onClick={(e) => {
+                if (!hasChildren) return;
+                e.stopPropagation();
+                setOpen((o) => !o);
+              }}
+              className={cn('shrink-0', !hasChildren && 'opacity-0')}
+            >
+              <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
+            </span>
+            {activeFolder === node.path ? (
+              <FolderOpen className="size-3 shrink-0" />
+            ) : (
+              <Folder className="size-3 shrink-0" />
+            )}
+            <span className="truncate">{node.name}</span>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onClick={() => onNewFolder(node.path)}>
+            <FolderPlus className="size-3.5" /> New folder
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       {open && hasChildren && (
         <div>
           {node.children.map((c) => (
@@ -142,6 +223,7 @@ function FolderRow({
               activeFolder={activeFolder}
               setActiveFolder={setActiveFolder}
               onDropMedia={onDropMedia}
+              onNewFolder={onNewFolder}
             />
           ))}
         </div>
@@ -155,21 +237,32 @@ function FolderRow({
 export function SourcesPanel() {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
   const items = useMediaPoolStore((s) => s.items);
+  const folders = useMediaPoolStore((s) => s.folders);
   const loading = useMediaPoolStore((s) => s.loading);
   const refresh = useMediaPoolStore((s) => s.refresh);
   const importPaths = useMediaPoolStore((s) => s.importPaths);
   const moveToFolder = useMediaPoolStore((s) => s.moveToFolder);
+  const createFolder = useMediaPoolStore((s) => s.createFolder);
 
   const [search, setSearch] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  // `undefined` = closed; `null` = open, creating at the pool root; a string
+  // = open, creating nested inside that folder (D-059).
+  const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (projectOpen) void refresh();
   }, [projectOpen, refresh]);
 
-  const tree = useMemo(() => buildFolderTree(items), [items]);
+  const tree = useMemo(() => buildFolderTree(folders), [folders]);
+
+  const doCreateFolder = async (fullPath: string) => {
+    const res = await createFolder(fullPath);
+    if (!res.ok) toast.error(`Couldn't create folder: ${res.error}`);
+    else setNewFolderParent(undefined);
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -242,32 +335,58 @@ export function SourcesPanel() {
         </div>
       </div>
 
-      {tree.length > 0 && (
-        <div className="shrink-0 max-h-32 overflow-y-auto px-1 py-1 border-b border-border-color">
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setActiveFolder(null)}
-            className={cn(
-              'flex items-center gap-1 py-1 pl-1.5 pr-2 rounded text-[11px] cursor-pointer select-none',
-              activeFolder === null
-                ? 'bg-accent/15 text-text-primary'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
-            )}
-          >
-            <Film className="size-3" /> All media
+      <ContextMenu>
+        <ContextMenuTrigger>
+          <div className="shrink-0 max-h-32 overflow-y-auto px-1 py-1 border-b border-border-color">
+            <div className="flex items-center">
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setActiveFolder(null)}
+                className={cn(
+                  'flex-1 flex items-center gap-1 py-1 pl-1.5 pr-2 rounded text-[11px] cursor-pointer select-none',
+                  activeFolder === null
+                    ? 'bg-accent/15 text-text-primary'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
+                )}
+              >
+                <Film className="size-3" /> All media
+              </div>
+              <button
+                onClick={() => setNewFolderParent(null)}
+                title="New folder"
+                aria-label="New folder"
+                className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+              >
+                <FolderPlus className="size-3" />
+              </button>
+            </div>
+            {tree.map((n) => (
+              <FolderRow
+                key={n.path}
+                node={n}
+                depth={0}
+                activeFolder={activeFolder}
+                setActiveFolder={setActiveFolder}
+                onDropMedia={doMove}
+                onNewFolder={setNewFolderParent}
+              />
+            ))}
           </div>
-          {tree.map((n) => (
-            <FolderRow
-              key={n.path}
-              node={n}
-              depth={0}
-              activeFolder={activeFolder}
-              setActiveFolder={setActiveFolder}
-              onDropMedia={doMove}
-            />
-          ))}
-        </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onClick={() => setNewFolderParent(null)}>
+            <FolderPlus className="size-3.5" /> New folder
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {newFolderParent !== undefined && (
+        <NewFolderDialog
+          parentPath={newFolderParent}
+          onClose={() => setNewFolderParent(undefined)}
+          onCreate={doCreateFolder}
+        />
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto p-2">
@@ -301,7 +420,16 @@ export function SourcesPanel() {
                 className="group relative flex flex-col gap-1 rounded-md border border-border-color bg-bg-primary p-1.5 cursor-grab active:cursor-grabbing hover:border-accent/60"
               >
                 <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
-                  <Film className="size-4 text-text-secondary/50" />
+                  {it.thumb ? (
+                    <img
+                      src={it.thumb}
+                      alt=""
+                      draggable={false}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <Film className="size-4 text-text-secondary/50" />
+                  )}
                   {it.offline && (
                     <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
                       <WifiOff className="size-3" />

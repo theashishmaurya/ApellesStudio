@@ -77,6 +77,24 @@ One or two lines per session. Detail lives in the decision it references.
   actual DOM coordinates, real resulting store/JSON state checked — see
   D-058 for the full method and honest caveats.
 
+- **2026-09-03** — **Sources panel fixes: async media commands, real
+  thumbnails, real "New Folder" (D-059, B-014).** Owner-reported, hands-on
+  bugs D-046's own accessibility-driven verification missed.
+  `chroma_media_list`/`_import`/`_move` converted to `async fn` — they were
+  plain `fn`, which Tauri runs inline on the main UI thread, stalling the
+  native Import file-picker behind them (`chroma_media_import` also moves
+  its `ffprobe`/`ffmpeg` work into `spawn_blocking`). Every imported item now
+  gets a real cached poster-frame thumbnail (`video::extract_thumb`, reused
+  — not a new decode path — to `<video_dir>/.chroma/thumbs/<id>.jpg`).
+  `ProjectManifest.folders: Vec<String>` + `chroma_media_create_folder` let a
+  new, empty bin persist and list before anything is filed into it, via a
+  "New Folder" button + right-click context menus (`@chroma/ui`'s shadcn
+  `ContextMenu`, its first real consumer). `cargo test chroma::` 114/114
+  (was 112 in this fresh worktree; +2 new tests), `tsc --noEmit` unchanged
+  (app 64, bridge 0, editor 1 pre-existing/unrelated, ui 0). See D-059 for
+  full verification detail, including an honest note on what the live
+  click-to-dialog timing test could and couldn't show.
+
 - **2026-09-03** — **Multi-track NLE Phase A: `Clip.start_frame` + gap-aware
   edit ops + track management (D-054).** `chroma-timeline::Clip` gained an
   explicit, timeline-absolute `start_frame: i64` (not a `Gap` item — see

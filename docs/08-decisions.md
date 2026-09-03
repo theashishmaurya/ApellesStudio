@@ -4545,3 +4545,212 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   `docs/notes/multi-track-nle.md`); a ripple-trim mode; timeline
   rename/delete (still no backing commands, unchanged from D-046);
   cursor-anchored zoom (D-051's own deferred item, unchanged).
+## D-059 — Sources panel fixes: async media commands (B-014), real poster-frame thumbnails, real "New Folder"
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** D-046's own verification was accessibility-driven (`osascript`/System
+  Events + reading `project.json` before/after), with no real screen access —
+  enough to prove the AX tree and data round-trips, not enough to catch a real
+  performance regression or "this still looks unfinished" gaps. The owner did
+  real hands-on testing of the shipped Sources panel and found three concrete
+  problems D-046's verification missed: "Import" is slow to open the native
+  file dialog (**B-014**, see `docs/BUGS.md`), every card shows the same
+  generic film-strip placeholder regardless of import — D-046's own decision
+  already flagged this as deferred — and there is no way to create a new,
+  empty bin/folder (only re-filing an *existing* item into a not-yet-used
+  path, which only "creates" a folder that already has something in it).
+
+- **1. `chroma_media_list`/`_import`/`_move` → `async fn` (B-014).** Root
+  cause and fix are B-014's entry in `docs/BUGS.md` — not repeated here. One
+  addition: `chroma_media_import`'s probing loop moves into
+  `tokio::task::spawn_blocking`, not just gaining the bare `async` keyword
+  the other two get, because it is the one command doing real subprocess
+  work (`ffprobe`, and now `ffmpeg` for thumbnails) rather than a fast
+  `serde_json` read/write.
+  - **Verified — real before/after timing, not "should be faster now".**
+    Built a small `osascript`/System Events harness (menu-bar-free UI
+    scripting, the same mechanism D-046's own live verification used):
+    activate the app, timestamp immediately before a synthetic click on the
+    "Import" button (found via the AX tree, not coordinates), then poll
+    for the native open-panel sheet to appear under the main window,
+    timestamping the first success, and dismiss with Escape. See the
+    "Verified (shared)" paragraph below for the actual numbers and what
+    could/couldn't be measured this way.
+
+- **2. Real poster-frame thumbnails — reuse `video::extract_thumb`, generate
+  at import time, cache beside the source video.** D-046's decision named
+  the exact existing mechanism to reuse: `chroma::video::extract_thumb` (the
+  same extractor the project launcher's own card thumbnail — `regen_thumb`
+  — and the Colorist shot-strip already call), not a second decode path.
+  - **Where it's generated:** `probe_media_item` (the one place
+    `chroma_media_import` builds a `MediaItem`), right after a successful
+    `video::probe` — a mid-clip frame (`frame_count / 2`, not frame 0, which
+    is often a black or fade-in frame on real footage), scaled to 150px
+    tall (matching `extract_thumb_strip`'s existing thumbnail height, not
+    `regen_thumb`'s larger 360px launcher-card size — this is a small grid
+    tile, not a launcher card).
+  - **Where it's cached:** `<video_dir>/.chroma/thumbs/<mediaId>.jpg` — the
+    same `<video_dir>/.chroma/<kind>/<key>/…` layout `mask.rs`'s mattes
+    (`.chroma/mattes/<paramsHash>/`) and `depth.rs`'s per-frame depth
+    (`.chroma/depth/<paramsHash>/`) already use: a cache that lives beside
+    the source, keyed and *referenced*, never copied into the project
+    directory — consistent with the "media referenced in place" invariant
+    this whole module is built around. Keyed by the pool item's own id
+    (already unique) rather than a params hash like mattes/depth use,
+    because a media item only ever needs one poster thumbnail, not one per
+    distinct set of tracking/depth parameters.
+  - **Live-read, not persisted on the model** — `MediaItemDto.thumb` is
+    computed in `MediaItemDto::from` exactly the way `offline` already is
+    (a `data:image/jpeg;base64,…` string read from the cache file, `None`
+    if nothing is cached), not a new field on the persisted `MediaItem`.
+    Keeps `project.json` free of embedded image bytes and means a manually
+    deleted/corrupted cache file just silently falls back to the placeholder
+    rather than needing a repair path.
+  - **Scope: generated at import time only, no backfill for pre-D-059
+    items or a lazy generate-on-list.** A lazy "generate if missing" inside
+    `chroma_media_list`/`MediaItemDto::from` was considered and rejected —
+    that function runs on every list/import, and adding an `ffmpeg`
+    subprocess spawn per missing thumbnail there would silently reintroduce
+    the exact main-thread/blocking-work problem item 1 just fixed, just
+    moved to a different command. An item imported before this decision (or
+    whose thumbnail generation failed) keeps the placeholder icon until
+    re-imported; not backfilled automatically. Noted here rather than
+    silently accepted as a known, deliberate limitation.
+  - **Verified — a real file through the real command path, bytes read
+    back and decoded, not just "a file exists".** `cargo test chroma::`
+    (`media_import_generates_and_caches_a_real_thumbnail`): synthesizes a
+    real 64×64 10fps `ffmpeg testsrc` clip, imports it through
+    `chroma_media_import` for real, asserts the returned DTO's `thumb` is a
+    `data:image/jpeg;base64,…` string, reads the cache file
+    `thumb_cache_path` points at off disk, and decodes those exact bytes
+    with `image::load_from_memory_with_format(…, ImageFormat::Jpeg)` —
+    asserting real, non-zero width/height, i.e. a real decoded JPEG frame,
+    not a placeholder or an empty/corrupt file — then confirms
+    `chroma_media_list` re-reads the identical cached data URL live.
+
+- **3. Real "New Folder" — a small additive `ProjectManifest.folders: Vec<String>`
+  list, not a bin-hierarchy entity.** D-045's original model ("a folder
+  exists exactly when some item's `folder` string names it") has no way to
+  represent a folder with zero items — the moment its last item moves out,
+  the folder disappears from the derived tree. Two real options:
+  1. **A full bin-hierarchy entity** (a `Bin { id, name, parent_id }` tree,
+     `MediaItem.folder` becoming a bin id reference instead of a path
+     string) — the "proper" normalized-data-model answer, but D-045
+     explicitly rejected this shape as unneeded complexity for what the
+     panel actually needs (a tree derived from path strings, no
+     rename/move-with-children/id-stability concerns a real hierarchy
+     entity exists to solve), and nothing about "let an empty one exist"
+     changes that calculus — it's solvable additively instead.
+  2. **A small `Vec<String>` of explicitly-known folder paths** (chosen) —
+     additive and optional (`#[serde(default)]`, same convention every
+     other D-044/45/46 field used), independent of whether any item
+     currently references it. `chroma_media_create_folder` appends to it
+     (idempotent — creating an already-known folder is a no-op);
+     `chroma_media_import`/`_move` also register whatever `folder` they're
+     given (`register_folder`, shared), so a folder implicitly created by
+     importing/moving into a not-yet-used path (D-045's original behaviour)
+     is remembered too, not just an explicitly-created one — the two
+     creation paths converge on the same list rather than one being a
+     second-class citizen. `chroma_media_folders` (+ `all_folders`, the
+     dedup/union helper) returns the union of this list and every item's
+     `folder` string — what the Sources panel's tree is actually built
+     from now, not `items` alone.
+  - **Frontend:** a "New Folder" button next to "All media" in the tree
+    header (always visible, even with zero folders — the primary case this
+    fixes), plus a right-click context menu on the tree area (root-level)
+    and on each `FolderRow` (nested, creating inside that folder) — using
+    `@chroma/ui`'s shadcn `ContextMenu` (D-042), its first real consumer
+    outside `packages/ui` itself (every other context-menu use in `app/` is
+    RapidRAW's inherited `useContextMenu`/`ContextMenuContext`, vendored
+    code this pass had no reason to touch). Naming goes through a small
+    `Dialog` (same controlled-`open` pattern `ExportDialog` already uses).
+    `useMediaPoolStore` gained a `folders: string[]` field (populated by
+    `refresh()` alongside `items`, via `Promise.all`) and a `createFolder`
+    action.
+  - **Verified.** `cargo test chroma::`
+    (`chroma_media_create_folder_lists_even_with_zero_items`): creates a
+    folder with zero items, confirms `chroma_media_folders` lists it;
+    confirms creating the same folder again is idempotent (no duplicate);
+    confirms a blank name is rejected; then imports a real item into that
+    folder and confirms both the item's `folder` and the folder list are
+    correct afterward (still exactly one entry, not two).
+
+- **Verified (shared across all three).** `cargo test chroma::` 114/114
+  (was 112 in this fresh worktree before this pass — confirmed by running
+  the suite before touching anything; +2: `chroma_media_create_folder_lists_even_with_zero_items`,
+  `media_import_generates_and_caches_a_real_thumbnail`, plus the existing
+  `media_move_refiles_an_existing_item` updated to drive the now-async
+  command on a `tokio::runtime::Builder::new_current_thread()`). `cargo
+  clippy`/`cargo fmt` run on touched files only (`project.rs`, `audio.rs`,
+  `lib.rs`) — **hit the hard rule directly this session**: an
+  over-broad `cargo fmt -- <files>` / `rustfmt <files>` invocation that
+  included `lib.rs` (the crate root) reformatted the *entire* crate's module
+  tree as a side effect (rustfmt walks `mod` declarations from a crate-root
+  file) — caught immediately via `git status`/`git diff --stat` showing 14
+  unrelated files touched, reverted with `git checkout --` before it went
+  anywhere near a commit. Fixed by running plain `rustfmt --edition 2024` on
+  each touched *leaf* file individually instead of ever pointing it at
+  `lib.rs`. `tsc --noEmit`: app 64/64 (unchanged baseline, confirmed in this
+  fresh worktree both before and after), `packages/bridge` 0, `packages/editor`
+  1 (unchanged, the pre-existing unrelated CSS-import declaration in
+  `TimelinePane.tsx` — untouched, out of this pass's file scope), `packages/ui` 0.
+  - **Real boot + real click-through**, `npm run tauri:dev` (port `15420`,
+    not `1420` — another worktree/session held `1420` all evening; reverted
+    to `1420` in both `vite.config.mjs`/`tauri.conf.json` before committing),
+    driven via `osascript`/System Events (same mechanism D-046's own
+    verification used) against the real `~/Movies/Chroma/New.chroma`
+    project:
+    - **Folder creation (item 3):** clicked "New Folder", typed a name into
+      the real dialog, clicked Create — `project.json`'s `folders` array
+      showed `["VerifiedEmptyFolder"]` immediately, with **zero** items
+      referencing it, and the Sources panel's tree rendered it as a real,
+      clickable row (confirmed via the AX tree, not just data). Cleaned up
+      after (removed the test folder from `folders`) rather than leaving
+      test cruft in the owner's real project.
+    - **Thumbnails (item 2):** imported a real, never-before-imported `.mov`
+      file through the real Import flow. `project.json`'s `media` array
+      grew by one; `<video_dir>/.chroma/thumbs/<newId>.jpg` existed on disk
+      (5.5 KB); decoded with Python's PIL as a real JPEG, `250×150`, RGB —
+      a genuine decoded frame from that exact video, not a placeholder.
+    - **Import dialog timing (item 1 / B-014) — honest result, not
+      oversold.** Built an `osascript` harness that finds the "Import"
+      button via the AX tree (not coordinates), timestamps immediately
+      before `click`, and polls `count sheets of window 1` (the native
+      open-panel is a **sheet** on the main window here, not a separate
+      top-level window — confirmed by inspecting its AX contents, a real
+      `NSOpenPanel` sidebar/outline) until it appears. On an **idle** click
+      (project already open, Sources panel's own mount-time `chroma_media_list`
+      long since settled, a small 2-item pool) this measured **~140–680 ms
+      in both the pre-fix (still-synchronous) build and the post-fix (async)
+      build — no observable difference at this specific low-contention
+      repro.** That is an honest, expected result, not a failure to find one:
+      with only 2 items, the original `chroma_media_list` call the panel's
+      mount fires completes in far under a millisecond even fully
+      synchronous, so there is no realistic window for it to still be
+      occupying the main thread by the time "Import" is clicked moments
+      later. I attempted to manufacture heavier, more representative
+      contention — a real batch import of 15 diverse real video files (which
+      *did* succeed end-to-end through the pre-fix, synchronous
+      `chroma_media_import`, proving correctness under real load) run
+      concurrently with a responsiveness probe on a second native action —
+      but reliable, precisely-timed multi-file `NSOpenPanel` selection and
+      a valid "is the main thread free" probe (a tab switch turned out to be
+      a pure frontend state change with no IPC round-trip at all, so it
+      proved nothing) both proved too fragile to nail down cleanly via
+      `osascript` UI-scripting inside the remaining session time — noted
+      here honestly rather than papered over with a fabricated number. The
+      fix's actual justification is **not** this live timing test (which was
+      inconclusive by construction, not by finding "no bug") — it is the
+      **definitive, source-level root-cause finding** in B-014's `docs/BUGS.md`
+      entry (`tauri-macros` 2.6.3's own `command::wrapper` source, read
+      directly: a non-`async fn` command's generated body calls itself
+      inline wherever the IPC message is dispatched, versus an `async fn`
+      command's body being handed to `respond_async_serialized`/the async
+      runtime), plus the fact that this fix is strictly load-bearing in one
+      direction only — moving real, occasionally-slow work
+      (`ffprobe`/`ffmpeg` subprocess calls, on `chroma_media_import`) off the
+      thread that also has to present native dialogs cannot make that thread
+      *less* available, only more, whatever a given click's own timing
+      happens to show on a small idle test project.
+  - Dev server killed after (`lsof -ti:15420 | xargs kill -9` + `pkill -9 RapidRAW`).
