@@ -74,6 +74,12 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-017 — Relight "Clear"/delete-last-keyframe never actually removes the light's keyframes
+status: fixed (2026-09-03, D-066) · severity: medium (a real edit silently no-ops — clicking "Clear" looks like it worked, but the keyframes are still there) · area: `app/src/components/chroma/RelightPanel.tsx`
+- **found:** owner's own hands-on testing, 2026-09-03.
+- **cause:** `writeLightParams` (the callback backing the keyframe "Clear"/"X" buttons, separate from `updateActiveLight` which correctly does a partial-patch merge for the Color/Power/Distance sliders) applied its result via `{ ...l, ...next }`. `clearKeyframes`/`removeKeyframe` (`utils/maskKeyframes.ts`, shared with D-034's mask keyframes) signal "no keyframes left" by **deleting** the `chromaKeyframes` key from the object they return — but a spread merge can only *overwrite* a key present in the right-hand object, never un-set one absent from it. `next` (the result) has no `chromaKeyframes` key to overwrite `l`'s stale one with, so the old value silently survived every click. The shared mechanism itself is correct — `MaskKeyframeBar.tsx` (mask geometry keyframes, the original D-034 UI) replaces `sub.parameters` wholesale rather than spread-merging it, and doesn't have this bug; this was specific to how `RelightPanel.tsx` composed the reused pieces.
+- **fix:** `writeLightParams` now replaces the light outright (`next` is always already a complete light object from the three keyframe functions, never a partial patch) instead of spread-merging.
+
 ## B-016 — Colorist fullscreen preview has no way back out: no close button, Escape didn't work either
 status: fixed (2026-09-03, D-065) · severity: medium (not stuck forever — the app-level tab bar still switches tabs — but a real dead end inside the preview itself) · area: `app/src/components/panel/Editor.tsx`
 - **found:** owner's own hands-on testing, 2026-09-03 — "after doing full screen on colorist no way to go back... no cross no esc etc."

@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Relight keyframe "Clear"/"X" never actually removed
+  keyframes (D-066, B-017).** `writeLightParams` spread-merged its result
+  onto the stale light (`{ ...l, ...next }`) — a spread can overwrite a
+  key, never un-set one, and `clearKeyframes`/`removeKeyframe` signal
+  "done" by deleting `chromaKeyframes` from their return value, which the
+  merge silently discarded. Now replaces the light outright. Cross-checked
+  the shared mechanism (`maskKeyframes.ts`, D-034) against its other real
+  caller (`MaskKeyframeBar.tsx`) — not buggy there, this was specific to
+  how `RelightPanel.tsx` composed it. Also confirmed a separate same-
+  session report ("no light shows when I change color") is by design, not
+  a bug — a positional light genuinely no-ops until Track/Bake Depth runs.
+
 - **2026-09-03** — **Colorist fullscreen had no way back out (D-065,
   B-016).** The only exit button lived inside the toolbar, which itself
   hides (`max-h-0 opacity-0`) exactly when fullscreen turns on — the

@@ -5016,3 +5016,55 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   over) — the fix is a simple, direct store write with no dependency on the
   code whose behavior wasn't fully explained, which is the actual basis for
   confidence here, not a live click.
+
+## D-066 — Relight keyframe "Clear"/delete: a spread-merge silently un-did every delete
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner's live testing: clicking "Clear" (or the per-frame "X")
+  on a relight light's keyframe row did nothing — the "N keys" count never
+  changed.
+- **Found by reading the actual merge logic, not by guessing.**
+  `RelightPanel.tsx`'s `writeLightParams` — the callback behind the keyframe
+  buttons specifically (`updateActiveLight`, a separate function backing the
+  Color/Power/Distance sliders, was never affected) — applied its argument
+  via `{ ...l, ...next }`. `clearKeyframes`/`removeKeyframe`
+  (`utils/maskKeyframes.ts`, shared with D-034's mask-geometry keyframes)
+  signal "no keyframes remain" by `delete`-ing the `chromaKeyframes` key
+  from the object they return. A spread merge can overwrite a key the
+  right-hand object *has*; it cannot un-set a key the right-hand object
+  *lacks* — `next` (post-delete) has no `chromaKeyframes` key at all to
+  overwrite `l`'s stale one with, so the stale value survived untouched
+  through every "Clear" click, silently (no error, no visual sign anything
+  was wrong beyond the count just never moving).
+- **Confirmed the shared mechanism itself is sound** — checked
+  `MaskKeyframeBar.tsx` (D-034's original mask-geometry keyframe UI, same
+  `clearKeyframes`/`removeKeyframe` functions) for the same pattern: it
+  calls `updateSubMask(sub.id, { parameters: next })`, replacing the whole
+  `parameters` field wholesale rather than spread-merging into it — correct,
+  no bug there. This was specific to how `RelightPanel.tsx` composed the
+  reused pieces, not a defect in `maskKeyframes.ts` itself.
+- **Fix.** `writeLightParams` now assigns `next` directly in place of the
+  old light, rather than spreading it on top — correct because all three
+  callers (`upsertKeyframe`/`removeKeyframe`/`clearKeyframes`) already build
+  `next` as a complete light object (`{ ...parameters, ... }` internally),
+  never a partial patch; `writeLightParams`'s only real job was "take the
+  next real state," not "merge a patch."
+- **Verification.** `tsc --noEmit -p app`: 64/64, unchanged baseline. No
+  live-window click test this pass — the bug and its fix are both purely
+  about JS object-merge semantics (verifiable by reading, not by clicking),
+  and the fix was cross-checked against the one other real caller of the
+  same shared functions to confirm it doesn't have the same bug, which is
+  real evidence about the mechanism even without a live click. See **B-017**
+  in `docs/BUGS.md`. Also confirmed, separately, that the same owner
+  session's "no light showing at all when I changed the color" report is
+  **not a bug**: `Editor.tsx`'s Relight panel says outright "Key/fill/rim
+  lights need a depth track or bake (ambient works without one)," and
+  `resolve_relight_depth_bitmap` (`mask_generation.rs`) genuinely returns
+  `None` — confirmed by its own test, `resolve_relight_depth_bitmap(&js, 8,
+  8, 1.0, (0.0, 0.0)).is_none()` for adjustments with no depth source set —
+  which leaves `relight_depth_layer` at its safe `-1` default
+  (`image_processing.rs`'s own comment: "an un-wired path just renders
+  ambient-only relight, never a wrong depth layer") — a positional light
+  with no Track Depth/Bake Depth run yet is *designed* to render as no-op,
+  not broken. No code change for that one.

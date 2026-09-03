@@ -115,10 +115,24 @@ export default function RelightPanel() {
   // --- keyframes (D-034 reuse) — only meaningful for a positional light on a video.
   const keyframes = useMemo(() => (activeLight ? parseKeyframes(activeLight) : []), [activeLight]);
   const keyedHere = keyframes.some((k) => k.frame === Math.round(currentFrame));
+  // D-066: `next` here is always a COMPLETE light object — `upsertKeyframe`/
+  // `removeKeyframe`/`clearKeyframes` (`utils/maskKeyframes.ts`) each build
+  // it as `{ ...parameters, ... }` from the light passed in, so it already
+  // carries every field. `removeKeyframe`/`clearKeyframes` signal "no
+  // keyframes left" by *deleting* `chromaKeyframes` from that object — but
+  // `{ ...l, ...next }` (the old body here) spread `next` back ONTO the
+  // stale `l`, and a spread can only overwrite a key, never un-set one:
+  // `next` has no `chromaKeyframes` key to overwrite `l`'s with, so `l`'s
+  // stale (soon-to-be-removed) `chromaKeyframes` survived every "Clear"/
+  // "X" click, silently. Replacing `l` outright fixes both buttons in one
+  // place, since `updateActiveLight` (a separate function, for the Color/
+  // Power/Distance sliders) already does the correct partial-patch merge —
+  // this function's own job was never "merge a patch," only "keyframe ops
+  // give you the next real state, use it."
   const writeLightParams = useCallback(
     (next: Record<string, any>) => {
       if (!activeLightId) return;
-      updateLights((ls) => ls.map((l) => (l.id === activeLightId ? { ...l, ...next } : l)));
+      updateLights((ls) => ls.map((l) => (l.id === activeLightId ? (next as RelightLight) : l)));
     },
     [activeLightId, updateLights],
   );
