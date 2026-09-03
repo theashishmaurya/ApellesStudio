@@ -204,10 +204,21 @@ compositing) done, D-088 (2026-09-03), P0** — real CPU alpha-over
 compositing (position/scale/rotation/opacity, keyframeable), see that
 decision and this note's own B3 entry above for the full writeup. Track
 lock/hide and clip transforms landed alongside it as D-086 (data model) —
-the P0 "full NLE" effort's Phase 1/2 of 4; Phase 3 (TS mirror) and Phase 4
-(UI: track header lock/hide icons, a transform editor on the selected clip)
-are next. E (transitions) and F (export through the real timeline) are now
-unblocked (B3 exists) but not yet started. This note is the scoping record
-— update it (or promote pieces of it into `D-NNN` entries) as each phase
-actually lands, the same discipline every other feature this week has
-followed.
+the P0 "full NLE" effort's Phase 1/2 of 4. **Phase 3 (TS mirror) done,
+D-089 (2026-09-03)** — `packages/editor/src/timeline.ts` now carries
+`Track.locked`/`hidden`, `Clip`'s transform fields, and the
+`set_track_locked`/`set_track_hidden`/`move_track`/`set_clip_transform`/
+`set_clip_keyframes` ops, with `applyOp` refusing every per-clip op on a
+locked track exactly like Rust's `TrackLocked` (`move` checks both source
+and destination track; track-list ops — `add_track`/`remove_track`/
+`move_track` — stay ungated, mirroring the Rust `track_mut` split). 27 new
+vitest tests, `tsc --noEmit -p packages/editor` clean. **Phase 4 (UI) is
+next and not yet started**: track header lock/hide icons alongside the
+existing mute toggle, a real rearrange gesture (native `enableRowDrag` if
+clean, else up/down buttons), and a transform-editing popover on the
+selected clip (interim numeric inputs; keyframing UI can reuse
+`RelightPanel.tsx`'s Diamond-icon keyframe pattern). E (transitions) and F
+(export through the real timeline) are unblocked (B3 exists) but not yet
+started. This note is the scoping record — update it (or promote pieces of
+it into `D-NNN` entries) as each phase actually lands, the same discipline
+every other feature this week has followed.

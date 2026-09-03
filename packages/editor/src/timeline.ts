@@ -65,6 +65,27 @@ export interface Clip {
   source_len: number;
   /** Timeline-absolute start frame (D-054/D-058) — see the module doc. */
   start_frame: number;
+  /** Compositing transform (D-086/D-088, Phase 1/2 of the full-NLE P0
+   *  effort) — mirrors `chroma_timeline::Clip`'s new fields exactly.
+   *  `opacity`/`scale` default to `1.0` server-side (NOT `0.0` — see the
+   *  Rust field's own doc for why `Clip` moved off `#[derive(Default)]`),
+   *  `position_x`/`position_y`/`rotation` to `0.0`. Optional here the same
+   *  way `Track.gain` already is — a pre-D-086 clip (or one this file
+   *  builds without setting them) round-trips fine, `chroma_timeline_set`'s
+   *  verbatim-storage contract means the server fills in real defaults on
+   *  the next `chroma_timeline_get`. */
+  opacity?: number;
+  position_x?: number;
+  position_y?: number;
+  scale?: number;
+  rotation?: number;
+  /** D-086 — `[{frame, params: {opacity?, position_x?, position_y?, scale?,
+   *  rotation?}}]`, the exact shape `utils/maskKeyframes.ts` already writes
+   *  for mask/relight-light keyframes, reused verbatim rather than a
+   *  second keyframe shape. `chroma::keyframes`'s D-034 engine
+   *  (Rust-side) interpolates it at render time relative to the clip's own
+   *  source frame — this file never interpolates it itself. */
+  chroma_keyframes?: Array<{ frame: number; params: Record<string, unknown> }>;
 }
 
 /** A clip's exclusive timeline end frame — `chroma-timeline::Clip::end_frame`. */
@@ -81,6 +102,18 @@ export interface Track {
    *  reason. Only meaningful for `kind === 'audio'` — a video track's own
    *  embedded audio stays hardcoded at unity (D-057's own scoping). */
   gain?: number;
+  /** D-086 — mirrors `chroma_timeline::Track::locked`/`hidden` (both default
+   *  `false` server-side, optional here for the same reason as `gain`).
+   *  `locked` blocks per-clip edits on this track (`reorder`/`trim_start`/
+   *  `trim_end`/`split`/`remove`/`move` in `applyOp` below all refuse —
+   *  mirroring Rust's single `track_mut` choke point, `TimelineError::
+   *  TrackLocked`) but NOT `add_track`/`remove_track`/`move_track` — same
+   *  "locking protects a track's clips, not the track list" split as the
+   *  Rust side. `hidden` is a pure compositor/render concern (`chroma_
+   *  timeline_frame`'s `resolve_visible_video_layers_at` skips a hidden
+   *  video track) — `applyOp` has nothing to refuse for it. */
+  locked?: boolean;
+  hidden?: boolean;
 }
 
 export const DEFAULT_TRACK_GAIN = 1.0;
@@ -243,7 +276,56 @@ export type EditOp =
    *  already reads — "muted" has no independent representation to drift
    *  out of sync with the actual gain. No validation to mirror (the Rust
    *  field is a plain `f32` with no clamp of its own). */
-  | { kind: 'set_track_gain'; track: number; gain: number };
+  | { kind: 'set_track_gain'; track: number; gain: number }
+  /** D-086/D-089 — toggle a track's lock. Mirrors `chroma_timeline::Track::
+   *  locked`: always succeeds (locking is itself a track-list-level op, not
+   *  gated by its own lock — matches `add_track`/`remove_track`/`move_track`'s
+   *  own unlocked status in `track_mut`'s doc). */
+  | { kind: 'set_track_locked'; track: number; locked: boolean }
+  /** D-086/D-089 — toggle a track's visibility in the compositor. Mirrors
+   *  `chroma_timeline::Track::hidden`. Always succeeds — same reasoning as
+   *  `set_track_locked`. */
+  | { kind: 'set_track_hidden'; track: number; hidden: boolean }
+  /** D-086/D-089 — reorder the track list itself (compositing z-order,
+   *  D-086's own doc: "track index order is compositing z-order, not
+   *  cosmetic"). Mirrors `chroma_timeline::Timeline::move_track(from, to)`
+   *  exactly: bounds-checked, `from === to` a genuine no-op, NOT gated by
+   *  either track's lock (same track-list-vs-track-clips split as
+   *  `add_track`/`remove_track`). */
+  | { kind: 'move_track'; from: number; to: number }
+  /** D-088/D-089 — set a clip's compositing transform (opacity/position/
+   *  scale/rotation), the interim popover's write op. Always replaces the
+   *  full set together (no partial-field variant) since the UI edits one
+   *  clip's transform as a single form; refused (no-op) if the clip's track
+   *  is locked, same as every other per-clip op. Keyframes are a SEPARATE
+   *  op (`set_clip_keyframes`, below) — a transform edit while keyframes
+   *  exist is a "set the base/unkeyframed value" edit, matching how
+   *  `resolve_clip_transform` (Rust, D-088) only falls back to the static
+   *  fields when no keyframe covers the requested frame or none exist. */
+  | {
+      kind: 'set_clip_transform';
+      track: number;
+      clip: number;
+      opacity: number;
+      position_x: number;
+      position_y: number;
+      scale: number;
+      rotation: number;
+    }
+  /** D-089 — replace a clip's keyframe track outright (add/move/remove a
+   *  keyframe is "recompute the array, then set it" client-side — mirrors
+   *  the exact pattern `utils/maskKeyframes.ts`'s `upsertKeyframe`/
+   *  `removeKeyframe`/`clearKeyframes` already use for mask/relight-light
+   *  keyframes; this op is the timeline-clip equivalent write). `keyframes:
+   *  []` and `keyframes: undefined` are both "no keyframes" — normalized to
+   *  `undefined` on write so an empty array never round-trips as a
+   *  keyframed clip. Refused (no-op) if the clip's track is locked. */
+  | {
+      kind: 'set_clip_keyframes';
+      track: number;
+      clip: number;
+      keyframes: Array<{ frame: number; params: Record<string, unknown> }>;
+    };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
  *  labels (D-051) only, never used in the actual edit logic below. */
@@ -280,6 +362,16 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Remove track ${op.track + 1}`;
     case 'set_track_gain':
       return op.gain <= 0 ? `Mute track ${op.track + 1}` : `Unmute track ${op.track + 1}`;
+    case 'set_track_locked':
+      return op.locked ? `Lock track ${op.track + 1}` : `Unlock track ${op.track + 1}`;
+    case 'set_track_hidden':
+      return op.hidden ? `Hide track ${op.track + 1}` : `Show track ${op.track + 1}`;
+    case 'move_track':
+      return `Reorder track ${op.from + 1}`;
+    case 'set_clip_transform':
+      return `Adjust ${clipLabel(before, op.track, op.clip)}`;
+    case 'set_clip_keyframes':
+      return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
     default:
       return 'Edit timeline';
   }
@@ -330,6 +422,58 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     next.tracks[op.track].gain = op.gain;
     return next;
   }
+  if (op.kind === 'set_track_locked') {
+    // D-089 — not gated by the track's own current lock state, same as the
+    // Rust side (`Track.locked` is a plain field write, not routed through
+    // `track_mut`).
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks[op.track].locked = op.locked;
+    return next;
+  }
+  if (op.kind === 'set_track_hidden') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks[op.track].hidden = op.hidden;
+    return next;
+  }
+  if (op.kind === 'move_track') {
+    // Mirrors `Timeline::move_track(from, to)` exactly: bounds-checked,
+    // `from === to` a genuine no-op, not gated by lock (track-list
+    // structure, not per-clip editing).
+    if (op.from < 0 || op.from >= tl.tracks.length) return tl;
+    if (op.to < 0 || op.to >= tl.tracks.length) return tl;
+    if (op.from === op.to) return tl;
+    const next = clone(tl);
+    const [moved] = next.tracks.splice(op.from, 1);
+    next.tracks.splice(op.to, 0, moved);
+    return next;
+  }
+  if (op.kind === 'set_clip_transform') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    nc.opacity = op.opacity;
+    nc.position_x = op.position_x;
+    nc.position_y = op.position_y;
+    nc.scale = op.scale;
+    nc.rotation = op.rotation;
+    return next;
+  }
+  if (op.kind === 'set_clip_keyframes') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    // normalize `[]` to `undefined` — see the op's own doc.
+    nc.chroma_keyframes = op.keyframes.length > 0 ? op.keyframes : undefined;
+    return next;
+  }
   if (op.kind === 'move') {
     // Mirrors `Timeline::move_clip(from_track, from_idx, to_track,
     // to_start_frame)` field-for-field, including its error order (negative
@@ -340,6 +484,10 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (!c) return tl;
     const dest = tl.tracks[op.toTrack];
     if (!dest) return tl;
+    // D-089 — mirrors Rust `move_clip`'s explicit lock check on BOTH the
+    // source track (losing a clip to elsewhere) and the destination track
+    // (gaining one dropped onto it).
+    if (src.locked || dest.locked) return tl;
     if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
     const newEnd = op.startFrame + c.duration;
     // the clip being moved never counts as overlapping itself, and only on
@@ -360,6 +508,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
 
   const tr = tl.tracks[op.track];
   if (!tr) return tl;
+  // D-089 — single choke point for the remaining per-clip ops
+  // (reorder/trim_start/trim_end/split/remove), mirroring Rust's own single
+  // `track_mut` check (`TimelineError::TrackLocked`) rather than repeating
+  // the guard in each `case` below.
+  if (tr.locked) return tl;
 
   switch (op.kind) {
     case 'reorder': {

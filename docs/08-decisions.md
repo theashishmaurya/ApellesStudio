@@ -6501,3 +6501,49 @@ check `ps aux | grep cargo` first.
   correctness guard for the actual new logic (the blend/transform math);
   `decode_pipe`'s own existing tests already cover the decode path itself.
   Phase 3 (the TypeScript mirror of the new fields/ops) is next.
+
+## D-089 — Full NLE, Phase 3: TypeScript mirror of the lock/hide/rearrange/transform data model
+
+Phase 3 of the P0 full-NLE effort (D-086 was Phase 1, the Rust data model;
+D-088 was Phase 2, the real compositor). This phase brings
+`packages/editor/src/timeline.ts` — the pure client-side edit model that
+`chroma_timeline_set` stores verbatim — up to parity with what D-086/D-088
+actually shipped server-side, so Phase 4's UI has real ops to call.
+
+- `Track` gained `locked?`/`hidden?`, `Clip` gained `opacity?`/`position_x?`/
+  `position_y?`/`scale?`/`rotation?`/`chroma_keyframes?` — all optional,
+  same convention as `Track.gain` (absent means the Rust-side serde default
+  applies on the next `chroma_timeline_get`).
+- New `EditOp` variants: `set_track_locked`, `set_track_hidden`,
+  `move_track`, `set_clip_transform`, `set_clip_keyframes`. Note:
+  `move_track` did NOT already exist in this file before this phase (only
+  in the Rust crate, from D-086) — checked by reading the whole file first,
+  since an earlier planning pass had assumed otherwise.
+- `applyOp` mirrors Rust's `TrackLocked` refusal exactly: a single lock
+  check right after the shared `tr = tl.tracks[op.track]` resolution
+  refuses `reorder`/`trim_start`/`trim_end`/`split`/`remove` (mirroring
+  Rust's single `track_mut` choke point), `set_clip_transform`/
+  `set_clip_keyframes` get their own equivalent check (new ops, no Rust
+  `track_mut` caller to mirror structurally but the same semantics), and
+  `move` checks BOTH the source and destination track's lock (mirroring
+  `move_clip`'s explicit dual check). `add_track`/`remove_track`/
+  `move_track` are deliberately NOT gated by lock, matching Rust's
+  track-list-vs-track-clips split — verified by grepping the actual Rust
+  `pub fn` list rather than assuming, which confirmed `add_clip` has no
+  Rust-side equivalent at all (`chroma_timeline_set` stores whatever the
+  frontend sends, per this file's own module doc), so it stays ungated too.
+- `set_clip_keyframes` reuses the exact `{frame, params}` shape
+  `utils/maskKeyframes.ts` already writes for mask/relight-light keyframes
+  (D-034/D-048) rather than inventing a second shape, and normalizes an
+  empty array to `undefined` on write so a clip never round-trips as
+  "keyframed" with zero actual keyframes.
+
+Verification: 27 new vitest tests (label names, each new op's direct
+behavior, out-of-range no-ops, and a dedicated "track lock enforcement"
+describe block covering every op D-086 gates in Rust plus the two new
+per-clip ops) — 57/57 in `timeline.test.ts`, 68/68 across
+`packages/editor`. `npx tsc --noEmit -p packages/editor` clean. `npx tsc
+--noEmit -p app` baseline unchanged at 64 pre-existing errors.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

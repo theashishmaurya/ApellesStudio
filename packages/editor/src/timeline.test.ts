@@ -80,6 +80,23 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0 }, before)).toBe('Mute track 1');
     expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 1 }, before)).toBe('Unmute track 1');
   });
+
+  it('names lock/hide/rearrange/transform ops (D-086/D-089)', () => {
+    expect(labelForOp({ kind: 'set_track_locked', track: 0, locked: true }, before)).toBe('Lock track 1');
+    expect(labelForOp({ kind: 'set_track_locked', track: 0, locked: false }, before)).toBe('Unlock track 1');
+    expect(labelForOp({ kind: 'set_track_hidden', track: 0, hidden: true }, before)).toBe('Hide track 1');
+    expect(labelForOp({ kind: 'set_track_hidden', track: 0, hidden: false }, before)).toBe('Show track 1');
+    expect(labelForOp({ kind: 'move_track', from: 0, to: 1 }, before)).toBe('Reorder track 1');
+    expect(
+      labelForOp(
+        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0 },
+        before,
+      ),
+    ).toBe('Adjust "Intro"');
+    expect(labelForOp({ kind: 'set_clip_keyframes', track: 0, clip: 0, keyframes: [] }, before)).toBe(
+      'Keyframe "Intro"',
+    );
+  });
 });
 
 // D-058 — every op below mirrors `chroma-timeline::lib.rs`'s Rust op of the
@@ -312,6 +329,190 @@ describe('add_track / remove_track / set_track_gain (D-080)', () => {
   it('set_track_gain is a no-op for an out-of-range index', () => {
     const before = tl(backToBack());
     expect(applyOp(before, { kind: 'set_track_gain', track: 5, gain: 0 })).toBe(before);
+  });
+});
+
+describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () => {
+  it('set_track_locked sets the locked field directly', () => {
+    const before = tl(backToBack());
+    const locked = applyOp(before, { kind: 'set_track_locked', track: 0, locked: true });
+    expect(locked.tracks[0].locked).toBe(true);
+    const unlocked = applyOp(locked, { kind: 'set_track_locked', track: 0, locked: false });
+    expect(unlocked.tracks[0].locked).toBe(false);
+  });
+
+  it('set_track_locked is a no-op for an out-of-range index', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'set_track_locked', track: 5, locked: true })).toBe(before);
+  });
+
+  it('set_track_hidden sets the hidden field directly', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, { kind: 'set_track_hidden', track: 0, hidden: true });
+    expect(after.tracks[0].hidden).toBe(true);
+  });
+
+  it('set_track_hidden is a no-op for an out-of-range index', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'set_track_hidden', track: 5, hidden: true })).toBe(before);
+  });
+
+  it('move_track reorders the track list', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [], gain: 1 },
+        { kind: 'audio', clips: [], gain: 1 },
+        { kind: 'audio', clips: [], gain: 0.5 },
+      ],
+    };
+    const after = applyOp(before, { kind: 'move_track', from: 2, to: 0 });
+    expect(after.tracks.map((t) => t.gain)).toEqual([0.5, 1, 1]);
+  });
+
+  it('move_track same index is a real no-op', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'move_track', from: 0, to: 0 })).toBe(before);
+  });
+
+  it('move_track out of range is a no-op', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'move_track', from: 5, to: 0 })).toBe(before);
+    expect(applyOp(before, { kind: 'move_track', from: 0, to: 5 })).toBe(before);
+  });
+
+  it('move_track is not blocked by a locked track (track-list structure, not per-clip editing)', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [], locked: true },
+        { kind: 'audio', clips: [] },
+      ],
+    };
+    const after = applyOp(before, { kind: 'move_track', from: 0, to: 1 });
+    expect(after.tracks[0].kind).toBe('audio');
+    expect(after.tracks[1]).toEqual({ kind: 'video', clips: [], locked: true });
+  });
+});
+
+describe('set_clip_transform / set_clip_keyframes (D-088/D-089)', () => {
+  it('set_clip_transform writes all five transform fields together', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 0.5,
+      position_x: 10,
+      position_y: -20,
+      scale: 1.5,
+      rotation: 90,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.opacity).toBe(0.5);
+    expect(c.position_x).toBe(10);
+    expect(c.position_y).toBe(-20);
+    expect(c.scale).toBe(1.5);
+    expect(c.rotation).toBe(90);
+  });
+
+  it('set_clip_transform is a no-op for an out-of-range clip', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 99, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0 })).toBe(before);
+  });
+
+  it('set_clip_keyframes writes the keyframe array', () => {
+    const before = tl(backToBack());
+    const keyframes = [{ frame: 0, params: { opacity: 0 } }, { frame: 30, params: { opacity: 1 } }];
+    const after = applyOp(before, { kind: 'set_clip_keyframes', track: 0, clip: 0, keyframes });
+    expect(after.tracks[0].clips[0].chroma_keyframes).toEqual(keyframes);
+  });
+
+  it('set_clip_keyframes normalizes an empty array to undefined, never round-tripping as keyframed', () => {
+    const before = tl([clip('a', 'Intro', { chroma_keyframes: [{ frame: 0, params: { opacity: 1 } }] })]);
+    const after = applyOp(before, { kind: 'set_clip_keyframes', track: 0, clip: 0, keyframes: [] });
+    expect(after.tracks[0].clips[0].chroma_keyframes).toBeUndefined();
+  });
+});
+
+describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::TimelineError::TrackLocked', () => {
+  function lockedTl(): Timeline {
+    return { id: 't1', name: 'Timeline', tracks: [{ kind: 'video', clips: backToBack(), locked: true }] };
+  }
+
+  it('reorder is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'reorder', track: 0, from: 0, to: 1 })).toBe(before);
+  });
+
+  it('trim_start is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'trim_start', track: 0, clip: 1, delta: 5 })).toBe(before);
+  });
+
+  it('trim_end is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: -5 })).toBe(before);
+  });
+
+  it('split is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'split', track: 0, clip: 0, atFrame: 50 })).toBe(before);
+  });
+
+  it('remove is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'remove', track: 0, clip: 0 })).toBe(before);
+  });
+
+  it('set_clip_transform is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(
+      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 0.5, position_x: 0, position_y: 0, scale: 1, rotation: 0 }),
+    ).toBe(before);
+  });
+
+  it('set_clip_keyframes is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(applyOp(before, { kind: 'set_clip_keyframes', track: 0, clip: 0, keyframes: [{ frame: 0, params: {} }] })).toBe(
+      before,
+    );
+  });
+
+  it('move is refused when the source track is locked', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: backToBack(), locked: true },
+        { kind: 'video', clips: [] },
+      ],
+    };
+    expect(applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 500 })).toBe(before);
+  });
+
+  it('move is refused when the destination track is locked', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: backToBack() },
+        { kind: 'video', clips: [], locked: true },
+      ],
+    };
+    expect(applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 500 })).toBe(before);
+  });
+
+  it('locking a track does not block track-list ops (add_track/remove_track/move_track)', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: backToBack(), locked: true }],
+    };
+    expect(applyOp(before, { kind: 'add_track', trackKind: 'audio' }).tracks).toHaveLength(2);
+    expect(applyOp(before, { kind: 'remove_track', track: 0 }).tracks).toHaveLength(0);
   });
 });
 

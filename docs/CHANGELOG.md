@@ -1162,3 +1162,12 @@ _(none — pre-v1)_
   arbitrary-angle rotation, real alpha blending), no new dependencies. The
   single-track case is untouched, byte-identical. 7 new pure compositing
   tests, all passing on the first run.
+- **2026-09-03** — **Full NLE, Phase 3 (D-089): TypeScript mirror of the
+  lock/hide/rearrange/transform data model.** `packages/editor/src/
+  timeline.ts` gains `Track.locked`/`hidden`, `Clip`'s transform fields, and
+  new ops `set_track_locked`/`set_track_hidden`/`move_track`/
+  `set_clip_transform`/`set_clip_keyframes` — `applyOp` mirrors Rust's
+  `TrackLocked` refusal exactly (per-clip ops refused on a locked track,
+  `move` checks both source and destination, track-list ops stay ungated).
+  27 new vitest tests (68/68 across `packages/editor`), `tsc --noEmit`
+  clean, `app`'s 64-error baseline unchanged. Phase 4 (UI) is next.
