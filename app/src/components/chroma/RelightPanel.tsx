@@ -16,12 +16,16 @@
 // panel is the numeric-control half of the same interaction, matching the
 // brief's "drag = position, a control = falloff radius" split.
 //
-// Styling: plain elements + app tokens + the shared `Slider`, matching
-// MasksPanel's own control style — not a new design language.
+// Styling (D-068): rebuilt on `@chroma/ui`'s shadcn/Base UI primitives
+// (`Button`, `Slider`) — was plain elements + app tokens matching
+// MasksPanel's pre-Chroma-pivot style, flagged by the owner as visibly
+// inconsistent with the rest of the app ("feels like it's not from this
+// app"). Interaction logic (tab selection, preset apply, keyframe ops) is
+// untouched — this pass only changes what renders it, not what it does.
 import { useCallback, useMemo, useState } from 'react';
 import { Diamond, Plus, Trash2, Eye, EyeOff, X } from 'lucide-react';
+import { Button, Slider } from '@chroma/ui';
 
-import Slider from '../ui/Slider';
 import { useEditorStore } from '../../store/useEditorStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
 import { useChromaStore } from '../../store/useChromaStore';
@@ -137,6 +141,12 @@ export default function RelightPanel() {
     [activeLightId, updateLights],
   );
 
+  // `@chroma/ui`'s `Slider` (Base UI) always deals in `number | readonly
+  // number[]` since it's shared with range sliders — every call here only
+  // ever uses one thumb, so unwrap once and reuse (same pattern
+  // `@chroma/player`'s `Player.tsx` uses for its own scrub bar).
+  const sliderValue = (v: number | readonly number[]): number => (Array.isArray(v) ? v[0] : (v as number));
+
   return (
     <div className="flex flex-col gap-3 p-3 text-sm">
       <div>
@@ -154,22 +164,24 @@ export default function RelightPanel() {
       <div className="flex flex-col gap-1.5 text-xs text-text-secondary">
         <div className="flex items-center gap-2 flex-wrap">
           {videoInfo?.isVideo && (
-            <button
-              className="px-2 py-1 rounded bg-surface hover:bg-card-active text-text-primary disabled:opacity-50"
+            <Button
+              variant="secondary"
+              size="xs"
               onClick={handleTrackRelightDepth}
               disabled={!!depthTrackProgress}
             >
               {relightDepthDir ? 'Re-track depth' : 'Track Depth'}
-            </button>
+            </Button>
           )}
-          <button
-            className="px-2 py-1 rounded bg-surface hover:bg-card-active text-text-primary disabled:opacity-50"
+          <Button
+            variant="secondary"
+            size="xs"
             onClick={handleBakeRelightDepth}
             disabled={isBakingRelightDepth}
             title="Static single-frame depth bake — fallback for a clip with no depth track"
           >
             {isBakingRelightDepth ? 'Baking…' : relightDepthBake ? 'Re-bake depth' : 'Bake Depth'}
-          </button>
+          </Button>
           {depthTrackProgress && (
             <span className="tabular-nums">
               {depthTrackProgress.total
@@ -189,49 +201,43 @@ export default function RelightPanel() {
       </div>
 
       {/* Bottom tab strip: Preset / Ambient / Light 1 / Light 2 / … / + Add Light */}
-      <div className="flex items-center gap-1 flex-wrap border-t border-b border-border py-2">
-        <button
-          className={`px-2 py-1 rounded text-xs ${
-            showPresets ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
-          }`}
+      <div className="flex items-center gap-1.5 flex-wrap border-t border-b border-border-color py-2">
+        <Button
+          variant={showPresets ? 'default' : 'secondary'}
+          size="xs"
           onClick={() => setShowPresets(true)}
           title="Apply a saved lighting setup"
         >
           Preset
-        </button>
-        <button
-          className={`px-2 py-1 rounded text-xs ${
-            !showPresets && activeLight?.kind === 'ambient' ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
-          }`}
+        </Button>
+        <Button
+          variant={!showPresets && activeLight?.kind === 'ambient' ? 'default' : 'secondary'}
+          size="xs"
           onClick={selectOrAddAmbient}
         >
           Ambient
-        </button>
+        </Button>
         {positionalLights.map((light) => (
-          <button
+          <Button
             key={light.id}
-            className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 ${
-              !showPresets && light.id === activeLightId ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
-            }`}
+            variant={!showPresets && light.id === activeLightId ? 'default' : 'secondary'}
+            size="xs"
+            className="gap-1.5"
             onClick={() => {
               setShowPresets(false);
               setEditor({ activeRelightLightId: light.id });
             }}
           >
             <span
-              className="inline-block w-2.5 h-2.5 rounded-full border border-white/40"
+              className="inline-block size-2.5 rounded-full border border-white/40"
               style={{ background: light.color }}
             />
             {relightLightLabel(light, lights)}
-          </button>
+          </Button>
         ))}
-        <button
-          className="px-2 py-1 rounded text-xs flex items-center gap-1 bg-surface text-text-secondary hover:bg-card-active"
-          onClick={addPositionalLight}
-          title="Add a positional light"
-        >
+        <Button variant="secondary" size="xs" className="gap-1" onClick={addPositionalLight} title="Add a positional light">
           <Plus size={12} /> Add Light
-        </button>
+        </Button>
       </div>
 
       {/* Preset picker (D-054) ----------------------------------------------- */}
@@ -243,7 +249,7 @@ export default function RelightPanel() {
           {RELIGHT_PRESETS.map((preset) => (
             <button
               key={preset.id}
-              className="text-left px-2 py-2 rounded bg-surface hover:bg-card-active"
+              className="text-left px-2.5 py-2 rounded-md border border-border-color bg-surface hover:bg-card-active hover:border-accent/60 transition-colors"
               onClick={() => applyPreset(preset)}
             >
               <div className="text-text-primary text-xs font-medium">{preset.label}</div>
@@ -255,66 +261,84 @@ export default function RelightPanel() {
       !activeLight ? (
         <div className="text-text-secondary text-xs">Select Ambient or add a light to edit it.</div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="text-text-primary text-xs font-medium">{relightLightLabel(activeLight, lights)}</div>
-            <div className="flex items-center gap-1">
-              <button
-                className="p-1 rounded hover:bg-surface text-text-secondary"
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => updateActiveLight({ visible: !activeLight.visible })}
                 title={activeLight.visible ? 'Hide this light' : 'Show this light'}
               >
                 {activeLight.visible ? <Eye size={14} /> : <EyeOff size={14} />}
-              </button>
-              <button
-                className="p-1 rounded hover:bg-surface text-red-400"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-red-400 hover:text-red-400"
                 onClick={() => deleteLight(activeLight.id)}
                 title="Delete this light"
               >
                 <Trash2 size={14} />
-              </button>
+              </Button>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-text-secondary text-xs w-16">Color</span>
-            <input
-              type="color"
-              value={activeLight.color}
-              onChange={(e) => updateActiveLight({ color: e.target.value })}
-              className="w-7 h-7 p-0 border-none rounded-sm cursor-pointer bg-transparent"
+            <span className="text-text-secondary text-xs flex-1">Color</span>
+            {/* A real color-picker component doesn't exist yet in `@chroma/ui`
+                — the native `<input type="color">` still does the real job
+                (opens the OS picker), just given a proper bordered/rounded
+                button shell around it instead of a bare swatch, matching
+                every other control's sizing on this panel. */}
+            <label className="relative size-7 rounded-md border border-border-color overflow-hidden cursor-pointer hover:border-accent/60 transition-colors">
+              <input
+                type="color"
+                value={activeLight.color}
+                onChange={(e) => updateActiveLight({ color: e.target.value })}
+                className="absolute -inset-1 cursor-pointer"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-text-secondary">Power</span>
+              <span className="text-text-primary tabular-nums">{activeLight.intensity}</span>
+            </div>
+            <Slider
+              min={0}
+              max={200}
+              step={1}
+              value={activeLight.intensity}
+              onValueChange={(v) => updateActiveLight({ intensity: sliderValue(v) })}
             />
           </div>
 
-          <Slider
-            label="Power"
-            min={0}
-            max={200}
-            step={1}
-            value={activeLight.intensity}
-            onChange={(e: any) => updateActiveLight({ intensity: Number(e.target.value) })}
-            fillOrigin="min"
-          />
-
           {activeLight.kind !== 'ambient' && (
             <>
-              <Slider
-                label="Distance"
-                min={5}
-                max={100}
-                step={1}
-                value={activeLight.radius}
-                onChange={(e: any) => updateActiveLight({ radius: Number(e.target.value) })}
-                fillOrigin="min"
-              />
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-text-secondary">Distance</span>
+                  <span className="text-text-primary tabular-nums">{activeLight.radius}</span>
+                </div>
+                <Slider
+                  min={5}
+                  max={100}
+                  step={1}
+                  value={activeLight.radius}
+                  onValueChange={(v) => updateActiveLight({ radius: sliderValue(v) })}
+                />
+              </div>
 
               {/* Keyframes (D-034 reuse) — position/radius only, video only. */}
               {videoInfo?.isVideo && (
                 <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none pt-1">
-                  <button
-                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-surface ${
-                      keyedHere ? 'text-accent' : 'text-text-primary'
-                    }`}
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
                     onClick={() =>
                       writeLightParams(
                         upsertKeyframe(activeLight, currentFrame, {
@@ -328,28 +352,30 @@ export default function RelightPanel() {
                   >
                     <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
                     {keyframes.length === 0 ? 'Keyframe light' : keyedHere ? 'Update key' : 'Add key'}
-                  </button>
+                  </Button>
                   {keyframes.length > 0 && (
                     <>
                       <span className="tabular-nums">
                         {keyframes.length} key{keyframes.length === 1 ? '' : 's'}
                       </span>
                       {keyedHere && (
-                        <button
-                          className="p-0.5 rounded hover:bg-surface"
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
                           onClick={() => writeLightParams(removeKeyframe(activeLight, currentFrame))}
                           title="Delete the keyframe at this frame"
                         >
                           <X size={12} />
-                        </button>
+                        </Button>
                       )}
-                      <button
-                        className="px-1 py-0.5 rounded hover:bg-surface"
+                      <Button
+                        variant="ghost"
+                        size="xs"
                         onClick={() => writeLightParams(clearKeyframes(activeLight))}
                         title="Remove all keyframes (light becomes static)"
                       >
                         Clear
-                      </button>
+                      </Button>
                     </>
                   )}
                 </div>

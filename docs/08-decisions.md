@@ -5068,3 +5068,59 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   ambient-only relight, never a wrong depth layer") — a positional light
   with no Track Depth/Bake Depth run yet is *designed* to render as no-op,
   not broken. No code change for that one.
+
+## D-067 — `chroma_depth_track`/`_status` had zero logging
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner: "clicked track depth multiple time" (with the light
+  still not showing). No way to tell apart, from `app.log` alone: the click
+  never reaching this command, "no video loaded" erroring instantly, the
+  sidecar rejecting the job, or a genuinely successful track whose *render*
+  is what's actually broken — four very different next investigations.
+- **Fix.** `log::error!`/`log::info!` on every real exit path of both
+  commands: no-video-loaded, job start (with the resolved video path and
+  params), sidecar-unreachable, a malformed sidecar response, an explicit
+  `error` field in the sidecar's response, and — in `_status` — only the
+  *terminal* poll states (`done`/`error`/`cancelled`/`unknown`), not every
+  2-second tick, to avoid flooding the log during a long track.
+- **Verification.** `cargo build --workspace` clean (12m22s under heavy
+  contention from the concurrently-running unify-clip-model migration
+  subagent's own builds, not a sign of a problem with this change). No live
+  click test this pass — the point of this change is precisely to make the
+  *next* live click diagnosable, not to diagnose this one blind.
+
+## D-068 — Relight panel restyled onto `@chroma/ui`'s real components
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner: "use proper button and all so its pretty UI feels
+  like its not from this APP." `RelightPanel.tsx`'s own module doc had
+  admitted this outright since D-048: "plain elements + app tokens... matching
+  MasksPanel's own control style — not a new design language" — a
+  deliberate choice at the time to match the pre-Chroma-pivot editor's
+  look, now a visible inconsistency against every newer Chroma-native panel
+  (`SourcesPanel`, `ExportDialog`, `TimelineSwitcher`), which are all on
+  `@chroma/ui` (shadcn/Base UI, D-042).
+- **Fix — presentation only, zero interaction-logic changes.** Every
+  `<button>` → `@chroma/ui`'s `Button` (`variant="default"` for the
+  selected tab/state, `"secondary"` otherwise, `"ghost"` for icon-only
+  actions, `"icon-xs"`/`"xs"` sizing matching the panel's existing
+  density). The legacy `../ui/Slider` (RapidRAW-era, `label`/`onChange`
+  props) → `@chroma/ui`'s `Slider` (Base UI, `onValueChange` returning
+  `number | readonly number[]` since it's shared with range sliders —
+  unwrapped once via a local `sliderValue` helper, same pattern
+  `@chroma/player`'s `Player.tsx` already uses for its scrub bar), with the
+  label/value readout now a small row above the track instead of a prop the
+  old component rendered internally. The color swatch stays the native
+  `<input type="color">` (no color-picker component exists in `@chroma/ui`
+  yet — real feature, not this pass's job) but now sits inside a proper
+  bordered/rounded button-shaped container matching every other control's
+  sizing, instead of a bare unstyled swatch.
+- **Verification.** `tsc --noEmit -p app`: 64/64, unchanged baseline (zero
+  new errors from either file). `cargo build --workspace` clean. No live
+  visual confirmation this pass (no screen access to the real window) —
+  the change is presentational only and every prop/handler wired to the
+  underlying state is unchanged from the pre-existing, already-tested
+  interaction logic, which is the actual basis for shipping this without a
+  live look first.

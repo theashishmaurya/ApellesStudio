@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Relight diagnosability + visual consistency (D-067/
+  D-068).** `chroma_depth_track`/`_status` had zero logging — "clicked
+  Track Depth multiple times, nothing happened" couldn't be told apart
+  from four very different real causes purely from `app.log`; every real
+  exit path now logs. Separately, `RelightPanel.tsx` — flagged by the
+  owner as visibly inconsistent with the rest of the app — is rebuilt on
+  `@chroma/ui`'s real `Button`/`Slider` instead of the RapidRAW-era plain
+  elements its own module doc had admitted using since D-048. Presentation
+  only, no interaction-logic changes.
+
 - **2026-09-03** — **Relight keyframe "Clear"/"X" never actually removed
   keyframes (D-066, B-017).** `writeLightParams` spread-merged its result
   onto the stale light (`{ ...l, ...next }`) — a spread can overwrite a

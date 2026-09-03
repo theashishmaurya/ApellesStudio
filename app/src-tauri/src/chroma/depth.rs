@@ -58,7 +58,26 @@ pub async fn chroma_depth_track(
     input_size: Option<u32>,
     max_res: Option<u32>,
 ) -> Result<serde_json::Value, String> {
-    let cv = crate::chroma::state::current_video().ok_or("no video loaded")?;
+    // D-067: this command had zero logging — a real gap when an owner's
+    // "clicked Track Depth multiple times, nothing happened" report can't
+    // be told apart from "the click never reached this command," "no video
+    // was loaded so it errored immediately," "the sidecar rejected it," and
+    // "it genuinely worked and the render is what's broken," purely from
+    // app.log. Every real exit path now logs.
+    let cv = match crate::chroma::state::current_video() {
+        Some(cv) => cv,
+        None => {
+            log::error!("[relight] chroma_depth_track: no video loaded");
+            return Err("no video loaded".into());
+        }
+    };
+    log::info!(
+        "[relight] chroma_depth_track: starting for {} (from={:?} to={:?} step={:?})",
+        cv.path.display(),
+        from_frame,
+        to_frame,
+        step
+    );
 
     let body = json!({
         "video_path": cv.path.to_string_lossy(),
@@ -69,33 +88,55 @@ pub async fn chroma_depth_track(
         "max_res": max_res.unwrap_or(1280),
     });
 
-    let v: serde_json::Value = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(format!("{}/depth_track", sidecar_base_url()))
         .json(&body)
         .send()
         .await
-        .map_err(unreachable_hint)?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let msg = unreachable_hint(e);
+            log::error!("[relight] chroma_depth_track: sidecar unreachable: {msg}");
+            msg
+        })?;
+    let v: serde_json::Value = response.json().await.map_err(|e| {
+        log::error!("[relight] chroma_depth_track: bad sidecar response: {e}");
+        e.to_string()
+    })?;
 
     if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        log::error!("[relight] chroma_depth_track: sidecar returned an error: {err}");
         return Err(err.to_string());
     }
+    log::info!("[relight] chroma_depth_track: job started, response: {v}");
     Ok(v) // `dir` is in the response; the frontend stores it on the sub-mask
 }
 
 /// Poll a `/depth_track` job.
 #[tauri::command]
 pub async fn chroma_depth_track_status(job_id: String) -> Result<serde_json::Value, String> {
-    reqwest::Client::new()
+    let v: serde_json::Value = reqwest::Client::new()
         .get(format!("{}/depth_track/{job_id}", sidecar_base_url()))
         .send()
         .await
-        .map_err(unreachable_hint)?
+        .map_err(|e| {
+            let msg = unreachable_hint(e);
+            log::error!("[relight] chroma_depth_track_status({job_id}): sidecar unreachable: {msg}");
+            msg
+        })?
         .json()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            log::error!("[relight] chroma_depth_track_status({job_id}): bad sidecar response: {e}");
+            e.to_string()
+        })?;
+    // D-067: only the terminal states, not every 2s poll — this loop runs
+    // for as long as the track takes, logging every tick would be noise.
+    if let Some(state) = v.get("state").and_then(|s| s.as_str())
+        && matches!(state, "done" | "error" | "cancelled" | "unknown")
+    {
+        log::info!("[relight] chroma_depth_track_status({job_id}): terminal state {state}, response: {v}");
+    }
+    Ok(v)
 }
 
 /// The tracked depth map for the currently-decoded video frame, as a full-res
