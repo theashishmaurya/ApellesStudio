@@ -20,25 +20,29 @@
 //!   counterpart of `resolve_video_position`, resolving every genuine
 //!   `TrackKind::Audio` clip overlapping a position for `chroma::audio`'s
 //!   mixer.
-//! What it does NOT do: no `wgpu`, no colour grade, no pixel-level
-//!   compositing — the editor preview is deliberately independent of the
-//!   Colorist's `AppState` render path (grade-in-preview + real multi-texture
-//!   blending are a later `chroma-compositor` step, Phase B3). Still no
-//!   transitions / transcript cut / OTIO export / MCP.
-//!   `resolve_video_position` (shared by `chroma_timeline_frame` and the
-//!   audio path) now resolves **N video tracks under opaque, top-wins
-//!   compositing** (D-056, Phase B1) — video tracks in index order, first one
+//! What it does NOT do: no `wgpu`, no colour grade — the editor preview is
+//!   deliberately independent of the Colorist's `AppState`/GPU render path.
+//!   Still no transitions / transcript cut / OTIO export / MCP.
+//!   `resolve_video_position` (used by Colorist's active-clip resolution and
+//!   the embedded-audio baseline, `chroma::audio` — genuinely single-clip
+//!   concerns, unchanged) resolves **N video tracks under opaque, top-wins
+//!   selection** (D-056, Phase B1) — video tracks in index order, first one
 //!   with a clip (not a gap) at the position wins, via
-//!   `chroma_timeline::Timeline::resolve_video_clip_at`; this needed no new
-//!   rendering code, since opaque top-wins is a track-**selection** problem,
-//!   not a pixel-blending one. Audio mixing across `TrackKind::Audio` tracks
-//!   is real now too (D-057, `chroma::audio`'s mixer) — this module just
+//!   `chroma_timeline::Timeline::resolve_video_clip_at`. `chroma_timeline_frame`
+//!   itself (D-088, Phase 2/B3) is a DIFFERENT, real story now: real CPU
+//!   pixel-level compositing IS here, for the multi-track preview
+//!   specifically — `Timeline::resolve_visible_video_layers_at` resolves
+//!   every visible video layer at a position, and `composite_video_frame`
+//!   alpha-blends them (opacity/position/scale/rotation, keyframeable via
+//!   the existing D-034 engine) when there's more than one; the
+//!   exactly-one-layer case still takes the old plain-decode fast path,
+//!   byte-identical to before. Audio mixing across `TrackKind::Audio` tracks
+//!   is real too (D-057, `chroma::audio`'s mixer) — this module just
 //!   resolves *which* clips are active, the actual decode/mix/output lives in
 //!   `chroma::audio`. No timeline-switcher UI yet (D-045 pass 2 is model +
 //!   commands only; "active timeline" is a Rust-side concept the frontend
 //!   doesn't need to know about for the existing single-timeline Edit tab to
-//!   keep working) — pass 3. No multi-track UI either (Phase D, blocked on
-//!   nothing further now that B1 and C have both landed, but not yet built).
+//!   keep working) — pass 3.
 //!
 //! The timelines are persisted **inside the `.chroma` project**:
 //!   `ProjectManifest.timelines: Vec<Timeline>` + `active_timeline: usize`
@@ -58,6 +62,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use base64::Engine as _;
+use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -407,26 +412,57 @@ fn blank_frame() -> String {
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()
 }
 
-/// Decode the source frame under timeline position `pos` and return it as a
-/// `data:image/jpeg;base64,…` string. `max_long_edge` (px) optionally caps the
-/// decoded size — ffmpeg downscales, so a 4K source is never CPU-scaled here.
+/// Decode the source frame(s) under timeline position `pos` and return the
+/// result as a `data:image/jpeg;base64,…` string. `max_long_edge` (px)
+/// optionally caps the decoded size — ffmpeg downscales, so a 4K source is
+/// never CPU-scaled here (except inside [`composite_video_frame`]'s own
+/// per-layer resize/rotate, unavoidable once more than one layer is real
+/// compositing, not a plain decode).
 ///
-/// This is a plain decode → JPEG: no grade, no compositing, no `AppState`
-/// (D-041). Out-of-range → a 1×1 transparent PNG; a decode / probe failure →
-/// `Err`.
+/// D-088 (Phase 2 of the P0 full-NLE effort, `docs/notes/multi-track-nle.md`
+/// Phase B3): this used to be a single-clip decode only
+/// (`resolve_video_position`'s opaque top-wins winner) — now resolves EVERY
+/// visible video track's clip at `pos`
+/// (`Timeline::resolve_visible_video_layers_at`, D-086) and, when there's
+/// more than one, real-composites them (`composite_video_frame`) instead of
+/// showing only the top one. The exactly-one-layer case (still the
+/// overwhelming common one) takes the same fast plain-decode path as
+/// before — byte-identical output, no new cost. Deliberately does NOT call
+/// `resolve_video_position` (that resolver stays single-winner, unchanged,
+/// for its OTHER two callers — Colorist's active-clip resolution and the
+/// embedded-audio baseline, both genuinely single-clip concerns this
+/// change has no business touching).
+///
+/// Out-of-range / nothing visible → a 1×1 transparent PNG; a decode / probe
+/// failure → `Err`.
 #[tauri::command]
 pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
-    let Some((clip, frame, info)) = resolve_video_position(pos)? else {
-        return Ok(blank_frame());
+    let timeline = resolve_timeline(false)?;
+    if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
+        return Err("timeline has no video track".to_string());
+    }
+    let layers: Vec<(usize, &Clip, i64)> = timeline
+        .resolve_visible_video_layers_at(pos as i64)
+        .into_iter()
+        .filter(|(_, c, _)| !c.source_path.is_empty())
+        .collect();
+
+    let img = match layers.as_slice() {
+        [] => return Ok(blank_frame()),
+        [(_, clip, source_frame)] => {
+            // Fast path, unchanged from pre-D-088: exactly one visible
+            // layer needs no compositing at all.
+            let path = PathBuf::from(&clip.source_path);
+            let info = probe_cached(&path)?;
+            let frame = (*source_frame).max(0) as u64;
+            let scale = max_long_edge.and_then(|le| {
+                decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
+            });
+            decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
+                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
+        }
+        _ => composite_video_frame(&layers, max_long_edge)?,
     };
-
-    let path = PathBuf::from(&clip.source_path);
-    let scale = max_long_edge.and_then(|le| {
-        decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
-    });
-
-    let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
-        .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
 
     let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
     img.to_rgb8()
@@ -436,4 +472,291 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
         "data:image/jpeg;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(buf.get_ref())
     ))
+}
+
+// --------------------------------------------------------------------------- //
+// D-088 (Phase 2, Phase B3 of docs/notes/multi-track-nle.md): the actual
+// multi-layer compositor. Real CPU alpha-over compositing (`image` +
+// `imageproc`, both already dependencies — no wgpu here, this is a
+// per-frame-on-demand still decode, not a 60fps realtime path; a GPU
+// version can follow if this proves too slow in practice, but a real,
+// correct, working CPU compositor beats an unbuilt GPU one).
+// --------------------------------------------------------------------------- //
+
+/// A clip's transform, resolved for one specific `source_frame` — the
+/// static fields, or their keyframe-interpolated values.
+struct ClipTransform {
+    opacity: f64,
+    position_x: f64,
+    position_y: f64,
+    scale: f64,
+    rotation: f64,
+}
+
+/// Resolve `clip`'s transform at `source_frame`. Deliberately does NOT call
+/// `chroma::keyframes::interpolated_parameters` — that reads
+/// `chroma::state::current_video()`'s global "currently loaded video" frame,
+/// the Colorist grading session's own state, which has nothing to do with
+/// (and would usually disagree with) the specific source frame a timeline
+/// clip is being composited at here. Calls the lower-level, frame-explicit
+/// `parse_keyframes`/`interpolate` directly instead — same D-034 engine,
+/// just not routed through the global-state-coupled wrapper. Keyframes are
+/// authored relative to the clip's own SOURCE frame (matching the
+/// convention every other keyframeable thing in this codebase — masks,
+/// relight lights — already uses: "the current frame" of whatever's loaded,
+/// which for a single clip IS its source frame).
+fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
+    let base = ClipTransform {
+        opacity: clip.opacity,
+        position_x: clip.position_x,
+        position_y: clip.position_y,
+        scale: clip.scale,
+        rotation: clip.rotation,
+    };
+    let Some(kf_value) = &clip.chroma_keyframes else {
+        return base;
+    };
+    // `parse_keyframes` expects the *containing* params object (it reads
+    // `parameters.chromaKeyframes` off it) — `Clip::chroma_keyframes` stores
+    // the array directly, so wrap it the one time this function needs to.
+    let wrapped = serde_json::json!({ "chromaKeyframes": kf_value });
+    let Some(keyframes) = super::keyframes::parse_keyframes(&wrapped) else {
+        return base;
+    };
+    if keyframes.is_empty() {
+        return base;
+    }
+    let interpolated = super::keyframes::interpolate(&keyframes, source_frame.max(0) as u64);
+    let f64_or = |key: &str, fallback: f64| {
+        interpolated.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
+    };
+    ClipTransform {
+        opacity: f64_or("opacity", base.opacity),
+        position_x: f64_or("position_x", base.position_x),
+        position_y: f64_or("position_y", base.position_y),
+        scale: f64_or("scale", base.scale),
+        rotation: f64_or("rotation", base.rotation),
+    }
+}
+
+/// Decode every layer (already visible + non-empty-source, see the caller)
+/// and alpha-composite them onto one canvas. Paint order: `layers` arrives
+/// in `resolve_visible_video_layers_at`'s index-ascending order (index 0 =
+/// highest priority); this function decodes in that order but PAINTS in
+/// reverse (lowest priority first, at the back; highest priority last, on
+/// top) — matches `resolve_visible_video_layers_at`'s own documented paint
+/// contract. The canvas is the TOP (highest-priority) layer's own scaled
+/// dimensions — every other layer is transformed (scale/rotate/opacity)
+/// then centered on that canvas plus its own `position_x`/`position_y`
+/// offset, not scaled to fill the canvas by default (a lower-priority
+/// layer showing through at its own native size, like a picture-in-picture,
+/// is the more useful default than a silent full-bleed stretch).
+fn composite_video_frame(
+    layers: &[(usize, &Clip, i64)],
+    max_long_edge: Option<u32>,
+) -> Result<DynamicImage, String> {
+    struct Decoded {
+        img: image::RgbaImage,
+        transform: ClipTransform,
+    }
+
+    let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
+    for (_, clip, source_frame) in layers {
+        let path = PathBuf::from(&clip.source_path);
+        let info = probe_cached(&path)?;
+        let frame = (*source_frame).max(0) as u64;
+        let scale = max_long_edge
+            .and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
+        let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
+            .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
+        decoded.push(Decoded {
+            img: img.to_rgba8(),
+            transform: resolve_clip_transform(clip, *source_frame),
+        });
+    }
+
+    let (canvas_w, canvas_h) = decoded[0].img.dimensions();
+    let mut canvas: image::RgbaImage =
+        image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));
+
+    for d in decoded.iter().rev() {
+        composite_layer_onto(&mut canvas, &d.img, &d.transform);
+    }
+
+    Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+/// Scale → rotate → apply opacity (as an alpha multiply) → overlay `layer`
+/// onto `canvas`, centered plus `transform`'s position offset. Real
+/// arbitrary-angle rotation via `imageproc::geometric_transformations::
+/// rotate_about_center` — the exact same function + transparent-border
+/// pattern `image_processing.rs`'s own `apply_rotation` already uses for
+/// the Colorist's rotate adjustment, not a second rotation implementation.
+fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage, t: &ClipTransform) {
+    let opacity = t.opacity.clamp(0.0, 1.0) as f32;
+    if opacity <= 0.0 {
+        return; // fully transparent — nothing to paint, skip the work
+    }
+
+    let (lw, lh) = layer.dimensions();
+    let scale = t.scale.max(0.0);
+    let (sw, sh) = (
+        ((lw as f64) * scale).round().max(1.0) as u32,
+        ((lh as f64) * scale).round().max(1.0) as u32,
+    );
+    let mut work: image::RgbaImage = if (sw, sh) != (lw, lh) {
+        image::imageops::resize(layer, sw, sh, image::imageops::FilterType::Triangle)
+    } else {
+        layer.clone()
+    };
+
+    if t.rotation != 0.0 {
+        let rgba32f = DynamicImage::ImageRgba8(work).to_rgba32f();
+        let rotated = imageproc::geometric_transformations::rotate_about_center(
+            &rgba32f,
+            (t.rotation as f32) * std::f32::consts::PI / 180.0,
+            imageproc::geometric_transformations::Interpolation::Bilinear,
+            imageproc::geometric_transformations::Border::Constant(image::Rgba([
+                0.0f32, 0.0, 0.0, 0.0,
+            ])),
+        );
+        work = DynamicImage::ImageRgba32F(rotated).to_rgba8();
+    }
+
+    if opacity < 1.0 {
+        for p in work.pixels_mut() {
+            p[3] = (p[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    let (cw, ch) = canvas.dimensions();
+    let (ww, wh) = work.dimensions();
+    let x = (cw as f64) / 2.0 - (ww as f64) / 2.0 + t.position_x;
+    let y = (ch as f64) / 2.0 - (wh as f64) / 2.0 + t.position_y;
+    image::imageops::overlay(canvas, &work, x.round() as i64, y.round() as i64);
+}
+
+#[cfg(test)]
+mod composite_tests {
+    use super::*;
+    use image::{ImageBuffer, Rgba};
+
+    fn flat(w: u32, h: u32, px: [u8; 4]) -> image::RgbaImage {
+        ImageBuffer::from_pixel(w, h, Rgba(px))
+    }
+
+    fn identity_transform() -> ClipTransform {
+        ClipTransform {
+            opacity: 1.0,
+            position_x: 0.0,
+            position_y: 0.0,
+            scale: 1.0,
+            rotation: 0.0,
+        }
+    }
+
+    /// D-088: `resolve_clip_transform` with no `chroma_keyframes` returns the
+    /// clip's own static fields, untouched.
+    #[test]
+    fn resolve_clip_transform_uses_static_fields_when_unkeyframed() {
+        let clip = Clip {
+            opacity: 0.5,
+            position_x: 10.0,
+            position_y: -5.0,
+            scale: 2.0,
+            rotation: 45.0,
+            ..Default::default()
+        };
+        let t = resolve_clip_transform(&clip, 0);
+        assert_eq!(t.opacity, 0.5);
+        assert_eq!(t.position_x, 10.0);
+        assert_eq!(t.position_y, -5.0);
+        assert_eq!(t.scale, 2.0);
+        assert_eq!(t.rotation, 45.0);
+    }
+
+    /// D-088: with real `chroma_keyframes`, the interpolated value wins over
+    /// the static field at that source frame — same D-034 engine masks and
+    /// relight lights already use, just called with an explicit frame
+    /// instead of the global `current_video()` state (see
+    /// `resolve_clip_transform`'s own doc for why).
+    #[test]
+    fn resolve_clip_transform_uses_interpolated_keyframe_values() {
+        let clip = Clip {
+            opacity: 1.0, // static field — should be overridden by the keyframes below
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "opacity": 0.0 } },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+        // halfway between the two keys -> linear interpolation -> ~0.5
+        let t = resolve_clip_transform(&clip, 50);
+        assert!((t.opacity - 0.5).abs() < 0.01, "expected ~0.5, got {}", t.opacity);
+        // before the first key -> held at the first key's value (0.0)
+        let t0 = resolve_clip_transform(&clip, 0);
+        assert_eq!(t0.opacity, 0.0);
+    }
+
+    /// Opacity 0 must be a real no-op — the canvas is untouched, not just
+    /// "very faint."
+    #[test]
+    fn composite_layer_onto_skips_entirely_at_zero_opacity() {
+        let mut canvas = flat(4, 4, [10, 20, 30, 255]);
+        let before = canvas.clone();
+        let layer = flat(4, 4, [255, 255, 255, 255]);
+        let t = ClipTransform { opacity: 0.0, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        assert_eq!(canvas, before);
+    }
+
+    /// Opacity 1 with an opaque layer exactly covering the canvas must
+    /// produce the layer's own color, not a blend with whatever was there.
+    #[test]
+    fn composite_layer_onto_full_opacity_fully_replaces() {
+        let mut canvas = flat(4, 4, [10, 20, 30, 255]);
+        let layer = flat(4, 4, [200, 100, 50, 255]);
+        composite_layer_onto(&mut canvas, &layer, &identity_transform());
+        assert_eq!(*canvas.get_pixel(2, 2), Rgba([200, 100, 50, 255]));
+    }
+
+    /// D-088's real "not opaque top-wins" ask: a real alpha blend at
+    /// fractional opacity must land STRICTLY between the two colors, not at
+    /// either endpoint — proves real blending math ran, not a threshold
+    /// on/off switch.
+    #[test]
+    fn composite_layer_onto_partial_opacity_blends_strictly_between() {
+        let mut canvas = flat(4, 4, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 255, 255, 255]);
+        let t = ClipTransform { opacity: 0.5, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        let r = canvas.get_pixel(2, 2)[0];
+        assert!(r > 20 && r < 235, "expected a real mid-blend, got {r}");
+    }
+
+    /// `position_x`/`position_y` offset from center — a layer smaller than
+    /// the canvas, nudged, must land where expected and leave the
+    /// untouched canvas area alone.
+    #[test]
+    fn composite_layer_onto_respects_position_offset() {
+        let mut canvas = flat(10, 10, [0, 0, 0, 255]);
+        let layer = flat(2, 2, [255, 0, 0, 255]);
+        // centered would place the 2x2 layer at (4,4)-(5,5); shift +3,+0.
+        let t = ClipTransform { position_x: 3.0, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        assert_eq!(*canvas.get_pixel(7, 4), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(4, 4), Rgba([0, 0, 0, 255])); // the un-shifted spot is untouched
+    }
+
+    /// `scale` actually changes the painted footprint size, not just a
+    /// cosmetic field nobody reads.
+    #[test]
+    fn composite_layer_onto_respects_scale() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        let t = ClipTransform { scale: 3.0, ..identity_transform() }; // -> 12x12, centered at (4,4)-(15,15)
+        composite_layer_onto(&mut canvas, &layer, &t);
+        assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
 }

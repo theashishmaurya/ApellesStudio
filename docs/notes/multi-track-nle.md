@@ -101,8 +101,18 @@ part is the compositing math/pipeline itself, not "how many."
   `resolve_video_clip_at` is a plain filtered `Vec` iteration with no
   hardcoded track count, so it already generalizes past 2 tracks with zero
   additional code — B2 is now mostly "test/confirm N>2," not new engineering.
-- B3 — real blend modes / opacity (needed for anything beyond simple video-over-video)
-  — this is where the genuinely new GPU/pixel-compositing work still is.
+- ~~B3 — real blend modes / opacity~~ — **done, D-088 (2026-09-03), P0.**
+  Real CPU alpha-over compositing (`app/src-tauri/src/chroma/edit.rs`,
+  `composite_video_frame`/`composite_layer_onto`) — `image`/`imageproc`
+  (both pre-existing deps), NOT wgpu: this is a per-frame-on-demand still
+  decode, not a 60fps realtime path, and a real working CPU compositor
+  beat an unbuilt GPU one for this pass. Per-clip position/scale/rotation
+  (arbitrary angle, real — `imageproc::geometric_transformations::
+  rotate_about_center`)/opacity, keyframeable via the existing D-034
+  engine (`chroma_timeline::Clip.chroma_keyframes`, D-086). Single-track
+  case untouched, byte-identical fast path. 7 new pure compositing-math
+  tests. A GPU version can follow later if CPU compositing proves too slow
+  in practice — not attempted this pass, no evidence yet that it's needed.
 
 ### Phase C — Audio mixing
 
@@ -189,10 +199,15 @@ B3; opaque multi-track editing is fully usable now, blend-mode/opacity
 compositing (B3) is a separate, additive later step, not a blocker for the
 UI existing. See D-080 for the full writeup, including a genuinely still-open
 gap (a live drag-clip-between-tracks gesture) and what's out of scope
-entirely for now (lock/solo — no backing model field). **B3 (real blend
-modes / opacity) is the one remaining piece of genuinely new GPU/pixel-
-compositing work**, still not started. E (transitions) and F (export through
-the real timeline) remain blocked on B3. This note is the scoping record —
-update it (or promote pieces of it into `D-NNN` entries) as each phase
+entirely for now (lock/solo — no backing model field). **B3 (real
+compositing) done, D-088 (2026-09-03), P0** — real CPU alpha-over
+compositing (position/scale/rotation/opacity, keyframeable), see that
+decision and this note's own B3 entry above for the full writeup. Track
+lock/hide and clip transforms landed alongside it as D-086 (data model) —
+the P0 "full NLE" effort's Phase 1/2 of 4; Phase 3 (TS mirror) and Phase 4
+(UI: track header lock/hide icons, a transform editor on the selected clip)
+are next. E (transitions) and F (export through the real timeline) are now
+unblocked (B3 exists) but not yet started. This note is the scoping record
+— update it (or promote pieces of it into `D-NNN` entries) as each phase
 actually lands, the same discipline every other feature this week has
 followed.

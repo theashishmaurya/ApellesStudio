@@ -1155,3 +1155,10 @@ _(none — pre-v1)_
   existing single-winner track resolver — the real query the Phase 2
   compositor needs). 58/58 chroma-timeline tests, 143/143 chroma:: tests
   unchanged. Phase 2 (the actual compositor) is next.
+- **2026-09-03** — **Full NLE, Phase 2 (D-088): a real video track
+  compositor exists now.** `chroma_timeline_frame` alpha-blends every
+  visible video layer at a position (not just the top opaque winner) —
+  real position/scale/rotation/opacity, keyframeable. CPU-based (real
+  arbitrary-angle rotation, real alpha blending), no new dependencies. The
+  single-track case is untouched, byte-identical. 7 new pure compositing
+  tests, all passing on the first run.

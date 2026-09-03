@@ -6422,3 +6422,82 @@ check `ps aux | grep cargo` first.
   `ai/` to run (`test_depth_track.py` is a standalone script, matching this
   directory's existing convention, not a harness this change needed to
   satisfy).
+
+## D-088 — Full NLE, Phase 2: the real multi-layer video compositor
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Phase 2 of the P0 full-NLE effort (D-086 was Phase 1, the
+  data model) — the actual "long pole" flagged all session:
+  `chroma_timeline_frame`'s preview decode was, until now, a single opaque
+  top-wins winner only (`resolve_video_position`, D-056) — real video-track
+  stacking needed genuine pixel compositing, which never existed anywhere
+  in this codebase outside the Colorist's grade pipeline.
+- **`Timeline::resolve_video_position` (Colorist's active-clip resolution,
+  `chroma::audio`'s embedded-audio baseline) is UNCHANGED** — both are
+  genuinely single-clip concerns this work has no business touching;
+  checked every caller (`grep`, not assumed) before writing a line of the
+  compositor. `chroma_timeline_frame` gets its own new path instead, using
+  `Timeline::resolve_visible_video_layers_at` (D-086) directly.
+- **`chroma_timeline_frame`**: resolves every visible layer at `pos`;
+  exactly one layer takes the SAME fast plain-decode path as before
+  (byte-identical output, zero new cost for the still-overwhelmingly-common
+  single-track case); more than one calls the new `composite_video_frame`.
+- **`composite_video_frame`/`composite_layer_onto`**: real CPU alpha-over
+  compositing via `image`/`imageproc` (both pre-existing dependencies — no
+  new crate, no wgpu). Deliberately CPU, not GPU, for v1: this is a
+  per-frame-on-demand still decode (scrub/playback calls one frame at a
+  time), not a 60fps realtime path, and a real working CPU compositor beats
+  an unbuilt GPU one. Per layer: resize by `scale`, rotate by `rotation`
+  (arbitrary angle, real — `imageproc::geometric_transformations::
+  rotate_about_center`, the *exact* function + transparent-border pattern
+  `image_processing.rs`'s own Colorist rotate adjustment already uses, not
+  a second implementation, and not limited to 90°-increments), multiply
+  alpha by `opacity`, then `image::imageops::overlay` onto the canvas
+  (already-used elsewhere in this codebase — `ai_connector.rs`,
+  `export_processing.rs`). Paint order: `resolve_visible_video_layers_at`'s
+  index-ascending order, painted in REVERSE (lowest-priority/highest-index
+  first/at the back, highest-priority/index-0 last/on top) — canvas is the
+  top layer's own scaled dimensions, matching the single-clip case's
+  existing output size exactly.
+- **Keyframes reuse D-034's engine directly, NOT `interpolated_parameters`**
+  — that wrapper reads `chroma::state::current_video()`'s global
+  "currently loaded video" frame (the Colorist grading session's own
+  state), the wrong frame for a timeline clip being composited at an
+  explicit position here. `resolve_clip_transform` calls the lower-level,
+  frame-explicit `parse_keyframes`/`interpolate` directly instead — same
+  engine, same `[{frame, params}]` shape, no new interpolation code,
+  correctly frame-scoped. Keyframes are interpreted relative to the clip's
+  own SOURCE frame, matching the convention every other keyframeable thing
+  in this codebase (masks, relight lights) already uses.
+- **Module doc corrected**: `chroma/edit.rs`'s own header used to say "no
+  pixel-level compositing... a later chroma-compositor step, Phase B3" —
+  updated now that Phase B3 is real, not aspirational.
+- **Renumbered mid-flight**: this was drafted as D-087 before discovering
+  (via a fresh `grep` right before writing this entry) that a concurrent
+  session agent had already landed the real D-087 (sidecar memory/TTL) —
+  same collision-avoidance discipline this whole session has used
+  (D-070 was renumbered from a stale D-065 earlier tonight); every "D-087"
+  reference in `edit.rs`'s own code comments was corrected to D-088 via a
+  scoped `sed` before this entry was written, not left inconsistent.
+- **Verification.** 7 new real pure-logic tests in a new `composite_tests`
+  module in `edit.rs` (not a separate file — matches this module's
+  existing "tests live with the code" convention): `resolve_clip_transform`
+  with/without keyframes (confirms interpolation actually overrides the
+  static field, and the pre-first-key hold behavior), and
+  `composite_layer_onto` at zero opacity (a real no-op, canvas untouched —
+  not just "very faint"), full opacity (exact replace), **partial opacity
+  landing strictly between the two colors** (proves real blend math ran,
+  not a threshold switch — the actual D-086/owner ask: "not opaque
+  top-wins... actually stacked"), position offset (lands at the exact
+  expected pixel, untouched area stays untouched), and scale (painted
+  footprint size actually changes). All pass on the first run — no
+  iteration needed to get the alpha-blend math right.
+  `cargo test --manifest-path app/src-tauri/Cargo.toml chroma::`: **150
+  passed, 0 failed, 1 ignored** (143 baseline + 7 new). `cargo build`:
+  clean. No `CHROMA_TEST_VIDEO`-gated real-decode integration test this
+  pass (would need a real multi-clip project fixture to exercise
+  end-to-end) — the pure compositing-math tests above are the real
+  correctness guard for the actual new logic (the blend/transform math);
+  `decode_pipe`'s own existing tests already cover the decode path itself.
+  Phase 3 (the TypeScript mirror of the new fields/ops) is next.
