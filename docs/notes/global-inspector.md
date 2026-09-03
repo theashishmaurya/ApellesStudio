@@ -150,11 +150,25 @@ Scoped 2026-09-03 (D-080's own session, after Phase D shipped). **Phase 1 done,
 D-081 (2026-09-03)** — real selection model + layer list, wired to seek the player.
 **Phase 2 done, D-099 (2026-09-04)** — `InspectorPanel.tsx` + `propCatalog.ts` +
 `manifestEdit.ts`, a real typed form bound to the selection, verified against a
-real manifest (backward-compat requirement) via a scratch harness. **Phase 3 (NLE
-half) is no longer blocked** — Phase B3 (`multi-track-nle.md`) shipped as D-088
-during the same session, before this phase started; Phase 3 itself was not built
-this pass (needs `TimelinePane.tsx`, in active concurrent use by the D-094–D-098
-dnd-kit work for the whole dispatch) — it's a real, genuinely-ready next increment,
-not a re-scope. **Phase 4 (shared panel shell)** waits on Phase 3 landing. This
-note is the scoping record — update it (or promote pieces into `D-NNN` entries) as
-each phase actually lands.
+real manifest (backward-compat requirement) via a scratch harness.
+
+**Phase 3 done, D-102 (2026-09-04)**, once `TimelinePane.tsx` freed up after the
+concurrent D-094–D-100 drag-and-drop work committed — `ClipInspectorPanel.tsx`, a
+real persistent panel for the selected clip's transform (opacity/position_x/
+position_y/scale/rotation — this doc's original field list named `fade_in`/
+`fade_out`, which turned out not to exist on the real, shipped `Clip`; corrected
+here) and keyframes, added as a third pane in `TimelinePane.tsx`'s existing
+`ResizablePanelGroup`. **D-090's popover was removed, not kept alongside** — same
+fields/ops, a persistent panel is strictly better UX, two controls risking drift
+for no benefit; this is the real call this doc's Phase 3 section always deferred
+to whoever built it. `Selection` stayed local to `TimelinePane.tsx` (embedded, not
+lifted) — the actual cross-tab-shared shell is still Phase 4's job, now unblocked
+since both halves have real content. Backward compatibility verified three ways: a
+scratch harness (missing fields / locked track / real keyframes), and the owner's
+own real `~/Movies/Chroma/New.chroma/project.json`, confirming the panel's
+`?? default` fallbacks match what a real save on disk actually looks like.
+
+**Phase 4 (shared panel shell) is next** — both halves have real, working content
+to unify now; not started, no scoping beyond this doc's original Phase 4 section
+exists yet. This note is the scoping record — update it (or promote pieces into
+`D-NNN` entries) as each phase actually lands.

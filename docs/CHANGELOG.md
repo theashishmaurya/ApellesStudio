@@ -18,6 +18,15 @@ One or two lines per session. Detail lives in the decision it references.
   collided with the dev server's own auto-rebuild watcher and corrupted
   `target/debug` — recovered via the documented `rm -rf target/debug` +
   rebuild.
+- **2026-09-04** — **Global Inspector Phase 3: NLE clip properties
+  (D-102).** `ClipInspectorPanel.tsx` — a persistent transform + keyframes
+  panel for the selected Edit-tab clip, replacing D-090's popover outright
+  (removed, not kept alongside — same fields/ops, no benefit to two
+  controls). Added to `TimelinePane.tsx` only after the concurrent
+  drag-and-drop work (D-100) finished. Backward-compat verified against a
+  scratch harness and the owner's own real project file. Drafted as
+  D-101, renumbered after the sidecar-ownership pass above claimed it
+  first.
 - **2026-09-04** — **Unified clip move onto ONE mechanism; fixed the real
   root cause of D-098's stuck-ghost/blocked-drag cluster (D-100, B-029).**
   A stuck `activeDrag` after an interrupted drag left `TrackDropZone`'s

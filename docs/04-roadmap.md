@@ -220,6 +220,18 @@ roadmap structure.
   policy, live 10s re-poll, a real "AI Sidecar" Settings card. Live-
   verified against the session's own genuinely-stale (~6hr) sidecar.
 
+- ✅ **Global Inspector, Phase 3 (NLE half)** — done, **D-102** (see "Next"
+  item 7 above for the full writeup). Drafted as D-101, renumbered after
+  finding the sidecar-ownership pass above had already claimed it — the
+  second real D-number collision this session (D-100 was the first, same
+  root cause: several agents working this queue in parallel tonight).
+  `ClipInspectorPanel.tsx` — a persistent transform + keyframes panel
+  replacing D-090's popover outright (same fields/ops, better UX, no
+  reason to keep both), added to `TimelinePane.tsx`'s resizable panel
+  group only after the concurrent drag-and-drop work (D-100) finished and
+  freed the file. Backward-compat verified against a scratch harness AND
+  the owner's own real `~/Movies/Chroma/New.chroma/project.json`.
+
 ---
 
 ## Now — what's live, by tab
@@ -531,6 +543,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    file collision, so it was deliberately deferred rather than raced.
    **Real next step once that other work settles**: Phase 3, now genuinely
    unblocked. **Phase 4 (shared panel shell)** waits on Phase 3.
+   **Phase 3 done, D-102 (2026-09-04)**, once the drag-and-drop work
+   finished (D-100) and cleared the file — `ClipInspectorPanel.tsx`, a real
+   persistent panel for the selected clip's transform (opacity/position/
+   scale/rotation — `fade_in`/`fade_out` don't actually exist on `Clip`,
+   this doc's own earlier field list was wrong, corrected against the real
+   D-086/D-088 fields) and keyframes, added as a third pane in
+   `TimelinePane.tsx`'s existing `ResizablePanelGroup`. **Real call made**:
+   D-090's clip-transform popover is REMOVED, not kept alongside this panel
+   — same fields/ops, a persistent panel is strictly better UX, two
+   controls editing the same clip would only risk drifting out of sync.
+   `Selection` stays local to `TimelinePane.tsx` for this pass (embedded,
+   not lifted to a shared store) — Phase 4's "one tab-agnostic shell" is
+   still the right place to unify once both halves have real content, per
+   this doc's own original sequencing. Backward compatibility verified
+   three ways: a scratch harness (no transform fields / a locked track /
+   keyframes present, all render correctly), and — the strongest check —
+   read the owner's own real `~/Movies/Chroma/New.chroma/project.json`
+   directly, confirming its 9 real clips' shape matches exactly what this
+   panel expects. **Phase 4 (shared panel shell) is next**, unblocked, both
+   halves now have real content to unify.
 8. **Unify clip identity, Edit ↔ Colorist (Resolve-shaped)** — owner,
    2026-09-03: "we have one clip we add, we can move to LUTs and color and
    we have the same clip, not multiple" (Resolve comparison), triggered by

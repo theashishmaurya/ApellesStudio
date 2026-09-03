@@ -157,19 +157,16 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 import {
   AudioLines,
   ArrowRightLeft,
-  Diamond,
   Eye,
   EyeOff,
   Film,
   GripVertical,
   Lock,
   Scissors,
-  SlidersHorizontal,
   Trash2,
   Unlock,
   Volume2,
   VolumeX,
-  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -179,10 +176,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Input,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -194,6 +187,7 @@ import {
 
 import { useEditorTimelineStore } from './timelineStore';
 import { Waveform } from './Waveform';
+import { ClipInspectorPanel } from './ClipInspectorPanel';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
@@ -1471,126 +1465,10 @@ export function TimelinePane() {
             </DropdownMenu>
           )}
 
-          {/* D-090 — clip transform + keyframes: opacity/position/scale/
-              rotation, the interim popover this file's own D-086 doc comment
-              flagged as coming next. Disabled when the selected clip's track
-              is locked (the underlying ops already no-op for this — see
-              `applyOp`'s `TrackLocked` mirror — disabling the trigger too so
-              it doesn't look like a live control that silently does nothing). */}
-          {selectedClip && (
-            <Popover>
-              <PopoverTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={selectedTrackLocked}
-                    aria-label="Clip transform"
-                  >
-                    <SlidersHorizontal />
-                    Transform
-                  </Button>
-                }
-              />
-              <PopoverContent align="start" className="w-64">
-                <div className="flex flex-col gap-2.5 text-xs">
-                  <div className="text-text-primary font-medium">Clip transform</div>
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-text-secondary">Opacity</span>
-                    <Input
-                      type="number"
-                      step={0.05}
-                      min={0}
-                      max={1}
-                      className="h-7 w-20 text-right"
-                      value={selectedClip.opacity ?? 1}
-                      onChange={(e) => applyTransform({ opacity: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-text-secondary">Position X</span>
-                    <Input
-                      type="number"
-                      step={1}
-                      className="h-7 w-20 text-right"
-                      value={selectedClip.position_x ?? 0}
-                      onChange={(e) => applyTransform({ position_x: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-text-secondary">Position Y</span>
-                    <Input
-                      type="number"
-                      step={1}
-                      className="h-7 w-20 text-right"
-                      value={selectedClip.position_y ?? 0}
-                      onChange={(e) => applyTransform({ position_y: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-text-secondary">Scale</span>
-                    <Input
-                      type="number"
-                      step={0.05}
-                      min={0}
-                      className="h-7 w-20 text-right"
-                      value={selectedClip.scale ?? 1}
-                      onChange={(e) => applyTransform({ scale: Number(e.target.value) })}
-                    />
-                  </label>
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-text-secondary">Rotation</span>
-                    <Input
-                      type="number"
-                      step={1}
-                      className="h-7 w-20 text-right"
-                      value={selectedClip.rotation ?? 0}
-                      onChange={(e) => applyTransform({ rotation: Number(e.target.value) })}
-                    />
-                  </label>
-
-                  {/* D-090 — keyframing, the exact interaction
-                      `RelightPanel.tsx` uses for relight-light keyframes
-                      (Diamond icon, `keyedHere` highlight, add/update/
-                      delete-here/clear-all) — see `clipKeyframes.ts`'s doc
-                      for why this is a small local mirror rather than a
-                      cross-package import of `app/src/utils/maskKeyframes.ts`. */}
-                  <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none pt-1 border-t border-border-color mt-0.5">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
-                      onClick={doUpsertKeyframe}
-                      title={keyedHere ? 'Update this clip keyframe' : 'Keyframe this clip at the current frame'}
-                    >
-                      <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
-                      {clipKeyframes.length === 0 ? 'Keyframe clip' : keyedHere ? 'Update key' : 'Add key'}
-                    </Button>
-                    {clipKeyframes.length > 0 && (
-                      <>
-                        <span className="tabular-nums">
-                          {clipKeyframes.length} key{clipKeyframes.length === 1 ? '' : 's'}
-                        </span>
-                        {keyedHere && (
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            onClick={doRemoveKeyframeHere}
-                            title="Delete the keyframe at this frame"
-                          >
-                            <X size={12} />
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="xs" onClick={doClearKeyframes} title="Remove all keyframes">
-                          Clear
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
+          {/* D-090's clip-transform popover was removed in D-102 — the
+              persistent `ClipInspectorPanel` in the resizable panel group
+              below replaces it, same fields/ops, better UX for iterating on
+              values, no reason to keep both. */}
 
           <div className="ml-auto flex items-center gap-0.5">
             <Tooltip>
@@ -1777,6 +1655,34 @@ export function TimelinePane() {
               />
             ))}
           </div>
+        </ResizablePanel>
+
+        <ResizableHandle />
+
+        {/* D-102 — the Inspector, NLE half (Phase 3 of
+            `docs/notes/global-inspector.md`), replacing D-090's popover.
+            Persistent, matching `@chroma/motion`'s `InspectorPanel.tsx`
+            (Phase 2) UX for the other "Global Inspector" half — a real
+            resizable pane, not a fixed width, per the standing CLAUDE.md
+            rule. `Selection` stays local to this file for this pass; a
+            tab-agnostic shared shell is Phase 4's job once both halves
+            exist. */}
+        <ResizablePanel
+          defaultSize={280}
+          minSize={220}
+          maxSize={420}
+          className="border-l border-border-color bg-surface"
+        >
+          <ClipInspectorPanel
+            clip={selectedClip}
+            trackLocked={selectedTrackLocked}
+            clipKeyframes={clipKeyframes}
+            keyedHere={keyedHere}
+            onTransformChange={applyTransform}
+            onUpsertKeyframe={doUpsertKeyframe}
+            onRemoveKeyframeHere={doRemoveKeyframeHere}
+            onClearKeyframes={doClearKeyframes}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
       </div>
