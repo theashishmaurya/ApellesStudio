@@ -71,6 +71,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
+import './timeline-overrides.css';
 import { Film, Scissors, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@chroma/ui';
 

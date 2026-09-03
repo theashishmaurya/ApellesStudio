@@ -1397,6 +1397,46 @@ pub async fn chroma_media_move(id: String, folder: Option<String>) -> Result<Med
     Ok(dto)
 }
 
+/// Remove one or more items from the pool (D-060/D-061) — the Sources panel
+/// had no delete action at all until this pass; every item added stayed
+/// forever. Takes a batch (`Vec`) rather than a single id, matching
+/// [`chroma_media_import`]'s "one round trip, one manifest save" shape,
+/// since D-061 added a real multi-select "Delete N" action to the panel —
+/// looping a single-id command per selected item would mean one disk write
+/// per item instead of one for the whole selection. An id that isn't in the
+/// pool (already removed by a concurrent action, a stale selection, etc.)
+/// is silently skipped rather than failing the whole batch — unlike
+/// [`chroma_media_move`]'s strict "unknown id errors," a bulk delete's ids
+/// come from the frontend's own already-rendered list, not user-typed
+/// input, so "it's already gone" isn't a real error condition worth
+/// aborting a multi-item action over. A shot (`ProjectShot`) already
+/// referencing a removed item is deliberately left alone rather than
+/// cascade-deleted: [`resolve_shot`]'s existing "dangling reference →
+/// offline, not fatal" discipline (the same path a hand-edited manifest
+/// already had to handle) covers it, so this command doesn't need its own
+/// referential-integrity story. Best-effort removes each cached thumbnail
+/// file too (D-059's `thumb_cache_path`) so a re-import under the same path
+/// doesn't need to overwrite stale bytes — failure there is silently
+/// ignored, same as every other cache-cleanup path in this module (a
+/// leftover `.jpg` beside the source is harmless).
+#[tauri::command]
+pub async fn chroma_media_remove(ids: Vec<String>) -> Result<(), String> {
+    let dir = require_open_project()?;
+    let mut manifest = load_manifest(&dir)?;
+    for id in &ids {
+        let Some(idx) = manifest.media.iter().position(|m| &m.id == id) else {
+            continue;
+        };
+        let removed = manifest.media.remove(idx);
+        if let Some(cache_path) = thumb_cache_path(&removed.source_path, &removed.id) {
+            let _ = std::fs::remove_file(cache_path);
+        }
+    }
+    manifest.modified = now_rfc3339();
+    save_manifest(&dir, &manifest)?;
+    Ok(())
+}
+
 /// Register a new, possibly-still-empty bin path (D-059) — the Sources
 /// panel's explicit "New Folder" action. Idempotent (creating an
 /// already-known folder is a no-op, not an error) and does not require the
@@ -1995,6 +2035,61 @@ mod tests {
             rt.block_on(chroma_media_move("no-such-id".into(), Some("X".into())))
                 .is_err()
         );
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn media_remove_deletes_a_batch_and_their_cached_thumbnails() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("media_remove");
+        let (dir, mut manifest) = new_project_in(&root, "media-remove", &[]).unwrap();
+        let path_a = root.join("a.mov").to_string_lossy().to_string();
+        let path_b = root.join("b.mov").to_string_lossy().to_string();
+        let path_c = root.join("c.mov").to_string_lossy().to_string();
+        add_media(&mut manifest, &[path_a.clone(), path_b.clone(), path_c.clone()], None);
+        let id_a = manifest.media[0].id.clone();
+        let id_b = manifest.media[1].id.clone();
+        let id_c = manifest.media[2].id.clone();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "media-remove".into(),
+        }));
+
+        // synthesize fake cached thumbnails for the two items actually being
+        // removed, exactly where `thumb_cache_path` says one would live, to
+        // prove removal actually cleans them up rather than just orphaning
+        // them beside the source.
+        let cache_a = thumb_cache_path(&path_a, &id_a).expect("real source path");
+        let cache_b = thumb_cache_path(&path_b, &id_b).expect("real source path");
+        std::fs::create_dir_all(cache_a.parent().unwrap()).unwrap();
+        std::fs::write(&cache_a, b"fake jpeg bytes").unwrap();
+        std::fs::write(&cache_b, b"fake jpeg bytes").unwrap();
+        assert!(cache_a.exists());
+        assert!(cache_b.exists());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        // a batch delete of [a, b, "no-such-id"] — the stale id must not
+        // abort the whole batch (D-061's multi-select "Delete N" sends
+        // whatever the panel's current selection is; a race with e.g. a
+        // concurrent import/remove shouldn't fail the user's click).
+        rt.block_on(chroma_media_remove(vec![
+            id_a.clone(),
+            id_b.clone(),
+            "no-such-id".into(),
+        ]))
+        .expect("an unknown id in the batch should be skipped, not fail the whole call");
+
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.media.len(), 1, "only the untouched item should remain");
+        assert_eq!(reloaded.media[0].id, id_c);
+        assert!(!cache_a.exists(), "a's cached thumbnail should be cleaned up too");
+        assert!(!cache_b.exists(), "b's cached thumbnail should be cleaned up too");
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);

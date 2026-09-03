@@ -19,7 +19,9 @@ numbers are actually calibrated).
   v3/Later), export +
   `.cube` bake, `grade.json`, the agent activity feed + `request_human`, an eval
   harness. MCP surface: 38+ tools. **RapidRAW's DAM/welcome/library shell is gone**
-  (D-043) — it's the grading editor only now.
+  (D-043) — it's the grading editor only now. **Shot-switch now shows a real
+  loading spinner** (D-063/B-015) instead of a silent flash to blank — the
+  spinner already existed, fully built, wired to a dead pre-pivot flag.
 - **Editor** — MVP: single-video-track timeline (`chroma-timeline` + `react-timeline-editor`),
   scrub/play preview (independent of the Colorist render path) via the shared
   `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
@@ -35,20 +37,30 @@ numbers are actually calibrated).
   edit model now actually maintains** (D-058, closing a gap D-054's backend
   model had opened) — drag-from-Sources and edge-trim were both silently
   broken by that gap until the owner's live testing caught it and this pass
-  fixed it (**B-012**/**B-013**). No multi-track or transcript cut yet.
+  fixed it (**B-012**/**B-013**) — though D-058's own fix alone still wasn't
+  the whole story: drag-and-drop stayed dead in the *real* app until
+  **D-064** found Tauri's own `dragDropEnabled` (on by default, intercepting
+  HTML5 drag before the page saw it) — the actual last piece, confirmed by
+  the owner dragging a real clip in the real window. Edge-trim now has a
+  real `ew-resize` cursor + hover affordance (D-061; the library never
+  styled this). No multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
-  still an open question), Save (project-scoped sidecar
-  `<project>.chroma/motion/manifest.json`) and Render (`chroma-motion`
-  crate → `npx remotion render`). No multi-manifest, render progress/cancel,
-  or packaged-build story for the engine yet.
+  still an open question, now queued below as its own scoping task), Save
+  (project-scoped sidecar `<project>.chroma/motion/manifest.json`) and
+  Render (`chroma-motion` crate → `npx remotion render`) — **render now
+  auto-imports its output into Sources** (D-062), ready to drag onto the
+  Edit timeline like any other clip (deliberately not auto-placed on any
+  timeline). No multi-manifest, render progress/cancel, or packaged-build
+  story for the engine yet.
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
   screen (opens on the launcher, tabs appear once a project is open), a docked
   Sources/Library panel reachable from every tab (real poster-frame thumbnails,
   import, search, a bin tree with real "New Folder" creation — even an empty
-  one persists and lists, drag-to-track — D-046, D-059), `@chroma/ui` (shadcn/
-  Base UI, 18 components, themed).
+  one persists and lists, drag-to-track — D-046, D-059; **real delete**, single
+  via a hover trash icon/right-click or multi-select "Select all"/"Delete (N)"
+  — D-060/D-061), `@chroma/ui` (shadcn/Base UI, 18 components, themed).
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.
@@ -209,6 +221,33 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      single-track UI needing to speak the new model correctly. Fixed;
      see D-058 / **B-012**/**B-013**. Phase D (an actual multi-track UI —
      multiple visible lanes, track headers) is still not started.
+   - **Follow-up, same day (D-064):** D-058's own fix was real but the
+     drag still didn't work in the *actual app* — see D-064: Tauri's
+     window-level `dragDropEnabled` (on by default) was intercepting
+     HTML5 drag events before the page saw them. `dragDropEnabled: false`
+     in `tauri.conf.json`; confirmed by the owner dragging a real clip in
+     the real window, the project's first non-proxy drag-and-drop
+     confirmation.
+7. **Motion property-editor GUI** — owner, 2026-09-03: not yet scoped.
+   Motion is currently 100% raw JSON manifest + live preview by design
+   (D-047 explicitly punted "a visual editor" as an open question). Owner
+   wants real per-primitive property controls (position/timing/text/camera
+   keyframes across all 7 primitives — text, emphasis, matrix, graph,
+   layers, scene3d, particleflow — plus scene/layer selection) so AI
+   drafts the manifest and a human refines it through a GUI, not raw JSON.
+   Considered buying Remotion's official **Editor Starter**
+   (remotion.dev/docs/editor-starter) as the frontend — checked: it's a
+   **paid product** (one-time purchase for individuals/small companies, a
+   "Company License" subscription for larger ones; ~$600 per the owner's
+   own check of the actual price, not published on the docs page) and a
+   **template to adopt and customize**, not a component library to
+   integrate into an existing app — real rework either way to speak our
+   manifest schema instead of its own internal data model. Owner's call:
+   not worth it, build our own — but its feature list (Layout/Position/
+   Dimensions/Rotation, Typography, Fill, Stroke, a proper layers timeline)
+   is a real reference for scoping this properly, same discipline as the
+   multi-track NLE effort (`docs/notes/multi-track-nle.md`) — write the
+   scope down before building. **Not yet started** — no notes doc yet.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

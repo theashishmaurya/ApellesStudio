@@ -1,0 +1,32 @@
+/*
+ * Chroma — resize-handle cursor + hover affordance for
+ * `@xzdarcy/react-timeline-editor`'s clip edge-trim handles (D-060).
+ *
+ * The bundled library CSS (imported just above this one in
+ * `TimelinePane.tsx`, so this file's rules win on specificity ties) styles
+ * these handles' `:after` triangle indicator but never sets a `cursor` on
+ * the handle itself — trimming worked fine (`interact.js`'s own
+ * `resizable()` needs no cursor styling to function, and D-058 already
+ * fixed the real pointer-events bug blocking the drag itself), but nothing
+ * told the mouse it *could* until the owner pointed out there was no
+ * visual cue at all on hover, unlike a reference editor's clear
+ * ew-resize/highlight affordance. Reuses the library's own
+ * `.timeline-editor-cursor`/`-area` `ew-resize` convention (already the
+ * playhead scrubber's hover cursor) rather than inventing a new one, plus
+ * a hover opacity bump on the same `:after` triangle the library already
+ * draws — only the side that's actually visible on that handle (the other
+ * side is `transparent` by design, left untouched so it doesn't gain a
+ * visible border where none should be).
+ */
+.timeline-editor-action-left-stretch,
+.timeline-editor-action-right-stretch {
+  cursor: ew-resize;
+}
+
+.timeline-editor-action-left-stretch:hover:after {
+  border-left-color: rgba(255, 255, 255, 0.35);
+}
+
+.timeline-editor-action-right-stretch:hover:after {
+  border-right-color: rgba(255, 255, 255, 0.35);
+}

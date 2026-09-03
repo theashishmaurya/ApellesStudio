@@ -2122,6 +2122,7 @@ pub fn run() {
             chroma::project::chroma_media_import,
             chroma::project::chroma_media_list,
             chroma::project::chroma_media_move,
+            chroma::project::chroma_media_remove,
             chroma::project::chroma_media_create_folder,
             chroma::project::chroma_media_folders,
             chroma::project::chroma_project_add_shot,

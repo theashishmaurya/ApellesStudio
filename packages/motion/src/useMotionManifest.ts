@@ -28,7 +28,7 @@ const DEBOUNCE_MS = 300;
 
 export type LoadState = 'loading' | 'no-project' | 'ready' | 'error';
 
-export function useMotionManifest() {
+export function useMotionManifest(onRendered?: (outputPath: string) => void) {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -146,12 +146,23 @@ export function useMotionManifest() {
       }
       const result = await renderManifest();
       setRenderResult(result);
+      // D-062: rendering used to just write the file and print its path as
+      // plain text — nothing put it anywhere the owner could actually use
+      // it (not the Sources pool, not the Edit timeline), so "does render
+      // create a video I can drag into my own video?" was a real "no" until
+      // this callback. `onRendered` is owned by the app layer (D-039: a tab
+      // package like this one must not reach into `@chroma/bridge`'s media
+      // pool store directly), which imports it into Sources — from there
+      // it's a normal draggable clip like anything else, not spliced onto a
+      // timeline automatically (the owner may not want it there yet, or may
+      // want it on a different timeline/track than whatever's active).
+      onRendered?.(result.outputPath);
     } catch (e) {
       setRenderError(e instanceof Error ? e.message : String(e));
     } finally {
       setRendering(false);
     }
-  }, [manifest, parseError, dirty, save]);
+  }, [manifest, parseError, dirty, save, onRendered]);
 
   return {
     loadState,

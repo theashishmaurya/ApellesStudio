@@ -4,6 +4,47 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Sources panel delete (single + batch), edge-trim
+  cursor, timeline-switcher width fix (D-060/D-061).** New
+  `chroma_media_remove(ids: Vec<String>)` — right-click "Remove from
+  pool," a hover trash icon per card, and a header "Select" → "Select
+  all" / "Delete (N)" bulk path, all wired to the same batch command
+  (removes the pool ref + cached thumbnail, never the source file). The
+  timeline's resize handles get a real `ew-resize` cursor + hover
+  highlight (the library never styled this at all — `timeline-
+  overrides.css`, new); the D-058 tab strip stops stretching to fill the
+  row (`grow-0`, the shadcn base `flex-1` was never actually cancelled)
+  and is capped to half-width. `cargo test chroma::` 126/126 (+1).
+- **2026-09-03** — **The real B-012/B-013 fix: Tauri's own
+  `dragDropEnabled` was eating drag-and-drop in the actual app (D-064).**
+  D-058 fixed the frontend model and verified strongly — in a plain
+  Chrome tab, since that's this sandbox's only way to drive real DOM
+  events. The owner's live retest in the real Tauri window showed drag
+  still completely dead: Tauri v2's window-level native drag capture
+  (on by default, never set in `tauri.conf.json`) intercepts HTML5 drag
+  events before the page ever sees them — a class of bug no proxy method
+  could catch. `dragDropEnabled: false`. Confirmed by the owner dragging
+  a real clip in the real window.
+- **2026-09-03** — **Motion render now lands in Sources; Edit-tab preview
+  gets a real loading state (D-062).** Rendering used to just write a
+  file and print its path as plain text — nothing put it anywhere
+  usable. `onRendered` (app-composition-root-owned, since `@chroma/
+  motion` can't reach `@chroma/bridge`) now imports the result into the
+  Sources pool. `PreviewPane`'s "no frame" placeholder — shown
+  identically whether a frame was loading or genuinely absent — is now a
+  real spinner during a first-load, and the plain text only for a
+  genuinely empty timeline.
+- **2026-09-03** — **Colorist shot-switch preview had a fully-built
+  loading spinner wired to a dead flag (D-063, B-015).** `showSpinner`
+  existed, styled and correct, keyed to `useLibraryStore.isViewLoading`
+  — a RapidRAW still-image-library flag with exactly one call site,
+  unreachable since the D-043 video pivot. The real switch paths
+  (`switchToShot`, `_hydrateOpenDto`) never touched it, and
+  `_hydrateOpenDto` itself never toggled `busy` either (4 callers each
+  separately remembered to wrap it; Sources' "add to grading" didn't).
+  `isLoading` now also reads `useSessionStore.busy`; the toggle moved
+  inside `_hydrateOpenDto` so every caller gets it for free.
+
 - **2026-09-03** — **Multi-track NLE Phase B1: opaque top-wins video-track
   resolution (D-056).** Real finding: opaque "top wins" compositing needed
   **no new rendering/GPU code** — with no alpha in play, the top-priority

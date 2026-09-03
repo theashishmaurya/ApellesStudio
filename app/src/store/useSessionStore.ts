@@ -459,51 +459,68 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // --- project model (D-037) ------------------------------------------------
 
   _hydrateOpenDto: async (dto) => {
-    // the Rust session already holds the online shots (chroma_project_open
-    // loaded them). Mirror it, then attach per-shot grades + project metadata.
-    const list = await invoke<SessionDto>('chroma_session_list');
+    // D-063: `busy` set here, not just left to each caller — `openProject`/
+    // `newProject`/etc. (the 4 in-store callers) already wrap their own
+    // call to this in `busy: true`/`false`, but `SourcesPanel`'s "add to
+    // grading" action calls this directly and never did, which is exactly
+    // why clicking "+" on a Sources clip flashed to a blank/stale preview
+    // during the real decode round trip below with zero loading feedback —
+    // `Editor.tsx`'s spinner (D-063, now wired to this flag too) had
+    // nothing to key off. Setting it here, inside the one function every
+    // path funnels through, means a future 7th caller gets this for free
+    // instead of needing to remember it (the exact gap this fixes). A
+    // redundant `true`→`true` from an outer caller that already set it is
+    // harmless.
+    set({ busy: true });
+    try {
+      // the Rust session already holds the online shots (chroma_project_open
+      // loaded them). Mirror it, then attach per-shot grades + project metadata.
+      const list = await invoke<SessionDto>('chroma_session_list');
 
-    const shotIds: Record<string, string> = {};
-    for (const s of dto.shots) shotIds[s.sourcePath] = s.id;
-    const offlineShots: OfflineShot[] = dto.shots
-      .filter((s) => s.offline)
-      .map((s) => ({ id: s.id, sourcePath: s.sourcePath, name: s.name }));
+      const shotIds: Record<string, string> = {};
+      for (const s of dto.shots) shotIds[s.sourcePath] = s.id;
+      const offlineShots: OfflineShot[] = dto.shots
+        .filter((s) => s.offline)
+        .map((s) => ({ id: s.id, sourcePath: s.sourcePath, name: s.name }));
 
-    const grades: Record<string, Adjustments> = {};
-    for (const s of dto.shots) {
-      if (s.offline) continue;
-      try {
-        const g: any = await invoke('chroma_load_grade', { path: `${dto.gradeDir}/${s.id}.grade.json` });
-        grades[s.sourcePath] = normalizeLoadedAdjustments(g?.adjustments ?? INITIAL_ADJUSTMENTS);
-      } catch {
-        /* no grade.json for this shot yet — neutral */
+      const grades: Record<string, Adjustments> = {};
+      for (const s of dto.shots) {
+        if (s.offline) continue;
+        try {
+          const g: any = await invoke('chroma_load_grade', { path: `${dto.gradeDir}/${s.id}.grade.json` });
+          grades[s.sourcePath] = normalizeLoadedAdjustments(g?.adjustments ?? INITIAL_ADJUSTMENTS);
+        } catch {
+          /* no grade.json for this shot yet — neutral */
+        }
       }
-    }
 
-    set({
-      shots: list.shots,
-      activeIndex: list.active,
-      grades,
-      shotIds,
-      offlineShots,
-      projectPath: dto.projectPath,
-      projectName: dto.name,
-      gradeDir: dto.gradeDir,
-      projectSettings: dto.settings ?? null,
-      dirty: false,
-    });
+      set({
+        shots: list.shots,
+        activeIndex: list.active,
+        grades,
+        shotIds,
+        offlineShots,
+        projectPath: dto.projectPath,
+        projectName: dto.name,
+        gradeDir: dto.gradeDir,
+        projectSettings: dto.settings ?? null,
+        dirty: false,
+      });
 
-    if (list.shots.length > 0) {
-      // decode + install the active shot's frame into the editor and apply its grade
-      const sw = await invoke<SessionSwitchDto>('chroma_session_set_active', { index: list.active });
-      set({ shots: sw.session.shots, activeIndex: sw.session.active });
-      const active = sw.session.shots[sw.session.active];
-      applyLoaded(active, sw.loaded, grades[active.path] ?? { ...INITIAL_ADJUSTMENTS });
-    } else {
-      // every shot offline — nothing to show
-      useEditorStore.getState().setEditor({ selectedImage: null });
-      useChromaStore.getState().setVideoInfo(null);
-      useAgentStore.getState().scopeToShot(null);
+      if (list.shots.length > 0) {
+        // decode + install the active shot's frame into the editor and apply its grade
+        const sw = await invoke<SessionSwitchDto>('chroma_session_set_active', { index: list.active });
+        set({ shots: sw.session.shots, activeIndex: sw.session.active });
+        const active = sw.session.shots[sw.session.active];
+        applyLoaded(active, sw.loaded, grades[active.path] ?? { ...INITIAL_ADJUSTMENTS });
+      } else {
+        // every shot offline — nothing to show
+        useEditorStore.getState().setEditor({ selectedImage: null });
+        useChromaStore.getState().setVideoInfo(null);
+        useAgentStore.getState().scopeToShot(null);
+      }
+    } finally {
+      set({ busy: false });
     }
   },
 

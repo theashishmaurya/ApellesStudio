@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Loader2 } from 'lucide-react';
 import { Player } from '@chroma/player';
 
 import { useEditorTimelineStore } from './timelineStore';
@@ -158,12 +159,29 @@ export function PreviewPane() {
     <Player
       title="Timeline"
       surface={
-        frameSrc ? (
+        // D-062: a plain "no frame" text was doing double duty for two very
+        // different states — "still waiting on the first frame" (normal,
+        // e.g. right after dropping a clip onto an empty timeline — the
+        // scrub fetch just hasn't resolved yet) and "genuinely nothing to
+        // show." Both rendered identical static gray text, so a real fetch
+        // in flight read exactly like a stuck/broken preview — the owner's
+        // own live testing flagged this as ambiguous. Once any frame has
+        // loaded, `frameSrc` never goes back to `null` on its own (only a
+        // remount resets it — see the module doc's scrub-effect note), so
+        // this spinner only ever appears on a genuine first-load, not on
+        // ordinary scrub/play frame-to-frame fetches, which still keep the
+        // previous frame visible while the next one loads (unchanged).
+        decodeErr ? (
+          <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
+        ) : frameSrc ? (
           <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
-        ) : (
-          <div className="text-sm text-text-secondary">
-            {decodeErr ? `preview error: ${decodeErr}` : 'no frame'}
+        ) : timeline ? (
+          <div className="flex flex-col items-center gap-2 text-text-secondary">
+            <Loader2 className="size-5 animate-spin" />
+            <span className="text-xs">Loading preview…</span>
           </div>
+        ) : (
+          <div className="text-sm text-text-secondary">no frame</div>
         )
       }
       frame={playhead}

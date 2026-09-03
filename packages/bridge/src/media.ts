@@ -77,6 +77,14 @@ interface MediaPoolState {
    *  `folder: null` to move it back to the pool root. Updates `items` in
    *  place on success. */
   moveToFolder: (id: string, folder: string | null) => Promise<{ ok: boolean; error?: string }>;
+  /** remove one or more items from the pool in a single round trip
+   *  (D-060/D-061 — a batch, not a single id, so the panel's multi-select
+   *  "Delete N" doesn't do one disk write per item). Does not touch the
+   *  file on disk (media is always referenced in place, never owned by the
+   *  project), only the pool's reference to it + its cached thumbnail. An
+   *  id no longer in the pool is silently skipped, not an error. Removes
+   *  every requested id from `items` in place on success. */
+  removeMedia: (ids: string[]) => Promise<{ ok: boolean; error?: string }>;
   /** register a new, possibly-still-empty bin path (D-059) — the Sources
    *  panel's "New Folder" action. Idempotent; replaces `folders` with the
    *  backend's fresh (deduped, sorted) list on success. */
@@ -135,6 +143,18 @@ export const useMediaPoolStore = create<MediaPoolState>((set) => ({
       if (folder && folder.trim()) {
         set((s) => (s.folders.includes(folder) ? s : { folders: [...s.folders, folder].sort() }));
       }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  removeMedia: async (ids) => {
+    if (ids.length === 0) return { ok: true };
+    try {
+      await invoke('chroma_media_remove', { ids });
+      const idSet = new Set(ids);
+      set((s) => ({ items: s.items.filter((it) => !idSet.has(it.id)) }));
       return { ok: true };
     } catch (e) {
       return { ok: false, error: String(e) };

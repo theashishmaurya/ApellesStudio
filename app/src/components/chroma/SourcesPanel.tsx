@@ -24,10 +24,32 @@
 // "+" on each item is the explicit "add to grading" action
 // (`chroma_project_add_shot`), distinct from import: importing is pool-only
 // by design, grading is opt-in per item.
+//
+// Deletion (D-060/D-061): right-click → "Remove from pool" (D-060) plus two
+// faster paths added the same session once the owner flagged right-click
+// alone as "too much" — a per-card hover trash button for a single quick
+// delete, and a header "Select" toggle that turns every card into a
+// checkbox for a real multi-select "Select all" / "Delete N" bulk action
+// (`chroma_media_remove` takes a batch of ids for exactly this, one disk
+// write for the whole selection rather than one per item).
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
-import { ChevronRight, Film, Folder, FolderOpen, FolderPlus, Plus, Search, WifiOff } from 'lucide-react';
+import {
+  Check,
+  CheckSquare,
+  ChevronRight,
+  Film,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Plus,
+  Search,
+  Square,
+  Trash2,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import {
   Button,
   ContextMenu,
@@ -242,6 +264,7 @@ export function SourcesPanel() {
   const refresh = useMediaPoolStore((s) => s.refresh);
   const importPaths = useMediaPoolStore((s) => s.importPaths);
   const moveToFolder = useMediaPoolStore((s) => s.moveToFolder);
+  const removeMedia = useMediaPoolStore((s) => s.removeMedia);
   const createFolder = useMediaPoolStore((s) => s.createFolder);
 
   const [search, setSearch] = useState('');
@@ -251,6 +274,11 @@ export function SourcesPanel() {
   // `undefined` = closed; `null` = open, creating at the pool root; a string
   // = open, creating nested inside that folder (D-059).
   const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
+  // D-061: multi-select mode — header's "Select" toggle turns every card
+  // into a checkbox; `selectedIds` only matters while this is true (cleared
+  // on exit so a stale selection can't silently apply to a later action).
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (projectOpen) void refresh();
@@ -293,6 +321,43 @@ export function SourcesPanel() {
     if (!res.ok) toast.error(`Move failed: ${res.error}`);
   };
 
+  // D-060/D-061: no confirmation dialog — matches this panel's existing
+  // low-ceremony convention (New Folder has none either), and the action is
+  // non-destructive to the actual file (media is always referenced in
+  // place, never copied/owned — see the module doc), only to the pool's
+  // reference to it.
+  const doRemove = async (ids: string[], label: string) => {
+    const res = await removeMedia(ids);
+    if (!res.ok) toast.error(`Couldn't remove: ${res.error}`);
+    else toast.success(`Removed ${label} from the pool`);
+  };
+
+  const toggleSelecting = () => {
+    setSelecting((s) => !s);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allVisibleSelected = filtered.length > 0 && filtered.every((it) => selectedIds.has(it.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(filtered.map((it) => it.id)));
+  };
+
+  const doDeleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    await doRemove(ids, ids.length === 1 ? '1 clip' : `${ids.length} clips`);
+    setSelectedIds(new Set());
+  };
+
   const addToGrading = async (id: string) => {
     setAddingId(id);
     try {
@@ -318,22 +383,73 @@ export function SourcesPanel() {
         <span className="text-[11px] font-semibold tracking-wide text-text-secondary flex-1">
           SOURCES
         </span>
+        <Button
+          variant={selecting ? 'secondary' : 'ghost'}
+          size="xs"
+          onClick={toggleSelecting}
+          disabled={items.length === 0}
+          className="h-6 gap-1"
+        >
+          <CheckSquare className="size-3" /> Select
+        </Button>
         <Button variant="ghost" size="xs" onClick={doImport} disabled={importing} className="h-6 gap-1">
           <Plus className="size-3" /> Import
         </Button>
       </div>
 
-      <div className="shrink-0 px-2.5 py-1.5 border-b border-border-color">
-        <div className="relative">
-          <Search className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search media…"
-            className="h-6 pl-6 text-[11px]"
-          />
+      {selecting ? (
+        // D-061: the bulk-action bar replaces the search box while
+        // selecting — searching and multi-selecting-across-a-filter at the
+        // same time is a real feature (D-062 candidate) this pass doesn't
+        // build; simplest correct scope is "Select all" means all of
+        // `filtered`, so hiding search here avoids the confusing case of a
+        // stale selection referencing items the current filter now hides.
+        <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border-color bg-accent/5">
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary"
+          >
+            {allVisibleSelected ? (
+              <CheckSquare className="size-3.5 text-accent" />
+            ) : (
+              <Square className="size-3.5" />
+            )}
+            Select all
+          </button>
+          <span className="flex-1 text-[11px] text-text-secondary">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="destructive"
+            size="xs"
+            onClick={() => void doDeleteSelected()}
+            disabled={selectedIds.size === 0}
+            className="h-6 gap-1"
+          >
+            <Trash2 className="size-3" /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          </Button>
+          <button
+            onClick={toggleSelecting}
+            title="Cancel"
+            aria-label="Cancel selection"
+            className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="shrink-0 px-2.5 py-1.5 border-b border-border-color">
+          <div className="relative">
+            <Search className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search media…"
+              className="h-6 pl-6 text-[11px]"
+            />
+          </div>
+        </div>
+      )}
 
       <ContextMenu>
         <ContextMenuTrigger>
@@ -400,56 +516,105 @@ export function SourcesPanel() {
           </p>
         ) : (
           <div className="grid grid-cols-2 gap-2">
-            {filtered.map((it) => (
-              <div
-                key={it.id}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = 'copy';
-                  e.dataTransfer.setData(
-                    CHROMA_MEDIA_DRAG_MIME,
-                    JSON.stringify({
-                      id: it.id,
-                      sourcePath: it.sourcePath,
-                      name: it.name,
-                      frameCount: it.video?.frameCount ?? null,
-                    }),
-                  );
-                }}
-                title={it.sourcePath}
-                className="group relative flex flex-col gap-1 rounded-md border border-border-color bg-bg-primary p-1.5 cursor-grab active:cursor-grabbing hover:border-accent/60"
-              >
-                <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
-                  {it.thumb ? (
-                    <img
-                      src={it.thumb}
-                      alt=""
-                      draggable={false}
-                      className="absolute inset-0 h-full w-full object-cover"
-                    />
-                  ) : (
-                    <Film className="size-4 text-text-secondary/50" />
-                  )}
-                  {it.offline && (
-                    <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
-                      <WifiOff className="size-3" />
+            {filtered.map((it) => {
+              const isSelected = selectedIds.has(it.id);
+              return (
+                <ContextMenu key={it.id}>
+                  <ContextMenuTrigger>
+                    <div
+                      draggable={!selecting}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'copy';
+                        e.dataTransfer.setData(
+                          CHROMA_MEDIA_DRAG_MIME,
+                          JSON.stringify({
+                            id: it.id,
+                            sourcePath: it.sourcePath,
+                            name: it.name,
+                            frameCount: it.video?.frameCount ?? null,
+                          }),
+                        );
+                      }}
+                      onClick={() => selecting && toggleSelected(it.id)}
+                      title={it.sourcePath}
+                      className={cn(
+                        'group relative flex flex-col gap-1 rounded-md border p-1.5 hover:border-accent/60',
+                        selecting ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing',
+                        isSelected ? 'border-accent bg-accent/10' : 'border-border-color bg-bg-primary',
+                      )}
+                    >
+                      <div className="aspect-video w-full rounded bg-black/30 flex items-center justify-center relative overflow-hidden">
+                        {it.thumb ? (
+                          <img
+                            src={it.thumb}
+                            alt=""
+                            draggable={false}
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        ) : (
+                          <Film className="size-4 text-text-secondary/50" />
+                        )}
+                        {it.offline && (
+                          <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
+                            <WifiOff className="size-3" />
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
+                        {it.name}
+                      </span>
+                      {selecting ? (
+                        // D-061: a real checkbox, always visible (not just
+                        // on hover) — the whole point of selection mode is
+                        // seeing at a glance what's selected before
+                        // committing to Delete.
+                        <div
+                          className={cn(
+                            'absolute top-1 left-1 size-5 rounded flex items-center justify-center border',
+                            isSelected
+                              ? 'bg-accent border-accent text-white'
+                              : 'bg-bg-primary/90 border-border-color text-transparent',
+                          )}
+                        >
+                          <Check className="size-3" />
+                        </div>
+                      ) : (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void doRemove([it.id], it.name);
+                            }}
+                            title="Remove from pool"
+                            aria-label={`Remove ${it.name} from the pool`}
+                            className="absolute top-1 left-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void addToGrading(it.id);
+                            }}
+                            disabled={addingId === it.id || it.offline}
+                            title="Add to grading"
+                            aria-label={`Add ${it.name} to grading`}
+                            className="absolute top-1 right-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 hover:border-accent"
+                          >
+                            <Plus className="size-3" />
+                          </button>
+                        </>
+                      )}
                     </div>
-                  )}
-                </div>
-                <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
-                  {it.name}
-                </span>
-                <button
-                  onClick={() => addToGrading(it.id)}
-                  disabled={addingId === it.id || it.offline}
-                  title="Add to grading"
-                  aria-label={`Add ${it.name} to grading`}
-                  className="absolute top-1 right-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 hover:border-accent"
-                >
-                  <Plus className="size-3" />
-                </button>
-              </div>
-            ))}
+                  </ContextMenuTrigger>
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => void doRemove([it.id], it.name)} variant="destructive">
+                      <Trash2 className="size-3.5" /> Remove from pool
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              );
+            })}
           </div>
         )}
       </div>

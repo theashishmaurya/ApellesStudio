@@ -4754,3 +4754,227 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
       *less* available, only more, whatever a given click's own timing
       happens to show on a small idle test project.
   - Dev server killed after (`lsof -ti:15420 | xargs kill -9` + `pkill -9 RapidRAW`).
+
+## D-060/D-061 — Sources panel: real delete (single, batch), edge-trim cursor affordance, timeline-switcher width
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Live testing (same session as D-058) turned up four more
+  real gaps: no way to remove a clip from the Sources pool at all; the
+  library's own resize handles ship with no `cursor` styling, so nothing
+  told the mouse edge-trim was even possible until you'd already started
+  dragging; right-click-then-click "Remove from pool" (D-060's first pass)
+  was flagged as "too much" once it existed — a faster hover/bulk path was
+  asked for next (D-061); and the rebuilt tab strip (D-058) still looked
+  like a full-width bar with a lot of dead space behind 1-2 short tabs.
+- **D-060 — `chroma_media_remove`.** New Tauri command, added
+  `SourcesPanel`'s right-click "Remove from pool." Removes the pool
+  reference + the cached thumbnail file (`thumb_cache_path`, D-059) only —
+  never the source file (media stays referenced-in-place, never owned).
+  A `ProjectShot` still referencing the removed id is left alone
+  deliberately: `resolve_shot`'s pre-existing "dangling reference →
+  offline, not fatal" discipline already covers it.
+- **D-061 — batch delete + faster UI paths, same day.** Once a real delete
+  existed, right-click was flagged as too slow for the common case.
+  `chroma_media_remove` was reshaped to take `Vec<String>` instead of one
+  id (matching `chroma_media_import`'s "one round trip, one manifest save"
+  shape) *before* it had any real caller outside this pass, so this isn't
+  a breaking API change to anything shipped. An unknown id in the batch is
+  silently skipped rather than failing the whole call — the ids come from
+  the panel's own already-rendered selection, not typed input, so "already
+  gone" isn't a real error worth aborting a multi-item click over. Two new
+  UI paths, both wired to the same batch command: (1) a hover trash icon
+  per card (top-left, mirroring the existing top-right "add to grading"
+  `+`) for a one-click single delete, no right-click needed; (2) a header
+  "Select" toggle that turns every card into a checkbox with "Select all"
+  + "Delete (N)" — the bulk path. Right-click "Remove from pool" (D-060)
+  is left in place as a third option, not removed.
+- **Edge-trim cursor.** `@xzdarcy/react-timeline-editor`'s bundled CSS
+  styles the resize handles' `:after` triangle but sets no `cursor` on the
+  handle itself (checked directly in the bundled `.css`, not assumed) —
+  `TimelinePane.tsx` never fixed this because D-058's fix was about the
+  drag actually *working*, not about the affordance telling you it could.
+  New `timeline-overrides.css` (imported after the library's own, so it
+  wins ties): `cursor: ew-resize` on both handles (reusing the library's
+  own convention from the playhead scrubber) + a hover opacity bump on
+  each handle's own `:after` triangle — only the side that's actually
+  visible on that handle, the other stays `transparent` by design.
+  Fixing the pre-existing "1 known tsc error" (`Cannot find module ...
+  side-effect import of *.css`, D-051) alongside adding a second one was
+  cheaper than accepting two: a `packages/editor/src/css.d.ts`
+  (`declare module '*.css'`) ambient declaration clears both, `tsc
+  --noEmit` on `packages/editor` is 0 now, not 1.
+- **Timeline-switcher width.** The shadcn base `TabsTrigger` ships
+  `flex-1` (an equal-width segmented-control style); D-058's own override
+  only added `shrink-0`, which cancels `flex-1`'s *shrink* half but not
+  its *grow* half — tabs kept stretching to fill the whole row. Added
+  `grow-0 basis-auto` (the actual fix) + a right hairline divider (`gap-0`
+  replacing `gap-0.5`, since equal-width flex-1 had been the only thing
+  keeping tabs visually apart) + capped the switcher's own container to
+  `w-1/2 min-w-[220px]` per the owner's explicit ask, rather than the
+  full-width bar D-058 shipped.
+- **Verification.** `cargo test chroma::` 126/126 (was 125; +1:
+  `media_remove_deletes_a_batch_and_their_cached_thumbnails` — 2 real
+  items + 1 stale id in one batch call, asserts both real items and their
+  synthesized cache files are gone, the stale id doesn't error the call,
+  and the untouched third item survives). `tsc --noEmit`: `app` 64/64
+  unchanged, `packages/editor` **1 → 0** (the `css.d.ts` fix), `packages/
+  bridge` 0/0. Real `cargo build --workspace` + a full `npm run tauri:dev`
+  boot, twice (the first attempt hit a stale port-1420 process and a
+  corrupted 3GB incremental-build cache — both artifacts of this session's
+  own repeated force-kills across restarts, not this change; cleared
+  `target/debug/incremental` and rebuilt clean). No automated DOM-level
+  interaction test this pass (the D-058 Chrome-tab method); the owner
+  confirmed drag-and-drop working live first, then this batch landed on
+  top of that same running app.
+
+## D-062 — Motion render auto-imports into Sources; Edit-tab preview gets a real loading state
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Two owner questions in one message: "does render put the
+  video on the timeline or in Sources, so I can drag it into my own
+  video?" and a follow-up report of a preview "flicker" that looked like
+  a broken refresh rather than a normal load.
+- **Render destination — traced, not guessed.** `chroma_motion_render`
+  (`app/src-tauri/src/chroma/motion.rs`) only ever wrote a file to
+  `<project>.chroma/motion/render.mp4` and returned its path;
+  `ManifestEditor.tsx` just printed that path as plain text. Nothing
+  imported it into the media pool or placed it on any timeline — the
+  honest answer to "does it..." was no.
+- **Fix — an `onRendered` callback, not a cross-layer import.**
+  `@chroma/motion` cannot depend on `@chroma/bridge` (D-039 layer
+  direction: a tab package doesn't reach into the app/domain layer), so
+  `useMotionManifest`/`MotionTab` gained an optional `onRendered?:
+  (outputPath: string) => void`, fired with the real render result.
+  `app/src/main.tsx` (the composition root — same reasoning as its
+  existing B-007 bridge) supplies it: `useMediaPoolStore.importPaths([outputPath])`
+  at the pool root, toast on success/failure. **Deliberately does not**
+  also splice the result onto the Edit tab's active timeline — the owner
+  may want a specific track/position, not wherever an automatic placement
+  would land it; dragging it in from Sources (like any other clip) stays
+  the one explicit placement action. A second render at the same fixed
+  output path returns `added: []` (the backend already dedups by path,
+  D-045) — handled as a pool refresh, not a false "couldn't add" error.
+- **Preview flicker (Edit tab) — a real gap, distinct from D-063's
+  Colorist-tab version of the same underlying mistake.**
+  `PreviewPane.tsx`'s fallback rendered the exact same plain "no frame"
+  text whether a frame was still loading (normal, e.g. right after
+  dropping the first clip onto an empty timeline) or genuinely absent —
+  indistinguishable from broken. Since `frameSrc` only reads `null` on a
+  genuine first-load (a later scrub/play keeps the previous frame visible
+  while the next one fetches — unchanged, already correct), the fix is a
+  derived render, no new state: `decodeErr` → error text, `frameSrc` →
+  the image, `frameSrc === null && timeline` → a real `Loader2` spinner,
+  else the plain "no frame" text for a genuinely-empty case.
+- **Verification.** `tsc --noEmit`: `packages/motion` 0/0, `app` 64/64
+  unchanged, `packages/editor` 0/0 (post D-061's `css.d.ts` fix). No
+  automated render-then-drag test this pass (would need a real `npx
+  remotion render` invocation, several seconds per run); reasoned from
+  the traced code path plus the pre-existing `chroma_media_import`
+  dedup-by-path behavior (already covered by other tests) rather than a
+  new end-to-end test.
+
+## D-063 — Colorist shot-switch preview: the loading spinner existed but was wired to a dead flag
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** The same "flicker" report, but for the Colorist tab: the
+  owner clicking a shot in the strip, or "add to grading" from Sources,
+  saw a blank/stale preview for a moment with no loading indication.
+- **The real finding — a spinner already existed, fully built, wired to
+  a flag that's always `false` in the current app.** `Editor.tsx`'s
+  `showSpinner` (`isLoading && !hasDisplayableImage`) drives a real,
+  already-styled full-screen `Loader2` overlay (48px, accent color, a
+  300ms opacity transition) — genuinely good UI, just never fires.
+  `isLoading` reads `useLibraryStore.isViewLoading`, which is only ever
+  set by `useAppNavigation`'s still-image `handleImageSelect` flow — a
+  survivor of RapidRAW's original photo-library UI that the video-only
+  Colorist pivot (D-043) never calls anymore. Confirmed by grep, not
+  assumption: `isViewLoading` has exactly one `true`-setting call site in
+  the whole app, and it's unreachable from the current video workflow.
+  The actual "select a video" operations — `useSessionStore`'s
+  `switchToShot` (the shot strip) and `_hydrateOpenDto` (project open,
+  and "add to grading" from Sources) — each do a real decode round trip
+  through `chroma_session_set_active`, with zero visual feedback wired to
+  either.
+- **A second, independent gap in the same area: `_hydrateOpenDto` itself
+  never touched `busy` at all.** `switchToShot` correctly wraps its own
+  call in `busy: true`/`false`; `openProject`/`newProject`/`saveUntitledAs`/
+  `relinkShot` each separately wrap their own call to `_hydrateOpenDto` in
+  `busy: true`/`false` — four call sites all remembering to do it
+  independently. `SourcesPanel.tsx`'s "add to grading" action calls
+  `_hydrateOpenDto` directly and never did — the most likely trigger for
+  what the owner actually saw, since dragging/adding a clip into grading
+  is a normal, frequent action. **Fix:** moved the `busy` toggle inside
+  `_hydrateOpenDto` itself (try/finally), so every current and future
+  caller gets it whether or not it remembers to wrap the call — a
+  redundant `true`→`true` from an outer caller that already set it is
+  harmless.
+- **Fix, wiring.** `Editor.tsx`'s `isLoading` now reads `useLibraryStore
+  .isViewLoading || useSessionStore.busy` — additive (RapidRAW's original
+  flag, if the still-image path is ever reachable again, still works; the
+  real video-switch path now works too), not a replacement.
+- **Verification.** `tsc --noEmit`: `app` 64/64 unchanged (both files
+  touched — `useSessionStore.ts`, `Editor.tsx` — are inside the existing
+  baseline error set, confirmed no new errors from either). No automated
+  UI test this pass (no screen-recording access to the real Tauri window,
+  the same recurring gap D-046/D-051/D-058 have each hit) — reasoned from
+  a direct trace of both `busy`'s existing call sites and `isViewLoading`'s
+  single, dead call site, not from re-reading the spinner JSX alone. See
+  **B-015** in `docs/BUGS.md` for the bug writeup.
+
+## D-064 — the actual B-012/B-013 root cause: Tauri's own `dragDropEnabled` was intercepting HTML5 drag-and-drop in the real app
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** D-058 fixed the frontend/backend model mismatch behind
+  B-012 (drag-and-drop) and B-013 (edge-trim), verified via genuinely
+  strong DOM-level interaction evidence — real `dragstart`/`dragover`/
+  `drop` events, real synthetic `PointerEvent` sequences, against the real
+  unmodified components. There was one acknowledged, unavoidable gap in
+  that method: it ran in a plain Chrome tab (`npx vite`, no Tauri/Rust),
+  with `window.__TAURI_INTERNALS__` minimally shimmed — the documented
+  workaround for this sandbox having no screen-recording access to the
+  real Tauri window. The owner's very next live retest showed drag-and-
+  drop still completely inert in the actual app. Trim worked; drag didn't
+  — a real, narrower gap than D-058's fix being wrong.
+- **Root cause — found by inspecting `tauri.conf.json`, not by guessing.**
+  Tauri v2's window-level native drag-drop capture (`app.windows[].
+  dragDropEnabled`) defaults to `true` and was never set in this project's
+  config. When enabled, Tauri intercepts OS-level drag sessions at the
+  webview layer for its own `onDragDropEvent` API (built for "drop a file
+  from Finder onto the window") — this competes with, and in practice
+  swallows, the page's own standard HTML5 `dragstart`/`dragover`/`drop`
+  protocol that `SourcesPanel`'s drag-to-timeline feature depends on. A
+  plain Chrome tab has no Tauri runtime present at all, so there was
+  nothing to intercept anything in D-058's test — this is exactly the
+  class of Tauri-runtime-specific behavior that verification method was
+  structurally incapable of catching, flagged honestly in this project's
+  own notes as a known limit of that workaround, and it's exactly what
+  bit here.
+- **Fix.** `"dragDropEnabled": false` added to the one window entry in
+  `app/src-tauri/tauri.conf.json`. Checked first that nothing in the
+  codebase listens for Tauri's native `onDragDropEvent`/`tauri://drag-*`
+  events (grepped — zero matches) — the app has no feature that depends
+  on OS-level file-drop-from-Finder, so disabling it costs nothing.
+  A config-only change still requires a full rebuild to take effect
+  (Tauri bakes `tauri.conf.json` into the binary via its build script's
+  `cargo:rerun-if-changed`), not just a window restart.
+- **Verification.** Real, not simulated: killed the running dev instance,
+  rebuilt (`cargo build --workspace`, clean), relaunched
+  `npm run tauri:dev`, and the owner personally dragged a clip from
+  Sources onto the Edit-tab timeline in the actual native window —
+  "yeah drag and drop works." This is the first drag-and-drop
+  confirmation this project has that wasn't a proxy (Chrome tab, unit
+  test, or code read) — the real window, a real mouse.
+- **Process note, not a new technical finding:** this is the second time
+  in one session a "verified" fix shipped and then failed the owner's own
+  live retest (D-046's drag-to-track claim, then D-058's own trim/drag
+  claim). Both times the actual gap was narrower than "the fix is wrong"
+  — D-058's model fix and DOM-interaction method were both genuinely
+  correct for what they tested; the miss was a real-app-only behavior no
+  available proxy could exercise. Recorded here rather than glossed over,
+  since "restart in the real app and just try it" is now the standing
+  last verification step for any interaction-level fix in this repo, not
+  optional polish.

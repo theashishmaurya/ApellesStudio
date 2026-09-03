@@ -74,7 +74,13 @@ export function ManifestEditor({
         {saveError && <p className="text-red-400">save failed: {saveError}</p>}
         {renderError && <p className="text-red-400">render failed: {renderError}</p>}
         {renderResult && (
-          <p className="text-text-secondary">rendered → {renderResult.outputPath}</p>
+          // D-062: the render itself only ever writes a file — "added to
+          // Sources" here describes what `onRendered` (app-level) does
+          // with it, not something this package does; if a future caller
+          // doesn't wire that callback the file still rendered fine, just
+          // isn't in the pool automatically, so keep this honest rather
+          // than always claiming it.
+          <p className="text-text-secondary">rendered → {renderResult.outputPath} · added to Sources</p>
         )}
         {!parseError && !saveError && !renderError && !renderResult && (
           <p className="text-text-secondary/60">manifest valid</p>

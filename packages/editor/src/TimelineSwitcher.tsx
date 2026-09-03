@@ -61,7 +61,12 @@ export function TimelineSwitcher() {
   if (timelines.length === 0) return null;
 
   return (
-    <div className="shrink-0 border-b border-border-color bg-surface px-1.5">
+    // D-060: the strip previously spanned the full pane width regardless of
+    // how many tabs it held (a single 2-tab project left most of the row
+    // empty, dark space with no separation from the actual clip timeline
+    // below it) — capped to half the pane's width per the owner's ask, with
+    // a `min-w` floor so a long timeline name still has room before eliding.
+    <div className="shrink-0 w-1/2 min-w-[220px] border-b border-border-color bg-surface px-1.5">
       <Tabs
         value={active?.id ?? ''}
         onValueChange={(value) => {
@@ -73,12 +78,23 @@ export function TimelineSwitcher() {
           if (id && id !== active?.id) void setActiveTimeline(id);
         }}
       >
-        <TabsList variant="line" className="h-8 w-full justify-start gap-0.5 rounded-none bg-transparent p-0">
+        <TabsList variant="line" className="h-8 w-full justify-start gap-0 rounded-none bg-transparent p-0">
           {timelines.map((t) => (
             <TabsTrigger
               key={t.id}
               value={t.id}
-              className="h-8 shrink-0 rounded-t-md rounded-b-none border-b-2 border-transparent px-2.5 text-[11px] data-selected:border-accent"
+              // D-060: the shadcn base `TabsTrigger` ships `flex-1` (an
+              // equal-width segmented control) — this switcher's tabs are a
+              // real strip of independently-sized labels, not a segmented
+              // toggle, so `grow-0 basis-auto` overrides it (`shrink-0`
+              // alone, the pre-fix className, only cancels the *shrink*
+              // half of `flex-1` — the *grow* half was still splitting the
+              // row evenly, which is why every tab looked oversized and
+              // identical-width). A right hairline (`border-r`, dropped on
+              // the last tab) replaces the bare `gap-0.5` as the visual
+              // separator between tabs, since equal-width flex-1 was the
+              // only thing that had been keeping them apart before.
+              className="h-8 shrink-0 grow-0 basis-auto rounded-t-md rounded-b-none border-r border-border-color/60 border-b-2 border-b-transparent px-3 text-[11px] last:border-r-0 data-selected:border-b-accent"
             >
               {t.name || 'Untitled timeline'}
             </TabsTrigger>
@@ -104,7 +120,7 @@ export function TimelineSwitcher() {
               value={NEW_TIMELINE_TAB}
               aria-label="New timeline"
               title="New timeline"
-              className="h-8 w-8 shrink-0 justify-center rounded-t-md rounded-b-none px-0 text-text-secondary hover:text-text-primary"
+              className="h-8 w-8 shrink-0 grow-0 basis-auto justify-center rounded-t-md rounded-b-none px-0 text-text-secondary hover:text-text-primary"
             >
               <Plus className="size-3.5" />
             </TabsTrigger>

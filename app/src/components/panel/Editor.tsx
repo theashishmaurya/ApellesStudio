@@ -25,6 +25,7 @@ import { useLibraryStore } from '../../store/useLibraryStore';
 import { useAiMasking } from '../../hooks/useAiMasking';
 import { useChromaSubjectTracking } from '../../hooks/useChromaSubjectTracking';
 import { useChromaStore } from '../../store/useChromaStore';
+import { useSessionStore } from '../../store/useSessionStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
 
 const parseRgb = (rgbStr: string): [number, number, number, number] => {
@@ -88,7 +89,18 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
   const activePanel = useUIStore((s) => s.activePanel);
   const isInstantTransition = useUIStore((s) => s.isInstantTransition);
   const setUI = useUIStore((s) => s.setUI);
-  const isLoading = useLibraryStore((s) => s.isViewLoading);
+  // D-063: `isViewLoading` is RapidRAW's original still-image-library flag
+  // (set by `useAppNavigation`'s image-select flow, which the video-only
+  // Colorist UI never calls post-D-043) — always `false` in practice here,
+  // so `showSpinner` below never fired for a real gap this tab actually
+  // has: `useSessionStore`'s `switchToShot` (the shot strip) and
+  // `_hydrateOpenDto` (Sources panel "add to grading") both do a real
+  // decode round trip with the old frame already gone and the new one not
+  // installed yet, and nothing told the user it was loading rather than
+  // broken — see B-015/D-063 (`docs/BUGS.md`/`docs/08-decisions.md`) for
+  // the report that found this. `busy` is the flag that's actually true
+  // during both.
+  const isLoading = useLibraryStore((s) => s.isViewLoading) || useSessionStore((s) => s.busy);
   const selectedImage = useEditorStore((s) => s.selectedImage);
   const adjustments = useEditorStore((s) => s.adjustments);
   const adjustmentsHistory = useEditorStore((s) => s.history);

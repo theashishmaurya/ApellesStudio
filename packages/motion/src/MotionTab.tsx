@@ -8,14 +8,19 @@
  * rendering are project-scoped (`app/src-tauri/src/chroma/motion.rs`), so —
  * same contract `@chroma/editor`'s `EditorTab` already uses — a project
  * must be open.
+ *
+ * `onRendered` (D-062, optional) fires with the rendered file's path after
+ * a successful render — this package can't import it into the Sources pool
+ * itself (`@chroma/bridge` is app/domain-layer, D-039 layer direction), so
+ * the app-level composition (`app/src/main.tsx`) supplies this to do that.
  */
 import { Button } from './Button';
 import { MotionPreview } from './MotionPreview';
 import { ManifestEditor } from './ManifestEditor';
 import { useMotionManifest } from './useMotionManifest';
 
-export function MotionTab() {
-  const m = useMotionManifest();
+export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
+  const m = useMotionManifest(onRendered);
 
   if (m.loadState === 'no-project') {
     return (
