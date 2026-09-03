@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useImperativeHandle } from 'react';
 import { Crop, PercentCrop } from 'react-image-crop';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
@@ -2070,6 +2070,31 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
       )}
     >
       {hasRenderedAnyPreview && <div className="hidden" data-bench-id="editor-first-frame" />}
+      {isFullScreen && (
+        // D-065: the only fullscreen-exit control was the toolbar's own
+        // button — but the whole toolbar is exactly what this container
+        // collapses to `max-h-0 opacity-0` the moment fullscreen turns on
+        // (below), so there was no way to click back out. Escape *should*
+        // also exit (see `useKeyboardShortcuts.ts`'s builtin Escape
+        // handler), but `handleToggleFullScreen` exists as two separate,
+        // duplicated closures (this file and `App.tsx`, wired to two
+        // different callers) — real duplication, a real bug-prone smell,
+        // not confirmed broken by static reading alone but exactly the
+        // shape of gap this session has repeatedly found only breaks in
+        // the real running app. This button calls `setUI` directly,
+        // bypassing both closures entirely, so it's a guaranteed working
+        // exit regardless of whatever's happening with either of them —
+        // rendered outside the toolbar's own collapsing container, always
+        // on top (`z-50`), fixed position so no other transform affects it.
+        <button
+          onClick={() => setUI({ isFullScreen: false })}
+          title="Exit fullscreen"
+          aria-label="Exit fullscreen"
+          className="fixed top-3 right-3 z-50 size-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 backdrop-blur-sm"
+        >
+          <X size={16} />
+        </button>
+      )}
       <div
         className={clsx(
           'shrink-0 relative z-10',

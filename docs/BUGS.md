@@ -74,6 +74,13 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-016 — Colorist fullscreen preview has no way back out: no close button, Escape didn't work either
+status: fixed (2026-09-03, D-065) · severity: medium (not stuck forever — the app-level tab bar still switches tabs — but a real dead end inside the preview itself) · area: `app/src/components/panel/Editor.tsx`
+- **found:** owner's own hands-on testing, 2026-09-03 — "after doing full screen on colorist no way to go back... no cross no esc etc."
+- **cause:** the fullscreen-exit button lived only inside `EditorToolbar`, and the toolbar's own wrapping container is set to `max-h-0 opacity-0` exactly when `isFullScreen` is true — the one control that could exit fullscreen was hidden by fullscreen itself. Separately, `handleToggleFullScreen` exists as two independent, undeduplicated closures (`App.tsx`, wired to the Escape-key shortcut; `Editor.tsx`, wired to the toolbar button) with no prop threading connecting them — a real duplication smell, not fully root-caused for why Escape specifically didn't fire (both closures write the same `useUIStore.isFullScreen` flag, so they *should* be equivalent), left as a known follow-up rather than a risky untested refactor this pass.
+- **fix:** a dedicated close (`X`) button, always rendered when `isFullScreen` (outside the toolbar's collapsing container, `z-50`, fixed position), calling `setUI({ isFullScreen: false })` directly — bypasses both `handleToggleFullScreen` closures entirely, so it's a guaranteed exit regardless of whatever's happening with either of them.
+- **deferred:** consolidate the two `handleToggleFullScreen` closures into one (thread it as a prop `App.tsx` → `EditorView` → `Editor`, or lift the toggle into `useUIStore` as an action) and confirm live whether Escape's dead-end was a real bug in that duplication or something else entirely.
+
 ## B-015 — Colorist preview flashes to a blank/stale image on every shot switch, with no loading indication
 status: fixed (2026-09-03, D-063) · severity: medium (no data loss; reads as broken, not just unpolished — this is what the owner reported as "a refresh/flicker") · area: `app/src/components/panel/Editor.tsx`, `app/src/store/useSessionStore.ts`
 - **found:** owner's own hands-on testing, 2026-09-03 — clicking a different shot in the strip, or "add to grading" from Sources, showed a brief flash with nothing telling them whether it was loading or had actually failed.

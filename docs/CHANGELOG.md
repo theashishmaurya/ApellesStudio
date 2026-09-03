@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Colorist fullscreen had no way back out (D-065,
+  B-016).** The only exit button lived inside the toolbar, which itself
+  hides (`max-h-0 opacity-0`) exactly when fullscreen turns on — the
+  control that exits fullscreen was hidden by fullscreen. Added a
+  dedicated close button, always rendered, independent of the toolbar and
+  of two undeduplicated `handleToggleFullScreen` closures (`App.tsx`/
+  `Editor.tsx`, real duplication flagged but not fully consolidated this
+  pass — see D-065).
+
 - **2026-09-03** — **Sources panel delete (single + batch), edge-trim
   cursor, timeline-switcher width fix (D-060/D-061).** New
   `chroma_media_remove(ids: Vec<String>)` — right-click "Remove from

@@ -4978,3 +4978,41 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   since "restart in the real app and just try it" is now the standing
   last verification step for any interaction-level fix in this repo, not
   optional polish.
+
+## D-065 — Colorist fullscreen: a guaranteed close button, independent of two undeduplicated toggle closures
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner's live testing: full-screening the Colorist preview left
+  no way back — no visible close control, Escape didn't work either.
+- **Found, by reading the actual render tree rather than guessing:**
+  `EditorToolbar` (the only place `onToggleFullScreen` was wired to a button)
+  sits inside a container that itself collapses to `max-h-0 opacity-0` the
+  instant `isFullScreen` turns on — the one exit control was hidden by the
+  very state it exits. Separately, `handleToggleFullScreen` turned out to be
+  two independent `useCallback`s — one in `App.tsx` (wired to `useKeyboard
+  Shortcuts`'s Escape handler), one in `Editor.tsx` (wired to the toolbar
+  button) — with zero prop threading between `App.tsx` → `EditorView` →
+  `Editor` connecting them. Both write the same `useUIStore.isFullScreen`
+  flag, so they're functionally equivalent on paper; why Escape specifically
+  didn't work for the owner wasn't nailed down by static reading alone, and
+  a live-window interaction test (this session's own now-standing
+  discipline, per D-064) wasn't run for this one due to time — flagged
+  honestly rather than claimed fixed with confidence it doesn't have.
+- **Fix, scoped to what's certain rather than the whole duplication.** A
+  dedicated close (`X`) button, rendered unconditionally when `isFullScreen`
+  — outside the toolbar's own collapsing container, `z-50`, fixed position —
+  calling `setUI({ isFullScreen: false })` directly. This sidesteps both
+  closures entirely: whatever is or isn't wrong with either one, this button
+  works regardless, because it doesn't go through them at all.
+- **Deferred, explicitly:** consolidating the two closures into one (thread
+  `App.tsx`'s version down as a prop, or move the toggle into `useUIStore`
+  as an action both callers read) — real duplication, real bug-prone smell,
+  but a prop-threading change through two component layers isn't something
+  to risk untested this late in the session when the button alone already
+  closes the owner's actual complaint. See **B-016** in `docs/BUGS.md`.
+- **Verification.** `tsc --noEmit -p app`: 64/64, unchanged baseline. No
+  live-window click test this pass (noted above as a real gap, not glossed
+  over) — the fix is a simple, direct store write with no dependency on the
+  code whose behavior wasn't fully explained, which is the actual basis for
+  confidence here, not a live click.
