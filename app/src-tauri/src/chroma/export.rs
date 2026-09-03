@@ -266,12 +266,30 @@ fn grade_frame(
         .and_then(|m| serde_json::from_value(m.clone()).ok())
         .unwrap_or_default();
 
-    let mask_bitmaps: Vec<_> = mask_defs
+    let mut mask_bitmaps: Vec<_> = mask_defs
         .iter()
         .filter_map(|def| generate_mask_bitmap(def, w, h, 1.0, (0.0, 0.0), None))
         .collect();
 
-    let adjustments = get_all_adjustments_from_json(js, false, None);
+    let mut adjustments = get_all_adjustments_from_json(js, false, None);
+    // Interactive relight follow-up (D-054): D-048 deliberately left every
+    // `mask_bitmaps` build site OTHER than the live-preview path
+    // (`process_preview_job` in `lib.rs`) at `relight_depth_layer == -1`, so a
+    // positional light rendered in the GUI went inert on a real export —
+    // only `apply_relight`'s ambient term (no depth needed) survived. Wire
+    // the same resolver the preview path uses in here too, so an export
+    // matches what the user actually saw. `resolve_relight_depth_bitmap`
+    // prefers a tracked depth dir (per-frame, keyed off
+    // `chroma::state::current_video().frame`, which `set_current_frame` above
+    // the `grade_frame` call already points at this exact frame) and falls
+    // back to a static single-frame bake when no track exists.
+    if adjustments.relight_light_count > 0
+        && let Some(depth_bitmap) =
+            crate::mask_generation::resolve_relight_depth_bitmap(js, w, h, 1.0, (0.0, 0.0))
+    {
+        adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
+        mask_bitmaps.push(depth_bitmap);
+    }
     let lut = js
         .get("lutPath")
         .and_then(|p| p.as_str())
@@ -838,6 +856,78 @@ mod tests {
         export_video(&vid, &out, &json!({ "exposure": 1.0 }), 0, 29, ExportOpts::default())
             .expect("export");
         assert!(out.exists());
+    }
+
+    /// D-054: a positional relight light must survive a real export, not just
+    /// the live preview (D-048 left `grade_frame` at `relight_depth_layer ==
+    /// -1` deliberately — this is the "wire it in" follow-up). Exercises
+    /// `grade_frame` directly (no `CHROMA_TEST_VIDEO` fixture needed — a
+    /// synthetic in-memory frame + a synthetic static depth bake via
+    /// `relightDepthBake`, the D-054 fallback) so this test runs in any
+    /// environment with a GPU adapter, matching `relight.rs`'s
+    /// `relight_render_is_deterministic`'s own skip-without-GPU convention.
+    /// A real, correct/incorrect answer: the lit frame's pixels must differ
+    /// from the unlit frame's — "the code path is reached" is not enough.
+    #[test]
+    fn export_positional_relight_light_changes_pixels() {
+        use base64::{Engine as _, engine::general_purpose};
+        use image::{GrayImage, ImageFormat, Luma, Rgb};
+        use std::io::Cursor;
+
+        let Ok(ctx) = render_core::init_gpu_context() else {
+            eprintln!(
+                "skip: no GPU adapter available for export_positional_relight_light_changes_pixels"
+            );
+            return;
+        };
+        let caches = OwnedRenderCaches::default();
+
+        const W: u32 = 48;
+        const H: u32 = 48;
+
+        // Real per-pixel variation, not a flat fill — a flat frame can't
+        // reveal a shading bug where the light math never actually samples
+        // per-pixel colour.
+        let frame = DynamicImage::ImageRgb8(RgbImage::from_fn(W, H, |x, y| {
+            Rgb([((x * 5) % 255) as u8, ((y * 5) % 255) as u8, 96])
+        }));
+
+        // A synthetic depth bake: radial "near in the middle" gradient, same
+        // shape the relight.rs GPU determinism test uses, encoded as the
+        // static-bake data URL (`relightDepthBake`) rather than pushed
+        // straight into `mask_bitmaps` — this exercises the D-054 fallback
+        // resolution path end-to-end, not just the shader.
+        let depth = GrayImage::from_fn(W, H, |x, y| {
+            let dx = x as f32 - (W as f32 / 2.0);
+            let dy = y as f32 - (H as f32 / 2.0);
+            let dist = (dx * dx + dy * dy).sqrt() / ((W as f32).hypot(H as f32) / 2.0);
+            Luma([(255.0 * (1.0 - dist.min(1.0))) as u8])
+        });
+        let mut buf = Cursor::new(Vec::new());
+        depth.write_to(&mut buf, ImageFormat::Png).unwrap();
+        let depth_bake = format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(buf.get_ref())
+        );
+
+        let js_lit = json!({
+            "relightLights": [{
+                "kind": "key", "x": 25.0, "y": 35.0, "radius": 50.0,
+                "intensity": 160.0, "color": "#ff9040", "visible": true
+            }],
+            "relightDepthBake": depth_bake,
+        });
+        let lit = grade_frame(&ctx, &caches, frame.clone(), 0, &js_lit).expect("lit export frame");
+
+        let js_unlit = json!({});
+        let unlit = grade_frame(&ctx, &caches, frame, 0, &js_unlit).expect("unlit export frame");
+
+        assert_eq!(lit.dimensions(), unlit.dimensions());
+        assert_ne!(
+            lit.into_raw(),
+            unlit.into_raw(),
+            "a positional relight light with a static depth bake made no difference to an exported frame"
+        );
     }
 
     /// Tracked-subject export: an `ai-subject` mask carrying a `chromaTrackDir`

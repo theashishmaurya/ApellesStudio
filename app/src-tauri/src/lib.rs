@@ -489,15 +489,17 @@ fn process_preview_job(
     let tm_override = resolve_tonemapper_override_from_handle(app_handle, is_raw);
     let mut final_adjustments =
         get_all_adjustments_from_json(&adjustments_clone, is_raw, tm_override);
-    // Interactive relight (D-046): append the resolved depth bitmap as one more
-    // mask-texture-array layer (same array `get_cached_or_generate_mask` just
-    // populated) and point the uniform at it. Live-preview path only — the
-    // other `mask_bitmaps` construction sites (export/thumbnail/LUT bake)
-    // leave `relight_depth_layer` at -1, so relight there stays ambient-only.
+    // Interactive relight (D-048, static-bake fallback D-054): append the
+    // resolved depth bitmap as one more mask-texture-array layer (same array
+    // `get_cached_or_generate_mask` just populated) and point the uniform at
+    // it. `resolve_relight_depth_bitmap` prefers a tracked depth dir, falling
+    // back to a static single-frame bake when no track exists (D-054) — this
+    // is the live-preview path; `chroma/export.rs`'s `grade_frame` now calls
+    // the same resolver for the real export render (D-054 also wired that
+    // path, previously left at -1 / ambient-only per D-048).
     if final_adjustments.relight_light_count > 0
-        && let Some(dir) = crate::chroma::relight::resolve_depth_dir(&adjustments_clone)
-        && let Some(depth_bitmap) = crate::mask_generation::generate_relight_depth_bitmap(
-            &dir,
+        && let Some(depth_bitmap) = crate::mask_generation::resolve_relight_depth_bitmap(
+            &adjustments_clone,
             preview_width,
             preview_height,
             effective_scale,

@@ -226,7 +226,7 @@ export interface Adjustments {
   lutSize?: number;
   lutIsSceneReferred?: boolean;
   masks: Array<MaskContainer>;
-  /** Interactive relight (D-046). See `RelightLight`. */
+  /** Interactive relight (D-048). See `RelightLight`. */
   relightLights: Array<RelightLight>;
   /** The Video-Depth-Anything track directory (D-036) the Relight layer
    *  shades against — same tracked-dir shape a mask's `chromaDepthDir` uses,
@@ -234,6 +234,15 @@ export interface Adjustments {
    *  Depth" is run from the Relight panel; positional lights are inert (no
    *  crash) until then, ambient lights don't need it. */
   relightDepthDir: string | null;
+  /** Static single-frame depth-bake fallback (D-054, follow-up to D-048) —
+   *  a raw Depth-Anything-V2 data URL from "Bake Depth", the SAME single-
+   *  frame model + command (`generate_full_image_depth_map`) the lens-blur
+   *  depth map (`lensBlurDepthMap`) and D-024's AI-Depth mask static bake
+   *  already use. `relightDepthDir` (a real temporal track) always wins over
+   *  this when both are set; this is what lets a still image, or a video
+   *  with no track run yet, shade positional lights instead of staying
+   *  inert. `null` until "Bake Depth" is run. */
+  relightDepthBake: string | null;
   orientationSteps: number;
   rotation: number;
   saturation: number;
@@ -354,7 +363,7 @@ export interface MaskAdjustments {
   whites: number;
 }
 
-/** Interactive relight (D-046) — one virtual light in the "Relight" grade
+/** Interactive relight (D-048) — one virtual light in the "Relight" grade
  *  layer. A sibling top-level layer, NOT a mask container: it shades every
  *  pixel via a depth-driven normal, not a rasterized opacity matte.
  *  `x`/`y`/`radius` are 0–100 percentages (of frame width/height, and of the
@@ -601,6 +610,7 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
   masks: [],
   relightLights: [],
   relightDepthDir: null,
+  relightDepthBake: null,
   orientationSteps: 0,
   rotation: 0,
   saturation: 0,

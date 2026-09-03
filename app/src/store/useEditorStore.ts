@@ -64,9 +64,12 @@ interface EditorState {
   // Masks & AI
   activeMaskContainerId: string | null;
   activeMaskId: string | null;
-  // Interactive relight (D-046) — which light in `adjustments.relightLights`
+  // Interactive relight (D-048) — which light in `adjustments.relightLights`
   // the canvas puck + RelightPanel controls are currently editing.
   activeRelightLightId: string | null;
+  // D-054: "Bake Depth" (the static single-frame fallback) is in flight —
+  // mirrors `isGeneratingAiMask` below, scoped to just this one button.
+  isBakingRelightDepth: boolean;
   activeAiPatchContainerId: string | null;
   activeAiSubMaskId: string | null;
   isMaskControlHovered: boolean;
@@ -111,6 +114,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   activeMaskContainerId: null,
   activeMaskId: null,
   activeRelightLightId: null,
+  isBakingRelightDepth: false,
   activeAiPatchContainerId: null,
   activeAiSubMaskId: null,
 

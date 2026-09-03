@@ -967,14 +967,29 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   `components/ui/AppProperties.tsx` (+`Panel.Relight`),
   `components/panel/PanelSwitcher.tsx` (+icon/tooltip), `store/useUIStore.ts`
   (panel registration), `i18n/locales/en.json` (+1 tooltip key).
-  · **Interactive relight (D-046):** a new "Relight" grade layer + a
-  depth-driven WGSL shading pass, riding D-024's existing mask-texture-array
-  plumbing (one more `textureLoad` layer, no new bind group) and D-036's
-  existing depth-track sidecar job (same commands, a new top-level
-  `relightDepthDir` target instead of a mask's parameters). No `AppState` /
-  Cargo / Tauri-command / bind-group change. Verified against the real
-  running app + a real project over the control-server bridge (D-046's
-  "Verified" section has the detail). Full design in D-046.
+  · **Interactive relight (D-048 — mislabeled "D-046" in this note until
+  D-054 fixed it; D-046 is actually "Media pool pass 3"):** a new "Relight"
+  grade layer + a depth-driven WGSL shading pass, riding D-024's existing
+  mask-texture-array plumbing (one more `textureLoad` layer, no new bind
+  group) and D-036's existing depth-track sidecar job (same commands, a new
+  top-level `relightDepthDir` target instead of a mask's parameters). No
+  `AppState` / Cargo / Tauri-command / bind-group change. Verified against
+  the real running app + a real project over the control-server bridge
+  (D-048's "Verified" section has the detail). Full design in D-048. Small
+  deferred follow-ups (static depth-bake fallback, export wiring, a Preset
+  tab, MCP tool wrapping) landed 2026-09-03 as D-054.
+
+- **2026-09-03** — **Interactive relight follow-ups (D-054)**, on top of
+  D-048's vendored-file edits above · edits: `mask_generation.rs`
+  (+`generate_relight_depth_bitmap_static` — decodes a static base64 depth
+  bake through the existing `generate_ai_bitmap_from_base64` warp path;
+  +`resolve_relight_depth_bitmap` — the one entry point every render path
+  now calls, tracked dir first then static-bake fallback; +6 tests),
+  `lib.rs` (`process_preview_job` now calls `resolve_relight_depth_bitmap`
+  instead of its old inline dir-then-bitmap two-step — same behaviour for
+  the tracked case, the fallback for free). `chroma/export.rs` (new Chroma
+  code, not an upstream-fork file) wires the same resolver into
+  `grade_frame` — see D-054 for the full write-up.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

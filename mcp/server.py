@@ -678,6 +678,95 @@ def delete_mask(mask_id: str) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# relight (D-048, MCP wrapping D-054)
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def list_relight_lights() -> str:
+    """List every light in the "Relight" grade layer (D-048) plus its depth
+    source. Returns {lights: [{id, kind, x, y, radius, intensity, color,
+    visible, chromaKeyframes?}], depthDir}. kind is "key" | "fill" | "rim" |
+    "ambient" — only "ambient" changes the shading math (uniform tint, no
+    position/falloff); the other three are UI presets sharing one math path.
+    x/y/radius are 0-100 percentages of frame size. depthDir is the tracked
+    Video-Depth-Anything directory (depth_track / "Track Depth" in the
+    Relight panel) key/fill/rim lights shade against — null means those
+    positional lights currently render as a no-op UNLESS a static depth bake
+    exists (see the Relight panel's "Bake Depth" button, D-054); ambient
+    lights need no depth source at all."""
+    import json
+
+    return json.dumps(_op("list_relight_lights"), indent=2, default=str)
+
+
+@mcp.tool()
+def add_relight_light(
+    kind: str = "key",
+    x: float | None = None,
+    y: float | None = None,
+    radius: float | None = None,
+    intensity: float | None = None,
+    color: str | None = None,
+) -> list:
+    """Add a light to the "Relight" grade layer (D-048) — a deterministic,
+    depth-driven virtual light, the agent's path to relight without driving
+    the canvas puck (RelightPuckLayer) directly.
+
+    kind: "key" | "fill" | "rim" | "ambient". Each has a sensible preset
+    default (e.g. "key" = warm, screen-left, tight falloff) applied first;
+    only the args you pass override it. "ambient" ignores x/y/radius (it
+    tints the whole frame uniformly, no position/falloff).
+
+    x/y: 0-100, percentage of frame width/height. radius: 0-100, percentage
+    of the longer frame dimension — falloff distance, ignored for ambient.
+    intensity: 0-200 (100 = the shader's baseline light strength). color:
+    "#rrggbb".
+
+    A positional (key/fill/rim) light needs a depth source to actually shade
+    anything — run depth_track first (temporal, video only), or use the
+    Relight panel's "Bake Depth" button (static single-frame fallback,
+    D-054, also works on a still). Returns {light} and the rendered frame."""
+    args: dict = {"kind": kind}
+    if x is not None:
+        args["x"] = x
+    if y is not None:
+        args["y"] = y
+    if radius is not None:
+        args["radius"] = radius
+    if intensity is not None:
+        args["intensity"] = intensity
+    if color is not None:
+        args["color"] = color
+    return _result(_op("add_relight_light", **args))
+
+
+@mcp.tool()
+def set_relight_light(
+    id: str,
+    x: float | None = None,
+    y: float | None = None,
+    radius: float | None = None,
+    intensity: float | None = None,
+    color: str | None = None,
+    visible: bool | None = None,
+    kind: str | None = None,
+) -> list:
+    """Update an existing relight light (id from list_relight_lights /
+    add_relight_light). Only passed args change. Same field meanings as
+    add_relight_light. Set visible=false to temporarily disable a light
+    without deleting it. Returns {id, patch} and the rendered frame."""
+    patch = {k: v for k, v in locals().items() if k != "id" and v is not None}
+    return _result(_op("set_relight_light", id=id, **patch))
+
+
+@mcp.tool()
+def delete_relight_light(id: str) -> list:
+    """Delete one light from the "Relight" grade layer (id from
+    list_relight_lights). Does not touch the depth track/bake or any other
+    light."""
+    return _result(_op("delete_relight_light", id=id))
+
+
+# --------------------------------------------------------------------------- #
 # scopes — grade by the numbers
 # --------------------------------------------------------------------------- #
 @mcp.tool()

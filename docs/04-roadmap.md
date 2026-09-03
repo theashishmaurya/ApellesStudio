@@ -15,7 +15,8 @@ numbers are actually calibrated).
   (shape + AI subject, composable, keyframeable), scopes, `match_to_reference`,
   depth-haze, subject tracking (SAM2+ViTMatte) + temporal depth track (VDA),
   **interactive relight** (draggable depth-driven light pucks, deterministic,
-  real-time — D-046; the photoreal diffusion bake is still v3/Later), export +
+  real-time — D-048, follow-ups D-054; the photoreal diffusion bake is still
+  v3/Later), export +
   `.cube` bake, `grade.json`, the agent activity feed + `request_human`, an eval
   harness. MCP surface: 38+ tools. **RapidRAW's DAM/welcome/library shell is gone**
   (D-043) — it's the grading editor only now.
@@ -188,18 +189,16 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 - **Photoreal relight bake** — RelightVid/IC-Light diffusion in the `ai/` sidecar,
   seeded from the same puck setup, preview-one-frame-then-commit UX. v3, not before.
   The **interactive** half (deterministic depth-driven light pucks) shipped — see
-  "Now" above and D-046. `docs/notes/relight-research.md`.
-- **Interactive relight follow-ups (D-046 deferred, small):** a static single-frame
-  depth-bake fallback for a clip with no depth track (parity with D-024's AI-Depth
-  mask); wire `relight_depth_layer` into `export.rs`'s `mask_bitmaps` build so a
-  positional light (not just ambient) survives an export, not only live preview;
-  a "Preset" tab (saved/built-in lighting setups) alongside `RelightPanel`'s
-  Ambient/Light-N tabs — the ClipDrop reference UI has one, v1 shipped the
-  functional tabs (drag/color/power/distance/keyframe) without it; MCP tool
-  wrapping (`mcp/server.py`) for the 4 new control-server relight ops
-  (`add_relight_light` etc.) — they exist on the HTTP control-server bridge
-  (`useChromaControl.ts`) but aren't yet Claude-agent-callable tools, unlike
-  their `add_mask`/`list_masks` counterparts.
+  "Now" above and D-048 (mislabeled "D-046" here and in `docs/09-engine-notes.md`
+  until D-054 fixed it — D-046 is actually "Media pool pass 3").
+  `docs/notes/relight-research.md`.
+- ~~**Interactive relight follow-ups (D-048 deferred, small)**~~ — **done, D-054
+  (2026-09-03):** static single-frame depth-bake fallback for a clip with no
+  depth track (parity with D-024's AI-Depth mask); `relight_depth_layer` wired
+  into `export.rs`'s `mask_bitmaps` build so a positional light (not just
+  ambient) survives an export; a "Preset" tab on `RelightPanel`; MCP tool
+  wrapping (`mcp/server.py`) for the 4 control-server relight ops. All four
+  landed in one pass — see D-054.
 - **Visual understanding for the Editor tab** — temporal (Qwen3-VL, local default) +
   spatial (SAM2/YOLO, already have, just under-exposed) → natural-language footage
   search, B-roll auto-tagging, shot classification, auto-reframe hints, highlight

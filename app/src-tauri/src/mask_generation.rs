@@ -1342,7 +1342,7 @@ fn generate_sub_mask_bitmap(
     }
 }
 
-/// Interactive relight (D-046): rasterize the depth track directory the
+/// Interactive relight (D-048): rasterize the depth track directory the
 /// Relight layer shades against into a full-res `GrayImage`, aligned to the
 /// current frame exactly like an "AI Depth" mask's tracked bitmap
 /// (`generate_ai_depth_bitmap` above) — same `tracked_depth_map` (D-036) +
@@ -1375,6 +1375,69 @@ pub fn generate_relight_depth_bitmap(
         crop_offset,
     };
     Some(generate_ai_bitmap_from_full_mask(&full, &tf))
+}
+
+/// Interactive relight follow-up (D-054): static single-frame depth-bake
+/// fallback for a clip with no temporal depth track — parity with D-024's
+/// AI-Depth mask, which already degrades this way (`generate_ai_depth_bitmap`
+/// above, the `mask_data_base64` arm). `depth_base64` is the raw, un-band-
+/// passed depth-map data URL `chroma::relight::resolve_depth_bake` reads off
+/// `adjustments.relightDepthBake` — baked once by the same single-frame
+/// Depth-Anything-V2 model (`generate_full_image_depth_map`), not a second
+/// model or pipeline. Reuses the *exact* `generate_ai_bitmap_from_base64` warp
+/// path the AI-Depth mask's own static bake and every other base64-backed
+/// mask type already go through, so crop/scale alignment is identical.
+/// Relight has no per-layer rotation/flip of its own (unlike a mask
+/// sub-mask), so `tf` uses the image's own orientation only — same as
+/// [`generate_relight_depth_bitmap`] above.
+pub fn generate_relight_depth_bitmap_static(
+    depth_base64: &str,
+    width: u32,
+    height: u32,
+    scale: f32,
+    crop_offset: (f32, f32),
+) -> Option<GrayImage> {
+    if depth_base64.is_empty() {
+        return None;
+    }
+    let tf = TransformParams {
+        rotation: 0.0,
+        flip_horizontal: false,
+        flip_vertical: false,
+        orientation_steps: 0,
+        width,
+        height,
+        scale,
+        crop_offset,
+    };
+    generate_ai_bitmap_from_base64(depth_base64, &tf)
+}
+
+/// Interactive relight follow-up (D-054): the single entry point every render
+/// path (live preview `process_preview_job` in `lib.rs`, and now the real
+/// export's `grade_frame` in `chroma/export.rs`) should call to resolve the
+/// depth bitmap the Relight layer shades against for the current frame.
+/// Prefers a temporal Video-Depth-Anything track
+/// (`chroma::relight::resolve_depth_dir` + [`generate_relight_depth_bitmap`])
+/// when one is present AND something is actually cached at this frame;
+/// otherwise falls back to a static single-frame bake
+/// (`chroma::relight::resolve_depth_bake` +
+/// [`generate_relight_depth_bitmap_static`]). `None` only when neither exists
+/// — the caller then renders ambient-only relight, unchanged from D-048 v1.
+pub fn resolve_relight_depth_bitmap(
+    js_adjustments: &Value,
+    width: u32,
+    height: u32,
+    scale: f32,
+    crop_offset: (f32, f32),
+) -> Option<GrayImage> {
+    if let Some(dir) = crate::chroma::relight::resolve_depth_dir(js_adjustments)
+        && let Some(bitmap) = generate_relight_depth_bitmap(&dir, width, height, scale, crop_offset)
+    {
+        return Some(bitmap);
+    }
+    let depth_base64 = crate::chroma::relight::resolve_depth_bake(js_adjustments)?;
+    generate_relight_depth_bitmap_static(&depth_base64, width, height, scale, crop_offset)
 }
 
 pub fn generate_mask_bitmap(
@@ -1568,4 +1631,89 @@ pub fn get_cached_or_generate_mask(
     }
 
     generated
+}
+
+#[cfg(test)]
+mod relight_depth_bake_tests {
+    //! D-054: the static single-frame depth-bake fallback for relight
+    //! (`generate_relight_depth_bitmap_static` / `resolve_relight_depth_bitmap`
+    //! above). Pure image-decode + JSON-precedence tests — no GPU, no sidecar,
+    //! no video fixture needed (unlike `generate_relight_depth_bitmap`'s
+    //! tracked-dir path, which reads real files off disk).
+    use super::*;
+
+    fn tiny_depth_png_data_url(fill: u8) -> String {
+        let img = GrayImage::from_pixel(4, 4, Luma([fill]));
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, ImageFormat::Png).unwrap();
+        format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(buf.get_ref())
+        )
+    }
+
+    #[test]
+    fn static_bake_empty_input_is_none() {
+        assert!(generate_relight_depth_bitmap_static("", 8, 8, 1.0, (0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn static_bake_decodes_and_warps_to_requested_size() {
+        let data_url = tiny_depth_png_data_url(128);
+        let bitmap = generate_relight_depth_bitmap_static(&data_url, 16, 16, 1.0, (0.0, 0.0))
+            .expect("valid depth PNG should decode");
+        assert_eq!(bitmap.dimensions(), (16, 16));
+    }
+
+    #[test]
+    fn static_bake_malformed_base64_is_none() {
+        assert!(
+            generate_relight_depth_bitmap_static(
+                "data:image/png;base64,not-base64!!",
+                8,
+                8,
+                1.0,
+                (0.0, 0.0)
+            )
+            .is_none()
+        );
+    }
+
+    /// Precedence: neither source present -> None (unchanged D-048 v1
+    /// behaviour, ambient-only relight).
+    #[test]
+    fn resolve_neither_source_is_none() {
+        let js = serde_json::json!({});
+        assert!(resolve_relight_depth_bitmap(&js, 8, 8, 1.0, (0.0, 0.0)).is_none());
+    }
+
+    /// Precedence: only a static bake present -> the bake is used (this is
+    /// the whole point of D-054 — a depth-less clip now shades instead of
+    /// staying inert).
+    #[test]
+    fn resolve_falls_back_to_static_bake_when_no_tracked_dir() {
+        let js = serde_json::json!({ "relightDepthBake": tiny_depth_png_data_url(200) });
+        let bitmap = resolve_relight_depth_bitmap(&js, 12, 12, 1.0, (0.0, 0.0));
+        assert!(
+            bitmap.is_some(),
+            "static bake should resolve when no tracked dir is set"
+        );
+        assert_eq!(bitmap.unwrap().dimensions(), (12, 12));
+    }
+
+    /// Precedence: a `relightDepthDir` that resolves to nothing real on disk
+    /// (no such directory / no video loaded) still falls through to the
+    /// static bake rather than giving up — the whole point of a *fallback*.
+    #[test]
+    fn resolve_falls_back_to_static_bake_when_tracked_dir_is_empty_on_disk() {
+        let js = serde_json::json!({
+            "relightDepthDir": "/no/such/chroma/depth/dir",
+            "relightDepthBake": tiny_depth_png_data_url(90),
+        });
+        let bitmap = resolve_relight_depth_bitmap(&js, 10, 10, 1.0, (0.0, 0.0));
+        assert!(
+            bitmap.is_some(),
+            "an unresolvable tracked dir should fall through to the static bake, not give up"
+        );
+    }
 }

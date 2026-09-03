@@ -1,13 +1,16 @@
-// Chroma — interactive relight panel (D-046).
+// Chroma — interactive relight panel (D-048).
 //
 // The right-panel controls for the "Relight" grade layer: a ClipDrop-style
-// bottom tab strip (Ambient / Light 1 / Light 2 / … / + Add Light), and below
-// it the selected light's Color / Power / Distance controls plus a keyframe
-// affordance (reuses the D-034 mask-keyframe mechanism via
-// `utils/maskKeyframes.ts` — `GEOMETRY_KEYS.relight`, not a new keyframe
-// system) and a "Track Depth" button (D-036's `chroma_depth_track` job,
-// wired to the top-level `relightDepthDir` instead of a mask's parameters —
-// see `useAiMasking.ts`'s `handleTrackRelightDepth`).
+// bottom tab strip (Preset / Ambient / Light 1 / Light 2 / … / + Add Light),
+// and below it either the Preset picker (D-054) or the selected light's
+// Color / Power / Distance controls plus a keyframe affordance (reuses the
+// D-034 mask-keyframe mechanism via `utils/maskKeyframes.ts` —
+// `GEOMETRY_KEYS.relight`, not a new keyframe system), a "Track Depth" button
+// (D-036's `chroma_depth_track` job, wired to the top-level `relightDepthDir`
+// instead of a mask's parameters — see `useAiMasking.ts`'s
+// `handleTrackRelightDepth`) and a "Bake Depth" button (D-054's static
+// single-frame fallback, `handleBakeRelightDepth` — the depth-less-clip
+// parity D-024's AI-Depth mask already has).
 //
 // The canvas puck drag lives in `RelightPuckLayer` (ImageCanvas.tsx); this
 // panel is the numeric-control half of the same interaction, matching the
@@ -15,7 +18,7 @@
 //
 // Styling: plain elements + app tokens + the shared `Slider`, matching
 // MasksPanel's own control style — not a new design language.
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Diamond, Plus, Trash2, Eye, EyeOff, X } from 'lucide-react';
 
 import Slider from '../ui/Slider';
@@ -25,19 +28,27 @@ import { useChromaStore } from '../../store/useChromaStore';
 import { useAiMasking } from '../../hooks/useAiMasking';
 import { Adjustments, RelightLight } from '../../utils/adjustments';
 import { createRelightLight, relightLightLabel } from '../../utils/relightUtils';
+import { RELIGHT_PRESETS, RelightPreset } from '../../utils/relightPresets';
 import { parseKeyframes, upsertKeyframe, removeKeyframe, clearKeyframes } from '../../utils/maskKeyframes';
 
 export default function RelightPanel() {
   const { setAdjustments } = useEditorActions();
-  const { handleTrackRelightDepth } = useAiMasking();
+  const { handleTrackRelightDepth, handleBakeRelightDepth } = useAiMasking();
   const videoInfo = useChromaStore((s) => s.videoInfo);
   const currentFrame = useChromaStore((s) => s.currentFrame);
   const depthTrackProgress = useChromaStore((s) => s.depthTrackProgress);
 
   const lights = useEditorStore((s) => s.adjustments.relightLights) || [];
   const relightDepthDir = useEditorStore((s) => s.adjustments.relightDepthDir);
+  const relightDepthBake = useEditorStore((s) => s.adjustments.relightDepthBake);
+  const isBakingRelightDepth = useEditorStore((s) => s.isBakingRelightDepth);
   const activeLightId = useEditorStore((s) => s.activeRelightLightId);
   const setEditor = useEditorStore((s) => s.setEditor);
+
+  // D-054: the Preset tab is a picker, not a light — its own bit of UI state
+  // rather than a fourth kind of `activeRelightLightId`. Selecting Ambient,
+  // a light tab, or +Add Light all drop back out of it (see their handlers).
+  const [showPresets, setShowPresets] = useState(false);
 
   const ambientLight = useMemo(() => lights.find((l) => l.kind === 'ambient'), [lights]);
   const positionalLights = useMemo(() => lights.filter((l) => l.kind !== 'ambient'), [lights]);
@@ -59,6 +70,7 @@ export default function RelightPanel() {
   );
 
   const selectOrAddAmbient = useCallback(() => {
+    setShowPresets(false);
     if (ambientLight) {
       setEditor({ activeRelightLightId: ambientLight.id });
       return;
@@ -69,6 +81,7 @@ export default function RelightPanel() {
   }, [ambientLight, updateLights, setEditor]);
 
   const addPositionalLight = useCallback(() => {
+    setShowPresets(false);
     // Alternate key/fill for the first two, then default to "key" — a simple,
     // predictable preset progression rather than a kind picker on add.
     const kind = positionalLights.length === 0 ? 'key' : positionalLights.length === 1 ? 'fill' : 'key';
@@ -76,6 +89,20 @@ export default function RelightPanel() {
     updateLights((ls) => [...ls, light]);
     setEditor({ activeRelightLightId: light.id });
   }, [positionalLights.length, updateLights, setEditor]);
+
+  // D-054: apply a built-in preset — REPLACES `relightLights` through the
+  // exact same `setAdjustments` a manual add-light action uses (`updateLights`
+  // above), then selects the first light of the new set so its controls show
+  // immediately, matching "+Add Light"'s own select-on-add behaviour.
+  const applyPreset = useCallback(
+    (preset: RelightPreset) => {
+      const newLights = preset.build();
+      updateLights(() => newLights);
+      setEditor({ activeRelightLightId: newLights[0]?.id ?? null });
+      setShowPresets(false);
+    },
+    [updateLights, setEditor],
+  );
 
   const deleteLight = useCallback(
     (id: string) => {
@@ -105,35 +132,62 @@ export default function RelightPanel() {
         </div>
       </div>
 
-      {/* Depth source ------------------------------------------------------ */}
-      {videoInfo?.isVideo && (
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
+      {/* Depth source -------------------------------------------------------
+          "Track Depth" (D-036, per-frame, video only) always wins when both
+          exist; "Bake Depth" (D-054) is the fallback — a static single-frame
+          bake, parity with D-024's AI-Depth mask — works on a still image
+          too, since a still has no temporal track to run in the first place. */}
+      <div className="flex flex-col gap-1.5 text-xs text-text-secondary">
+        <div className="flex items-center gap-2 flex-wrap">
+          {videoInfo?.isVideo && (
+            <button
+              className="px-2 py-1 rounded bg-surface hover:bg-card-active text-text-primary disabled:opacity-50"
+              onClick={handleTrackRelightDepth}
+              disabled={!!depthTrackProgress}
+            >
+              {relightDepthDir ? 'Re-track depth' : 'Track Depth'}
+            </button>
+          )}
           <button
             className="px-2 py-1 rounded bg-surface hover:bg-card-active text-text-primary disabled:opacity-50"
-            onClick={handleTrackRelightDepth}
-            disabled={!!depthTrackProgress}
+            onClick={handleBakeRelightDepth}
+            disabled={isBakingRelightDepth}
+            title="Static single-frame depth bake — fallback for a clip with no depth track"
           >
-            {relightDepthDir ? 'Re-track depth' : 'Track Depth'}
+            {isBakingRelightDepth ? 'Baking…' : relightDepthBake ? 'Re-bake depth' : 'Bake Depth'}
           </button>
-          {depthTrackProgress ? (
+          {depthTrackProgress && (
             <span className="tabular-nums">
               {depthTrackProgress.total
                 ? `${depthTrackProgress.done}/${depthTrackProgress.total}`
                 : 'starting…'}
             </span>
-          ) : relightDepthDir ? (
-            <span>Depth track ready — key/fill/rim lights shade the frame.</span>
-          ) : (
-            <span>Key/fill/rim lights need a depth track (ambient works without one).</span>
           )}
         </div>
-      )}
+        {!depthTrackProgress &&
+          (relightDepthDir ? (
+            <span>Depth track ready — key/fill/rim lights shade the frame.</span>
+          ) : relightDepthBake ? (
+            <span>Static depth bake ready — key/fill/rim lights shade the frame (won&apos;t follow camera motion).</span>
+          ) : (
+            <span>Key/fill/rim lights need a depth track or bake (ambient works without one).</span>
+          ))}
+      </div>
 
-      {/* Bottom tab strip: Ambient / Light 1 / Light 2 / … / + Add Light --- */}
+      {/* Bottom tab strip: Preset / Ambient / Light 1 / Light 2 / … / + Add Light */}
       <div className="flex items-center gap-1 flex-wrap border-t border-b border-border py-2">
         <button
           className={`px-2 py-1 rounded text-xs ${
-            activeLight?.kind === 'ambient' ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
+            showPresets ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
+          }`}
+          onClick={() => setShowPresets(true)}
+          title="Apply a saved lighting setup"
+        >
+          Preset
+        </button>
+        <button
+          className={`px-2 py-1 rounded text-xs ${
+            !showPresets && activeLight?.kind === 'ambient' ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
           }`}
           onClick={selectOrAddAmbient}
         >
@@ -143,9 +197,12 @@ export default function RelightPanel() {
           <button
             key={light.id}
             className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 ${
-              light.id === activeLightId ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
+              !showPresets && light.id === activeLightId ? 'bg-accent text-button-text' : 'bg-surface text-text-secondary hover:bg-card-active'
             }`}
-            onClick={() => setEditor({ activeRelightLightId: light.id })}
+            onClick={() => {
+              setShowPresets(false);
+              setEditor({ activeRelightLightId: light.id });
+            }}
           >
             <span
               className="inline-block w-2.5 h-2.5 rounded-full border border-white/40"
@@ -163,8 +220,25 @@ export default function RelightPanel() {
         </button>
       </div>
 
-      {/* Selected light's controls ----------------------------------------- */}
-      {!activeLight ? (
+      {/* Preset picker (D-054) ----------------------------------------------- */}
+      {showPresets ? (
+        <div className="flex flex-col gap-2">
+          <div className="text-text-secondary text-xs">
+            Apply a starting look — replaces the current lights, then tweak from there.
+          </div>
+          {RELIGHT_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              className="text-left px-2 py-2 rounded bg-surface hover:bg-card-active"
+              onClick={() => applyPreset(preset)}
+            >
+              <div className="text-text-primary text-xs font-medium">{preset.label}</div>
+              <div className="text-text-secondary text-[11px] mt-0.5">{preset.description}</div>
+            </button>
+          ))}
+        </div>
+      ) : /* Selected light's controls ----------------------------------------- */
+      !activeLight ? (
         <div className="text-text-secondary text-xs">Select Ambient or add a light to edit it.</div>
       ) : (
         <div className="flex flex-col gap-2">
