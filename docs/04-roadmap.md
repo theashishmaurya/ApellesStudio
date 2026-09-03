@@ -23,15 +23,18 @@ roadmap structure.
   (including every track's waveform canvas) — cheap with 1 row, a real freeze once
   D-080 made cost scale with track count. Fixed with `useCallback` + gating the
   redundant `setDragOver` call.
-- 🔄 **Full NLE — P0** (owner: "scope it out frontend backend and work till its
-  perfect," referencing Palmier Pro as the feature bar). Real video-track
-  compositing (V1/V2 actually stacked, not opaque top-wins), track lock/hide (mute
-  already existed, D-057), rearrange (track z-order), clip transform
-  (position/scale/rotation/opacity) + keyframes reusing the existing D-034 keyframe
-  engine. In progress — data model (`chroma-timeline::Clip`/`Track` new fields) +
-  a real CPU compositor in `app/src-tauri/src/chroma/edit.rs` are the two hard
-  pieces; UI (track header icons, rearrange, a transform editor on the selected
-  clip) rides on top. No commit yet.
+- ✅ **Full NLE — P0** (owner: "scope it out frontend backend and work till its
+  perfect," referencing Palmier Pro as the feature bar). **Done, all 4 phases:**
+  data model (`bc6af05`, D-086), real alpha-over multi-layer compositor
+  (`b17eaa3`, D-088 — V1/V2 actually stacked, not opaque top-wins), TS mirror
+  (`2224e7b`, D-089), UI — lock/hide/rearrange/transform popover/keyframing
+  (`d240a40`, D-090). Real end to end: V1/V2 stacked compositing, A1/A2 audio
+  separation (pre-existing D-057), track lock/hide/mute/rearrange/selection/
+  keyframes. One documented trade-off: rearrange is up/down buttons, not
+  native drag (the library's row-drag had no clean from/to delta in the time
+  available — a working fallback over a half-working drag). 58+143+150+68+79
+  tests across the 4 phases, `tsc` clean, live app boot confirmed clean (no
+  click-through — no native-window automation available this session).
 - ✅ **Edit tab stuck on "No project open"** — done, `cec1a2b` (**D-085/B-025**).
   Real root cause of the "stuck in the click" half: `ProjectLauncher.tsx` had zero
   loading feedback during a genuinely multi-second open, inviting a second click
