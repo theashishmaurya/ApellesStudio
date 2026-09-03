@@ -4294,3 +4294,254 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   design) untouched, as directed; re-resolving active sources mid-session
   (a clip beginning after a gap won't be picked up until the next Play/seek
   — matches D-050's existing "no re-seek mid-play" design).
+## D-058 — Timeline UI fixes: `timeline.ts` gets D-054's `start_frame` for real (B-012/B-013), `TimelineSwitcher` rebuilt as a tab strip, an adaptive-density real-timecode ruler
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** The owner did real hands-on testing of the live app — the
+  first time any of D-046/D-051/D-054's timeline UI work was actually
+  driven by a real drag/interaction rather than code review, an
+  accessibility-tree script, or a unit test. Two previously-"verified"
+  interactions turned out broken (drag-and-drop from Sources, edge-trim);
+  the timeline switcher and ruler were flagged as needing real UI work this
+  task never got before. This decision covers all four; see **B-012**/
+  **B-013** in `docs/BUGS.md` for the drag/trim bug writeups specifically —
+  this entry is the design rationale, those are the "what broke and why."
+
+- **Root cause (drag-and-drop + trim) — a frontend/backend model mismatch
+  D-054 introduced and nothing re-verified before this pass, exactly the
+  risk flagged when this task was scoped.** `chroma_timeline_set` stores
+  whatever the frontend sends **verbatim** (D-041's original contract,
+  unchanged) — there is no server-side clamping, so
+  `packages/editor/src/timeline.ts`'s pure-TS mirror of the edit ops, not
+  `chroma-timeline::lib.rs`'s Rust ops, is what actually runs for every
+  edit made through this UI. D-054 (earlier the same day as this fix) gave
+  `Clip` a mandatory, timeline-absolute `start_frame: i64` and changed
+  `trim_start`/`trim_end`/`remove`'s real semantics around it (gap-aware,
+  no-overlap, neighbor-clamped) — entirely in the Rust crate, by design
+  (D-054 explicitly scoped "no frontend/UI" for Phase A). Nobody then
+  ported that model into `timeline.ts`: its `Clip` type had no
+  `start_frame` field at all, every op still assumed the pre-D-054 world
+  (a clip's position is *implicit*, the sum of every preceding clip's
+  duration), and `buildRow` rendered positions the same way — so a dropped
+  clip's JSON simply had no `start_frame` key, and a left-edge trim could
+  only ever visibly shrink a clip from the **end** (the only thing that
+  formula lets move), never the start where the user actually dragged.
+  Neither D-046 nor D-054 individually failed at what they set out to
+  verify — D-046 flagged drag-to-track as its one code-review-only,
+  not-live-tested piece; D-054 explicitly deferred all frontend work. The
+  gap was structural, between two correctly-scoped decisions landed
+  hours apart on the same day, and only surfaced once a real person
+  exercised both together. **Lesson applied going forward:** when a data
+  model a UI's own local mirror depends on changes, that UI's mirror is
+  now stale until someone explicitly re-verifies it — "the backend crate
+  has correct new semantics" and "the frontend actually produces JSON
+  matching them" are two different claims, and `chroma_timeline_set`'s
+  verbatim-storage contract means only the second one actually matters for
+  what ships.
+
+- **Second, independent root cause (trim only) — a CSS stacking bug that
+  made the resize handle physically unreachable, found only by checking
+  live hit-testing, not by reading source.** Even with `trim_start`'s model
+  fixed, a real pointer event at a resize handle's own on-screen coordinates
+  (`document.elementFromPoint`) resolved to the clip's own name-label div,
+  not the library's `.timeline-editor-action-{left,right}-stretch` handle
+  underneath it. The label carries `z-10` (so it paints above the Waveform
+  canvas within its own clip) but its parent establishes no isolating
+  stacking context, so that `z-10` escapes and competes directly against
+  the handle siblings (`z-index: auto`, rendered later in the DOM per the
+  library, which normally would win) — and since the label is an
+  unconstrained block-level div, it silently covers the entire clip width,
+  both 10px edge zones included. `interact.js`'s `resizable()` — correctly
+  configured, exactly as D-051 found — never received the `pointerdown`
+  that starts a resize gesture, because the label ate it first. This means
+  edge-trim's real pre-fix symptom was nothing happens at all (no resize
+  cursor engaging, no `onActionResizeEnd`), not "the wrong edge moves" as
+  the `trim_start` model bug alone would have predicted — the model bug was
+  real but never actually reachable through the UI until this hitbox bug
+  was found and fixed first. See B-013's full writeup.
+
+- **Fix — port D-054's model into `timeline.ts` for real, field-for-field
+  against the Rust ops, not a reinterpretation.** `Clip.start_frame` added;
+  `NewClipFields = Omit<Clip, 'start_frame'>` is what a not-yet-placed
+  clip (a Sources-panel drag) actually has, and `applyOp`'s `add_clip`
+  case computes the real value (`nextAppendFrame` — end of whatever's
+  already on the target track) at the only point that has both the new
+  clip and the real track state, rather than ever letting a clip exist
+  without one. `trim_start`/`trim_end` reimplemented to mirror
+  `chroma-timeline::Timeline::trim_start`/`trim_end` exactly (including
+  the neighbor-clamp bounds); `split` now gives its right half a real
+  `start_frame` instead of copying the left half's (previously: both
+  halves claimed the same timeline position); `remove` needed no code
+  change (a plain splice already matches the crate's "lift, not ripple"
+  semantics — see below) but its *effect* changed once rendering stopped
+  deriving position from Vec order. `buildRow`/`doSplit`/the ripple-flash
+  snapshot all now read `clip.start_frame` directly instead of re-deriving
+  it. New `move` `EditOp` (mirroring `Timeline::move_clip`'s same-track
+  case, overlap-rejected) replaces `onActionMoveEnd`'s old array-splice
+  `reorder` call — `reorder` alone stopped affecting position the moment
+  `start_frame` became authoritative (D-054 redefined it as storage-order
+  only), so leaving the clip-body-drag handler calling it would have made
+  dragging a clip's body silently do nothing, a regression this fix would
+  otherwise have introduced. `reorder` itself is left as-is (unused by
+  this UI now, kept for API completeness/tests, matches the crate).
+  **Consequence, not a compromise:** a gap can now genuinely appear on
+  screen (after a left-edge trim, or a remove) — this matches what's on
+  disk and is exactly what a normal NLE's non-ripple trim looks like, not
+  a rendering bug. A future ripple-trim mode (shift downstream clips too)
+  is a real, separate feature this doesn't build. **The hitbox bug's fix**
+  is one line in `TimelinePane.tsx`'s `getActionRender` — `pointer-events-
+  none` on the clip-name label (with an inline comment carrying the full
+  stacking-context writeup, so a future reader doesn't mistake it for
+  decorative and remove it) — deliberately not `isolate` on the content
+  wrapper (the more "textbook" stacking-context fix): the label and the
+  already-`pointer-events: none` Waveform canvas are both purely decorative
+  overlays that don't need to receive pointer events themselves — `onClick`/
+  drag/resize are all handled by the library at the action level — so making
+  them inert is simpler and more clearly correct than re-scoping a stacking
+  context and hoping nothing else depends on the label's exact paint order.
+
+- **Verification.** Real op tests mirroring `chroma-timeline`'s own Rust
+  unit tests (`packages/editor/src/timeline.test.ts`, `ruler.test.ts` for
+  item 4 — 33 tests total, all passing): `add_clip` appends after the
+  furthest clip end (not just the last Vec entry — tested with a
+  pre-existing gap); `trim_start` shifts `start_frame`+`source_start`
+  together, keeps the end fixed, and clamps against both the source-media
+  bound and the nearest preceding clip's end (isolated from each other —
+  one test gives the clip source room to spare specifically so only the
+  neighbor clamp can be what's tested); `trim_end`'s matching next-clip
+  clamp; `split` gives the right half its own `start_frame` (the exact
+  B-012/B-013 bug, asserted directly: `right.start_frame` must not equal
+  `left.start_frame`); `remove` leaves the other clip's `start_frame`
+  untouched (no ripple); `move` repositions and rejects an overlapping
+  destination. `tsc --noEmit` baseline confirmed in this fresh worktree
+  first (`app`: 64 errors, byte-identical to the D-051/D-054-recorded
+  baseline; `packages/editor`: 1, the same pre-existing CSS-import
+  declaration D-051 noted) — unchanged after every change in this pass.
+
+  **Real interaction-level evidence for items 1/2 — not "read the code."**
+  This sandbox has no screen-recording or accessibility access to the live
+  *Tauri* window (the same gap every prior session on this repo has hit —
+  see D-046/D-051's own notes), so a different real-interaction path was
+  used instead of that one: `npm run dev`'s plain Vite dev server (no
+  Tauri/Rust — the frontend alone), opened in a **real Chrome tab** via
+  `claude-in-chrome`, with a temporary `window.__TAURI_INTERNALS__` shim in
+  `app/index.html` (guarded `if (!window.__TAURI_INTERNALS__)` — inert in
+  the real app, where Tauri injects the real one before any page script
+  runs; removed before commit, confirmed via `git diff` showing no change
+  to that file) whose mocked `invoke()` only implements `chroma_timeline_
+  set`/`_get` as a passthrough (store what's sent, return it back) so
+  `useEditorTimelineStore`'s real save/reload cycle round-trips through it
+  faithfully. Every other invoke() call rejects and is caught by the app's
+  own existing error handling (confirmed harmless — e.g. the preview pane
+  shows "preview error: … chroma_timeline_frame" instead of a frame, or
+  simply doesn't render, never a crash). The **real, unmodified
+  `SourcesPanel`/`TimelinePane`/`TimelineSwitcher` React components**,
+  compiled by the real Vite dev server, were driven directly:
+  - Seeded a real timeline + media-pool item into the **live, running**
+    `useSessionStore`/`useEditorTimelineStore`/`useMediaPoolStore`
+    singletons (dynamically `import()`-ing their already-loaded module URLs
+    from the page's own `performance.getEntriesByType('resource')` list, so
+    it's the exact same singleton the mounted React tree reads — not a
+    fresh, disconnected instance).
+  - **Drag-and-drop (item 1):** a real native HTML5 drag/drop sequence — a
+    genuine `DataTransfer`, `dragstart` dispatched on the actual Sources-
+    panel item's DOM node (its own real `onDragStart` handler populated the
+    `application/x-chroma-media` payload), `dragenter`/`dragover`/`drop`
+    dispatched on the actual `.timeline-editor-edit-row` DOM node the
+    library renders (confirming the event reaches through the library's
+    internal DOM to `TimelinePane`'s handler, not blocked as one of the
+    scoped-out candidate causes worried it might be) — confirmed via a
+    global capture-phase listener logging every dnd event, its `dataTransfer
+    .types`, and `defaultPrevented`, that the MIME type carried through
+    correctly and `preventDefault()` fired on `dragover`. The resulting
+    clip in the live store landed at `start_frame: 240` (exactly the
+    existing clip's end), confirmed both in the store and in the literal
+    JSON `chroma_timeline_set` payload the mock captured — and confirmed
+    **visually**, a screenshot showing "dropme.mp4" correctly appended
+    right after the existing clip with the ruler now reading `00:00:13:23`
+    (336 frames / 24fps). Chrome's own drag heuristics also let a plain
+    `computer`-tool mouse-based drag promote into a real HTML5 drag session
+    (dragstart/dragover fired with a real DataTransfer) but its coarse,
+    linear-interpolated path didn't reliably land a `drop` — the direct
+    `dispatchEvent` sequence above is the one that produced a clean,
+    repeatable result and is what's reported as the real finding.
+  - **Edge-trim (item 2) — this is what surfaced the hitbox bug above.**
+    A first attempt with the `computer` tool's mouse-based drag on the
+    resize handle produced real `pointerdown`/`pointermove`/`pointerup`
+    events but no resize — checking `document.elementFromPoint()` at the
+    handle's exact coordinates *before* the pointer-events fix showed the
+    clip-name label as the hit target, not the handle (the bug). After
+    adding `pointer-events-none` to the label, the same coordinate check
+    correctly returned the handle, and a real synthetic `PointerEvent`
+    sequence (`pointerdown`→8×`pointermove`→`pointerup`, `pointerId`/
+    `isPrimary`/`buttons` set to mirror a genuine mouse gesture, dispatched
+    at the handle's real screen coordinates) produced a live `clipB` moving
+    from `start_frame: 240, duration: 96` to `start_frame: 251, duration:
+    85` — `end_frame` unchanged at exactly `336` both before and after,
+    confirming "end stays fixed, start slides" — with a visible gap opening
+    on screen before it (screenshotted) and the exact `source_start`/
+    `start_frame` shift (11 frames, matching the delta dragged) present in
+    the literal `chroma_timeline_set` payload.
+  - Dev server (`npx vite --port 1420`, no Tauri) killed after
+    (`lsof -ti:1420 | xargs kill -9`); the temporary shim reverted before
+    commit.
+
+- **`TimelineSwitcher` rebuilt as a tab strip (item 3).** Replaced the
+  `Select` dropdown + separate "+ New" button with `@chroma/ui`'s
+  `Tabs`/`TabsList`/`TabsTrigger` (shadcn-on-Base-UI, D-042) — one tab per
+  timeline, click to `chroma_timeline_set_active`, plus a `+` tab at the
+  end. The `+` tab is a real `TabsTrigger` (keyboard/focus/hover for free)
+  but must never become the *selected* tab (nothing to show there); since
+  `Tabs` here is fully controlled (`value` always the real active
+  timeline's id), `onValueChange` intercepts a sentinel value and opens the
+  inline name field instead of ever writing it into `value` — no
+  uncontrolled-state hack needed. Used the canonical component per this
+  repo's "no ad-hoc copied snippets" standard rather than hand-rolling tab
+  styling.
+
+- **Ruler: real timecode + adaptive tick density (item 4).**
+  `@xzdarcy/react-timeline-editor`'s `TimeArea` has a `getScaleRender(item)`
+  hook (checked in its bundled source first, same discipline as D-051) but
+  no adaptive-density concept of its own — `scale` (seconds per labeled
+  tick) is a single fixed prop; the pre-fix code hardcoded it to `1`,
+  exactly the "1, 2, 3…49" clutter at low zoom the owner hit. New
+  `ruler.ts` (`niceTickIntervalSeconds`, `formatTimecode`), both pure and
+  unit-tested:
+  - **`niceTickIntervalSeconds(pxPerSecond, targetPx, minSeconds)`** — the
+    classic "nice numbers" ruler technique: pick the smallest interval from
+    a fixed 1-2-5 progression (0.1s…3600s) whose pixel spacing at the
+    current zoom is still `>= targetPx` (70px), floored at `minSeconds`
+    (`1/fps`, one frame — an interval finer than a frame means nothing).
+    `TimelinePane`'s zoom state was renamed `pxPerSec` (from `scaleWidth`,
+    which only ever meant "px per second" because `scale` was hardcoded to
+    1) and is now the independent control; the library's actual
+    `scaleWidth` prop (its own "px per one `scale`-unit" meaning) is
+    derived as `tickSeconds * pxPerSec` each render, so what's on screen
+    stays pixel-continuous through zoom even though the chosen tick
+    interval only takes discrete "nice" values.
+  - **`formatTimecode(seconds, fps, tickIntervalSeconds)`** — real
+    `HH:MM:SS` broadcast timecode, converting via the timeline's actual
+    `rate` (not a hardcoded 24) so a 30fps or 60fps project's frame column
+    is correct; `:FF` is appended only when the current tick interval is
+    sub-second — at whole-second-or-coarser spacing every label showing a
+    redundant `:00` would be noise, so the ruler's own density decides the
+    format rather than a fixed rule.
+  - **Verification:** `ruler.test.ts` — the interval function only ever
+    returns a listed "nice" value, widens as zoom shrinks and narrows as it
+    grows, reproduces the pre-fix 1s-tick behavior at the old default zoom
+    (continuity check, not just a fresh assertion), never goes finer than
+    one frame, and the chosen interval's pixel spacing is checked directly
+    against `targetPx` rather than trusted; the formatter is checked
+    against real fps conversion (30fps vs 24fps giving different frame
+    numbers for the same wall-clock second), the sub-second `:FF` threshold,
+    minute/hour rollover, and a non-positive-fps fallback. No visual
+    confirmation of the rendered ruler pixels in the live app (same
+    screen-recording gap as above) — the tick-interval math and the label
+    string are what's actually checkable, and are checked directly.
+
+- **Deferred / out of scope this pass (per the brief):** multi-track UI
+  (multiple visible lanes, track headers — blocked on Phase B of
+  `docs/notes/multi-track-nle.md`); a ripple-trim mode; timeline
+  rename/delete (still no backing commands, unchanged from D-046);
+  cursor-anchored zoom (D-051's own deferred item, unchanged).
