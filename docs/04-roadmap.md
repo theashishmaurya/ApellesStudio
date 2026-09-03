@@ -39,9 +39,10 @@ numbers are actually calibrated).
   or packaged-build story for the engine yet.
 - **Shell** — 3-tab layout, window chrome, the project launcher as the app's entry
   screen (opens on the launcher, tabs appear once a project is open), a docked
-  Sources/Library panel reachable from every tab (thumbnails-less grid, import,
-  search, bin tree, drag-to-track — D-046), `@chroma/ui` (shadcn/Base UI, 18
-  components, themed).
+  Sources/Library panel reachable from every tab (real poster-frame thumbnails,
+  import, search, a bin tree with real "New Folder" creation — even an empty
+  one persists and lists, drag-to-track — D-046, D-056), `@chroma/ui` (shadcn/
+  Base UI, 18 components, themed).
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.

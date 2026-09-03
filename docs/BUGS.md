@@ -53,6 +53,50 @@ status: open · severity: low (a working, prominent alternative — `ExportDialo
 
 ## Fixed
 
+## B-012 — "Import" in the Sources panel is slow to open the native file-picker dialog
+status: fixed (2026-09-03) · severity: medium (no data loss, but a real, reproducible perf regression on a primary action) · area: `app/src-tauri/src/chroma/project.rs` (`chroma_media_list`/`_import`/`_move`)
+- **repro:** open a project with the Sources panel visible (mount alone
+  triggers a `chroma_media_list` refresh), click "Import".
+- **expected:** the native multi-select file dialog (`@tauri-apps/plugin-dialog`'s
+  `open()`, via `ProjectLauncher.pickClips` — reused by `SourcesPanel.doImport`)
+  appears immediately; nothing runs between the click and the `open()` IPC
+  call.
+- **actual:** a real, measurable delay before the dialog appears. Traced to
+  `chroma_media_list`, `chroma_media_import`, and `chroma_media_move` all
+  being plain (non-`async`) `#[tauri::command]` functions — confirmed against
+  `tauri-macros` 2.6.3's `command::wrapper` source: a non-`async fn` command
+  defaults to `ExecutionContext::Blocking`, whose generated body
+  (`body_blocking`) calls the command directly (`let result = $path(...)`)
+  inline wherever the IPC message is dispatched — the main UI thread on
+  macOS — rather than going through `respond_async_serialized`/the async
+  runtime the way every sibling `async fn` command in the same file
+  (`chroma_project_open`/`_save`/`_add_shot`) already does. `chroma_media_import`
+  compounds this: `probe_media_item` shells out to `ffprobe` (and, after
+  D-056, `ffmpeg` for a thumbnail) per path — real, occasionally slow
+  blocking work — synchronously on that same thread. Any of these three
+  commands in flight (the panel's own mount-time `refresh()`, or a
+  same-session import) directly delays the next IPC message the main thread
+  processes, including the dialog-open call, which macOS requires be
+  presented from the main thread.
+- **fix:** all three converted to `async fn` (D-056) — no longer inline on
+  the main thread. `chroma_media_import` additionally wraps its probing in
+  `tokio::task::spawn_blocking`, matching the existing convention
+  `chroma_frame_thumbnails`/`chroma_session_thumbnail` already use for their
+  own `ffmpeg`/`ffprobe` subprocess calls, keeping it off the async
+  runtime's shared worker threads too, not just off the main thread.
+- **verified:** the root cause is a direct, source-level finding (read
+  against `tauri-macros` 2.6.3 itself, not inferred), not a guess. Live
+  click-to-dialog-appear timing via `osascript`/System Events (the same
+  mechanism D-046's own verification used) showed no measurable difference
+  before/after on an idle, low-media-count repro — an honest result, not
+  proof there's nothing to fix; see D-056 for the full account of what that
+  test could and couldn't show, and why the fix stands on the source-level
+  finding regardless. `cargo test chroma::` covers the async conversion
+  (existing `media_move_refiles_an_existing_item` now drives the command on
+  a `tokio::runtime::Builder::new_current_thread()`, same pattern
+  `chroma_project_save_attaches_a_new_shot_to_the_pool` already used for
+  `chroma_project_save`).
+
 ## B-009 — duplicate `remotion` packages crash the app at runtime with "Multiple versions of Remotion detected"
 status: fixed (2026-09-02) · severity: blocker (crashed frontend mount entirely, not just the Motion tab) · area: root `package.json` `overrides`, `packages/motion-engine/package.json`'s caret-pinned `@remotion/*` deps
 - **repro:** boot the app (`npm run tauri:dev`) with `packages/motion-engine`'s
