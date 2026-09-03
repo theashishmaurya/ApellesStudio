@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Multi-track NLE Phase A: `Clip.start_frame` + gap-aware
+  edit ops + track management (D-054).** `chroma-timeline::Clip` gained an
+  explicit, timeline-absolute `start_frame: i64` (not a `Gap` item — see
+  D-054's rationale) so clips stop being forced back-to-back.
+  `reorder`/`trim_start`/`trim_end`/`split`/`remove` reworked for gaps + a
+  no-overlap invariant (`remove`/`reorder`'s behavior changed — flagged in
+  D-054). New `Timeline::add_track`/`remove_track`/`move_clip` ops +
+  matching `chroma_timeline_add_track`/`_remove_track`/`_move_clip` Tauri
+  commands in `edit.rs`. Legacy `project.json` migration
+  (`backfill_legacy_positions`) verified against the real
+  `~/Movies/Chroma/New.chroma/project.json`. `chroma-timeline` 23/23,
+  `cargo test chroma::` 110/110 (was 107; caught and fixed one real
+  compile-time bug along the way — a `chroma::audio` test helper built a
+  `Clip` literal directly and needed the new field), `tsc --noEmit` 64/64
+  unchanged, real boot confirmed the existing single-track Edit tab is
+  unaffected. No frontend touched, no compositor/audio work (Phases B/C/D,
+  still to come — see `docs/notes/multi-track-nle.md`).
+
 - **2026-09-03** — **`chroma-types` step 2: `Resolution`/`Rational` made real
   (D-053).** Audited `app/src-tauri/src/chroma/*` for real duplicates of the
   D-039-step-1 placeholders. Real find: `width`/`height` field pairs on

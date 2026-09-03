@@ -40,11 +40,29 @@ real scoping for it, replacing the one-line placeholder that's stood in for it s
 ## The phased build
 
 ### Phase A — Data model foundation
-Add a position field to `Clip` (or a `Gap` item) so clips stop being forced
-back-to-back. Add `add_track`/`remove_track`/`move_clip_to_track` ops. Well-scoped,
-same shape `chroma-timeline` has absorbed cleanly three times already (D-041/045/046).
-**Sizing: one solid subagent pass** — real Rust logic, real unit tests, no rendering
-touched.
+
+**Done, D-054 (2026-09-03).** Added a position field to `Clip` — an explicit,
+timeline-absolute `start_frame: i64` (not a `Gap` item; see D-054 for the
+full rationale, in short: it matches `TimelinePane.tsx`'s
+`@xzdarcy/react-timeline-editor`'s own start/end-time item model, so Phase D
+won't need a translation layer). Clips stop being forced back-to-back — a
+track's clips can now leave gaps, and `clip_at` returns `None` for a query
+landing in one, same as past-the-end. Every existing op reworked for
+gaps + a no-overlap invariant (`trim_start`/`trim_end` gained
+neighbor-clamping; `remove`/`reorder` changed behavior — flagged explicitly
+in D-054, since removing/reordering no longer implicitly ripple-reflows the
+track now that position is explicit). Added `Timeline::add_track`/
+`remove_track`/`move_clip`, each with real unit tests (round-trip,
+cross-track identity preservation, overlap rejection, out-of-range errors).
+Wired `chroma_timeline_add_track`/`_remove_track`/`_move_clip` Tauri
+commands in `edit.rs`. Legacy `project.json` migration
+(`backfill_legacy_positions`, a typed post-deserialize step, not a raw-JSON
+rewrite like D-045/D-046's — see D-054) verified against the real
+`~/Movies/Chroma/New.chroma/project.json`. `chroma-timeline` 23/23 tests;
+no frontend touched, `tsc` baseline unaffected. **Nothing in the app
+populates a second track or a gap yet** — `build_from_shots` is unchanged,
+one video track, clips still back to back — this phase is "the model *can*
+represent it," not "the app now does it." Phase B is next.
 
 ### Phase B — The compositor (the real project, not a checkbox)
 Actually render N video tracks together: sample every visible track at a given frame,
@@ -100,6 +118,9 @@ to attach to.
 
 ## Status
 
-Scoped 2026-09-03, not yet built. Phase A is the first dispatch. This note is the
-scoping record — update it (or promote pieces of it into `D-NNN` entries) as each phase
-actually lands, the same discipline every other feature this week has followed.
+Scoped 2026-09-03. **Phase A done, D-054 (2026-09-03)** — see that phase's
+own section above for what landed. B and C are next (independent of each
+other; B is the long pole). D/E/F remain blocked on B. This note is the
+scoping record — update it (or promote pieces of it into `D-NNN` entries) as
+each phase actually lands, the same discipline every other feature this week
+has followed.

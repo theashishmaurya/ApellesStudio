@@ -3564,3 +3564,199 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   `ChromaError::NotFound` cases, but `chroma-timeline` is explicitly out of
   scope for this step (own test suite, already-real crate per D-041/045/046)
   and wasn't touched.
+
+---
+
+## D-054 — Multi-track NLE Phase A: `Clip.start_frame` (not a `Gap` item) for explicit position, gap-aware edit ops, `add_track`/`remove_track`/`move_clip`, typed post-deserialize legacy-position backfill
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** `docs/notes/multi-track-nle.md` scoped the owner's "we need
+  full multi-track editing" ask into phases; Phase A is the real current
+  blocker underneath "just add more tracks" — `Clip` has no position field
+  at all, so every track is forced back-to-back by construction
+  (`Track::clip_at` walks the clip list summing durations; every edit op
+  assumed this). This step fixes that and adds the ops needed to actually
+  have more than one track. No rendering, no compositing, no frontend —
+  those are Phases B/C/D.
+
+- **Position model: an explicit `start_frame: i64` on `Clip`, timeline-
+  absolute — not an OTIO-style `Gap` track item.** Both were real options
+  (the module doc already calls this crate "OTIO-*shaped*", and real OTIO
+  has `Gap`). Chose `start_frame` because:
+  - **It matches what the UI layer already expects.** The Edit tab's
+    `TimelinePane.tsx` is built on `@xzdarcy/react-timeline-editor` (D-041),
+    whose action items are modeled by absolute `start`/`end` time, not by
+    an interspersed gap placeholder. A `Gap` variant would mean either the
+    frontend translates `TrackItem::Gap` into "nothing rendered between
+    these two times" on every read, or `chroma-timeline` itself exposes a
+    second, gap-stripped view for consumers — extra translation layer for
+    no benefit this phase actually needs.
+  - **Every op gets simpler, not more special-cased.** With `start_frame`,
+    `split`'s old "sum durations before `clip_idx`" became a direct field
+    read; `clip_at` became a direct range check instead of a cumulative
+    walk. A `Gap` enum would need every op (`trim_end` growing into a gap,
+    `remove` producing one, `split` never producing one, `reorder` not
+    applicable to gaps at all) to pattern-match `TrackItem::Clip` vs.
+    `::Gap` and merge/split adjacent gaps — meaningfully more code for a
+    property (explicit gap *entities*, as opposed to gaps being simply
+    "the space between two `start_frame`s") that nothing in this codebase's
+    scope (Phase A, or B/C/D as scoped) asks for.
+  - **Timeline-absolute, not track-relative:** a clip's position doesn't
+    depend on which track it's on, so `move_clip` across tracks is a plain
+    field write (`clip.start_frame = to_start_frame`), not a coordinate
+    conversion. Every track shares one timeline clock, matching how
+    `Timeline::duration()` (max over tracks) already worked.
+  - Trade-off accepted: no explicit "this is deliberately empty space" audit
+    trail — a gap is just wherever `clip_at` returns `None`. Fine for this
+    phase; revisit only if a later phase needs to attach metadata to a gap
+    itself (e.g. a placeholder clip), which nothing scoped does.
+
+- **Per-op semantics, all now gap-aware, all with the no-overlap invariant
+  ("clips on a track never overlap") maintained by construction rather than
+  checked after the fact:**
+  - **`clip_at`** — was a cumulative-duration walk; now a direct
+    `start_frame <= f < start_frame+duration` scan. A query landing in a
+    gap returns `None`, same as past-the-end (was already `None`) — no
+    special case needed, both are just "no clip covers this frame."
+  - **`Track::duration()`** — was `sum(duration)` (valid only because
+    clips were always back-to-back); now `max(start_frame + duration)`
+    over all clips — the furthest clip end, gaps included. For every
+    existing back-to-back scenario (unchanged `from_shots` output) these
+    two formulas agree, so no behavior change there.
+  - **`trim_start`** — now moves `start_frame` by the same `delta` as
+    `source_start` (the clip's *end* stays fixed, matching a standard NLE
+    left-edge trim), clamped so it can't move earlier than the end of the
+    nearest preceding clip on the track (no overlap introduced) in addition
+    to the existing source-media clamp. Trimming right now visibly opens a
+    gap before the clip instead of leaving neighbors untouched-but-implicit.
+  - **`trim_end`** — unchanged field-wise (`duration` only, `start_frame`
+    fixed), but now also clamped so it can't grow past the `start_frame` of
+    the nearest following clip on the track — previously impossible to
+    violate (extending always cascaded everyone after it); now a real
+    constraint since nothing ripples automatically.
+  - **`split`** — simplified (direct `start_frame` read instead of summing
+    predecessors); behavior unchanged, still never opens a gap between the
+    two halves.
+  - **`remove`** — **behavior change, flagged per the brief:** previously a
+    "ripple delete" by construction (removing a clip always closed the gap
+    because nothing else in the model *could* leave one); now a plain
+    "lift" — the clip is gone, its slot becomes a gap, nothing else moves.
+    `remove_drops_a_clip`'s old assertion (`t.duration() == 300` after
+    removing the middle clip from a 350-frame track) is no longer true
+    under this model — renamed to `remove_leaves_a_gap`, now asserts
+    `duration() == 350` (the last clip never moved) and that the vacated
+    range reads back as a gap. A real "ripple delete" (shift everything
+    after left to close the gap) is a reasonable future op but wasn't
+    asked for this phase and isn't invented here.
+  - **`reorder`** — **behavior change, flagged per the brief:** previously
+    the *only* way to move a clip in time (Vec splice → the old cumulative
+    walk re-derived every position from the new order, cascading the whole
+    track). Now that `start_frame` is an explicit, independently-owned
+    field, a Vec splice has no timing effect at all — `reorder` is
+    redefined as changing only the clips' **storage order** (bookkeeping /
+    future UI list order), explicitly documented as not moving anything in
+    time. `reorder_moves_a_clip` (asserted a full cascade reflow) became
+    `reorder_changes_vec_order_but_not_positions` (asserts the Vec order
+    changes but every clip's `(start_frame, duration)` — and hence every
+    `clip_at` result — is identical before and after). The old "move a clip
+    earlier/later in time" job is now `move_clip`'s (see below), which is
+    an explicit, validated position change rather than an implicit side
+    effect of list order.
+
+- **New ops.** `Timeline::add_track(kind) -> usize` (push + return index).
+  `Timeline::remove_track(track) -> Result<(), TimelineError>` — removes
+  the track **and every clip on it**; no orphan-preservation, no special
+  case for a non-empty track, stated explicitly rather than left implicit
+  (recovery is the caller's job — D-052 global undo already covers this at
+  a higher layer). `Timeline::move_clip(from_track, from_idx, to_track,
+  to_start_frame: i64) -> Result<(), TimelineError>` — the position
+  parameter is a plain `i64` (timeline-absolute), following directly from
+  the `start_frame` design choice above; works for a same-track reposition
+  too (`from_track == to_track`), which is the intended "drag a clip to a
+  new spot on its own track" primitive now that `reorder` no longer does
+  that. Validates: no negative position (`NegativePosition`), both track
+  indices in range, the source clip index in range, and the destination
+  range doesn't overlap any *other* clip already on the destination track
+  (`Overlap(track, frame)` — the clip being moved never counts as
+  overlapping itself, so "nudge a clip by N frames on its own track" and
+  "swap two adjacent clips via two moves" both work).
+
+- **Migration — typed post-deserialize backfill, not a raw-JSON rewrite.**
+  D-045/D-046's `migrate_legacy_timeline`/`migrate_legacy_shots` needed raw
+  `serde_json::Value` surgery because they change *shape* (a singular key
+  becoming a list, a shot's inline fields becoming a pool reference) before
+  a `#[serde(default)]` could even apply. This migration doesn't change
+  shape — `Clip::start_frame` is a new field on an existing struct — so
+  the shape-level part is plain `#[serde(default = "legacy_missing_start")]`
+  (sentinel `i64::MIN`, chosen because it's never a value any real position
+  computation produces). What's genuinely not a per-field default: the
+  *correct* backfilled value isn't `0` for every legacy clip (that would
+  collapse every clip in an old multi-clip track onto the same frame) — it's
+  each clip's reconstructed back-to-back position, i.e. running the old
+  `clip_at`-style cumulative-duration walk once. That's
+  `Track::backfill_legacy_positions` / `Timeline::backfill_legacy_positions`
+  — a typed method on the already-deserialized `Timeline`, called once from
+  `chroma::project::load_manifest` right after `serde_json::from_value`
+  (alongside the existing `active_shot`/`active_timeline` range-clamp
+  calls there). Idempotent (only touches clips still at the sentinel) and
+  safe on a mixed real/legacy track (accumulator continues from whichever
+  value — real or just-backfilled — each clip ends up with), though that
+  shape doesn't occur in practice. **Verified against the real
+  `~/Movies/Chroma/New.chroma/project.json`** (embedded verbatim as a test
+  fixture, both at the crate level — `backfill_matches_the_real_project_json_single_clip_shape`
+  — and through the real `load_manifest` path —
+  `real_project_json_shape_backfills_clip_position`, which also round-trips
+  the migrated position through `save_manifest`/reload): its one real clip
+  (no `start_frame` key) backfills to `start_frame: 0`, the correct
+  reconstruction for a single-clip track.
+
+- **Tauri commands (`app/src-tauri/src/chroma/edit.rs`, matching the
+  existing `chroma_timeline_*` naming convention D-045 set):**
+  `chroma_timeline_add_track(kind) -> Result<usize, String>`,
+  `chroma_timeline_remove_track(track) -> Result<(), String>`,
+  `chroma_timeline_move_clip(from_track, from_idx, to_track,
+  to_start_frame) -> Result<(), String>` — all operate on the project's
+  **active** timeline (same pattern as `chroma_timeline_get`/`_set`) and
+  persist via `project::save_manifest` on success, leaving the persisted
+  file untouched on error. Registered in `lib.rs`'s `generate_handler!`.
+  No frontend consumes these yet (Phase D is explicitly blocked on Phases
+  B/C) — this makes the capability reachable for a script/test/future UI,
+  same spirit as D-045's `chroma_timeline_create`/`_set_active` landing
+  before any timeline-switcher UI existed. `chroma_timeline_frame`'s "first
+  video track only" preview behavior is deliberately untouched — no
+  compositing exists yet (Phase B).
+
+- **Verified:** `cargo test -p chroma-timeline` 23/23 (was 10; +13: gap
+  query, back-to-back position assertions on `from_shots`/serde round-trip,
+  the legacy-sentinel + backfill tests including the real-project-shape
+  fixture, `reorder`'s redefined no-position-change contract, `trim_start`/
+  `trim_end`'s new gap/neighbor-clamp cases, `remove`'s gap-not-ripple
+  behavior, `add_track`/`remove_track` round-trip + clips-dropped-with-track,
+  `move_clip` cross-track/same-track/overlap-rejected/out-of-range).
+  `cargo test --manifest-path app/src-tauri/Cargo.toml chroma::` **110/110**
+  (was 107, D-051's last recorded count, unchanged through D-053; +3: the
+  `edit.rs` track/move command round-trip
+  (`track_commands_add_remove_and_move_clip_on_the_active_timeline`) and the
+  two `project.rs` D-054 migration tests
+  (`multi_clip_legacy_track_backfills_back_to_back_positions`,
+  `real_project_json_shape_backfills_clip_position` — the latter the real
+  `~/Movies/Chroma/New.chroma/project.json` shape exercised through the
+  actual `load_manifest` path, not just the crate-level fixture). One real
+  bug caught by this run: `chroma::audio`'s test helper
+  (`open_test_project`) built a `chroma_timeline::Clip` struct literal
+  directly (not via `Timeline::from_shots`) and didn't compile until it
+  gained the new `start_frame` field — fixed (`start_frame: 0`, the only
+  clip on its track). `tsc --noEmit` in `app/` **64/64, unchanged** — no
+  frontend file touched this phase, matching the brief's expectation this
+  is completely unaffected. Real boot (`npm run tauri:dev`) confirmed the
+  existing single-track Edit tab experience is unaffected — purely additive
+  capability, not a behavior change to what already renders.
+
+- **Deferred (explicitly out of scope this phase, per
+  `docs/notes/multi-track-nle.md`):** no frontend/UI (`TimelinePane.tsx`
+  untouched — Phase D, blocked on B/C); no compositor/rendering change
+  (`chroma_timeline_frame` still only reads the first video track — Phase
+  B); no audio-track work (Phase C); nothing in the app's real flows
+  (`build_from_shots`) populates a second track or a gap — the model can
+  now represent them, the app still doesn't produce them.

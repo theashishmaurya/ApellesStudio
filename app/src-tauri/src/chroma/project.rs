@@ -58,6 +58,14 @@
 //! decision for why the wire-level DTOs (`ProjectShotDto`, `ProjectShotInput`,
 //! `ProjectOpenDto`) didn't need to change shape at all, keeping this pass's
 //! frontend cost to just the new UI rather than a `useSessionStore` rewrite.
+//!
+//! **Multi-track NLE, Phase A (D-054):** `chroma_timeline::Clip` gained an
+//! explicit `start_frame`. [`load_manifest`] calls
+//! `Timeline::backfill_legacy_positions` on every loaded timeline (a typed
+//! post-deserialize step, not a raw-JSON rewrite — see [`load_manifest`]'s
+//! doc for why this migration didn't need the `migrate_legacy_*` pattern)
+//! to reconstruct real positions for clips from pre-D-054 `project.json`
+//! files. See the D-054 decision and `docs/notes/multi-track-nle.md`.
 
 use std::path::{Path, PathBuf};
 
@@ -601,8 +609,18 @@ fn migrate_legacy_shots(raw: &mut Value) {
 
 /// Read + parse `<project_dir>/project.json`, gate the schema major, migrate
 /// a legacy singular `timeline` key (D-045) and legacy `shot.sourcePath`/
-/// `shot.name` into pool references (D-046), and clamp `active_shot` /
-/// `active_timeline` into range. Untagged files are treated as v1.
+/// `shot.name` into pool references (D-046), backfill legacy clip positions
+/// (D-054 — see below), and clamp `active_shot` / `active_timeline` into
+/// range. Untagged files are treated as v1.
+///
+/// **D-054's clip-position migration** doesn't need a raw-JSON rewrite like
+/// `migrate_legacy_timeline`/`migrate_legacy_shots` — `Clip::start_frame`'s
+/// `#[serde(default = ...)]` already gets every legacy clip to a typed,
+/// detectable sentinel on its own. What's left, and what genuinely can't be
+/// a plain per-field default, is *reconstructing the right value* (the old
+/// implicit back-to-back position, not `0` for every clip) — that's
+/// `Timeline::backfill_legacy_positions`, called here once per timeline,
+/// right after the typed deserialize.
 pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     let mp = project_dir.join("project.json");
     let txt = std::fs::read_to_string(&mp).map_err(|e| format!("read {}: {e}", mp.display()))?;
@@ -638,6 +656,9 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     }
     if !manifest.timelines.is_empty() && manifest.active_timeline >= manifest.timelines.len() {
         manifest.active_timeline = 0;
+    }
+    for tl in &mut manifest.timelines {
+        tl.backfill_legacy_positions();
     }
     Ok(manifest)
 }
@@ -1789,6 +1810,12 @@ mod tests {
             !tl.id.is_empty(),
             "a fresh id is backfilled — the legacy shape had none"
         );
+        assert_eq!(
+            tl.tracks[0].clips[0].start_frame, 0,
+            "D-054: the clip's position (missing from this legacy shape) is \
+             backfilled to 0 — the only clip on the track, so its \
+             reconstructed back-to-back position is the very start"
+        );
 
         // saving never reintroduces the old singular key
         save_manifest(&dir, &m).unwrap();
@@ -1802,9 +1829,100 @@ mod tests {
         assert!(raw.get("timelines").is_some());
 
         // loading the now-migrated file again is idempotent and keeps the id
+        // and the D-054-backfilled position (the saved JSON now has a real
+        // start_frame, so this second load doesn't touch it again).
         let reloaded = load_manifest(&dir).unwrap();
         assert_eq!(reloaded.timelines.len(), 1);
         assert_eq!(reloaded.timelines[0].id, tl.id);
+        assert_eq!(reloaded.timelines[0].tracks[0].clips[0].start_frame, 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- multi-track NLE, Phase A: clip positions (D-054) -------------------
+
+    /// The real `~/Movies/Chroma/New.chroma/project.json` shape (checked by
+    /// hand against that file): already-migrated `timelines` (D-045 shape),
+    /// one clip with no `start_frame` key at all. Loading through the real
+    /// path must reconstruct the same position the pre-D-054 code rendered
+    /// it at (0 — the only clip on the track).
+    #[test]
+    fn real_project_json_shape_backfills_clip_position() {
+        let root = tmp("d054_real_shape");
+        let dir = root.join("real.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"New",
+                "created":"2026-09-02T06:14:35.182646+00:00",
+                "modified":"2026-09-02T18:59:08.794685+00:00",
+                "shots":[{"id":"8022aef1-78db-491e-aeb4-03a78b785af7",
+                          "mediaId":"787cf906-62ee-4a05-84cb-b4688c41aa8c","frame":0}],
+                "activeShot":0,"settings":{},
+                "timelines":[{"id":"abd97cef-22b4-4e5f-a7cc-ffbfa8fe39c3","name":"New","rate":null,
+                    "tracks":[{"kind":"video","clips":[
+                        {"id":"8022aef1-78db-491e-aeb4-03a78b785af7",
+                         "shot_id":"8022aef1-78db-491e-aeb4-03a78b785af7",
+                         "name":"pexels_28808272.mp4",
+                         "source_path":"/Users/ashishmaurya/Downloads/pexels_28808272.mp4",
+                         "source_start":0,"duration":1078,"source_len":1078}]}]}],
+                "activeTimeline":0,
+                "media":[{"id":"787cf906-62ee-4a05-84cb-b4688c41aa8c",
+                          "sourcePath":"/Users/ashishmaurya/Downloads/pexels_28808272.mp4",
+                          "name":"pexels_28808272.mp4","added":"2026-09-02T18:59:07.057154+00:00"}]}"#,
+        )
+        .unwrap();
+
+        let m = load_manifest(&dir).unwrap();
+        let clip = &m.timelines[0].tracks[0].clips[0];
+        assert_eq!(clip.start_frame, 0, "reconstructed back-to-back position");
+        assert_eq!(clip.duration, 1078);
+        assert_eq!(m.timelines[0].duration(), 1078);
+
+        // round-trips through save/reload with the real position persisted
+        save_manifest(&dir, &m).unwrap();
+        let raw: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("project.json")).unwrap())
+                .unwrap();
+        let saved_clip = &raw["timelines"][0]["tracks"][0]["clips"][0];
+        assert_eq!(
+            saved_clip.get("start_frame").and_then(|v| v.as_i64()),
+            Some(0),
+            "the migrated position is now written back explicitly"
+        );
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.timelines[0].tracks[0].clips[0].start_frame, 0);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A legacy track with several clips (every one missing `start_frame`)
+    /// reconstructs the exact back-to-back layout they rendered at before
+    /// D-054 — not every clip collapsing to `0`.
+    #[test]
+    fn multi_clip_legacy_track_backfills_back_to_back_positions() {
+        let root = tmp("d054_multi_clip");
+        let dir = root.join("legacy.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("project.json"),
+            r#"{"schema":"chroma.project/1","name":"multi","shots":[],"activeShot":0,"settings":{},
+                "timelines":[{"id":"t1","name":"Main","rate":null,"tracks":[{"kind":"video","clips":[
+                    {"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":100,"source_len":100},
+                    {"id":"b","name":"B","source_path":"/b.mov","source_start":0,"duration":50,"source_len":50},
+                    {"id":"c","name":"C","source_path":"/c.mov","source_start":0,"duration":200,"source_len":200}
+                ]}]}],"activeTimeline":0}"#,
+        )
+        .unwrap();
+
+        let m = load_manifest(&dir).unwrap();
+        let starts: Vec<i64> = m.timelines[0].tracks[0]
+            .clips
+            .iter()
+            .map(|c| c.start_frame)
+            .collect();
+        assert_eq!(starts, vec![0, 100, 150]);
+        assert_eq!(m.timelines[0].duration(), 350);
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1951,6 +2069,71 @@ mod tests {
         // still exactly one timeline — chroma_timeline_set never appends
         let listed = super::super::edit::chroma_timeline_list().unwrap();
         assert_eq!(listed.len(), 1);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- track management + cross-track move (D-054) ------------------------
+
+    #[test]
+    fn track_commands_add_remove_and_move_clip_on_the_active_timeline() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("d054_track_commands");
+        let (dir, manifest) = new_project_in(
+            &root,
+            "track-cmds",
+            &[root.join("a.mov").to_string_lossy().to_string()],
+        )
+        .unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "track-cmds".into(),
+        }));
+
+        // lazily builds the one-video-track timeline from the seed shot
+        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(tl.tracks.len(), 1);
+        let clip_id = tl.tracks[0].clips[0].id.clone();
+
+        // add_track
+        let new_idx =
+            super::super::edit::chroma_timeline_add_track(chroma_timeline::TrackKind::Audio)
+                .unwrap();
+        assert_eq!(new_idx, 1);
+        let tl2 = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(tl2.tracks.len(), 2);
+        assert_eq!(tl2.tracks[1].kind, chroma_timeline::TrackKind::Audio);
+
+        // move_clip: from the video track (0) onto the fresh audio track (1)
+        super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500).unwrap();
+        let tl3 = super::super::edit::chroma_timeline_get().unwrap();
+        assert!(tl3.tracks[0].clips.is_empty(), "removed from track 0");
+        assert_eq!(tl3.tracks[1].clips.len(), 1, "landed on track 1");
+        assert_eq!(tl3.tracks[1].clips[0].id, clip_id, "identity preserved");
+        assert_eq!(tl3.tracks[1].clips[0].start_frame, 500);
+
+        // an out-of-range move errors and leaves the persisted timeline unchanged
+        assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0).is_err());
+        let tl4 = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(
+            tl4.tracks[1].clips.len(),
+            1,
+            "unchanged after the failed move"
+        );
+
+        // remove_track (including the clip now sitting on it)
+        super::super::edit::chroma_timeline_remove_track(1).unwrap();
+        let tl5 = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(
+            tl5.tracks.len(),
+            1,
+            "the audio track (and its clip) is gone"
+        );
+
+        // an out-of-range remove_track errors
+        assert!(super::super::edit::chroma_timeline_remove_track(9).is_err());
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
