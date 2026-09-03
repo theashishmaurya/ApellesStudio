@@ -130,14 +130,19 @@ full writeup (mixing architecture, the three headroom options considered, where
 `Track.gain` lives and why).
 
 ### Phase D — Multi-track UI
-Track lanes, headers (mute/lock/solo), drag-between-tracks in `TimelinePane.tsx`.
-**Genuinely blocked on B and C existing** — no point building UI for tracks that can't
-render or mix. Once B/C land, back to the "wiring/UI-from-kit" bucket — fast.
+
+**Done, D-080 (2026-09-03).** Track lanes + headers (mute + remove; lock/solo
+deferred, no backing model field) in `TimelinePane.tsx`, add/remove-track
+toolbar buttons, a "Move to ▾" dropdown standing in for drag-between-tracks
+(the library has no native cross-row action drag). Built once B1+B2 (opaque
+top-wins, confirmed at N tracks) and C (audio mixing) existed — did NOT wait
+for B3 (real blend modes/opacity): opaque multi-track editing doesn't need
+it, and B3 is additive on top of the UI existing, not a prerequisite for it.
 **Also sequenced after `docs/notes/unified-clip-model.md`'s migration** (owner-
-directed 2026-09-03): once multiple video tracks exist, "which clip is Colorist
-grading" needs to resolve to whichever clip wins compositing at the playhead — that
-migration builds the shared resolution path Phase D's UI and Colorist both need,
-so building Phase D against the current pre-migration model would mean rework.
+directed 2026-09-03, done as D-070): once multiple video tracks exist, "which
+clip is Colorist grading" needs to resolve to whichever clip wins compositing
+at the playhead — that migration built the shared resolution path Phase D's
+UI and Colorist both need. See D-080 for the full writeup.
 
 ### Phase E — Transitions
 A cross-dissolve is two clips composited with a time-varying blend — rides directly on
@@ -163,13 +168,31 @@ to attach to.
 Scoped 2026-09-03. **Phase A done, D-054.** **Phase B1 done, D-056
 (2026-09-03)** — see that phase's own section above for what landed and the
 load-bearing finding (opaque top-wins needed no new rendering code, just
-track-priority selection; B2 — N tracks — is now mostly a confirm-at-N>2 pass
-per that same finding, the walk already generalizes). **Phase C done, D-057
-(2026-09-03)** — ran concurrently with B1 in a separate worktree, per the
-sequencing plan above; real N-source audio mixing, `Track.gain`, sum-then-
-soft-limit headroom. **B3 (real blend modes / opacity) is the one remaining
-piece of genuinely new GPU/pixel-compositing work** — B1/B2 turned out not to
-need any. D/E/F remain blocked on B fully landing (B3 specifically, now that
-B1/B2 and C are satisfied). This note is the scoping record — update it (or
-promote pieces of it into `D-NNN` entries) as each phase actually lands, the
-same discipline every other feature this week has followed.
+track-priority selection). **Phase B2 (N tracks) confirmed, D-080
+(2026-09-03)** — was claimed to already generalize with no new code but had
+never actually been exercised past two tracks until D-080's own scoping pass
+checked it first: new `three_video_track_timeline` fixture + two tests prove
+the walk falls through *two* consecutive gaps correctly (track 0 exhausted,
+track 1 also exhausted, track 2 wins), not just one — the real gap real N>2
+coverage would have caught. **Phase C done, D-057 (2026-09-03)** — ran
+concurrently with B1 in a separate worktree, per the sequencing plan above;
+real N-source audio mixing, `Track.gain`, sum-then-soft-limit headroom.
+**Phase D (multi-track UI) done, D-080 (2026-09-03)** — `TimelinePane.tsx`
+renders one row per track, a real custom track-header sidebar (kind icon,
+per-kind label, mute toggle on `Track.gain`, remove-track), add-track
+toolbar buttons, and a "Move to ▾" dropdown standing in for live
+drag-between-tracks (the library has no native cross-row action drag —
+checked before assuming otherwise). Built ahead of B3 landing, on top of
+B1/B2's opaque-only compositing — deliberately, since the roadmap's own
+"D needs B" framing meant B1+B2 at minimum, not literally all of B including
+B3; opaque multi-track editing is fully usable now, blend-mode/opacity
+compositing (B3) is a separate, additive later step, not a blocker for the
+UI existing. See D-080 for the full writeup, including a genuinely still-open
+gap (a live drag-clip-between-tracks gesture) and what's out of scope
+entirely for now (lock/solo — no backing model field). **B3 (real blend
+modes / opacity) is the one remaining piece of genuinely new GPU/pixel-
+compositing work**, still not started. E (transitions) and F (export through
+the real timeline) remain blocked on B3. This note is the scoping record —
+update it (or promote pieces of it into `D-NNN` entries) as each phase
+actually lands, the same discipline every other feature this week has
+followed.

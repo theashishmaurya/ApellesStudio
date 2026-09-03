@@ -5972,3 +5972,122 @@ flakiness (clearing `target/debug/incremental` alone didn't fix it; a full
 `rm -rf target/debug` did). Going forward this session: never run a manual
 cargo command while the dev app's own build/watch process might be active;
 check `ps aux | grep cargo` first.
+
+## D-080 — Multi-track UI (Phase D of `docs/notes/multi-track-nle.md`)
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, stepping away mid-session: "work on the composition
+  UI please, or let a sub agent do it, don't sit idle." Per the roadmap
+  (item 6, `docs/notes/multi-track-nle.md`), Phase D — an actual multi-track
+  timeline UI, multiple visible lanes with track headers — was the next
+  unblocked piece: Phase A (clip positions, add/remove-track ops) and C
+  (audio mixing) were done, B1 (2-track opaque compositing) was done, and B2
+  (N tracks) was *claimed* to already generalize with no new code but had
+  never actually been exercised past two tracks.
+- **B2 confirmed first, before building UI on top of an unverified claim.**
+  `chroma-timeline`'s `resolve_video_clip_at` is a plain `.filter().
+  find_map()` walk over every video track in index order — genuinely no
+  hardcoded track count. New `three_video_track_timeline` fixture + two
+  tests confirm it: top-wins with all three tracks populated, and — the
+  real gap in coverage — a query frame that has to fall through **two**
+  consecutive gaps (track 0 exhausted, track 1 also exhausted) to reach
+  track 2, which a "top, then one fallback" implementation would get wrong
+  but the real filtered-walk implementation doesn't. `cargo test -p
+  chroma-timeline`: 39/39 (+2).
+- **The pure edit model (`packages/editor/src/timeline.ts`) was already
+  fully multi-track-shaped** — every existing op already takes a `track`
+  index, `Track`/`Timeline` already have no fixed-count assumption. The
+  real gap was entirely in `TimelinePane.tsx`, which only ever rendered
+  `videoTrackIndex(tl)` (the first video track) as a single hardcoded row,
+  and in the op vocabulary itself lacking track-list-level operations.
+  Added: `Track.gain` (mirrors `chroma_timeline::Track::gain`, D-057 —
+  wasn't in the TS type at all before this), and three new `EditOp`
+  variants — `add_track`, `remove_track`, `set_track_gain` — each mirroring
+  its Rust counterpart's exact validation (`add_track` always succeeds;
+  `remove_track`/`set_track_gain` no-op on an out-of-range index, matching
+  `NoSuchTrack`). `move` changed from a single `track` field to
+  `fromTrack`/`toTrack`, mirroring `Timeline::move_clip(from_track,
+  from_idx, to_track, to_start_frame)` — same-track is just the
+  `fromTrack === toTrack` case, same as the Rust op. `packages/editor`
+  `vitest run`: 45/45 (+10 new: cross-track move incl. its own overlap
+  check, add/remove-track, set_track_gain, updated `move`/label tests for
+  the field rename).
+- **`TimelinePane.tsx` — the actual UI, checked against the library's real
+  API before assuming anything:**
+  - One `TimelineRow` per track (`buildRows`, was `buildRow` returning a
+    single hardcoded video row), `row.id` = the track's own index —
+    `@xzdarcy/react-timeline-editor` always hands the row back in every
+    action/click callback, so this is the one stable way to map back to
+    `timeline.tracks[i]`.
+  - **Track headers are a fully custom sidebar, not a library feature** —
+    read the library's bundled `.d.ts` first (`EditData`'s full prop list)
+    and confirmed there's no `getRowHeaderRender` or equivalent, only
+    `getActionRender`/`getScaleRender` for *content inside* the scrollable
+    area. Built a real sidebar column (`HEADER_WIDTH`, one `ROW_HEIGHT`
+    block per track: kind icon, a running per-kind label — "Video 1",
+    "Audio 1", "Video 2" — a mute toggle on audio tracks writing `Track.
+    gain` 0/1 — D-057's mixer already reads this field, no new "muted"
+    concept to drift out of sync with — and a remove-track button), kept in
+    vertical sync with the library's own scroll via its real `onScroll`
+    prop (`OnScrollParams.scrollTop`) applied as a CSS transform. "Lock" /
+    "solo" are standard NLE affordances with no backing `chroma_timeline::
+    Track` field yet — not faked with frontend-only state `chroma_
+    timeline_set`'s verbatim-storage contract wouldn't actually persist;
+    left for whenever the model grows those fields.
+  - **No native cross-row drag** — also checked before assuming: read
+    `onActionMoveEnd`'s params (`{action, row, start, end}` — `row` is
+    always the action's *starting* row) and `drag_utils.d.ts`/`onRowDragStart`
+    /`onRowDragEnd` (for dragging a whole ROW to reorder rows — a different
+    feature, `enableRowDrag`) — there's no drop-target-row concept anywhere
+    in the library's action-drag path. A live drag-clip-between-tracks
+    gesture would need a custom pointer-driven override of the library's
+    own drag handling; scoped out of this pass and flagged as a known real
+    gap, not silently omitted. Built a working, non-drag substitute
+    instead: a "Move to ▾" dropdown on the toolbar (`@chroma/ui`'s
+    `DropdownMenu`), enabled when a clip is selected and more than one
+    track exists, listing every other track by its label — fires the new
+    cross-track `move`, clip keeps its own `start_frame` (overlap-rejected
+    at the destination, same as any other `move`).
+  - **Dropping a Sources-panel clip targets whichever lane the cursor is
+    over.** D-046 pass 3's plain-HTML5-drag mechanism (native drag/drop
+    crossing the shell/tab package boundary the D-039 layer direction
+    forbids a shared `DndContext` from crossing) generalized to be
+    row-aware: `dropTargetTrack` converts the drop's `clientY` into a track
+    index using the library's own fixed layout constants read straight out
+    of its bundled CSS (`.timeline-editor-time-area`'s 32px ruler +
+    `.timeline-editor-edit-area`'s 10px `margin-top` — not guessed) plus
+    the tracked `scrollTop`, clamped to a real track index; falls back to
+    the first video track (the old, only, default) if the pointer lands
+    outside every row.
+  - **Selection is now `{track, id}`, not a bare action id** — with one
+    track, an id alone was unambiguous; `Split`/`Remove`/`Move to ▾` all
+    need to know which track's clip list a selected id lives in now.
+  - **`Split` now requires a selection** (was: split whatever's on "the"
+    video track under the playhead, unconditional on selection — there was
+    only ever one track to mean). A real, deliberate behavioural
+    refinement, not an accidental regression: with N tracks, "at the
+    playhead" alone doesn't say which track, and "split the selected clip"
+    is the standard-NLE reading.
+- **Not built this pass, flagged honestly rather than silently skipped:**
+  a live drag-clip-between-tracks gesture (the "Move to ▾" dropdown is the
+  real, working substitute); track lock/solo (no backing model field);
+  Phase B3 (real blend modes/opacity — still ambient/opaque-only
+  compositing, per the roadmap's own sequencing, untouched by this pass);
+  Phase E (transitions, rides on B3); Phase F (export through the real
+  timeline).
+- **Verification.** `cargo test -p chroma-timeline`: 39/39. `cargo test
+  --manifest-path app/src-tauri/Cargo.toml chroma::`: 143/143, 1 ignored
+  (unchanged — this pass touched no Rust command surface, only the crate's
+  own test coverage). `cargo build`: clean. `packages/editor``vitest run`:
+  45/45. `tsc --noEmit -p packages/editor`: 0/0. `tsc --noEmit -p app`:
+  64/64 unchanged baseline. App boots cleanly under the real Tauri runtime
+  (confirmed via `app.log`, no crash/error on load) — **no live
+  interactive click-through this pass**: the owner was away for this
+  build (per their own instruction to keep working rather than wait), and
+  this session has no tool that can drive a native Tauri/WKWebView window
+  (tried navigating a plain Chrome tab to the Vite dev server directly —
+  confirmed it hard-fails with no Tauri IPC bridge available, `<WindowControls>`
+  erroring on a Tauri-only API — unrelated to this feature, a genuine tool
+  limitation, not skipped out of laziness). Real drag/drop/click-through
+  verification is pending the owner's own next session.

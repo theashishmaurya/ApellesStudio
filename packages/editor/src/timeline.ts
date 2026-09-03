@@ -75,7 +75,15 @@ export function endFrame(c: Clip): number {
 export interface Track {
   kind: 'video' | 'audio';
   clips: Clip[];
+  /** Linear volume multiplier (D-057) — mirrors `chroma_timeline::Track::gain`.
+   *  `1.0` unity, `0.0` full mute, `> 1.0` boosts. Absent on a pre-D-057
+   *  timeline (defaults to `1.0` server-side); optional here for the same
+   *  reason. Only meaningful for `kind === 'audio'` — a video track's own
+   *  embedded audio stays hardcoded at unity (D-057's own scoping). */
+  gain?: number;
 }
+
+export const DEFAULT_TRACK_GAIN = 1.0;
 
 export interface Timeline {
   /** Stable id (D-045) — distinguishes this timeline among a project's others. */
@@ -208,13 +216,34 @@ export type EditOp =
    *  `start_frame` (D-058) is computed by `applyOp` itself — always the end
    *  of whatever's already on the target track, i.e. a plain append. */
   | { kind: 'add_clip'; track: number; clip: NewClipFields; atIndex?: number }
-  /** D-058 — reposition a clip in time (the timeline UI's clip-body drag).
-   *  Mirrors `chroma-timeline::Timeline::move_clip`'s same-track case:
-   *  rejected (no-op) rather than clamped if the destination would overlap
-   *  another clip already on the track — same "just don't do it" contract
-   *  the crate uses, so this file never invents an overlap the crate
-   *  wouldn't also refuse. */
-  | { kind: 'move'; track: number; clip: number; startFrame: number };
+  /** D-058/D-080 — reposition a clip in time, and optionally onto a
+   *  different track (`fromTrack !== toTrack`) — the "move to another
+   *  track" affordance in the panel's toolbar, since
+   *  `@xzdarcy/react-timeline-editor` has no native cross-row drag (checked
+   *  its bundled types before building this — `onActionMoveEnd` only ever
+   *  reports the row the drag started in). Mirrors
+   *  `chroma-timeline::Timeline::move_clip(from_track, from_idx, to_track,
+   *  to_start_frame)` exactly, same-track being the `fromTrack === toTrack`
+   *  case: rejected (no-op) rather than clamped if the destination would
+   *  overlap another clip already on `toTrack` — same "just don't do it"
+   *  contract the crate uses, so this file never invents an overlap the
+   *  crate wouldn't also refuse. */
+  | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number }
+  /** D-080 — append a new empty track. Mirrors `chroma_timeline::Timeline::
+   *  add_track`: always succeeds, no validation to mirror. */
+  | { kind: 'add_track'; trackKind: 'video' | 'audio' }
+  /** D-080 — remove a track and every clip on it (no confirmation/undo
+   *  special-casing here — same as the Rust op, recovery is the shared
+   *  undo stack's job like any other edit, D-051). Mirrors `chroma_timeline
+   *  ::Timeline::remove_track`: no-op (rejected) for an out-of-range index. */
+  | { kind: 'remove_track'; track: number }
+  /** D-080 — set a track's linear volume multiplier (D-057's `Track.gain`).
+   *  The panel's mute toggle uses this (`gain: 0` / restore to `1`) rather
+   *  than a separate boolean field, matching what `chroma::audio`'s mixer
+   *  already reads — "muted" has no independent representation to drift
+   *  out of sync with the actual gain. No validation to mirror (the Rust
+   *  field is a plain `f32` with no clamp of its own). */
+  | { kind: 'set_track_gain'; track: number; gain: number };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
  *  labels (D-051) only, never used in the actual edit logic below. */
@@ -241,8 +270,16 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Remove ${clipLabel(before, op.track, op.clip)}`;
     case 'add_clip':
       return `Add "${op.clip.name}"`;
-    case 'move':
-      return `Move ${clipLabel(before, op.track, op.clip)}`;
+    case 'move': {
+      const label = clipLabel(before, op.fromTrack, op.clip);
+      return op.fromTrack === op.toTrack ? `Move ${label}` : `Move ${label} to another track`;
+    }
+    case 'add_track':
+      return `Add ${op.trackKind} track`;
+    case 'remove_track':
+      return `Remove track ${op.track + 1}`;
+    case 'set_track_gain':
+      return op.gain <= 0 ? `Mute track ${op.track + 1}` : `Unmute track ${op.track + 1}`;
     default:
       return 'Edit timeline';
   }
@@ -256,7 +293,7 @@ function clampInt(v: number, lo: number, hi: number): number {
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   if (op.kind === 'add_clip') {
     const next = clone(tl);
-    if (next.tracks.length === 0) next.tracks.push({ kind: 'video', clips: [] });
+    if (next.tracks.length === 0) next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN });
     const trackIdx = op.track < next.tracks.length ? op.track : 0;
     const track = next.tracks[trackIdx];
     // D-058 — always an append: the position a dragged clip lands at is
@@ -267,6 +304,57 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const clip: Clip = { ...op.clip, start_frame: startFrame };
     const at = Math.min(Math.max(op.atIndex ?? track.clips.length, 0), track.clips.length);
     track.clips.splice(at, 0, clip);
+    return next;
+  }
+
+  // D-080 — track-list-level ops: none of these operate on "the clips of one
+  // already-known track" the way the switch below's remaining ops do (`move`
+  // spans two tracks; `add_track`/`remove_track` mutate the list itself), so
+  // they're handled before the generic `tr = tl.tracks[op.track]` guard.
+  if (op.kind === 'add_track') {
+    // Mirrors `chroma_timeline::Timeline::add_track` — always succeeds.
+    const next = clone(tl);
+    next.tracks.push({ kind: op.trackKind, clips: [], gain: DEFAULT_TRACK_GAIN });
+    return next;
+  }
+  if (op.kind === 'remove_track') {
+    // Mirrors `Timeline::remove_track` — out-of-range is a no-op (`NoSuchTrack`).
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks.splice(op.track, 1);
+    return next;
+  }
+  if (op.kind === 'set_track_gain') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks[op.track].gain = op.gain;
+    return next;
+  }
+  if (op.kind === 'move') {
+    // Mirrors `Timeline::move_clip(from_track, from_idx, to_track,
+    // to_start_frame)` field-for-field, including its error order (negative
+    // position checked first, before either track/clip is even looked up).
+    if (op.startFrame < 0) return tl;
+    const src = tl.tracks[op.fromTrack];
+    const c = src?.clips[op.clip];
+    if (!c) return tl;
+    const dest = tl.tracks[op.toTrack];
+    if (!dest) return tl;
+    if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
+    const newEnd = op.startFrame + c.duration;
+    // the clip being moved never counts as overlapping itself, and only on
+    // its OWN track — a same-id clip could coincidentally exist on the
+    // destination track in theory, but index identity (not id) is what the
+    // Rust op excludes, so this mirrors that exactly.
+    const overlaps = dest.clips.some((other, i) => {
+      if (op.fromTrack === op.toTrack && i === op.clip) return false;
+      return op.startFrame < endFrame(other) && newEnd > other.start_frame;
+    });
+    if (overlaps) return tl;
+    const next = clone(tl);
+    const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
+    moved.start_frame = op.startFrame;
+    next.tracks[op.toTrack].clips.push(moved);
     return next;
   }
 
@@ -281,21 +369,6 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const clips = next.tracks[op.track].clips;
       const [moved] = clips.splice(from, 1);
       clips.splice(to, 0, moved);
-      return next;
-    }
-    case 'move': {
-      const c = tr.clips[op.clip];
-      if (!c) return tl;
-      if (op.startFrame < 0 || op.startFrame === c.start_frame) return tl;
-      const newEnd = op.startFrame + c.duration;
-      // mirrors `Timeline::move_clip`'s overlap check — the clip being
-      // moved never counts as overlapping itself.
-      const overlaps = tr.clips.some(
-        (other, i) => i !== op.clip && op.startFrame < endFrame(other) && newEnd > other.start_frame,
-      );
-      if (overlaps) return tl;
-      const next = clone(tl);
-      next.tracks[op.track].clips[op.clip].start_frame = op.startFrame;
       return next;
     }
     case 'remove': {

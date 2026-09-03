@@ -1170,6 +1170,51 @@ mod tests {
         assert!(t.resolve_video_clip_at(-1).is_none());
     }
 
+    /// D-080 (Phase B2 confirmation, `docs/notes/multi-track-nle.md`):
+    /// `resolve_video_clip_at`'s walk was claimed to already generalize past
+    /// two tracks (a plain filtered iteration, nothing hardcoded to "top or
+    /// bottom") but nothing had actually exercised three-plus video tracks
+    /// until this test. Three disjoint single-clip tracks: track 0 covers
+    /// only `[0,50)`, track 1 only `[0,30)`, track 2 `[0,200)` — a query
+    /// frame past BOTH track 0 and track 1's content can only resolve
+    /// correctly if the walk keeps going past track 1's own gap too, not
+    /// just falls through once.
+    fn three_video_track_timeline() -> Timeline {
+        let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
+        t.add_track(TrackKind::Video); // track 1, empty
+        t.add_track(TrackKind::Video); // track 2, empty
+        // Shrink track 0 to a short clip so it genuinely runs out early.
+        t.trim_end(0, 0, -50).unwrap(); // A: 100 -> 50 frames, now [0,50)
+        t.move_clip(0, 1, 1, 0).unwrap(); // B -> track 1 @ [0,50), then trimmed below
+        t.trim_end(1, 0, -20).unwrap(); // track 1's clip: 50 -> 30 frames, now [0,30)
+        t.move_clip(0, 1, 2, 0).unwrap(); // C -> track 2 @ [0, its own length)
+        t
+    }
+
+    #[test]
+    fn resolve_video_clip_at_three_tracks_top_wins_when_all_have_content() {
+        let t = three_video_track_timeline();
+        // frame 10: all three tracks have content — index 0 (highest
+        // priority) wins, same rule as the two-track case, just confirmed
+        // with a third track also present and also matching.
+        let (track_idx, clip, _) = t.resolve_video_clip_at(10).unwrap();
+        assert_eq!(track_idx, 0);
+        assert_eq!(clip.name, "A");
+    }
+
+    #[test]
+    fn resolve_video_clip_at_three_tracks_falls_through_two_gaps_to_the_third() {
+        let t = three_video_track_timeline();
+        // frame 100: track 0's clip ended at 50, track 1's ended at 30 —
+        // both genuinely exhausted, not just lower priority. Only track 2
+        // (index 2, third in line) has anything here. A walk that only
+        // checked "top, then one fallback" would incorrectly return None.
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(100).unwrap();
+        assert_eq!(track_idx, 2);
+        assert_eq!(clip.name, "C");
+        assert_eq!(source_frame, 100);
+    }
+
     #[test]
     fn resolve_video_clip_at_no_video_tracks_is_none() {
         let t = Timeline::default();

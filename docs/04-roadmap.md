@@ -228,6 +228,27 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      in `tauri.conf.json`; confirmed by the owner dragging a real clip in
      the real window, the project's first non-proxy drag-and-drop
      confirmation.
+   - ~~**Phase D — multi-track UI**~~ — **done, D-080 (2026-09-03).** B2
+     (N-track compositing) confirmed first (was claimed but never actually
+     exercised past 2 tracks — new 3-track test in `chroma-timeline`
+     proves the walk falls through *two* consecutive gaps correctly, not
+     just one). `TimelinePane.tsx` now renders one row per track (was a
+     single hardcoded video row), a real custom track-header sidebar
+     (kind icon, per-kind label, mute toggle writing D-057's `Track.gain`,
+     remove-track), add-video/add-audio-track toolbar buttons, and a
+     "Move to another track ▾" dropdown (the library has no native
+     cross-row drag — checked its types before assuming otherwise; this is
+     the real, working substitute, not a live drag gesture). New
+     `add_track`/`remove_track`/`set_track_gain` ops in `timeline.ts`;
+     `move` generalized from one `track` field to `fromTrack`/`toTrack`.
+     `cargo test -p chroma-timeline` 39/39, `chroma::` 143/143 unchanged,
+     `vitest` 45/45, `tsc` both packages clean/unchanged. **No live
+     click-through this pass** — built while the owner was away (their own
+     instruction: "work on the composition UI, don't sit idle"), and this
+     session has no tool that can drive the native Tauri window; real
+     interactive verification is pending the owner's next session. See
+     D-080 for the full writeup, including what's deliberately not built
+     yet (live drag-between-tracks, lock/solo — no backing model field).
 7. **Global Inspector — Motion + NLE, one shared panel, not two** — owner,
    2026-09-03: reframed from "Motion property-editor GUI" once scoping
    started. Both tabs need real property controls (position/timing/text/

@@ -65,8 +65,20 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'remove', track: 0, clip: 99 }, before)).toBe('Remove clip');
   });
 
-  it('names the clip for move (D-058)', () => {
-    expect(labelForOp({ kind: 'move', track: 0, clip: 1, startFrame: 250 }, before)).toBe('Move "B-roll 1"');
+  it('names the clip for move (D-058/D-080)', () => {
+    expect(labelForOp({ kind: 'move', fromTrack: 0, toTrack: 0, clip: 1, startFrame: 250 }, before)).toBe(
+      'Move "B-roll 1"',
+    );
+    expect(labelForOp({ kind: 'move', fromTrack: 0, toTrack: 1, clip: 1, startFrame: 250 }, before)).toBe(
+      'Move "B-roll 1" to another track',
+    );
+  });
+
+  it('names track ops (D-080)', () => {
+    expect(labelForOp({ kind: 'add_track', trackKind: 'audio' }, before)).toBe('Add audio track');
+    expect(labelForOp({ kind: 'remove_track', track: 1 }, before)).toBe('Remove track 2');
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 0 }, before)).toBe('Mute track 1');
+    expect(labelForOp({ kind: 'set_track_gain', track: 0, gain: 1 }, before)).toBe('Unmute track 1');
   });
 });
 
@@ -202,23 +214,104 @@ describe('remove (D-058)', () => {
   });
 });
 
-describe('move (D-058)', () => {
-  it('repositions the clip to the requested start_frame', () => {
+describe('move (D-058/D-080)', () => {
+  it('repositions the clip to the requested start_frame on the same track', () => {
     const before = tl(backToBack());
-    const after = applyOp(before, { kind: 'move', track: 0, clip: 1, startFrame: 500 });
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 1, startFrame: 500 });
     expect(after.tracks[0].clips[1].start_frame).toBe(500);
   });
 
-  it('rejects (no-op) a move that would overlap another clip on the track', () => {
+  it('rejects (no-op) a move that would overlap another clip on the destination track', () => {
     const before = tl(backToBack()); // a:[0,100) b:[100,200)
-    const after = applyOp(before, { kind: 'move', track: 0, clip: 1, startFrame: 50 }); // would overlap a
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 1, startFrame: 50 }); // would overlap a
     expect(after).toBe(before);
   });
 
   it('rejects a negative position', () => {
     const before = tl(backToBack());
-    const after = applyOp(before, { kind: 'move', track: 0, clip: 0, startFrame: -1 });
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: -1 });
     expect(after).toBe(before);
+  });
+
+  it('moves a clip onto a different track, preserving id/duration/source window', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: backToBack() }, { kind: 'video', clips: [] }],
+    };
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 1, startFrame: 300 });
+    expect(after.tracks[0].clips).toHaveLength(1);
+    expect(after.tracks[0].clips[0].id).toBe('a');
+    expect(after.tracks[1].clips).toHaveLength(1);
+    const moved = after.tracks[1].clips[0];
+    expect(moved.id).toBe('b');
+    expect(moved.start_frame).toBe(300);
+    expect(moved.duration).toBe(100);
+    expect(moved.source_path).toBe('/media/b.mov');
+  });
+
+  it('rejects (no-op) a cross-track move that would overlap a clip already on the destination track', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [clip('a', 'Intro', { start_frame: 0, duration: 100 })] },
+        { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 50, duration: 100 })] }, // [50,150)
+      ],
+    };
+    // moving `a` (duration 100) to start at 100 on track 1 -> [100,200), overlaps [50,150)
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100 });
+    expect(after).toBe(before);
+  });
+
+  it('a same-track, same-position move is a real no-op', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 0 });
+    expect(after).toBe(before);
+  });
+
+  it('an out-of-range source or destination track is a no-op', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'move', fromTrack: 5, toTrack: 0, clip: 0, startFrame: 10 })).toBe(before);
+    expect(applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 5, clip: 0, startFrame: 10 })).toBe(before);
+  });
+});
+
+describe('add_track / remove_track / set_track_gain (D-080)', () => {
+  it('add_track appends an empty track of the requested kind with default gain', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, { kind: 'add_track', trackKind: 'audio' });
+    expect(after.tracks).toHaveLength(2);
+    expect(after.tracks[1]).toEqual({ kind: 'audio', clips: [], gain: 1.0 });
+  });
+
+  it('remove_track drops the track and every clip on it', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: backToBack() }, { kind: 'audio', clips: [] }],
+    };
+    const after = applyOp(before, { kind: 'remove_track', track: 0 });
+    expect(after.tracks).toHaveLength(1);
+    expect(after.tracks[0].kind).toBe('audio');
+  });
+
+  it('remove_track is a no-op for an out-of-range index', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'remove_track', track: 5 })).toBe(before);
+  });
+
+  it('set_track_gain sets the gain field directly (mute is gain: 0)', () => {
+    const before = tl(backToBack());
+    const muted = applyOp(before, { kind: 'set_track_gain', track: 0, gain: 0 });
+    expect(muted.tracks[0].gain).toBe(0);
+    const restored = applyOp(muted, { kind: 'set_track_gain', track: 0, gain: 1 });
+    expect(restored.tracks[0].gain).toBe(1);
+  });
+
+  it('set_track_gain is a no-op for an out-of-range index', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'set_track_gain', track: 5, gain: 0 })).toBe(before);
   });
 });
 

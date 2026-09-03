@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Multi-track timeline UI (D-080, Phase D of the
+  multi-track NLE effort).** The Edit tab now shows a real lane per track —
+  custom header sidebar (kind icon, per-kind label, mute toggle, remove),
+  add-video/add-audio-track buttons, and a "Move to ▾" dropdown to move a
+  clip between tracks (the timeline library has no native drag-between-rows,
+  confirmed before assuming otherwise). Confirmed N-track compositing
+  actually works past 2 tracks first (was claimed, never tested) before
+  building UI on top of it. Opaque compositing only for now — real blend
+  modes/opacity (Phase B3) is still unbuilt, a separate later step.
+
 - **2026-09-03** — **Relight shading overhaul (D-078/D-079): real light, not
   a coloured gel.** Falloff was 2D-screen-only and colour was flat additive
   — read as a translucent wash, live-confirmed fixed by switching to a
