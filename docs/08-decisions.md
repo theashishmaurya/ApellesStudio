@@ -3564,3 +3564,194 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   `ChromaError::NotFound` cases, but `chroma-timeline` is explicitly out of
   scope for this step (own test suite, already-real crate per D-041/045/046)
   and wasn't touched.
+
+## D-054 — Interactive relight follow-ups: static depth-bake fallback, export wiring, a Preset tab, MCP tool wrapping
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** `docs/04-roadmap.md`'s "Later" bucket carried four small,
+  explicitly-deferred D-048 ("Interactive relight (puck UI + depth-driven
+  shading)") follow-ups. (Both `docs/04-roadmap.md` lines 162-163 and
+  `docs/09-engine-notes.md`'s D-048 section header itself said "D-046" for
+  interactive relight — a pre-existing mislabel, D-046 is actually "Media
+  pool pass 3"; fixed in this commit alongside these four, per CLAUDE.md's
+  "docs describe the system as it actually is" rule.) All four land here,
+  as one batch — each independent enough to be its own decision, but small
+  enough that a shared write-up plus four clearly-separated sections is more
+  legible than four one-paragraph entries.
+
+  1. **Static single-frame depth-bake fallback.** D-048 v1: no temporal
+     depth track ⇒ positional lights render as a correct, deliberate no-op
+     (the `has_depth` shader gate). Studied first: D-024's AI-Depth mask,
+     which already has exactly this fallback (`generate_ai_depth_bitmap`'s
+     `mask_data_base64` arm) via a static Depth-Anything-V2 bake. Also found
+     `generate_full_image_depth_map` (`ai_commands.rs`) — an existing,
+     already-`generate_handler!`-registered command that runs that *exact*
+     single-frame model on the currently-warped image and returns a raw
+     (un-band-passed) depth PNG data URL, already used by the lens-blur
+     effect's own static depth map (`lensBlurDepthMap`). **Choice:** reuse
+     it verbatim — no second model, no second Tauri command. A new
+     `adjustments.relightDepthBake: string | null` field (parsed by
+     `chroma::relight::resolve_depth_bake`) holds the data URL; a "Bake
+     Depth" button in `RelightPanel.tsx` (`useAiMasking.ts`'s
+     `handleBakeRelightDepth`) populates it, mirroring "Track Depth"'s own
+     button/hook shape exactly. Unlike "Track Depth" (video only — a still
+     has no temporal track to run), "Bake Depth" works on a still image too,
+     since D-048 v1's relight layer was never video-gated to begin with.
+     Rust-side, `mask_generation::generate_relight_depth_bitmap_static`
+     decodes it through the *same* `generate_ai_bitmap_from_base64` warp
+     path every other base64-backed mask type already uses (crop/scale
+     alignment stays identical to the tracked path). A new
+     `mask_generation::resolve_relight_depth_bitmap(js_adjustments, …)` is
+     now the one entry point every render path calls: tracked dir first (if
+     something is actually cached at the current frame), static bake
+     second, `None` (ambient-only, unchanged D-048 behaviour) only if
+     neither resolves. `lib.rs`'s `process_preview_job` was refactored to
+     call it instead of its old two-step dir-then-bitmap inline logic — same
+     behaviour for the tracked case, now with the fallback for free.
+
+  2. **`export.rs` wiring.** D-048 deliberately left every `mask_bitmaps`
+     build site other than the live-preview path
+     (`process_preview_job`/`lib.rs`) at `relight_depth_layer == -1`, so a
+     positional light rendered in the GUI went inert on a real export — only
+     the ambient term (no depth needed) survived. Studied first:
+     `apply_relight` (`shader.wgsl`) and how `process_preview_job` feeds it
+     (the exact `resolve_relight_depth_bitmap` call added in item 1 above).
+     **Choice:** `chroma/export.rs`'s `grade_frame` (the per-frame renderer
+     `export_video`'s real ffmpeg-in/ffmpeg-out loop calls, not
+     `export_processing.rs`'s single-mask-isolation helper, which is a
+     different, deliberately-relight-zeroing function per D-048) now calls
+     the *same* `resolve_relight_depth_bitmap` resolver and appends the
+     bitmap the same way — one more `mask_bitmaps` layer, `relight_depth_layer`
+     pointed at it. `grade_frame` already runs after `set_current_frame`
+     (the export loop calls it per decoded frame), so the tracked-dir path's
+     per-frame PNG lookup (keyed off `chroma::state::current_video().frame`)
+     resolves correctly for every exported frame, not just frame 0 — no
+     extra state plumbing needed, this was already correct for masks and
+     inherited automatically. **Deliberately still `-1`:** `bake_primary_lut`
+     (primary-grade-only .cube bake — no masks of any kind belong there) and
+     `export_processing.rs`'s `build_single_mask_adjustments` (isolates one
+     mask's own effect for a preview swatch — relight is a global layer, not
+     scoped to a mask, same reasoning D-048 already documented for it).
+
+  3. **Preset tab.** D-048's brief named a ClipDrop reference strip with a
+     leading "Preset" tab (saved/built-in lighting setups); v1 shipped
+     Ambient/Light-N/+Add Light only, calling it "UI polish, deferred."
+     Studied first: `RelightPuckLayer.tsx` + `adjustments.relightLights`'s
+     shape, and `relightUtils.ts`'s `createRelightLight` (the exact factory
+     "+Add Light" already calls). **Choice:** `utils/relightPresets.ts` — a
+     small, hand-picked array of `{id, label, description, build}`, each
+     `build()` returning a `RelightLight[]` via `createRelightLight(kind)`
+     patched with hand-tuned field overrides (position/radius/intensity/
+     color) for a specific look, not a new schema. Three presets, not an
+     exhaustive gallery: "Warm key + cool rim" (two-point portrait rig),
+     "Soft ambient fill" (flat/flattering wash), "Dramatic single-source"
+     (moody, high-contrast). `RelightPanel.tsx` gets a `showPresets` boolean
+     (a picker view, not a fourth "kind" of active light) and a new leading
+     "Preset" tab; applying a preset calls the *same* `updateLights`/
+     `setAdjustments` path "+Add Light" uses (REPLACES `relightLights`, then
+     selects the first new light — matching "+Add Light"'s own
+     select-on-add behaviour), not a separate code path.
+
+  4. **MCP tool wrapping.** D-048 added `list_relight_lights`/
+     `add_relight_light`/`set_relight_light`/`delete_relight_light` to the
+     HTTP control-server bridge (`useChromaControl.ts`'s `OPS` registry,
+     explicitly "mirroring `add_mask`'s shape" per D-048's own consequences
+     section) for its own live verification, but never wrapped them as
+     `mcp/server.py` tools — every other control-server op with an
+     agent-facing purpose has one, these didn't. Studied first: the
+     "masks" section of `mcp/server.py` (`add_subject_mask`/`set_mask_adjust`/
+     `delete_mask` etc.) for the established `@mcp.tool()` + `_op`/`_result`
+     wrapping convention: optional args built into a `dict` and only
+     included when passed, a docstring stating field ranges/meanings and
+     pointing at prerequisite tools. **Choice:** four new tools in a new
+     "relight" section (`mcp/server.py`, between "masks" and "scopes"),
+     wrapping the four ops 1:1, same convention, no 5th tool invented for
+     "Bake Depth" (item 1) — that stays a GUI-only action for now, not
+     asked for here and not on the HTTP control-server bridge to wrap.
+
+- **Consequences / footprint.** New: `app/src/utils/relightPresets.ts`.
+  Edited: `chroma/relight.rs` (+`resolve_depth_bake`, 2 tests),
+  `mask_generation.rs` (+`generate_relight_depth_bitmap_static`,
+  +`resolve_relight_depth_bitmap`, +6 tests in a new
+  `relight_depth_bake_tests` module), `lib.rs` (`process_preview_job` now
+  calls the unified resolver), `chroma/export.rs` (`grade_frame` wires the
+  same resolver in, +1 real GPU pixel-difference test — lit vs. unlit,
+  `export_positional_relight_light_changes_pixels`), `adjustments.ts`
+  (+`relightDepthBake` field), `useAiMasking.ts` (+`handleBakeRelightDepth`),
+  `useEditorStore.ts` (+`isBakingRelightDepth`), `RelightPanel.tsx` ("Bake
+  Depth" button + Preset tab/picker), `mcp/server.py` (+4 tools). No
+  `AppState`/Cargo/bind-group/new-Tauri-command change — same footprint
+  shape D-048 itself had for the same reason (existing generic plumbing
+  absorbs all four).
+
+- **Verified (2026-09-03).** `cargo test --no-default-features -p RapidRAW
+  chroma::` **109/109** green (existing D-048 relight tests unaffected +
+  the new `export_positional_relight_light_changes_pixels` pixel-diff test,
+  run for real against a real GPU adapter, same skip-without-GPU convention
+  as `relight_render_is_deterministic`); `mask_generation`'s new
+  `relight_depth_bake_tests` module **6/6** green separately (not under the
+  `chroma::` path, pure decode/precedence tests, no GPU/video fixture
+  needed). `cargo clippy --no-default-features -p RapidRAW --no-deps` — 15
+  warnings, all pre-existing (confirmed by file/line against files this
+  pass never touched — same 15 D-048's own note already named), **zero** in
+  `relight.rs`/`mask_generation.rs`/`export.rs`/`lib.rs`. `cargo fmt`
+  **scoped per-file** (`rustfmt --check` on each touched file directly, not
+  `cargo fmt` on `lib.rs` — that walks the whole `mod` tree via the crate
+  root and would have flagged dozens of pre-existing, unrelated files;
+  CLAUDE.md's hard rule) — every new line this pass wrote is clean; the two
+  pre-existing drifts already living in touched files
+  (`mask_generation.rs:1272`, already logged as D-034 drift by D-048;
+  `export.rs`'s 20 lines, confirmed via `git show HEAD:…|rustfmt --check`
+  to already differ before this pass touched the file) were left alone, not
+  "fixed," per the same rule. `cd app && npx tsc --noEmit` — 64 errors,
+  unchanged baseline for this worktree, zero in a touched/new file.
+
+  **Live app, real project.** Booted `npm run tauri:dev` from this
+  worktree (a fresh dependency compile — this session's disk filled from
+  concurrent agent activity on the shared machine mid-build twice;
+  recovered both times by removing this worktree's own rebuildable
+  `target/`, a legitimate `cargo clean`-equivalent, never another agent's
+  files). Opened the real `~/Movies/Chroma/New.chroma` project over the
+  control-server bridge (`open_project`, `set_active_shot`) — confirmed the
+  saved grade schema round-trips the new `relightDepthBake` field
+  (`null`). Drove the 4 relight ops directly (the same HTTP path the new
+  MCP tools call, `_op` being a thin `httpx.post` wrapper — item 4):
+  `add_relight_light` (ambient, green, intensity 80) → decoded the
+  returned preview JPEG — **solid, uniform green**, exactly
+  `apply_relight`'s ambient math, matching D-048's own precedent.
+  `set_relight_light` (intensity 80 → 20) → re-rendered preview visibly
+  fainter — live intensity scaling confirmed. `add_relight_light` (kind
+  "key", no depth source present) → preview **unchanged** — confirms the
+  `has_depth` gate still correctly no-ops a positional light absent any
+  depth source (regression check: D-048's original behaviour, now one of
+  two ways to be "absent" — no track *and* no bake). `list_relight_lights`
+  confirmed state; all test lights deleted; `save_project` confirmed the
+  on-disk grade returned to `relightLights: []` — the user's real project
+  left exactly as found. `list_masks`/`list_projects` and the MCP tools'
+  Python module (`python3 -m py_compile` + an AST walk enumerating every
+  `@mcp.tool()` function) confirm the 4 new tools
+  (`list_relight_lights`/`add_relight_light`/`set_relight_light`/
+  `delete_relight_light`) are defined with the expected signatures — the
+  installed `mcp` package in this sandbox (public PyPI 1.26.0) lacks the
+  `mcp.server.mcpserver` module this file imports from (a pre-existing,
+  environment-specific gap unrelated to this change — the file predates
+  this pass), so the actual MCP stdio handshake could not be driven
+  end-to-end here; the identical underlying HTTP call it makes was.
+
+  **Not directly exercised live — the genuine gaps, flagged rather than
+  glossed over:** (1) the "Bake Depth" button (item 1) and the Preset tab
+  (item 3) are pure UI actions with no control-server equivalent (by
+  design — item 4's scope is exactly the 4 pre-existing relight ops, not a
+  5th one invented for this pass), and this sandbox has no
+  screen/accessibility access to click them — the same limitation D-048
+  itself hit for `RelightPuckLayer`'s drag. Verified instead by code
+  review: `handleBakeRelightDepth` calls the *exact* already-proven-live
+  `generate_full_image_depth_map` command (Effects.tsx's lens-blur feature
+  already exercises it in production); `applyPreset` calls the *exact*
+  `updateLights`/`setAdjustments` path just proven live via
+  `add_relight_light`, only building multiple `createRelightLight(kind)`
+  results instead of one. (2) The export test proves item 1+2's static-bake
+  path with a synthetic depth bitmap (deterministic, repeatable, part of
+  the permanent suite) rather than a real UI-triggered bake — a live
+  `chroma_export_video` run using the real "Bake Depth" output was not
+  performed, for the same click-access reason.

@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Interactive relight follow-ups (D-054)**, all four of
+  D-048's deferred small items: a static single-frame depth-bake fallback
+  ("Bake Depth", reusing the existing single-frame Depth-Anything-V2 command
+  `generate_full_image_depth_map` — parity with D-024's AI-Depth mask, no
+  second model); `relight_depth_layer` wired into `export.rs`'s `grade_frame`
+  so a positional light survives a real export, not just live preview (+ a
+  real GPU pixel-diff test, lit vs. unlit); a "Preset" tab on `RelightPanel`
+  (3 starter looks: warm key + cool rim, soft ambient fill, dramatic
+  single-source); MCP tool wrapping for the 4 control-server relight ops
+  (`mcp/server.py`). Also fixed a pre-existing "D-046" mislabel for
+  interactive relight in `docs/04-roadmap.md` and `docs/09-engine-notes.md`
+  — the real decision is D-048; D-046 is "Media pool pass 3".
 - **2026-09-03** — **`chroma-types` step 2: `Resolution`/`Rational` made real
   (D-053).** Audited `app/src-tauri/src/chroma/*` for real duplicates of the
   D-039-step-1 placeholders. Real find: `width`/`height` field pairs on

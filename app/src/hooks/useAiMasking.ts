@@ -428,11 +428,11 @@ export function useAiMasking() {
     }
   };
 
-  // Chroma (D-046): same `chroma_depth_track`/`_status` job as `handleTrackDepth`
+  // Chroma (D-048): same `chroma_depth_track`/`_status` job as `handleTrackDepth`
   // above — the underlying track is per-clip, not per-mask (the sidecar cancels
   // only a running "depth" job regardless of caller) — but the resulting
   // directory is written to the top-level `adjustments.relightDepthDir` rather
-  // than a sub-mask's parameters, since the Relight layer isn't a mask (D-046).
+  // than a sub-mask's parameters, since the Relight layer isn't a mask (D-048).
   // Shares `useChromaStore`'s `depthTrackProgress` with `handleTrackDepth`:
   // only one depth-track job can run at a time system-wide anyway.
   const handleTrackRelightDepth = async () => {
@@ -461,6 +461,37 @@ export function useAiMasking() {
       return { error: err?.message || String(err) };
     } finally {
       setDepthTrackProgress(null);
+    }
+  };
+
+  // Chroma (D-054, follow-up to D-048): static single-frame depth-bake
+  // fallback for a clip with no temporal depth track — parity with D-024's
+  // AI-Depth mask, which already has this fallback. Reuses the SAME
+  // single-frame Depth-Anything-V2 command the AI-Depth mask and lens-blur
+  // depth map (`Effects.tsx`'s `handleGenerateLensBlurDepthMap`) already
+  // call — no second model/pipeline. Result is a plain data URL written to
+  // the top-level `relightDepthBake` (mirrors `handleTrackRelightDepth`
+  // writing `relightDepthDir`), read by `resolve_relight_depth_bitmap`
+  // (Rust) ONLY when no tracked dir is present. Works on a still image too
+  // (unlike "Track Depth", which needs a video) — a still has no temporal
+  // track to run in the first place.
+  const handleBakeRelightDepth = async () => {
+    const { selectedImage, adjustments } = useEditorStore.getState();
+    if (!selectedImage?.path) return { error: 'no image loaded' };
+    setEditor({ isBakingRelightDepth: true });
+    try {
+      const transformAdjustments = getTransformAdjustments(adjustments);
+      const b64: string = await invoke('generate_full_image_depth_map', {
+        jsAdjustments: transformAdjustments,
+      });
+      setAdjustments((prev: Adjustments) => ({ ...prev, relightDepthBake: b64 }));
+      useChromaStore.getState().bumpFrameNonce();
+      return { baked: true };
+    } catch (err: any) {
+      toast.error(`Bake Depth failed: ${err?.message || String(err)}`);
+      return { error: err?.message || String(err) };
+    } finally {
+      setEditor({ isBakingRelightDepth: false });
     }
   };
 
@@ -679,5 +710,6 @@ export function useAiMasking() {
     handleTrackSubject,
     handleTrackDepth,
     handleTrackRelightDepth,
+    handleBakeRelightDepth,
   };
 }

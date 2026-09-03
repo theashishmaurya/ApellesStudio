@@ -1,4 +1,4 @@
-//! Interactive relight (D-046) — deterministic, real-time depth-driven light
+//! Interactive relight (D-048) — deterministic, real-time depth-driven light
 //! pucks. This module owns the pure, testable pieces: parsing the "Relight"
 //! grade layer (`adjustments.relightLights` + `adjustments.relightDepthDir`)
 //! out of the frontend's JSON adjustments blob into GPU-ready uniforms, and
@@ -10,7 +10,7 @@
 //! `mask_generation::generate_relight_depth_bitmap`, same infra D-024's
 //! depth-haze mask already uses). It does NOT do subject tracking, matte
 //! refinement, or the diffusion "bake" mode — that is out of scope for this
-//! feature entirely (see `docs/notes/relight-research.md` and D-046).
+//! feature entirely (see `docs/notes/relight-research.md` and D-048).
 //!
 //! Design in one line: the Relight layer is a **sibling top-level adjustment
 //! layer**, not a mask container — it carries its own depth-source reference
@@ -25,6 +25,16 @@
 //! `generate_sub_mask_bitmap` uses for mask geometry. No new interpolation
 //! code. The frontend mirror reuses `utils/maskKeyframes.ts` the same way
 //! (`GEOMETRY_KEYS.relight = ['x', 'y', 'radius']`).
+//!
+//! Static depth-bake fallback (D-054, follow-up to D-048's deferred item):
+//! [`resolve_depth_bake`] reads `adjustments.relightDepthBake` — a raw,
+//! un-band-passed depth-map PNG baked once by the same single-frame
+//! Depth-Anything-V2 model D-024's AI-Depth mask and the lens-blur depth map
+//! already share (`generate_full_image_depth_map`), stored as a plain base64
+//! data URL exactly like `AiDepthMaskParameters.mask_data_base64`. It is
+//! consulted by `mask_generation::resolve_relight_depth_bitmap` ONLY when no
+//! temporal track (`relightDepthDir`) is present or nothing is cached yet at
+//! the current frame — a tracked directory always wins when both exist.
 
 use crate::image_processing::{MAX_RELIGHT_LIGHTS, RelightLightGpu};
 use serde_json::Value;
@@ -36,7 +46,7 @@ use serde_json::Value;
 pub struct RelightLightSpec {
     /// "key" | "fill" | "rim" | "ambient". Only "ambient" changes the shading
     /// math (uniform tint, no position/normal/falloff) — the other three are
-    /// UI labels/presets today (D-046 v1 scope).
+    /// UI labels/presets today (D-048 v1 scope).
     pub kind: String,
     /// 0–100, percentage of frame width/height. Ignored for `kind == "ambient"`.
     pub x: f32,
@@ -165,13 +175,25 @@ pub fn parse_relight_lights_gpu(
 /// `adjustments.relightDepthDir` — the per-frame Video-Depth-Anything track
 /// directory the Relight layer shades against (D-036's tracking mechanism,
 /// triggered from the Relight panel's own "Track Depth" button rather than a
-/// mask's). `None` when absent/empty — the caller then renders ambient-only
-/// (no positional-light shading, no crash; see `apply_relight`'s WGSL gate).
-/// v1 does not fall back to a static single-frame bake (unlike D-024's AI
-/// Depth mask) — deferred, `docs/04-roadmap.md`.
+/// mask's). `None` when absent/empty — the caller then falls back to
+/// [`resolve_depth_bake`]'s static bake, and only renders ambient-only (no
+/// positional-light shading, no crash; see `apply_relight`'s WGSL gate) when
+/// neither exists.
 pub fn resolve_depth_dir(js_adjustments: &Value) -> Option<String> {
     js_adjustments
         .get("relightDepthDir")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// `adjustments.relightDepthBake` — a static single-frame depth-map PNG (data
+/// URL), the D-054 fallback for a clip with no temporal depth track. `None`
+/// when absent/empty. See the module header for how this relates to
+/// [`resolve_depth_dir`].
+pub fn resolve_depth_bake(js_adjustments: &Value) -> Option<String> {
+    js_adjustments
+        .get("relightDepthBake")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -267,6 +289,18 @@ mod tests {
         assert_eq!(
             resolve_depth_dir(&json!({ "relightDepthDir": "/tmp/x" })),
             Some("/tmp/x".to_string())
+        );
+    }
+
+    /// D-054: the static-bake resolver mirrors `resolve_depth_dir`'s absent/
+    /// empty handling exactly — same contract, different field.
+    #[test]
+    fn depth_bake_absent_or_empty_is_none() {
+        assert!(resolve_depth_bake(&json!({})).is_none());
+        assert!(resolve_depth_bake(&json!({ "relightDepthBake": "" })).is_none());
+        assert_eq!(
+            resolve_depth_bake(&json!({ "relightDepthBake": "data:image/png;base64,abc" })),
+            Some("data:image/png;base64,abc".to_string())
         );
     }
 
