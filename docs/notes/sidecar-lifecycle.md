@@ -74,6 +74,52 @@ the owned child. An external sidecar is never touched. Result: `pgrep -f
 `{ managed: bool, healthy: bool, pid?: u32, restarts: u32, lastError?: string }`
 — for a future UI "AI: ●" indicator. Nothing consumes it yet.
 
+## TODO — real ownership of an "external" sidecar (found 2026-09-03, D-069)
+
+**The gap:** "External already up" mode (above) makes its owned-vs-external
+decision **exactly once**, at app boot, from a single bare `GET /health`. Once
+anything answers, Rust defers to it **forever** — `monitor_external`'s 10s poll
+loop only updates a `healthy` flag for the UI; it never re-evaluates whether
+that process is still the right one, and explicitly never restarts it even
+once it's confirmed dead ("not managed — not restarting it").
+
+**Why this bit for real:** a sidecar process from **Tuesday, Sept 1, 21:19** —
+over two days old, from before `/depth_track` even existed in `ai/server.py`
+— sat on port 8765 through this entire session. Every one of that night's many
+app restarts found it healthy and deferred to it, so the staleness was
+invisible to every actual code rebuild. Root-caused and worked around by hand
+(`kill` + `ai/run.sh`) — see **D-069**, `docs/08-decisions.md`. The underlying
+gap is still open.
+
+**What "properly Rust-owned" would need** (real design work, not scoped in
+detail yet — this section is the placeholder for that scoping pass, not the
+scoping itself):
+- A stronger health check than a bare 200 on `/health` — e.g. a version/build
+  marker in the `/health` payload (`ai/server.py` already returns a JSON body
+  with a `models` list; a `version` or `git_sha` field would let Rust compare
+  "is this process running code I recognize" instead of just "is it alive")
+  so a genuinely stale external process gets detected, not silently trusted.
+- A real policy decision for what happens on a detected mismatch: refuse and
+  warn (safest — never kill a process the app didn't start), offer to take
+  over (kill it and spawn a fresh Rust-owned one), or something in between.
+  Killing an external process Rust never started is not something to do by
+  default without the owner's say-so — this needs a real UI moment, not a
+  silent auto-kill.
+- Reconsider whether "already up → external, hands off forever" should
+  instead periodically re-poll `/health` for a version match even after the
+  initial boot decision, not just for liveness — so a sidecar that gets
+  restarted *externally* mid-session (e.g. someone runs `ai/run.sh` fresh
+  while the app is still open) is picked up rather than needing a full app
+  restart to re-evaluate.
+- Surfacing `chroma_ai_status`'s existing `managed`/`healthy` fields
+  somewhere in the UI (today: "nothing consumes it yet," per this doc's own
+  note above) — an owner staring at a feature that silently does nothing has
+  no way to tell "sidecar's down" from "sidecar's stale" from "this feature
+  is just broken" without reading `app.log` by hand, exactly what happened
+  here.
+
+Not started. See `docs/04-roadmap.md`'s Next queue for the tracked item.
+
 ## TODO — packaged app (Phase 4)
 
 `resolve_ai_dir` relies on `CARGO_MANIFEST_DIR`, a build-machine path. A signed
