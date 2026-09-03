@@ -7666,3 +7666,207 @@ check remains the only thing that fully closes that loop.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+
+## D-101 — Real sidecar ownership: content-hash staleness detection, refuse-and-warn policy, live re-poll, a real status UI (roadmap item 9)
+
+Owner asleep, standing mandate to finish the roadmap's ready "Next" items overnight
+with real judgment calls, no check-ins. Roadmap item 9, scoped but explicitly "not
+scoped in detail yet" per `docs/notes/sidecar-lifecycle.md`'s own TODO section
+(written after D-069: a sidecar process from Sept 1, over two days stale, silently
+404ing, trusted forever because `spawn_and_supervise`'s owned-vs-external decision
+happens exactly once at boot from a bare `GET /health` 200).
+
+**Four real design questions, each a real decision, not a default:**
+
+**1. What signal proves "this is the code I'd spawn," not just "something's alive"?**
+Considered a hand-bumped version string — rejected: manually bumping it is the exact
+discipline gap that let a process go two days stale invisibly, at a *different*
+layer than D-069's actual bug. A git SHA was considered and also rejected: it
+wouldn't change for uncommitted local edits, a real and common state during an
+iterative session like this one — a sidecar started against locally-modified,
+uncommitted `server.py` would still report the last-committed SHA, a false match.
+**Chosen: SHA256 of `ai/server.py`'s own bytes**, computed once at Python import
+(`_CONTENT_SHA256`, truncated to 16 hex chars — 8 bytes is ample collision
+resistance for "is this the exact file on disk," no need for the full 64) and
+returned in `/health`. Rust's `chroma::sidecar::content_hash` computes the
+identical hash over its own resolved `ai/server.py` (`sha2::Sha256`, already a
+workspace dependency, used identically in `ai_processing.rs`'s asset-verification
+path — no new dependency). Verified byte-for-byte identical output between the two
+implementations independently (Python's own `hashlib.sha256(...).hexdigest()[:16]`
+vs. hex-encoding the Rust digest's first 8 bytes) — not assumed compatible.
+
+**2. What happens on a detected mismatch?** The doc's own framing was explicit that
+this needed a real answer, not an obvious one: refuse-and-warn (safest — never
+touch a process this app didn't start) vs. offer-to-take-over (kill + respawn, a
+real destructive action needing explicit UI consent) vs. something in between.
+**Chosen: refuse-and-warn only, this pass.** No autonomous session — human or
+agent — should be killing an external process on the owner's machine overnight
+with nobody there to consent to it; that's exactly the kind of destructive,
+hard-to-reverse action this project's own safety posture (and Claude Code's own
+operating rules) treat as requiring explicit confirmation, not something an
+"authorized to make real judgment calls" mandate extends to. A stale mismatch is
+logged loudly (`log::warn!`, naming D-069 and the manual fix) and surfaced via
+`SidecarStatus::stale` for the UI. **Explicit follow-up, not built:** a real
+"restart the stale sidecar" UI affordance, which — unlike an automatic kill —
+*would* be a legitimate one-click convenience once there's a human present to
+click it.
+
+**3. Re-poll mid-session, not just at boot?** Yes — `monitor_external`'s existing
+10s liveness poll (D-028) now also re-fetches and compares `content_sha256` on the
+same cadence, so an externally-restarted sidecar's staleness state updates live
+without needing a full app restart to re-evaluate. "Picked up" deliberately means
+the *status* reflects reality live, not that the app takes any action — consistent
+with #2's policy.
+
+**4. Surface `chroma_ai_status` somewhere.** It existed since D-028 with zero
+consumers (confirmed via grep, not assumed) — the doc's own words, "an owner
+staring at a feature that silently does nothing has no way to tell 'sidecar's
+down' from 'sidecar's stale' from 'this feature is just broken.'" Added a real,
+small "AI Sidecar" status card to `SettingsPanel.tsx` (polled every 5s) — a
+Wifi/WifiOff/AlertTriangle icon, plain-language state, restart count, last error.
+Not a settings toggle; purely diagnostic, since there's nothing to configure.
+While building this, found `SidecarStatus` predated this codebase's own
+`#[serde(rename_all = "camelCase")]` convention (every other Chroma command
+struct has it — `commands.rs`, `project.rs`, `grade.rs`, etc.) — it had simply
+never had a real frontend consumer to expose the mismatch until now. Fixed rather
+than left inconsistent, since this pass is the one making it a real consumer.
+
+**Live-verified, not just reasoned about:** the sidecar process actually running
+on `:8765` this whole session turned out to be a perfect, real test case — started
+`Thu Sep 3, 20:18:20`, i.e. genuinely ~6 hours stale by the time this landed, from
+before `content_sha256` existed at all. Confirmed via `curl /health` it reported no
+such field (the exact "old build, unknown, not a false positive" case the
+staleness policy is built to handle correctly). Killed it, restarted via
+`ai/run.sh` with the new code, confirmed its `/health` now reports
+`content_sha256: "2fb9a708f94e2cfd"` — independently cross-checked against a
+fresh, separate `hashlib.sha256` computation of the same file (not derived from
+the same code path). Watched `app.log`'s live supervisor loop detect the ~11s
+outage and recovery in real time (`external sidecar stopped responding` →
+`external sidecar is healthy again`), with **no false "became stale" warning** on
+the reconnect — the hashes genuinely match, confirming the whole comparison
+pipeline end to end, not just each half in isolation. The genuine-*mismatch* path
+(a different hash correctly flagged `stale: true`) is covered by a real regression
+test (`staleness_policy_only_flags_a_real_mismatch_never_an_unknown`) rather than
+a second live exercise against the running app — standing up a second competing
+process on the same port to force a live mismatch was judged riskier than
+warranted for what the unit test already proves deterministically.
+
+**A real incident during this pass, disclosed rather than smoothed over:** a
+manual `cargo clippy` invocation was run without accounting for the Tauri dev
+server's own file-watcher, which auto-rebuilds on every save — the two cargo
+invocations overlapped and corrupted `target/debug` (the exact "concurrent cargo
+processes" failure mode this repo's own `CLAUDE.md` names explicitly, complete
+with the same class of undefined-symbol linker errors). The dev server's native
+app process died as a result. Recovered via the documented procedure (`rm -rf
+target/debug`, full rebuild — 7m44s) and confirmed a clean boot (`Running
+.../RapidRAW`, sidecar supervisor initializing correctly) before continuing any
+further work. Lesson applied for the rest of this pass: re-check `ps aux` for an
+active rustc/cargo process immediately before *every* manual cargo invocation, not
+just once at the start of the task — a live file-watcher means "clear" at t=0
+doesn't mean "clear" five minutes later once more edits have landed.
+
+**Tests:** 4 new (`content_hash` determinism/correctness/missing-file handling,
+the staleness comparison policy itself) — `cargo test -p RapidRAW --lib
+chroma::sidecar::`, all passing. `cargo clippy -p RapidRAW --no-deps` clean on
+`sidecar.rs`. `npx tsc --noEmit` on `app/`: 64 pre-existing errors, unchanged,
+none in the new `SettingsPanel.tsx` code.
+
+**Deferred, explicitly:** the "offer to take over a stale sidecar" one-click UI
+(#2 above); Phase 4 packaging concerns (`resolve_ai_dir`'s `CARGO_MANIFEST_DIR`
+dependency) — unrelated, pre-existing, out of scope here.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-102 — Global Inspector, Phase 3: the NLE half, replacing D-090's popover with a persistent panel
+
+Owner, asleep, on continuing the "finish the roadmap queue" mandate: "Global
+Inspector and keyframe should also work on our current videos as well" —
+dispatched right after Phase 2 (D-099) landed and flagged this as newly
+unblocked (Phase B3 shipped as D-088). By the time this pass started, the
+concurrent `TimelinePane.tsx` drag-and-drop work had also finished and
+committed (D-094–D-100, ending with D-100's unified `ClipBody`/`useDraggable`
+move mechanism) — read that file fresh rather than assuming anything about it
+from before tonight, per the coordinator's own explicit instruction.
+
+**Real finding first: `Clip`'s actual field set doesn't match what the
+original scoping doc predicted.** `fade_in`/`fade_out` — named in the
+dispatch brief — do not exist on `chroma_timeline::Clip`/`timeline.ts`'s
+mirror; the real, shipped fields (D-086/D-088) are exactly `opacity`/
+`position_x`/`position_y`/`scale`/`rotation` + `chroma_keyframes`. Built
+against the real field set, not the brief's memory of the scoping doc.
+
+**What shipped**: `ClipInspectorPanel.tsx` — a real, persistent property
+panel for the selected clip's transform + keyframes, added as a third
+`ResizablePanel` in `TimelinePane.tsx`'s existing `ResizablePanelGroup`
+(header sidebar / edit area / **Inspector**), matching `@chroma/motion`'s
+`InspectorPanel.tsx` (D-099) UX for the "Global Inspector" framing's other
+half. This is a pure presentation swap, not new editing logic — every field,
+op (`set_clip_transform`/`set_clip_keyframes`), and the keyframe CRUD
+(`clipKeyframes.ts`) already existed and already worked (D-089/D-090); this
+pass only changes how it's presented.
+
+**The real call the dispatch asked for, made explicitly**: D-090's
+clip-transform `Popover` is **removed**, not kept alongside this panel. Same
+field set, same ops — a persistent panel is strictly better UX for exactly
+the "nudge a value, watch it update" iteration this editor is for, and
+running both would mean two controls that can silently drift out of sync
+editing the same clip, for no real benefit. Removed the now-dead
+`Popover`/`PopoverContent`/`PopoverTrigger`/`Input`/`Diamond`/`X`/
+`SlidersHorizontal` imports from `TimelinePane.tsx` along with the JSX (all
+had exactly one remaining reference — the import line itself — confirmed via
+grep before removing, not assumed dead).
+
+**The `Selection`-lifting call, made explicitly**: `TimelinePane.tsx`'s own
+`Selection` (`{track, id}`, D-080) stays local to that file for this pass —
+`ClipInspectorPanel` is embedded directly in `TimelinePane.tsx`'s layout,
+not lifted to a shared store or prop-drilled up to `Shell.tsx`. The actual
+"one shared component, tab-agnostic" panel shell is Phase 4's explicit job
+once both halves have real content — building that shell now, with only one
+NLE selection shape to generalize against, would mean guessing at Phase 4's
+real shape rather than deriving it once Motion's and NLE's actual selection
+models both exist side by side. Same right-weight call the scoping doc
+already made for Phase 1/2.
+
+**Backward compatibility — verified three ways, not asserted:**
+1. A scratch, never-committed Chrome-driven harness (`app/inspector3-
+   harness.html`, deleted before this commit — nothing outside `packages/
+   editor` in the diff), mounting the real `TimelinePane` against a fixture
+   with three real cases: a clip with a full transform + 2 keyframes, a
+   clip with NO transform fields at all (the genuine pre-D-086 shape), and a
+   clip on a locked track. All three verified live: the keyframed clip's
+   fields and "2 keys"/`keyedHere` state render correctly and a live opacity
+   edit round-trips into the real `useEditorTimelineStore` state; the
+   fields-absent clip renders every documented default (`opacity` 1,
+   position 0/0, scale 1, rotation 0, "Keyframe clip" with no count) instead
+   of `undefined`/crashing; the locked-track clip shows a real "this clip's
+   track is locked" notice with every control disabled, mirroring
+   `applyOp`'s own `TrackLocked` refusal exactly.
+2. Read the owner's own real project (`~/Movies/Chroma/New.chroma/
+   project.json`, 9 real clips across 2 tracks) directly — every clip
+   already carries explicit `opacity`/`position_x`/`position_y`/`scale`/
+   `rotation` (all at their defaults, `chroma_keyframes: null`), confirming
+   D-086's server-side "verbatim storage, backend fills real defaults on the
+   next `chroma_timeline_get`" contract is exactly what's on disk for real
+   project data, and that this panel's `?? default` fallbacks are reading
+   the actual shape a real save produces, not a guessed one.
+3. `selectedClip`'s existing `null`-for-stale-selection guard (idx `< 0`,
+   D-089) is unchanged — `ClipInspectorPanel` already renders its own
+   "select a clip" empty state for that case, no new code needed there.
+
+**Verification**: `ps aux | grep cargo` checked before every command — a
+concurrent agent had `cargo test -p RapidRAW --lib chroma::sidecar::`
+actively running for the sidecar-ownership pass (D-101) throughout; no
+cargo touched here, pure frontend. `cd packages/editor && npx vitest run` —
+91/91 (unchanged; a presentation-layer move of already-tested logic, no new
+pure-logic surface). `npx tsc --noEmit -p packages/editor` clean. `-p app` —
+zero errors trace to `TimelinePane.tsx`/`ClipInspectorPanel.tsx`. **A second
+real D-number collision this session**: drafted as D-101, renumbered to
+D-102 after finding the concurrent sidecar-ownership pass had already
+claimed D-101 (uncommitted on disk at the time, confirmed via a live
+`cargo test` process actually running for it — the same kind of check D-100
+itself used the first time this happened tonight).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

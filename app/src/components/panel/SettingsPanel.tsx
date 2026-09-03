@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  AlertTriangle,
   Cloud,
   Cpu,
   ExternalLink as ExternalLinkIcon,
@@ -46,6 +47,17 @@ import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
 import { RotateCcw } from 'lucide-react';
 import { useUIStore } from '../../store/useUIStore';
+
+/** Mirrors `chroma::sidecar::SidecarStatus` (D-101, `camelCase` on the wire —
+ *  see that struct's own doc comment for why). */
+interface SidecarStatus {
+  managed: boolean;
+  healthy: boolean;
+  pid?: number;
+  restarts: number;
+  stale: boolean;
+  lastError?: string;
+}
 
 interface ConfirmModalState {
   confirmText: string;
@@ -545,6 +557,11 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
   const [logPath, setLogPath] = useState<string | null>(null);
   const [logPathLoading, setLogPathLoading] = useState(true);
   const [logPathError, setLogPathError] = useState(false);
+  // D-101 — chroma_ai_status existed since D-028 but nothing consumed it
+  // ("nothing consumes it yet," per docs/notes/sidecar-lifecycle.md). This is
+  // the first real UI surface for it, so the owner isn't blind to sidecar
+  // health/staleness without reading app.log by hand.
+  const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null);
   const [dpr, setDpr] = useState(() => (typeof window !== 'undefined' ? window.devicePixelRatio : 1));
 
   const settingCategories = useMemo(
@@ -668,6 +685,28 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
 
   useEffect(() => {
     invoke<string[]>('get_lensfun_makers').then(setLensMakers).catch(console.error);
+  }, []);
+
+  // D-101 — poll chroma_ai_status so the "AI Sidecar" card below stays live
+  // while Settings is open. 5s is deliberately coarser than the Rust
+  // supervisor's own 10s external re-poll / 2s owned-child poll — this is a
+  // human-readable status display, not a control loop, no need to match its
+  // cadence exactly.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      invoke<SidecarStatus>('chroma_ai_status')
+        .then((s) => {
+          if (!cancelled) setSidecarStatus(s);
+        })
+        .catch(console.error);
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, []);
 
   const handleProcessingSettingChange = async (key: string, value: any) => {
@@ -2150,6 +2189,74 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                         )}
                       </AnimatePresence>
                     </div>
+                  </div>
+
+                  <div className="p-6 bg-surface rounded-xl shadow-md">
+                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
+                      AI Sidecar
+                    </Text>
+                    {/* D-101 — real status for the ai/ sidecar (SAM 2 / ViTMatte /
+                        depth / relight normals), which the Colorist's masking,
+                        tracking, and relight features silently depend on. Before
+                        this, chroma_ai_status existed (D-028) but nothing consumed
+                        it — a dead process or a stale one from an old build looked
+                        identical to "the feature is just broken," which is exactly
+                        what happened in D-069. Not a settings toggle, purely a
+                        diagnostic — there's nothing to configure here. */}
+                    {!sidecarStatus ? (
+                      <Text variant={TextVariants.small} className="opacity-70">
+                        Checking…
+                      </Text>
+                    ) : (
+                      <div className="flex items-start gap-3">
+                        {sidecarStatus.stale ? (
+                          // amber = the same "degraded, not fully broken" precedent
+                          // ShotStrip.tsx/SourcesPanel.tsx already use for "media offline"
+                          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+                        ) : sidecarStatus.healthy ? (
+                          <Wifi size={18} className="mt-0.5 shrink-0 text-green-400" />
+                        ) : (
+                          <WifiOff size={18} className="mt-0.5 shrink-0 text-red-400" />
+                        )}
+                        <div>
+                          <Text>
+                            {sidecarStatus.stale
+                              ? 'Running, but stale'
+                              : sidecarStatus.healthy
+                                ? sidecarStatus.managed
+                                  ? `Running (pid ${sidecarStatus.pid ?? '?'})`
+                                  : 'Running (external)'
+                                : 'Not responding'}
+                          </Text>
+                          {sidecarStatus.stale && (
+                            <Text variant={TextVariants.small} className="mt-1 opacity-80">
+                              An external sidecar process answered, but it's running different
+                              code than this build's <code>ai/server.py</code> — likely an old
+                              process left over from before a rebuild (see D-069). Restart it by
+                              hand: <code>kill</code> the process, then <code>cd ai && ./run.sh</code>.
+                            </Text>
+                          )}
+                          {!sidecarStatus.managed && sidecarStatus.healthy && !sidecarStatus.stale && (
+                            <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                              This app didn't start it — running one yourself (
+                              <code>cd ai && ./run.sh</code>) is fine, it just won't be
+                              auto-restarted if it crashes.
+                            </Text>
+                          )}
+                          {sidecarStatus.restarts > 0 && (
+                            <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                              Restarted {sidecarStatus.restarts} time{sidecarStatus.restarts === 1 ? '' : 's'}{' '}
+                              this session.
+                            </Text>
+                          )}
+                          {sidecarStatus.lastError && (
+                            <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
+                              {sidecarStatus.lastError}
+                            </Text>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">

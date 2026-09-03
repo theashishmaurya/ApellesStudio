@@ -8,7 +8,11 @@
 //! What it does:
 //!   - resolve the sidecar dir + a Python interpreter (env overrides → venv → PATH)
 //!   - if a sidecar is already healthy on the port, monitor it WITHOUT owning it
-//!     (never kill or respawn someone else's process)
+//!     (never kill or respawn someone else's process) — D-101: also compares its
+//!     self-reported `content_sha256` against this build's own `ai/server.py` on
+//!     every poll, so a genuinely stale/different external process is detected
+//!     and surfaced (`SidecarStatus::stale`) instead of trusted forever just for
+//!     answering 200 (see `docs/notes/sidecar-lifecycle.md`'s "real ownership" TODO)
 //!   - otherwise spawn `python -m uvicorn server:app`, pipe its stdout+stderr to
 //!     `log::info!("[sidecar] …")`, poll `/health` until ready, then restart it
 //!     with capped exponential backoff if it dies
@@ -33,6 +37,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 /// How long to wait for the freshly-spawned sidecar to answer `/health`.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -89,8 +94,15 @@ pub fn shutdown() {
 
 // ---- status (chroma_ai_status command) -------------------------------------------
 
-/// Snapshot for a future UI indicator. Not required by any current view.
+/// Snapshot for the settings-panel "AI Sidecar" status card (D-101 — the
+/// first real consumer; before this, nothing did). `camelCase` on the wire
+/// to match every other Chroma command struct's convention (`commands.rs`,
+/// `project.rs`, `grade.rs`, etc.) — this struct predates D-101 and had
+/// drifted from that convention since it had no real frontend consumer yet
+/// to notice the mismatch; fixed here rather than left inconsistent now that
+/// one exists.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SidecarStatus {
     /// this process spawned and owns the sidecar child
     pub managed: bool,
@@ -100,6 +112,15 @@ pub struct SidecarStatus {
     pub pid: Option<u32>,
     /// how many times we've restarted the child since launch
     pub restarts: u32,
+    /// D-101 — only ever meaningful when `managed == false`: the external
+    /// process answered `/health` but its `content_sha256` doesn't match
+    /// what this build's own `ai/server.py` would produce, so it's likely
+    /// running different (probably older) code. Always `false` for a
+    /// Rust-owned spawn, which is the exact code on disk by construction.
+    /// `false` also when staleness genuinely can't be determined (no
+    /// `content_sha256` on either side — e.g. an external sidecar built
+    /// before D-101) rather than a false positive.
+    pub stale: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 }
@@ -115,7 +136,8 @@ fn set_status(f: impl FnOnce(&mut SidecarStatus)) {
     }
 }
 
-/// `{ managed, healthy, pid?, restarts, lastError? }` — for a future "AI: ●" pill.
+/// `{ managed, healthy, pid?, restarts, stale, lastError? }` — backs the
+/// Settings panel's "AI Sidecar" status card (D-101).
 #[tauri::command]
 pub fn chroma_ai_status() -> SidecarStatus {
     status().lock().map(|s| s.clone()).unwrap_or_default()
@@ -126,31 +148,67 @@ pub fn chroma_ai_status() -> SidecarStatus {
 // A raw HTTP/1.1 GET so the supervisor thread needs no tokio runtime and no
 // `reqwest/blocking` feature (the runtime `reqwest` here is async-only).
 
-fn health_ok(port: u16) -> bool {
-    let Some(addr) = format!("127.0.0.1:{port}")
+/// The `/health` fields this file actually cares about — not a full mirror
+/// of `ai/server.py`'s response shape (which also carries `models`/`device`/
+/// etc., irrelevant here).
+struct HealthInfo {
+    ok: bool,
+    /// D-101 — `ai/server.py`'s own `content_sha256` (a truncated SHA256 of
+    /// its own file bytes). `None` if the field was absent (an older
+    /// sidecar build, from before this existed) or the body didn't parse.
+    content_sha256: Option<String>,
+}
+
+/// Full `GET /health` — reads the whole response, not just the status line
+/// (unlike the old `health_ok` this replaces), so the JSON body's
+/// `content_sha256` (D-101) is available for staleness comparison.
+/// `Connection: close` means "read to EOF" correctly gets the full body off
+/// a raw `TcpStream` without needing to parse `Content-Length`/chunking.
+fn health_check(port: u16) -> Option<HealthInfo> {
+    let addr = format!("127.0.0.1:{port}")
         .to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-    else {
-        return false;
-    };
-    let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else {
-        return false;
-    };
+        .ok()?
+        .next()?;
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok()?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
-    if s.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-        .is_err()
-    {
-        return false;
-    }
-    let mut buf = Vec::with_capacity(256);
-    let _ = s.take(512).read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf)
+    s.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut buf = Vec::with_capacity(4096);
+    // Best-effort: a slow/hanging server hits the read timeout above rather
+    // than blocking forever, and whatever was read so far still gets used.
+    let _ = s.read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
+    let ok = text
         .lines()
         .next()
         .map(|l| l.contains(" 200"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    let content_sha256 = text
+        .split("\r\n\r\n")
+        .nth(1)
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+        .and_then(|v| v.get("content_sha256").and_then(|s| s.as_str()).map(str::to_string));
+    Some(HealthInfo { ok, content_sha256 })
+}
+
+/// Liveness only, no staleness check — the cheap path most call sites want
+/// (the owned-child ready-poll and supervise loop, where we always know
+/// exactly what we spawned; there's no "which build is this" question).
+fn health_ok(port: u16) -> bool {
+    health_check(port).map(|h| h.ok).unwrap_or(false)
+}
+
+/// D-101 — SHA256 of `ai/server.py`'s own bytes, truncated to the first 8
+/// bytes (16 hex chars) — matches `ai/server.py`'s own `_CONTENT_SHA256`
+/// byte-for-byte, so an external process's self-reported hash can be
+/// compared against "the exact code this Rust binary would spawn."
+fn content_hash(ai_dir: &Path) -> Option<String> {
+    let bytes = std::fs::read(ai_dir.join("server.py")).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
 }
 
 // ---- resolve the sidecar dir + a python interpreter ------------------------------
@@ -274,16 +332,36 @@ pub fn spawn_and_supervise(_app: tauri::AppHandle) {
         return;
     }
 
-    if health_ok(port) {
-        log::info!(
-            "[sidecar] already running (external) on :{port} — monitoring only, will not manage or kill it"
-        );
+    // D-101 — real ownership: compute the content hash we'd expect from a
+    // sidecar built off the exact `ai/server.py` this Rust binary can see,
+    // *before* deciding external-vs-owned, so "already up" can be told apart
+    // from "already up, but a different (probably stale) build" instead of
+    // trusting any 200 forever — the actual D-069 gap. `None` here (no ai/
+    // dir resolved yet) means staleness can't be determined; that's handled
+    // as "unknown, not stale" below rather than a false positive.
+    let expected_hash = resolve_ai_dir().and_then(|d| content_hash(&d));
+
+    if let Some(info) = health_check(port).filter(|h| h.ok) {
+        let stale = match (&expected_hash, &info.content_sha256) {
+            (Some(exp), Some(got)) => exp != got,
+            _ => false,
+        };
+        if stale {
+            log::warn!(
+                "[sidecar] already running (external) on :{port}, but its content_sha256 doesn't match what this build's ai/server.py would produce — likely a stale process from an older build (see D-069/D-101). Monitoring only, NOT killing or restarting a process this app didn't start — if this is unexpected, restart it by hand (kill the pid, then `cd ai && ./run.sh`)."
+            );
+        } else {
+            log::info!(
+                "[sidecar] already running (external) on :{port} — monitoring only, will not manage or kill it"
+            );
+        }
         set_status(|s| {
             s.managed = false;
             s.healthy = true;
             s.pid = None;
+            s.stale = stale;
         });
-        monitor_external(port);
+        monitor_external(port, expected_hash);
         return;
     }
 
@@ -363,6 +441,12 @@ pub fn spawn_and_supervise(_app: tauri::AppHandle) {
             s.healthy = false;
             s.pid = Some(pid);
             s.last_error = None;
+            // A Rust-owned spawn is, by construction, running the exact
+            // ai/server.py on disk right now — never stale. Explicit reset
+            // (not just relying on the struct default) in case this status
+            // transitions from a prior external+stale phase within the same
+            // app session (e.g. the external process died and we took over).
+            s.stale = false;
         });
 
         // wait-for-ready
@@ -479,14 +563,28 @@ pub fn spawn_and_supervise(_app: tauri::AppHandle) {
 
 /// An external sidecar is up: health-poll and log state changes only. We never
 /// spawn our own or kill theirs (spec D-028 step 3).
-fn monitor_external(port: u16) {
-    let mut last = true;
+///
+/// D-101: also re-checks `content_sha256` on the same 10s cadence, not just
+/// liveness — so an external sidecar restarted *mid-session* with different
+/// code (someone ran `ai/run.sh` fresh while this app stayed open) is picked
+/// up as a status change without needing a full app restart to re-evaluate.
+/// "Picked up" means the `stale` flag (surfaced via `chroma_ai_status`)
+/// reflects reality live — this still never auto-restarts or takes over the
+/// process itself; see the policy note on `SidecarStatus::stale`.
+fn monitor_external(port: u16, expected_hash: Option<String>) {
+    let mut last_healthy = true;
+    // The caller already logged the initial stale/fresh state before handing
+    // off here (it had to, to decide what to log at all) — start this loop's
+    // "did it change" tracking from that same value so we don't immediately
+    // re-log the state the caller just announced.
+    let mut last_stale = status().lock().map(|s| s.stale).unwrap_or(false);
     loop {
         if nap(Duration::from_secs(10)) {
             return;
         }
-        let ok = health_ok(port);
-        if ok != last {
+        let info = health_check(port);
+        let ok = info.as_ref().map(|h| h.ok).unwrap_or(false);
+        if ok != last_healthy {
             if ok {
                 log::info!("[sidecar] external sidecar is healthy again");
             } else {
@@ -494,8 +592,113 @@ fn monitor_external(port: u16) {
                     "[sidecar] external sidecar stopped responding on :{port} (not managed — not restarting it)"
                 );
             }
-            last = ok;
-            set_status(|s| s.healthy = ok);
+            last_healthy = ok;
         }
+        let stale = match (&expected_hash, info.as_ref().and_then(|h| h.content_sha256.as_ref())) {
+            (Some(exp), Some(got)) => exp != got,
+            _ => false,
+        };
+        if stale != last_stale {
+            if stale {
+                log::warn!(
+                    "[sidecar] external sidecar on :{port} now reports a content_sha256 that doesn't match — became stale mid-session (restarted externally with different code, or this app's own ai/ code changed underneath it). Not managed — not restarting it."
+                );
+            } else {
+                log::info!(
+                    "[sidecar] external sidecar on :{port} content_sha256 now matches this build's ai/server.py — no longer considered stale."
+                );
+            }
+            last_stale = stale;
+        }
+        set_status(|s| {
+            s.healthy = ok;
+            s.stale = stale;
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_server_py(dir: &Path, contents: &str) {
+        std::fs::write(dir.join("server.py"), contents).unwrap();
+    }
+
+    #[test]
+    fn content_hash_matches_python_sha256_hexdigest_truncated_to_16_chars() {
+        // Real, known SHA256 of the literal bytes b"hello chroma\n" — computed
+        // independently (Python `hashlib.sha256(b"hello chroma\n").hexdigest()`)
+        // rather than derived from this same code, so this test can't just be
+        // checking the implementation against itself.
+        let tmp = std::env::temp_dir().join(format!("chroma_sidecar_hash_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        write_server_py(&tmp, "hello chroma\n");
+
+        let got = content_hash(&tmp).expect("server.py exists, hash should compute");
+        assert_eq!(got, "35719cab709150d0");
+        assert_eq!(got.len(), 16, "16 hex chars = first 8 bytes of the digest, matching ai/server.py's own [:16] truncation");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn content_hash_changes_when_the_file_changes_and_is_deterministic_when_it_doesnt() {
+        let tmp = std::env::temp_dir().join(format!("chroma_sidecar_hash_delta_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        write_server_py(&tmp, "version A");
+        let a1 = content_hash(&tmp).unwrap();
+        let a2 = content_hash(&tmp).unwrap();
+        assert_eq!(a1, a2, "hashing the same bytes twice must be deterministic");
+
+        write_server_py(&tmp, "version B — a single different byte is enough");
+        let b = content_hash(&tmp).unwrap();
+        assert_ne!(a1, b, "a real code change must change the hash, or staleness could never be detected");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn content_hash_is_none_when_server_py_is_missing() {
+        // The "no ai/ dir resolved yet" / "somehow no server.py at the
+        // resolved path" case — must degrade to "can't determine," never
+        // panic, since this runs on every sidecar boot decision.
+        let tmp = std::env::temp_dir().join(format!("chroma_sidecar_hash_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert!(content_hash(&tmp).is_none());
+    }
+
+    /// Mirrors the exact `match (&expected_hash, &got_hash) { ... }` staleness
+    /// rule used in both `spawn_and_supervise`'s external branch and
+    /// `monitor_external` — a real regression test for the actual policy
+    /// (D-101): mismatch is only ever claimed when *both* sides have a real
+    /// hash to compare, never inferred from one side being unknown.
+    fn is_stale(expected: &Option<String>, got: &Option<String>) -> bool {
+        match (expected, got) {
+            (Some(exp), Some(got)) => exp != got,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn staleness_policy_only_flags_a_real_mismatch_never_an_unknown() {
+        let a = Some("aaaaaaaaaaaaaaaa".to_string());
+        let b = Some("bbbbbbbbbbbbbbbb".to_string());
+
+        assert!(is_stale(&a, &b), "two different real hashes = genuinely stale");
+        assert!(!is_stale(&a, &a), "identical real hashes = not stale");
+        assert!(
+            !is_stale(&None, &b),
+            "no expected hash (e.g. ai/ dir not resolved) — can't claim staleness we can't compute"
+        );
+        assert!(
+            !is_stale(&a, &None),
+            "external sidecar has no content_sha256 field (pre-D-101 build) — unknown, not a false positive"
+        );
+        assert!(!is_stale(&None, &None), "both unknown — definitely not a false positive");
     }
 }

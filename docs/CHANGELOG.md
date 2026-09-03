@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Real sidecar ownership: content-hash staleness
+  detection (D-101, roadmap item 9).** `ai/server.py` now reports a
+  `content_sha256` of its own bytes in `/health`; `chroma::sidecar` computes
+  the same hash and flags a mismatch (`SidecarStatus.stale`) instead of
+  trusting any 200 forever — the actual D-069 gap. Policy: refuse-and-warn
+  only, never auto-kill an external process. Re-checked live on the
+  existing 10s poll, not just at boot. New "AI Sidecar" status card in
+  Settings — `chroma_ai_status`'s first real consumer. Live-verified
+  against the session's own genuinely ~6hr-stale sidecar (killed, restarted
+  with the new code, watched the supervisor correctly report "no longer
+  stale" with no false positive). One incident: a manual `cargo clippy` run
+  collided with the dev server's own auto-rebuild watcher and corrupted
+  `target/debug` — recovered via the documented `rm -rf target/debug` +
+  rebuild.
 - **2026-09-04** — **Unified clip move onto ONE mechanism; fixed the real
   root cause of D-098's stuck-ghost/blocked-drag cluster (D-100, B-029).**
   A stuck `activeDrag` after an interrupted drag left `TrackDropZone`'s

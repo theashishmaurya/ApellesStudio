@@ -48,6 +48,21 @@ VITMATTE_ID = os.environ.get("CHROMA_VITMATTE", "hustvl/vitmatte-small-compositi
 
 app = FastAPI(title="chroma-ai")
 
+# D-101 — real sidecar ownership: a content hash of this file's own bytes, not
+# a hand-bumped version string (which needs remembering to bump — the exact
+# discipline that let a 2-day-stale process go undetected, D-069). The Rust
+# supervisor computes the same hash over its own resolved copy of server.py
+# and compares it against this value on /health, so a genuinely different
+# running process (old code, or local edits mid-session) is detectable
+# instead of trusted forever just for answering 200. Matches
+# `sha2::Sha256` on the Rust side byte-for-byte, truncated to 16 hex chars —
+# plenty of collision resistance for "is this the file I have on disk", no
+# need for the full 64.
+try:
+    _CONTENT_SHA256 = hashlib.sha256(open(__file__, "rb").read()).hexdigest()[:16]
+except Exception:
+    _CONTENT_SHA256 = None
+
 # One Apple GPU — serialise every model call so a track pass, an on-seek refine
 # and a segment can't stack their MPS working sets on top of each other. Held
 # per-frame in the track loop (released between frames) so /refine_track can
@@ -405,7 +420,13 @@ def health():
             "video_depth": os.path.exists(os.path.join(MODELS_DIR, VDA_CKPT_NAME)),
             "relight_normals": os.path.isdir(
                 os.path.join(MODELS_DIR, "models--" + MOGE_REPO.replace("/", "--"))
-            )}
+            ),
+            # D-101 — lets a caller tell "this is the exact server.py I have
+            # on disk" from "this is some other build" instead of trusting
+            # any 200 forever. None if the hash couldn't be computed (e.g.
+            # this file isn't readable at its own path for some reason) —
+            # the Rust side treats a missing hash as "unknown," not a match.
+            "content_sha256": _CONTENT_SHA256}
 
 
 def _process_rss_mb() -> float:

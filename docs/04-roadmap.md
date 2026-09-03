@@ -215,6 +215,11 @@ roadmap structure.
   sequence that exposed the deeper bug — still not a real WKWebView
   window, flagged as such.
 
+- ✅ **Real sidecar ownership** — done, **D-101** (see "Next" item 9 below
+  for the full writeup). Content-hash staleness detection, refuse-and-warn
+  policy, live 10s re-poll, a real "AI Sidecar" Settings card. Live-
+  verified against the session's own genuinely-stale (~6hr) sidecar.
+
 ---
 
 ## Now — what's live, by tab
@@ -557,24 +562,33 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    "known limit" note on two clips sharing one source path). **Was
    sequenced before item 6's Phase D and item 7's Inspector** — both now
    build against the real model instead of the old split.
-9. **Real sidecar ownership — detect a stale external AI process instead of
-   deferring to it forever** — owner, 2026-09-03, found while root-causing
-   D-069 (Track Depth silently 404ing against a process that had been
-   running since Sept 1, over two days stale). **Full scoping:
-   `docs/notes/sidecar-lifecycle.md`'s "TODO — real ownership" section.**
-   `chroma::sidecar::spawn_and_supervise` (D-028) makes its owned-vs-
-   external call exactly once, at app boot, from a bare `GET /health` — an
-   external process that answers is trusted forever, never re-verified,
-   never restarted even once confirmed dead. Needs real design work, not
-   scoped in detail yet: a version/capability marker in `/health`'s
-   response so a genuinely stale process is detected rather than silently
-   trusted; a real policy for what happens on a detected mismatch (refuse +
-   warn vs. offer to take over — killing a process the app didn't start is
-   not a silent default); whether to re-poll for a version match mid-
-   session, not just for liveness, so an externally-restarted sidecar gets
-   picked up without a full app restart; surfacing `chroma_ai_status`'s
-   existing `managed`/`healthy` fields somewhere in the UI (today: nothing
-   consumes them). **Not yet started.**
+9. ~~**Real sidecar ownership — detect a stale external AI process instead of
+   deferring to it forever**~~ — **done, D-101 (2026-09-04, overnight
+   autonomous pass).** All four real design questions this item raised are
+   resolved: (1) `ai/server.py`'s `/health` now reports `content_sha256` (a
+   truncated SHA256 of its own file bytes — zero-maintenance, no version
+   string to remember to bump), and `chroma::sidecar` computes the same
+   hash over its own resolved `ai/server.py` to compare; (2) **policy
+   decision: refuse-and-warn only** — a mismatch is logged loudly and
+   surfaced via `chroma_ai_status.stale`, never auto-killed (killing a
+   process this app didn't start stays a real UI moment, not a silent
+   default — an "offer to take over" affordance was deliberately not built
+   this pass, an explicit follow-up); (3) `monitor_external`'s existing 10s
+   poll now re-checks the hash too, not just liveness, so an externally-
+   restarted sidecar's staleness state is picked up live; (4)
+   `chroma_ai_status` has a real first consumer — an "AI Sidecar" status
+   card in Settings (health/managed/stale/restart-count/last-error). Live-
+   verified against the actual ~6-hour-stale sidecar this session had been
+   running against the whole time (the exact real scenario D-069
+   described) — restarted it with the new code and watched the Rust
+   supervisor's periodic re-poll correctly report "no longer stale, hashes
+   match" with no false positive. Real regression tests for the hash/
+   comparison logic. One incident during this pass: a manual `cargo
+   clippy` run collided with the dev server's own auto-rebuild-on-save
+   watcher and corrupted `target/debug` (the known failure mode this
+   repo's own CLAUDE.md warns about) — recovered via the documented `rm
+   -rf target/debug` + rebuild, app confirmed back to a clean boot before
+   continuing. See D-101 for the full writeup.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

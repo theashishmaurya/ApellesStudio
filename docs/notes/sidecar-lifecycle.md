@@ -74,7 +74,43 @@ the owned child. An external sidecar is never touched. Result: `pgrep -f
 `{ managed: bool, healthy: bool, pid?: u32, restarts: u32, lastError?: string }`
 — for a future UI "AI: ●" indicator. Nothing consumes it yet.
 
-## TODO — real ownership of an "external" sidecar (found 2026-09-03, D-069)
+## Real ownership of an "external" sidecar — done (D-101, 2026-09-04)
+
+**This section (below) is the original scoping note, kept for its "why" —
+everything it describes as needed is now built.** Summary of what actually
+landed, D-101 has the full writeup:
+
+- `ai/server.py`'s `/health` reports `content_sha256` (SHA256 of its own
+  file bytes, truncated to 16 hex chars) — a zero-maintenance signal, not a
+  hand-bumped version string.
+- `chroma::sidecar::content_hash` computes the identical hash over its own
+  resolved `ai/server.py` and compares it against an external sidecar's
+  `/health` response, both at the initial boot-time decision and on every
+  subsequent `monitor_external` poll (still the existing 10s cadence).
+- **Policy: refuse-and-warn only.** A mismatch is logged clearly and
+  surfaced via `SidecarStatus.stale` — never auto-killed. Killing a process
+  this app didn't start stays a real UI moment requiring explicit consent,
+  not a default this or any future autonomous pass should take. An
+  "offer to restart the stale sidecar" one-click UI is a legitimate,
+  explicitly deferred follow-up (unlike an automatic kill, a one-click
+  action *with a human present to click it* is fine).
+- `chroma_ai_status` has a real consumer for the first time: a small "AI
+  Sidecar" status card in `SettingsPanel.tsx` (health/managed/stale/
+  restart-count/last-error, polled every 5s).
+- Live-verified against a real ~6-hour-stale sidecar process this session
+  had genuinely been running against — not a synthetic scenario.
+
+**Still not addressed** (out of scope for D-101, real remaining gaps):
+- No "offer to take over" UI — a stale external sidecar still requires a
+  manual `kill` + `cd ai && ./run.sh` by hand, same as before, just now
+  with a clear on-screen signal that it's needed.
+- Nothing changed about what happens if an external sidecar dies
+  permanently while the app stays open — `monitor_external` only monitors,
+  by design (D-028 step 3); it still never falls through to spawning an
+  owned replacement. Not this item's scope; a real design question of its
+  own if it ever becomes a real problem.
+
+## TODO — real ownership of an "external" sidecar (found 2026-09-03, D-069) — ORIGINAL SCOPING NOTE, kept for context, see "done" section above
 
 **The gap:** "External already up" mode (above) makes its owned-vs-external
 decision **exactly once**, at app boot, from a single bare `GET /health`. Once
@@ -118,7 +154,7 @@ scoping itself):
   is just broken" without reading `app.log` by hand, exactly what happened
   here.
 
-Not started. See `docs/04-roadmap.md`'s Next queue for the tracked item.
+**Done — see the "Real ownership... — done (D-101)" section above this one.**
 
 ## TODO — packaged app (Phase 4)
 
