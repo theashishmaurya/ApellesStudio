@@ -98,8 +98,38 @@ pub async fn chroma_depth_track(
             log::error!("[relight] chroma_depth_track: sidecar unreachable: {msg}");
             msg
         })?;
-    let v: serde_json::Value = response.json().await.map_err(|e| {
-        log::error!("[relight] chroma_depth_track: bad sidecar response: {e}");
+    // D-067 follow-up: the real bug that motivated this whole file's logging
+    // pass in the first place — a stale, already-running sidecar process
+    // (started days before this route existed, and never restarted because
+    // `spawn_and_supervise` defers entirely to *anything* already answering
+    // `/health`, D-028) 404'd every `/depth_track` call with a plain
+    // `{"detail":"Not Found"}` body. Nothing here ever checked the HTTP
+    // status — `.json()` happily parsed that body, `v.get("error")` found
+    // nothing (the key is `"detail"`, not `"error"`), so this silently
+    // returned `Ok` with no `dir`/`job_id` at all. The frontend then had
+    // nothing to poll and nothing to store, `depthTrackProgress` cleared
+    // almost instantly, and the owner's "I clicked it, nothing happened"
+    // was the only visible symptom of what was actually an infrastructure
+    // problem (a stale process), not a code bug in this command. Checking
+    // status first closes this whole failure class, not just this one
+    // instance of it — a differently-broken sidecar response in the future
+    // fails loudly here instead of silently downstream.
+    let status = response.status();
+    let text = response.text().await.map_err(|e| {
+        log::error!("[relight] chroma_depth_track: couldn't read sidecar response body: {e}");
+        e.to_string()
+    })?;
+    if !status.is_success() {
+        log::error!("[relight] chroma_depth_track: sidecar returned HTTP {status}: {text}");
+        return Err(format!(
+            "sidecar returned HTTP {status}: {text} — if this is \"Not Found\", the sidecar \
+             is probably a stale process from before this route existed; restart it (kill \
+             whatever's on :8765, then `cd ai && ./run.sh`, or just relaunch the app if \
+             nothing was already running on that port)"
+        ));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        log::error!("[relight] chroma_depth_track: bad sidecar response JSON: {e} (body: {text})");
         e.to_string()
     })?;
 
@@ -114,7 +144,7 @@ pub async fn chroma_depth_track(
 /// Poll a `/depth_track` job.
 #[tauri::command]
 pub async fn chroma_depth_track_status(job_id: String) -> Result<serde_json::Value, String> {
-    let v: serde_json::Value = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .get(format!("{}/depth_track/{job_id}", sidecar_base_url()))
         .send()
         .await
@@ -122,13 +152,22 @@ pub async fn chroma_depth_track_status(job_id: String) -> Result<serde_json::Val
             let msg = unreachable_hint(e);
             log::error!("[relight] chroma_depth_track_status({job_id}): sidecar unreachable: {msg}");
             msg
-        })?
-        .json()
-        .await
-        .map_err(|e| {
-            log::error!("[relight] chroma_depth_track_status({job_id}): bad sidecar response: {e}");
-            e.to_string()
         })?;
+    // Same status-check discipline as `chroma_depth_track` above (D-067
+    // follow-up) — don't parse a non-2xx body as if it were a real status.
+    let status = response.status();
+    let text = response.text().await.map_err(|e| {
+        log::error!("[relight] chroma_depth_track_status({job_id}): couldn't read response body: {e}");
+        e.to_string()
+    })?;
+    if !status.is_success() {
+        log::error!("[relight] chroma_depth_track_status({job_id}): sidecar returned HTTP {status}: {text}");
+        return Err(format!("sidecar returned HTTP {status}: {text}"));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        log::error!("[relight] chroma_depth_track_status({job_id}): bad response JSON: {e} (body: {text})");
+        e.to_string()
+    })?;
     // D-067: only the terminal states, not every 2s poll — this loop runs
     // for as long as the track takes, logging every tick would be noise.
     if let Some(state) = v.get("state").and_then(|s| s.as_str())

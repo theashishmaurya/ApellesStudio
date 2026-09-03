@@ -5124,3 +5124,71 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   underlying state is unchanged from the pre-existing, already-tested
   interaction logic, which is the actual basis for shipping this without a
   live look first.
+
+## D-069 — the real Track Depth root cause: a 2-day-stale sidecar process, silently 404ing, silently accepted as success
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** D-067 added logging specifically so the owner's next "clicked
+  Track Depth, nothing happened" would be diagnosable. It was — immediately:
+  `app.log` showed `chroma_depth_track: job started, response:
+  {"detail":"Not Found"}` on every click.
+- **Root cause, traced to the actual process, not guessed.** `{"detail":
+  "Not Found"}` is FastAPI's stock 404 body — meaning the AI sidecar
+  answering on `:8765` didn't have a `/depth_track` route at all, despite
+  `ai/server.py` (`@app.post("/depth_track")`, line 809) clearly having one
+  in the checked-out source. `ps -p $(lsof -ti:8765)` showed why: that
+  process had been running since **Tuesday, Sept 1, 21:19** — over two days,
+  started well before this session, serving whatever `server.py` looked
+  like back then. `chroma::sidecar::spawn_and_supervise` (D-028) only
+  chooses between "spawn and manage our own" and "something's already
+  answering `/health`, defer entirely" **once, at app boot** — and defers
+  permanently once it finds anything alive, with no version/capability
+  check beyond a bare 200 on `/health`. Every one of tonight's many app
+  restarts found that same Sept-1 process still alive and healthy, so Rust
+  deferred to it every single time — the staleness was invisible to every
+  rebuild this session did, because none of them were the thing serving
+  `/depth_track`.
+- **The second, independently real bug this exposed: nothing checked HTTP
+  status before parsing a response as success.** `chroma_depth_track`
+  called `.json()` on the response body regardless of status code; a 404's
+  `{"detail":"Not Found"}` parsed as valid JSON with neither `error` (the
+  field this code checked) nor `dir`/`job_id` (what the frontend needed) —
+  so the command returned `Ok` with an empty-ish object, `handleTrackRelight
+  Depth` had nothing to poll and nothing to store, `depthTrackProgress`
+  cleared almost instantly, and the *only* visible symptom was "I clicked
+  it, nothing happened." This is the same failure shape as D-064
+  (drag-and-drop) and D-063 (the dead loading flag) — a real thing silently
+  no-op'd rather than erring loudly.
+- **Fix, two parts.** (1) Killed the stale process, restarted it via `ai/
+  run.sh` — confirmed with a direct `curl` against `/health` (fresh
+  `models` list including `video_depth_anything_vits.pth`) and a direct
+  `curl -X POST /depth_track` against a nonexistent path, which now
+  correctly returns `{"error":"no such file: ..."}`, not a 404. The
+  already-running Chroma app didn't need restarting — it calls the sidecar
+  fresh on every command, not once at boot. (2) `chroma_depth_track`/
+  `_status` now check `response.status()` before ever parsing the body —
+  any non-2xx returns a real, loud error (including, for `_track`
+  specifically, an inline hint pointing at exactly this failure mode — "if
+  this is 'Not Found', the sidecar is probably a stale process... restart
+  it") instead of silently succeeding with nothing useful in it. Closes the
+  whole failure *class*, not just this one instance — a sidecar broken in
+  some other future way now fails loudly here too.
+- **Deferred, explicitly, as a real open question rather than solved
+  tonight:** should `spawn_and_supervise`'s "something's already on
+  `/health`" check be more than a bare 200 — e.g. confirm the responding
+  process actually has the routes/capabilities this exact `server.py`
+  expects, so a genuinely stale external process gets detected and
+  refused (or the owner warned) at app boot instead of silently deferred to
+  forever? Real design work (what counts as "compatible," what happens to
+  a legitimately-external sidecar someone started for another reason), not
+  a quick fix — noted here for whoever scopes it next, not attempted this
+  pass.
+- **Verification.** `cargo build --workspace` clean. Live: `curl http://
+  127.0.0.1:8765/health` and a direct `curl -X POST .../depth_track`
+  against the freshly-restarted sidecar, both confirmed correct
+  (health payload lists the real models; depth_track returns a real
+  `{"error":...}` for a bad path instead of a 404). The owner's own next
+  live click through the actual UI is still the real end-to-end
+  confirmation and hasn't happened yet as of this entry — noted honestly,
+  not claimed.

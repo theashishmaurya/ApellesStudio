@@ -74,6 +74,13 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-018 — Track Depth silently did nothing: a 2-day-stale AI sidecar process, 404ing, silently accepted as success
+status: fixed (2026-09-03, D-069) · severity: high (the entire Relight key/fill/rim feature was unusable — this is the actual root cause behind every "no light shows" report this session) · area: `app/src-tauri/src/chroma/depth.rs`, the external `ai/` sidecar process, `chroma::sidecar::spawn_and_supervise`
+- **found:** owner: "clicked track depth multiple time" — real logging (D-067, this same session) made it diagnosable immediately: `app.log` showed `chroma_depth_track: job started, response: {"detail":"Not Found"}` on every click.
+- **cause:** the process answering `:8765` had been running since Tuesday, Sept 1, 21:19 — over two days, from before `/depth_track` was added to `ai/server.py`. `chroma::sidecar::spawn_and_supervise` (D-028) checks once, at app boot, whether anything already answers `/health`; if so it defers entirely, with no version/capability check beyond a bare 200. Every restart tonight found that same stale process alive and deferred to it, so the staleness was invisible to every one of tonight's actual app rebuilds. Separately: `chroma_depth_track` never checked HTTP status before parsing the body as success — a 404's `{"detail":"Not Found"}` parsed as "valid" JSON with neither `error` nor `dir`/`job_id`, so the command returned `Ok` with nothing useful, and the frontend's only visible symptom was silence.
+- **fix:** killed the stale sidecar process, restarted via `ai/run.sh` — confirmed live via `curl /health` and a direct `curl -X POST /depth_track`. `chroma_depth_track`/`_status` now check `response.status()` before parsing anything, with a real error (including an inline hint about exactly this failure mode) on any non-2xx — closes the whole failure class, not just this instance.
+- **deferred:** should `spawn_and_supervise`'s health check verify the responding process actually has the expected routes/capabilities, rather than trusting a bare 200 forever? Real design question, not solved this pass — see D-069.
+
 ## B-017 — Relight "Clear"/delete-last-keyframe never actually removes the light's keyframes
 status: fixed (2026-09-03, D-066) · severity: medium (a real edit silently no-ops — clicking "Clear" looks like it worked, but the keyframes are still there) · area: `app/src/components/chroma/RelightPanel.tsx`
 - **found:** owner's own hands-on testing, 2026-09-03.

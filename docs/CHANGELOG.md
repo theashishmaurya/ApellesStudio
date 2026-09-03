@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **The real Track Depth root cause: a 2-day-stale AI
+  sidecar (D-069, B-018).** D-067's new logging paid off immediately —
+  `app.log` showed every click hitting a 404 (`{"detail":"Not Found"}`)
+  from the process on `:8765`, which turned out to have been running
+  since **Sept 1, 21:19** (`ps -p $(lsof -ti:8765)`), well before
+  `/depth_track` existed in `ai/server.py`. `spawn_and_supervise` (D-028)
+  only checks for something-already-answering once, at boot, and defers
+  forever once found — so every restart tonight deferred to the same
+  stale process, invisible to every actual app rebuild. Killed + restarted
+  it (`ai/run.sh`), confirmed live via `curl`. Also hardened
+  `chroma_depth_track`/`_status` to check HTTP status before parsing a
+  response as success (they didn't — this is *why* the 404 silently
+  looked like "nothing happened" instead of a real error).
+
 - **2026-09-03** — **Relight diagnosability + visual consistency (D-067/
   D-068).** `chroma_depth_track`/`_status` had zero logging — "clicked
   Track Depth multiple times, nothing happened" couldn't be told apart
