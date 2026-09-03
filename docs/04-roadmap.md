@@ -32,14 +32,18 @@ roadmap structure.
   a real CPU compositor in `app/src-tauri/src/chroma/edit.rs` are the two hard
   pieces; UI (track header icons, rearrange, a transform editor on the selected
   clip) rides on top. No commit yet.
-- 🔄 **Edit tab stuck on "No project open"** — owner reported the click to open a
-  project feels stuck, and landing on the Edit tab right after shows the empty
-  state persistently even though the project genuinely opened (confirmed via
-  `app.log` — Colorist's own preview rendered fine in the same session). Likely the
-  same staleness class D-071 fixed for Colorist (a tab not refreshing when a
-  project opens elsewhere) — `EditorTab.tsx` only refetches on mount + OS window
-  `focus`, no in-app tab-switch trigger. In progress, mirroring D-071's fix pattern
-  in `app/src/main.tsx`.
+- ✅ **Edit tab stuck on "No project open"** — done, `cec1a2b` (**D-085/B-025**).
+  Real root cause of the "stuck in the click" half: `ProjectLauncher.tsx` had zero
+  loading feedback during a genuinely multi-second open, inviting a second click
+  that hit the `busy` guard and surfaced a confusing "session busy" toast instead
+  — fixed with a real per-card loading state + disable-while-opening. The
+  "No project open" persistence half: the existing B-007-style refetch in
+  `main.tsx` looked structurally correct on inspection but wasn't landing
+  reliably by live report — made defensive (retries once, 500ms later, if it
+  lands on an error) rather than claiming a fully-proven root cause. `tsc`
+  verification was starved to ~0% CPU by the other 3 parallel agents' cargo
+  work and could not complete — flagged honestly in the write-up, not skipped
+  silently.
 - 🔄 **Sidecar memory: diagnostics + TTL auto-unload** — owner: a Python process at
   5.78GB, "we have a memory leak somewhere... we need some kind of TTL to offload
   them or else it will be a nightmare." Diagnosing whether this is a real leak or
