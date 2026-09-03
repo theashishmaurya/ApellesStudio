@@ -92,6 +92,33 @@ pub struct Track {
     /// field — deliberately scoped out of Phase C, see D-057.
     #[serde(default = "default_track_gain")]
     pub gain: f32,
+    /// D-082 (Phase B3, `docs/notes/multi-track-nle.md`). Prevents edits to
+    /// this track's clips through the normal ops (`trim_start`/`trim_end`/
+    /// `split`/`remove`/`move_clip` all refuse — return
+    /// `TimelineError::TrackLocked` — when the *source* track is locked;
+    /// `add_clip`-equivalent placement onto a locked track is likewise
+    /// refused by the same check). Purely an editing-safety guard, not a
+    /// rendering concern — a locked track still composites/plays normally.
+    /// `#[serde(default)]` is correct here (unlike `gain`): `bool::default()
+    /// == false`, and "not locked" is the only sane meaning for a pre-D-082
+    /// track with no `locked` key.
+    #[serde(default)]
+    pub locked: bool,
+    /// D-082. Excludes this track from compositing (video) — a hidden video
+    /// track's clips are skipped by [`Timeline::resolve_visible_video_layers_at`]
+    /// entirely, same as if the track didn't exist for that call, though its
+    /// clips/positions are untouched (unlike `remove_track`). For an audio
+    /// track, "hidden" and `gain: 0.0` (mute) are deliberately two different
+    /// concepts kept separate rather than folded together: mute is a mix
+    /// level (still selectable/audible if un-muted later, and the mixer only
+    /// ever reads `gain`), hidden is "this track isn't part of the edit right
+    /// now" (a visibility/scratch concept, matching the "eye" icon
+    /// convention every reference NLE uses, kept for consistency across
+    /// track kinds even though nothing reads it for audio yet).
+    /// `#[serde(default)]` — a pre-D-082 track with no `hidden` key is
+    /// visible, correctly.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 fn default_track_gain() -> f32 {
@@ -134,7 +161,7 @@ fn legacy_missing_start() -> i64 {
 /// bookkeeping order only (see `Timeline::reorder`'s doc); every op that
 /// needs "the clip before/after this one in time" scans by `start_frame`,
 /// never by Vec index.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     /// Stable id — survives reorder / trim; a `split` gives the new half a
     /// derived id. Lets the UI key a clip across a `get`→edit→`get` cycle.
@@ -183,6 +210,96 @@ pub struct Clip {
     /// caller runs the backfill.
     #[serde(default = "legacy_missing_start")]
     pub start_frame: i64,
+
+    // --- Compositing transform (D-082, Phase B3) --------------------------
+    // Only meaningful on a video clip sitting on a track *below* the topmost
+    // one with content at a given position — a lone top-track clip still
+    // renders exactly as before regardless of these (opacity 1, no offset,
+    // no scale/rotation change *is* "draw it plain"). `app/src-tauri`'s
+    // compositor (not this crate — see the module doc's "no rendering" line)
+    // is the actual consumer; this crate only carries the values and their
+    // migration defaults.
+    /// 0.0–1.0. `#[serde(default = "default_opacity")]`, not a bare
+    /// `#[serde(default)]`: `f64::default() == 0.0`, which would render a
+    /// pre-D-082 clip (and any clip a caller builds without setting this)
+    /// fully transparent — a real, silent regression, not "the sane default
+    /// for an unset field." `1.0` (fully opaque) is the only default under
+    /// which every existing single/opaque-track render stays pixel-identical.
+    #[serde(default = "default_opacity")]
+    pub opacity: f64,
+    /// Composition-space pixel offset from this clip's natural (centred,
+    /// unscaled) position. `#[serde(default)]` is correct (`0.0` = no
+    /// offset, the only sane unset-field meaning).
+    #[serde(default)]
+    pub position_x: f64,
+    #[serde(default)]
+    pub position_y: f64,
+    /// Uniform scale multiplier. `#[serde(default = "default_scale")]` for
+    /// the same reason `opacity` isn't a bare `#[serde(default)]`:
+    /// `f64::default() == 0.0` would render every existing clip as a single
+    /// point.
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+    /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
+    #[serde(default)]
+    pub rotation: f64,
+    /// D-034-shaped keyframes for the four fields above — `[{frame, params:
+    /// {opacity?, position_x?, position_y?, scale?, rotation?}}, …]`, the
+    /// *exact* `[{frame, params}]` shape `chroma::keyframes::
+    /// interpolated_parameters` (already generic over any params `Value`,
+    /// already used by a mask's shape geometry AND by `RelightLight`,
+    /// D-034/D-048) already interpolates — reused verbatim rather than a
+    /// second keyframe engine. Lives as untyped `Value` here (not a typed
+    /// Rust struct) because this crate has no `chroma::keyframes` dependency
+    /// (`chroma-timeline` is a pure L2 domain crate — see the module doc;
+    /// `chroma::keyframes` is `app/src-tauri` layer) and because every other
+    /// keyframeable thing in this codebase (masks, relight lights) already
+    /// stores its keyframes as opaque JSON for the exact same reason — the
+    /// compositor (`app/src-tauri`) is what actually calls
+    /// `interpolated_parameters` on this field at render time, this crate
+    /// only carries it. `None`/absent = not keyframed, use the plain fields
+    /// above as-is (also `interpolated_parameters`'s own existing
+    /// "no keyframes → None → caller uses the raw fields" contract).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chroma_keyframes: Option<serde_json::Value>,
+}
+
+fn default_opacity() -> f64 {
+    1.0
+}
+
+fn default_scale() -> f64 {
+    1.0
+}
+
+/// Manual, not `#[derive(Default)]` (D-082): a derived `Default` would give
+/// `opacity`/`scale` their TYPE's zero value (`0.0`), not the `1.0` these
+/// fields actually need to mean "render this clip plainly" — `#[serde(
+/// default = "default_opacity")]` only ever governs *deserializing* a
+/// missing JSON key, a completely separate mechanism from `Default::
+/// default()`, which every `Clip { ..Default::default() }` construction
+/// site (this crate has several) would otherwise silently pick up as
+/// "fully transparent, zero scale."
+impl Default for Clip {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            shot_id: None,
+            media_id: None,
+            name: String::new(),
+            source_path: String::new(),
+            source_start: 0,
+            duration: 0,
+            source_len: 0,
+            start_frame: 0,
+            opacity: default_opacity(),
+            position_x: 0.0,
+            position_y: 0.0,
+            scale: default_scale(),
+            rotation: 0.0,
+            chroma_keyframes: None,
+        }
+    }
 }
 
 impl Clip {
@@ -215,6 +332,17 @@ pub enum TimelineError {
     NegativePosition(i64),
     #[error("moving this clip to track {0} at frame {1} would overlap an existing clip there")]
     Overlap(usize, i64),
+    /// D-082. Refused by `trim_start`/`trim_end`/`split`/`remove`/`reorder`
+    /// when the clip's OWN track is locked, and by `move_clip` when EITHER
+    /// `from_track` or `to_track` is locked — a locked track is "don't let
+    /// me accidentally edit this," which reads most naturally as protecting
+    /// it from BOTH losing a clip to elsewhere and gaining one dropped onto
+    /// it, not just one direction. `add_track`/`remove_track`/`move_track`
+    /// (track-list-level ops, not per-clip edits) are deliberately NOT
+    /// gated by this — locking a track doesn't lock the whole timeline's
+    /// track list.
+    #[error("track {0} is locked")]
+    TrackLocked(usize),
 }
 
 impl Timeline {
@@ -241,6 +369,7 @@ impl Timeline {
                     duration,
                     source_len: len,
                     start_frame,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -252,6 +381,8 @@ impl Timeline {
                 kind: TrackKind::Video,
                 clips,
                 gain: default_track_gain(),
+                locked: false,
+                hidden: false,
             }],
         }
     }
@@ -289,6 +420,31 @@ impl Timeline {
             .find_map(|(i, t)| t.clip_at(pos).map(|(c, sf)| (i, c, sf)))
     }
 
+    /// D-082 (Phase B3) — the multi-layer generalization of
+    /// [`Self::resolve_video_clip_at`]'s single-winner lookup: EVERY visible
+    /// (`!t.hidden`) video track with a real clip (not a gap) at `pos`, not
+    /// just the first one. Same track-index-order walk `resolve_video_clip_at`
+    /// already uses, so the two never disagree about *which* clips are
+    /// candidates — this just doesn't stop at the first hit. Returned in
+    /// track-index order (ascending) — **index order is compositing paint
+    /// order, lowest index painted LAST (on top)**, matching
+    /// `resolve_video_clip_at`'s own "lower index = higher priority"
+    /// convention exactly, so a caller doing real alpha-over compositing
+    /// should iterate this list in REVERSE (paint the last/lowest-priority
+    /// entry first, the first/highest-priority entry last, on top) — see
+    /// the compositor in `app/src-tauri/src/chroma/edit.rs` for the actual
+    /// consumer. A hidden track contributes nothing, silently, same
+    /// "gap = nothing here, not an error" contract every other resolver in
+    /// this crate already has.
+    pub fn resolve_visible_video_layers_at(&self, pos: i64) -> Vec<(usize, &Clip, i64)> {
+        self.tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == TrackKind::Video && !t.hidden)
+            .filter_map(|(i, t)| t.clip_at(pos).map(|(c, sf)| (i, c, sf)))
+            .collect()
+    }
+
     /// Reconstruct real positions for any clip loaded from pre-D-054 JSON
     /// that had no `start_frame` field at all (see `Clip::start_frame`'s
     /// doc). Safe — and a no-op — to call on an already-migrated or
@@ -302,10 +458,23 @@ impl Timeline {
         }
     }
 
+    /// The single choke point every per-clip edit op (`reorder`/`trim_start`/
+    /// `trim_end`/`split`/`remove`) routes through — D-082's `TrackLocked`
+    /// check lives here once, rather than duplicated per op, so a future op
+    /// added the normal way (calling this) is locked-safe automatically.
+    /// `move_clip` does NOT go through this (it touches two tracks, source
+    /// and destination) — its own lock check is separate, see that fn.
+    /// `remove_track`/`add_track`/`move_track` (track-*list* ops) also don't
+    /// — see `TrackLocked`'s own doc for why.
     fn track_mut(&mut self, track: usize) -> Result<&mut Track, TimelineError> {
-        self.tracks
+        let t = self
+            .tracks
             .get_mut(track)
-            .ok_or(TimelineError::NoSuchTrack(track))
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
+        Ok(t)
     }
 
     /// Add a new, empty track of `kind`, appended after the last existing
@@ -315,6 +484,8 @@ impl Timeline {
             kind,
             clips: Vec::new(),
             gain: default_track_gain(),
+            locked: false,
+            hidden: false,
         });
         self.tracks.len() - 1
     }
@@ -328,6 +499,30 @@ impl Timeline {
             return Err(TimelineError::NoSuchTrack(track));
         }
         self.tracks.remove(track);
+        Ok(())
+    }
+
+    /// D-082 ("rearrange" from the owner's full-NLE ask). Reorders `tracks`
+    /// itself — a plain Vec move, `from` spliced out and re-inserted at
+    /// `to`. Not cosmetic: track index order IS compositing z-order (lower
+    /// index = higher priority, see `resolve_video_clip_at`'s and
+    /// `resolve_visible_video_layers_at`'s own docs), so this changes what
+    /// paints on top of what. Deliberately NOT gated by either track's
+    /// `locked` (see `TrackLocked`'s doc — a locked track protects its own
+    /// clips from edits, not the track list's order; the same distinction
+    /// `remove_track`/`add_track` already have from `track_mut`-routed ops).
+    pub fn move_track(&mut self, from: usize, to: usize) -> Result<(), TimelineError> {
+        if from >= self.tracks.len() {
+            return Err(TimelineError::NoSuchTrack(from));
+        }
+        if to >= self.tracks.len() {
+            return Err(TimelineError::NoSuchTrack(to));
+        }
+        if from == to {
+            return Ok(());
+        }
+        let t = self.tracks.remove(from);
+        self.tracks.insert(to, t);
         Ok(())
     }
 
@@ -358,6 +553,9 @@ impl Timeline {
             .tracks
             .get(from_track)
             .ok_or(TimelineError::NoSuchTrack(from_track))?;
+        if src.locked {
+            return Err(TimelineError::TrackLocked(from_track));
+        }
         let clip = src
             .clips
             .get(from_idx)
@@ -369,6 +567,9 @@ impl Timeline {
             .tracks
             .get(to_track)
             .ok_or(TimelineError::NoSuchTrack(to_track))?;
+        if dest.locked {
+            return Err(TimelineError::TrackLocked(to_track));
+        }
         let overlaps = dest.clips.iter().enumerate().any(|(i, c)| {
             if from_track == to_track && i == from_idx {
                 return false; // the clip being moved never overlaps itself
@@ -757,6 +958,8 @@ mod tests {
         t.tracks.push(Track {
             kind: TrackKind::Video,
             gain: default_track_gain(),
+            locked: false,
+            hidden: false,
             clips: vec![
                 Clip {
                     id: "a".into(),
@@ -915,6 +1118,8 @@ mod tests {
         t2.tracks.push(Track {
             kind: TrackKind::Video,
             gain: default_track_gain(),
+            locked: false,
+            hidden: false,
             clips: vec![
                 Clip {
                     id: "x".into(),
@@ -1343,5 +1548,173 @@ mod tests {
         t.split(0, 1, 120).unwrap();
         assert_eq!(t.tracks[0].clips[1].media_id.as_deref(), Some("m-b"));
         assert_eq!(t.tracks[0].clips[2].media_id.as_deref(), Some("m-b"));
+    }
+
+    // -----------------------------------------------------------------
+    // D-082 (Phase B3): Clip transform defaults, track lock/hide,
+    // move_track, resolve_visible_video_layers_at.
+    // -----------------------------------------------------------------
+
+    /// The whole reason `Clip` moved off `#[derive(Default)]` to a manual
+    /// `impl Default` — confirms `opacity`/`scale` land on `1.0`, not the
+    /// derive's `0.0`, for a freshly-built `Clip::default()` (not just a
+    /// deserialized one, which `serde(default = ...)` already covered).
+    #[test]
+    fn clip_default_is_fully_opaque_and_unscaled() {
+        let c = Clip::default();
+        assert_eq!(c.opacity, 1.0);
+        assert_eq!(c.scale, 1.0);
+        assert_eq!(c.position_x, 0.0);
+        assert_eq!(c.position_y, 0.0);
+        assert_eq!(c.rotation, 0.0);
+        assert!(c.chroma_keyframes.is_none());
+    }
+
+    /// A `from_shots` clip (the common "just probed some media" path) also
+    /// gets real defaults, not the zeroed ones — `from_shots` builds `Clip`
+    /// via `..Default::default()` for exactly these fields.
+    #[test]
+    fn from_shots_clips_are_fully_opaque() {
+        let t = Timeline::from_shots(&shots());
+        assert!(t.tracks[0].clips.iter().all(|c| c.opacity == 1.0 && c.scale == 1.0));
+    }
+
+    #[test]
+    fn track_json_without_locked_or_hidden_defaults_to_both_false() {
+        let json = r#"{"kind":"video","clips":[]}"#;
+        let t: Track = serde_json::from_str(json).unwrap();
+        assert!(!t.locked);
+        assert!(!t.hidden);
+    }
+
+    #[test]
+    fn clip_json_without_transform_fields_defaults_correctly() {
+        let json = r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,"source_len":10,"start_frame":0}"#;
+        let c: Clip = serde_json::from_str(json).unwrap();
+        assert_eq!(c.opacity, 1.0);
+        assert_eq!(c.scale, 1.0);
+        assert_eq!(c.position_x, 0.0);
+        assert_eq!(c.rotation, 0.0);
+    }
+
+    #[test]
+    fn move_track_reorders_the_track_list() {
+        let mut t = two_video_track_timeline();
+        let track0_kind_before = t.tracks[0].clips[0].name.clone(); // "A"
+        t.move_track(0, 1).unwrap();
+        // track that was at index 1 (its first clip named "B") is now at 0
+        assert_eq!(t.tracks[0].clips[0].name, "B");
+        assert_eq!(t.tracks[1].clips[0].name, track0_kind_before); // "A", now at 1
+    }
+
+    #[test]
+    fn move_track_out_of_range_is_an_error() {
+        let mut t = two_video_track_timeline();
+        assert_eq!(t.move_track(5, 0), Err(TimelineError::NoSuchTrack(5)));
+        assert_eq!(t.move_track(0, 5), Err(TimelineError::NoSuchTrack(5)));
+    }
+
+    #[test]
+    fn move_track_same_index_is_a_real_no_op() {
+        let mut t = two_video_track_timeline();
+        assert_eq!(t.move_track(0, 0), Ok(()));
+    }
+
+    #[test]
+    fn resolve_visible_video_layers_at_returns_every_track_with_content_not_just_the_top() {
+        let t = two_video_track_timeline(); // track0: A[0,100); track1: B[0,50) C[100,300)
+        // frame 10: both tracks have content.
+        let layers = t.resolve_visible_video_layers_at(10);
+        assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].0, 0);
+        assert_eq!(layers[0].1.name, "A");
+        assert_eq!(layers[1].0, 1);
+        assert_eq!(layers[1].1.name, "B");
+    }
+
+    #[test]
+    fn resolve_visible_video_layers_at_omits_a_track_with_a_gap_there() {
+        let t = two_video_track_timeline();
+        // frame 60: track0 has A still; track1's B ended at 50, C starts at 100 — a gap.
+        let layers = t.resolve_visible_video_layers_at(60);
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].0, 0);
+    }
+
+    #[test]
+    fn resolve_visible_video_layers_at_excludes_a_hidden_track_even_with_content() {
+        let mut t = two_video_track_timeline();
+        t.tracks[1].hidden = true;
+        let layers = t.resolve_visible_video_layers_at(10);
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].0, 0);
+    }
+
+    #[test]
+    fn resolve_visible_video_layers_at_three_tracks_returns_all_that_overlap() {
+        let t = three_video_track_timeline(); // track0[0,50) track1[0,30) track2[0,200+)
+        let layers = t.resolve_visible_video_layers_at(10);
+        assert_eq!(layers.len(), 3);
+        assert_eq!(layers.iter().map(|(i, ..)| *i).collect::<Vec<_>>(), vec![0, 1, 2]);
+    }
+
+    fn locked_two_track_timeline() -> Timeline {
+        let mut t = two_video_track_timeline();
+        t.tracks[0].locked = true;
+        t
+    }
+
+    #[test]
+    fn trim_start_refuses_on_a_locked_track() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.trim_start(0, 0, 5), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn trim_end_refuses_on_a_locked_track() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.trim_end(0, 0, -5), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn split_refuses_on_a_locked_track() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.split(0, 0, 50), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn remove_refuses_on_a_locked_track() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.remove(0, 0), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn reorder_refuses_on_a_locked_track() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.reorder(0, 0, 0), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn move_clip_refuses_when_the_source_track_is_locked() {
+        let mut t = locked_two_track_timeline();
+        assert_eq!(t.move_clip(0, 0, 1, 200), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn move_clip_refuses_when_the_destination_track_is_locked() {
+        let mut t = two_video_track_timeline();
+        t.tracks[1].locked = true;
+        assert_eq!(t.move_clip(0, 0, 1, 200), Err(TimelineError::TrackLocked(1)));
+    }
+
+    /// A locked track's clips can't be edited, but the track LIST itself —
+    /// add/remove/reorder-of-tracks — is a different concern, not gated by
+    /// per-track lock (see `TrackLocked`'s own doc for the reasoning).
+    #[test]
+    fn locking_a_track_does_not_block_track_list_ops() {
+        let mut t = locked_two_track_timeline();
+        assert!(t.move_track(0, 1).is_ok());
+        assert_eq!(t.add_track(TrackKind::Audio), 2);
+        assert!(t.remove_track(2).is_ok());
     }
 }

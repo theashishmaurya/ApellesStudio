@@ -1136,3 +1136,12 @@ _(none — pre-v1)_
   `add_component(mask_id, type, mode)`, `set_submask_mode` — all through the same
   `createSubMask`/`updateSubMask` a slider uses. `ai/` + engine `points` support left
   unused.
+- **2026-09-03** — **Full NLE, Phase 1 (D-086): real data model for track
+  lock/hide, clip transform, and rearrange.** `chroma_timeline::Track`
+  gained `locked`/`hidden`; `Clip` gained `opacity`/`position_x`/
+  `position_y`/`scale`/`rotation`/`chroma_keyframes` (reusing the existing
+  D-034 keyframe engine, not a new one). New `Timeline::move_track` and
+  `resolve_visible_video_layers_at` (the multi-layer generalization of the
+  existing single-winner track resolver — the real query the Phase 2
+  compositor needs). 58/58 chroma-timeline tests, 143/143 chroma:: tests
+  unchanged. Phase 2 (the actual compositor) is next.

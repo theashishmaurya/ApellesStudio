@@ -10,7 +10,7 @@ description = "Chroma L2 — the OTIO-shaped edit model: tracks / clips, reorder
 [dependencies]
 chroma-types = { path = "../chroma-types" }
 serde = { workspace = true }
-thiserror = { workspace = true }
-
-[dev-dependencies]
+# D-082: `Clip::chroma_keyframes` is an opaque `serde_json::Value` (see that
+# field's doc) — real dependency now, not just a test one.
 serde_json = { workspace = true }
+thiserror = { workspace = true }

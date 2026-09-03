@@ -6277,3 +6277,75 @@ check `ps aux | grep cargo` first.
   actually finish. No `cargo` touched by this fix at all (pure
   frontend). No live interactive click-through this pass — the owner's own
   next project-open attempt is the real confirmation for both parts.
+
+## D-086 — Full NLE, Phase 1: data model for real multi-track compositing (track lock/hide, clip transform, rearrange)
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, P0, referencing Palmier Pro screenshots: "we need full
+  NLE track now... scope it out frontend backend and work till its
+  perfect... also selection keyframes mute view hide, rearrange etc etc.
+  what is in the full NLE has all the features we want to be working."
+  Specifically: real V1/V2 video stacking (not opaque top-wins, D-056/D-080's
+  existing behavior — actual layering), track lock/hide (mute already real,
+  D-057), rearrange (track z-order), and keyframeable clip transforms. This
+  is Phase B3 of `docs/notes/multi-track-nle.md` — the one piece flagged all
+  session as "the real long pole... genuinely new GPU/pixel-compositing
+  work," now made explicit P0. This entry is Phase 1 (data model) of a
+  4-phase build; Phase 2 (the actual compositor) is the hard engineering,
+  landing separately.
+- **`chroma_timeline::Track` gained `locked: bool` / `hidden: bool`**
+  (`#[serde(default)]` — correct since `bool::default() == false` and
+  "not locked/not hidden" is the sane meaning for a pre-migration track,
+  unlike `gain`'s D-057 non-zero-default precedent).
+- **`chroma_timeline::Clip` gained a compositing transform**: `opacity`/
+  `scale: f64` (`#[serde(default = "default_opacity"/"default_scale")]` →
+  `1.0` — a bare `#[serde(default)]` would be `0.0`, silently rendering
+  every existing clip invisible/zero-sized), `position_x`/`position_y`/
+  `rotation: f64` (bare `#[serde(default)]`, `0.0` correctly means "no
+  offset"/"upright"), and `chroma_keyframes: Option<serde_json::Value>` —
+  deliberately untyped, the *exact* `[{frame, params}]` shape `chroma::
+  keyframes`'s existing D-034 interpolation engine (already used by mask
+  shape geometry and `RelightLight`) already reads — reusing that engine
+  outright rather than building a second one. **This moved `Clip` off
+  `#[derive(Default)]` onto a manual `impl Default`** — a real bug caught
+  before it shipped: the derive would give `opacity`/`scale` their type's
+  `0.0`, not `1.0`, for every `Clip { ..Default::default() }` construction
+  site this crate and `app/src-tauri` already have (several) — `#[serde(
+  default = "...")]` only governs *deserializing a missing JSON key*, a
+  completely separate mechanism from `Default::default()`. Same class of
+  bug tonight's relight work already hit once with `RelightLightGpu`
+  (D-076) — caught this time before merging, not after a live report.
+- **`TimelineError::TrackLocked(usize)`** — refused by every per-clip edit
+  op (`trim_start`/`trim_end`/`split`/`remove`/`reorder`, all routed through
+  a single `track_mut` choke point that now checks `locked` once, so a
+  future op added the normal way is locked-safe automatically) and by
+  `move_clip` on EITHER its source or destination track (a locked track
+  should protect against both losing a clip to elsewhere and gaining one
+  dropped onto it). Deliberately NOT checked by `add_track`/`remove_track`/
+  the new `move_track` — locking a track protects its own clips, not the
+  track list's structure.
+- **`Timeline::move_track(from, to)`** — the "rearrange" ask. Not cosmetic:
+  track index order IS compositing z-order (`resolve_video_clip_at`'s own
+  "lower index = higher priority" convention), so this changes what paints
+  on top of what.
+- **`Timeline::resolve_visible_video_layers_at(pos)`** — the multi-layer
+  generalization of the existing single-winner `resolve_video_clip_at`:
+  every visible (`!hidden`) video track with real content at `pos`, not
+  just the first, in the same index-order walk (documented as the
+  compositor's paint-order contract: lowest index painted LAST/on top).
+  This is the actual query Phase 2's compositor will call.
+- **Verification.** `cargo test -p chroma-timeline`: **58/58** (39 baseline
+  + 19 new: `Clip::default()` opacity/scale correctness, serde-default
+  round-trips for the new fields, `move_track` success/out-of-range/no-op,
+  `resolve_visible_video_layers_at` multi-track/gap/hidden-track/3-track
+  cases, and a `TrackLocked` refusal test for every gated op). `cargo test
+  --manifest-path app/src-tauri/Cargo.toml chroma::`: **143 passed, 0
+  failed, 1 ignored** — unchanged from before this pass (this phase only
+  added fields + pure query/mutation methods, no new command surface yet).
+  `cargo build --manifest-path app/src-tauri/Cargo.toml`: clean (after
+  fixing every existing `Clip`/`Track` struct-literal construction site
+  across `chroma-timeline`, `app/src-tauri/src/chroma/project.rs`, and
+  `app/src-tauri/src/chroma/audio.rs` that the new required fields broke —
+  9 sites total, all real production/test code, not dead code). Phase 2
+  (the compositor) is next.

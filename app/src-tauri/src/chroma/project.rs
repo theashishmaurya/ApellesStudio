@@ -671,6 +671,7 @@ fn append_media_clip(
         duration,
         source_len: frames.max(0),
         start_frame,
+        ..Default::default()
     };
     tl.tracks[track_idx].clips.push(clip.clone());
     manifest.active_clip_id = Some(clip.id.clone());
@@ -3712,6 +3713,8 @@ mod tests {
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
                 gain: 1.0,
+                locked: false,
+                hidden: false,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -3815,6 +3818,8 @@ mod tests {
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
                 gain: 1.0,
+                locked: false,
+                hidden: false,
                 clips: vec![clip("clip-a"), clip("clip-b")],
             }],
         });
@@ -3858,6 +3863,8 @@ mod tests {
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
                 gain: 1.0,
+                locked: false,
+                hidden: false,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -4012,11 +4019,15 @@ mod tests {
                 chroma_timeline::Track {
                     kind: TrackKind::Video,
                     gain: 1.0,
+                    locked: false,
+                    hidden: false,
                     clips: vec![top.clone()],
                 },
                 chroma_timeline::Track {
                     kind: TrackKind::Video,
                     gain: 1.0,
+                    locked: false,
+                    hidden: false,
                     clips: vec![bottom.clone()],
                 },
             ],

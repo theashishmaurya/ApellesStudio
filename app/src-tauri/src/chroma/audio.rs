@@ -1396,11 +1396,14 @@ mod tests {
             duration: 100_000, // longer than any real test clip; exact value is irrelevant here
             source_len: 100_000,
             start_frame: 0, // D-054: the only clip on its track
+            ..Default::default()
         };
         let mut tracks = vec![chroma_timeline::Track {
             kind: chroma_timeline::TrackKind::Video,
             clips: vec![clip],
             gain: 1.0,
+            locked: false,
+            hidden: false,
         }];
         if let Some((audio_path, gain)) = audio_track {
             tracks.push(chroma_timeline::Track {
@@ -1415,8 +1418,11 @@ mod tests {
                     duration: 100_000,
                     source_len: 100_000,
                     start_frame: 0, // overlaps the video clip's [0, 100_000)
+                    ..Default::default()
                 }],
                 gain,
+                locked: false,
+                hidden: false,
             });
         }
         let timeline = chroma_timeline::Timeline {
