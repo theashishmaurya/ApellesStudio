@@ -74,6 +74,12 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-025 — Edit tab stuck on "No project open" after opening a project; opening had no loading feedback
+status: fixed (2026-09-03, D-085) · severity: high (blocks reaching the Edit tab at all after a fresh open) · area: `app/src/components/chroma/ProjectLauncher.tsx`, `app/src/main.tsx`
+- **found:** owner, live, two screenshots: clicking a project "gets stuck in the click, it does not open," and the Edit tab shows "No project open" persistently once it lands, even though `app.log` confirms the project genuinely opened (grade migration ran, Colorist's own preview rendered).
+- **cause:** two distinct gaps — (1) `handleOpen` had zero loading feedback during a real, sometimes multi-second open, inviting a second click that hit `openProject`'s own `busy` guard and surfaced a confusing "session busy" toast; (2) the existing B-007 fix (retry Edit's own `chroma_timeline_get` when a project opens) looked structurally correct on inspection but the owner's live report says it isn't landing reliably — root mechanism not fully proven, treated as a narrow timing race.
+- **fix:** a real `opening` loading state + spinner on the clicked project card, disabling every card while any open is in flight (closes the double-click race at the UI level); the Edit tab's own load effect now retries once, 500ms later, if it lands on an error state. Full writeup: D-085 in `docs/08-decisions.md`.
+
 ## B-024 — Edit-tab timeline: dragging a clip froze the UI
 status: fixed (2026-09-03, D-083) · severity: high (drag-and-drop is a core, constant-use interaction) · area: `packages/editor/src/TimelinePane.tsx`
 - **found:** owner, live, screenshot: "when i drag and drop the UI freezes up this is not performant at all."

@@ -35,7 +35,25 @@ function Root() {
   const activeTab = useActiveTab();
 
   useEffect(() => {
-    if (projectOpen) useEditorTimelineStore.getState().load();
+    if (!projectOpen) return;
+    // D-085: retry once, short delay, if the load lands on an error state —
+    // a defensive guard against a transient race between "frontend has set
+    // `projectPath`" and "backend's project-ref state is fully settled for
+    // *every* command to read," not just the one `openProject` itself
+    // awaited. Owner, live, screenshot: opened a project (Colorist rendered
+    // it successfully — confirmed via `app.log`), Edit tab stuck on "No
+    // project open" regardless. A single unconditional `load()` here
+    // couldn't explain that if the backend state really was ready by the
+    // time this effect ran; a real but narrow timing race is the most
+    // defensible explanation given nothing else in this bridge looks wrong
+    // on inspection — this makes that race harmless without pretending to
+    // have proven its exact mechanism.
+    useEditorTimelineStore.getState().load();
+    const retry = window.setTimeout(() => {
+      const s = useEditorTimelineStore.getState();
+      if (s.loaded && !s.timeline) s.load();
+    }, 500);
+    return () => window.clearTimeout(retry);
   }, [projectOpen]);
 
   // D-071: `chroma_timeline_set` (the Edit tab's own save path, fired on

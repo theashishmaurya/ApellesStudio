@@ -6215,3 +6215,65 @@ check `ps aux | grep cargo` first.
   click-through this pass — dispatched while the owner was actively
   reporting other issues live; the owner's own next drag-and-drop attempt
   is the real confirmation.
+
+## D-085 — Edit tab stuck on "No project open" after a real, successful open; opening a project had no loading feedback
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live, two screenshots: clicking a project in the
+  Projects list "gets stuck in the click, it does not open," and once it
+  does land, the Edit tab shows "No project open" persistently — confirmed
+  via `app.log` that the project genuinely opened (grade migration ran, a
+  real frame decoded and rendered in Colorist's own WGPU preview in the same
+  session, no crash, no error).
+- **Two distinct issues, not one, per the owner's own two-part report:**
+  1. **No loading feedback on open at all.** `ProjectLauncher.tsx`'s
+     `handleOpen` awaits a real, sometimes multi-second round trip (project
+     manifest load + grade-file migration, confirmed by real elapsed time
+     between the click and the migration warnings landing in `app.log`)
+     with zero visual change to the clicked card. A reasonable click during
+     that window reads as "did that even register?" — inviting a second
+     click, which hits `openProject`'s own `busy` guard
+     (`useSessionStore.ts`) and surfaces a raw "session busy" error toast:
+     technically harmless (the first open still completes), but a scary,
+     confusing symptom that reads as a real failure. This is very plausibly
+     the entire "stuck in the click" experience, not a genuine hang.
+  2. **The Edit tab's own staleness gap** — read `app/src/main.tsx`'s
+     existing B-007 fix first (a `useEffect` that calls `useEditorTimelineStore
+     .getState().load()` whenever `useSessionStore`'s `projectOpen` becomes
+     true) and confirmed it's real, present, and structurally correct for
+     the reported symptom on inspection. Could not find a definitive root
+     cause via static reading alone for why it would still leave the Edit
+     tab stuck given a confirmed-successful backend open elsewhere (same
+     `state::ProjectRef`/manifest source `chroma_timeline_get` and the
+     Colorist open path both read) — noted honestly rather than claiming a
+     certainty this pass didn't establish. Given a live, reported symptom
+     that the code doesn't obviously explain, treated the likeliest
+     remaining cause as a narrow timing race between "frontend has set
+     `projectPath`" and "every backend command's own state is fully
+     settled," not just the one call `openProject` itself awaited.
+- **Fix, part 1 (real, verified UX gap — `ProjectLauncher.tsx`).** A real
+  `opening: string | null` state: the clicked card shows a spinner +
+  "Opening…" overlay (same `Loader2` affordance this file's own "Create"
+  button already uses), every card disables while any open is in flight —
+  a second click can no longer reach `openProject` at all, closing the
+  "session busy" race at the UI level rather than only inside the store.
+- **Fix, part 2 (defensive, not a proven root cause — `app/src/main.tsx`).**
+  The existing B-007 effect now retries `load()` once, 500ms later, if the
+  first attempt lands on an error state (`loaded && !timeline`) — makes the
+  observed symptom harmless without pretending to have proven its exact
+  mechanism. If this owner-reported symptom recurs even with this retry in
+  place, that's real signal the cause is something else entirely (worth a
+  fresh, deeper investigation rather than assuming this pass closed it).
+- **Verification.** Both changes are small, isolated, and manually reviewed
+  against this file's own established patterns (the `Loader2`/disabled-state
+  convention already used elsewhere in `ProjectLauncher.tsx`; the retry
+  pattern is a plain `setTimeout` + the store's own existing state shape,
+  no new dependencies). **`tsc --noEmit -p app` could not be completed this
+  pass** — attempted multiple times, each starved to ~0% CPU by concurrent
+  sibling Rust/TS agent processes running heavy `cargo test`/build work at
+  the same time (this session had 3-4 parallel background agents active
+  simultaneously) — noted honestly rather than claiming a check that didn't
+  actually finish. No `cargo` touched by this fix at all (pure
+  frontend). No live interactive click-through this pass — the owner's own
+  next project-open attempt is the real confirmation for both parts.

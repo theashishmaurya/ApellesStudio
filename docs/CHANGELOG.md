@@ -4,6 +4,11 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Fixed: Edit tab stuck on "No project open" after a
+  real, successful open; opening a project had no loading feedback (D-085,
+  B-025).** Project cards now show a real spinner while opening and disable
+  during it (closes a confusing "session busy" double-click race); the Edit
+  tab's own load now retries once if it lands on a stale error state.
 - **2026-09-03** — **Fixed: dragging a clip in the Edit-tab timeline froze
   the UI (D-083, B-024).** Five callback props to the timeline library were
   inline arrow functions (new identity every render); a native drag fires

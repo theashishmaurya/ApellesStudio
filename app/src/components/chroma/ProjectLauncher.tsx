@@ -146,18 +146,48 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ProjectCard({ p, onOpen }: { p: ProjectSummary; onOpen: () => void }) {
+// D-085/B-025: `handleOpen` awaits a real, sometimes multi-second Tauri
+// round trip (project manifest load + grade-file migration — confirmed live,
+// `app.log` showed a real gap between the click and the migration warnings
+// completing) with zero visual feedback before this pass — a card just sat
+// there looking exactly as clickable as before, so a reasonable click during
+// that window read as "did that even register?" and prompted a second
+// click. A second click while the first is still in flight hit `openProject`'s
+// own `busy` guard (`useSessionStore.ts`) and surfaced a raw "session busy"
+// error toast — technically harmless (the first open still completes), but
+// a scary, confusing symptom that read as a real failure. `opening` disables
+// every card (not just the clicked one — a second project shouldn't be
+// openable while the first is mid-open either) and shows a spinner + "Opening…"
+// on the one actually being opened, the same `Loader2` affordance this file's
+// own "Create" button already uses.
+function ProjectCard({
+  p,
+  onOpen,
+  disabled,
+  opening,
+}: {
+  p: ProjectSummary;
+  onOpen: () => void;
+  disabled: boolean;
+  opening: boolean;
+}) {
   return (
     <button
       onClick={onOpen}
+      disabled={disabled}
       title={p.path}
-      className="group flex flex-col rounded-lg overflow-hidden border border-border-color bg-surface text-left hover:border-accent transition-colors"
+      className="group flex flex-col rounded-lg overflow-hidden border border-border-color bg-surface text-left hover:border-accent transition-colors disabled:opacity-60 disabled:pointer-events-none"
     >
-      <div className="aspect-video bg-bg-primary flex items-center justify-center overflow-hidden">
+      <div className="aspect-video bg-bg-primary flex items-center justify-center overflow-hidden relative">
         {p.thumb ? (
           <img src={p.thumb} draggable={false} className="w-full h-full object-cover" />
         ) : (
           <Film size={22} className="text-text-secondary/50" />
+        )}
+        {opening && (
+          <div className="absolute inset-0 bg-bg-primary/70 flex items-center justify-center gap-1.5 text-text-primary text-xs font-medium">
+            <Loader2 size={14} className="animate-spin" /> Opening…
+          </div>
         )}
       </div>
       <div className="px-3 py-2">
@@ -175,6 +205,10 @@ export default function ProjectLauncher() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [dir, setDir] = useState('');
   const [showNew, setShowNew] = useState(false);
+  // D-085/B-025: which project path (if any) is currently mid-`openProject`
+  // — real loading feedback for what used to be a silent, sometimes
+  // multi-second wait. See `ProjectCard`'s own doc comment for the full story.
+  const [opening, setOpening] = useState<string | null>(null);
   const openProject = useSessionStore((s) => s.openProject);
 
   const refresh = useCallback(async () => {
@@ -214,13 +248,24 @@ export default function ProjectLauncher() {
 
   const handleOpen = useCallback(
     async (path: string) => {
-      const res = await openProject(path);
-      if (!res.ok) {
-        toast.error(`Open failed: ${res.error}`);
-        return;
+      // D-085/B-025: `opening` doubles as the double-click guard — every
+      // card disables while it's set (see the render below), so a second
+      // click can't reach `openProject` at all and hit its `busy`-guard
+      // race any more; this bails defensively too, in case a click somehow
+      // still lands (e.g. a queued event from just before the disable took
+      // visual effect).
+      if (opening) return;
+      setOpening(path);
+      try {
+        const res = await openProject(path);
+        if (!res.ok) {
+          toast.error(`Open failed: ${res.error}`);
+        }
+      } finally {
+        setOpening(null);
       }
     },
-    [openProject],
+    [openProject, opening],
   );
 
   return (
@@ -257,7 +302,13 @@ export default function ProjectLauncher() {
               <span className="text-xs font-medium">New Project</span>
             </button>
             {projects.map((p) => (
-              <ProjectCard key={p.path} p={p} onOpen={() => handleOpen(p.path)} />
+              <ProjectCard
+                key={p.path}
+                p={p}
+                onOpen={() => handleOpen(p.path)}
+                disabled={!!opening}
+                opening={opening === p.path}
+              />
             ))}
           </div>
         )}
