@@ -114,6 +114,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the 3-tab world, `00-vision.md`/`01-prd.md`/`02-scope.md` corrected off "grading
    only, not an editor," `BUGS.md`'s "Known engine constraints" cleaned of solved items
    (D-014/D-018/D-034/D-036).
+6. **Multi-track NLE** — owner, 2026-09-03: "we use that, it's important, we need full
+   editing" — the standard baseline every NLE has (N video tracks, N audio tracks
+   mixed with per-track vol/mute/solo/pan, clips placeable anywhere not just
+   back-to-back, drag between tracks, track headers, add/remove tracks, basic
+   transitions, the composite actually renders in preview and export). Full scoping,
+   verified against the actual current code (not assumed): `docs/notes/multi-track-nle.md`.
+   Real finding: clips have no position field today — every track is forced
+   back-to-back by construction, the actual blocker under "just add tracks." Phased:
+   **A** (clip positions + gap item + add/remove-track ops, `chroma-timeline` — cheap,
+   one pass) and **C** (audio mixing, extends D-050's `cpal` pipeline — moderate) are
+   independent and approachable now. **B** (the actual compositor — render N video
+   tracks together, feed both preview and export) is the real long pole, sub-phased
+   B1 (2 tracks, opaque)→B2 (N tracks)→B3 (blend modes) rather than attempted whole.
+   **D** (multi-track timeline UI), **E** (transitions), **F** (export through the
+   real timeline) all sit downstream of B and shouldn't start earlier. Phase A is the
+   first dispatch.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
