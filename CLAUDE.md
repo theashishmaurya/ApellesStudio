@@ -110,6 +110,16 @@ in the same commit.
   reimplementing. When you must diverge from upstream, document the divergence in
   `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes. (Over time the
   Chroma `crates/` absorb more and the fork shrinks — D-039.)
+- **Every resizable-by-nature panel/pane/sidebar must actually be resizable** (owner,
+  2026-09-03, said once so it's a standing rule, not a per-feature ask). Fixed-width
+  panels, popovers, and dialogs that don't need to flex are fine as-is — this is about
+  panes that hold real content a user will want more/less space for: the Sources
+  sidebar, the track-header column, an Inspector, a properties popover, a preview vs.
+  timeline split, etc. `@chroma/ui`'s `resizable.tsx` (Base UI-backed) is already a real
+  component in the library for exactly this — use it rather than a fixed `w-[Npx]`/
+  `h-[Npx]` whenever you're building a new panel of this kind, and if an existing one was
+  built fixed-width before this rule existed, that's a real, worthwhile fix when you're
+  next in that file, not something to leave as-is out of inertia.
 
 ## Monorepo layout (D-039 / D-040)
 
