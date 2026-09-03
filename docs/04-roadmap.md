@@ -249,7 +249,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      interactive verification is pending the owner's next session. See
      D-080 for the full writeup, including what's deliberately not built
      yet (live drag-between-tracks, lock/solo — no backing model field).
-7. **Global Inspector — Motion + NLE, one shared panel, not two** — owner,
+7. ~~**Global Inspector — Motion + NLE, one shared panel, not two**~~ — owner,
    2026-09-03: reframed from "Motion property-editor GUI" once scoping
    started. Both tabs need real property controls (position/timing/text/
    camera keyframes for Motion's 7 primitives; position/scale/rotation/
@@ -336,8 +336,41 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    keyframes present, all render correctly), and — the strongest check —
    read the owner's own real `~/Movies/Chroma/New.chroma/project.json`
    directly, confirming its 9 real clips' shape matches exactly what this
-   panel expects. **Phase 4 (shared panel shell) is next**, unblocked, both
-   halves now have real content to unify.
+   panel expects.
+   **Item done — Phase 4, D-103 (2026-09-04).** Real judgment call on "how
+   shared is shared": a genuinely merged, single polymorphic Inspector
+   component was rejected — Motion's selection (a `Manifest` + scene/layer/
+   camera target) and the NLE's (a `Clip` + track/id) are different enough
+   in shape and edit ops that forcing them together would mean rewriting
+   two already-working, already-tested panels for no real user-facing
+   benefit. Instead: a new tiny package, **`@chroma/inspector`**, holding
+   only the pieces `InspectorPanel.tsx` and `ClipInspectorPanel.tsx` had
+   genuinely, independently converged on byte-identical (the "nothing
+   selected" empty state, the section-heading typography) — both panels now
+   import `InspectorEmptyState`/`InspectorSection` from it instead of
+   duplicating that JSX. A separate package because `@chroma/motion` cannot
+   depend on `@chroma/ui` at all (the `@react-three/fiber` JSX conflict
+   `Button.tsx`/`resizable.tsx` already document) — so shared chrome both
+   tabs use has to live somewhere neither's existing constraints block, and
+   putting it in `@chroma/ui` would have been unusable from Motion's side.
+   The resizable-panel wrapping was deliberately NOT unified — `@chroma/
+   editor` correctly uses `@chroma/ui`'s real `ResizablePanel` (no conflict
+   there), `@chroma/motion` uses its own local motion-safe wrapper; routing
+   both through a third shared one would either downgrade the editor away
+   from the real component it already correctly uses, or reintroduce the
+   JSX conflict into Motion. `Selection` was NOT lifted to a shared,
+   tab-agnostic store either — `Shell.tsx`'s own design already keeps every
+   tab mounted permanently and just hides inactive ones (confirmed by
+   reading it, not assumed), so a per-tab-local selection already behaves
+   exactly like a cross-tab shared one from the user's side; there was no
+   real gap lifting state would have closed. Verified live: both panels
+   re-rendered and interacted with side by side in a scratch harness after
+   the refactor (Motion layer selection + NLE clip selection both still
+   populate and edit correctly, now through visually consistent shared
+   section headings) — no regression in either. `tsc` clean across
+   `packages/inspector`/`motion`/`editor`/`app`; 18/18 + 91/91 tests
+   unchanged (a pure presentational extraction, no logic moved).
+   `docs/notes/global-inspector.md` — all 4 phases now done.
 8. **Unify clip identity, Edit ↔ Colorist (Resolve-shaped)** — owner,
    2026-09-03: "we have one clip we add, we can move to LUTs and color and
    we have the same clip, not multiple" (Resolve comparison), triggered by
@@ -567,13 +600,21 @@ same-track and cross-track move alike, library's own move-drag disabled, edge-tr
 untouched. `docs/notes/dnd-kit-migration.md` has the real license/maintenance/
 StrictMode-risk evaluation behind the library choice.
 
-**Global Inspector, both halves (2026-09-04 early morning, D-099/D-102):** a real
-typed property panel for Motion's 8 primitives (`InspectorPanel.tsx`/`propCatalog.ts`,
-bound to D-081's selection model) and a persistent NLE clip-properties panel
-(`ClipInspectorPanel.tsx`, replacing D-090's transform popover outright) — both
-verified against real backward-compat cases, the NLE half against the owner's actual
-`~/Movies/Chroma/New.chroma/project.json`. Phase 4 (one shared, tab-agnostic panel
-shell) is the remaining piece, unblocked.
+**Global Inspector, all 4 phases (2026-09-04 early morning, D-081/D-099/D-102/D-103):**
+a real typed property panel for Motion's 8 primitives (`InspectorPanel.tsx`/
+`propCatalog.ts`, bound to D-081's selection model) and a persistent NLE
+clip-properties panel (`ClipInspectorPanel.tsx`, replacing D-090's transform popover
+outright) — both verified against real backward-compat cases, the NLE half against the
+owner's actual `~/Movies/Chroma/New.chroma/project.json`. **Phase 4** unified the two
+panels' shared, genuinely-identical chrome (the empty-state message, section-heading
+typography) into a new tiny package, `@chroma/inspector` — not a full merge: the two
+panels' selections/fields/edit ops stayed different enough that forcing one polymorphic
+component would have meant rewriting working code for no benefit, and the resizable-
+panel wrapping stayed package-local since `@chroma/editor`'s real `@chroma/ui`
+`ResizablePanel` and `@chroma/motion`'s motion-safe local one aren't interchangeable
+(the `@react-three/fiber` JSX conflict). `Selection` stayed local per tab — `Shell.tsx`
+already keeps every tab mounted and just hides inactive ones, so there was no real
+cross-tab gap to close by lifting state.
 
 **Real sidecar ownership (2026-09-04 early morning, D-101):** content-hash staleness
 detection (`ai/server.py`'s own bytes, SHA256) replacing "trust the first `/health`

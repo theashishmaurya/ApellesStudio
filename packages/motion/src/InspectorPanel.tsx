@@ -22,9 +22,21 @@
  * manifest, etc.) renders a plain "no editable fields recognized for this
  * layer type" notice instead of throwing — the backward-compat floor every
  * function in `manifestEdit.ts` is already written to respect.
+ *
+ * D-103 (Phase 4): the empty-state message and section-heading styling now
+ * come from `@chroma/inspector` (a tiny shared package, no `@chroma/ui`
+ * dependency — see that package's README for why), the same components
+ * `@chroma/editor`'s `ClipInspectorPanel.tsx` uses. Everything else here —
+ * the field types, the manifest read/write logic, the layout — stays
+ * local; Motion's and the NLE's selections are different enough (a
+ * `Manifest`+scene/layer/camera target vs. a `Clip`+track/id) that forcing
+ * them through one polymorphic component would mean rewriting two already-
+ * working panels for no real benefit. See `@chroma/inspector`'s README for
+ * the full reasoning.
  */
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
+import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import type { Selection } from './LayerList';
 import {
   selectedScene,
@@ -221,14 +233,11 @@ function FieldGroup({
   return (
     <div className="flex flex-col gap-4">
       {byGroup.map(({ g, items }) => (
-        <div key={g} className="flex flex-col gap-2.5">
-          <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary/70">
-            {GROUP_LABEL[g]}
-          </h3>
+        <InspectorSection key={g} label={GROUP_LABEL[g]}>
           {items.map((spec) => (
             <FieldControl key={spec.key} spec={spec} value={raw[spec.key]} onCommit={(v) => onCommit(spec.key, v)} />
           ))}
-        </div>
+        </InspectorSection>
       ))}
     </div>
   );
@@ -296,11 +305,7 @@ export function InspectorPanel({
   onChange: (next: Manifest) => void;
 }) {
   if (!selection) {
-    return (
-      <div className="h-full w-full flex items-center justify-center text-[11px] text-text-secondary/60 px-4 text-center">
-        Select a scene, camera, or layer to edit its properties.
-      </div>
-    );
+    return <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>;
   }
 
   const { target } = selection;
@@ -355,9 +360,9 @@ export function InspectorPanel({
   const fields = fieldsForPrimitive(found.use);
   if (!fields) {
     return (
-      <div className="h-full w-full flex items-center justify-center text-[11px] text-text-secondary/60 px-4 text-center">
+      <InspectorEmptyState>
         No editable fields recognized for "{found.use}" — edit its manifest JSON directly in the editor pane.
-      </div>
+      </InspectorEmptyState>
     );
   }
   return (
@@ -373,9 +378,9 @@ export function InspectorPanel({
 
 function StaleNotice() {
   return (
-    <div className="h-full w-full flex items-center justify-center text-[11px] text-text-secondary/60 px-4 text-center">
+    <InspectorEmptyState>
       This selection no longer matches the manifest — it may have been edited directly. Pick it again from the layer
       list.
-    </div>
+    </InspectorEmptyState>
   );
 }

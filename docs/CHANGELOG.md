@@ -27,6 +27,17 @@ One or two lines per session. Detail lives in the decision it references.
   scratch harness and the owner's own real project file. Drafted as
   D-101, renumbered after the sidecar-ownership pass above claimed it
   first.
+- **2026-09-04** — **Global Inspector Phase 4: the shared shell, closing out
+  the whole effort (D-103).** New tiny package `@chroma/inspector` — just
+  `InspectorEmptyState`/`InspectorSection`, the two pieces Motion's and the
+  NLE's Inspector panels had genuinely converged on identically. Not a full
+  merge: the two panels' selections/fields/ops stayed different enough that
+  forcing one component would mean rewriting working code for no benefit;
+  resizable-panel wrapping and `Selection` both stayed package-local for the
+  same reason (`Shell.tsx` already keeps every tab mounted, so there was no
+  real cross-tab gap to close). Verified live, both panels side by side,
+  post-refactor — no regression in either. All 4 phases of the Global
+  Inspector now done.
 - **2026-09-04** — **Unified clip move onto ONE mechanism; fixed the real
   root cause of D-098's stuck-ghost/blocked-drag cluster (D-100, B-029).**
   A stuck `activeDrag` after an interrupted drag left `TrackDropZone`'s

@@ -7870,3 +7870,98 @@ itself used the first time this happened tonight).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-103 — Global Inspector, Phase 4: the shared shell, closing out the whole effort
+
+Owner, asleep, standing mandate continues: both halves now have real content
+(Motion's `InspectorPanel.tsx`, D-099; the NLE's `ClipInspectorPanel.tsx`,
+D-102), which is exactly the precondition `docs/notes/global-inspector.md`'s
+own sequencing set for Phase 4 — "don't build the shared shell before there's
+two real halves to share." That's now true, so this is the right increment.
+
+**The real "how shared is shared" call, made explicitly rather than left
+implicit or over-engineered:**
+
+A genuinely merged, single polymorphic Inspector component (a discriminated
+union `{kind: 'motion', selection} | {kind: 'nle', selection}` rendering one
+of the two panels' content internally) was **rejected**. Motion's selection
+is a `Manifest` + a scene/layer/camera target, edited via `manifestEdit.ts`'s
+JSON-patch functions across 8 primitive shapes; the NLE's is a `Clip` + a
+track/id, edited via two fixed ops (`set_clip_transform`/
+`set_clip_keyframes`) on exactly 5 scalar fields. These aren't superficially
+different renderings of the same underlying model — they're genuinely
+different data, different edit semantics, different field counts. Forcing
+them through one component would mean either a leaky union type neither side
+fits cleanly, or rewriting one panel's working, already-tested logic to
+match the other's shape, for a benefit that's purely cosmetic (both already
+look and behave like an "Inspector" to the owner). Not built.
+
+**What "shared" means here instead**: a new tiny package, **`@chroma/inspector`**
+(`packages/inspector/`) — `InspectorEmptyState` and `InspectorSection`, the
+*only* two things `InspectorPanel.tsx` and `ClipInspectorPanel.tsx` had
+independently, genuinely converged on byte-identical Tailwind classes for
+(confirmed by grep before extracting, not assumed): the "nothing selected"
+message and the uppercase/tracking-wide section-heading treatment. Both
+panels now import these instead of duplicating the JSX — real deduplication,
+not theater, and it closes a real, pre-existing cosmetic inconsistency
+(Motion's heading had no `pt-1`, the NLE's did — now identical).
+
+**Why a new package, not `@chroma/ui`**: `@chroma/motion` cannot depend on
+`@chroma/ui` at all — that barrel also exports `Text`, whose polymorphic
+`as`-prop typing breaks once `@react-three/fiber`'s global `JSX.
+IntrinsicElements` augmentation (pulled in transitively via `Scene3D`/
+`ParticleFlow`) sits in the same `tsc` program, the exact constraint
+`Button.tsx`/`resizable.tsx` already documented from Phase 2. Putting shared
+Inspector chrome in `@chroma/ui` would have made it unusable from Motion's
+side, defeating the point. `@chroma/inspector` has zero dependency on
+`@chroma/ui`, Tauri, or either tab package — both `@chroma/motion` and
+`@chroma/editor` depend on it without depending on each other, the same
+"neither tab package imports the other" boundary `@chroma/shell`'s own doc
+comment establishes for the tab registry itself.
+
+**The resizable-panel wrapping was deliberately NOT unified.** `@chroma/
+editor` correctly uses `@chroma/ui`'s real `ResizablePanel` (no conflict on
+that side — `TimelinePane.tsx` already did before this pass). `@chroma/
+motion` uses its own local `resizable.tsx` (a thin wrapper around the same
+underlying `react-resizable-panels`, built in Phase 2 specifically because
+it can't use `@chroma/ui`'s). Routing both through a third shared wrapper in
+`@chroma/inspector` would have meant either downgrading the editor away from
+the real, canonical component it already correctly uses (a regression, and
+against this repo's own "use the framework's canonical patterns" rule), or
+reintroducing the exact JSX conflict into Motion the local wrapper exists to
+avoid. Neither is an improvement — each package keeps wrapping its own panel
+in whichever resizable implementation is actually correct for it.
+
+**`Selection` was NOT lifted to a shared, tab-agnostic store.** Read
+`Shell.tsx` fresh before deciding (not assumed): it already keeps every tab
+permanently mounted, hiding inactive ones via CSS (`role="tabpanel"`,
+`className={isActive ? '...' : 'hidden'}`) rather than conditionally
+rendering them — meaning a per-tab-local `Selection` (Motion's own `useState`
+in `MotionTab.tsx`, the NLE's own in `TimelinePane.tsx`) already behaves
+*exactly* like a cross-tab-shared one from the user's perspective: whichever
+tab is active shows its own Inspector content, correctly, with no
+coordination needed. There was no real UX gap lifting state would have
+closed — only speculative "what if a future feature needs cross-tab
+selection" architecture, which this project's own CLAUDE.md explicitly rules
+out ("Do not add v2/v3 features 'while I'm here'... don't build for
+hypothetical future requirements").
+
+**Verification**: a scratch, never-committed Chrome-driven harness
+(`app/phase4-harness.html`, deleted before this commit) mounting Motion's
+`LayerList`+`InspectorPanel` and the real `TimelinePane` side by side, after
+the refactor — both selections still populate and edit correctly, both now
+rendering through the shared `InspectorSection` (confirmed visually
+identical section-heading typography across both halves in the same
+screenshot). `ps aux | grep cargo` checked before every command (clean, pure
+frontend). `npx tsc --noEmit` clean on `packages/inspector`, `packages/
+motion`, `packages/editor`, and `app` (zero new errors anywhere). `packages/
+motion`'s 18/18 and `packages/editor`'s 91/91 tests unchanged — a pure
+presentational extraction, no logic moved, nothing new to test beyond what
+the new package's own two components are (trivial enough not to warrant
+dedicated tests: no branching, no state, no computation).
+
+**All 4 phases of the Global Inspector (D-081/D-099/D-102/D-103) are now
+done.** `docs/notes/global-inspector.md` updated as the historical record.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

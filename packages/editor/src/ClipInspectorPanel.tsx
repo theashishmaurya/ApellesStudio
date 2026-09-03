@@ -20,15 +20,28 @@
  * editor supports, and having both would mean two controls that can edit
  * the same clip out of sync with each other for no real benefit. `Selection`
  * itself stays local to `TimelinePane.tsx` for this pass (not lifted to a
- * shared store/prop-drilled up to `Shell.tsx`) — the actual "one component,
- * tab-aware, shared shell" unification is Phase 4's job once both halves
- * have real content, per the scoping doc's own sequencing; embedding this
- * panel inside the Edit tab for now is the right-weight move, the same
- * "don't build the shared shell before there's two real halves to share"
- * call the doc already made.
+ * shared store/prop-drilled up to `Shell.tsx`).
+ *
+ * D-103 (Phase 4): the empty-state message and section-heading styling now
+ * come from `@chroma/inspector` (a tiny shared package with no `@chroma/ui`
+ * dependency — see its README), the same components `@chroma/motion`'s
+ * `InspectorPanel.tsx` uses. The field layout (`row`/`numInput` below) stays
+ * local and different from Motion's — this panel's side-by-side label/input
+ * rows were built for a narrower panel with only numeric fields, Motion's
+ * stacked label-above-input rows were built for a wider panel with
+ * selects/colour-pickers too; forcing one shape onto the other would mean
+ * rewriting a working, tested layout for no real benefit, exactly the
+ * "don't force a deeper unification than is actually clean" call
+ * `@chroma/inspector`'s README documents. `Selection` staying local (not
+ * lifted to a shared, tab-agnostic store) is the other real Phase 4 call —
+ * `Shell.tsx` already keeps every tab mounted and simply hides inactive
+ * ones, so a per-tab-local Inspector already behaves exactly like a
+ * cross-tab shared one from the user's side; there was no real gap lifting
+ * state would have closed, so it wasn't built.
  */
 import { Diamond, X } from 'lucide-react';
 import { Button, Input } from '@chroma/ui';
+import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import type { Clip } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 
@@ -63,16 +76,12 @@ export function ClipInspectorPanel({
   onClearKeyframes: () => void;
 }) {
   if (!clip) {
-    return (
-      <div className="h-full w-full flex items-center justify-center text-[11px] text-text-secondary/60 px-4 text-center">
-        Select a clip to edit its properties.
-      </div>
-    );
+    return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
   }
 
   return (
     <div className="h-full w-full overflow-y-auto p-3">
-      <div className="flex flex-col gap-2.5 text-xs">
+      <div className="flex flex-col gap-4 text-xs">
         <div className="text-text-primary font-medium truncate" title={clip.name}>
           {clip.name}
         </div>
@@ -82,106 +91,108 @@ export function ClipInspectorPanel({
           </div>
         )}
 
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary/70 pt-1">Transform</h3>
-        <label className={row}>
-          <span className="text-text-secondary">Opacity</span>
-          <Input
-            type="number"
-            step={0.05}
-            min={0}
-            max={1}
-            disabled={trackLocked}
-            className={numInput}
-            value={clip.opacity ?? 1}
-            onChange={(e) => onTransformChange({ opacity: Number(e.target.value) })}
-          />
-        </label>
-        <label className={row}>
-          <span className="text-text-secondary">Position X</span>
-          <Input
-            type="number"
-            step={1}
-            disabled={trackLocked}
-            className={numInput}
-            value={clip.position_x ?? 0}
-            onChange={(e) => onTransformChange({ position_x: Number(e.target.value) })}
-          />
-        </label>
-        <label className={row}>
-          <span className="text-text-secondary">Position Y</span>
-          <Input
-            type="number"
-            step={1}
-            disabled={trackLocked}
-            className={numInput}
-            value={clip.position_y ?? 0}
-            onChange={(e) => onTransformChange({ position_y: Number(e.target.value) })}
-          />
-        </label>
-        <label className={row}>
-          <span className="text-text-secondary">Scale</span>
-          <Input
-            type="number"
-            step={0.05}
-            min={0}
-            disabled={trackLocked}
-            className={numInput}
-            value={clip.scale ?? 1}
-            onChange={(e) => onTransformChange({ scale: Number(e.target.value) })}
-          />
-        </label>
-        <label className={row}>
-          <span className="text-text-secondary">Rotation</span>
-          <Input
-            type="number"
-            step={1}
-            disabled={trackLocked}
-            className={numInput}
-            value={clip.rotation ?? 0}
-            onChange={(e) => onTransformChange({ rotation: Number(e.target.value) })}
-          />
-        </label>
+        <InspectorSection label="Transform">
+          <label className={row}>
+            <span className="text-text-secondary">Opacity</span>
+            <Input
+              type="number"
+              step={0.05}
+              min={0}
+              max={1}
+              disabled={trackLocked}
+              className={numInput}
+              value={clip.opacity ?? 1}
+              onChange={(e) => onTransformChange({ opacity: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Position X</span>
+            <Input
+              type="number"
+              step={1}
+              disabled={trackLocked}
+              className={numInput}
+              value={clip.position_x ?? 0}
+              onChange={(e) => onTransformChange({ position_x: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Position Y</span>
+            <Input
+              type="number"
+              step={1}
+              disabled={trackLocked}
+              className={numInput}
+              value={clip.position_y ?? 0}
+              onChange={(e) => onTransformChange({ position_y: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Scale</span>
+            <Input
+              type="number"
+              step={0.05}
+              min={0}
+              disabled={trackLocked}
+              className={numInput}
+              value={clip.scale ?? 1}
+              onChange={(e) => onTransformChange({ scale: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Rotation</span>
+            <Input
+              type="number"
+              step={1}
+              disabled={trackLocked}
+              className={numInput}
+              value={clip.rotation ?? 0}
+              onChange={(e) => onTransformChange({ rotation: Number(e.target.value) })}
+            />
+          </label>
+        </InspectorSection>
 
         {/* the exact interaction `RelightPanel.tsx` uses for relight-light
             keyframes (Diamond icon, `keyedHere` highlight, add/update/
             delete-here/clear-all) — see `clipKeyframes.ts`'s doc for why
             this is a small local mirror rather than a cross-package import
             of `app/src/utils/maskKeyframes.ts`. */}
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary/70 pt-1">Keyframes</h3>
-        <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none">
-          <Button
-            variant="ghost"
-            size="xs"
-            disabled={trackLocked}
-            className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
-            onClick={onUpsertKeyframe}
-            title={keyedHere ? 'Update this clip keyframe' : 'Keyframe this clip at the current frame'}
-          >
-            <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
-            {clipKeyframes.length === 0 ? 'Keyframe clip' : keyedHere ? 'Update key' : 'Add key'}
-          </Button>
-          {clipKeyframes.length > 0 && (
-            <>
-              <span className="tabular-nums">
-                {clipKeyframes.length} key{clipKeyframes.length === 1 ? '' : 's'}
-              </span>
-              {keyedHere && (
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  disabled={trackLocked}
-                  onClick={onRemoveKeyframeHere}
-                  title="Delete the keyframe at this frame"
-                >
-                  <X size={12} />
+        <InspectorSection label="Keyframes">
+          <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none">
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={trackLocked}
+              className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
+              onClick={onUpsertKeyframe}
+              title={keyedHere ? 'Update this clip keyframe' : 'Keyframe this clip at the current frame'}
+            >
+              <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
+              {clipKeyframes.length === 0 ? 'Keyframe clip' : keyedHere ? 'Update key' : 'Add key'}
+            </Button>
+            {clipKeyframes.length > 0 && (
+              <>
+                <span className="tabular-nums">
+                  {clipKeyframes.length} key{clipKeyframes.length === 1 ? '' : 's'}
+                </span>
+                {keyedHere && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    disabled={trackLocked}
+                    onClick={onRemoveKeyframeHere}
+                    title="Delete the keyframe at this frame"
+                  >
+                    <X size={12} />
+                  </Button>
+                )}
+                <Button variant="ghost" size="xs" disabled={trackLocked} onClick={onClearKeyframes} title="Remove all keyframes">
+                  Clear
                 </Button>
-              )}
-              <Button variant="ghost" size="xs" disabled={trackLocked} onClick={onClearKeyframes} title="Remove all keyframes">
-                Clear
-              </Button>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        </InspectorSection>
       </div>
     </div>
   );

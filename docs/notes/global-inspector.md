@@ -168,7 +168,38 @@ scratch harness (missing fields / locked track / real keyframes), and the owner'
 own real `~/Movies/Chroma/New.chroma/project.json`, confirming the panel's
 `?? default` fallbacks match what a real save on disk actually looks like.
 
-**Phase 4 (shared panel shell) is next** — both halves have real, working content
-to unify now; not started, no scoping beyond this doc's original Phase 4 section
-exists yet. This note is the scoping record — update it (or promote pieces into
-`D-NNN` entries) as each phase actually lands.
+**Phase 4 done, D-103 (2026-09-04).** The real "how shared is shared" call, made
+explicitly rather than left implicit: a genuinely merged, single polymorphic
+Inspector component was rejected — Motion's selection (a `Manifest` +
+scene/layer/camera target) and the NLE's (a `Clip` + track/id) differ enough in
+shape and edit operations that forcing them through one component would mean
+rewriting two already-working, already-tested panels for no real user-facing
+benefit, exactly the risk this doc's own Phase 4 section flagged in advance
+("don't force a deeper unification than is actually clean"). Instead: a new tiny
+package, **`@chroma/inspector`** (`packages/inspector/`), holding only the pieces
+`InspectorPanel.tsx` and `ClipInspectorPanel.tsx` had genuinely, independently
+converged on byte-identical — the "nothing selected" empty state and the
+section-heading typography — as `InspectorEmptyState`/`InspectorSection`. A
+separate package, not `@chroma/ui`, because `@chroma/motion` cannot depend on
+`@chroma/ui` at all (the `@react-three/fiber` JSX-typing conflict `Button.tsx`/
+`resizable.tsx` already documented) — putting shared chrome there would have made
+it unusable from Motion's side. The resizable-panel wrapping was deliberately
+**not** unified: `@chroma/editor` correctly uses `@chroma/ui`'s real
+`ResizablePanel` (no conflict on that side), `@chroma/motion` uses its own local
+motion-safe wrapper; a third shared wrapper would have meant either downgrading
+the editor away from the real component it already correctly uses, or
+reintroducing the JSX conflict into Motion — neither is an improvement.
+`Selection` was **not** lifted to a shared, tab-agnostic store either —
+`Shell.tsx` (read directly, not assumed) already keeps every tab permanently
+mounted and just hides inactive ones via CSS, so a per-tab-local selection
+already behaves exactly like a cross-tab shared one from the user's side; there
+was no real gap lifting state would have closed, and this project's own "don't
+build for hypothetical future requirements" rule argued against doing it anyway.
+Verified live: both panels re-rendered and interacted with side by side in a
+scratch harness after the refactor — Motion layer selection and NLE clip
+selection both still populate and edit correctly, now sharing visually
+consistent section headings. `tsc` clean across `packages/inspector`/`motion`/
+`editor`/`app`; 18/18 + 91/91 tests unchanged (a pure presentational extraction).
+
+**All 4 phases of the Global Inspector are now done.** This note stays as the
+historical scoping + phase record.
