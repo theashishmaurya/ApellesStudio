@@ -1171,3 +1171,11 @@ _(none — pre-v1)_
   `move` checks both source and destination, track-list ops stay ungated).
   27 new vitest tests (68/68 across `packages/editor`), `tsc --noEmit`
   clean, `app`'s 64-error baseline unchanged. Phase 4 (UI) is next.
+- **2026-09-03** — **Full NLE, Phase 4 (D-090): the UI — the P0 effort is
+  done.** `TimelinePane.tsx` gains track header lock/hide toggles, up/down
+  rearrange (native row-drag checked, buttons shipped instead — see D-090),
+  a clip-transform popover (opacity/position/scale/rotation), and
+  keyframing UI reusing `RelightPanel.tsx`'s Diamond-icon pattern via new
+  `clipKeyframes.ts`. No new inline props into the timeline library's own
+  render path (D-083 discipline held). 11 new tests (79/79 across
+  `packages/editor`), `tsc --noEmit` clean both packages, clean app boot.

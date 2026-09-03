@@ -6547,3 +6547,93 @@ per-clip ops) — 57/57 in `timeline.test.ts`, 68/68 across
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-090 — Full NLE, Phase 4: the UI — lock/hide, rearrange, clip transform + keyframes
+
+Phase 4 (final phase) of the P0 full-NLE effort — the piece that actually
+makes D-086/D-088/D-089's data model, compositor, and TS ops usable from the
+Edit tab. `TimelinePane.tsx` (D-080's per-track UI) gains:
+
+- **Track header lock/hide toggles**, alongside the existing mute toggle
+  (D-080): `Lock`/`Unlock` icon on every track (writes `set_track_locked`),
+  `Eye`/`EyeOff` on video tracks only (writes `set_track_hidden` — `hidden`
+  has no audio-mixing effect, mirrors why mute is audio-only in the other
+  direction; verified by grepping `chroma::audio` for any `hidden` read
+  before assuming, found none). A locked track's header dims (`opacity-60`)
+  as a passive visual cue; the real enforcement is `applyOp`'s `TrackLocked`
+  mirror (D-089), already in place.
+- **Rearrange via up/down buttons**, not native `enableRowDrag`. Checked the
+  library's bundled types first: row-drag reorders `editorData` and hands
+  back a full reordered-id list with no clean "moved from A to B" delta, and
+  nothing in this file owns `editorData`'s order independently of
+  `timeline.tracks` (`buildRows` derives it fresh every render) — mapping
+  that reliably into `move_track` calls without risking a UI/disk desync
+  wasn't worth the remaining time in this pass, so per the directive's own
+  "a working button beats a half-working drag" — shipped the buttons.
+  `move_track(from, to)` with adjacent indices is exactly a swap, so
+  `doMoveTrack` also swaps the current selection's track index when it
+  matches either side, rather than leaving the selection pointing at the
+  wrong row after a move. `HEADER_WIDTH` widened 132 → 156px for the new
+  two-row header cell layout (kind icon + label + up/down on top,
+  lock/hide-or-mute/remove on the bottom row).
+- **Clip-transform popover** — a "Transform" toolbar button (next to the
+  existing "Move to ▾", enabled only with a selection) opens a
+  `@chroma/ui` `Popover` with numeric `opacity`/`position_x`/`position_y`/
+  `scale`/`rotation` inputs, each writing the full `set_clip_transform` op
+  (D-089's "replace all five fields together" contract) via a small
+  `applyTransform(patch)` that fills the unpatched fields from the clip's
+  own current values. Disabled (trigger only, not deep-disabling every
+  input) when the selected clip's track is locked — the op already no-ops
+  server/store-side, this just keeps the control from looking live when it
+  isn't.
+- **Keyframing UI**, the exact interaction `RelightPanel.tsx` uses for
+  relight-light keyframes: a `Diamond`-icon "Keyframe clip" / "Update key" /
+  "Add key" button (filled when `keyedHere`), a live keyframe count, a
+  delete-at-this-frame `X` button (shown only when keyed here), and a
+  "Clear" button for all keyframes. New `packages/editor/src/
+  clipKeyframes.ts` is a small, SEPARATE mirror of `app/src/utils/
+  maskKeyframes.ts`'s upsert/remove/clear pattern (not a shared import —
+  `packages/editor` cannot depend on `app`, the D-039 layer direction runs
+  the other way) — scoped to just the CRUD this UI needs, no interpolation
+  math (that stays the Rust engine's job at render time). One real
+  behavioral difference from the mask version worth flagging: `Clip.
+  chroma_keyframes` (D-086) is the RAW `[{frame,params}]` array itself, not
+  a `parameters.chromaKeyframes`-wrapped object the way mask/relight
+  keyframes are — `resolve_clip_transform` (Rust, D-088) wraps it into a
+  synthetic object only at the point it hands it to the shared interpolator.
+  `clipSourceFrame(clip, playhead)` converts the timeline playhead into the
+  clip's own SOURCE frame (`source_start + (playhead - start_frame)`,
+  clamped to the clip's source window) before keying — keyframes are
+  interpolated against source frame, not timeline position, confirmed by
+  reading exactly what `resolve_clip_transform` passes to `interpolate`.
+
+**D-083 discipline followed**: no new inline arrow function was added to
+any prop passed into `<TimelineEditor>` itself (`getActionRender`,
+`onClickAction`, `onScroll`, `onActionMoveEnd`, `onActionResizeEnd` are
+untouched, still the D-083 `useCallback`-wrapped versions). Every new
+handler this phase adds (track header buttons, popover open/close,
+transform inputs, keyframe buttons) is a plain React event handler on
+native DOM elements OUTSIDE the timeline library's own render path — the
+same category `toggleMute`/`doAddTrack`/`doRemoveTrack`/`doMoveToTrack`
+(D-080) already are, none of which are `useCallback`-wrapped either, for
+the same reason: D-083's freeze was specifically about identity-sensitive
+props handed to the third-party library's per-item rendering, not about
+ordinary React event handlers in general.
+
+Verification: 11 new vitest tests for `clipKeyframes.ts`'s pure functions
+(79/79 across `packages/editor`, up from 68/68 after D-089). `tsc --noEmit
+-p packages/editor` clean. `tsc --noEmit -p app` baseline unchanged at 64.
+Live check: restarted `cargo tauri dev` cleanly (it was not running at the
+start of this phase) and confirmed a clean boot with no panic/crash in the
+log — no native-window automation available this session, so this is
+static correctness + a clean boot, the same bar every UI piece tonight has
+used, not an actual click-through of the new lock/hide/rearrange/transform
+controls.
+
+This closes all 4 phases of the P0 "full NLE" effort (D-086/D-088/D-089/
+D-090): real multi-track V1/V2 stacked compositing (not opaque top-wins),
+A1/A2 audio separation (pre-existing, D-057), and full track controls —
+lock, hide, mute (D-080), rearrange, selection (D-080), keyframes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

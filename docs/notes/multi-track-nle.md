@@ -212,13 +212,29 @@ D-089 (2026-09-03)** — `packages/editor/src/timeline.ts` now carries
 locked track exactly like Rust's `TrackLocked` (`move` checks both source
 and destination track; track-list ops — `add_track`/`remove_track`/
 `move_track` — stay ungated, mirroring the Rust `track_mut` split). 27 new
-vitest tests, `tsc --noEmit -p packages/editor` clean. **Phase 4 (UI) is
-next and not yet started**: track header lock/hide icons alongside the
-existing mute toggle, a real rearrange gesture (native `enableRowDrag` if
-clean, else up/down buttons), and a transform-editing popover on the
-selected clip (interim numeric inputs; keyframing UI can reuse
-`RelightPanel.tsx`'s Diamond-icon keyframe pattern). E (transitions) and F
-(export through the real timeline) are unblocked (B3 exists) but not yet
-started. This note is the scoping record — update it (or promote pieces of
-it into `D-NNN` entries) as each phase actually lands, the same discipline
-every other feature this week has followed.
+vitest tests, `tsc --noEmit -p packages/editor` clean. **Phase 4 (UI) done,
+D-090 (2026-09-03) — the P0 "full NLE" effort is complete.**
+`TimelinePane.tsx`'s track header gains lock (`Lock`/`Unlock`, every track)
+and hide (`Eye`/`EyeOff`, video tracks only — `hidden` has no audio-mixing
+effect) toggles alongside the existing mute toggle; rearrange is up/down
+buttons wired to `move_track` (native `enableRowDrag` was checked and
+passed over — no clean from/to delta out of the library's own row-drag
+callback in the time available, see D-090 for the full reasoning); a new
+"Transform" toolbar popover edits opacity/position/scale/rotation via
+`set_clip_transform`; keyframing reuses `RelightPanel.tsx`'s Diamond-icon
+add/update/delete-here/clear pattern via a new `clipKeyframes.ts` (a small
+separate mirror of `app/src/utils/maskKeyframes.ts`, not a cross-package
+import — D-039's layer direction runs app → editor, not the reverse). No
+new inline props were added to the timeline library's own render path
+(`getActionRender`/`onActionMoveEnd`/etc.) — every new handler is a plain
+DOM event handler outside it, so D-083's freeze-fix discipline holds. 11
+new vitest tests (79/79 across `packages/editor`), both packages' `tsc
+--noEmit` clean, `app`'s 64-error baseline unchanged, and a clean
+`cargo tauri dev` boot confirmed live (no native-window automation
+available to click through the controls themselves — same limitation
+every UI piece this session has had). E (transitions) and F (export
+through the real timeline) are unblocked (B3 exists) but not yet started —
+the next real gaps, whenever they're picked up. This note is the scoping
+record — update it (or promote pieces of it into `D-NNN` entries) as each
+phase actually lands, the same discipline every other feature this week
+has followed.

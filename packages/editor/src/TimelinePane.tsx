@@ -121,13 +121,37 @@ import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
 import './timeline-overrides.css';
-import { AudioLines, ArrowRightLeft, Film, Plus, Scissors, Trash2, Volume2, VolumeX, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  AudioLines,
+  ArrowRightLeft,
+  ChevronDown,
+  ChevronUp,
+  Diamond,
+  Eye,
+  EyeOff,
+  Film,
+  Lock,
+  Plus,
+  Scissors,
+  SlidersHorizontal,
+  Trash2,
+  Unlock,
+  Volume2,
+  VolumeX,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import {
   Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -144,10 +168,17 @@ import {
   endFrame,
   timelineFps,
   videoTrackIndex,
+  type Clip,
   type DraggedMedia,
   type Timeline,
   type Track,
 } from './timeline';
+import {
+  clearClipKeyframes,
+  clipSourceFrame,
+  removeClipKeyframe,
+  upsertClipKeyframe,
+} from './clipKeyframes';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -163,8 +194,9 @@ const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
 /** how long a rippled clip's highlight stays visible (ms) */
 const RIPPLE_FLASH_MS = 550;
-/** Track header sidebar width (D-080) — fixed, matches `ROW_HEIGHT` rows. */
-const HEADER_WIDTH = 132;
+/** Track header sidebar width (D-080; widened D-090 for the lock/hide/
+ *  rearrange row) — fixed, matches `ROW_HEIGHT` rows. */
+const HEADER_WIDTH = 156;
 /** `.timeline-editor-time-area` (32px, the ruler bar) + `.timeline-editor-
  *  edit-area`'s `margin-top` (10px) — read from the library's own bundled
  *  CSS (`react-timeline-editor.css`), not guessed, since `dropTargetTrack`
@@ -568,6 +600,41 @@ export function TimelinePane() {
     applyOp({ kind: 'set_track_gain', track, gain: muted ? DEFAULT_TRACK_GAIN : 0 });
   };
 
+  // D-090 — Phase 4 of the P0 full-NLE effort: lock/hide/rearrange, wired to
+  // the D-086/D-089 ops. Not gated by the track's own current lock state
+  // (mirrors `applyOp`'s own `set_track_locked`/`set_track_hidden`/
+  // `move_track` — track-list-level, not routed through the per-clip
+  // `TrackLocked` check).
+  const toggleLock = (track: number) => {
+    const t = tracks[track];
+    if (!t) return;
+    applyOp({ kind: 'set_track_locked', track, locked: !t.locked });
+  };
+
+  const toggleHidden = (track: number) => {
+    const t = tracks[track];
+    if (!t) return;
+    applyOp({ kind: 'set_track_hidden', track, hidden: !t.hidden });
+  };
+
+  // Up/down over native `enableRowDrag` — checked the library's bundled
+  // types first: row-drag reorders `editorData` itself but hands back only
+  // the reordered id list with no clean "this row moved from index A to B"
+  // delta, and nothing here owns `editorData`'s order independently of
+  // `timeline.tracks` (`buildRows` derives it fresh every render) — mapping
+  // a full reordered-id-list callback back into a single `move_track(from,
+  // to)` call reliably would need real time to get right without risking a
+  // silent desync between what the library shows and what's on disk. A
+  // single-step swap via a button needs none of that: `from`/`to` are
+  // already known integers. `move_track(from, to)` with adjacent indices is
+  // exactly a swap, so the selection-follow logic below only needs to swap.
+  const doMoveTrack = (from: number, to: number) => {
+    if (to < 0 || to >= tracks.length) return;
+    applyOp({ kind: 'move_track', from, to });
+    if (selected?.track === from) setSelected({ track: to, id: selected.id });
+    else if (selected?.track === to) setSelected({ track: from, id: selected.id });
+  };
+
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
   const zoomIn = () => setPxPerSec((w) => clampPxPerSec(w * ZOOM_STEP));
   const zoomOut = () => setPxPerSec((w) => clampPxPerSec(w / ZOOM_STEP));
@@ -581,6 +648,72 @@ export function TimelinePane() {
   const libScaleWidth = tickSeconds * pxPerSec;
 
   const otherTracks = selected ? tracks.map((_, i) => i).filter((i) => i !== selected.track) : [];
+
+  // D-090 — clip-transform popover + keyframing, wired to `set_clip_
+  // transform`/`set_clip_keyframes` (D-089). `selectedClip` is `null` for a
+  // stale selection (removed clip/track) — the trigger button below is
+  // disabled in that case, same guard every other selection-gated toolbar
+  // action here already uses.
+  const selectedIdx = selected ? idxOf(selected.track, selected.id) : -1;
+  const selectedClip: Clip | null = selected && selectedIdx >= 0 ? clipsOf(selected.track)[selectedIdx] : null;
+  const selectedTrackLocked = selected ? !!tracks[selected.track]?.locked : false;
+  // Keyframes are interpolated against the clip's own SOURCE frame, not the
+  // absolute timeline position — see `clipKeyframes.ts`'s doc.
+  const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead) : 0;
+  const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
+  const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
+
+  const applyTransform = (
+    patch: Partial<{ opacity: number; position_x: number; position_y: number; scale: number; rotation: number }>,
+  ) => {
+    if (!selected || !selectedClip || selectedIdx < 0) return;
+    applyOp({
+      kind: 'set_clip_transform',
+      track: selected.track,
+      clip: selectedIdx,
+      opacity: patch.opacity ?? selectedClip.opacity ?? 1,
+      position_x: patch.position_x ?? selectedClip.position_x ?? 0,
+      position_y: patch.position_y ?? selectedClip.position_y ?? 0,
+      scale: patch.scale ?? selectedClip.scale ?? 1,
+      rotation: patch.rotation ?? selectedClip.rotation ?? 0,
+    });
+  };
+
+  const doUpsertKeyframe = () => {
+    if (!selected || !selectedClip || selectedIdx < 0) return;
+    applyOp({
+      kind: 'set_clip_keyframes',
+      track: selected.track,
+      clip: selectedIdx,
+      keyframes: upsertClipKeyframe(clipKeyframes, clipKfSourceFrame, {
+        opacity: selectedClip.opacity ?? 1,
+        position_x: selectedClip.position_x ?? 0,
+        position_y: selectedClip.position_y ?? 0,
+        scale: selectedClip.scale ?? 1,
+        rotation: selectedClip.rotation ?? 0,
+      }),
+    });
+  };
+
+  const doRemoveKeyframeHere = () => {
+    if (!selected || selectedIdx < 0) return;
+    applyOp({
+      kind: 'set_clip_keyframes',
+      track: selected.track,
+      clip: selectedIdx,
+      keyframes: removeClipKeyframe(clipKeyframes, clipKfSourceFrame) ?? [],
+    });
+  };
+
+  const doClearKeyframes = () => {
+    if (!selected || selectedIdx < 0) return;
+    applyOp({
+      kind: 'set_clip_keyframes',
+      track: selected.track,
+      clip: selectedIdx,
+      keyframes: clearClipKeyframes() ?? [],
+    });
+  };
 
   return (
     <div
@@ -641,6 +774,127 @@ export function TimelinePane() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+          )}
+
+          {/* D-090 — clip transform + keyframes: opacity/position/scale/
+              rotation, the interim popover this file's own D-086 doc comment
+              flagged as coming next. Disabled when the selected clip's track
+              is locked (the underlying ops already no-op for this — see
+              `applyOp`'s `TrackLocked` mirror — disabling the trigger too so
+              it doesn't look like a live control that silently does nothing). */}
+          {selectedClip && (
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={selectedTrackLocked}
+                    aria-label="Clip transform"
+                  >
+                    <SlidersHorizontal />
+                    Transform
+                  </Button>
+                }
+              />
+              <PopoverContent align="start" className="w-64">
+                <div className="flex flex-col gap-2.5 text-xs">
+                  <div className="text-text-primary font-medium">Clip transform</div>
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">Opacity</span>
+                    <Input
+                      type="number"
+                      step={0.05}
+                      min={0}
+                      max={1}
+                      className="h-7 w-20 text-right"
+                      value={selectedClip.opacity ?? 1}
+                      onChange={(e) => applyTransform({ opacity: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">Position X</span>
+                    <Input
+                      type="number"
+                      step={1}
+                      className="h-7 w-20 text-right"
+                      value={selectedClip.position_x ?? 0}
+                      onChange={(e) => applyTransform({ position_x: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">Position Y</span>
+                    <Input
+                      type="number"
+                      step={1}
+                      className="h-7 w-20 text-right"
+                      value={selectedClip.position_y ?? 0}
+                      onChange={(e) => applyTransform({ position_y: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">Scale</span>
+                    <Input
+                      type="number"
+                      step={0.05}
+                      min={0}
+                      className="h-7 w-20 text-right"
+                      value={selectedClip.scale ?? 1}
+                      onChange={(e) => applyTransform({ scale: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">Rotation</span>
+                    <Input
+                      type="number"
+                      step={1}
+                      className="h-7 w-20 text-right"
+                      value={selectedClip.rotation ?? 0}
+                      onChange={(e) => applyTransform({ rotation: Number(e.target.value) })}
+                    />
+                  </label>
+
+                  {/* D-090 — keyframing, the exact interaction
+                      `RelightPanel.tsx` uses for relight-light keyframes
+                      (Diamond icon, `keyedHere` highlight, add/update/
+                      delete-here/clear-all) — see `clipKeyframes.ts`'s doc
+                      for why this is a small local mirror rather than a
+                      cross-package import of `app/src/utils/maskKeyframes.ts`. */}
+                  <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none pt-1 border-t border-border-color mt-0.5">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
+                      onClick={doUpsertKeyframe}
+                      title={keyedHere ? 'Update this clip keyframe' : 'Keyframe this clip at the current frame'}
+                    >
+                      <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
+                      {clipKeyframes.length === 0 ? 'Keyframe clip' : keyedHere ? 'Update key' : 'Add key'}
+                    </Button>
+                    {clipKeyframes.length > 0 && (
+                      <>
+                        <span className="tabular-nums">
+                          {clipKeyframes.length} key{clipKeyframes.length === 1 ? '' : 's'}
+                        </span>
+                        {keyedHere && (
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={doRemoveKeyframeHere}
+                            title="Delete the keyframe at this frame"
+                          >
+                            <X size={12} />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="xs" onClick={doClearKeyframes} title="Remove all keyframes">
+                          Clear
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
 
           <div className="mx-1 h-4 w-px bg-border-color" />
@@ -712,35 +966,87 @@ export function TimelinePane() {
             {tracks.map((track, i) => {
               const isVideo = track.kind === 'video';
               const muted = !isVideo && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
+              const locked = !!track.locked;
+              const hidden = isVideo && !!track.hidden;
               return (
                 <div
                   key={i}
-                  className="flex items-center gap-1 px-2 border-b border-border-color/60 text-text-secondary"
+                  className={
+                    'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
+                    (locked ? 'opacity-60' : '')
+                  }
                   style={{ height: ROW_HEIGHT }}
                 >
-                  {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
-                  <span className="text-[10px] font-medium truncate flex-1">{labels[i]}</span>
-                  {!isVideo && (
+                  <div className="flex items-center gap-1">
+                    {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
+                    <span className="text-[10px] font-medium truncate flex-1">{labels[i]}</span>
+                    {/* D-090 — rearrange: track index order is compositing
+                        z-order (`move_track`), not cosmetic. Up/down over
+                        native row-drag — see the module doc for why. */}
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      onClick={() => toggleMute(i)}
-                      aria-label={muted ? 'Unmute track' : 'Mute track'}
-                      title={muted ? 'Unmute track' : 'Mute track'}
+                      onClick={() => doMoveTrack(i, i - 1)}
+                      disabled={i === 0}
+                      aria-label="Move track up"
+                      title="Move track up (higher priority)"
                     >
-                      {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+                      <ChevronUp className="size-3" />
                     </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="text-red-400 hover:text-red-400"
-                    onClick={() => doRemoveTrack(i)}
-                    aria-label="Remove track"
-                    title="Remove track"
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => doMoveTrack(i, i + 1)}
+                      disabled={i === tracks.length - 1}
+                      aria-label="Move track down"
+                      title="Move track down (lower priority)"
+                    >
+                      <ChevronDown className="size-3" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => toggleLock(i)}
+                      aria-label={locked ? 'Unlock track' : 'Lock track'}
+                      title={locked ? 'Unlock track' : 'Lock track'}
+                    >
+                      {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+                    </Button>
+                    {isVideo && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => toggleHidden(i)}
+                        aria-label={hidden ? 'Show track' : 'Hide track'}
+                        title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
+                      >
+                        {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                      </Button>
+                    )}
+                    {!isVideo && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => toggleMute(i)}
+                        aria-label={muted ? 'Unmute track' : 'Mute track'}
+                        title={muted ? 'Unmute track' : 'Mute track'}
+                      >
+                        {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="ml-auto text-red-400 hover:text-red-400"
+                      onClick={() => doRemoveTrack(i)}
+                      aria-label="Remove track"
+                      title="Remove track"
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </div>
                 </div>
               );
             })}
