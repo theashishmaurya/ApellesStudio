@@ -105,11 +105,29 @@ part is the compositing math/pipeline itself, not "how many."
   — this is where the genuinely new GPU/pixel-compositing work still is.
 
 ### Phase C — Audio mixing
-Extend `chroma::audio`'s `cpal` pipeline to sum N tracks with per-track gain instead of
-playing one embedded stream. Real DSP work but bounded — `cpal`/`rubato`/`dasp_sample`
-are already integrated (D-050), this is a mixer stage on top, not new infrastructure.
-**Sizing: moderate**, not a long pole. Independent of Phase B — can run in parallel with
-it in a separate worktree.
+
+**Done, D-057 (2026-09-03).** `chroma::audio`'s `cpal` pipeline now sums every active
+audio source — the baseline video-embedded audio (unchanged, unity gain, D-050's
+existing behaviour) plus every genuine `TrackKind::Audio` clip overlapping the play
+position — instead of playing exactly one stream. `chroma_timeline::Track` gained a
+`gain: f32` field (default `1.0`, D-057), read by a new mixer (`mix_sources`/
+`soft_limit` in `chroma::audio`) that sums the active (nonzero-gain) sources and passes
+the result through a soft (`tanh`) limiter — chosen over a hard clamp (real digital
+clipping) or a blanket `1/N` pre-scale (needlessly quiet when sources rarely peak
+together); with one or zero active sources, summation/limiting is skipped entirely,
+which is what keeps the pre-existing single-embedded-track case byte-identical and
+makes "mute a track via `gain: 0.0`" an exact, checkable property rather than an
+approximation. Streamed via one audio thread pulling N `DecodedSource`s in lockstep by
+a fixed-size window (`open_source` factored out of the old single-source `run_session`
+body). Pan/stereo positioning deliberately scoped out — mono gain scaling covers this
+phase's actual goal, real extra scope nothing here asked for. **Still nothing in the
+app populates a real audio track** — this is the mixing *capability*, exercised in
+`chroma::audio`'s own tests via a hand-built `Timeline` (a real 2-track project +
+`chroma_audio_play`/`_level`/`_stop` through the real command surface, plus a
+deterministic decode-and-mix test against two distinct real audio files) — Phase D
+(the UI to actually place an audio-track clip) is still not started. See D-057 for the
+full writeup (mixing architecture, the three headroom options considered, where
+`Track.gain` lives and why).
 
 ### Phase D — Multi-track UI
 Track lanes, headers (mute/lock/solo), drag-between-tracks in `TimelinePane.tsx`.
@@ -140,10 +158,13 @@ to attach to.
 Scoped 2026-09-03. **Phase A done, D-054.** **Phase B1 done, D-056
 (2026-09-03)** — see that phase's own section above for what landed and the
 load-bearing finding (opaque top-wins needed no new rendering code, just
-track-priority selection). Phase C (audio mixing) is running concurrently in
-a separate worktree. **B2/B3 are next for the compositor** — B2 is now mostly
-a confirm-at-N>2 pass per B1's finding; B3 (real blend modes) is where the
-actual new GPU/pixel-compositing work still is. D/E/F remain blocked on B
-fully landing. This note is the scoping record — update it (or promote pieces
-of it into `D-NNN` entries) as each phase actually lands, the same discipline
-every other feature this week has followed.
+track-priority selection; B2 — N tracks — is now mostly a confirm-at-N>2 pass
+per that same finding, the walk already generalizes). **Phase C done, D-057
+(2026-09-03)** — ran concurrently with B1 in a separate worktree, per the
+sequencing plan above; real N-source audio mixing, `Track.gain`, sum-then-
+soft-limit headroom. **B3 (real blend modes / opacity) is the one remaining
+piece of genuinely new GPU/pixel-compositing work** — B1/B2 turned out not to
+need any. D/E/F remain blocked on B fully landing (B3 specifically, now that
+B1/B2 and C are satisfied). This note is the scoping record — update it (or
+promote pieces of it into `D-NNN` entries) as each phase actually lands, the
+same discipline every other feature this week has followed.

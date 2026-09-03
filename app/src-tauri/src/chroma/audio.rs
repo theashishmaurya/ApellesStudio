@@ -8,25 +8,33 @@
 //!   (`PreviewPane.tsx`) rather than coupled to it frame-by-frame. See the
 //!   "sync model" note below for why.
 //! What it does: [`chroma_audio_play`] resolves `start_frame` on the active
-//!   timeline's video track — via [`super::edit::resolve_video_position`],
-//!   the exact same lookup the video preview uses — to a clip + source
-//!   position, and, if that clip's source has an audio stream
-//!   ([`super::video::VideoInfo::has_audio`]), spawns a dedicated OS thread
-//!   that: opens the file with `symphonia`, seeks to the matching source
-//!   time, decodes packets in a loop, adapts channel count and resamples to
-//!   the output device's config (`rubato`) as needed, bit-depth-converts to
-//!   whatever `cpal`'s chosen output `SampleFormat` is (`dasp_sample`), and
-//!   feeds a bounded ring buffer that the `cpal` output callback drains.
+//!   timeline to every currently-active audio source — the video track's own
+//!   embedded audio (via [`super::edit::resolve_video_position`], the exact
+//!   same lookup the video preview uses, gated on
+//!   [`super::video::VideoInfo::has_audio`]) **plus** (D-057, Phase C — see
+//!   below) any clip on a genuine `TrackKind::Audio` track overlapping that
+//!   position — and spawns one dedicated OS thread that: opens every source
+//!   with `symphonia`, seeks each to its matching source time, decodes
+//!   packets from all of them in lockstep, adapts channel count and
+//!   resamples each to the output device's config (`rubato`) as needed,
+//!   sums them with per-track gain and headroom handling
+//!   ([`mix_sources`]), bit-depth-converts the mixed result to whatever
+//!   `cpal`'s chosen output `SampleFormat` is (`dasp_sample`), and feeds a
+//!   bounded ring buffer that the `cpal` output callback drains.
 //!   [`chroma_audio_stop`] tears the session down (pause / re-seek / unmount).
 //!   [`chroma_audio_level`] exposes the last measured RMS/peak of what the
 //!   output callback actually wrote — the verification hook (see D-049); it
 //!   is not wired to any meter UI yet.
-//! What it does NOT do: multi-track mixing (single-video-track MVP — see
-//!   `docs/04-roadmap.md`), audio effects or persisted mute/volume (playback
-//!   only), audio during scrubbing while paused (silence is correct there —
-//!   only real Play produces sound), export audio (`export.rs` stays
-//!   video-only, untouched by this module), or long-session drift correction
-//!   between the audio and video clocks (see below).
+//! What it does NOT do: pan/stereo-positioning per track (D-057 scoped this
+//!   out — see that decision), audio effects beyond the mix's own headroom
+//!   limiter, persisted mute/solo UI (Phase D, blocked on this landing),
+//!   audio during scrubbing while paused (silence is correct there — only
+//!   real Play produces sound), export audio (`export.rs` stays video-only,
+//!   untouched by this module), re-resolving which sources are active mid-
+//!   session (a source's set is fixed at the moment `chroma_audio_play` is
+//!   called, same as D-050's "no re-seek mid-play" — a clip beginning after a
+//!   gap mid-session won't be picked up until the next Play/seek), or long-
+//!   session drift correction between the audio and video clocks (see below).
 //!
 //! ## Waveform extraction (D-051 — the mature timeline UI pass)
 //!
@@ -93,18 +101,46 @@
 //! frontend only ever needs to call this at that same transition (see
 //! `PreviewPane.tsx`).
 //!
-//! ## Why not a separate `TrackKind::Audio`
+//! ## Multi-track mixing (D-057, Phase C of `docs/notes/multi-track-nle.md`)
 //!
-//! `chroma-timeline`'s `Track` already has an `Audio` variant, but nothing
-//! populates one (see the crate's own doc comment). This module deliberately
-//! does not start populating it: the MVP's one video track's clips already
-//! point at the same source files the frame decode reads, which — for a
-//! talking-head / screen-capture shot — already carry the embedded audio
-//! stream. A real, separate audio `Track` only earns its keep once there is
-//! something genuinely audio-only to put on it (a detached audio clip, a
-//! music bed) — that is multi-track work, tracked as its own roadmap item,
-//! not this one; wiring a redundant audio-track-that-mirrors-the-video-track
-//! now would just be dead weight to keep in sync until that day.
+//! D-049/D-050 (above) deliberately did not populate `chroma-timeline`'s
+//! `TrackKind::Audio` — nothing yet needed a second, genuinely audio-only
+//! source. This module now reads one when it exists
+//! ([`super::edit::resolve_audio_track_positions`]), while leaving the
+//! baseline video-embedded-audio path from D-050 completely intact as the
+//! default/first source. **Still nothing in the app populates an
+//! `Audio` track** (Phase D UI is blocked on this landing — see the note) —
+//! this is the mixing *capability*, exercised in this module's own tests via
+//! a hand-built `Timeline`, same spirit as D-054 landing `add_track`/
+//! `move_clip` before any UI called them.
+//!
+//! **Where per-track gain lives:** `chroma_timeline::Track::gain` (a plain
+//! `f32`, default `1.0`) — on the model, not a side table in this module or
+//! in `chroma::project`. `chroma-timeline`'s own module doc draws the line at
+//! "no media, no rendering, no compositing"; a numeric mix-level multiplier
+//! is none of those — it's exactly the kind of plain editorial property
+//! (like `Clip::start_frame`, D-054) that belongs in the domain model so it
+//! persists with the project and Phase D's future mute/volume UI has a real
+//! field to read and write, not a parallel map this module would have to
+//! keep in sync with track add/remove. This module owns *interpreting* that
+//! number (the mixing math, [`mix_sources`]/[`soft_limit`]) — reading media
+//! and touching `cpal` is squarely `chroma::audio`'s job, not
+//! `chroma-timeline`'s.
+//!
+//! **Headroom:** summed sources are passed through a soft (tanh) limiter,
+//! not a hard clamp or a blanket `1/N` pre-scale — see [`mix_sources`]'s own
+//! doc for the three options considered and why. The pre-existing single-
+//! source (D-050) case takes a provably identical code path (no summation,
+//! no limiter) — see that same doc.
+//!
+//! **Scoped out this pass, deliberately:** stereo panning / positioning per
+//! track. Mono gain scaling (this module already collapses everything to the
+//! output device's channel count via [`adapt_channels`] regardless of source
+//! channel count) covers Phase C's actual goal — mixing N sources with
+//! per-track level control — without the real extra complexity a pan law
+//! would add (equal-power vs. linear pan, mid/side handling once more than
+//! stereo is in play). Nothing in `docs/notes/multi-track-nle.md`'s Phase C
+//! scope asks for it; revisit if/when Phase D's UI wants a pan control.
 //!
 //! ## The ring buffer
 //!
@@ -231,6 +267,88 @@ pub(crate) fn peaks_from_samples(samples: &[f32], bucket_count: usize) -> Vec<(f
             }
         }
         out.push((lo, hi));
+    }
+    out
+}
+
+/// Smooth soft-knee limiter (D-057, Phase C mixing) — `tanh(x)`. Guarantees
+/// `|soft_limit(x)| <= 1.0` for any finite `x` (mathematically `|tanh(x)| <
+/// 1` strictly; at `f32` precision an extreme `x` — far beyond anything a
+/// real audio mix produces — rounds to exactly `1.0`, not past it, so the
+/// property that actually matters, *never exceeding full scale*, still
+/// holds), is odd (`soft_limit(-x) == -soft_limit(x)`) and passes small-
+/// magnitude input through almost unchanged (`tanh'(0) == 1`, so the error
+/// at typical dialogue/music amplitudes — well under ±0.3 — is third-order
+/// in `x`, inaudible) while compressing only as a summed mix approaches or
+/// exceeds full scale. This is the standard shape for a master-bus limiter:
+/// it avoids the harsh, audibly distorted digital clipping a hard
+/// `clamp(-1.0, 1.0)` would produce the moment two or more simultaneously
+/// loud sources sum past unity. Pure — no I/O. See [`mix_sources`] for
+/// where/when it's actually applied.
+pub(crate) fn soft_limit(x: f32) -> f32 {
+    x.tanh()
+}
+
+/// Mix `buffers` (equal-length, interleaved, already channel-adapted and
+/// resampled to the output device's rate/channel count — one per active
+/// audio source in a [`chroma_audio_play`] session) into one buffer, each
+/// scaled by its own `gains[i]` first (D-057's per-track gain).
+///
+/// **Headroom approach — chosen and justified (D-057):** a track at `gain ==
+/// 0.0` (muted) is dropped entirely *before* deciding how many sources are
+/// really contributing, rather than summed-then-multiplied-by-zero. Once
+/// only the still-nonzero-gain sources remain:
+/// - **Exactly one (or zero) active source → no summation, no limiter.** The
+///   buffer is returned as-is (`gain == 1.0`, the default for both a freshly
+///   added track and the baseline video-embedded-audio source) or scaled by
+///   its own gain, and nothing else touches it. This is what keeps two
+///   things exactly true, not just approximately: (1) the pre-D-057
+///   single-embedded-audio-track case (D-050, still the only real scenario
+///   until a project actually gets a populated audio track) takes an
+///   **identical code path with identical output**, not merely
+///   indistinguishable output — no limiter, no multiply-by-1.0 rounding, to
+///   this function's caller; (2) muting one of two active tracks
+///   (`gains = [1.0, 0.0]`) makes the mix **exactly** (not approximately)
+///   equal to the other source alone, a real bit-for-bit checkable property
+///   this module's tests assert directly, not just "sounds about right."
+/// - **Two or more active sources → sum, then pass every summed sample
+///   through [`soft_limit`].** Chosen over the two other standard options the
+///   brief named: pre-scaling every source by `1/N` guarantees no clipping
+///   too, but permanently quietens a mix even when the sources are never
+///   simultaneously near full scale (the common real case — e.g. dialogue
+///   and a music bed rarely peak together), which is a worse default than
+///   this tool's users would expect; a hard `clamp` avoids the `1/N`
+///   loudness tax but produces true digital clipping (audible distortion) on
+///   whatever moments *do* sum past unity. A soft (tanh) limiter gets the
+///   best of both: normal-level mixes pass through at full loudness
+///   (unaffected in practice — see [`soft_limit`]'s own doc), and only the
+///   rare simultaneous-peak moment is smoothly compressed instead of
+///   harshly clipped.
+///
+/// `len` is every buffer's length (all callers already guarantee this — see
+/// [`DecodedSource::take`]); `buffers.len() != gains.len()` is a caller bug,
+/// `debug_assert`ed rather than handled, since both always come from the
+/// same per-source `Vec` zip in [`run_session`]. Pure — no I/O.
+pub(crate) fn mix_sources(buffers: &[Vec<f32>], gains: &[f32], len: usize) -> Vec<f32> {
+    debug_assert_eq!(buffers.len(), gains.len());
+    let active: Vec<usize> = (0..buffers.len()).filter(|&i| gains[i] != 0.0).collect();
+
+    if active.len() <= 1 {
+        return match active.first() {
+            None => vec![0.0; len],
+            Some(&i) if gains[i] == 1.0 => buffers[i].clone(),
+            Some(&i) => buffers[i].iter().map(|s| s * gains[i]).collect(),
+        };
+    }
+
+    let mut out = vec![0f32; len];
+    for &i in &active {
+        for (o, s) in out.iter_mut().zip(buffers[i].iter()) {
+            *o += s * gains[i];
+        }
+    }
+    for o in out.iter_mut() {
+        *o = soft_limit(*o);
     }
     out
 }
@@ -411,38 +529,68 @@ pub fn chroma_audio_stop() {
     stop_and_bump_generation();
 }
 
-/// Seek-and-play in one call: resolve `start_frame` on the active timeline's
-/// video track (same lookup the video preview uses), and — if that clip's
-/// source has an audio stream — start a fresh decode+playback session there.
-/// A clip with no audio stream, or `start_frame` past the end of the video
-/// track, is **not** an error: it just means nothing plays, matching the
-/// video preview's own "blank frame past the end" behaviour.
+/// One audio source for a play session (D-057) — a source path, the source
+/// second to start decoding from, and the linear gain to scale its
+/// contribution by in the final mix (see [`mix_sources`]). Built once per
+/// [`chroma_audio_play`] call from whatever's active at `start_frame`; not
+/// re-resolved mid-session (matches D-050's own "no re-seek mid-play" design
+/// — see the module doc).
+struct AudioSourceSpec {
+    path: PathBuf,
+    start_secs: f64,
+    gain: f32,
+}
+
+/// Seek-and-play in one call: resolve `start_frame` on the active timeline to
+/// every currently-active audio source — the video track's own embedded
+/// audio (D-050's original, still-default behaviour, unchanged: always at
+/// unity gain, resolved via the same [`super::edit::resolve_video_position`]
+/// lookup the video preview uses) **plus** (D-057, Phase C) any clip on a
+/// genuine `TrackKind::Audio` track that overlaps `start_frame`, each at its
+/// own track's gain — and start a fresh session that decodes and mixes all of
+/// them together (see [`run_session`]). No active source anywhere (no video
+/// clip at this position, or one with no audio stream, and no audio-track
+/// clip either) is **not** an error: it just means nothing plays, matching
+/// the video preview's own "blank frame past the end" behaviour.
 #[tauri::command]
 pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
     let my_gen = stop_and_bump_generation();
 
-    let Some((clip, source_frame, info)) = super::edit::resolve_video_position(start_frame)? else {
-        return Ok(());
-    };
-    if !info.has_audio {
-        log::debug!(
-            "chroma_audio_play: {} has no audio stream — playing silent",
-            clip.source_path
-        );
-        return Ok(());
+    let mut sources: Vec<AudioSourceSpec> = Vec::new();
+
+    if let Some((clip, source_frame, info)) = super::edit::resolve_video_position(start_frame)? {
+        if info.has_audio {
+            sources.push(AudioSourceSpec {
+                path: PathBuf::from(&clip.source_path),
+                start_secs: info.frame_to_secs(source_frame),
+                gain: 1.0,
+            });
+        } else {
+            log::debug!(
+                "chroma_audio_play: {} has no audio stream — nothing from the video track",
+                clip.source_path
+            );
+        }
     }
 
-    let path = PathBuf::from(&clip.source_path);
-    let start_secs = info.frame_to_secs(source_frame);
+    for (path, start_secs, gain) in super::edit::resolve_audio_track_positions(start_frame)? {
+        sources.push(AudioSourceSpec {
+            path,
+            start_secs,
+            gain,
+        });
+    }
+
+    if sources.is_empty() {
+        return Ok(());
+    }
 
     let handle = thread::Builder::new()
         .name("chroma-audio".into())
         .spawn(move || {
-            if let Err(e) = run_session(&path, start_secs, my_gen) {
-                log::warn!(
-                    "chroma audio session ({}, {start_secs:.3}s): {e}",
-                    path.display()
-                );
+            let n = sources.len();
+            if let Err(e) = run_session(sources, my_gen) {
+                log::warn!("chroma audio session ({n} source(s)): {e}");
             }
         })
         .map_err(|e| format!("spawn audio thread: {e}"))?;
@@ -610,27 +758,111 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
 }
 
 // --------------------------------------------------------------------------- //
-// the audio thread — owns the symphonia decoder, the cpal stream, and the
-// ring buffer between them for its whole lifetime; nothing here is ever
-// moved to another thread (sidesteps needing `cpal::Stream: Send`, which
+// the audio thread — owns every source's symphonia decoder, the cpal stream,
+// and the ring buffer between them for its whole lifetime; nothing here is
+// ever moved to another thread (sidesteps needing `cpal::Stream: Send`, which
 // varies by host backend — see the `run_session` doc below)
 // --------------------------------------------------------------------------- //
 
-/// Runs entirely on the dedicated thread [`chroma_audio_play`] spawned for
-/// it. Opens `path` with `symphonia`, seeks to `start_secs`, opens the
-/// default `cpal` output device, and decodes packets into a ring buffer the
-/// `cpal` callback drains until either the source is exhausted (then idles,
-/// keeping the device stream open — silent — until told to stop, so it does
-/// not clatter the device open/closed every frame) or `my_gen` is superseded.
-///
-/// The `cpal::Stream` is a local variable here, created and dropped on this
-/// same thread, and is never stored in the `SESSION` static or otherwise
-/// moved across threads — deliberately sidesteps relying on `Stream: Send`
-/// (its `Send`-ness is backend-dependent; CoreAudio's does resolve to `Send`
-/// in practice via its `Monitor: Send + Sync` supertrait bound, but pinning
-/// the whole design on that rather than needing it at all is simpler and
-/// more portable).
-fn run_session(path: &Path, start_secs: f64, my_gen: u64) -> Result<(), String> {
+/// One already-open, mid-decode audio source (D-057) — a `symphonia`
+/// format reader + decoder for a single source file, already resampled and
+/// channel-adapted to the session's shared output rate/channel count, plus a
+/// small carry buffer of already-produced-but-not-yet-consumed interleaved
+/// samples. `symphonia` packets and `rubato` chunks come out in whatever
+/// sizes they come in, which rarely line up with the fixed-size window
+/// [`run_session`]'s mixing loop pulls every source in lockstep by — `carry`
+/// is what absorbs that mismatch (produced-but-unread samples sit here
+/// between [`Self::ensure`] calls) so every source can be asked for exactly
+/// the same number of samples regardless of its own internal packet/chunk
+/// sizes.
+struct DecodedSource {
+    label: String,
+    format: Box<dyn symphonia::core::formats::FormatReader>,
+    decoder: Box<dyn symphonia::core::codecs::audio::AudioDecoder>,
+    track_id: u32,
+    src_channels: usize,
+    resample: Resample,
+    carry: VecDeque<f32>,
+    /// Set once `next_packet` reports EOF/reset for this source — its
+    /// contribution to the mix from then on is silence (padding in
+    /// [`Self::take`]), not an end to the whole session (other sources may
+    /// still be playing; see `run_session`'s loop condition).
+    exhausted: bool,
+}
+
+impl DecodedSource {
+    /// Decode further packets until `carry` holds at least `want` samples or
+    /// this source hits EOF (setting `exhausted`, after which `carry` may
+    /// stay short of `want` forever — that's fine, [`Self::take`] pads).
+    fn ensure(&mut self, want: usize, out_channels: usize) -> Result<(), String> {
+        while self.carry.len() < want && !self.exhausted {
+            let packet = match self.format.next_packet() {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    self.exhausted = true;
+                    break;
+                }
+                Err(SymError::ResetRequired) => {
+                    self.exhausted = true;
+                    break;
+                }
+                Err(SymError::IoError(_)) => {
+                    self.exhausted = true;
+                    break;
+                }
+                Err(e) => return Err(format!("next_packet ({}): {e}", self.label)),
+            };
+            if packet.track_id != self.track_id {
+                continue;
+            }
+            let decoded = match self.decoder.decode(&packet) {
+                Ok(d) => d,
+                Err(SymError::DecodeError(_)) => continue, // skip the bad packet, keep going
+                Err(e) => return Err(format!("decode ({}): {e}", self.label)),
+            };
+            let mut interleaved = vec![0f32; decoded.samples_interleaved()];
+            decoded.copy_to_slice_interleaved(&mut interleaved);
+            let adapted = adapt_channels(&interleaved, self.src_channels, out_channels);
+            let resampled = self.resample.push(&adapted)?;
+            self.carry.extend(resampled);
+        }
+        Ok(())
+    }
+
+    /// Pop exactly `want` interleaved samples — decoding more first via
+    /// [`Self::ensure`] if needed, padding with silence once this source is
+    /// exhausted (its own contribution simply becomes silence for the rest
+    /// of the session; the other sources are unaffected).
+    fn take(&mut self, want: usize, out_channels: usize) -> Result<Vec<f32>, String> {
+        self.ensure(want, out_channels)?;
+        let mut out = Vec::with_capacity(want);
+        for _ in 0..want {
+            out.push(self.carry.pop_front().unwrap_or(0.0));
+        }
+        Ok(out)
+    }
+
+    /// True once this source will never produce another non-silent sample —
+    /// `run_session`'s whole-session-done check (every source, not just
+    /// one) is `.all(DecodedSource::is_done)`.
+    fn is_done(&self) -> bool {
+        self.exhausted && self.carry.is_empty()
+    }
+}
+
+/// Open `path`'s default audio track, seek to `start_secs`, and set up
+/// resampling to the session's shared `(out_rate, out_channels)` — the common
+/// "get a source ready to decode" setup every [`AudioSourceSpec`] in a
+/// [`run_session`] call goes through. Mirrors [`decode_mono_range`]'s
+/// symphonia open/probe/seek prefix (duplicated there for the documented
+/// reason: the two diverge immediately after — one a bounded batch read, this
+/// one a live streaming source kept open for the session's lifetime).
+fn open_source(
+    path: &Path,
+    start_secs: f64,
+    out_rate: u32,
+    out_channels: usize,
+) -> Result<DecodedSource, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -668,7 +900,7 @@ fn run_session(path: &Path, start_secs: f64, my_gen: u64) -> Result<(), String> 
         .unwrap_or(1)
         .max(1);
 
-    let mut decoder = symphonia::default::get_codecs()
+    let decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&codec_params, &Default::default())
         .map_err(|e| format!("make decoder: {e}"))?;
 
@@ -687,6 +919,48 @@ fn run_session(path: &Path, start_secs: f64, my_gen: u64) -> Result<(), String> 
         );
     }
 
+    let resample = Resample::new(src_rate, out_rate, out_channels)?;
+
+    Ok(DecodedSource {
+        label: path.display().to_string(),
+        format,
+        decoder,
+        track_id,
+        src_channels,
+        resample,
+        carry: VecDeque::new(),
+        exhausted: false,
+    })
+}
+
+/// Runs entirely on the dedicated thread [`chroma_audio_play`] spawned for
+/// it. Opens the default `cpal` output device once, opens every one of
+/// `sources` (D-057: the baseline video-embedded audio plus any overlapping
+/// `TrackKind::Audio` clips) via [`open_source`], and drives a mixing loop
+/// that pulls a fixed-size window of interleaved samples from every still-
+/// active source in lockstep, sums them via [`mix_sources`] (unchanged,
+/// single-source behaviour when `sources.len() == 1` — see that function's
+/// doc for why this keeps the pre-D-057 single-track case byte-identical),
+/// and writes the mixed window into the ring buffer the `cpal` callback
+/// drains — until either every source is exhausted (then idles, keeping the
+/// device stream open — silent — until told to stop) or `my_gen` is
+/// superseded.
+///
+/// **If `sources[0]` (the baseline) fails to open, that's a real error** —
+/// same contract this function always had for its one source. **If any later
+/// source (an audio-track clip) fails to open, it's logged and dropped, not
+/// fatal** — a broken/offline music-bed clip shouldn't take down a session
+/// that would otherwise have played the video's dialogue track fine; the
+/// remaining sources still mix.
+///
+/// The `cpal::Stream` is a local variable here, created and dropped on this
+/// same thread, and is never stored in the `SESSION` static or otherwise
+/// moved across threads — deliberately sidesteps relying on `Stream: Send`
+/// (its `Send`-ness is backend-dependent; CoreAudio's does resolve to `Send`
+/// in practice via its `Monitor: Send + Sync` supertrait bound, but pinning
+/// the whole design on that rather than needing it at all is simpler and
+/// more portable).
+fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -712,36 +986,52 @@ fn run_session(path: &Path, start_secs: f64, my_gen: u64) -> Result<(), String> 
     )?;
     stream.play().map_err(|e| format!("stream.play: {e}"))?;
 
-    let mut resample = Resample::new(src_rate, out_rate, out_channels)?;
+    let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
+    let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
+    for (i, spec) in sources.iter().enumerate() {
+        match open_source(&spec.path, spec.start_secs, out_rate, out_channels) {
+            Ok(ds) => {
+                decoded.push(ds);
+                gains.push(spec.gain);
+            }
+            Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
+            Err(e) => log::warn!(
+                "chroma audio: skipping extra source {}: {e}",
+                spec.path.display()
+            ),
+        }
+    }
 
-    'decode: loop {
+    // Every non-baseline source failed to open too (or `sources` somehow
+    // ended up empty) — nothing to actually mix. Idle exactly like the EOF
+    // case below rather than erroring, since the caller (`chroma_audio_play`)
+    // already treats "nothing to play" as a non-error.
+    if decoded.is_empty() {
+        while is_current(my_gen) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        return Ok(());
+    }
+
+    // Matches `RateConverter::chunk_frames` — not load-bearing that it does
+    // (any window size works), just keeps the two aligned so a resampled
+    // source rarely straddles a window boundary mid-`rubato`-chunk.
+    let chunk_frames = 1024;
+    let chunk_len = chunk_frames * out_channels.max(1);
+
+    'mix: loop {
         if !is_current(my_gen) {
-            break 'decode;
+            break 'mix;
         }
-        let packet = match format.next_packet() {
-            Ok(Some(p)) => p,
-            Ok(None) => break 'decode, // EOF — fall through to the idle wait below
-            Err(SymError::ResetRequired) => break 'decode,
-            Err(SymError::IoError(_)) => break 'decode,
-            Err(e) => return Err(format!("next_packet: {e}")),
-        };
-        if packet.track_id != track_id {
-            continue;
+        if decoded.iter().all(DecodedSource::is_done) {
+            break 'mix; // every source exhausted — fall through to the idle wait below
         }
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(SymError::DecodeError(_)) => continue, // skip the bad packet, keep going
-            Err(e) => return Err(format!("decode: {e}")),
-        };
 
-        let mut interleaved = vec![0f32; decoded.samples_interleaved()];
-        decoded.copy_to_slice_interleaved(&mut interleaved);
-
-        let adapted = adapt_channels(&interleaved, src_channels, out_channels);
-        let resampled = resample.push(&adapted)?;
-        if resampled.is_empty() {
-            continue;
+        let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
+        for ds in decoded.iter_mut() {
+            bufs.push(ds.take(chunk_len, out_channels)?);
         }
+        let mixed = mix_sources(&bufs, &gains, chunk_len);
 
         // Backpressure: block briefly while the ring buffer is comfortably
         // full rather than growing it unbounded — bail out early if a
@@ -754,17 +1044,15 @@ fn run_session(path: &Path, start_secs: f64, my_gen: u64) -> Result<(), String> 
             thread::sleep(Duration::from_millis(5));
         }
         if !is_current(my_gen) {
-            break 'decode;
+            break 'mix;
         }
-        ring.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend(resampled);
+        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(mixed);
     }
 
-    // Source exhausted (or a benign reset/EOF-shaped error) — keep the
+    // Every source exhausted (or a benign reset/EOF-shaped error) — keep the
     // device stream open (it'll drain to silence once the ring buffer empties
     // on its own) until told to stop, rather than reopening the device every
-    // time playback runs past the end of a clip's audio.
+    // time playback runs past the end of the longest source's audio.
     while is_current(my_gen) {
         thread::sleep(Duration::from_millis(50));
     }
@@ -945,6 +1233,122 @@ mod tests {
         assert_eq!(peaks, vec![(0.42, 0.42)]);
     }
 
+    // --- D-057: the mixer's headroom math (soft_limit / mix_sources) --------
+
+    #[test]
+    fn soft_limit_is_bounded_odd_and_near_identity_for_small_input() {
+        assert_eq!(soft_limit(0.0), 0.0);
+        assert!(
+            (soft_limit(0.1) - 0.1).abs() < 0.001,
+            "near-identity at low level"
+        );
+        assert!((soft_limit(0.5) - 0.5f32.tanh()).abs() < 1e-6);
+        // A moderate overshoot (3.0 — plausible from 3 simultaneously loud
+        // unity-gain sources) is compressed but stays strictly under full
+        // scale at f32 precision.
+        assert!(
+            soft_limit(3.0) < 1.0 && soft_limit(3.0) > 0.99,
+            "compressed, still under unity"
+        );
+        assert!(soft_limit(-3.0) > -1.0 && soft_limit(-3.0) < -0.99);
+        // The real, load-bearing safety property — never *exceeds* full
+        // scale — holds even at an extreme input where f32 rounds
+        // `tanh(x)` to exactly 1.0 (mathematically `tanh(x) < 1` always, but
+        // an f32 this close to 1.0 has no representable value between it and
+        // 1.0 to round to): still no digital-clipping overshoot, which is
+        // the guarantee that actually matters for the mixer.
+        assert!(soft_limit(1e6) <= 1.0);
+        assert!(soft_limit(-1e6) >= -1.0);
+        assert_eq!(soft_limit(-2.0), -soft_limit(2.0), "odd function");
+    }
+
+    #[test]
+    fn mix_sources_single_source_unity_gain_is_a_byte_identical_passthrough() {
+        // The D-050 regression contract: with exactly one active source at
+        // the default gain, mix_sources must not alter the buffer at all —
+        // no multiply, no limiter — so the pre-existing single-embedded-
+        // audio-track playback path is provably unchanged by this change.
+        let buf = vec![0.1f32, -0.9, 0.37, -0.02, 0.6];
+        let mixed = mix_sources(&[buf.clone()], &[1.0], buf.len());
+        assert_eq!(mixed, buf);
+    }
+
+    #[test]
+    fn mix_sources_single_source_nonunity_gain_scales_without_limiting() {
+        let buf = vec![0.4f32, -0.4, 0.2];
+        let mixed = mix_sources(&[buf.clone()], &[0.5], buf.len());
+        assert_eq!(mixed, vec![0.2, -0.2, 0.1]);
+    }
+
+    #[test]
+    fn mix_sources_two_sources_sums_them() {
+        let a = vec![0.1f32, 0.2, 0.3];
+        let b = vec![0.05f32, -0.1, 0.05];
+        let mixed = mix_sources(&[a.clone(), b.clone()], &[1.0, 1.0], 3);
+        // Both nonzero and under the limiter's near-identity range at these
+        // small magnitudes, so this is (within soft_limit's negligible
+        // low-level error) the true sum, not silence and not just one input.
+        for i in 0..3 {
+            let expected = soft_limit(a[i] + b[i]);
+            assert!((mixed[i] - expected).abs() < 1e-6);
+        }
+        assert_ne!(mixed, a, "not just the first source");
+        assert_ne!(mixed, b, "not just the second source");
+    }
+
+    /// The exact, checkable "mute via gain" property the task brief asks
+    /// for: muting one of two active sources (`gain == 0.0`) must make the
+    /// mix **identical** to the other source alone — not approximately, not
+    /// "close enough" — because a muted source is dropped before the
+    /// active-source count (and therefore whether the limiter engages at
+    /// all) is decided.
+    #[test]
+    fn mix_sources_muting_one_of_two_sources_equals_the_other_alone() {
+        let a = vec![0.9f32, -0.8, 0.95, -0.99]; // deliberately loud — would
+        // engage the limiter if both sources were summed, proving the
+        // muted branch really does skip summation+limiting entirely, not
+        // just "happen to look the same" at low amplitude.
+        let b = vec![0.7f32, 0.6, -0.5, 0.4];
+
+        let mix_mute_b = mix_sources(&[a.clone(), b.clone()], &[1.0, 0.0], 4);
+        assert_eq!(mix_mute_b, a, "muting b must equal a alone, exactly");
+
+        let mix_mute_a = mix_sources(&[a.clone(), b.clone()], &[0.0, 1.0], 4);
+        assert_eq!(mix_mute_a, b, "muting a must equal b alone, exactly");
+
+        // and both are provably different from the real (unmuted) mix — the
+        // mute genuinely changes the output, this isn't a no-op comparison
+        let both_active = mix_sources(&[a.clone(), b.clone()], &[1.0, 1.0], 4);
+        assert_ne!(both_active, a);
+        assert_ne!(both_active, b);
+    }
+
+    #[test]
+    fn mix_sources_all_gains_zero_is_silence() {
+        let a = vec![0.5f32, 0.5];
+        let b = vec![0.5f32, 0.5];
+        let mixed = mix_sources(&[a, b], &[0.0, 0.0], 2);
+        assert_eq!(mixed, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn mix_sources_loud_overlapping_sources_never_exceed_unity() {
+        // Three simultaneously loud sources — a naive sum would blow well
+        // past full scale (up to 3.0); the limiter must keep every sample
+        // inside [-1, 1].
+        let a = vec![0.9f32; 8];
+        let b = vec![0.9f32; 8];
+        let c = vec![0.9f32; 8];
+        let mixed = mix_sources(&[a, b, c], &[1.0, 1.0, 1.0], 8);
+        assert!(
+            mixed.iter().all(|s| s.abs() <= 1.0),
+            "never exceeds full scale: {mixed:?}"
+        );
+        // and it's still meaningfully louder than a single source alone —
+        // the limiter compresses, it doesn't silence
+        assert!(mixed[0] > 0.9, "still louder than any one source alone");
+    }
+
     #[test]
     fn generation_bump_invalidates_a_session() {
         // stop_and_bump_generation with nothing running just advances the
@@ -964,6 +1368,20 @@ mod tests {
     /// alive for the project directory to stay on disk; the caller is
     /// responsible for `state::set_project(None)` once done.
     fn open_test_project(video_path: &str) -> tempfile::TempDir {
+        open_test_project_with_audio_track(video_path, None)
+    }
+
+    /// D-057: [`open_test_project`], optionally with a second, genuine
+    /// `TrackKind::Audio` track added — `(audio_clip_source_path, gain)` —
+    /// holding one clip at `start_frame: 0` covering the same position the
+    /// tests below play from. This is the real fixture Phase C's own test
+    /// requirement asks for: "a `Timeline` with a video track (embedded
+    /// audio) + a genuine `TrackKind::Audio` track holding a real
+    /// audio-bearing clip."
+    fn open_test_project_with_audio_track(
+        video_path: &str,
+        audio_track: Option<(&str, f32)>,
+    ) -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("tempdir");
         let project_dir = tmp.path().join("AudioTest.chroma");
         std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
@@ -978,14 +1396,32 @@ mod tests {
             source_len: 100_000,
             start_frame: 0, // D-054: the only clip on its track
         };
+        let mut tracks = vec![chroma_timeline::Track {
+            kind: chroma_timeline::TrackKind::Video,
+            clips: vec![clip],
+            gain: 1.0,
+        }];
+        if let Some((audio_path, gain)) = audio_track {
+            tracks.push(chroma_timeline::Track {
+                kind: chroma_timeline::TrackKind::Audio,
+                clips: vec![chroma_timeline::Clip {
+                    id: "audio-clip1".into(),
+                    shot_id: None,
+                    name: "audio-track-test".into(),
+                    source_path: audio_path.to_string(),
+                    source_start: 0,
+                    duration: 100_000,
+                    source_len: 100_000,
+                    start_frame: 0, // overlaps the video clip's [0, 100_000)
+                }],
+                gain,
+            });
+        }
         let timeline = chroma_timeline::Timeline {
             id: "tl1".into(),
             name: "AudioTest".into(),
             rate: None,
-            tracks: vec![chroma_timeline::Track {
-                kind: chroma_timeline::TrackKind::Video,
-                clips: vec![clip],
-            }],
+            tracks,
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),
@@ -1005,6 +1441,46 @@ mod tests {
             name: "AudioTest".into(),
         }));
         tmp
+    }
+
+    /// Synthesize a short pure-tone `.m4a` (AAC-in-MP4, matching this
+    /// crate's `symphonia` feature set — `isomp4` + `aac`, no `wav`/`pcm`
+    /// support enabled) via `ffmpeg`'s `sine` test source — a second,
+    /// genuinely distinct real audio signal for the mixing tests below to
+    /// sum against `CHROMA_TEST_AUDIO_VIDEO`'s content. `ffmpeg` is already a
+    /// hard dependency of this repo's pipeline (`video.rs`'s own doc); there
+    /// is no committed binary audio fixture in this repo (every existing
+    /// audio/video test fixture is an env-var-gated real file, not something
+    /// checked in — see D-050), so generating one at test time, into a
+    /// tempdir, mirrors that same convention rather than adding a first
+    /// binary fixture file to source control. `sample_rate` is passed
+    /// explicitly so the synthesized tone can be made to match a real
+    /// fixture's own rate (48 kHz for `CHROMA_TEST_AUDIO_VIDEO`, per D-050) —
+    /// letting a test decode both through [`decode_mono_range`] and mix them
+    /// sample-for-sample without needing `rubato` in the test itself.
+    fn synth_test_tone(dir: &Path, freq_hz: u32, duration_secs: f64, sample_rate: u32) -> PathBuf {
+        let out = dir.join("tone.m4a");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!(
+                    "sine=frequency={freq_hz}:duration={duration_secs}:sample_rate={sample_rate}"
+                ),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ac",
+                "2",
+            ])
+            .arg(&out)
+            .status()
+            .expect("spawn ffmpeg to synthesize a test tone");
+        assert!(status.success(), "ffmpeg tone synthesis failed");
+        out
     }
 
     // Integration test — only runs if CHROMA_TEST_AUDIO_VIDEO points at a real
@@ -1068,6 +1544,157 @@ mod tests {
             (rms, peak),
             (0.0, 0.0),
             "a source with no audio stream must not produce any device output"
+        );
+    }
+
+    // --- D-057 (Phase C) mixing tests ---------------------------------------
+
+    /// The deterministic core of the Phase C test requirement: decode two
+    /// real, distinct audio-bearing files (`CHROMA_TEST_AUDIO_VIDEO`'s real
+    /// content, and a freshly-synthesized 440 Hz tone at the same sample
+    /// rate) via the same `decode_mono_range` path `chroma_audio_waveform`
+    /// already uses, then mix them with `mix_sources` exactly as
+    /// `run_session` does per-window — no `cpal`, no live device, no
+    /// wall-clock sleep, so this is fully deterministic and asserts *exact*
+    /// numeric properties on real decoded PCM rather than a live-device
+    /// rms/peak proxy: the mix is genuinely the sum of both sources (not
+    /// either one alone, not silence), and muting the tone (`gain == 0.0`)
+    /// makes the mix identical, sample-for-sample, to the video's audio
+    /// decoded alone.
+    #[test]
+    fn real_decoded_sources_mix_and_mute_correctly() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // 48 kHz matches CHROMA_TEST_AUDIO_VIDEO's real fixture
+        // (A001_08302215_C019.MOV, AAC 48 kHz/2ch — see D-050), so both
+        // sources decode at the same native rate and can be mixed
+        // sample-index-aligned without needing rubato in the test itself.
+        let tone_path = synth_test_tone(tmp.path(), 440, 2.0, 48_000);
+
+        let dur = 2.0;
+        let video_mono =
+            decode_mono_range(Path::new(&video_path), 0.0, dur).expect("decode video audio");
+        let tone_mono = decode_mono_range(&tone_path, 0.0, dur).expect("decode synthesized tone");
+        assert!(
+            tone_mono.iter().any(|s| s.abs() > 0.01),
+            "the synthesized tone itself must be genuinely non-silent"
+        );
+
+        let len = video_mono.len().min(tone_mono.len());
+        assert!(len > 0, "both sources must decode some real samples");
+        let video_mono = &video_mono[..len];
+        let tone_mono = &tone_mono[..len];
+
+        // Both active (unity gain each) — genuinely the sum, not either
+        // source alone.
+        let mixed = mix_sources(&[video_mono.to_vec(), tone_mono.to_vec()], &[1.0, 1.0], len);
+        assert_ne!(
+            mixed, video_mono,
+            "mix must not just be the video's own audio"
+        );
+        assert_ne!(mixed, tone_mono, "mix must not just be the tone");
+        assert!(
+            mixed.iter().any(|s| s.abs() > 0.0),
+            "mix must not be silence"
+        );
+
+        // The checkable gain property: muting the tone track (gain == 0.0)
+        // must make the mix *exactly* equal to the video's audio decoded
+        // alone — bit-for-bit, not approximately.
+        let muted_tone = mix_sources(&[video_mono.to_vec(), tone_mono.to_vec()], &[1.0, 0.0], len);
+        assert_eq!(
+            muted_tone, video_mono,
+            "muting the tone track (gain=0.0) must equal the video's audio alone"
+        );
+
+        // And symmetrically: muting the video track must equal the tone alone.
+        let muted_video = mix_sources(&[video_mono.to_vec(), tone_mono.to_vec()], &[0.0, 1.0], len);
+        assert_eq!(
+            muted_video, tone_mono,
+            "muting the video track (gain=0.0) must equal the tone alone"
+        );
+    }
+
+    /// End-to-end through the real command surface (D-057): a genuine
+    /// two-track `Timeline` — the video's embedded audio on the video track,
+    /// plus a synthesized tone clip on a real `TrackKind::Audio` track
+    /// (`Track::clip_at` resolving it via `resolve_audio_track_positions`,
+    /// exactly what a future Phase D UI's "add an audio track" would
+    /// eventually produce) — played through the real `chroma_audio_play`
+    /// command, exactly as `PreviewPane.tsx` would call it. Proves the whole
+    /// pipeline (timeline resolution → `run_session` opening 2 sources →
+    /// real `cpal` output) actually engages for a multi-track project, using
+    /// the same live-device rms/peak proxy D-050 introduced (a sandboxed
+    /// agent can't literally listen — see that decision).
+    #[test]
+    fn chroma_audio_play_mixes_a_genuine_audio_track_with_the_video_track() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tone_path = synth_test_tone(tmp.path(), 440, 3.0, 48_000);
+
+        let _project = open_test_project_with_audio_track(
+            &video_path,
+            Some((&tone_path.display().to_string(), 1.0)),
+        );
+        let played = chroma_audio_play(0);
+        thread::sleep(Duration::from_millis(1500));
+        let (rms, peak) = chroma_audio_level();
+        chroma_audio_stop();
+        super::super::state::set_project(None);
+
+        played.expect("chroma_audio_play with a video track + a genuine audio track");
+        eprintln!(
+            "chroma_audio_play_mixes_a_genuine_audio_track_with_the_video_track: rms={rms:.4} peak={peak:.4}"
+        );
+        assert!(
+            peak > 0.001,
+            "expected non-silent mixed PCM out of the real cpal output stream, got peak={peak}"
+        );
+    }
+
+    /// The same two-track project as above, but the audio track's gain is
+    /// `0.0` — end-to-end proof that `Track::gain` really reaches the mixer:
+    /// still non-silent (the video's own audio still plays), but this is
+    /// the live-device sibling of `real_decoded_sources_mix_and_mute_correctly`'s
+    /// exact, deterministic version of the same property.
+    #[test]
+    fn chroma_audio_play_with_a_muted_audio_track_still_plays_the_video() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tone_path = synth_test_tone(tmp.path(), 440, 3.0, 48_000);
+
+        let _project = open_test_project_with_audio_track(
+            &video_path,
+            Some((&tone_path.display().to_string(), 0.0)),
+        );
+        let played = chroma_audio_play(0);
+        thread::sleep(Duration::from_millis(1500));
+        let (_rms, peak) = chroma_audio_level();
+        chroma_audio_stop();
+        super::super::state::set_project(None);
+
+        played.expect("chroma_audio_play with a muted audio track");
+        assert!(
+            peak > 0.001,
+            "the video's own audio must still play even with the audio track muted, got peak={peak}"
         );
     }
 
