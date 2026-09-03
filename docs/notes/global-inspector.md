@@ -148,8 +148,13 @@ panel" unification) is last on purpose, once there's real content on both sides.
 
 Scoped 2026-09-03 (D-080's own session, after Phase D shipped). **Phase 1 done,
 D-081 (2026-09-03)** — real selection model + layer list, wired to seek the player.
-**Phase 2 (property panel) is the natural next increment** — the prop catalog above
-is already extracted, Phase 1's selection is real and live. **Phase 3 (NLE half)
-stays blocked on Phase B3** (`multi-track-nle.md`). **Phase 4 (shared panel shell)**
-waits on both halves having real content. This note is the scoping record — update
-it (or promote pieces into `D-NNN` entries) as each phase actually lands.
+**Phase 2 done, D-099 (2026-09-04)** — `InspectorPanel.tsx` + `propCatalog.ts` +
+`manifestEdit.ts`, a real typed form bound to the selection, verified against a
+real manifest (backward-compat requirement) via a scratch harness. **Phase 3 (NLE
+half) is no longer blocked** — Phase B3 (`multi-track-nle.md`) shipped as D-088
+during the same session, before this phase started; Phase 3 itself was not built
+this pass (needs `TimelinePane.tsx`, in active concurrent use by the D-094–D-098
+dnd-kit work for the whole dispatch) — it's a real, genuinely-ready next increment,
+not a re-scope. **Phase 4 (shared panel shell)** waits on Phase 3 landing. This
+note is the scoping record — update it (or promote pieces into `D-NNN` entries) as
+each phase actually lands.

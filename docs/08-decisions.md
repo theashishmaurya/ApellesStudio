@@ -7401,3 +7401,117 @@ than kept as dead code, per this repo's own "no dead code" rule.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-099 — Global Inspector, Phase 2: a real Motion-tab property panel bound to the layer-list selection
+
+Owner, going to sleep: "do all of them... make proper decisions and finish all of
+them" (the ready roadmap "Next" queue), with an explicit standing note that
+"Global Inspector and keyframe should also work on our current videos as well" —
+i.e. backward compatibility with real, already-saved manifests is a hard
+requirement, not a nice-to-have. Dispatched as a separate fork from the
+concurrent `TimelinePane.tsx`/dnd-kit work (D-094–D-098) — scoped entirely to
+`packages/motion/` + `packages/motion-engine/`, zero file overlap by design.
+
+**What shipped**, following `docs/notes/global-inspector.md`'s own Phase 2
+scoping exactly:
+
+- `propCatalog.ts` — the real, one-time schema-extraction artifact the scoping
+  doc called for: every manifest-level field for all 8 registered primitives
+  (`text`/`emphasis`/`matrix`/`graph`/`layers`/`particleflow`/`labelbox`/
+  `layerstack`) plus scene-level fields and both camera-keyframe shapes,
+  transcribed directly from each primitive's own source + `registry.ts`'s
+  adapter (manifest field names — `text:` not `children`, `at`/`dur` in
+  seconds — not the component's internal frame-based prop names). Verified
+  against the actual current source, not the scoping doc's already-good but
+  now-one-day-old transcription.
+- `manifestEdit.ts` — pure, testable read/write functions (`selectedLayer`,
+  `setLayerField`, `setSceneField`, `setCamera2d`/`3d`, …) that produce a new
+  immutable `Manifest` from a `Selection` + field + value. Every resolver
+  returns `null`/the same reference (never throws) for a selection that
+  doesn't resolve — the actual backward-compat mechanism: an old manifest
+  with an unrecognized `use` or a stale selection degrades gracefully instead
+  of crashing the tab. 18 tests, including the specific "selection is stale
+  after the manifest shrank" and "field doesn't resolve" cases.
+- `InspectorPanel.tsx` — the real form. Scalar fields (number/string/boolean/
+  select/color) get typed controls; array/nested-shaped props (`Matrix.
+  values`, `Graph.nodes`/`edges`/`pulses`, `Emphasis.box`, vec3 tuples) get a
+  live-validated JSON textarea with commit-on-blur and its own error surface
+  — the scoping doc's own explicitly-authorized "lighter-touch editor for
+  these" call, made real rather than re-litigated mid-build. Camera and
+  3D-camera keyframe arrays get a real add/remove/edit list (not JSON) since
+  that shape is small and fixed, unlike the primitives' actual content props.
+  An unrecognized `use` (a future primitive, or hand-edited manifest field
+  this build doesn't know) renders a plain notice instead of throwing —
+  point-tested live against the real component, not just reasoned about.
+- `resizable.tsx` — a small local `react-resizable-panels` wrapper, **not**
+  `@chroma/ui`'s `ResizablePanelGroup`: that package's barrel also exports
+  `Text`, whose polymorphic `as`-prop typing breaks under `@react-three/
+  fiber`'s global JSX augmentation once `@chroma/motion-engine`'s `Scene3D`/
+  `ParticleFlow` are in the same `tsc` program — the exact, already-documented
+  `Button.tsx` constraint (checked, not assumed still true). `@chroma/ui`'s
+  own `resizable.tsx` turned out to be a thin wrapper around the same
+  `react-resizable-panels` underneath (read directly, not assumed) — this
+  mirrors that wrapper against the real engine directly, so the CLAUDE.md
+  "every resizable-by-nature pane must actually be resizable" rule is
+  honoured with substance, not skipped because the barrel import doesn't
+  work here. `MotionTab.tsx`'s right-hand cluster (layer list / Inspector /
+  manifest editor, previously three fixed-width `div`s) is now a real
+  4-panel `PanelGroup` alongside the preview.
+
+**Real judgment calls, made rather than deferred** (owner asleep, none of
+these were checked in on):
+- Array/nested content props stay JSON-editable this pass rather than getting
+  bespoke per-item list editors (a `Layers.items` add/remove UI, a `Graph`
+  node/edge graph editor) — genuinely a different, larger scope (these are
+  primitives' actual *content*, not transform/timing knobs) that the scoping
+  doc itself flagged as a real future increment, not a corner cut silently.
+- Scene `id` is deliberately NOT in `SCENE_FIELDS` — it's the scene's
+  identity (React key, cross-reference target), and a rename through a
+  generic field editor is a different, riskier operation than every other
+  field here; out of scope, not forgotten.
+- No schema (`zod`) validation gate before a field write lands in the text —
+  `manifestEdit.ts`'s functions can only ever produce a value the field's own
+  control type allows (a number input can't write a string), and
+  `useMotionManifest`'s existing debounced `safeParse` already catches
+  anything that does turn out invalid, surfacing `parseError` the same way a
+  bad manual edit would. A second, earlier validation gate was judged
+  redundant against that existing floor, not skipped by oversight.
+
+**Backward compatibility — the owner's explicit requirement, verified for
+real**: built and used a scratch, never-committed isolated-component harness
+(`app/inspector-harness.html` + `inspector-harness-main.tsx`, mirroring the
+D-098 fork's own established pattern for exactly this class of verification
+gap, deleted before this commit — nothing outside `packages/motion`/
+`packages/motion-engine` in the diff) mounting `LayerList` + `InspectorPanel`
+directly against `sample.ts`'s real, pre-existing manifest fixture — no
+mocking, the actual shipped sample. Verified live in a real rendered DOM via
+Chrome DevTools automation (not reasoned about): every field group renders
+correctly grouped and pre-populated from real values (text layer's `preset:
+"stroke-on"`/`x:180`/`y:300`/`size:78`; emphasis layer's `box` JSON;
+scene-level `dur:4`); a scalar field edit (`size` 78→100) round-trips into
+the actual manifest object; a JSON field edit (`box`) commits correctly on
+blur, including the real edge case of blurring-via-selecting-a-different-row
+— the JSON field's commit fires and lands before the field unmounts, not
+lost in the transition; a 3-keyframe camera array renders as three real,
+independently-editable keyframe cards. This is real interactive proof the
+Inspector works against an actual saved-shape manifest, not just that the
+pure functions pass in isolation.
+
+**Verification**: `ps aux | grep cargo` checked before every command (other
+agents had active `cargo`/`rustc` builds running throughout this pass — none
+touched, no Rust in this dispatch anyway). `cd packages/motion && npx vitest
+run` — 18/18 (new — neither `packages/motion` nor `packages/motion-engine`
+had a test harness before tonight; this pass set one up for `packages/motion`
+via a local `vitest.config.ts` matching `packages/editor`'s). `npx tsc
+--noEmit -p packages/motion` clean. `-p packages/motion-engine` — 2
+pre-existing errors (`Scene3D.tsx`, missing `dom` lib for `document`),
+confirmed pre-existing (this dispatch touched zero files in that package).
+`-p app` — checked against the *files*, not just the count: zero errors trace
+to anything this pass touched; the app-wide total fluctuated over the course
+of the session (64 at one check, 70 at another) because other agents were
+actively editing unrelated `app/src` files concurrently the whole time — a
+real, transient multi-agent-session artifact, not a regression, and reported
+as such rather than picking whichever count looked better.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

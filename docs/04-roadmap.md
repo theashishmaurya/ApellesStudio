@@ -170,6 +170,23 @@ roadmap structure.
   flagged as such rather than claimed closed. `tsc`/vitest/vite build
   clean (88/88 tests, 64-error app baseline unchanged, one new safe
   React-Compiler bailout accounted for).
+- ✅ **Global Inspector, Phase 2 (Motion property panel)** — done, **D-099**.
+  Dispatched separately, scoped to `packages/motion`/`packages/motion-engine`
+  only, zero overlap with the drag-and-drop work above. Real typed form
+  bound to the layer-list selection (`InspectorPanel.tsx` + `propCatalog.ts`,
+  the full 8-primitive schema-extraction pass) with a JSON fallback for
+  content-shaped props and a real keyframe-list editor for both cameras;
+  `manifestEdit.ts` (18 tests, `packages/motion`'s first test harness) reads/
+  writes immutably and never throws on a stale/unrecognized selection — the
+  real backward-compat mechanism behind the owner's "should also work on our
+  current videos" requirement, verified live against the real `sample.ts`
+  manifest via a scratch Chrome-driven harness (deleted before commit).
+  Right-hand panel cluster is now a real resizable `PanelGroup`. **Real
+  finding surfaced while updating this doc**: Phase 3 (NLE half) was scoped
+  as "blocked on Phase B3" — B3 actually shipped tonight too (D-088), so
+  Phase 3 is genuinely unblocked now, just not started this pass (would
+  need `TimelinePane.tsx`, which the drag-and-drop work above was actively
+  using for this entire dispatch) — a real next step, not a re-scope.
 
 ---
 
@@ -449,8 +466,39 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    exists. `tsc` clean on `packages/motion`/`motion-engine`/`app`
    (unchanged baseline). No dedicated test harness exists yet for either
    package (neither had one before this pass) — not set up this pass,
-   flagged rather than silently skipped. **Phase 2 (the actual property
-   panel) is next**, unblocked, no backend work needed.
+   flagged rather than silently skipped.
+   **Phase 2 done, D-099 (2026-09-04)** — `InspectorPanel.tsx`, a real form
+   bound to the layer-list selection: typed controls for every scalar field
+   across all 8 primitives (`propCatalog.ts`, the real schema-extraction
+   pass), a live-validated JSON fallback for array/nested content props
+   (`Matrix.values`, `Graph.nodes/edges`, `Emphasis.box`), and a real
+   add/remove keyframe-list editor for both 2D and 3D scene cameras.
+   `manifestEdit.ts` (pure, 18 tests — `packages/motion`'s first test
+   harness) reads/writes the manifest immutably and degrades gracefully
+   (never throws) for a stale selection or an unrecognized `use`, the real
+   backward-compatibility mechanism the owner explicitly required ("should
+   also work on our current videos as well") — verified live via a
+   scratch harness against `sample.ts`'s real manifest (Chrome DevTools
+   automation: read every field group renders correctly populated, a
+   scalar edit and a JSON-field edit both round-trip into the manifest
+   including the commit-before-unmount race when switching selection
+   mid-edit). `MotionTab.tsx`'s right-hand cluster is now a real
+   `react-resizable-panels`-backed `PanelGroup` (`resizable.tsx` — a local
+   wrapper, not `@chroma/ui`'s, due to the same `@react-three/fiber`
+   JSX-typing conflict `Button.tsx` already documented), honouring the
+   new "every resizable-by-nature pane must actually be resizable" rule.
+   **Phase 3 (NLE half) is actually now unblocked** — Phase B3 (real
+   blend modes/opacity, the compositor prerequisite this doc originally
+   named) shipped as D-088 during tonight's own Full NLE P0 pass, so the
+   "blocked on B3" note above is stale (checked against
+   `docs/notes/multi-track-nle.md`'s own current status, not assumed).
+   **Not started this pass anyway** — it requires editing
+   `packages/editor/src/TimelinePane.tsx`, which another concurrent agent
+   was actively deep in (D-094–D-098's dnd-kit consolidation) for the
+   entire duration of this dispatch; building Phase 3 there risked a real
+   file collision, so it was deliberately deferred rather than raced.
+   **Real next step once that other work settles**: Phase 3, now genuinely
+   unblocked. **Phase 4 (shared panel shell)** waits on Phase 3.
 8. **Unify clip identity, Edit ↔ Colorist (Resolve-shaped)** — owner,
    2026-09-03: "we have one clip we add, we can move to LUTs and color and
    we have the same clip, not multiple" (Resolve comparison), triggered by

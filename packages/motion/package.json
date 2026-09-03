@@ -5,11 +5,18 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Motion tab (D-039 / D-046) — @remotion/player embed of @chroma/motion-engine's Animation composition + a JSON scene-manifest editor, validated against the engine's zod schema.",
+  "description": "Chroma Motion tab (D-039 / D-046) — @remotion/player embed of @chroma/motion-engine's Animation composition + a JSON scene-manifest editor, validated against the engine's zod schema. Global Inspector Phase 2 (D-099): a real property panel bound to the layer-list selection.",
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "@chroma/motion-engine": "*",
     "@remotion/player": "4.0.519",
     "@tauri-apps/api": "^2.11.1",
-    "react": "^19.2.8"
+    "react": "^19.2.8",
+    "react-resizable-panels": "4.12.3"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
   }
 }

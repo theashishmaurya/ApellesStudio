@@ -20,6 +20,17 @@ One or two lines per session. Detail lives in the decision it references.
   real Tauri/WKWebView window — flagged explicitly, not claimed closed.
   `tsc`/vitest/vite build clean (88/88 tests, 64-error app baseline
   unchanged, one new safe React-Compiler bailout accounted for).
+- **2026-09-04** — **Global Inspector Phase 2: a real Motion property panel
+  (D-099).** Typed form bound to the layer-list selection across all 8
+  primitives, JSON fallback for content-shaped props, a real camera
+  keyframe-list editor, a resizable right-hand panel cluster. Reads/writes
+  the manifest immutably and degrades gracefully on a stale/unrecognized
+  selection — verified against real, already-existing manifests (the
+  owner's explicit backward-compat requirement) via a scratch Chrome-driven
+  harness, not just unit tests. `packages/motion`'s first test harness
+  (18/18). Phase 3 (NLE half) found to be newly unblocked (B3 shipped as
+  D-088) but deliberately not started — would need `TimelinePane.tsx`,
+  in active use by concurrent dnd-kit work all session.
 - **2026-09-04** — **Mid-stack track insert, kind inference, a real
   cross-track clip-move handle, cross-track overlap allowed (D-096,
   B-027).** Continuing D-095's own live-testing session: a track can now
