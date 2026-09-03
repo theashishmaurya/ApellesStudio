@@ -6349,3 +6349,76 @@ check `ps aux | grep cargo` first.
   `app/src-tauri/src/chroma/audio.rs` that the new required fields broke —
   9 sites total, all real production/test code, not dead code). Phase 2
   (the compositor) is next.
+
+## D-087 — Sidecar memory: diagnosed the 5.78 GB report, shipped real observability + TTL auto-unload
+
+**decided (2026-09-03) · built (2026-09-03)**
+
+- **Context.** Owner, live, Activity Monitor screenshot: a Python process at
+  5.78 GB — "we have a memory leak somewhere, this is not acceptable, we
+  need some kind of way to look at memory for our sidecar." Follow-up,
+  explicit: "once we used we need some kind of TTL to offload them or else
+  it will be a nightmare" — a real automatic idle-unload, not just a manual
+  reclaim button.
+- **Diagnosed first, didn't assume a bug.** The specific process in the
+  screenshot (PID 8210) was already gone by the time this was investigated
+  — `ps`/`lsof` on the *current* sidecar process showed ~60 MB RSS at rest,
+  and no Python process on the machine exceeded 500 MB. The 5.78 GB reading
+  was real, just of an earlier sidecar instance from earlier in tonight's
+  session (this sidecar has been restarted several times tonight across the
+  relight/MoGe-2 work) — not evidence the *current* process is actively
+  leaking. Checked B-002's existing `_free_gpu()` fix (`torch.mps.
+  empty_cache()` + `gc.collect()`, called in every heavy endpoint's
+  `finally`) is correctly present in every endpoint including this
+  session's own new `/generate_normal_map` (D-077) — verified by reading
+  it, not assumed correct just because I wrote it earlier tonight.
+- **The real finding: not a leak, a genuine missing-memory-management gap.**
+  `_free_gpu()` only returns *cached allocator blocks* to the OS — it was
+  never designed to and does not unload model weights. Every lazy-singleton
+  loader (`sam`/`detector`/`matte`/`video_depth`/`moge`, plus
+  `_get_video_predictor`'s SAM 2 video predictor) sets its global once and
+  never clears it. A session that touches subject tracking, depth tracking,
+  AND relight (as tonight's did) accumulates all 6 real models resident at
+  once, forever, even hours after any of them were last used. That is a
+  real, physically-expected way to reach several GB — not runaway/unbounded
+  growth, but genuinely nothing was ever built to release it. Almost
+  certainly what the owner actually saw.
+- **Fix — TTL-based automatic idle-unload, the owner's own explicit ask,
+  not just a manual fallback** (`ai/server.py`):
+  - Every loader now calls `_touch(name)` on every call (cache hit or real
+    load — being asked for is "used" for TTL purposes).
+  - A background daemon thread (`_ttl_sweep_loop`, `_SWEEP_INTERVAL_SECONDS
+    = 30`) wakes every 30s and unloads (`del` the global + `_free_gpu()`)
+    anything idle past `MODEL_TTL_SECONDS` (default 300 = 5 min, overridable
+    via `CHROMA_MODEL_TTL_SECONDS` for testing/tuning).
+  - **Safety against yanking a model mid-request:** the sweep acquires the
+    same `_GPU` lock every heavy endpoint already holds while calling a
+    loader (B-002's own "one Apple GPU, serialize every model call"
+    design) — while any request holds `_GPU`, the sweep simply blocks until
+    it's released, so a model can never be unloaded out from under a call
+    in progress. No new locking primitive, reused the one that already
+    existed for exactly this class of problem.
+  - `GET /memory` — real observability: current process RSS (`ps -o rss= -p
+    <pid>`, shelled out once per call — no new dependency for one number,
+    and this is a debugging endpoint, not a hot path) plus each model's
+    loaded state, idle seconds, and the live TTL.
+  - `POST /unload` (optional `{"model": "<name>"}`, omitted = unload
+    everything loaded) — the manual reclaim the owner can hit right after a
+    heavy job, alongside the automatic sweep, not instead of it.
+- **Verified live, end to end, not just read the code:** loaded MoGe-2 via a
+  real `/generate_normal_map` call (RSS 251.9 MB → 767.8 MB, confirming a
+  real model actually loaded), confirmed `/memory` reported it loaded with
+  a live idle-seconds counter; with `CHROMA_MODEL_TTL_SECONDS=12`, waited
+  35s and confirmed the sweep thread actually unloaded it (`/memory` back to
+  `loaded: false`, log line `[memory] TTL sweep unloaded: moge`) —
+  caught and fixed a real bug in this same verification pass: the sweep's
+  own log `print()` wasn't flushed, so it didn't show up in the log file
+  until a later flush, defeating the point of a debug log line — added
+  `flush=True`. Also verified `POST /unload` for a specific model, for "all
+  loaded," and the unknown-model-name error path.
+- **Verification.** Sidecar restarted clean on the real default TTL (300s)
+  after testing; `curl /health` and `curl /memory` both healthy. No `cargo`
+  touched — pure Python, `ai/server.py` only. No existing pytest suite in
+  `ai/` to run (`test_depth_track.py` is a standalone script, matching this
+  directory's existing convention, not a harness this change needed to
+  satisfy).

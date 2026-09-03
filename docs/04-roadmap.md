@@ -44,16 +44,15 @@ roadmap structure.
   verification was starved to ~0% CPU by the other 3 parallel agents' cargo
   work and could not complete — flagged honestly in the write-up, not skipped
   silently.
-- 🔄 **Sidecar memory: diagnostics + TTL auto-unload** — owner: a Python process at
-  5.78GB, "we have a memory leak somewhere... we need some kind of TTL to offload
-  them or else it will be a nightmare." Diagnosing whether this is a real leak or
-  expected cumulative footprint (5 real models loaded into one long-lived process
-  across tonight's session: SAM2, YOLO, ViTMatte, Video-Depth-Anything, MoGe-2 —
-  none ever unloaded before now), building a real `/memory`-style diagnostic
-  endpoint, and — per the owner's explicit follow-up — a real TTL-based automatic
-  idle-unload (per-model last-used timestamp + a background sweep freeing anything
-  idle past the TTL, safe against the existing `_GPU` lock), not just a manual
-  unload endpoint. In progress, `ai/server.py`.
+- ✅ **Sidecar memory: diagnostics + TTL auto-unload** — done, **D-087**. Not a
+  leak — the specific 5.78GB process was already gone by the time it was
+  investigated; the real gap was that loaded models (SAM2/YOLO/ViTMatte/
+  Video-Depth-Anything/MoGe-2) never got released. Shipped `GET /memory`
+  (RSS + per-model loaded/idle status) and a background TTL sweep
+  auto-unloading anything idle past 5 min, safe against the existing `_GPU`
+  lock; `POST /unload` for a manual reclaim alongside it. Verified live
+  end to end (loaded MoGe-2, watched it auto-unload after the TTL, confirmed
+  via `/memory` and real RSS numbers the whole way).
 
 ---
 

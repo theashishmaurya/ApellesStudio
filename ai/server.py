@@ -74,6 +74,177 @@ def _free_gpu():
     gc.collect()
 
 
+# ---------------------------------------------------------------------------
+# Model idle-unload (D-084) — owner, live, Activity Monitor screenshot: a
+# Python process at 5.78 GB, "we have a memory leak somewhere... once we used
+# we need some kind of TTL to offload them or else it will be a nightmare."
+#
+# Diagnosis first: the specific 5.78 GB process (PID 8210) was already gone
+# by the time this was investigated — `ps`/`lsof` on the *current* sidecar
+# process showed ~60 MB RSS, and no Python process on the machine was over
+# 500 MB. So the reading was real but of an earlier sidecar instance, not
+# evidence of an ongoing leak in this one. `_free_gpu()` (B-002, above) is
+# correctly called in every heavy endpoint's `finally` block, including this
+# session's own new `/generate_normal_map` (D-077) — verified by reading it,
+# not assumed. But `_free_gpu()` only returns *cached allocator blocks* to
+# the OS; it was never meant to and does not unload the model weights
+# themselves. The real gap `_free_gpu()` was never designed to close: every
+# lazy-singleton loader below (`sam`/`detector`/`matte`/`video_depth`/`moge`,
+# plus `_get_video_predictor`'s SAM 2 video predictor) sets its global ONCE
+# and never clears it — a long session that touches subject tracking, depth
+# tracking, AND relight (as tonight's did) accumulates all five real models
+# resident at once, forever, even once nothing has used any of them for
+# hours. That's a real, physically expected way to reach several GB — not a
+# runaway/unbounded leak, but a genuine missing-memory-management gap, and
+# almost certainly what the owner actually saw. Fixed here with a real
+# TTL-based idle-unload (the owner's own explicit ask, not just a manual
+# `/unload` fallback) plus a `/memory` diagnostic endpoint so this doesn't
+# require guessing via Activity Monitor next time.
+#
+# Safety: unloading must never race an in-flight request. Every heavy
+# endpoint already serializes through `_GPU` (one Apple GPU, B-002's own
+# comment). The sweep thread below acquires the SAME `_GPU` lock before
+# unloading anything — while a request holds `_GPU` (any `with _GPU:` block,
+# already present in every endpoint that calls a loader), the sweep simply
+# blocks until it's released, so a model can never be pulled out from under
+# a call in progress.
+MODEL_TTL_SECONDS = float(os.environ.get("CHROMA_MODEL_TTL_SECONDS", 300))  # 5 min
+_SWEEP_INTERVAL_SECONDS = 30
+
+_last_used_lock = threading.Lock()
+_last_used: dict[str, float] = {}
+
+
+def _touch(name: str) -> None:
+    """Call from inside every lazy-loader, on EVERY call (cache hit or real
+    load) — being asked for is what "used" means for TTL purposes, not just
+    the first load."""
+    with _last_used_lock:
+        _last_used[name] = time.time()
+
+
+def _idle_seconds(name: str) -> Optional[float]:
+    with _last_used_lock:
+        t = _last_used.get(name)
+    return None if t is None else max(0.0, time.time() - t)
+
+
+def _forget(name: str) -> None:
+    with _last_used_lock:
+        _last_used.pop(name, None)
+
+
+def _unload_sam() -> bool:
+    global _sam
+    if _sam is None:
+        return False
+    _sam = None
+    _forget("sam")
+    return True
+
+
+def _unload_detector() -> bool:
+    global _detector
+    if _detector is None:
+        return False
+    _detector = None
+    _forget("detector")
+    return True
+
+
+def _unload_matte() -> bool:
+    global _matte
+    if _matte is None:
+        return False
+    _matte = None
+    _forget("matte")
+    return True
+
+
+def _unload_video_pred() -> bool:
+    global _video_pred
+    if _video_pred is None:
+        return False
+    _video_pred = None
+    _forget("video_pred")
+    return True
+
+
+def _unload_video_depth() -> bool:
+    global _vda
+    if _vda is None:
+        return False
+    _vda = None
+    _forget("video_depth")
+    return True
+
+
+def _unload_moge() -> bool:
+    global _moge
+    if _moge is None:
+        return False
+    _moge = None
+    _forget("moge")
+    return True
+
+
+# name -> (is-loaded predicate, unload fn). A predicate rather than a bare
+# global reference because the globals themselves are reassigned by the
+# unload/(re)load functions — a closure over the name value at dict-build
+# time here, resolved fresh on every call, same pattern `_idle_seconds`
+# already uses.
+_MODEL_REGISTRY: dict[str, tuple] = {
+    "sam": (lambda: _sam is not None, _unload_sam),
+    "detector": (lambda: _detector is not None, _unload_detector),
+    "matte": (lambda: _matte is not None, _unload_matte),
+    "video_pred": (lambda: _video_pred is not None, _unload_video_pred),
+    "video_depth": (lambda: _vda is not None, _unload_video_depth),
+    "moge": (lambda: _moge is not None, _unload_moge),
+}
+
+
+def _sweep_idle_models() -> list[str]:
+    """Unload every model idle past `MODEL_TTL_SECONDS`. Acquires `_GPU` —
+    see the module-doc note above on why that's what makes this safe to run
+    concurrently with real requests. Returns the names actually unloaded."""
+    freed = []
+    with _GPU:
+        for name, (is_loaded, unload) in _MODEL_REGISTRY.items():
+            if not is_loaded():
+                continue
+            idle = _idle_seconds(name)
+            # `idle is None` (loaded but never touched — shouldn't happen
+            # once every loader calls `_touch`, but fail safe rather than
+            # unload something we have no usage evidence for either way)
+            # is deliberately NOT swept.
+            if idle is not None and idle >= MODEL_TTL_SECONDS:
+                if unload():
+                    freed.append(name)
+        if freed:
+            _free_gpu()
+    return freed
+
+
+def _ttl_sweep_loop() -> None:
+    while True:
+        time.sleep(_SWEEP_INTERVAL_SECONDS)
+        try:
+            freed = _sweep_idle_models()
+            if freed:
+                # flush=True: stdout is line-buffered at best when not a TTY
+                # (always true under uvicorn/run.sh) — without it this can
+                # sit in the buffer indefinitely, defeating the point of a
+                # log line meant for live debugging (confirmed live: the
+                # unload itself worked on the first real test, but this
+                # line hadn't appeared in the log file yet when checked).
+                print(f"[memory] TTL sweep unloaded: {', '.join(freed)}", flush=True)
+        except Exception as e:  # a sweep bug must never take the server down
+            print(f"[memory] TTL sweep error (ignored): {e}", flush=True)
+
+
+threading.Thread(target=_ttl_sweep_loop, daemon=True).start()
+
+
 def sam():
     global _sam
     if _sam is None:
@@ -81,6 +252,7 @@ def sam():
 
         _sam = SAM(os.path.join(MODELS_DIR, "sam2.1_s.pt"))
         _sam.to(DEVICE)
+    _touch("sam")
     return _sam
 
 
@@ -93,6 +265,7 @@ def matte():
         proc = VitMatteImageProcessor.from_pretrained(VITMATTE_ID)
         model = VitMatteForImageMatting.from_pretrained(VITMATTE_ID).to(DEVICE).eval()
         _matte = (proc, model)
+    _touch("matte")
     return _matte
 
 
@@ -182,6 +355,7 @@ def detector():
         from ultralytics import YOLO
 
         _detector = YOLO(os.path.join(MODELS_DIR, "yolo11n.pt"))
+    _touch("detector")
     return _detector
 
 
@@ -232,6 +406,79 @@ def health():
             "relight_normals": os.path.isdir(
                 os.path.join(MODELS_DIR, "models--" + MOGE_REPO.replace("/", "--"))
             )}
+
+
+def _process_rss_mb() -> float:
+    """Current process RSS in MB. `resource.getrusage(RUSAGE_SELF).ru_maxrss`
+    is PEAK RSS, not current, and its unit is platform-dependent (KB on
+    Linux, BYTES on macOS — this sidecar only ever runs on macOS, so bytes).
+    A real *current* RSS reading needs either `psutil` (not a dependency
+    here — not worth adding for one number) or reading the process's own
+    `/proc`-equivalent, which macOS doesn't expose the same way Linux does.
+    `ps -o rss= -p <pid>` (KB) is the simplest real, current-RSS reading
+    with zero new dependencies, shelled out once per `/memory` call — this
+    endpoint is a debugging tool hit occasionally, not a hot path, so the
+    subprocess cost is a non-issue."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(os.getpid())],
+            capture_output=True, text=True, timeout=2,
+        )
+        return int(out.stdout.strip()) / 1024.0
+    except Exception:
+        return -1.0
+
+
+@app.get("/memory")
+def memory_status():
+    """D-084 — real memory observability for the sidecar, so "why is this
+    process N GB" doesn't require Activity Monitor guesswork. `rss_mb` is
+    THIS process's current resident memory; `models` reports each
+    lazy-singleton's loaded state and how long it's been idle, against the
+    live `MODEL_TTL_SECONDS` the background sweep (`_ttl_sweep_loop`) uses to
+    decide what to unload."""
+    models = {}
+    for name, (is_loaded, _unload) in _MODEL_REGISTRY.items():
+        loaded = is_loaded()
+        idle = _idle_seconds(name) if loaded else None
+        models[name] = {
+            "loaded": loaded,
+            "idle_seconds": round(idle, 1) if idle is not None else None,
+            "ttl_seconds": MODEL_TTL_SECONDS,
+        }
+    return {
+        "rss_mb": round(_process_rss_mb(), 1),
+        "device": DEVICE,
+        "models": models,
+        "sweep_interval_seconds": _SWEEP_INTERVAL_SECONDS,
+    }
+
+
+class UnloadReq(BaseModel):
+    # None/omitted = unload everything currently loaded.
+    model: Optional[str] = None
+
+
+@app.post("/unload")
+def unload_models(req: UnloadReq = UnloadReq()):
+    """D-084 — manual reclaim, alongside the automatic TTL sweep (not
+    instead of it): hit this right after a heavy job if you want the memory
+    back immediately rather than waiting out the TTL. Same `_GPU`-locked
+    safety as the automatic sweep — see the module doc above `_sweep_idle_models`."""
+    if req.model is not None and req.model not in _MODEL_REGISTRY:
+        return {"error": f"unknown model \"{req.model}\" — known: {list(_MODEL_REGISTRY)}"}
+    freed = []
+    with _GPU:
+        targets = [req.model] if req.model else list(_MODEL_REGISTRY)
+        for name in targets:
+            is_loaded, unload = _MODEL_REGISTRY[name]
+            if is_loaded() and unload():
+                freed.append(name)
+        if freed:
+            _free_gpu()
+    return {"freed": freed, "rss_mb": round(_process_rss_mb(), 1)}
 
 
 def _segment_array(rgb: np.ndarray, box=None, pts=None, auto_person=True,
@@ -349,6 +596,7 @@ def _get_video_predictor(max_obj: int = 1):
         _video_pred.high_res_features = None
         _video_pred.feat_sizes = None
         _free_gpu()
+    _touch("video_pred")
     return _video_pred
 
 
@@ -669,6 +917,7 @@ def video_depth():
         m = VideoDepthAnything(**VDA_CFG)
         m.load_state_dict(_torch.load(ckpt, map_location="cpu"), strict=True)
         _vda = m.to(_vda_device()).eval()
+    _touch("video_depth")
     return _vda
 
 
@@ -852,6 +1101,7 @@ def moge():
         from moge.model.v2 import MoGeModel
 
         _moge = MoGeModel.from_pretrained(MOGE_REPO, cache_dir=MODELS_DIR).to(DEVICE).eval()
+    _touch("moge")
     return _moge
 
 
