@@ -145,6 +145,31 @@ roadmap structure.
   app's `<StrictMode>` root is actually exposed to (confirmed by reading
   `main.tsx`). Rust `chroma-timeline` 59/59, `packages/editor` 88/88,
   `tsc` + `vite build` clean.
+- ✅ **Track reorder + cross-track clip move moved onto `@dnd-kit/core`/
+  `@dnd-kit/sortable`** — done, **D-098/B-028**. Cross-track clip move
+  (D-096's full-width strip) still failed live — "not able to drag video 2
+  to video 1" — the SECOND drag interaction this session to pass the
+  Chromium harness but fail in the real Tauri/WKWebView window. Re-checked
+  D-064's `dragDropEnabled` fix first (still globally set, ruled out), then
+  implemented the dnd-kit scoping doc's phase 1 plan for real: track
+  reorder onto `@dnd-kit/sortable`'s `SortableContext`/`useSortable`,
+  cross-track clip move onto `@dnd-kit/core`'s `useDraggable`/
+  `useDroppable`/`DragOverlay` — same-track drag/trim/resize untouched
+  (the timeline library's own native mechanism, never what was broken).
+  Two real bugs found and fixed live during implementation: a React-
+  synthetic-event same-element-handler ordering issue (a capture-phase
+  `stopPropagation` was silently also blocking dnd-kit's own bubble-phase
+  listener on the same element — fixed by composing into one handler), and
+  a droppable-registration timing issue (a conditionally-mounted droppable
+  wasn't measured in time for its own first drag — fixed by mounting it
+  permanently, toggling interactivity via a prop instead). Verified against
+  the real component under real `<StrictMode>` with real `PointerEvent`
+  sequences (the usual CDP native-drag tool doesn't trigger dnd-kit at
+  all) — dnd-kit's own open StrictMode issue does not reproduce on the
+  installed version; still explicitly not a real WKWebView window,
+  flagged as such rather than claimed closed. `tsc`/vitest/vite build
+  clean (88/88 tests, 64-error app baseline unchanged, one new safe
+  React-Compiler bailout accounted for).
 
 ---
 

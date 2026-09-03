@@ -64,6 +64,15 @@
  *     `dropTargetTrack` row-from-`clientY` math the Sources-panel path
  *     already uses; a same-track drop of the clip-move payload is a no-op
  *     here (the library's own drag already owns same-row repositioning).
+ *     **D-098 superseded this native-HTML5 mechanism** (and D-097's own
+ *     track-reorder equivalent) with real `@dnd-kit/core`/`@dnd-kit/
+ *     sortable` drags — native HTML5 `draggable` was reported live as
+ *     unreliable on Tauri's macOS WKWebView twice, despite passing this
+ *     session's own Chromium-based harness checks each time. See D-098 in
+ *     `docs/08-decisions.md`, and `ClipMoveHandle`/`SortableTrackHeader`/
+ *     `TrackDropZone` (module scope, below) for the current mechanism. The
+ *     "distinct hit-target, not either-defers-to-the-other" coexistence
+ *     principle above is unchanged — only the drag API underneath it is.
  *   - **Dropping a Sources-panel clip targets whichever lane the cursor is
  *     over** (D-046 pass 3's plain-HTML5-drag mechanism, now row-aware) —
  *     `dropTargetTrack` converts `e.clientY` into a row index using the
@@ -133,6 +142,19 @@ import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-t
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
 import './timeline-overrides.css';
 import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS as DndCSS } from '@dnd-kit/utilities';
+import {
   AudioLines,
   ArrowRightLeft,
   Diamond,
@@ -175,7 +197,6 @@ import { useEditorTimelineStore } from './timelineStore';
 import { Waveform } from './Waveform';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
-  CHROMA_CLIP_MOVE_MIME,
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_TRACK_GAIN,
   clipFromDraggedMedia,
@@ -300,6 +321,229 @@ interface Selection {
   id: string;
 }
 
+/** D-098 — real `@dnd-kit/sortable` drag id for track `index`, and the
+ *  `data` payload every drag source/target below reads back in `onDragEnd`
+ *  to tell a track-reorder apart from a clip cross-track move (two
+ *  independent drag "kinds" sharing one `DndContext`, disambiguated by
+ *  `event.active.data.current.type`, not by id shape). */
+function trackDragId(index: number): string {
+  return `track:${index}`;
+}
+
+/** D-098 — a track header row, now a real `@dnd-kit/sortable` item
+ *  (replacing D-094's native HTML5 `draggable` + hand-rolled
+ *  `draggedTrack`/`dragOverTrack` state and per-row `onDragOver`/`onDrop`).
+ *  Defined at module scope, not nested in `TimelinePane` — a component
+ *  declared inside another component's body gets a new identity every
+ *  render, which would force-remount this on every parent re-render and
+ *  break `useSortable`'s own drag-state continuity; every dnd-kit-based
+ *  component in this file follows the same rule. `setNodeRef` goes on the
+ *  whole row (so the real "other rows slide out of the way" animation
+ *  `@dnd-kit/sortable` is actually for applies to the row, not just the
+ *  handle); `attributes`/`listeners` are spread ONLY on the small grip
+ *  icon (the standard dnd-kit "drag handle" pattern) so the rest of the
+ *  row — the lock/hide/mute/remove buttons — stays plain-clickable. */
+function SortableTrackHeader({
+  index,
+  height,
+  isVideo,
+  muted,
+  locked,
+  hidden,
+  label,
+  onToggleLock,
+  onToggleHidden,
+  onToggleMute,
+  onRemove,
+}: {
+  index: number;
+  height: number;
+  isVideo: boolean;
+  muted: boolean;
+  locked: boolean;
+  hidden: boolean;
+  label: string;
+  onToggleLock: () => void;
+  onToggleHidden: () => void;
+  onToggleMute: () => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: trackDragId(index),
+    data: { type: 'track' as const, index },
+  });
+  const style: CSSProperties = {
+    height,
+    transform: DndCSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={
+        'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
+        (locked ? 'opacity-60 ' : '')
+      }
+    >
+      <div className="flex items-center gap-1">
+        {/* D-098 — real `move_track` behaviour is now driven by
+            `@dnd-kit/sortable` instead of native HTML5 `draggable`,
+            specifically because native HTML5 drag was reported live as
+            unreliable on Tauri's macOS WKWebView (D-097's own doc) despite
+            passing every check this session's Chromium-based harness could
+            run — a real, honest gap dnd-kit's pointer/keyboard-sensor
+            model (not native browser drag internals) is meant to close. */}
+        <div
+          className="cursor-grab p-1 -m-1 text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
+          {...attributes}
+          {...listeners}
+          title="Drag to reorder track"
+          aria-label="Drag to reorder track"
+        >
+          <GripVertical className="size-3" />
+        </div>
+        {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
+        <span className="text-[10px] font-medium truncate flex-1">{label}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleLock}
+          aria-label={locked ? 'Unlock track' : 'Lock track'}
+          title={locked ? 'Unlock track' : 'Lock track'}
+        >
+          {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+        </Button>
+        {isVideo && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onToggleHidden}
+            aria-label={hidden ? 'Show track' : 'Hide track'}
+            title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
+          >
+            {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+          </Button>
+        )}
+        {!isVideo && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onToggleMute}
+            aria-label={muted ? 'Unmute track' : 'Mute track'}
+            title={muted ? 'Unmute track' : 'Mute track'}
+          >
+            {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="ml-auto text-red-400 hover:text-red-400"
+          onClick={onRemove}
+          aria-label="Remove track"
+          title="Remove track"
+        >
+          <Trash2 className="size-3" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** D-098 — the cross-track clip-move handle, now a real `useDraggable`
+ *  source (replacing D-094/D-096's native HTML5 `draggable` top strip).
+ *  Module-scope for the same remount-safety reason as `SortableTrackHeader`
+ *  above. Still a small, physically distinct DOM element inset past the
+ *  10px edge-trim zones — the safety property that let this coexist with
+ *  the timeline library's own same-track `interact.js` drag was never
+ *  about native-vs-dnd-kit, it was about being a separate hit target, which
+ *  this still is. `opacity-0` while dragging — the real element hides in
+ *  place, `DragOverlay` (rendered once, in `TimelinePane`) shows the
+ *  floating ghost instead, a real cursor-follow preview HTML5's frozen
+ *  drag-image (B-027) never gave us. */
+function ClipMoveHandle({ track, clipId }: { track: number; clipId: string }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `clip:${track}:${clipId}`,
+    data: { type: 'clip' as const, track, clipId },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        'absolute left-[11px] right-[11px] top-0 z-20 flex h-2.5 cursor-grab items-center justify-center rounded-t text-button-text/60 hover:bg-white/10 hover:text-button-text active:cursor-grabbing ' +
+        (isDragging ? 'opacity-0' : '')
+      }
+      {...attributes}
+      {...listeners}
+      // D-098 — same intent as D-094's original stopPropagation: keep this
+      // press from ever reaching the library's own interact.js listener,
+      // bound natively (not via React) to the action wrapper, an ANCESTOR
+      // of this element. A SEPARATE capture-phase `onPointerDownCapture`
+      // calling `stopPropagation()` was tried first and empirically broke
+      // dnd-kit's own drag (verified live: the handle stopped responding to
+      // real pointer events entirely) — React's synthetic dispatch runs
+      // capture-then-bubble handlers as ONE ordered sequence and appears to
+      // honor `stopPropagation()` across that whole sequence, not just
+      // "propagation to other elements" the way native
+      // `Event.stopPropagation()` does — so it was also skipping
+      // `listeners.onPointerDown` (a bubble-phase handler on this SAME
+      // element). Fixed by composing into ONE handler instead of two
+      // separate props: stop propagation first (still real,
+      // native-DOM-level — this is what actually keeps interact.js on the
+      // ancestor from ever seeing the press), then explicitly call dnd-kit's
+      // own `listeners.onPointerDown` — no reliance on React's same-element
+      // multi-handler ordering at all.
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        listeners?.onPointerDown?.(e);
+      }}
+      title="Drag to move to another track"
+      aria-label="Drag to move to another track"
+    >
+      <GripHorizontal size={10} />
+    </div>
+  );
+}
+
+/** D-098 — one droppable target per track, overlaid on the edit area at
+ *  that track's real on-screen position (same `RULER_AND_MARGIN_PX +
+ *  index*ROW_HEIGHT - scrollTop` math `insertPreview`'s overlays already
+ *  use). **Always mounted** (not conditionally rendered on an active
+ *  drag) — a real bug found live, not assumed: mounting these only once
+ *  `activeDrag` flips on meant dnd-kit had to register + measure a brand
+ *  new droppable in the middle of an already-in-progress drag, and its
+ *  collision detection never caught up in time for the very first
+ *  gesture (verified live: the `DragOverlay` ghost tracked the pointer
+ *  correctly, but `onDragEnd`'s `event.over` never resolved, so the drop
+ *  silently didn't move anything). Kept permanently mounted instead —
+ *  `useDroppable`'s registration/measurement then happens at real mount
+ *  time, long before any drag starts — and `pointer-events` is toggled by
+ *  `active` instead of existence, so it's still fully inert (zero chance
+ *  of intercepting a normal click/same-track-drag/resize) outside a
+ *  clip-type drag. Module-scope for the same remount-safety reason as the
+ *  other two. */
+function TrackDropZone({ track, top, height, active }: { track: number; top: number; height: number; active: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `track-drop:${track}`,
+    data: { type: 'track' as const, track },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={
+        (active ? 'pointer-events-auto' : 'pointer-events-none') +
+        ' absolute left-0 right-0 z-20 ' +
+        (active && isOver ? 'bg-accent/10 outline outline-accent/60 -outline-offset-1' : '')
+      }
+      style={{ top, height }}
+    />
+  );
+}
+
 export function TimelinePane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
@@ -397,14 +641,17 @@ export function TimelinePane() {
   const effects = useMemo(() => ({ [EFFECT_ID]: { id: EFFECT_ID, name: 'clip' } }), []);
 
   const [dragOver, setDragOver] = useState(false);
-  // D-094 — track-reorder drag state (header sidebar only, see the module
-  // doc) and cross-track clip-move drag state (edit area, same mechanism
-  // as the Sources-panel drop below, a second MIME type). Both gated the
-  // same way `dragOver`/`scrollTop` already are (B-024) — a native
-  // `dragover` fires continuously for the whole gesture, so every setter
-  // here only actually dispatches when the value would change.
-  const [draggedTrack, setDraggedTrack] = useState<number | null>(null);
-  const [dragOverTrack, setDragOverTrack] = useState<number | null>(null);
+  // D-098 — track reorder and cross-track clip move are now real
+  // `@dnd-kit/core`/`@dnd-kit/sortable` drags, not native HTML5 `draggable`
+  // (see the module doc on `SortableTrackHeader`/`ClipMoveHandle` for why —
+  // reported live as unreliable on Tauri's WKWebView). `activeDrag` is the
+  // one shared `<DndContext>`'s notion of "what's currently being dragged"
+  // — drives the `DragOverlay` ghost and whether `TrackDropZone` overlays
+  // exist in the DOM at all (only during a clip-type drag).
+  const [activeDrag, setActiveDrag] = useState<
+    { type: 'track'; index: number } | { type: 'clip'; track: number; clipId: string } | null
+  >(null);
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   /** D-095/D-096/D-097 — live feedback for a Sources-panel drag: `'edge'`
    *  shows an insertion line snapped to the nearest clip boundary on the row
    *  under the pointer (the dragged clip's real duration is unreadable
@@ -497,9 +744,9 @@ export function TimelinePane() {
    *  event's `clientY` — see the module doc's "Dropping a Sources-panel
    *  clip" section for the exact layout constants this reads. Falls back to
    *  the first video track (this file's pre-D-080 default) if the pointer
-   *  is above/below every row. Reused by D-094's cross-track clip-move drop
-   *  for the same reason — it's the same "which row is the pointer over"
-   *  question either drag needs answered. */
+   *  is above/below every row. (D-098: cross-track clip move no longer uses
+   *  this — it's a real `@dnd-kit/core` drag now, resolving its own drop
+   *  target via `TrackDropZone`'s droppable id, not `clientY` math.) */
   const dropTargetTrack = (e: DragEvent): number => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) return timeline ? videoTrackIndex(timeline) : 0;
@@ -522,21 +769,19 @@ export function TimelinePane() {
   // apart. Per the HTML5 spec, `dataTransfer.getData` is unreadable during
   // `dragover` (only `.types` is) — that's why this only ever branches on
   // `.types.includes(...)`, never reads the payload until `onDrop`.
+  //
+  // D-098 — no longer branches on `CHROMA_CLIP_MOVE_MIME`: cross-track clip
+  // move is a real `@dnd-kit/core` drag now (`ClipMoveHandle`/`onDndDragEnd`
+  // below), a completely separate drag system from this native-HTML5
+  // `onDragOver`/`onDrop` pair, which now only ever handles a Sources-panel
+  // media drag.
   const onDragOver = (e: DragEvent) => {
-    const isClipMove = e.dataTransfer.types.includes(CHROMA_CLIP_MOVE_MIME);
     const isMediaDrag = e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME);
-    if (!isClipMove && !isMediaDrag) return;
+    if (!isMediaDrag) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = isClipMove ? 'move' : 'copy';
+    e.dataTransfer.dropEffect = 'copy';
     setDragOver((prev) => (prev ? prev : true));
 
-    // D-095/D-096 — live insertion/new-track preview, Sources-panel drags
-    // only (see `insertPreview`'s own doc — a cross-track clip move doesn't
-    // ripple/insert, so it never sets this).
-    if (!isMediaDrag) {
-      setInsertPreview((prev) => (prev === null ? prev : null));
-      return;
-    }
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) {
       setInsertPreview((prev) => (prev === null ? prev : null));
@@ -570,50 +815,12 @@ export function TimelinePane() {
     setDragOver((prev) => (prev ? false : prev));
     setInsertPreview((prev) => (prev === null ? prev : null));
   };
+  // D-098 — no longer handles a `CHROMA_CLIP_MOVE_MIME` payload: cross-track
+  // clip move is `onDndDragEnd` (a real `@dnd-kit/core` drag) now. This
+  // handler is Sources-panel media drops only.
   const onDrop = (e: DragEvent) => {
     setDragOver(false);
     setInsertPreview(null);
-    // D-094 — cross-track clip move, checked first: a clip's drag handle
-    // carries `CHROMA_CLIP_MOVE_MIME`, never `CHROMA_MEDIA_DRAG_MIME`, so
-    // there's no ambiguity between the two branches.
-    const clipMoveRaw = e.dataTransfer.getData(CHROMA_CLIP_MOVE_MIME);
-    if (clipMoveRaw) {
-      e.preventDefault();
-      let payload: { track: number; id: string };
-      try {
-        payload = JSON.parse(clipMoveRaw);
-      } catch {
-        return;
-      }
-      const i = idxOf(payload.track, payload.id);
-      if (i < 0) return;
-      const toTrack = dropTargetTrack(e);
-      if (toTrack === payload.track) {
-        // D-096 — a real regression, found live immediately after the
-        // strip went full-width (B-027): this used to be an intentional
-        // no-op ("the library's own action-drag already owns same-row
-        // repositioning") because the old small corner grip was a near-
-        // impossible accidental grab. A full-width strip is an EASY
-        // accidental grab for an ordinary horizontal same-track drag —
-        // and this branch silently doing nothing read as "stuck, can't
-        // move it," a real reported break of a working D-051 feature.
-        // Fix: handle a same-track drop here too, the same way the
-        // library's own `onActionMoveEndCb` would — a plain reposition to
-        // wherever the pointer now is, through the normal `move` op
-        // (same-track overlap is still rejected, unchanged) — so which
-        // mechanism actually caught the gesture no longer matters to the
-        // outcome.
-        const rect = editAreaRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const startFrame = Math.max(0, xToFrame(e, rect));
-        applyOp({ kind: 'move', fromTrack: payload.track, toTrack, clip: i, startFrame });
-        return;
-      }
-      const clip = clipsOf(payload.track)[i];
-      applyOp({ kind: 'move', fromTrack: payload.track, toTrack, clip: i, startFrame: clip.start_frame });
-      setSelected({ track: toTrack, id: payload.id });
-      return;
-    }
     const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
     if (!raw) return;
     e.preventDefault();
@@ -752,54 +959,20 @@ export function TimelinePane() {
           >
             {clip?.name ?? action.id}
           </div>
-          {/* D-094/D-096 — cross-track clip-move drag handle: a FULL-WIDTH
-              top strip, not a small corner icon (D-094's original design,
-              grown once already in D-095 to a ~20px icon — still reported
-              live as hard to find/grab: "i should be able to drag A001 to
-              video_1... or vise versa," a real screenshot of trying to grab
-              the clip BODY itself, not hunting for an icon). Deliberately
-              did NOT make the whole clip body draggable to get there — the
-              library's own interact.js same-track drag is ALSO bound to
-              this same action wrapper via plain mousedown/pointermove (not
-              native HTML5 `draggable`), and setting `draggable=true` on the
-              clip body itself would race the two drag systems for the same
-              initial mousedown with no reliable winner (confirmed by
-              reasoning through the library's own event model before
-              building this, not guessed) — precisely the class of bug this
-              session's own D-074 relight-puck capture/bubble-phase incident
-              already taught this codebase to take seriously. A full-width
-              *strip*, still a distinct DOM element from the rest of the
-              clip body (same safe mechanism D-094 already used, just much
-              bigger), gets most of the ergonomic win — "grab anywhere along
-              the top of the clip" — without that risk. Horizontally inset
-              `left-[11px] right-[11px]` (not `left-0 right-0`) so it never
-              overlaps the 10px left/right edge resize zones
-              (`.timeline-editor-action-{left,right}-stretch`, siblings of
-              this content, full clip HEIGHT per the library's own bundled
-              CSS) — the exact B-013 hit-testing mistake this file already
-              paid for once, not worth risking again for a wider strip.
-              `onMouseDown`/`onPointerDown` stop propagation so interact.js
-              never sees this press. Only shown with more than one track —
-              nothing to cross-track-move to otherwise, same gating
-              `otherTracks`/"Move to ▾" already use. */}
-          {tracks.length > 1 && (
-            <div
-              className="absolute left-[11px] right-[11px] top-0 z-20 flex h-2.5 cursor-grab items-center justify-center rounded-t text-button-text/60 hover:bg-white/10 hover:text-button-text active:cursor-grabbing"
-              style={{ WebkitUserDrag: 'element' } as CSSProperties}
-              draggable
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              onDragStart={(e) => {
-                e.stopPropagation();
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData(CHROMA_CLIP_MOVE_MIME, JSON.stringify({ track: ti, id: action.id }));
-              }}
-              title="Drag to move to another track"
-              aria-label="Drag to move to another track"
-            >
-              <GripHorizontal size={10} />
-            </div>
-          )}
+          {/* D-098 — cross-track clip-move handle, now a real
+              `@dnd-kit/core` drag source (`ClipMoveHandle`, module-scope
+              component above) — native HTML5 `draggable` (D-094/D-096) was
+              reported live as unreliable on Tauri's WKWebView twice in one
+              session (this handle, then the track-reorder one) despite
+              passing every check this session's Chromium-based harness
+              could run; see `docs/08-decisions.md` D-098 for the real
+              investigation. Still a full-width top strip, still a distinct
+              hit target from the rest of the clip body inset past the 10px
+              edge-trim zones — that safety property was always about being
+              a separate element from the library's own interact.js-bound
+              action wrapper, not about which drag API sat underneath it.
+              Only shown with more than one track. */}
+          {tracks.length > 1 && <ClipMoveHandle track={ti} clipId={action.id} />}
         </div>
       );
     },
@@ -982,6 +1155,68 @@ export function TimelinePane() {
     }
   };
 
+  // D-098 — the one shared `<DndContext>`'s handlers, covering both drag
+  // kinds this file now hands to `@dnd-kit/core` (track reorder, cross-track
+  // clip move — same-track drag/trim/resize stays on the timeline library's
+  // own native mechanism, untouched, out of scope for this migration).
+  const onDndDragStart = useCallback((event: DragStartEvent) => {
+    const data = event.active.data.current as
+      | { type: 'track'; index: number }
+      | { type: 'clip'; track: number; clipId: string }
+      | undefined;
+    if (!data) return;
+    setActiveDrag(data);
+  }, []);
+
+  const onDndDragCancel = useCallback(() => setActiveDrag(null), []);
+
+  const onDndDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const data = event.active.data.current as
+        | { type: 'track'; index: number }
+        | { type: 'clip'; track: number; clipId: string }
+        | undefined;
+      setActiveDrag(null);
+      if (!data) return;
+
+      if (data.type === 'track') {
+        // `over` is another `SortableTrackHeader` (every sortable item is
+        // also a droppable, dnd-kit's own doc) — its `data.current.index`
+        // is the CURRENT render's track index, exactly what `doMoveTrack`
+        // (unchanged from D-094/D-097) already expects as `to`.
+        const overData = event.over?.data.current as { type: 'track'; index: number } | undefined;
+        if (!overData || overData.type !== 'track') return;
+        doMoveTrack(data.index, overData.index);
+        return;
+      }
+
+      // clip
+      const { track: fromTrack, clipId } = data;
+      const i = idxOf(fromTrack, clipId);
+      if (i < 0) return;
+      const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
+      if (!overData || overData.type !== 'track') return; // dropped outside any track — cancel, nothing to do
+      const toTrack = overData.track;
+      const clip = clipsOf(fromTrack)[i];
+      if (toTrack === fromTrack) {
+        // D-096/B-027's own fix, ported: a same-track drop via this handle
+        // is a real reposition (matching what the library's own
+        // `onActionMoveEndCb` would do), not a no-op — which mechanism
+        // actually caught the gesture must never change the outcome.
+        // `event.delta.x` is the net pointer movement for the whole drag,
+        // in screen px — converts to frames the same way `xToFrame` does,
+        // just relative rather than absolute (no `rect`/`clientX` needed).
+        const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+        const startFrame = Math.max(0, clip.start_frame + deltaFrames);
+        applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame });
+        return;
+      }
+      applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame: clip.start_frame });
+      setSelected({ track: toTrack, id: clipId });
+    },
+    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps],
+  );
+
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
   const zoomIn = () => setPxPerSec((w) => clampPxPerSec(w * ZOOM_STEP));
   const zoomOut = () => setPxPerSec((w) => clampPxPerSec(w / ZOOM_STEP));
@@ -1062,20 +1297,33 @@ export function TimelinePane() {
     });
   };
 
+  // D-098 — `DragOverlay` content: a small floating pill following the
+  // pointer for whichever drag is active, a real cursor-follow preview
+  // native HTML5 drag/drop never gave us (B-027's own drag-ghost complaint
+  // was a symptom of that gap, not a one-off bug — the browser's default
+  // drag image is a frozen DOM snapshot captured once at `dragstart`).
+  const dragOverlayLabel =
+    activeDrag?.type === 'track'
+      ? labels[activeDrag.index]
+      : activeDrag?.type === 'clip'
+        ? (clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]?.name ?? activeDrag.clipId)
+        : null;
+
   return (
-    <div
-      className={
-        'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
-        (dragOver ? 'ring-2 ring-inset ring-accent' : '')
-      }
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
-          e.preventDefault();
-          doRemove();
+    <DndContext sensors={dndSensors} onDragStart={onDndDragStart} onDragEnd={onDndDragEnd} onDragCancel={onDndDragCancel}>
+      <div
+        className={
+          'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
+          (dragOver ? 'ring-2 ring-inset ring-accent' : '')
         }
-      }}
-    >
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
+            e.preventDefault();
+            doRemove();
+          }
+        }}
+      >
       <TooltipProvider>
         <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
           <Tooltip>
@@ -1296,128 +1544,37 @@ export function TimelinePane() {
             className="absolute left-0 right-0"
             style={{ top: RULER_AND_MARGIN_PX - scrollTop }}
           >
-            {tracks.map((track, i) => {
-              const isVideo = track.kind === 'video';
-              const muted = !isVideo && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
-              const locked = !!track.locked;
-              const hidden = isVideo && !!track.hidden;
-              return (
-                <div
-                  key={i}
-                  className={
-                    'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
-                    (locked ? 'opacity-60 ' : '') +
-                    // D-094 — drop-target feedback for a track being
-                    // dragged over this row (see `onDragOver` below).
-                    (dragOverTrack === i && draggedTrack !== null && draggedTrack !== i
-                      ? 'bg-accent/10 outline outline-accent/60 -outline-offset-1'
-                      : '')
-                  }
-                  style={{ height: ROW_HEIGHT }}
-                  onDragOver={(e) => {
-                    if (draggedTrack === null) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    setDragOverTrack((prev) => (prev === i ? prev : i));
-                  }}
-                  onDragLeave={() => setDragOverTrack((prev) => (prev === i ? null : prev))}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = draggedTrack;
-                    setDraggedTrack(null);
-                    setDragOverTrack(null);
-                    if (from === null) return;
-                    doMoveTrack(from, i);
-                  }}
-                >
-                  <div className="flex items-center gap-1">
-                    {/* D-094 — track-reorder drag handle, replacing D-090's
-                        up/down buttons. Plain HTML5 drag/drop scoped to
-                        this header sidebar's own DOM — see the module doc.
-                        `move_track(from, to)` is the same op the old
-                        buttons wrote; the drop target is whichever row
-                        the pointer is over at drop time (`onDrop` above),
-                        not just an adjacent index.
-                        D-097 — real `move_track` behaviour was verified
-                        correct against a real (Chromium, via this
-                        session's own browser-automation harness) native
-                        drag; reported not to work in the actual app,
-                        which runs on Tauri's macOS WKWebView (a different
-                        engine, untestable this session). `p-1` grows the
-                        actual hit target from the bare 12px icon to a
-                        real ~20px one (a small `size-3` glyph with no
-                        padding is a plausible real-mouse miss target even
-                        where the underlying drag/drop wiring is correct),
-                        and `-webkit-user-drag: element` is an explicit
-                        hint WebKit is documented to need more often than
-                        Chromium for a custom `draggable` source. */}
-                    <div
-                      className="cursor-grab p-1 -m-1 text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
-                      style={{ WebkitUserDrag: 'element' } as CSSProperties}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', String(i));
-                        setDraggedTrack(i);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedTrack(null);
-                        setDragOverTrack(null);
-                      }}
-                      title="Drag to reorder track"
-                      aria-label="Drag to reorder track"
-                    >
-                      <GripVertical className="size-3" />
-                    </div>
-                    {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
-                    <span className="text-[10px] font-medium truncate flex-1">{labels[i]}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => toggleLock(i)}
-                      aria-label={locked ? 'Unlock track' : 'Lock track'}
-                      title={locked ? 'Unlock track' : 'Lock track'}
-                    >
-                      {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
-                    </Button>
-                    {isVideo && (
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => toggleHidden(i)}
-                        aria-label={hidden ? 'Show track' : 'Hide track'}
-                        title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
-                      >
-                        {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-                      </Button>
-                    )}
-                    {!isVideo && (
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => toggleMute(i)}
-                        aria-label={muted ? 'Unmute track' : 'Mute track'}
-                        title={muted ? 'Unmute track' : 'Mute track'}
-                      >
-                        {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="ml-auto text-red-400 hover:text-red-400"
-                      onClick={() => doRemoveTrack(i)}
-                      aria-label="Remove track"
-                      title="Remove track"
-                    >
-                      <Trash2 className="size-3" />
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
+            {/* D-098 — real `@dnd-kit/sortable` list, replacing D-094's
+                native HTML5 `draggable` track-reorder handle + hand-rolled
+                `draggedTrack`/`dragOverTrack` state (see the module doc /
+                `SortableTrackHeader`'s own doc for why). `items` is the
+                CURRENT render's track ids in order — `SortableContext` uses
+                it to compute the live "other rows slide out of the way"
+                animation during a drag. */}
+            <SortableContext items={tracks.map((_, i) => trackDragId(i))} strategy={verticalListSortingStrategy}>
+              {tracks.map((track, i) => {
+                const isVideo = track.kind === 'video';
+                const muted = !isVideo && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
+                const locked = !!track.locked;
+                const hidden = isVideo && !!track.hidden;
+                return (
+                  <SortableTrackHeader
+                    key={i}
+                    index={i}
+                    height={ROW_HEIGHT}
+                    isVideo={isVideo}
+                    muted={muted}
+                    locked={locked}
+                    hidden={hidden}
+                    label={labels[i]}
+                    onToggleLock={() => toggleLock(i)}
+                    onToggleHidden={() => toggleHidden(i)}
+                    onToggleMute={() => toggleMute(i)}
+                    onRemove={() => doRemoveTrack(i)}
+                  />
+                );
+              })}
+            </SortableContext>
           </div>
         </ResizablePanel>
 
@@ -1487,9 +1644,33 @@ export function TimelinePane() {
                 }}
               />
             )}
+            {/* D-098 — one real `useDroppable` target per track, always
+                mounted (see `TrackDropZone`'s own doc for why — a real
+                mid-drag droppable-registration timing bug found live), only
+                pointer-interactive while a clip-type `@dnd-kit/core` drag is
+                active. Positioned in the same `editAreaRef`-relative
+                coordinate space every other overlay in this file already
+                uses. */}
+            {tracks.map((_, i) => (
+              <TrackDropZone
+                key={i}
+                track={i}
+                top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop}
+                height={ROW_HEIGHT}
+                active={activeDrag?.type === 'clip'}
+              />
+            ))}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
-    </div>
+      </div>
+      <DragOverlay dropAnimation={null}>
+        {dragOverlayLabel && (
+          <div className="pointer-events-none rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-button-text shadow-lg">
+            {dragOverlayLabel}
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
   );
 }

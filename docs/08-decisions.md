@@ -7207,3 +7207,197 @@ logic in isolation.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-098 — Track reorder + cross-track clip move moved onto `@dnd-kit/core`/`@dnd-kit/sortable`, replacing native HTML5 drag (B-028)
+
+Owner: "not able to drag video 2 to video 1" — the SECOND drag interaction this
+session (after D-095's track-reorder finding) to pass this session's own
+Chromium-browser-automation checks but fail live in the real Tauri/WKWebView
+window. Given that real, recurring pattern, the owner greenlit implementing
+`docs/notes/dnd-kit-migration.md`'s phase 1 plan for real, not just scoping
+it further — this entry is that implementation.
+
+**Sanity check first, before touching any code**: re-verified D-064's
+`dragDropEnabled: false` fix is still in effect — `app/src-tauri/
+tauri.conf.json`, set at the single window's level (this app only ever has
+one window, "main"), so it covers every drag zone including the new strip,
+not scoped narrowly, not regressed. Ruled out as this bug's cause before
+starting the migration, per the coordinator's own explicit instruction to
+check the smaller/cheaper explanation first.
+
+**New dependency, per this repo's own rule (every new crate/dependency gets
+a `D-NNN`: what it's for, alternatives, license, maintenance status)**:
+`@dnd-kit/core@6.3.1` + `@dnd-kit/sortable@10.0.0` (`packages/editor`).
+**What it's for**: replaces native HTML5 `draggable`/`dataTransfer` for
+track reorder and cross-track clip move specifically — the two interactions
+reported broken live. **Alternatives**: continuing to harden native HTML5
+drag was the status quo (D-094/D-095/D-096's own increasingly defensive
+fixes — bigger hit targets, WebKit CSS hints — none of which actually
+closed the gap, per this bug); no other drag library was seriously
+considered, since dnd-kit was the owner's own explicit, informed steer, not
+a pick made from a fresh survey. **License**: MIT. **Maintenance status**:
+checked live against the npm registry + GitHub (not recalled) —
+not archived, 17.6k stars, real ongoing repo activity (pushed within the
+last ~2 months of this session's own clock) — but no new npm release since
+2024-12, and an OPEN issue (#2116, "React 19: DragDropProvider manager is
+destroyed during Strict Mode replay") against an in-progress, unreleased
+rewrite. Full detail already in `docs/notes/dnd-kit-migration.md`
+(unchanged by this pass — referenced, not repeated here).
+
+**Scope, exactly as the owner specified**: track reorder
+(`SortableTrackHeader`, wrapping `@dnd-kit/sortable`'s `useSortable` inside
+a `SortableContext`) and cross-track clip move (`ClipMoveHandle`/
+`TrackDropZone`, `@dnd-kit/core`'s `useDraggable`/`useDroppable`) — same-
+track drag/trim/resize stays on `@xzdarcy/react-timeline-editor`'s own
+native `flexible`/`dragLine` mechanism, completely untouched (working
+since D-051, never the thing reported broken). One shared `<DndContext>`
+wraps the whole `TimelinePane` return, with a single `PointerSensor`
+(`activationConstraint: {distance: 4}`, so a plain click doesn't
+accidentally start a drag) and one `onDragEnd`/`onDragStart`/`onDragCancel`
+handler set disambiguating "track" vs "clip" drags via
+`event.active.data.current.type`. `SortableTrackHeader`/`ClipMoveHandle`/
+`TrackDropZone` are all module-scope functions, not nested inside
+`TimelinePane` — a component declared inside another component's render
+body gets a new identity every render, which would force-remount it and
+break `useSortable`'s/`useDraggable`'s own drag-state continuity.
+
+**Track reorder**: `move_track(from, to)` is unchanged — `onDragEnd` reads
+`active`'s and `over`'s own `data.current.index` (both real track indices
+from the CURRENT render, since every sortable item's `data` is
+`{type:'track', index}`) and calls the EXISTING `doMoveTrack` helper
+verbatim (which already does the bounds check + `applyOp` + selection-
+follow via `trackIndexAfterMove`) — no new mutation logic, only a new
+trigger for the same one.
+
+**Cross-track clip move**: `TrackDropZone`, one real `useDroppable` per
+track, overlaid on the edit area at each track's actual on-screen position
+(reusing the exact `RULER_AND_MARGIN_PX + index*ROW_HEIGHT - scrollTop`
+math `insertPreview`'s own overlays already used). On drop: cross-track
+→ `applyOp({kind:'move', ..., startFrame: clip.start_frame})` (unchanged
+position, matches D-094's original); same-track (grabbing the handle but
+dropping on the SAME track) → `event.delta.x` converts to a frame offset
+the same way `xToFrame` does, applied as a real reposition — porting
+D-096/B-027's own fix forward (a same-track drop via this handle must
+never be a silent no-op, regardless of which drag system caught the
+gesture).
+
+**Two real implementation bugs found and fixed live during this pass**,
+neither guessed — both changed the actual shipped code, not just the
+verification method:
+
+1. **A React-synthetic-event same-element-handler ordering bug.** First
+   attempt: a separate `onPointerDownCapture={(e) => e.stopPropagation()}`
+   prop alongside `{...listeners}` on `ClipMoveHandle`, matching D-094's
+   original mouseDown/pointerDown-stopPropagation intent (keep the press
+   from ever reaching the timeline library's own `interact.js` listener,
+   bound natively to an ancestor). Verified live this broke the drag
+   entirely — the handle stopped responding to real pointer events. Native
+   `Event.stopPropagation()` only blocks propagation to OTHER elements,
+   never other listeners on the SAME one, but React's synthetic dispatch
+   runs the whole capture-then-bubble sequence as one ordered pass and
+   appears to honor `stopPropagation()` across that entire sequence — so
+   the capture-phase handler was also skipping `listeners.onPointerDown`
+   (a bubble-phase handler on that same element). Fixed by composing into
+   ONE handler instead of two separate props: `onPointerDown={(e) => {
+   e.stopPropagation(); listeners?.onPointerDown?.(e); }}` — no reliance on
+   React's same-element multi-handler ordering at all, and the
+   `stopPropagation()` call is still real/native, so it still keeps
+   `interact.js` on the ancestor from ever seeing the press.
+2. **A droppable-registration timing bug.** First attempt: `TrackDropZone`
+   only rendered while `activeDrag?.type === 'clip'` (mounted the instant a
+   clip drag starts). Verified live this meant `onDragEnd`'s `event.over`
+   never resolved — dnd-kit's default `rectIntersection` collision
+   detection reads from a `droppableRects` map populated by measuring each
+   registered droppable, and a droppable that's only just been mounted
+   hadn't been measured yet by the time the drop happened. Fixed by keeping
+   `TrackDropZone` **permanently mounted** (so `useDroppable` registers/
+   measures it at real component-mount time, long before any drag starts)
+   and toggling `pointer-events`/highlight via an `active` prop instead of
+   mount/unmount — still fully inert (zero click/drag interference) outside
+   a clip-type drag, just via CSS rather than DOM presence.
+
+**Live StrictMode verification — the real, elevated bar this pass needed**:
+the coordinator's own instruction was not to declare this done off the
+Chromium harness alone again, since that's exactly what happened for
+D-095/D-096's track-reorder and clip-move fixes before this bug report.
+This pass's harness (`app/harness.html`/`harness-main.tsx`, scratch,
+deleted after use, never committed — the same technique D-095 built)
+was extended to wrap its root in `<React.StrictMode>`, matching the real
+app's own root (`app/src/main.tsx` line 139, confirmed by reading it, not
+assumed) exactly — directly testing the open dnd-kit StrictMode issue
+(#2116) this session's own scoping doc flagged, rather than assuming it's
+fine because the package installs. **A real, separate finding surfaced
+during this verification, not a guess**: `mcp__chrome-devtools__drag` (this
+session's usual native-HTML5-drag CDP tool, which worked for D-095/D-096's
+testing) does NOT trigger dnd-kit's `PointerSensor` at all — dnd-kit
+deliberately doesn't use native HTML5 drag/drop, so a tool built for it
+can't drive dnd-kit either. Verification instead dispatched real
+`PointerEvent` sequences (`pointerdown`→`pointermove`→`pointerup`) directly
+via `evaluate_script`, which ALSO surfaced a real methodology lesson: firing
+all events synchronously within one script call never let dnd-kit's
+droppable-measurement effects run (see bug 2 above) — real
+`requestAnimationFrame` waits between events were needed, mirroring that a
+real human dragging with an actual mouse takes many multiples of one frame
+to move the cursor, so this was a synthetic-test-speed artifact, not
+something the real usage would ever hit. With that real event/timing
+discipline, verified **against the real rendered `TimelinePane` component,
+under real `<StrictMode>`, with real `PointerEvent`s**:
+- Track reorder: `move_track(0, 2)` on a 3-track fixture reordered
+  correctly, confirmed via the store's own resulting track-kind order.
+- Cross-track clip move: a clip dragged from track 1 onto track 0 (which
+  already held another clip covering the same time range) landed
+  correctly as a real overlapping layer — `[[a,b] on track 0, [] on track
+  1]`, `a`/`b` both at `start_frame: 0` — exercising D-096's own
+  cross-track-overlap-allowed fix through the new mechanism too.
+- Same-track reposition via the handle: a 90px drag at the fixture's
+  90px/sec zoom repositioned the clip from `start_frame: 0` to `24`
+  (exactly 1 second, 24fps) — confirms D-096/B-027's fix carried forward
+  correctly.
+- Zero console errors/warnings across every one of the above, under real
+  `<StrictMode>` double-invoke — the specific dnd-kit issue #2116 this
+  session's own scoping doc flagged does **not** reproduce on the
+  installed `6.3.1` `DndContext` (a different, older architecture than the
+  unreleased `DragDropProvider` that issue is actually against).
+
+**What this does NOT close the loop on, stated plainly rather than
+repeating "verified" language that's already twice not held up this
+session**: none of the above is a real Tauri/WKWebView window. Chromium
+(even driven by hand-timed real `PointerEvent`s, a meaningfully stronger
+check than the native-HTML5-drag harness D-095/D-096 relied on) is still
+not WKWebView. dnd-kit's pointer-sensor model has a real, structural reason
+to be MORE reliable there than native HTML5 drag (it doesn't depend on the
+browser engine's own drag-and-drop implementation at all, which is exactly
+where D-094/D-095/D-096's fixes kept failing) — but that is an architectural
+argument, not a live confirmation. **The owner's own hands-on check in the
+real app is still the only thing that can actually close this loop**, and
+should be treated as such, not skipped because this round's verification
+was deeper than last time's.
+
+**A real, previously-unnoticed accuracy gap surfaced while verifying this
+pass's own `vite build` bailout count**: D-094/D-095/D-096's own
+verification sections claimed "same N bailouts, no new ones" based on
+`tail`-truncated build output (the full React Compiler bailout list for
+this app is dozens of lines, not the 4-8 lines those `tail` calls
+happened to surface) — those claims were about the SPECIFIC lines each
+check happened to look at, not a real full-list diff, and should be read
+that way, not retroactively assumed wrong. This pass's own check used the
+full, untruncated list: one real new bailout, `packages/editor/src/
+TimelinePane.tsx: Existing memoization could not be preserved` (×7) — the
+compiler's own safe fallback when it can't prove an equivalent rewrite of
+existing manual memoization (the new `useCallback`s this pass added), not
+an error; the manual memoization still runs exactly as written regardless.
+
+Verification: `ps aux | grep cargo` clean throughout (pure frontend, no
+Rust touched this pass). `cd packages/editor && npx vitest run` — 88/88
+(unchanged; no new pure logic added to `timeline.ts`, only a dead MIME
+constant removed — see below). `npx tsc --noEmit -p packages/editor` and
+`-p app` clean (64-error `app` baseline unchanged). `cd app && npx vite
+build` — clean, 3182 modules (+1, the new dependency), full bailout list
+diffed line-for-line against the pre-pass list (see the accuracy-gap note
+above) — one new, safe bailout, accounted for. `packages/editor/src/
+timeline.ts`'s now-dead `CHROMA_CLIP_MOVE_MIME` export (no producer or
+consumer left anywhere in the repo, confirmed via `grep`) removed rather
+than kept as dead code, per this repo's own "no dead code" rule.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

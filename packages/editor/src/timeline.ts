@@ -137,13 +137,11 @@ export const DEFAULT_FPS = 24;
  */
 export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
 
-/** D-094 — the `dataTransfer` MIME type a clip-body drag-handle carries
- *  (`{ track, id }` JSON identifying the source clip) for a cross-track
- *  clip move, read by `TimelinePane`'s own drop handler. Same
- *  same-package-boundary reasoning as `CHROMA_MEDIA_DRAG_MIME` above — a
- *  distinct MIME so a single `onDrop` can tell a Sources-panel clip-add
- *  apart from an existing-clip cross-track move without ambiguity. */
-export const CHROMA_CLIP_MOVE_MIME = 'application/x-chroma-clip-move';
+// D-094 originally added `CHROMA_CLIP_MOVE_MIME` here for a native-HTML5
+// cross-track clip-move drag; D-098 replaced that mechanism with a real
+// `@dnd-kit/core` drag (native HTML5 drag was unreliable on Tauri's
+// WKWebView — see D-098 in `docs/08-decisions.md`), so this constant has no
+// producer or consumer left and was removed rather than kept as dead code.
 
 /** What a Sources-panel drag carries — just enough to build a full-length
  *  `Clip` on drop; `frameCount`/`fps` absent (unprobed or offline media)

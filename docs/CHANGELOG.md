@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Track reorder + cross-track clip move moved onto
+  `@dnd-kit/core`/`@dnd-kit/sortable` (D-098, B-028).** Native HTML5 drag
+  failed live a second time (cross-track clip move, after track reorder)
+  despite passing this session's Chromium-only checks — owner greenlit
+  implementing the dnd-kit scoping doc's phase 1 plan for real. Same-track
+  drag/trim/resize untouched (the timeline library's own native
+  mechanism, never what was broken). Two real bugs found and fixed during
+  implementation (a React-synthetic-event same-element-handler ordering
+  issue; a droppable-registration timing issue); re-checked D-064's
+  `dragDropEnabled` fix first and ruled it out. Verified against the real
+  component under real `<StrictMode>` with real `PointerEvent` sequences
+  (not just the Chromium harness alone this time) — dnd-kit issue #2116's
+  StrictMode bug does not reproduce on the installed version. Still not a
+  real Tauri/WKWebView window — flagged explicitly, not claimed closed.
+  `tsc`/vitest/vite build clean (88/88 tests, 64-error app baseline
+  unchanged, one new safe React-Compiler bailout accounted for).
 - **2026-09-04** — **Mid-stack track insert, kind inference, a real
   cross-track clip-move handle, cross-track overlap allowed (D-096,
   B-027).** Continuing D-095's own live-testing session: a track can now
