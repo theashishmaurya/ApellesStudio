@@ -137,6 +137,14 @@ export const DEFAULT_FPS = 24;
  */
 export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
 
+/** D-094 — the `dataTransfer` MIME type a clip-body drag-handle carries
+ *  (`{ track, id }` JSON identifying the source clip) for a cross-track
+ *  clip move, read by `TimelinePane`'s own drop handler. Same
+ *  same-package-boundary reasoning as `CHROMA_MEDIA_DRAG_MIME` above — a
+ *  distinct MIME so a single `onDrop` can tell a Sources-panel clip-add
+ *  apart from an existing-clip cross-track move without ambiguity. */
+export const CHROMA_CLIP_MOVE_MIME = 'application/x-chroma-clip-move';
+
 /** What a Sources-panel drag carries — just enough to build a full-length
  *  `Clip` on drop; `frameCount`/`fps` absent (unprobed or offline media)
  *  means the drop is rejected rather than adding a zero-length clip. */

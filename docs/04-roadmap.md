@@ -30,11 +30,10 @@ roadmap structure.
   (`2224e7b`, D-089), UI — lock/hide/rearrange/transform popover/keyframing
   (`d240a40`, D-090). Real end to end: V1/V2 stacked compositing, A1/A2 audio
   separation (pre-existing D-057), track lock/hide/mute/rearrange/selection/
-  keyframes. One documented trade-off: rearrange is up/down buttons, not
-  native drag (the library's row-drag had no clean from/to delta in the time
-  available — a working fallback over a half-working drag). 58+143+150+68+79
-  tests across the 4 phases, `tsc` clean, live app boot confirmed clean (no
-  click-through — no native-window automation available this session).
+  keyframes. Original trade-off (rearrange was up/down buttons, not native
+  drag) since superseded — see D-094 below. 58+143+150+68+79 tests across
+  the 4 phases, `tsc` clean, live app boot confirmed clean (no click-through
+  — no native-window automation available this session).
 - ✅ **Edit tab stuck on "No project open"** — done, `cec1a2b` (**D-085/B-025**).
   Real root cause of the "stuck in the click" half: `ProjectLauncher.tsx` had zero
   loading feedback during a genuinely multi-second open, inviting a second click
@@ -84,6 +83,25 @@ roadmap structure.
   depth). NLE track/clip actions deliberately deferred (concurrent
   `TimelinePane.tsx` drag-and-drop rework) — tracked as a follow-up, along
   with Motion/media-pool/export gaps, in `docs/notes/telemetry.md`.
+- ✅ **Timeline drag-and-drop rework** — done, **D-094**. Owner: "instead of
+  button the timeline should be drag and drop and also instead of arrow for
+  tracks we should have drag handles to reshuffle" + "all the windows should
+  be resizable" (now a standing `CLAUDE.md` rule). Three changes in
+  `TimelinePane.tsx`: (1) track reorder is a real `GripVertical` drag handle
+  per header row (plain HTML5 drag/drop, generalized `move_track`
+  selection-follow math, not the old adjacent-only swap), replacing D-090's
+  up/down buttons; (2) cross-track clip move is a real drag handle on each
+  clip (`CHROMA_CLIP_MOVE_MIME`, same drop mechanism as the existing
+  Sources-panel drop, `onMouseDown`/`onPointerDown` `stopPropagation` so it
+  never races the library's own same-track action-drag) — the D-080 "Move
+  to ▾" dropdown is kept as a fallback affordance, not removed, since this
+  couldn't be exercised against the live native window this session; (3)
+  the track-header sidebar is now a real `ResizablePanel` (was a fixed
+  `width: 156px`), the first live use of `@chroma/ui`'s `resizable.tsx`.
+  79/79 `packages/editor` tests, `tsc` clean (editor + app, 64-error app
+  baseline unchanged), `npx vite build` clean (3181 modules, no new
+  bailouts). Live drag-gesture verification not possible this session (no
+  native-window automation available) — flagged, not silently skipped.
 
 ---
 

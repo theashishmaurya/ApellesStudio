@@ -6829,3 +6829,125 @@ regardless, per this session's standing discipline; none running.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-094 — Real drag-and-drop for the NLE timeline (track reorder + cross-track clip move) + resizable header sidebar
+
+Owner, comparing our Edit tab against a reference NLE (Palmier Pro
+screenshots): "instead of button the timeline should be drag and drop and
+also instead of arrow for tracks we should have drag handles to reshuffle,"
+plus (separately, same session) "all the windows should be resizable,
+please make this a rule so we don't have to reask it" — codified as a
+`CLAUDE.md` standing rule before this change; this is its first real
+application. All work in `packages/editor/src/TimelinePane.tsx` (plus one
+new constant in `timeline.ts`).
+
+**Track reorder** — replaces D-090's up/down buttons with a real
+`GripVertical` drag handle on each header row. Considered the library's own
+`enableRowDrag`/`onRowDragStart`/`onRowDragEnd` (`@xzdarcy/react-timeline-
+editor`'s row-drag, applying to the EDIT AREA's rows, not our custom header
+sidebar) — read its bundled source (`index.es.js`, minified but traceable)
+to actually verify D-090's stated blocker ("no clean from/to delta"): the
+library computes the reordered array via a splice-based helper
+(`oe(r, draggedIndex, targetIndex)`, adjusting `targetIndex` by -1 when it's
+past `draggedIndex`) and hands back `{ row, editorData }` — `row` is the
+pre-drag row object (still carrying its original `row.id`, `buildRows`
+assigns `id = String(trackIndex)`), `editorData` is the reordered array of
+the *same* row references. So `from = Number(row.id)` and
+`to = editorData.indexOf(row)` (or `findIndex`, reference equality) DOES
+give a clean, correct delta — D-090's "no clean delta" was really "hadn't
+traced the library's internals yet," not a real limitation. Verified this
+against `move_track`'s own Rust/TS semantics (`Vec::remove(from)` then
+`insert(to, _)`, `crates/chroma-timeline/src/lib.rs`) too: since `to` here
+is read from the *final* reordered array (not the library's own internal
+pre-removal `targetIndex`), it's already the row's desired final position —
+exactly what `remove`-then-`insert-at` produces, no further adjustment
+needed, regardless of the library's own internal -1 correction.
+
+Chose **not** to use `enableRowDrag` in the end, despite confirming it would
+work — its handle renders inside the library's own edit-area row (a fixed
+`left: 4px` grip baked into its bundled CSS, `.timeline-editor-edit-row-
+drag-handle`), not in our custom header sidebar. The owner's reference
+screenshots show the drag handle living in the LEFT TRACK-HEADER panel,
+which is entirely our own DOM, outside the library's row system. Built a
+small, self-contained native HTML5 drag/drop directly on the header rows
+instead (`draggable` grip icon, `dragstart`/`dragover`/`drop`, `'text/plain'`
+payload of the source index) — matches the reference NLE's actual affordance
+placement, avoids pulling in the library's own drag-handle styling/behavior
+we didn't ask for, and reuses the exact same drag/drop mechanism this file
+already has proven working for the Sources-panel clip drop. `move_track`'s
+old selection-follow logic only ever handled an adjacent swap (correct for
+up/down buttons); generalized it (`trackIndexAfterMove`) since a real drag
+can drop a track anywhere, shifting every track between `from`/`to` by one,
+not just the two endpoints — the adjacent case is a special case of the
+general formula, verified by hand.
+
+**Cross-track clip move** — replaces D-080's "Move to ▾" dropdown as the
+PRIMARY affordance; the dropdown is kept, not removed, as a fallback (see
+below). Each clip's `getActionRender` content gets a small `GripVertical`
+handle, inset past the 10px left-edge resize zone (same B-013 hit-testing
+concern the label overlay already had to solve — this handle is a small,
+positioned target, not full-width, so it doesn't shadow `flexible`'s resize
+handles). It's plain `draggable`, carrying `{ track, id }` as a new
+`CHROMA_CLIP_MOVE_MIME` (`timeline.ts`, alongside the existing
+`CHROMA_MEDIA_DRAG_MIME`) — the edit area's existing `onDragOver`/`onDrop`
+(previously only handling Sources-panel drops) now branches on which MIME
+type is present. A same-track drop of this payload is a deliberate no-op —
+the library's own action-drag (`onActionMoveEndCb`) already owns same-row
+repositioning, this handler only needs the cross-track case.
+
+The real risk flagged going in: the SAME clip DOM node would have both a
+native HTML5 `draggable` region (the new handle) and the library's own
+interact.js-driven same-track move-drag (bound to the action wrapper,
+listening for a mousedown/pointerdown anywhere in the clip body) — two drag
+systems that could both try to engage from one physical gesture. Resolved
+by making the handle a genuinely separate, small hit-target (not the whole
+clip body) with `onMouseDown`/`onPointerDown` calling `stopPropagation` —
+the press never bubbles to the action wrapper's own listener, so only one
+drag system ever starts per gesture, not two racing. This reasoning is
+sound but **not exercised against the live app** — no tool available this
+session can drive the actual native Tauri window (same limitation D-092
+already hit and documented; browser-automation tools hard-fail on
+`window.__TAURI__` being undefined). That's exactly why the dropdown stays:
+a real, working fallback sitting next to an unverified-live drag gesture,
+not a case of shipping something known-flaky.
+
+**Resizable header sidebar** — `TimelinePane.tsx`'s track-header column
+(`HEADER_WIDTH`, previously a hardcoded `width: 156px`) is now a real
+`ResizablePanel` inside a `ResizablePanelGroup`/`ResizableHandle`
+(`@chroma/ui`'s `resizable.tsx`, Base UI-backed, confirmed already a real
+exported component before writing the `CLAUDE.md` rule this session) — the
+first live usage anywhere in the app. `defaultSize`/`minSize`/`maxSize` are
+plain pixel numbers (`react-resizable-panels`' numeric-vs-string convention:
+a bare number is pixels, a string like `"50"` is percent) — no percentage
+math needed. The Sources-panel/clip-move drop handlers moved from the old
+manual flex wrapper div onto `ResizablePanelGroup` itself (it forwards
+`HTMLAttributes<HTMLDivElement>`, `onDragOver`/`onDragLeave`/`onDrop` just
+work); the header row's own track-reorder `onDragOver`/`onDrop` fire first
+(deeper in the DOM) and don't interfere with the group's handlers on bubble
+(different MIME types / no MIME at all for the plain `'text/plain'`
+track-reorder payload, so the group's own type checks correctly no-op).
+
+D-083 discipline preserved throughout: no new dependencies added to
+`getActionRender`/`onClickAction`/`onActionMoveEndCb`/`onActionResizeEndCb`/
+`onTimelineScroll` (the props actually passed to `<TimelineEditor>`) — the
+new `draggedTrack`/`dragOverTrack` state lives entirely in the header
+sidebar's own render path, and every setter is gated to only actually
+dispatch when the value changes (mirrors `onDragOver`'s existing
+`setDragOver` gating), same reasoning as B-024.
+
+Verification: `ps aux | grep cargo` clean before starting (pure frontend,
+no cargo needed). `cd packages/editor && npx vitest run` — 79/79 (unchanged
+baseline). `npx tsc --noEmit -p packages/editor` clean. `npx tsc --noEmit -p
+app` — still exactly 64 pre-existing errors, all unrelated (`useUIStore.ts`/
+`useImageProcessing.ts`, untouched files). `cd app && npx vite build` — full
+clean build, 3181 modules, no new bailouts or errors (confirms the
+`@chroma/ui` Resizable import and the new MIME constant resolve correctly
+through the real bundler, not just `tsc`); the live `cargo tauri dev`
+process (if any) was never touched, same as D-091/D-092's established
+pattern. Honestly flagged, not worked around: the actual drag gestures
+(track-handle drag, clip-handle drag, panel resize) are untested against a
+running window this session — the same native-window-automation gap
+D-092 already documented.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

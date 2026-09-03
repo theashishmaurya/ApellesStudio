@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-03** — **Real drag-and-drop for the NLE timeline + resizable
+  header sidebar (D-094).** `TimelinePane.tsx`: track reorder is now a
+  `GripVertical` drag handle per header row (replacing D-090's up/down
+  buttons; generalized `move_track` selection-follow math, not just
+  adjacent swap); cross-track clip move is a real drag handle on each clip
+  (`CHROMA_CLIP_MOVE_MIME`, same drop mechanism as the existing
+  Sources-panel drop) — the old "Move to ▾" dropdown stays as a fallback
+  since the live drag gesture couldn't be exercised against the native
+  window this session. The track-header sidebar is now a real
+  `@chroma/ui` `ResizablePanel` (was a fixed `width: 156px`) — the first
+  live use of that component, applying the owner's new standing
+  "resizable-by-nature panels" `CLAUDE.md` rule. 79/79 tests, `tsc` +
+  `vite build` clean.
+
 - **2026-09-03** — **Local-only user-action telemetry infrastructure
   (D-093).** New `trackEvent(event, props?)` in `@chroma/bridge`, reusing
   the existing `frontend_log` Tauri command (`[telemetry]` prefix, JSON

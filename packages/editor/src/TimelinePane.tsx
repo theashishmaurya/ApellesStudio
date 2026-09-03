@@ -40,19 +40,30 @@
  *     track, kept in vertical sync with the library's own scroll via its
  *     `onScroll` prop (`OnScrollParams.scrollTop`, from `react-virtualized`
  *     — the library's own scroll mechanism) applied as a CSS transform.
- *   - **No native cross-row (cross-track) drag** — also checked before
- *     building: `onActionMoveEnd`'s `row` param is always the action's
+ *   - **No native cross-row (cross-track) drag** — checked before building
+ *     D-080: `onActionMoveEnd`'s `row` param is always the action's
  *     *starting* row, and there is no drop-target-row concept anywhere in
- *     the library's action-drag path (`onRowDragStart`/`onRowDragEnd` are
- *     for dragging a whole ROW to reorder rows, a different feature, see
- *     `enableRowDrag`). A clip-body drag (`onActionMoveEnd`) therefore stays
- *     same-track, same as before this pass — moving a clip to a *different*
- *     track is a real, working, but non-drag affordance instead: a "Move
- *     to ▾" dropdown on the toolbar, enabled when a clip is selected and
- *     more than one track exists. Flagged here as a known gap, not silently
- *     omitted: a live drag-between-tracks gesture would need a custom
- *     pointer-driven override of the library's own action drag handling,
- *     scoped out of this pass.
+ *     the library's own action-drag path. D-080 shipped a "Move to ▾"
+ *     toolbar dropdown instead (kept below as a fallback affordance — see
+ *     D-094). **D-094 adds the real drag gesture**: each clip's rendered
+ *     content (`getActionRender`) gets a small `GripVertical` handle at its
+ *     top-left, inset past the 10px left-edge resize zone so it doesn't
+ *     shadow `flexible`'s resize hit-testing (same B-013 concern the label
+ *     overlay already had to solve). That handle is plain HTML5
+ *     `draggable`, carrying `{ track, id }` as `CHROMA_CLIP_MOVE_MIME` JSON
+ *     (`timeline.ts`) — the exact same drag/drop mechanism this file
+ *     already used for Sources-panel → timeline drops, just a second MIME
+ *     type the shared `onDragOver`/`onDrop` on the edit area now also
+ *     recognizes. Its `onMouseDown`/`onPointerDown` call `stopPropagation`
+ *     so the press never reaches the library's own interact.js listener
+ *     bound to the action wrapper (which would otherwise also try to start
+ *     its native same-track move-drag from the same physical mousedown) —
+ *     the two drag systems never both engage from one gesture because the
+ *     handle is a distinct hit-target from the rest of the clip body, not
+ *     because either system defers to the other. A drop lands via the same
+ *     `dropTargetTrack` row-from-`clientY` math the Sources-panel path
+ *     already uses; a same-track drop of the clip-move payload is a no-op
+ *     here (the library's own drag already owns same-row repositioning).
  *   - **Dropping a Sources-panel clip targets whichever lane the cursor is
  *     over** (D-046 pass 3's plain-HTML5-drag mechanism, now row-aware) —
  *     `dropTargetTrack` converts `e.clientY` into a row index using the
@@ -124,12 +135,11 @@ import './timeline-overrides.css';
 import {
   AudioLines,
   ArrowRightLeft,
-  ChevronDown,
-  ChevronUp,
   Diamond,
   Eye,
   EyeOff,
   Film,
+  GripVertical,
   Lock,
   Plus,
   Scissors,
@@ -152,6 +162,9 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -162,6 +175,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { Waveform } from './Waveform';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
+  CHROMA_CLIP_MOVE_MIME,
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_TRACK_GAIN,
   clipFromDraggedMedia,
@@ -194,9 +208,13 @@ const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
 /** how long a rippled clip's highlight stays visible (ms) */
 const RIPPLE_FLASH_MS = 550;
-/** Track header sidebar width (D-080; widened D-090 for the lock/hide/
- *  rearrange row) — fixed, matches `ROW_HEIGHT` rows. */
+/** Track header sidebar default width (D-080; widened D-090 for the lock/
+ *  hide/rearrange row) — now the `ResizablePanel`'s `defaultSize` (D-094:
+ *  the sidebar became genuinely resizable, per the owner's standing
+ *  "resizable-by-nature panels" rule in `CLAUDE.md`), not a fixed `width`. */
 const HEADER_WIDTH = 156;
+const HEADER_MIN_WIDTH = 110;
+const HEADER_MAX_WIDTH = 340;
 /** `.timeline-editor-time-area` (32px, the ruler bar) + `.timeline-editor-
  *  edit-area`'s `margin-top` (10px) — read from the library's own bundled
  *  CSS (`react-timeline-editor.css`), not guessed, since `dropTargetTrack`
@@ -347,12 +365,22 @@ export function TimelinePane() {
   const effects = useMemo(() => ({ [EFFECT_ID]: { id: EFFECT_ID, name: 'clip' } }), []);
 
   const [dragOver, setDragOver] = useState(false);
+  // D-094 — track-reorder drag state (header sidebar only, see the module
+  // doc) and cross-track clip-move drag state (edit area, same mechanism
+  // as the Sources-panel drop below, a second MIME type). Both gated the
+  // same way `dragOver`/`scrollTop` already are (B-024) — a native
+  // `dragover` fires continuously for the whole gesture, so every setter
+  // here only actually dispatches when the value would change.
+  const [draggedTrack, setDraggedTrack] = useState<number | null>(null);
+  const [dragOverTrack, setDragOverTrack] = useState<number | null>(null);
 
   /** D-080: which track a Sources-panel drop lands on, from the drop
    *  event's `clientY` — see the module doc's "Dropping a Sources-panel
    *  clip" section for the exact layout constants this reads. Falls back to
    *  the first video track (this file's pre-D-080 default) if the pointer
-   *  is above/below every row. */
+   *  is above/below every row. Reused by D-094's cross-track clip-move drop
+   *  for the same reason — it's the same "which row is the pointer over"
+   *  question either drag needs answered. */
   const dropTargetTrack = (e: DragEvent): number => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) return timeline ? videoTrackIndex(timeline) : 0;
@@ -367,15 +395,47 @@ export function TimelinePane() {
   // every single tick. Real, defensive fix regardless of the deeper cause
   // below (a `setState` call that doesn't change the value still goes
   // through React's update/scheduler machinery on every call).
+  //
+  // D-094: also recognizes `CHROMA_CLIP_MOVE_MIME` (a clip's own drag
+  // handle, for a cross-track move) alongside the pre-existing
+  // `CHROMA_MEDIA_DRAG_MIME` (a Sources-panel pool item, for `add_clip`) —
+  // both land on this same edit-area drop target, `onDrop` below tells them
+  // apart. Per the HTML5 spec, `dataTransfer.getData` is unreadable during
+  // `dragover` (only `.types` is) — that's why this only ever branches on
+  // `.types.includes(...)`, never reads the payload until `onDrop`.
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME)) return;
+    const isClipMove = e.dataTransfer.types.includes(CHROMA_CLIP_MOVE_MIME);
+    if (!isClipMove && !e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME)) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
+    e.dataTransfer.dropEffect = isClipMove ? 'move' : 'copy';
     setDragOver((prev) => (prev ? prev : true));
   };
   const onDragLeave = () => setDragOver((prev) => (prev ? false : prev));
   const onDrop = (e: DragEvent) => {
     setDragOver(false);
+    // D-094 — cross-track clip move, checked first: a clip's drag handle
+    // carries `CHROMA_CLIP_MOVE_MIME`, never `CHROMA_MEDIA_DRAG_MIME`, so
+    // there's no ambiguity between the two branches.
+    const clipMoveRaw = e.dataTransfer.getData(CHROMA_CLIP_MOVE_MIME);
+    if (clipMoveRaw) {
+      e.preventDefault();
+      let payload: { track: number; id: string };
+      try {
+        payload = JSON.parse(clipMoveRaw);
+      } catch {
+        return;
+      }
+      const i = idxOf(payload.track, payload.id);
+      if (i < 0) return;
+      const toTrack = dropTargetTrack(e);
+      // Same-track drop: the library's own action-drag already owns
+      // same-row repositioning (`onActionMoveEndCb`) — nothing to do here.
+      if (toTrack === payload.track) return;
+      const clip = clipsOf(payload.track)[i];
+      applyOp({ kind: 'move', fromTrack: payload.track, toTrack, clip: i, startFrame: clip.start_frame });
+      setSelected({ track: toTrack, id: payload.id });
+      return;
+    }
     const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
     if (!raw) return;
     e.preventDefault();
@@ -469,6 +529,36 @@ export function TimelinePane() {
           >
             {clip?.name ?? action.id}
           </div>
+          {/* D-094 — cross-track clip-move drag handle. Deliberately a
+              small, inset hit-target (not the whole clip body): the 10px
+              left-edge resize zone (`.timeline-editor-action-left-stretch`,
+              siblings of this content, see the B-013 note above) needs to
+              stay reachable, so this sits to the right of it and only in
+              the top strip. `onMouseDown`/`onPointerDown` stop propagation
+              so the library's own interact.js listener on the action
+              wrapper (bound for same-track move-drag) never sees this
+              press — the native HTML5 `dragstart` this triggers and the
+              library's own pointer-drag are mutually exclusive per
+              gesture, not competing over the same one. Only shown with
+              more than one track — nothing to cross-track-move to
+              otherwise, same gating `otherTracks`/"Move to ▾" already use. */}
+          {tracks.length > 1 && (
+            <div
+              className="absolute left-3 top-0.5 z-20 flex size-3.5 cursor-grab items-center justify-center rounded-sm text-button-text/70 hover:text-button-text active:cursor-grabbing"
+              draggable
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onDragStart={(e) => {
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData(CHROMA_CLIP_MOVE_MIME, JSON.stringify({ track: ti, id: action.id }));
+              }}
+              title="Drag to move to another track"
+              aria-label="Drag to move to another track"
+            >
+              <GripVertical size={11} />
+            </div>
+          )}
         </div>
       );
     },
@@ -617,22 +707,31 @@ export function TimelinePane() {
     applyOp({ kind: 'set_track_hidden', track, hidden: !t.hidden });
   };
 
-  // Up/down over native `enableRowDrag` — checked the library's bundled
-  // types first: row-drag reorders `editorData` itself but hands back only
-  // the reordered id list with no clean "this row moved from index A to B"
-  // delta, and nothing here owns `editorData`'s order independently of
-  // `timeline.tracks` (`buildRows` derives it fresh every render) — mapping
-  // a full reordered-id-list callback back into a single `move_track(from,
-  // to)` call reliably would need real time to get right without risking a
-  // silent desync between what the library shows and what's on disk. A
-  // single-step swap via a button needs none of that: `from`/`to` are
-  // already known integers. `move_track(from, to)` with adjacent indices is
-  // exactly a swap, so the selection-follow logic below only needs to swap.
+  // D-094 — track reorder is now a real drag handle on each header row
+  // (`GripVertical`, plain HTML5 drag/drop — same mechanism as the
+  // Sources-panel clip drop, just scoped to the header sidebar's own DOM,
+  // entirely separate from the library's action-drag), replacing D-090's
+  // up/down buttons. `move_track(from, to)` mirrors `chroma_timeline::
+  // Timeline::move_track` exactly (`Vec::remove(from)` then `insert(to,
+  // _)`) — a plain button swap only ever needed `from`/`to` adjacent, but a
+  // real drag can drop a track anywhere in the list, which shifts every
+  // track between `from` and `to` by one, not just the two endpoints. Doing
+  // the selection-follow math generically here (rather than the old
+  // two-branch swap) keeps it correct for both: an adjacent `to` reduces to
+  // exactly the old swap.
+  const trackIndexAfterMove = (idx: number, from: number, to: number): number => {
+    if (idx === from) return to;
+    if (from < to) return idx > from && idx <= to ? idx - 1 : idx;
+    return idx >= to && idx < from ? idx + 1 : idx;
+  };
+
   const doMoveTrack = (from: number, to: number) => {
-    if (to < 0 || to >= tracks.length) return;
+    if (from < 0 || from >= tracks.length || to < 0 || to >= tracks.length || from === to) return;
     applyOp({ kind: 'move_track', from, to });
-    if (selected?.track === from) setSelected({ track: to, id: selected.id });
-    else if (selected?.track === to) setSelected({ track: from, id: selected.id });
+    if (selected) {
+      const newTrack = trackIndexAfterMove(selected.track, from, to);
+      if (newTrack !== selected.track) setSelected({ track: newTrack, id: selected.id });
+    }
   };
 
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
@@ -949,15 +1048,27 @@ export function TimelinePane() {
         </div>
       </TooltipProvider>
 
-      <div className="relative flex-1 min-h-0 flex" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {/* D-094: the header/edit-area split is now a real `ResizablePanelGroup`
+          (was a fixed `width: HEADER_WIDTH` sidebar) — the owner's standing
+          "resizable-by-nature panels" rule in `CLAUDE.md`, applied to the
+          track-header column since this pass was already in this file. */}
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="relative flex-1 min-h-0"
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         {/* Track header sidebar (D-080) — not a library feature, see the
             module doc. `translateY` keeps it in step with the library's own
             vertical scroll (tracked via `onScroll` below), offset by the
             same ruler+margin the edit area itself is offset by so a
             header's block lines up with its row, not the ruler. */}
-        <div
-          className="shrink-0 border-r border-border-color bg-surface overflow-hidden relative"
-          style={{ width: HEADER_WIDTH }}
+        <ResizablePanel
+          defaultSize={HEADER_WIDTH}
+          minSize={HEADER_MIN_WIDTH}
+          maxSize={HEADER_MAX_WIDTH}
+          className="relative shrink-0 border-r border-border-color bg-surface overflow-hidden"
         >
           <div
             className="absolute left-0 right-0"
@@ -973,36 +1084,57 @@ export function TimelinePane() {
                   key={i}
                   className={
                     'flex flex-col justify-center gap-0.5 px-1.5 border-b border-border-color/60 text-text-secondary ' +
-                    (locked ? 'opacity-60' : '')
+                    (locked ? 'opacity-60 ' : '') +
+                    // D-094 — drop-target feedback for a track being
+                    // dragged over this row (see `onDragOver` below).
+                    (dragOverTrack === i && draggedTrack !== null && draggedTrack !== i
+                      ? 'bg-accent/10 outline outline-accent/60 -outline-offset-1'
+                      : '')
                   }
                   style={{ height: ROW_HEIGHT }}
+                  onDragOver={(e) => {
+                    if (draggedTrack === null) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverTrack((prev) => (prev === i ? prev : i));
+                  }}
+                  onDragLeave={() => setDragOverTrack((prev) => (prev === i ? null : prev))}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = draggedTrack;
+                    setDraggedTrack(null);
+                    setDragOverTrack(null);
+                    if (from === null) return;
+                    doMoveTrack(from, i);
+                  }}
                 >
                   <div className="flex items-center gap-1">
+                    {/* D-094 — track-reorder drag handle, replacing D-090's
+                        up/down buttons. Plain HTML5 drag/drop scoped to
+                        this header sidebar's own DOM — see the module doc.
+                        `move_track(from, to)` is the same op the old
+                        buttons wrote; the drop target is whichever row
+                        the pointer is over at drop time (`onDrop` above),
+                        not just an adjacent index. */}
+                    <div
+                      className="cursor-grab text-text-secondary/60 hover:text-text-secondary active:cursor-grabbing shrink-0"
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', String(i));
+                        setDraggedTrack(i);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedTrack(null);
+                        setDragOverTrack(null);
+                      }}
+                      title="Drag to reorder track"
+                      aria-label="Drag to reorder track"
+                    >
+                      <GripVertical className="size-3" />
+                    </div>
                     {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
                     <span className="text-[10px] font-medium truncate flex-1">{labels[i]}</span>
-                    {/* D-090 — rearrange: track index order is compositing
-                        z-order (`move_track`), not cosmetic. Up/down over
-                        native row-drag — see the module doc for why. */}
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => doMoveTrack(i, i - 1)}
-                      disabled={i === 0}
-                      aria-label="Move track up"
-                      title="Move track up (higher priority)"
-                    >
-                      <ChevronUp className="size-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => doMoveTrack(i, i + 1)}
-                      disabled={i === tracks.length - 1}
-                      aria-label="Move track down"
-                      title="Move track down (lower priority)"
-                    >
-                      <ChevronDown className="size-3" />
-                    </Button>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -1051,35 +1183,39 @@ export function TimelinePane() {
               );
             })}
           </div>
-        </div>
+        </ResizablePanel>
 
-        <div ref={editAreaRef} data-bench-id="timeline-edit-area" className="relative flex-1 min-h-0 overflow-hidden">
-          <TimelineEditor
-            ref={editorRef}
-            editorData={editorData}
-            effects={effects}
-            scale={tickSeconds}
-            scaleWidth={libScaleWidth}
-            getScaleRender={(sec) => formatTimecode(sec, fps, tickSeconds)}
-            startLeft={20}
-            rowHeight={ROW_HEIGHT}
-            autoScroll
-            dragLine
-            style={{ width: '100%', height: '100%' }}
-            onScroll={onTimelineScroll}
-            getActionRender={getActionRender}
-            onClickAction={onClickAction}
-            onClickTimeArea={(time) => {
-              setPlayhead(s2f(time));
-              return true;
-            }}
-            onCursorDrag={(time) => setPlayhead(s2f(time))}
-            onChange={() => false}
-            onActionMoveEnd={onActionMoveEndCb}
-            onActionResizeEnd={onActionResizeEndCb}
-          />
-        </div>
-      </div>
+        <ResizableHandle />
+
+        <ResizablePanel className="relative min-h-0 overflow-hidden">
+          <div ref={editAreaRef} data-bench-id="timeline-edit-area" className="relative h-full overflow-hidden">
+            <TimelineEditor
+              ref={editorRef}
+              editorData={editorData}
+              effects={effects}
+              scale={tickSeconds}
+              scaleWidth={libScaleWidth}
+              getScaleRender={(sec) => formatTimecode(sec, fps, tickSeconds)}
+              startLeft={20}
+              rowHeight={ROW_HEIGHT}
+              autoScroll
+              dragLine
+              style={{ width: '100%', height: '100%' }}
+              onScroll={onTimelineScroll}
+              getActionRender={getActionRender}
+              onClickAction={onClickAction}
+              onClickTimeArea={(time) => {
+                setPlayhead(s2f(time));
+                return true;
+              }}
+              onCursorDrag={(time) => setPlayhead(s2f(time))}
+              onChange={() => false}
+              onActionMoveEnd={onActionMoveEndCb}
+              onActionResizeEnd={onActionResizeEndCb}
+            />
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }
