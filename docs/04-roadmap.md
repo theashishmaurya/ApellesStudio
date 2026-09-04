@@ -81,13 +81,14 @@ restarted once each is done.
   and scroll are now fast (confirmed by the owner: "very fast now" for
   everything except the zoom action itself). Likely D-128's windowed LOD
   treating a zoom-triggered `level` change as fully cache-cold.
-- 🔲 **B-050 — Player's seek bar and volume slider are effectively invisible.**
-  A bare white dot floats above the transport row with no track under it
-  (seek), and the volume hover-slider shows nothing at all. Track/Indicator
-  color tokens suspected, not confirmed.
-- 🔲 **B-051 — Sources toggle still sits on top of "Timeline" title text.**
-  D-126 fixed legibility (opaque chip) but not position — still overlapping,
-  not just crowding.
+- ✅ **B-050 — Player's seek bar and volume slider are effectively invisible.**
+  Not a token issue — `slider.tsx`'s Track/Indicator used the Tailwind
+  shorthand `data-horizontal:`/`data-vertical:`, which checks for a literal
+  `[data-horizontal]` attribute Base UI never sets (it stamps
+  `data-orientation="horizontal"`); fixed to `data-[orientation=...]:`. D-131.
+- ✅ **B-051 — Sources toggle still sits on top of "Timeline" title text.**
+  D-126 fixed legibility (opaque chip) but not position; `Player.tsx`'s title
+  strip now reserves `pl-10` to clear the toggle's real 32px footprint. D-131.
 - 🔲 **B-052 — Play/Pause restarts just the audio**, even with a real D-129
   linked audio track on the timeline. Not yet clear if this is D-130
   incomplete or expected per-Play-session behavior being misread.

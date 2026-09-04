@@ -164,7 +164,23 @@ export function Player({
   return (
     <div className={cn('flex flex-col min-h-0 flex-1 bg-bg-primary', className)}>
       {showTitleStrip && (
-        <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
+        // B-051/D-131: `pl-10` (not the uniform `px-3` every other edge
+        // uses) reserves the footprint of `@chroma/shell`'s Sources-panel
+        // toggle — `absolute top-2 left-2 h-6 w-6` (`Shell.tsx`), i.e. an
+        // 8px-inset 24px chip whose right edge lands at x=32px. D-120
+        // deliberately floats that toggle over whichever tab is active, at
+        // the content area's top-left corner, specifically so it's reachable
+        // no matter which tab or panel state is showing — so it always sits
+        // on top of *this* strip's top-left corner too, not just in Edit.
+        // D-126 made the chip legible (opaque bg+border+shadow) but never
+        // gave this strip the matching padding, so its own "Timeline" text
+        // still started at the strip's default 12px and sat directly under
+        // the chip. `pl-10` = 40px clears the chip's 32px edge with an 8px
+        // gap; unconditional (not just when a Sources panel is actually
+        // mounted) because the toggle is genuinely shell-level, not
+        // Edit-tab-specific, so any tab embedding this shared component can
+        // have it floating over this same corner.
+        <div className="shrink-0 flex items-center justify-between gap-2 pl-10 pr-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
           <div className="flex items-center gap-1 min-w-0">
             {onPrev && (
               <Button variant="ghost" size="icon-xs" onClick={onPrev} title="Previous" aria-label="Previous">
@@ -188,7 +204,18 @@ export function Player({
         {onSeek && (
           <div className="px-3 pt-2">
             <Slider
-              value={frame}
+              // B-050/D-131: `@chroma/ui`'s Slider wrapper (matching upstream
+              // shadcn's own convention) only recognises an *array* value/
+              // defaultValue as "a real controlled value" — a bare number
+              // falls through to its `[min, max]` fallback and renders 2
+              // `Thumb`s instead of 1 (Base UI's `Root` itself accepts a raw
+              // number fine; only this wrapper's own thumb-count `_values`
+              // memo cared). Both extra thumbs land on index 0 (Base UI's
+              // `SliderThumb` forces `index = 0` whenever the real slider
+              // state has a single value, `range = sliderValues.length > 1`),
+              // so the two DOM thumbs stacked exactly on top of each other —
+              // harmless-looking, but duplicate focusable/ARIA nodes.
+              value={[frame]}
               min={0}
               max={hasDuration ? total : 1}
               step={1}
@@ -247,7 +274,9 @@ export function Player({
               {onVolumeChange && (
                 <div className="w-0 overflow-hidden group-hover/volume:w-16 focus-within:w-16 transition-[width] duration-150">
                   <Slider
-                    value={muted ? 0 : (volume ?? 1)}
+                    // B-050/D-131: see the seek slider's comment above — same
+                    // wrap-in-array fix, same reason.
+                    value={[muted ? 0 : (volume ?? 1)]}
                     min={0}
                     max={1}
                     step={0.01}

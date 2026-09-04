@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Player seek/volume sliders were invisible from a
+  Tailwind `data-*` variant typo, not a missing token; Sources toggle still
+  overlapped "Timeline" because D-126 only fixed legibility (D-131, B-050,
+  B-051).** `slider.tsx`'s Track/Indicator used `data-horizontal:`/
+  `data-vertical:`, which compiles to a check for a literal `[data-horizontal]`
+  attribute Base UI never sets (it stamps `data-orientation="horizontal"`) —
+  confirmed by compiling this app's real `styles.css` through
+  `@tailwindcss/node`, not guessed. Fixed to `data-[orientation=horizontal]:`/
+  `data-[orientation=vertical]:`; also fixed `Player.tsx` passing both sliders
+  a bare number instead of a single-element array (was silently rendering 2
+  stacked `Thumb`s instead of 1). Separately, `Player.tsx`'s title strip now
+  reserves `pl-10` to clear the Sources toggle's real 32px footprint, instead
+  of D-126's untouched uniform `px-3`. `packages/editor`/`packages/player`
+  `tsc` clean, `packages/editor` vitest 201/201; no live-window verification
+  possible in this sandbox (disclosed in D-131).
 - **2026-09-04** — **Timeline-header overlap fixed, real master mute/volume
   added, real fullscreen wired (D-126).** The Sources/Inspector floating
   toggles (D-118/D-120) now render as elevated chips
