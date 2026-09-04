@@ -14,8 +14,10 @@ tabs:
 - **left** — macOS traffic lights (close / minimize / toggle-fullscreen) + the
   `CHROMA` wordmark
 - **centre** — the tabs (Edit / Motion / Colorist), absolutely centred
-- **right** — the Sources-panel toggle (D-046, project open only) + Windows /
-  Linux window controls, or a matching spacer on macOS
+- **right** — Windows / Linux window controls, or a matching spacer on macOS
+  (the Sources-panel toggle button also lives in this cluster, project open
+  only — the button's *position in the chrome bar* didn't move in D-116, only
+  the panel it opens did, from the shell's right content slot to its left one)
 
 The whole bar is a `data-tauri-drag-region` except the buttons and tabs.
 `h-10`, `bg-surface border-b`. On macOS windowed, the shell root carries
@@ -48,11 +50,17 @@ arrives via the `launcher` prop (dependency direction is app → shell). The
 routing flag is computed in a small `Root` component in `app/src/main.tsx` from
 `useSessionStore` (`projectPath || projectName`).
 
-**Docked Sources panel (D-046).** Same injection pattern as `launcher`: the
-shell renders whatever `sourcesPanel` node is passed (`app/src/main.tsx` wires
-in `<SourcesPanel />`) as a fixed-width (288px) column to the right of the tab
-content — a sibling, never layered over it, so it can't fight Colorist's own
-panels or Editor's timeline pane for space. Toggled by a chrome-bar button
+**Docked Sources panel (D-046; moved left + made resizable, D-116).** Same
+injection pattern as `launcher`: the shell renders whatever `sourcesPanel`
+node is passed (`app/src/main.tsx` wires in `<SourcesPanel />`) as a real
+`@chroma/ui` `ResizablePanel` (default 288px, min 220, max 480 — was a fixed
+288px `div`) to the **left** of the tab content — a sibling, never layered
+over it, so it can't fight Colorist's own panels or Editor's timeline pane
+for space. Left placement matches every professional NLE reference
+(Premiere, Resolve, Final Cut, Palmier Pro all dock the media bin left);
+each tab's own properties/inspector panel already anchors to its own right
+edge independently of Sources, so this was a shell-only move — no tab
+package needed a change. Toggled by a chrome-bar button
 (`useShellStore.sourcesPanelOpen`, session-only, closed by default); the
 button carries `aria-pressed`, which WebKit maps to an `AXCheckBox` role, not
 `AXButton` — worth knowing if you're scripting against it.
@@ -89,6 +97,8 @@ reason.
 
 D-039 — the 3-tab layout + window chrome + the project-launcher entry screen
 (step 6c) are live. D-046 added the docked Sources-panel slot. D-051 added
-global undo/redo. Follow-up: move `ProjectLauncher` + the session store into
-`@chroma/bridge` / a `@chroma/project` fe package so the shell can own the
-launcher outright instead of taking it as a prop.
+global undo/redo. D-116 moved the Sources panel to the left and made it a
+real resizable panel instead of a fixed width. Follow-up: move
+`ProjectLauncher` + the session store into `@chroma/bridge` / a
+`@chroma/project` fe package so the shell can own the launcher outright
+instead of taking it as a prop.

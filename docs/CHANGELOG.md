@@ -13,6 +13,7 @@ One or two lines per session. Detail lives in the decision it references.
   inconsistency that could let a Sources-panel drop land on a track never
   shown in the preview, and widened the insert-snap radius (16→28px) for a
   more forgiving drop target.
+- **2026-09-04** — **Sources panel moved to the left, made a real resizable panel (D-116).** Matches the media-bin-on-left convention every professional NLE reference (including Palmier Pro) uses. Was a fixed 288px `div` on the right — a real, previously-unnoticed violation of the "everything resizable-by-nature must actually be resizable" rule; now a `ResizablePanel` (default 288, min 220, max 480). No tab package needed a change — each one's own properties panel already anchors independently to its own right edge.
 - **2026-09-04** — **Cross-track drag preview is now honest (D-113).** Two
   related follow-ups to D-111 on the same live-testing session: the
   full-row drag-over wash is gone, replaced by a precisely-sized/

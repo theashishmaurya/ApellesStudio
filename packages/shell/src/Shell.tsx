@@ -44,19 +44,32 @@
  * `onCloseProject`. Tab panels stay mounted underneath the launcher (hidden) so
  * the Colorist app's MCP control bridge keeps running.
  *
- * Docked Sources panel (D-046 pass 3): same injection pattern as `launcher` —
- * the shell renders whatever `sourcesPanel` node is passed in (never imports
- * the D-046 `SourcesPanel` itself, for the same app → shell dependency-
- * direction reason), as a fixed-width column to the right of the tab content,
- * toggled by a chrome-bar button. Collapsed by default so it never disrupts
- * Colorist's own left/right panel system or Editor's timeline pane — it's a
- * sibling of the tab content area, not layered over it, and its own opaque
- * background means it plays fine alongside the wgpu-transparent root (B-006).
+ * Docked Sources panel (D-046 pass 3; moved to the left + made resizable,
+ * D-116): same injection pattern as `launcher` — the shell renders whatever
+ * `sourcesPanel` node is passed in (never imports the D-046 `SourcesPanel`
+ * itself, for the same app → shell dependency-direction reason), as a real
+ * resizable column (`@chroma/ui`'s `ResizablePanelGroup`, matching this
+ * project's standing "every resizable-by-nature panel must actually be
+ * resizable" rule) to the **left** of the tab content, toggled by a
+ * chrome-bar button. Collapsed by default so it never disrupts Colorist's
+ * own left/right panel system or Editor's timeline pane — it's a sibling of
+ * the tab content area, not layered over it, and its own opaque background
+ * means it plays fine alongside the wgpu-transparent root (B-006). Left
+ * placement matches the convention every professional NLE reference uses
+ * (Premiere, Resolve, Final Cut, Palmier Pro all dock the media bin left) —
+ * each tab's own properties/inspector panel already anchors to *its own*
+ * right edge (Colorist's `ControlsPanel`, Edit's `ClipInspectorPanel`,
+ * Motion's `InspectorPanel`), so moving Sources out of the shell's
+ * right-most slot to the left-most one is the only shell-level change
+ * needed — those panels were never positioned relative to Sources itself
+ * (verified: no `SOURCES_PANEL_WIDTH`/`sourcesPanelOpen` reference exists
+ * outside this package), so they naturally read as "on the right" once
+ * Sources vacates that slot.
  */
 
 import { useEffect, type ReactNode } from 'react';
-import { ChevronLeft, PanelRight } from 'lucide-react';
-import { Button } from '@chroma/ui';
+import { ChevronLeft, PanelLeft } from 'lucide-react';
+import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@chroma/ui';
 import { useHistoryStore } from '@chroma/history';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
@@ -83,7 +96,13 @@ export interface ShellProps {
   sourcesPanel?: ReactNode;
 }
 
-const SOURCES_PANEL_WIDTH = 288;
+// D-116: default/min/max for the Sources column's `ResizablePanel` — same
+// default width the old fixed column used (288), a min that keeps the
+// media grid usable (a poster-frame thumbnail + label needs real room), a
+// max that stops it from swallowing the tab content on a wide window.
+const SOURCES_PANEL_DEFAULT_WIDTH = 288;
+const SOURCES_PANEL_MIN_WIDTH = 220;
+const SOURCES_PANEL_MAX_WIDTH = 480;
 
 export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPanel }: ShellProps) {
   const activeTab = useShellStore((s) => s.activeTab);
@@ -226,15 +245,34 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
                 (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
               }
             >
-              <PanelRight className="size-3.5" />
+              <PanelLeft className="size-3.5" />
             </Button>
           )}
           <WindowControls chrome={chrome} />
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex overflow-hidden relative">
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+      <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
+        {/* docked Sources panel (D-046; left + resizable, D-116) — a sibling
+            column, never layered over the tab content, so it can't fight
+            Colorist's own panels or Editor's timeline pane for space. A real
+            `ResizablePanel`, not a fixed width, per this project's own
+            "resizable-by-nature panels must actually be resizable" rule. */}
+        {projectOpen && sourcesPanel && sourcesPanelOpen && (
+          <>
+            <ResizablePanel
+              defaultSize={SOURCES_PANEL_DEFAULT_WIDTH}
+              minSize={SOURCES_PANEL_MIN_WIDTH}
+              maxSize={SOURCES_PANEL_MAX_WIDTH}
+              className="shrink-0 h-full border-r border-border-color bg-surface overflow-hidden"
+            >
+              {sourcesPanel}
+            </ResizablePanel>
+            <ResizableHandle />
+          </>
+        )}
+
+        <ResizablePanel className="min-h-0 flex flex-col overflow-hidden relative">
           {/* tab panels — always mounted (state + the Colorist MCP bridge persist);
               all hidden while the launcher is up. */}
           {tabs.map((tab) => {
@@ -247,20 +285,8 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
           })}
 
           {!projectOpen && <div className="absolute inset-0 flex flex-col bg-bg-primary">{launcher}</div>}
-        </div>
-
-        {/* docked Sources panel (D-046) — a sibling column, never layered over
-            the tab content, so it can't fight Colorist's own panels or
-            Editor's timeline pane for space. */}
-        {projectOpen && sourcesPanel && sourcesPanelOpen && (
-          <div
-            className="shrink-0 h-full border-l border-border-color bg-surface overflow-hidden"
-            style={{ width: SOURCES_PANEL_WIDTH }}
-          >
-            {sourcesPanel}
-          </div>
-        )}
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

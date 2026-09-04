@@ -60,7 +60,11 @@ numbers are actually calibrated).
   import, search, a bin tree with real "New Folder" creation — even an empty
   one persists and lists, drag-to-track — D-046, D-059; **real delete**, single
   via a hover trash icon/right-click or multi-select "Select all"/"Delete (N)"
-  — D-060/D-061), `@chroma/ui` (shadcn/Base UI, 18 components, themed).
+  — D-060/D-061), `@chroma/ui` (shadcn/Base UI, 18 components, themed). **Sources
+  docks on the left as a real resizable panel** (was a fixed-width right column —
+  D-114), matching the media-bin-left convention Premiere/Resolve/Final Cut/
+  Palmier Pro all share; each tab's own properties/inspector panel already
+  anchors to its own right edge independently.
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.
