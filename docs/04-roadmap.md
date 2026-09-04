@@ -35,11 +35,10 @@ restarted once each is done.
   last clip removed/moved away), it should be automatically removed and the
   remaining tracks renumbered, rather than leaving orphaned empty rows around.
   In progress, same fork (`fork/timeline-polish`).
-- 🔄 **Sources panel's open/close toggle is still on the right** — D-116 moved the
-  Sources panel itself to the left, but its chrome-bar toggle button stayed on
-  the right, now visually disconnected from the panel it controls. Owner: move
-  it to sit with the Sources panel, matching how D-118 put the Inspector's own
-  toggle with the Inspector. In progress, `fork/sources-toggle`.
+- ✅ **Sources panel's open/close toggle is still on the right** — done, D-120
+  (`fc87547`). Moved from `Shell.tsx`'s chrome-bar to `top-2 left-2` inside the
+  panel area, mirroring D-118's Inspector toggle placement. Stayed shell-level
+  (not per-tab) since Sources is genuinely shared across all three tabs.
 
 ---
 
