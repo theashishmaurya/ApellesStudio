@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Manifest read caching + a drop-target fix (D-114/D-115,
+  B-035).** `chroma::edit::resolve_timeline` (the per-preview-frame hot path)
+  no longer re-reads and re-parses `project.json` from disk when nothing has
+  changed since the last frame — an mtime-validated in-memory cache, measured
+  **18.4x faster in the steady state** (682µs/call → 37µs/call, real test,
+  not a claim). Separately: fixed a real `dropTargetTrack`/preview
+  inconsistency that could let a Sources-panel drop land on a track never
+  shown in the preview, and widened the insert-snap radius (16→28px) for a
+  more forgiving drop target.
 - **2026-09-04** — **Cross-track drag preview is now honest (D-113).** Two
   related follow-ups to D-111 on the same live-testing session: the
   full-row drag-over wash is gone, replaced by a precisely-sized/

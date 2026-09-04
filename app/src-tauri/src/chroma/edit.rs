@@ -170,7 +170,15 @@ pub(crate) fn ensure_timeline(
 /// `active_timeline` valid.
 fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectManifest), String> {
     let dir = current_project_dir()?;
-    let manifest = project::load_manifest(&dir)?;
+    // D-114 — the read-only path (this is `resolve_timeline`'s hot call,
+    // once per preview frame) uses the mtime-validated cache instead of a
+    // full re-read + re-parse every time; `persist: true` callers (which may
+    // go on to write) keep the plain, always-fresh-from-disk read.
+    let manifest = if persist {
+        project::load_manifest(&dir)?
+    } else {
+        project::load_manifest_cached(&dir)?
+    };
     let manifest = ensure_timeline(&dir, manifest, persist)?;
     Ok((dir, manifest))
 }

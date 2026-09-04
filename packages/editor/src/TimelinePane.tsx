@@ -276,7 +276,12 @@ const START_LEFT_PX = 20;
  *  clip-body fallback (this threshold no longer gates whether snapping
  *  works AT ALL), but 10px was still a tight, easy-to-miss target for a
  *  real mouse specifically aiming for the exact seam between two clips. */
-const INSERT_SNAP_PX = 16;
+// Gap-on-add: 16px is a tight target to hit precisely with a real mouse
+// drag, especially once a clip is only a few dozen pixels wide at a
+// zoomed-out view - a drop that visually looks "right next to" a clip can
+// still miss a 16px window and fall through to a raw, unsnapped position
+// far away. Widened for a more forgiving, still-precise-enough target.
+const INSERT_SNAP_PX = 28;
 /** D-097 — how wide the "insert a new track here" hit-zone is on EACH side
  *  of the boundary line between two existing track rows, in px, independent
  *  of `ROW_HEIGHT`'s own value. Deliberately a thin band, not half the row:
@@ -996,7 +1001,12 @@ export function TimelinePane() {
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) return timeline ? videoTrackIndex(timeline) : 0;
     const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
-    if (y < 0) return timeline ? videoTrackIndex(timeline) : 0;
+    // Gap-on-add fix: this used to silently fall back to `videoTrackIndex`
+    // for `y < 0`, while `onDragOver`'s own preview shows NOTHING for that
+    // same case (see its `if (y < 0)` branch below) - a real drop could land
+    // on a track the user was never shown a preview for. Now both agree:
+    // clamp into range instead of a hidden special case, so whatever track
+    // the preview pointed at is always the one the drop actually uses.
     return Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
   };
 

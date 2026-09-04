@@ -121,9 +121,11 @@
 //! misclassify a real, currently-graded shot as "no matching clip."
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use base64::Engine as _;
 use chroma_timeline::{Clip, Timeline, TrackKind};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -1138,6 +1140,55 @@ fn migrate_legacy_shots(raw: &mut Value) {
 /// implicit back-to-back position, not `0` for every clip) — that's
 /// `Timeline::backfill_legacy_positions`, called here once per timeline,
 /// right after the typed deserialize.
+/// D-114 — in-process cache for [`load_manifest`], keyed by `project_dir` and
+/// validated against `project.json`'s own mtime.
+///
+/// `chroma::edit::resolve_timeline` (via [`load_manifest`]) is a genuinely
+/// hot path — it runs on **every single preview frame** while scrubbing or
+/// playing back (once per `chroma_timeline_frame`/`chroma_audio_play` call),
+/// yet `project.json` only actually changes on an explicit save (D-105's
+/// debounced ~400ms during a drag, or a real structural op). Re-reading and
+/// re-parsing the whole manifest from disk on every frame — file I/O, JSON
+/// parse, schema/legacy migration, `backfill_legacy_positions` per timeline —
+/// was real, measured, wasted work on a purely local app that should feel
+/// instant. See `docs/notes/performance-instrumentation.md` for before/after
+/// numbers.
+///
+/// Validated by mtime rather than trusted blindly: a plain `fs::metadata`
+/// stat is orders of magnitude cheaper than a full read+parse, so every call
+/// still does *some* real disk I/O (correctness first), just not the
+/// expensive part when nothing has actually changed. This also means an
+/// external write to `project.json` (a hand edit, a stale/second process —
+/// see B-034's own sidecar-ownership-style caveat) is picked up on the very
+/// next call, not stuck stale for the process lifetime.
+static MANIFEST_CACHE: Lazy<Mutex<Option<(PathBuf, std::time::SystemTime, ProjectManifest)>>> =
+    Lazy::new(|| Mutex::new(None));
+
+/// Cached equivalent of [`load_manifest`] for read-only hot-path callers
+/// (`chroma::edit::resolve_timeline`'s `persist: false` case). Callers that
+/// need to mutate-then-persist should keep using plain `load_manifest` +
+/// [`save_manifest`], which already keeps this cache in sync on every write.
+pub fn load_manifest_cached(project_dir: &Path) -> Result<ProjectManifest, String> {
+    let mp = project_dir.join("project.json");
+    let mtime = std::fs::metadata(&mp)
+        .and_then(|m| m.modified())
+        .map_err(|e| format!("stat {}: {e}", mp.display()))?;
+
+    {
+        let cache = MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((dir, cached_mtime, manifest)) = cache.as_ref() {
+            if dir == project_dir && *cached_mtime == mtime {
+                return Ok(manifest.clone());
+            }
+        }
+    }
+
+    let manifest = load_manifest(project_dir)?;
+    *MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((project_dir.to_path_buf(), mtime, manifest.clone()));
+    Ok(manifest)
+}
+
 pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     let mp = project_dir.join("project.json");
     let txt = std::fs::read_to_string(&mp).map_err(|e| format!("read {}: {e}", mp.display()))?;
@@ -1224,6 +1275,19 @@ pub fn save_manifest(project_dir: &Path, manifest: &ProjectManifest) -> Result<(
         // Don't leave the staging file behind if the swap itself failed.
         let _ = std::fs::remove_file(&tmp_path);
         return Err(format!("replace project.json: {e}"));
+    }
+
+    // D-114 — keep `MANIFEST_CACHE` in sync with what we just wrote, rather
+    // than relying solely on the next cached read's mtime check to notice.
+    // Real, not theoretical: two writes landing within the same filesystem
+    // mtime tick (coarse on some platforms/filesystems) could otherwise let
+    // a cached read serve the FIRST write's content after the second one
+    // already landed. Re-stat the file we just renamed into place rather
+    // than trusting `SystemTime::now()`, so the cached mtime always matches
+    // what a fresh stat of the real file would report.
+    if let Ok(mtime) = std::fs::metadata(&final_path).and_then(|m| m.modified()) {
+        *MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((project_dir.to_path_buf(), mtime, manifest.clone()));
     }
     Ok(())
 }
@@ -2319,6 +2383,74 @@ mod tests {
             .filter(|n| n.ends_with(".tmp"))
             .collect();
         assert!(strays.is_empty(), "temp files left behind: {strays:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-114 — real before/after numbers for the manifest-cache fix, not a
+    /// vague "feels faster" claim. Simulates `resolve_timeline`'s real call
+    /// pattern: `chroma_timeline_frame` calls this once per preview frame
+    /// while scrubbing/playing, with `project.json` untouched between calls
+    /// (the common case — most frames aren't also a save tick). Padded to a
+    /// realistic size (same padding shape as the torn-read test above; the
+    /// owner's own real `New.chroma/project.json` is ~8.9KB, this lands in
+    /// the same range).
+    #[test]
+    fn manifest_cache_is_real_measured_faster_than_a_reread_per_frame() {
+        let root = tmp("cache_perf");
+        let (dir, mut manifest) = new_project_in(
+            &root,
+            "Cache Perf",
+            &["/a.mov".into(), "/b.mov".into(), "/c.mov".into()],
+        )
+        .unwrap();
+        for i in 0..400 {
+            let seed = manifest.timelines[0].tracks[0].clips[0].clone();
+            manifest.timelines[0].tracks[0].clips.push(Clip {
+                id: format!("padding-clip-{i}"),
+                name: format!("padding clip number {i} with a reasonably long name"),
+                source_path: format!("/some/reasonably/long/media/path/clip_{i}.mov"),
+                ..seed
+            });
+        }
+        save_manifest(&dir, &manifest).unwrap();
+
+        const N: u32 = 600; // ~10-20s of playback at 30-60fps — one real scrub/play session
+
+        // Warm the cache once, matching real usage (the very first frame is
+        // always a real read either way — this isolates the steady-state
+        // "nothing changed between frames" cost the fix actually targets).
+        load_manifest_cached(&dir).unwrap();
+
+        let uncached_start = std::time::Instant::now();
+        for _ in 0..N {
+            load_manifest(&dir).unwrap();
+        }
+        let uncached_elapsed = uncached_start.elapsed();
+
+        let cached_start = std::time::Instant::now();
+        for _ in 0..N {
+            load_manifest_cached(&dir).unwrap();
+        }
+        let cached_elapsed = cached_start.elapsed();
+
+        println!(
+            "D-114 manifest read, {N} calls, {} bytes: uncached (old) {:?} total, {:?}/call — cached (new) {:?} total, {:?}/call — {:.1}x faster",
+            std::fs::metadata(dir.join("project.json")).unwrap().len(),
+            uncached_elapsed,
+            uncached_elapsed / N,
+            cached_elapsed,
+            cached_elapsed / N,
+            uncached_elapsed.as_secs_f64() / cached_elapsed.as_secs_f64().max(1e-9),
+        );
+
+        // Real assertion, not just a printout: the cache must be
+        // meaningfully faster in the steady state, not marginally.
+        assert!(
+            cached_elapsed.as_secs_f64() * 3.0 < uncached_elapsed.as_secs_f64(),
+            "expected the cache to be at least 3x faster in the steady state; \
+             uncached={uncached_elapsed:?} cached={cached_elapsed:?}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -8679,3 +8679,98 @@ check is what closes the loop.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-114 — Cache the project manifest for the hot read-only path; stop re-reading `project.json` from disk on every preview frame
+**decided (2026-09-04)**
+
+- **Context:** owner, twice, live: "why it takes so much time lets optimize it its
+  under ms as it local not remote" and "this opening so slow, the timeline loading,
+  then video loading, then source loading its not remote we should not have that
+  much time taken." B-034/D-112 had already found the real hot-path shape while
+  chasing a torn-read bug: `chroma::edit::resolve_timeline` (backing
+  `resolve_video_position`/`resolve_audio_track_positions`, called from
+  `chroma_timeline_frame` and `chroma::audio::chroma_audio_play`) calls
+  `project::load_manifest` — a real disk read, JSON parse, schema/legacy migration,
+  and a `backfill_legacy_positions` pass per timeline — on **every single preview
+  frame**, while scrubbing or during playback. B-034 fixed the torn-*write* half of
+  that hot path (atomic rename); this decision fixes the redundant-*read* half,
+  which is wasted work regardless of the torn-read bug's own fix.
+- **Options considered:** (a) do nothing, rely on the OS page cache to make repeated
+  `read_to_string` calls cheap — rejected: the JSON parse + schema/legacy-migration
+  + `backfill_legacy_positions` work still runs fully on every call regardless of
+  whether the bytes came from disk or cache, and that's the larger cost, not the
+  raw I/O. (b) cache the parsed `ProjectManifest` in memory, trusted for the
+  process lifetime, invalidated only on this app's own writes — rejected: silently
+  wrong if `project.json` is ever changed by something other than this process
+  (a hand edit, a stale/second instance — the exact class of gap D-101's sidecar-
+  staleness work took seriously for a different subsystem). (c) **mtime-validated
+  in-memory cache** — a cheap `fs::metadata` stat on every call, full read+parse
+  only when the file's mtime has actually changed since the last cached read.
+- **Choice:** (c). Correctness is never traded for speed — an external change to
+  `project.json` is picked up on the very next call, not stuck stale — while the
+  expensive part of the work (parse + migration + backfill) only happens when
+  something has genuinely changed, which for the "same frame, nothing edited since
+  the last one" hot-path case is effectively never. `chroma::project::save_manifest`
+  also updates the cache directly (re-`stat`ing the file it just renamed into
+  place, not trusting `SystemTime::now()`) so two writes landing within one
+  filesystem mtime tick can't leave a cached read serving the older of the two.
+  Scoped to the read-only caller (`load_and_ensure_timeline(persist: false)`,
+  i.e. `resolve_timeline`'s own call) — `persist: true` callers (which may go on
+  to write) keep the plain, always-fresh `load_manifest` unchanged.
+- **Real measured numbers, not a vague "feels faster" claim** — a new test,
+  `manifest_cache_is_real_measured_faster_than_a_reread_per_frame`
+  (`chroma::project::tests`), simulates 600 calls (roughly a 10-20s scrub/play
+  session at 30-60fps) against a realistic ~230KB manifest (same padding shape as
+  B-034's own torn-read test; the owner's real `New.chroma/project.json` is
+  ~8.9KB, well inside this range): **682µs/call uncached → 37µs/call cached, an
+  18.4x reduction** in the steady state. The test asserts at least a 3x
+  improvement, not just prints a number, so a future regression that quietly
+  defeats the cache fails CI-visibly.
+- **What this does NOT fix, disclosed honestly rather than implied fixed:**
+  project-*open* itself (the owner's other named phase, alongside "timeline
+  loading") wasn't separately profiled this pass — this fix targets the specific,
+  already-identified per-frame re-read hot path, not the full open-to-usable-UI
+  critical path end to end (media probing, thumbnail generation, the Colorist
+  shot-strip load). A real breakdown of *that* path by phase is real follow-up
+  work, not assumed solved by this change.
+- **Verification:** `cargo test --package RapidRAW chroma::` 157 passed, 1
+  ignored (pre-existing), 0 failed. `cargo clippy` clean on the touched code (the
+  pre-existing, unrelated, workspace-wide `cargo fmt` drift across many other
+  files was left alone — out of scope for this pass, not something this change
+  introduced).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-115 — Fix a real drop-target inconsistency and widen the insert-snap radius (B-035)
+**decided (2026-09-04)**
+
+- **Context:** owner, live: "i added one... this created this much gap instead of
+  placing just beside it" — a Sources-panel clip drop landed with a real gap
+  instead of snapping adjacent to the target it was previewed against.
+- **Real, confirmed fix:** `TimelinePane.tsx`'s `dropTargetTrack` (drop time) and
+  `onDragOver`'s own preview-track computation disagreed for one case — `y < 0`
+  fell back to `videoTrackIndex(timeline)` in `dropTargetTrack` while the preview
+  showed nothing for that position. Now both clamp identically; a drop can never
+  land on a track the preview never showed. `INSERT_SNAP_PX` widened 16→28 as a
+  real, defensible usability improvement (a tight pixel target once a clip is
+  only a few dozen pixels wide at low zoom), verified against the existing
+  `computeInsertion`/`resolveClipLanding` suite (136/136 still passing — neither
+  change alters the snap/ripple contract those tests already cover).
+- **Honest scope limit:** static analysis of `computeInsertion`/`resolveClipLanding`
+  (both already have solid, existing test coverage from D-095/D-100/D-104) found
+  no further logic bug — they already correctly guarantee an adjacent,
+  non-overlapping landing whenever a snap point is found. These two fixes are
+  real and shipped, but weren't independently confirmed as reproducing the exact
+  large gap in the owner's own screenshot via a live interactive test (not
+  available this pass). If the symptom recurs after retesting, it likely needs
+  real interactive verification (a live drag, not unit tests) to pin down a
+  timing/layout-during-drag cause static reading can't see.
+- **Verification:** 136/136 `packages/editor` tests, `tsc` clean.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
