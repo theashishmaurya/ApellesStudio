@@ -134,6 +134,21 @@
  *     see the position-model note above — so this now mostly fires for a
  *     `move`; kept as-is since a future ripple-mode trim would want it too.)
  *
+ * D-137 (marquee-select, roadmap item 12 Phase 2) — a SECOND pointer gesture
+ * on this surface, which is the whole reason it warrants a note here rather
+ * than just a comment at its own code. A click-drag on empty edit-area canvas
+ * rubber-bands a selection; the pure half (what may start one, the activation
+ * threshold, the intersection, the modifier composition, the overlay
+ * geometry) is `marquee.ts`, unit-tested. **It cannot collide with the clip
+ * drag above, structurally**: dnd-kit's `PointerSensor` activator is an
+ * `onPointerDown` prop `useDraggable` puts on `ClipBody` and — inside this
+ * edit area — nowhere else, so `ClipBody` carries `data-chroma-clip-drag` and
+ * `canStartMarquee` refuses any press with that attribute on its propagation
+ * path. The two gestures are separated by DOM position, not by ordering,
+ * precedence or `stopPropagation` — see D-137 §1 and the block comment at the
+ * gesture's own code below for why that distinction is the entire point,
+ * given D-094–D-100.
+ *
  * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
  * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
  * tick density) via `getScaleRender`, and the labeled-tick interval
@@ -152,6 +167,7 @@ import {
   type CSSProperties,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
@@ -240,6 +256,18 @@ import {
   type Timeline,
   type Track,
 } from './timeline';
+import {
+  canStartMarquee,
+  clipsInMarquee,
+  composeMarqueeSelection,
+  marqueeActivated,
+  marqueeAnchorFromPoint,
+  marqueeOverlayBox,
+  marqueeRect,
+  type MarqueeAnchor,
+  type MarqueeRect,
+  type MarqueeViewport,
+} from './marquee';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -579,6 +607,17 @@ function ClipBody({
   return (
     <div
       ref={setNodeRef}
+      // D-137 — the marker marquee-select's own gesture guard tests for. This
+      // element is THE `@dnd-kit/core` `useDraggable` node inside the edit
+      // area, so `listeners` below is where dnd-kit's `PointerSensor`
+      // activator actually lives; a `pointerdown` anywhere in this subtree is
+      // a press dnd-kit's sensor claims. `canStartMarquee` (`marquee.ts`)
+      // refuses to begin a marquee for any event with this attribute on its
+      // propagation path, which makes "marquee" and "clip drag" mutually
+      // exclusive by DOM position rather than by ordering or precedence —
+      // see that module's doc, and D-094–D-100 for why this file does not
+      // settle two drag systems on one element any other way.
+      data-chroma-clip-drag=""
       className={className + ' cursor-grab active:cursor-grabbing ' + (isDragging ? 'opacity-30' : '')}
       style={style}
       {...attributes}
@@ -960,6 +999,200 @@ export function TimelinePane() {
     document.addEventListener('dragend', onGlobalDragEnd);
     return () => document.removeEventListener('dragend', onGlobalDragEnd);
   }, []);
+
+  // ── Marquee-select (D-137, roadmap item 12 Phase 2) ──────────────────────
+  //
+  // Click-drag on empty timeline canvas draws a rubber band; every clip whose
+  // bounding box it intersects becomes the selection. Every decision this
+  // gesture makes is pure and lives in `marquee.ts` (and is unit-tested
+  // there); what follows is only the wiring.
+  //
+  // **How it coexists with the clip drag, since that is the one thing this
+  // file has a six-decision history of getting wrong (D-094–D-100).** A
+  // marquee and a clip drag both begin with a `pointerdown` inside this edit
+  // area, so they are separated by DOM POSITION, not by precedence: dnd-kit's
+  // `PointerSensor` activator is an `onPointerDown` prop that `useDraggable`
+  // puts on `ClipBody` and nowhere else in this subtree (the other draggable
+  // in this file, `SortableTrackHeader`'s grip, is in the track-header
+  // `ResizablePanel`, a different subtree entirely). `ClipBody` therefore
+  // carries `data-chroma-clip-drag`, and `canStartMarquee` refuses any press
+  // whose propagation path contains it. The two gestures are consequently
+  // mutually exclusive by construction: a press dnd-kit's sensor can claim is
+  // a press this handler provably returns early on, and the reverse. Nothing
+  // here relies on which handler runs first, on `stopPropagation`, or on a
+  // shared "is a drag already running" flag — the `activeDrag` check below is
+  // a redundant belt, not the braces.
+  //
+  // The activation threshold reuses the `PointerSensor`'s own
+  // `activationConstraint: { distance: 4 }` value and distance metric
+  // (`MARQUEE_MIN_DRAG_PX`) rather than inventing a second one, so a press
+  // that is "a click" for one system can never be "a drag" for the other.
+  // Below the threshold the press stays a plain click and falls through to
+  // this area's existing clear-selection / select-gap `onClick` (D-100/D-105)
+  // untouched; above it, `marqueeClickSuppressedRef` swallows exactly that one
+  // click so the marquee's own result isn't immediately cleared by it.
+  const [marquee, setMarquee] = useState<MarqueeRect | null>(null);
+  /** The in-flight gesture. A ref, not state: it is written from `window`
+   *  pointer listeners that must not be re-registered on every mutation, and
+   *  nothing renders from it directly (`marquee` above is what paints). */
+  const marqueeRef = useRef<{
+    pointerId: number;
+    /** press point in CLIENT px — the threshold is a physical-distance
+     *  question, so it is the one part of this gesture not held in timeline
+     *  units. */
+    originX: number;
+    originY: number;
+    anchor: MarqueeAnchor;
+    /** read once, at `pointerdown`: a modifier tapped mid-drag must not change
+     *  the meaning of a gesture already under way. */
+    additive: boolean;
+    /** the selection to compose against — snapshotted at press time for the
+     *  same reason. */
+    base: Selection[];
+    active: boolean;
+  } | null>(null);
+  const marqueeClickSuppressedRef = useRef(false);
+
+  /** Everything the `window`-level pointer listeners need to read at their own
+   *  moment rather than at registration time (zoom, scroll and the timeline
+   *  all change mid-gesture). One ref, refreshed after every commit, keeps
+   *  those listeners registered exactly once for the component's whole life.
+   *
+   *  Written in an effect, NOT during render — the canonical "latest value"
+   *  ref pattern. A render-body assignment worked, but a mutation during
+   *  render is a real React anti-pattern (and the React Compiler said so:
+   *  `vite build` reported a fresh `Cannot access refs during render` bailout
+   *  on this file, which is this repo's own signal to fix the structure rather
+   *  than accept the bailout — D-100 made the same call for its own). Safe
+   *  timing-wise: the ref is seeded with the first render's values at
+   *  `useRef` time and refreshed after every commit, and a pointer event can
+   *  only ever be dispatched between frames, i.e. after a commit. */
+  const marqueeViewport: MarqueeViewport = {
+    fps,
+    pxPerSec,
+    scrollLeft,
+    scrollTop,
+    startLeftPx: START_LEFT_PX,
+    rulerPx: RULER_AND_MARGIN_PX,
+    rowHeight: ROW_HEIGHT,
+  };
+  const marqueeLatestRef = useRef<{ viewport: MarqueeViewport; timeline: Timeline | null }>({
+    viewport: marqueeViewport,
+    timeline,
+  });
+  useEffect(() => {
+    marqueeLatestRef.current = { viewport: marqueeViewport, timeline };
+  });
+
+  /** Pointer position → timeline units, against the CURRENT viewport. */
+  const marqueePointTo = useCallback((clientX: number, clientY: number): MarqueeAnchor | null => {
+    const rect = editAreaRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return marqueeAnchorFromPoint(clientX - rect.left, clientY - rect.top, marqueeLatestRef.current.viewport);
+  }, []);
+
+  const onEditAreaPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      // Only ever suppresses the click belonging to the gesture that set it —
+      // reset here so an interrupted gesture can't leak the flag forward.
+      marqueeClickSuppressedRef.current = false;
+      // Redundant with the target check below (a dnd-kit drag can only be
+      // running because its own sensor claimed a press on a `ClipBody`, which
+      // `canStartMarquee` already refuses), kept as a cheap invariant.
+      if (activeDrag) return;
+      if (!canStartMarquee(e.button, e.target as Element | null)) return;
+      const anchor = marqueePointTo(e.clientX, e.clientY);
+      if (!anchor) return;
+      marqueeRef.current = {
+        pointerId: e.pointerId,
+        originX: e.clientX,
+        originY: e.clientY,
+        anchor,
+        additive: e.shiftKey || e.metaKey || e.ctrlKey,
+        base: selection,
+        active: false,
+      };
+    },
+    [activeDrag, marqueePointTo, selection],
+  );
+
+  // The gesture's own move/up/cancel listeners live on `window`, not on the
+  // edit area and not via `setPointerCapture`: a marquee routinely runs past
+  // this pane's edges, and pointer capture would RETARGET every subsequent
+  // pointer event to the captured element — a real way to interfere with
+  // something else's hit-testing, which is precisely the class of bug this
+  // file already has enough of. Registered once (every value they read comes
+  // from a ref) so React re-renders during the drag never rebind them.
+  useEffect(() => {
+    /** Abandon an in-flight gesture without committing anything (Escape,
+     *  `pointercancel`, the window losing focus).
+     *
+     *  Cancelling an ACTIVATED marquee also suppresses the click that
+     *  terminates it — a real bug found by driving this in a browser, not
+     *  reasoned about: Escape correctly dropped the band, but the `pointerup`
+     *  that followed still produced a click on the edit area, which ran the
+     *  D-100 clear-selection branch and wiped the selection the user had
+     *  before they ever started the cancelled gesture. Cancelling must leave
+     *  the world exactly as it was found. A gesture that never passed the
+     *  threshold sets nothing, so a plain click still clears as it always
+     *  has; and the flag is re-cleared at the next `pointerdown`, so it can
+     *  never leak into an unrelated later click when no click follows at all
+     *  (blur, `pointercancel`). */
+    const finish = () => {
+      if (marqueeRef.current?.active) marqueeClickSuppressedRef.current = true;
+      marqueeRef.current = null;
+      setMarquee((prev) => (prev === null ? prev : null));
+    };
+    const onMove = (e: PointerEvent) => {
+      const g = marqueeRef.current;
+      if (!g || e.pointerId !== g.pointerId) return;
+      if (!g.active) {
+        if (!marqueeActivated(e.clientX - g.originX, e.clientY - g.originY)) return;
+        g.active = true;
+      }
+      const cur = marqueePointTo(e.clientX, e.clientY);
+      if (cur) setMarquee(marqueeRect(g.anchor, cur));
+    };
+    const onUp = (e: PointerEvent) => {
+      const g = marqueeRef.current;
+      if (!g || e.pointerId !== g.pointerId) return;
+      marqueeRef.current = null;
+      setMarquee(null);
+      // Never activated: this was a click, not a drag. Leave the selection
+      // alone and let the edit area's own `onClick` do its existing job.
+      if (!g.active) return;
+      const cur = marqueePointTo(e.clientX, e.clientY);
+      if (!cur) return;
+      const hits = clipsInMarquee(marqueeLatestRef.current.timeline, marqueeRect(g.anchor, cur));
+      setSelection(composeMarqueeSelection(g.base, hits, g.additive));
+      // A completed marquee is a real selection action, and a clip selection
+      // and a gap selection are mutually exclusive (D-105).
+      setSelectedGap(null);
+      marqueeClickSuppressedRef.current = true;
+    };
+    const onCancel = (e: PointerEvent) => {
+      const g = marqueeRef.current;
+      if (g && e.pointerId !== g.pointerId) return;
+      finish();
+    };
+    // Escape abandons an in-flight marquee without committing — the same
+    // cancel affordance `TransformOverlay`'s own drag has (D-136).
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && marqueeRef.current) finish();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('blur', finish);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('blur', finish);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [marqueePointTo, setSelection, setSelectedGap]);
 
   /** D-097 — the `0..tracksLength` insertion boundary near `y`
    *  (`editAreaRef`-relative, ruler/scroll already subtracted), or `null` if
@@ -2165,7 +2398,20 @@ export function TimelinePane() {
             // instead of just clearing. Anywhere else (a genuine dead zone —
             // trailing empty space past the last clip, or below every track
             // row) still falls through to a plain clear, same as before.
+            onPointerDown={onEditAreaPointerDown}
             onClick={(e) => {
+              // D-137 — the click that terminates a real marquee drag must not
+              // also run the clear-selection branch below and undo what the
+              // marquee just selected. The flag is set only by a marquee that
+              // actually passed its activation threshold, and is cleared both
+              // here (when consumed) and at the next `pointerdown` (so an
+              // interrupted gesture can never swallow an unrelated later
+              // click). A press that stayed below the threshold sets nothing
+              // and falls straight through to the existing behaviour.
+              if (marqueeClickSuppressedRef.current) {
+                marqueeClickSuppressedRef.current = false;
+                return;
+              }
               if ((e.target as HTMLElement).closest('.timeline-editor-action')) return;
               const rect = editAreaRef.current?.getBoundingClientRect();
               if (rect) {
@@ -2327,6 +2573,22 @@ export function TimelinePane() {
                 active. Positioned in the same `editAreaRef`-relative
                 coordinate space every other overlay in this file already
                 uses. */}
+            {/* D-137 — the marquee itself. `pointer-events-none` for the same
+                reason every other overlay in this file is: it must never
+                become a hit target, least of all one covering the clips its
+                own gesture is selecting. Painted above the drag ghosts
+                (`z-40`) since it is the thing the user is actively drawing.
+                Its geometry is derived from the rect's TIMELINE units on every
+                render (`marqueeOverlayBox`), not stored in pixels, so a scroll
+                or a ctrl-wheel zoom mid-drag moves and rescales the band with
+                the content it actually encloses rather than sliding off it. */}
+            {marquee && (
+              <div
+                data-bench-id="timeline-marquee"
+                className="pointer-events-none absolute z-40 rounded-[2px] border border-accent bg-accent/15"
+                style={marqueeOverlayBox(marquee, marqueeViewport)}
+              />
+            )}
             {tracks.map((_, i) => (
               <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop} height={ROW_HEIGHT} />
             ))}

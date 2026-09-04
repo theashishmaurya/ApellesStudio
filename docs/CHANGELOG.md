@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Marquee-select on the Edit timeline (D-137, roadmap item
+  12 Phase 2).** Click-drag on empty timeline canvas rubber-bands a selection;
+  every clip the rect intersects is selected, shift/cmd/ctrl unions onto the
+  existing selection. The deferral's stated reason was dnd-kit coexistence, and
+  it is resolved structurally rather than by precedence: `ClipBody` carries
+  `data-chroma-clip-drag` and the gesture refuses any `pointerdown` with that
+  on its path — the same condition dnd-kit's own `PointerSensor` uses — reusing
+  that sensor's `distance: 4` threshold rather than inventing a second one. All
+  decision logic is pure and unit-tested (`marquee.ts`, 36 new tests, 258
+  total); the gesture was driven with real `PointerEvent`s at the real
+  component under `<StrictMode>` in a browser, confirming same-track and
+  cross-track clip drag and track reorder all still work and never raise a
+  band. That run caught a real bug before it shipped: Escape cancelled the band
+  but its terminating click still wiped the pre-existing selection.
 - **2026-09-04** — **`position_x`/`position_y` become normalised composition
   fractions, with a real migration, and the Edit tab gets real on-canvas
   drag/scale handles (D-136, B-043 closed).** Phase 0a's code, left undone by

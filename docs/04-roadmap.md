@@ -626,7 +626,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     generalized cross-track) — a real feature loss versus what's described
     above, deliberate given the stakes. Auto-split is a legitimate,
     separately-scoped future follow-up, not abandoned.
-12. ~~**Multi-select**~~ — **Phase 1 done, D-107 (2026-09-04).** The audit's
+12. ~~**Multi-select**~~ — **Phases 1 and 2 done (D-107, 2026-09-04; D-137,
+    2026-09-05). Phase 3 still deferred.** The audit's
     own FIRST priority. `Selection` is now `{track, id}[]`; shift-click
     range-extend + cmd/ctrl-click toggle wired into `onClickAction`;
     `Remove`/`Split at playhead` generalized across the whole selection
@@ -636,12 +637,30 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     transform/keyframes/"Move to ▾" correctly fall back to their existing
     single-clip path via a derived `primary` for any selection size ≠ 1,
     exactly as the doc recommended. Same live-interaction verification gap
-    as item 11 above — disclosed, not claimed closed. **Phase 2
-    (marquee-select) and Phase 3 (multi-clip cross-track move, richer batch
-    Inspector editing) remain real, deliberately deferred** — a genuinely
-    new pointer gesture with real dnd-kit coexistence risk, per this
-    session's own six-round history stabilizing single-clip drag
-    (D-094–D-100); wait for Phase 1's own real usage first.
+    as item 11 above — disclosed, not claimed closed.
+    - **Phase 2 — marquee-select — ✅ BUILT (D-137, 2026-09-05).** Click-drag
+      on empty timeline canvas rubber-bands a selection; every clip whose
+      bounding box the rect intersects is selected, and shift/cmd/ctrl held at
+      press time unions onto the existing selection instead of replacing it.
+      The deferral's own stated reason was the dnd-kit coexistence risk, and
+      that is what the entry is mostly about: the marquee and the clip drag are
+      mutually exclusive **by DOM position** — `ClipBody` (the one
+      `useDraggable` node in the edit area) carries `data-chroma-clip-drag`,
+      and the gesture refuses any `pointerdown` with that on its propagation
+      path, which is the same condition dnd-kit's own `PointerSensor` uses to
+      decide whether it runs. No precedence, no `stopPropagation`, no
+      who-wins flag. The activation threshold reuses the `PointerSensor`'s own
+      `distance: 4` rather than inventing a second one. All the decision logic
+      is pure and unit-tested (`marquee.ts`, 36 tests); the gesture itself was
+      driven with real `PointerEvent`s against the real component under real
+      `<StrictMode>` in a browser (13 scenarios — including that same-track
+      and cross-track clip drag AND track reorder all still work and never
+      raise a band), which caught one real bug (Escape wiped the pre-existing
+      selection via the terminating click) before it shipped. Still not the
+      real Tauri/WKWebView window — disclosed in D-137, not claimed closed.
+    - **Phase 3 — multi-clip cross-track move, richer batch Inspector
+      editing — still real, still deliberately deferred.** Wait for Phases 1
+      and 2's own real usage first.
 13. **Real A/V linking (link/unlink, L-cut/J-cut)** — today's model is
     all-or-nothing (D-050 embedded / D-057 independent, no in-between).
     **Real scoping doc now exists: `docs/notes/av-linking.md` (D-106,

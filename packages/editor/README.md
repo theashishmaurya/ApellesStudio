@@ -28,6 +28,29 @@ dragging a pool item in from the shell's Sources panel.
   `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia` — the
   drag-to-track contract `TimelinePane`'s drop handler and the Sources
   panel's drag source both implement.
+- `marquee.ts` (D-137) — marquee-select's pure half: whether a `pointerdown`
+  may start a rubber-band at all (`canStartMarquee` /
+  `MARQUEE_BLOCKING_SELECTOR`), the activation threshold, the
+  clip-box-vs-rect intersection, how the result composes with the existing
+  selection, and the pixel↔timeline conversions the overlay paints from. No
+  React, no DOM, no `window` — `TimelinePane` owns the wiring. See
+  **Marquee-select** below.
+
+**Marquee-select (D-137, roadmap item 12 Phase 2).** Click-drag on empty
+timeline canvas draws a rubber band; every clip whose bounding box the rect
+intersects becomes the selection, with shift/cmd/ctrl (read once, at
+`pointerdown`) unioning onto the existing selection instead of replacing it.
+**The boundary that matters is with the `@dnd-kit/core` clip drag** (D-098 /
+D-100), since both gestures begin with a `pointerdown` in the same edit-area
+subtree: they are mutually exclusive **by DOM position**, not by precedence or
+ordering. `ClipBody` — the one `useDraggable` node inside the edit area, and so
+the only place dnd-kit's `PointerSensor` activator lives there — carries
+`data-chroma-clip-drag`, and `canStartMarquee` refuses any press with that
+attribute on its propagation path. Nothing relies on handler order or
+`stopPropagation`. The rect is held in timeline units (frame + fractional
+track row), so a scroll or ctrl-wheel zoom mid-drag moves and rescales the band
+with the content it encloses. `marquee.test.ts` covers the intersection math,
+the threshold, the modifier composition and the gesture guard.
 
 **Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
 `{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto
