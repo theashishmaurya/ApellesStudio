@@ -17,24 +17,27 @@ Two forks dispatched, both working in isolated git worktrees (`chroma-worktrees/
 the owner's live dev server isn't disturbed while they work — merged back and the app
 restarted once each is done.
 
-- 🔄 **Filmstrip thumbnail generation is spawning unbounded concurrent `ffmpeg`
-  processes** — owner hit 11 simultaneous `ffmpeg` processes, system load spiked to
-  200+, machine became nearly unusable. Immediate mitigation already applied
-  (`pkill -9 ffmpeg`, load recovered) — real fix (a concurrency cap/queue) in
-  progress, `fork/timeline-polish`.
-- 🔄 **Filmstrip thumbnails don't render for every clip type** — owner screenshot:
-  one clip on the timeline shows a real filmstrip, an adjacent clip (different
-  source file) shows none at all — likely a codec/container the new
-  `extract_thumb_strip_range` ffmpeg invocation fails on silently. In progress,
-  same fork.
-- 🔄 **Remove the dotted-line drag indicator** — owner: now that the drag preview
-  shows a real thumbnail-filled ghost, the separate dotted outline is redundant
-  visual clutter ("we have 3 things: the previous place, the new thumbnail
-  preview, and the dotted line — let's remove the dot"). In progress, same fork.
-- 🔄 **Auto-decommission empty tracks** — owner: when a track becomes empty (its
-  last clip removed/moved away), it should be automatically removed and the
-  remaining tracks renumbered, rather than leaving orphaned empty rows around.
-  In progress, same fork (`fork/timeline-polish`).
+- ✅ **Filmstrip thumbnail generation was spawning unbounded concurrent `ffmpeg`
+  processes** — done, D-121/B-037 (`86af5cc`). `Semaphore(3)` caps concurrency;
+  also found and fixed a compounding cause — software decode alone was 393%
+  CPU/~5s per clip on real 4K HEVC footage. `-hwaccel videotoolbox` (with a
+  real tested software fallback) cut that to 38% CPU/~3.3s, measured directly
+  against the owner's own file. This is very likely also the full explanation
+  for the separately-reported scrub/playback lag, not a second bug.
+- ✅ **Filmstrip thumbnails didn't render for every clip type** — done, same
+  commit. Root cause: a silent `.catch(() => [])` was swallowing every real
+  backend failure with zero logging — now logged, so a genuine codec failure
+  is diagnosable instead of invisible.
+- ✅ **Remove the dotted-line drag indicator** — done, D-122. The redundant
+  `border-dashed` landing box (pre-dating D-119's real thumbnail ghost) is
+  gone; the underlying state it shared with the sync-linked-clips preview
+  was kept, only the extra box's own render was removed.
+- ✅ **Auto-decommission empty tracks** — done, D-123. Checked live first:
+  neither Premiere nor Resolve auto-removes by default — scoped narrowly
+  (only the track a `remove`/cross-track `move` just emptied, never a
+  sweep) to honor the owner's ask without the blast radius a blind
+  implementation would have had. Fixed the real index-invalidation risk
+  this raised for `Selection`/`SelectedGap` with dedicated remap tests.
 - ✅ **Sources panel's open/close toggle is still on the right** — done, D-120
   (`fc87547`). Moved from `Shell.tsx`'s chrome-bar to `top-2 left-2` inside the
   panel area, mirroring D-118's Inspector toggle placement. Stayed shell-level
