@@ -124,6 +124,52 @@ restarted once each is done.
   which would have made crop look broken on the most obvious test case.
   Phase 0a's unit question is answered (D-132); its `position_*` migration
   and B-043 remain open.
+- ✅ **Video export must honour the Colorist's geometry** — done, **D-135**.
+  All four pieces from the scoping above landed: `grade_frame` runs the same
+  CPU geometry pre-pass the preview does, the encoder is sized lazily from
+  the first graded frame instead of a stale pre-computed `out_w`/`out_h`,
+  mask bitmaps build at the transformed size with the real crop offset
+  (D-019's tracked-matte assumption needed no change, only a corrected
+  parenthetical), and h.264's even-dimension requirement is a stated
+  round-down-by-2 rule. **B-042 closed**; D-127's `unsupported_geometry`
+  refusal is deleted — the only remaining refusal is a crop rounding to
+  zero in either axis.
+
+### Session checkpoint (2026-09-04, ~23:10) — approaching a context limit, work continues next session
+
+All five second-round bugs are merged and verified on `main` (`cargo check` +
+`tsc` clean after each): **D-131** (player sliders + Sources-toggle overlap),
+**D-132** (Edit-tab crop), **D-133** (audio restarting from 0:00 on every
+Play — a real `symphonia` seek-failure bug, not a design gap), **D-134**
+(filmstrip zoom: 31.3s → 0.001s for a fine-band sweep), **D-135** (export
+geometry, above). Main tree is clean and buildable.
+
+**One fork still in flight, not yet landed:** `fork/on-canvas-transform`
+(worktree at `../chroma-worktrees/on-canvas-transform`, dispatched ~23:03) —
+Phase 0a (composition-space migration for `position_x`/`position_y`, closing
+B-043) and Phase 1 (real `TransformOverlay.tsx` drag/resize handles on the
+Edit-tab preview) of `docs/notes/on-canvas-transform.md`. Had made no commits
+yet as of this checkpoint. **Next session: check
+`git -C ../chroma-worktrees/on-canvas-transform log --oneline main..HEAD`** —
+if it finished, follow the same rebase/renumber/verify/merge process used for
+every fork tonight (check for `D-NNN`/`B-NNN` collisions against `main`'s
+current tip first, since numbering has collided on nearly every merge
+tonight); if it's dead/stalled, either resume it or re-dispatch fresh against
+the then-current `main` tip. Clean up the worktree and branch either way.
+
+**Also still uncommitted, unrelated to tonight's work, do not touch without
+checking first:** the E2E-testing fork's in-progress changes sit directly in
+the main tree (`Cargo.lock`, `app/src-tauri/Cargo.toml`,
+`app/src-tauri/capabilities/default.json`, `app/src-tauri/src/lib.rs`,
+`package-lock.json`, untracked `app/src-tauri/tauri.e2e.conf.json` and
+`e2e/`) — this is the owner's own separate work, stashed and restored intact
+around every merge tonight via `git stash push -u` / `pop`, never committed
+by design. Leave it as-is.
+
+**Not yet done tonight:** restarting the live dev app so the owner can test
+the accumulated D-131–D-135 batch together (it was left running from earlier
+in the session — check `ps aux` for a live `target/debug/RapidRAW` before
+assuming a restart is needed).
 
 ---
 
