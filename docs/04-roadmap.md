@@ -66,9 +66,14 @@ restarted once each is done.
   **Mature single-track timeline UI** (D-051) — scroll-wheel + toolbar zoom,
   edge-drag trim + snap-to-clip-edge/playhead, a Rust-computed waveform on the
   clip **plus a real filmstrip of the clip's own picture content, shown in
-  the drag preview too** (D-119), ripple-shift flash, an **adaptive-density
+  the drag preview too** (D-119, hardware-decoded + concurrency-capped after
+  a real overload incident — D-121/B-037; the redundant dashed drag-landing
+  box removed once the filmstrip ghost made it duplicate information —
+  D-122), ripple-shift flash, an **adaptive-density
   real-timecode ruler**
-  (D-058). Clip **position is a real, explicit `start_frame` the frontend
+  (D-058). **An emptied track auto-decommissions and the rest renumber**
+  (D-123 — narrowly scoped to the track an edit just emptied, checked live
+  against Premiere/Resolve's own manual-only default first). Clip **position is a real, explicit `start_frame` the frontend
   edit model now actually maintains** (D-058, closing a gap D-054's backend
   model had opened) — drag-from-Sources and edge-trim were both silently
   broken by that gap until the owner's live testing caught it and this pass

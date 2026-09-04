@@ -399,6 +399,29 @@ function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void 
   }
 }
 
+/** Auto-decommission an empty track (owner, live: "if we have an empty
+ *  track we auto decommission it and renumber the tracks... not
+ *  unnecessary empty tracks"). Deliberately narrow, not a blanket sweep of
+ *  every track in the timeline: only the ONE track a `remove`/cross-track
+ *  `move` op just directly emptied gets pruned here — a track that started
+ *  this op already empty (e.g. one the owner just added via `add_track` and
+ *  hasn't placed a clip on yet) is left alone. Checked live against real
+ *  reference behavior, not assumed: neither Premiere Pro nor DaVinci
+ *  Resolve auto-removes an empty track by default (both require an
+ *  explicit "Delete Empty Tracks" action) — this is a deliberate, informed
+ *  deviation from that convention for this specific op class, per the
+ *  owner's own explicit ask, not an oversight. `Vec`/array removal renumbers
+ *  the remaining tracks by construction (index-derived labels, `labels[i]`
+ *  in `TimelinePane.tsx`, are already correct with no further change) — the
+ *  caller (`timelineStore.ts::applyOp`) is responsible for remapping any
+ *  *selection* state that held a track index across this call, the same
+ *  class of index-shift the track-reorder drag's own `trackIndexAfterMove`
+ *  already has to handle. Mirrors `chroma-timeline::Timeline::{remove,
+ *  move_clip}`'s own end-of-function prune exactly. */
+function pruneIfEmptyTrack(tracks: Track[], trackIdx: number): void {
+  if (tracks[trackIdx]?.clips.length === 0) tracks.splice(trackIdx, 1);
+}
+
 /** The sync-lock version of `shiftClipsAtOrAfter` (D-106) — mirrors
  *  `chroma-timeline::ripple_shift_with_auto_split` field-for-field. For a
  *  track receiving someone ELSE's ripple (never the track directly being
@@ -892,6 +915,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (overlaps && op.ripple) {
       propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, moved.duration);
     }
+    // Auto-decommission — only the source track can have been emptied by a
+    // cross-track move; a same-track move never changes clip *count* on
+    // either track. Prune AFTER `toTrack`'s own mutations above, and before
+    // returning, so the caller's own selection-remap sees the final shape.
+    if (op.fromTrack !== op.toTrack) pruneIfEmptyTrack(next.tracks, op.fromTrack);
     return next;
   }
 
@@ -921,6 +949,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       if (op.clip < 0 || op.clip >= tr.clips.length) return tl;
       const next = clone(tl);
       next.tracks[op.track].clips.splice(op.clip, 1);
+      pruneIfEmptyTrack(next.tracks, op.track);
       return next;
     }
     case 'remove_gap': {

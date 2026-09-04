@@ -9,6 +9,24 @@ One or two lines per session. Detail lives in the decision it references.
   toggle stranded in the chrome bar's top-right — now a `top-2 left-2`
   button over the tab content, mirroring the Inspector's own `top-2
   right-2` toggle (D-118) instead of crowding the same corner as it.
+- **2026-09-04** — **Capped concurrent filmstrip `ffmpeg` decodes + hardware
+  decode (D-121, B-037).** A real live incident: opening a multi-clip
+  project spawned 11 simultaneous `ffmpeg` processes, system load past
+  200. A `Semaphore(3)` caps concurrency; `-hwaccel videotoolbox` (with a
+  real software fallback) cut a single 4K HEVC decode from 393% CPU/~5s to
+  38% CPU/~3.3s, measured directly. Also fixed the paired silent-failure
+  bug: a missing thumbnail now logs a real error instead of swallowing it.
+- **2026-09-04** — **Removed the redundant dashed drag-landing box
+  (D-122).** Now that the drag ghost shows real filmstrip content, the
+  separate `border-dashed` landing-position box was drawing the same
+  information twice — owner: "we have 3 things... let's remove the dot."
+- **2026-09-04** — **Auto-decommission an empty track (D-123).** A track
+  emptied by `remove` or a cross-track `move` is now pruned automatically
+  and the rest renumber — narrowly scoped to only the directly-edited
+  track (checked live: neither Premiere nor Resolve auto-removes by
+  default, both need an explicit action), with real index-remap coverage
+  for `Selection`/`SelectedGap` so nothing points at a stale track index.
+
 - **2026-09-04** — **Real filmstrip thumbnails on Edit-tab timeline clips,
   in the drag preview too (D-119).** Video clips now show their actual
   source content tiled across the clip (`Filmstrip.tsx` +

@@ -394,26 +394,55 @@ pub fn extract_thumb_strip_range(
     // land a hair short after the approximate `-ss` seek and silently starve
     // the last bucket.
     let read_secs = duration_secs.max(0.0) + (2.0 / fps);
-    let out = Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error", "-ss"])
-        .arg(format!("{start_secs:.6}"))
-        .arg("-t")
-        .arg(format!("{read_secs:.6}"))
-        .arg("-i")
-        .arg(path)
-        .args([
-            "-vf",
-            &format!("select=not(mod(n\\,{step})),scale=-2:150"),
-            "-fps_mode", "passthrough",
-            "-q:v", "5",
-            "-f", "image2pipe",
-            "-c:v", "mjpeg",
-            "-",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("running ffmpeg ranged thumb strip on {}", path.display()))?;
+    let run = |hwaccel: bool| -> Result<std::process::Output> {
+        let mut cmd = Command::new(ffmpeg_bin());
+        cmd.args(["-hide_banner", "-loglevel", "error"]);
+        if hwaccel {
+            // Apple Silicon hardware HEVC/H.264 decode — measured live
+            // against the owner's real 4K HEVC footage: 393% CPU / ~5s
+            // software vs. 38% CPU / ~3s with this flag, for one 8s clip.
+            // That gap is the real, direct cause of the owner's concurrent-
+            // ffmpeg-burst overload (D-119's own follow-up) — several
+            // clips' worth of *software* HEVC decode is enough to starve
+            // the whole machine even with a concurrency cap in place.
+            cmd.args(["-hwaccel", "videotoolbox"]);
+        }
+        cmd.arg("-ss")
+            .arg(format!("{start_secs:.6}"))
+            .arg("-t")
+            .arg(format!("{read_secs:.6}"))
+            .arg("-i")
+            .arg(path)
+            .args([
+                "-vf",
+                &format!("select=not(mod(n\\,{step})),scale=-2:150"),
+                "-fps_mode", "passthrough",
+                "-q:v", "5",
+                "-f", "image2pipe",
+                "-c:v", "mjpeg",
+                "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd.output()
+            .with_context(|| format!("running ffmpeg ranged thumb strip on {}", path.display()))
+    };
+
+    let mut out = run(true)?;
+    if !out.status.success() {
+        // Real fallback, not assumed-safe: `-hwaccel videotoolbox` doesn't
+        // cover every codec/pixel format a source file might use, and a
+        // decode this feature treats as "nice to have" should degrade to
+        // software rather than leave a clip with no thumbnail at all and no
+        // trace of why (the exact silent-failure shape this whole pass is
+        // fixing on the frontend side too).
+        log::warn!(
+            "chroma_clip_thumbnails: hwaccel decode failed for {}, retrying in software: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out = run(false)?;
+    }
 
     if !out.status.success() {
         return Err(anyhow!(

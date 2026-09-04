@@ -132,6 +132,19 @@ type ThumbCacheValue = Vec<(u64, String)>;
 static THUMB_CACHE: Lazy<Mutex<HashMap<ThumbCacheKey, ThumbCacheValue>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Bounds how many `extract_thumb_strip_range` `ffmpeg` child processes may
+/// run at once. Found live, not theorized: the owner's real machine hit 11
+/// simultaneous `ffmpeg` processes opening a multi-clip project (every
+/// visible clip's `Filmstrip.tsx` requests its own strip independently, with
+/// nothing on either side throttling how many run at once), system load
+/// spiked past 200. Measured against the owner's own real 4K HEVC footage:
+/// a single strip decode is ~393% CPU for several seconds *even with*
+/// hardware decode disabled — a handful running concurrently is enough to
+/// starve the whole machine, not just this feature. 3 matches the number of
+/// performance-critical concurrent workloads this app can reasonably ask a
+/// desktop machine for at once alongside its own UI thread and any GPU work.
+static THUMB_SEMAPHORE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| tokio::sync::Semaphore::new(3));
+
 /// Round a seconds value to whole milliseconds for use as a cache key —
 /// avoids two calls for the same real clip range missing each other over
 /// float noise (e.g. `1.2000000000000002` vs `1.2`) while staying far finer
@@ -172,6 +185,13 @@ pub async fn chroma_clip_thumbnails(
     }
 
     let info = probe_cached(&path)?;
+    // Only the real decode waits on the semaphore — a cache hit above never
+    // reaches here, so a burst of requests for already-generated strips
+    // (e.g. re-rendering on scroll) is never needlessly queued behind it.
+    let _permit = THUMB_SEMAPHORE
+        .acquire()
+        .await
+        .map_err(|e| e.to_string())?;
     let thumbs = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, String)>, String> {
         video::extract_thumb_strip_range(&path, &info, start_secs, duration_secs, count)
             .map_err(|e| e.to_string())

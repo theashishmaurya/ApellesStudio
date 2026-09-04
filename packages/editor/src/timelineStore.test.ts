@@ -225,3 +225,58 @@ describe('selection (D-118)', () => {
     expect(s.selectedGap).toBeNull();
   });
 });
+
+describe('auto-decommission empty tracks — selection follows the prune (owner, live)', () => {
+  function threeTrackTimeline(): Timeline {
+    return {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [{ id: 'a', name: 'A', source_path: '/a.mov', source_start: 0, duration: 100, source_len: 100, start_frame: 0 }] },
+        { kind: 'video', clips: [{ id: 'b', name: 'B', source_path: '/b.mov', source_start: 0, duration: 100, source_len: 100, start_frame: 0 }] },
+        { kind: 'video', clips: [{ id: 'c', name: 'C', source_path: '/c.mov', source_start: 0, duration: 100, source_len: 100, start_frame: 0 }] },
+      ],
+    } as unknown as Timeline;
+  }
+
+  beforeEach(() => {
+    useEditorTimelineStore.setState({ timeline: threeTrackTimeline(), selection: [], selectedGap: null });
+  });
+
+  it('removing the sole selected clip on track 0 clears its own selection and shifts a later track-index selection down', () => {
+    useEditorTimelineStore.setState({
+      selection: [
+        { track: 0, id: 'a' }, // lives on the track about to be pruned
+        { track: 2, id: 'c' }, // lives two tracks later — must become track 1
+      ],
+    });
+    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 });
+    const s = useEditorTimelineStore.getState();
+    expect(s.timeline?.tracks).toHaveLength(2); // track 0 pruned
+    expect(s.selection).toEqual([{ track: 1, id: 'c' }]); // 'a' gone with its track, 'c' shifted 2->1
+  });
+
+  it('a selected gap on the pruned track is cleared; one on a later track shifts down', () => {
+    useEditorTimelineStore.setState({ selection: [], selectedGap: { track: 2, frame: 0 } });
+    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 });
+    expect(useEditorTimelineStore.getState().selectedGap).toEqual({ track: 1, frame: 0 });
+  });
+
+  it('a selection on a track BEFORE the pruned one is untouched', () => {
+    useEditorTimelineStore.setState({ selection: [{ track: 0, id: 'a' }] });
+    // empty track 2's only clip by moving it onto track 1 (cross-track)
+    useEditorTimelineStore.getState().applyOp({ kind: 'move', fromTrack: 2, toTrack: 1, clip: 0, startFrame: 200 });
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
+    expect(useEditorTimelineStore.getState().selection).toEqual([{ track: 0, id: 'a' }]); // unaffected
+  });
+
+  it('does not touch selection when no track was actually pruned (track still has a clip)', () => {
+    const t = threeTrackTimeline();
+    t.tracks[0].clips.push({ id: 'a2', name: 'A2', source_path: '/a2.mov', source_start: 0, duration: 50, source_len: 50, start_frame: 100 } as never);
+    useEditorTimelineStore.setState({ timeline: t, selection: [{ track: 2, id: 'c' }] });
+    useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: 0, clip: 0 }); // track 0 still has 'a2' left
+    const s = useEditorTimelineStore.getState();
+    expect(s.timeline?.tracks).toHaveLength(3);
+    expect(s.selection).toEqual([{ track: 2, id: 'c' }]); // untouched — nothing pruned
+  });
+});

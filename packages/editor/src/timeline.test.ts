@@ -356,6 +356,56 @@ describe('remove (D-058)', () => {
   });
 });
 
+describe('auto-decommission empty tracks', () => {
+  it('remove: prunes a track when its last clip is removed', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: [clip('a', 'A')] }, { kind: 'video', clips: [clip('b', 'B')] }],
+    };
+    const after = applyOp(before, { kind: 'remove', track: 0, clip: 0 });
+    expect(after.tracks).toHaveLength(1);
+    expect(after.tracks[0].clips[0].id).toBe('b'); // the survivor renumbers to index 0
+  });
+
+  it('remove: does NOT prune a track that still has another clip left', () => {
+    const before = tl(backToBack()); // single track, 2 clips
+    const after = applyOp(before, { kind: 'remove', track: 0, clip: 0 });
+    expect(after.tracks).toHaveLength(1); // still there, just one clip lighter
+  });
+
+  it('remove: does NOT sweep an unrelated already-empty track (only the directly-edited one prunes)', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [clip('a', 'A'), clip('c', 'C', { start_frame: 200 })] },
+        { kind: 'video', clips: [] }, // freshly added, deliberately empty — not this op's business
+      ],
+    };
+    const after = applyOp(before, { kind: 'remove', track: 0, clip: 0 });
+    expect(after.tracks).toHaveLength(2); // track 1 survives untouched
+    expect(after.tracks[0].clips).toHaveLength(1); // track 0 just lost one clip, not pruned (still has 'c')
+  });
+
+  it('cross-track move: prunes the source track when it becomes empty', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: [clip('a', 'A')] }, { kind: 'video', clips: [] }],
+    };
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 0 });
+    expect(after.tracks).toHaveLength(1); // old track 0 pruned; old track 1 is now index 0
+    expect(after.tracks[0].clips[0].id).toBe('a');
+  });
+
+  it('same-track move never prunes (clip count on the track is unchanged)', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 1, startFrame: 500 });
+    expect(after.tracks).toHaveLength(1);
+  });
+});
+
 describe('gapAt / remove_gap (D-105)', () => {
   it('finds the gap between two clips that do not touch', () => {
     const t: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 150 })] };
@@ -470,8 +520,10 @@ describe('move (D-058/D-080)', () => {
     // landing exactly on x's own start (the real, edge-aligned case
     // `resolveClipLanding` always produces) — x shifts later to make room.
     const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100, ripple: true });
-    expect(after.tracks[0].clips).toHaveLength(0);
-    expect(after.tracks[1].clips.map((c) => ({ id: c.id, start: c.start_frame }))).toEqual([
+    // Source track 0 is now empty and auto-decommissioned (owner, live) —
+    // what was track 1 is the only track left, renumbered to index 0.
+    expect(after.tracks).toHaveLength(1);
+    expect(after.tracks[0].clips.map((c) => ({ id: c.id, start: c.start_frame }))).toEqual([
       { id: 'x', start: 200 }, // shifted later by a's duration (100) to make room
       { id: 'a', start: 100 },
     ]);

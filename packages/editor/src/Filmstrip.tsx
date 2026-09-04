@@ -61,7 +61,16 @@ function getThumbs(sourcePath: string, startSecs: number, durationSecs: number, 
       count,
     })
       .then((rows) => rows.map((r) => ({ frame: r.frame, dataUrl: r.dataUrl })))
-      .catch(() => []);
+      .catch((err) => {
+        // Real failure, not silently dropped — a clip with genuinely no
+        // filmstrip and zero trace of why (this exact silent-catch, found
+        // live: the owner's 4K HEVC clip showed no thumbnail with nothing
+        // in any log to explain it) is undiagnosable. A missing filmstrip
+        // stays a soft failure for the *UI* (the clip still renders, just
+        // without a strip) — this only makes it a loud one in devtools.
+        console.error('[Filmstrip] chroma_clip_thumbnails failed for', sourcePath, err);
+        return [];
+      });
     thumbCache.set(key, p);
   }
   return p;

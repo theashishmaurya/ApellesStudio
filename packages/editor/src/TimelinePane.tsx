@@ -2127,27 +2127,18 @@ export function TimelinePane() {
                 style={{ top: RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop, height: ROW_HEIGHT }}
               />
             ))}
-            {/* D-113 — the precise cross-track/same-track clip-move
-                placeholder, replacing `TrackDropZone`'s old full-row wash
-                (see that component's own doc). Sized to the dragged clip's
-                REAL duration, positioned at the REAL resolved landing frame
-                — the same values `onDndDragEnd` would actually apply, not
-                an approximation of them. Same dashed-ghost visual language
-                `insertPreview`'s `'new_track'` case already established
-                (`border-dashed border-accent/70 bg-accent/10`), for
-                consistency with the one other "this is where it's going to
-                land" indicator this file already has. */}
-            {clipDragPreview && (
-              <div
-                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-accent/70 bg-accent/10"
-                style={{
-                  left: START_LEFT_PX + (clipDragPreview.startFrame / fps) * pxPerSec - scrollLeft,
-                  width: (clipDragPreview.duration / fps) * pxPerSec,
-                  top: RULER_AND_MARGIN_PX + clipDragPreview.toTrack * ROW_HEIGHT - scrollTop,
-                  height: ROW_HEIGHT,
-                }}
-              />
-            )}
+            {/* D-113 originally rendered a filled dashed box here at the
+                clip-move landing frame, matching `insertPreview`'s
+                `'new_track'` visual language. Owner, live, after D-119 gave
+                the `DragOverlay` ghost real filmstrip content: "we have 3
+                things — the previous place, the new thumbnail preview, and
+                the dotted line — let's remove the dot." With a real
+                picture-content ghost already following the cursor at the
+                resolved landing position, this second box was drawing the
+                same information twice. Removed — `clipDragPreview` (the
+                state) stays, `dragSyncGhosts` below still derives its own
+                sync-linked-track ghosts from it; only this box's own render
+                is gone. */}
             {/* D-113 — owner, live: "if both are synced, then both should
                 move together and hover together." One ghost per
                 `dragSyncGhosts` entry, at that clip's OWN track, shifted by

@@ -301,6 +301,37 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     const dur = timelineDuration(after);
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
+    // Auto-decommission (owner, live) — `applyOpPure` may have just pruned
+    // an emptied track for `remove`/cross-track `move` (see
+    // `pruneIfEmptyTrack`'s own doc). The op itself already tells us which
+    // index *could* have been pruned — `after.tracks.length` shrinking
+    // confirms it actually was, without needing to diff two track arrays
+    // that have no stable per-track id to diff by. Any selection/gap
+    // pointing at that exact index is gone with it (its track had zero
+    // clips, so nothing selected could still live there); anything after it
+    // shifts down by one, the same index-shift class `trackIndexAfterMove`
+    // already handles for the track-reorder drag.
+    const prunedTrack =
+      after.tracks.length < before.tracks.length
+        ? op.kind === 'remove'
+          ? op.track
+          : op.kind === 'move' && op.fromTrack !== op.toTrack
+            ? op.fromTrack
+            : null
+        : null;
+    if (prunedTrack !== null) {
+      const remap = (t: number) => (t > prunedTrack ? t - 1 : t);
+      set((s) => ({
+        selection: s.selection.filter((sel) => sel.track !== prunedTrack).map((sel) => ({ ...sel, track: remap(sel.track) })),
+        selectedGap:
+          s.selectedGap === null
+            ? null
+            : s.selectedGap.track === prunedTrack
+              ? null
+              : { ...s.selectedGap, track: remap(s.selectedGap.track) },
+      }));
+    }
+
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
