@@ -75,6 +75,29 @@ restarted once each is done.
   persistent cache wanted. **727px/tile → ≤50px** at the default zoom on the
   owner's 517s clip.
 
+### Second round (2026-09-04 evening) — after D-124–D-130 landed and the app restarted
+
+- 🔲 **B-049 — filmstrip zoom in/out is slow to recompute**, even though load
+  and scroll are now fast (confirmed by the owner: "very fast now" for
+  everything except the zoom action itself). Likely D-128's windowed LOD
+  treating a zoom-triggered `level` change as fully cache-cold.
+- 🔲 **B-050 — Player's seek bar and volume slider are effectively invisible.**
+  A bare white dot floats above the transport row with no track under it
+  (seek), and the volume hover-slider shows nothing at all. Track/Indicator
+  color tokens suspected, not confirmed.
+- 🔲 **B-051 — Sources toggle still sits on top of "Timeline" title text.**
+  D-126 fixed legibility (opaque chip) but not position — still overlapping,
+  not just crowding.
+- 🔲 **B-052 — Play/Pause restarts just the audio**, even with a real D-129
+  linked audio track on the timeline. Not yet clear if this is D-130
+  incomplete or expected per-Play-session behavior being misread.
+- 🔲 **No on-canvas crop/transform UI on the Edit-tab preview** — the owner
+  asked live ("no UI for crop", "no canvas on player to do it"). This is
+  exactly queue item 14/15 above (**scoped, not built**,
+  `docs/notes/on-canvas-transform.md`) — being picked up now rather than
+  staying queued, since it's what's actually blocking the owner's live
+  workflow today.
+
 ---
 
 ## Now — what's live, by tab

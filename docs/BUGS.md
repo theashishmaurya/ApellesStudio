@@ -27,6 +27,38 @@ Still real:
 
 ## Open
 
+## B-049 — Timeline filmstrip zoom (in or out) recomputes thumbnails very slowly, even though normal scroll/load is now fast (D-124/D-128)
+status: open · severity: medium (D-124/D-128 fixed load/scroll but zoom itself regressed) · area: `packages/editor/src/Filmstrip.tsx`, `app/src-tauri/src/chroma/filmstrip.rs`
+- **found:** owner, live, 2026-09-04: "i do zoom in and zoom out its takes like forever to calculate the thumbnail also thumblain rest looks amazing... very fast now" — so this is scoped specifically to the zoom action, not general scroll/load, which the owner confirms is fixed.
+- **repro:** open a project with a loaded clip on the Edit-tab timeline, click the zoom +/- controls (or the `%` readout) repeatedly.
+- **expected:** near-instant re-render at the new zoom level, same speed as the now-fixed scroll/load path.
+- **actual:** a long stall before thumbnails redraw at the new zoom level.
+- **likely cause, not yet confirmed:** D-128's windowed LOD keys chunks by `(source, level, chunk index)` — a zoom change moves the LOD `level`, which is a cache-cold key even when the same seconds-range was already warm at the old level; needs profiling to confirm this is actually where the stall is (vs. a synchronous decode on the main thread, or the frontend re-requesting the whole clip instead of just the new level's visible window).
+
+## B-050 — Player's seek bar and the volume-hover slider are effectively invisible: only a lone white dot floats above the transport row, no track/line, and the volume control shows nothing at all on hover
+status: open · severity: high (the Edit tab's transport, again — a seek control you can't see the state of is unusable) · area: `packages/ui/src/components/ui/slider.tsx`, `packages/player/src/Player.tsx`
+- **found:** owner, live, three screenshots. "no white visible thingy line for how much is done" (seek bar) and "no slider for player voice" (volume).
+- **repro:** open the Edit tab preview with a clip loaded; look above the transport button row.
+- **expected:** a horizontal track showing playback progress (seek), and a volume slider revealed on hovering the mute icon (D-126 built this as a hover-expand `w-0 → w-16` container).
+- **actual:** the seek slider's **thumb** renders as a bare white circle with no visible track under it, sitting at a fixed-looking position that only loosely tracks the playhead; the volume slider shows nothing at all, track or thumb, even on hover.
+- **likely cause, not yet confirmed:** `packages/ui/src/components/ui/slider.tsx`'s Track (`bg-muted`) and Indicator (`bg-primary`) may be resolving to a CSS variable that's transparent, undefined, or too close to the dark background to read — the Thumb (`bg-white`) stays visible because it doesn't depend on that token. Needs the actual computed styles checked, not guessed.
+
+## B-051 — Sources-panel toggle icon still visually sits on top of the "Timeline" title text
+status: open · severity: low (cosmetic, but D-126 claimed this fixed) · area: `packages/shell/src/Shell.tsx`, `packages/player/src/Player.tsx` (title strip)
+- **found:** owner, live: "timeline and window button for source still kinda on top of each other" — screenshot shows the Sources toggle chip directly over the "T" of "Timeline", reading "◫neline".
+- **repro:** open the Edit tab with the Sources panel closed.
+- **expected:** D-126's "elevated chip" styling was supposed to stop this crowding (bg+border+shadow, distinguishing it from the title strip).
+- **actual:** the chip is opaque now but its position is unchanged — it still overlaps the title text itself, not just sits near it.
+- **not yet root-caused:** D-126 fixed *legibility* (an opaque chip over transparent-ghost) but evidently not *position* — the toggle's `top-2 left-2` absolute placement and the title strip's own padding were never reconciled.
+
+## B-052 — Pressing Play/Pause restarts just the audio, even with a real linked audio track present on the timeline
+status: open · severity: high · area: `app/src-tauri/src/chroma/audio.rs`, `packages/editor/src/PreviewPane.tsx`
+- **found:** owner, live, on the build with D-129 (linked audio tracks) and D-130 (session-restart fix) both merged: "play nad pause restart the audio just audio even though its showing timeline and this is here" — screenshot shows a real `Audio 1` track with waveform, linked to `Video 2`.
+- **repro:** open a project with a linked audio track, press Play, then Pause, then Play again.
+- **expected:** per D-130's fix, pausing and resuming should not audibly restart/repeat the take from the wrong point.
+- **actual:** the owner still hears the audio (only the audio, not video) restart on every Play/Pause toggle.
+- **not yet root-caused:** could be D-130 incomplete, a distinct new interaction with D-129's link_group audio-source resolution, or expected-but-surprising behavior (each Play legitimately starts a fresh session at the current playhead per D-050's design) being misread as a bug — needs a real look at whether "restart" means "audibly repeats/loops" (still broken) or "correctly resumes but the owner expected a continuous stream" (a design question, not a bug). Do not assume before checking `chroma_audio_play`'s current behavior on repeated Play/Pause against a linked-audio project.
+
 ## B-047 — The audio session was restarted mid-playback by an unrelated object change, and D-125 removed the ordering that made restarts safe — so the voice repeated a couple of seconds, or vanished
 status: fixed (2026-09-04, D-130) · severity: high (the Edit tab's transport again — audio that repeats itself is worse than audio that is merely late) · area: `packages/editor/src/PreviewPane.tsx`, `app/src-tauri/src/chroma/audio.rs`
 - **found:** owner, live, on a binary rebuilt **after** D-125 merged: "the voice is lagging or just loops", then "yeah voice is overlapping couple of seconds also".
