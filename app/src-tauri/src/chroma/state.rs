@@ -11,7 +11,7 @@
 //! bundle — see D-033); a `.chroma/session.json` path list is a deferred
 //! follow-up.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
@@ -208,6 +208,22 @@ pub fn set_current_frame(frame: u64) {
 pub fn session_shots() -> (Vec<Shot>, usize) {
     let s = lock();
     (s.shots.clone(), s.active)
+}
+
+/// `shots`' index for `want`, in the session's own (path-deduplicated) space —
+/// the only index space [`Session::set_active`]/[`session_set_active`] ever
+/// validate against. B-030: a caller resolving "which clip should be active"
+/// from a *timeline*'s own clip list (not deduplicated — the same source path
+/// can legitimately back more than one clip, e.g. across tracks) must look up
+/// the target path here, not in whatever raw per-clip list it built the path
+/// from — that raw list's index can point past where the path actually landed
+/// in the deduplicated session once an earlier clip has already claimed it
+/// (`Session::upsert` collapses a repeated path into one shot, keeping the
+/// first slot). Pure/testable on purpose — `open_manifest`/the resync path
+/// both need this and can't otherwise be unit-tested directly (real
+/// `tauri::State` I/O).
+pub fn resolve_session_index_for_path(shots: &[Shot], want: &Path) -> Option<usize> {
+    shots.iter().position(|s| s.path == want)
 }
 
 /// D-071: drop every session shot whose path isn't in `keep` — see
@@ -440,6 +456,34 @@ mod tests {
         assert_eq!(s.shots.len(), 2);
         assert_eq!(s.active_shot().unwrap().path, PathBuf::from("/clips/B.mov"));
     }
+    #[test]
+    fn resolve_session_index_for_path_uses_the_deduplicated_session_space() {
+        // B-030's exact real-world shape: two clips share a source path
+        // (upsert collapses them into ONE shot, keeping the first slot), a
+        // third clip has a distinct path. A caller resolving "which index is
+        // /clips/C.mov at" against a *timeline*'s raw per-clip list (3
+        // entries, not deduplicated) must land on this session's real index
+        // (1), not the raw list's position (2) — that's the whole point of
+        // going through this helper instead of positioning in the raw list.
+        let mut s = Session::default();
+        s.upsert(shot("A", 0)); // raw index 0, session index 0
+        s.upsert(shot("A", 5)); // same path as above — collapses, still session index 0
+        s.upsert(shot("C", 0)); // raw index 2 in a hypothetical unde-duped list, session index 1
+        assert_eq!(s.shots.len(), 2, "A's repeat should not have appended a second shot");
+
+        let want = PathBuf::from("/clips/C.mov");
+        assert_eq!(resolve_session_index_for_path(&s.shots, &want), Some(1));
+
+        // and the found index is real: session_set_active only ever validates
+        // against this same (deduplicated) space, so feeding it the helper's
+        // answer must not error — the exact call this was extracted to guard.
+        assert!(s.set_active(1).is_ok());
+
+        // a path that was never loaded at all resolves to None, not a stale
+        // guess — the caller (open_manifest) already `.unwrap_or(0)`s this.
+        assert_eq!(resolve_session_index_for_path(&s.shots, Path::new("/clips/nope.mov")), None);
+    }
+
     // `prune_session_except` itself (the module-level wrapper around the
     // static global `SESSION`) is intentionally not unit-tested here — every
     // other test in this file operates on a local `Session::default()`

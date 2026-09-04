@@ -1483,8 +1483,30 @@ async fn open_manifest(
         let want = clips
             .get(active_shot)
             .map(|c| PathBuf::from(&c.source_path));
+        // B-030: `online_paths` is pushed once per *clip* (this loop, above) —
+        // it is NOT deduplicated by path. The decode session (`state::
+        // set_current_video` -> `Session::upsert`) IS deduplicated by path: two
+        // clips referencing the same source file collapse into one session
+        // shot. Looking up `want`'s position in `online_paths` (the raw,
+        // non-deduped list) and feeding that straight into
+        // `state::session_set_active` used to assume the two lists' index
+        // spaces matched — true only when no two clips share a source path.
+        // Now that clips can legitimately overlap/repeat a source across
+        // tracks (D-088's real multi-layer compositor), a duplicate earlier in
+        // `clips` inflates every later raw index past where that path's shot
+        // actually lands in the deduped session, and `session_set_active`
+        // rejects the out-of-range index — aborting the whole project open
+        // *before* `state::set_project` ever runs, which is why the frontend
+        // never saw a project open at all (found live, chasing a real "click
+        // does nothing" report against the owner's own project, which had
+        // picked up a repeated source path through tonight's NLE work).
+        // Fixed by resolving the index in the session's own (deduped) space —
+        // `state::resolve_session_index_for_path`, the same helper the resync
+        // path below already used (this call site was the one that hadn't
+        // caught up), now unit-tested directly in `state.rs`.
+        let (session_shots, _) = state::session_shots();
         let active_online = want
-            .and_then(|w| online_paths.iter().position(|p| p == &w))
+            .and_then(|w| state::resolve_session_index_for_path(&session_shots, &w))
             .unwrap_or(0);
         state::session_set_active(active_online)?;
         let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
@@ -1630,7 +1652,11 @@ pub async fn chroma_project_resync_clips(
         let idx = top_wins_clip_index(&manifest, &clips, candidate);
         let want = clips.get(idx).map(|c| PathBuf::from(&c.source_path));
         let (shots_now, _) = state::session_shots();
-        if let Some(i) = want.and_then(|w| shots_now.iter().position(|s| s.path == w)) {
+        // B-030: same deduplicated-session lookup `open_manifest` now uses
+        // too — this call site already had it right; extracted to
+        // `state::resolve_session_index_for_path` so both share one
+        // unit-tested implementation instead of two inline copies.
+        if let Some(i) = want.and_then(|w| state::resolve_session_index_for_path(&shots_now, &w)) {
             let _ = state::session_set_active(i);
             let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
             let _ = super::commands::seek_and_install(frame, None, &state).await;
