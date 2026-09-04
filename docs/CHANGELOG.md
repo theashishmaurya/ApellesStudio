@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Real scoping docs for the audit's top 3 gaps (D-106):
+  multi-select, cross-track ripple/sync-lock, A/V linking.** No code —
+  three real design docs (`docs/notes/multi-select.md`,
+  `cross-track-ripple-sync-lock.md`, `av-linking.md`), each grounded in
+  live-checked references (Resolve's Sync Lock, Premiere's Linked
+  Selection, Palmier's own `manage_clip_links`/`manage_tracks` tools).
+  Multi-select's "just extend the click handler" first read didn't survive
+  tracing every real consumer — scoped with a phased plan instead of built
+  blind, matching the judgment applied to the other two. Roadmap items
+  11-13 updated to point at the docs.
+
 - **2026-09-04** — **Gap select + delete (ripple close), and a real
   timeline-feature research audit (D-105).** Empty track space is now a
   real, selectable thing — click a gap to select it (a dashed overlay

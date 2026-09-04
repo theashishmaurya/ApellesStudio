@@ -439,39 +439,45 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     mirror `gapAt`/`remove_gap` (TS) field-for-field, single-track only
     (see item 11). Verified against the real rendered component via a
     scratch Chrome-driven harness. See D-105.
-11. **Cross-track ripple / sync-lock** — real, prioritized next step from
-    `docs/notes/timeline-feature-audit.md` (D-105): the single most-cited
-    gap against every reference checked (Premiere's "ripple trailing clips
-    in all unlocked tracks," Resolve's Sync Lock, Palmier's `syncLocked`
-    track field — on by default there, treated as the norm not an edge
-    case). Today's ripple (`add_clip`'s insertion ripple, D-104's `move`
-    ripple, item 10's `remove_gap`) only ever shifts clips on the ONE track
-    being edited. Real scope per the audit: a `Track.sync_locked` boolean
-    (default `true`, mirroring Palmier's own default), extending every
-    existing ripple call site to also shift other sync-locked tracks by
-    the same delta — reuses proven shift-by-delta math, not new mechanics.
-    Sequenced after item 12 in the audit's own reasoning (a good
-    multi-select design changes what "select these, then ripple them
-    together" needs to mean) but listed here first per numbering — see the
-    audit doc for the real priority order. **Not started.**
-12. **Multi-select** — real, prioritized FIRST step from the same audit:
-    `Selection` (`TimelinePane.tsx`) is a single `{track, id} | null`, never
-    a set — no shift/cmd-click, no marquee/rubber-band select (every
-    reference checked has this). Blocks the most (batch move under a
-    future sync-locked ripple, multi-gap delete, multi-clip transform
-    edits) and blocks nothing else — the audit's own recommendation is to
-    build this before item 11, not after, since it changes what a
-    multi-track ripple even needs to select. **Not started.**
-13. **Real A/V linking (link/unlink, L-cut/J-cut)** — real, prioritized
-    third step from the same audit: today's model is all-or-nothing —
-    audio embedded in a video clip (D-050, inseparable) or a fully
-    independent audio-track clip (D-057, zero relationship to any video
-    clip) — no in-between "linked but independently trimmable" concept
-    Premiere's Linked Selection and Palmier's `manage_clip_links` both
-    have. Can't represent an L-cut/J-cut at all today. Bigger than 11/12 —
-    needs a real `link_group` concept touching selection, move, and a
-    deliberate unlink UI affordance; scope it properly as its own note
-    before starting, per the audit's own recommendation. **Not started.**
+11. **Cross-track ripple / sync-lock** — the single most-cited gap against
+    every reference checked (Premiere's "ripple trailing clips in all
+    unlocked tracks," Resolve's Sync Lock, Palmier's `syncLocked` track
+    field). **Real scoping doc now exists: `docs/notes/cross-track-ripple-
+    sync-lock.md` (D-106, 2026-09-04)** — a `Track.sync_locked` boolean
+    (default `true`), extending the three existing single-track ripple
+    call sites to also shift every other sync-locked track, real
+    references confirmed live (Resolve's exact per-track semantics via
+    Blackmagic's own docs). Three open design questions flagged for the
+    owner in the doc (straddling-clip handling — auto-split vs. reject —
+    is the real fork in the road). Sequenced after item 12. **Scoped, not
+    built.**
+12. **Multi-select** — the audit's own FIRST priority. **Real scoping doc
+    now exists: `docs/notes/multi-select.md` (D-106, 2026-09-04)** — traced
+    every real consumer of `selected` (not just where it's set), found the
+    "just extend the click handler" first impression didn't hold once
+    `ClipInspectorPanel`'s single-clip contract and cross-track-move
+    landing-conflict for N clips were accounted for. Recommends a phased
+    build: Phase 1 (array `Selection`, shift/cmd-click, generalized
+    Remove/Split, Inspector empty-state for N≠1) is low-risk and the real
+    next increment; marquee-select is deliberately deferred (a genuinely
+    new pointer gesture, real coexistence risk given this session's own
+    six-round history stabilizing single-clip drag, D-094–D-100). **Scoped,
+    not built** — judged not safe enough to build blind in the same pass
+    despite being lower architectural risk than 11/13.
+13. **Real A/V linking (link/unlink, L-cut/J-cut)** — today's model is
+    all-or-nothing (D-050 embedded / D-057 independent, no in-between).
+    **Real scoping doc now exists: `docs/notes/av-linking.md` (D-106,
+    2026-09-04)** — a group-based `link_group: Option<String>` on `Clip`
+    (matching `media_id`'s existing back-link pattern), `link`/`unlink` ops
+    mirroring Palmier's own `manage_clip_links` exactly, real references
+    checked (Premiere's two-layer link+toggle system, Palmier's own tool
+    description). Flags a real prerequisite gap: this phase's scope is
+    linking two already-independent clips, not "any video clip to its own
+    native audio" — D-050's embedded-audio model would need to change
+    first for the fuller vision, out of scope here. Recommends the simpler
+    permanent-link-only interaction model over Premiere's fuller toggle,
+    since nothing in Palmier's own surface confirms the toggle is needed.
+    **Scoped, not built.**
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

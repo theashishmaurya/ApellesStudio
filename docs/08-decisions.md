@@ -8059,6 +8059,77 @@ claimed clean.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
+## D-106 — Real scoping (not code) for the timeline audit's top 3 gaps: multi-select, cross-track ripple/sync-lock, A/V linking
+**decided (2026-09-04)** — scoped, deliberately not built (except see note below)
+
+Owner, after seeing D-105's audit land: "should we use opus to plan out? or will you be
+able to do it? ... yeah go ahead do that create forks and let them work." Direction was
+explicit: produce real scoping docs for the two architecturally heavy items
+(cross-track ripple/sync-lock, A/V linking) before any code exists for them, and use
+real judgment on whether multi-select was safe enough to build in the same pass.
+
+**Three real scoping docs**, matching `docs/notes/multi-track-nle.md`'s established depth
+— `docs/notes/multi-select.md`, `docs/notes/cross-track-ripple-sync-lock.md`,
+`docs/notes/av-linking.md`. Each grounded in real references checked live (not memory):
+DaVinci Resolve's own Sync Lock behavior (per-track, default-on, ripples every
+sync-locked track regardless of which track the edit originated on — confirmed via
+Blackmagic's own docs), Premiere Pro's Linked Selection (a two-layer system — a
+permanent per-clip-group link plus a separate global toggle with a modifier-key
+override, confirmed via Adobe's own docs and cross-checked sources after one direct
+fetch timed out), and Palmier Pro's own `manage_clip_links`/`manage_tracks` tool
+descriptions (group-based linking, "at least two clips of different media types,"
+loaded directly as this repo's real feature bar).
+
+**Multi-select: scoped, not built** — the initial "just extend the click handler" read
+didn't survive tracing every real consumer of `selected` (`ClipInspectorPanel`'s
+single-clip prop contract, the "Move to ▾" cross-track-move landing-conflict problem
+for N clips at once, `getActionRender`'s highlight, drag-follow-selection after track
+reorder). Given this session's own six-round history stabilizing *single*-clip drag
+against gesture-coexistence bugs (D-094–D-100), building a new multi-select interaction
+blind — especially marquee/rubber-band select, a genuinely new pointer gesture — was
+judged not safe enough to build without the owner seeing the design first, matching the
+same standard applied to the other two. `multi-select.md` recommends a real phased
+plan: Phase 1 (array-shaped `Selection`, shift/cmd-click, generalized Remove/Split,
+Inspector falls back to empty-state for N≠1) is low-risk and ready to build next;
+marquee-select and multi-clip cross-track move are real, deliberately deferred later
+phases.
+
+**Cross-track ripple/sync-lock**: recommends a `Track.sync_locked` boolean (default
+`true`, matching Resolve/Palmier), extending the three existing single-track ripple
+call sites (`add_clip`'s insert, D-104's `move`, D-105's `remove_gap`) to also shift
+every *other* sync-locked track — independent of the edited track's own lock state,
+per the real reference semantics. Three open design questions flagged explicitly for
+the owner rather than silently decided: whether sync-lock applies uniformly to all
+three ripple sites (recommend yes), whether a straddling clip on another sync-locked
+track should auto-split (Resolve's real behavior) or reject the op (matching D-104's
+existing precedent — recommended for a first pass, safer/simpler), and confirming
+`remove_gap` still requires a real gap only on the *edited* track.
+
+**A/V linking**: recommends a group-based `link_group: Option<String>` on `Clip`
+(matching `Clip.media_id`'s existing back-link pattern, D-070) with `link`/`unlink` ops
+mirroring Palmier's own exactly ("merges the complete existing groups," "dissolves each
+member's complete link group"). Flags a real prerequisite gap the roadmap item's own
+framing glossed over: D-050's embedded audio isn't a separate `Clip` at all, so this
+phase's real scope is linking two *already-independent* clips, not "any video clip to
+its own native audio" — that fuller vision needs D-050's model to change first, a
+separate, unscoped gap. Recommends the simpler of two real interaction options (permanent
+link/unlink only, no global Linked-Selection toggle + modifier-key override) as the
+first pass, since no reference in this repo's own toolkit (Palmier) confirms the
+fuller Premiere-style toggle is actually necessary here.
+
+**Why one D-NNN for three docs, not three**: these three decisions were made together,
+in one pass, explicitly sequenced against each other (multi-select's array `Selection`
+is what the other two docs assume/consume) — splitting the entry would fragment a
+single real design conversation across three numbers for no benefit; the three `.md`
+files themselves stay separate since each is independently referenceable.
+
+All three: zero code changes, `docs/04-roadmap.md` items 11-13 updated to point at the
+real scoping docs and their status, `docs/notes/timeline-feature-audit.md` unchanged
+(still the source audit, these docs are the follow-on design work it recommended).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
 ## D-105 — Gap select + delete (ripple close), and a real timeline-feature research audit
 
 Owner, live: "we should be able to delete the gap as well select and delete
