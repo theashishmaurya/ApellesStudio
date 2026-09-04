@@ -33,7 +33,9 @@ use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
 use crate::gpu_processing::RenderRequest;
-use crate::image_processing::get_all_adjustments_from_json;
+use crate::image_processing::{
+    Crop, get_all_adjustments_from_json, get_geometry_params_from_json, is_geometry_identity,
+};
 use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
 use crate::render_core::{self, OwnedRenderCaches};
 
@@ -240,6 +242,88 @@ fn spawn_encoder(
 }
 
 // --------------------------------------------------------------------------- //
+// pre-flight: the geometry a video export genuinely cannot honour (B-042)
+// --------------------------------------------------------------------------- //
+
+/// `adjustments.orientationSteps` counts 90° turns, so this many of them is a
+/// full revolution — i.e. the same upright image, not a real transform.
+/// Matches `image_processing::apply_coarse_rotation`, which only ever acts on
+/// steps 1/2/3.
+const ORIENTATION_STEPS_PER_TURN: u64 = 4;
+
+/// Every geometry control in the Colorist's Crop panel is applied **on the
+/// CPU**, in `adjustment_utils::apply_all_transformations`, as a pre-pass
+/// before the GPU grade — `AllAdjustments` carries no geometry at all.
+/// [`grade_frame`] deliberately doesn't run that pre-pass (see D-127 for why
+/// it can't yet), so on a video export every one of these is silently
+/// dropped: the preview shows the cropped/straightened frame, the encoded
+/// file doesn't. This function names exactly which of them are non-identity
+/// in `js` so [`export_video`] can refuse up front with an actionable
+/// message instead of shipping the wrong pixels.
+///
+/// `width`/`height` are the source clip's real dimensions — needed because a
+/// full-frame crop rect is a no-op, and the Crop panel writes a full-frame
+/// rect the moment it's opened. The rounding/clamping here mirrors
+/// [`crate::image_processing::apply_crop`]'s own, step for step, so this
+/// guard and the still path can never disagree about what counts as "a real
+/// crop."
+fn unsupported_geometry(js: &Value, width: u32, height: u32) -> Vec<&'static str> {
+    let mut found: Vec<&'static str> = Vec::new();
+
+    if let Some(crop_val) = js.get("crop")
+        && !crop_val.is_null()
+        && let Ok(c) = serde_json::from_value::<Crop>(crop_val.clone())
+    {
+        let x = c.x.round().max(0.0) as u32;
+        let y = c.y.round().max(0.0) as u32;
+        let w = c.width.round().max(0.0) as u32;
+        let h = c.height.round().max(0.0) as u32;
+        if w > 0 && h > 0 && x < width && y < height {
+            let cw = (width - x).min(w);
+            let ch = (height - y).min(h);
+            let is_full_frame = x == 0 && y == 0 && cw == width && ch == height;
+            if cw > 0 && ch > 0 && !is_full_frame {
+                found.push("crop");
+            }
+        }
+    }
+
+    if js.get("rotation").and_then(Value::as_f64).unwrap_or(0.0) != 0.0 {
+        found.push("straighten (rotation)");
+    }
+    // `apply_coarse_rotation` only acts on steps 1/2/3; 0 and any whole number
+    // of turns are the same upright image.
+    let orientation_steps = js
+        .get("orientationSteps")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if !orientation_steps.is_multiple_of(ORIENTATION_STEPS_PER_TURN) {
+        found.push("90° orientation");
+    }
+    if js
+        .get("flipHorizontal")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        found.push("horizontal flip");
+    }
+    if js
+        .get("flipVertical")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        found.push("vertical flip");
+    }
+    // The perspective / lens-correction warp — same identity test
+    // `apply_geometry_warp` itself uses to decide whether to run at all.
+    if !is_geometry_identity(&get_geometry_params_from_json(js)) {
+        found.push("perspective / lens correction");
+    }
+
+    found
+}
+
+// --------------------------------------------------------------------------- //
 // per-frame grade (the still export path, wrapped in a video loop)
 // --------------------------------------------------------------------------- //
 
@@ -345,6 +429,19 @@ pub fn export_video(
         return Err("probe returned zero dimensions".into());
     }
 
+    // B-042: fail before spawning ffmpeg rather than encoding a file that
+    // silently disagrees with the preview. See `unsupported_geometry` / D-127.
+    let dropped = unsupported_geometry(js_adjustments, w, h);
+    if !dropped.is_empty() {
+        return Err(format!(
+            "video export can't apply {} yet — the Colorist applies geometry on the CPU, \
+             before the grade, and the video path doesn't run that pass (D-127). Reset it \
+             (Crop / Transform panels) and export again, or export a still if you need the \
+             geometry.",
+            dropped.join(", ")
+        ));
+    }
+
     let last = info.frame_count.saturating_sub(1);
     let from = from_frame.min(last);
     let to = to_frame.min(last).max(from);
@@ -438,9 +535,15 @@ pub fn export_video(
 
             let (gw, gh) = graded.dimensions();
             if (gw, gh) != (w, h) {
+                // Defensive invariant, not the crop guard it used to claim to
+                // be (B-042): `grade_frame` runs no geometry pass at all, so a
+                // size change here would mean `render_core::render` itself
+                // resized — a real engine bug, not a user-set crop. Real crop /
+                // straighten / flip is caught by `unsupported_geometry` before
+                // the encoder is ever spawned.
                 return Err(format!(
                     "graded frame {frame_index} is {gw}x{gh} (expected {w}x{h}) — \
-                     crop/ROI is not supported on video export",
+                     the grade must not change frame dimensions",
                 ));
             }
             // D-038: last-step resize to the project output resolution. Skipped
@@ -768,6 +871,81 @@ mod tests {
         assert_eq!(
             resolve_export_resolution((Some(0), Some(720)), (Some(3840), Some(2160))),
             (Some(3840), Some(2160))
+        );
+    }
+
+    // --- B-042: the geometry pre-flight ------------------------------------
+    // No fixture video needed — `unsupported_geometry` is pure JSON in, names
+    // out, which is exactly the part that must not drift from
+    // `apply_all_transformations`' own identity tests.
+
+    const FIXTURE_W: u32 = 1920;
+    const FIXTURE_H: u32 = 1080;
+
+    fn dropped(js: &Value) -> Vec<&'static str> {
+        unsupported_geometry(js, FIXTURE_W, FIXTURE_H)
+    }
+
+    #[test]
+    fn unsupported_geometry_is_empty_for_a_plain_grade() {
+        assert!(dropped(&json!({})).is_empty());
+        assert!(dropped(&json!({ "exposure": 1.0, "crop": null })).is_empty());
+    }
+
+    /// The Crop panel writes a full-frame rect as soon as it's opened — that
+    /// is not a crop, and must not block an export.
+    #[test]
+    fn unsupported_geometry_ignores_a_full_frame_crop_rect() {
+        let js = json!({ "crop": { "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0 } });
+        assert!(dropped(&js).is_empty());
+    }
+
+    #[test]
+    fn unsupported_geometry_reports_a_real_crop() {
+        let js = json!({ "crop": { "x": 100.0, "y": 0.0, "width": 1280.0, "height": 720.0 } });
+        assert_eq!(dropped(&js), vec!["crop"]);
+    }
+
+    #[test]
+    fn unsupported_geometry_reports_straighten_flip_and_orientation() {
+        assert_eq!(
+            dropped(&json!({ "rotation": 2.5 })),
+            vec!["straighten (rotation)"]
+        );
+        assert_eq!(
+            dropped(&json!({ "orientationSteps": 1 })),
+            vec!["90° orientation"]
+        );
+        // a full turn is the same upright image
+        assert!(dropped(&json!({ "orientationSteps": 4 })).is_empty());
+        assert_eq!(
+            dropped(&json!({ "flipHorizontal": true })),
+            vec!["horizontal flip"]
+        );
+        assert_eq!(
+            dropped(&json!({ "flipVertical": true })),
+            vec!["vertical flip"]
+        );
+    }
+
+    #[test]
+    fn unsupported_geometry_reports_the_perspective_warp() {
+        assert_eq!(
+            dropped(&json!({ "transformVertical": 10.0 })),
+            vec!["perspective / lens correction"]
+        );
+    }
+
+    #[test]
+    fn unsupported_geometry_names_every_offender_at_once() {
+        let js = json!({
+            "crop": { "x": 10.0, "y": 10.0, "width": 100.0, "height": 100.0 },
+            "rotation": 1.0,
+            "flipHorizontal": true,
+        });
+        assert_eq!(
+            dropped(&js),
+            vec!["crop", "straighten (rotation)", "horizontal flip"]
         );
     }
 

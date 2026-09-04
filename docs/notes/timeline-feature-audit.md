@@ -113,7 +113,11 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
   Chroma: opacity/position/scale/rotation (D-086). Palmier's `set_keyframes` additionally
   covers `volumeDb`, `crop`, and `blur` — Chroma has no volume/gain keyframing (`Track.gain`
   is a static per-track multiplier, D-057, never animated) and no crop/blur at all (no
-  effects stack — see Don't Have).
+  effects stack — see Don't Have). **Update (2026-09-04, D-127):** the missing *crop*
+  half now has a real home — Phase 3 of `docs/notes/on-canvas-transform.md`, which also
+  confirms the absence directly (no `crop` field on `Clip`, nothing in
+  `composite_layer_onto`) and finds a prerequisite nobody had noticed: the compositor's
+  coordinate space is preview-resolution-dependent (**B-042TEMP**).
 
 ## Don't have at all
 

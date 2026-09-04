@@ -268,7 +268,7 @@ pub struct Clip {
     /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
     #[serde(default)]
     pub rotation: f64,
-    /// D-034-shaped keyframes for the four fields above — `[{frame, params:
+    /// D-034-shaped keyframes for the five fields above — `[{frame, params:
     /// {opacity?, position_x?, position_y?, scale?, rotation?}}, …]`, the
     /// *exact* `[{frame, params}]` shape `chroma::keyframes::
     /// interpolated_parameters` (already generic over any params `Value`,

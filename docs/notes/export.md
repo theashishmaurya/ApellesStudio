@@ -95,6 +95,32 @@ Frontend bridge op (`app/src/hooks/useChromaControl.ts`): `export` /
 `export_progress`, both marked READ_ONLY (no settle/re-render), pull
 `useEditorStore.getState().adjustments` and `invoke` the command.
 
+## Geometry is NOT applied here — the export refuses instead (B-042 / D-127)
+
+Crop, straighten (`rotation`), 90° `orientationSteps`, horizontal/vertical flip and the
+perspective/lens warp are all a **CPU pre-pass**, `adjustment_utils::
+apply_all_transformations`, that runs *before* the GPU grade. `AllAdjustments` — the
+struct `render_core::render` actually consumes — carries no geometry at all. The Colorist
+preview runs that pre-pass (`process_preview_job` → `compute_full_transformed_res`) and so
+does the still export; **`grade_frame` above does not**, and until 2026-09-04 that meant a
+video export silently produced a full-frame file that disagreed with the preview the user
+had just been looking at. (The dimension check inside the encode loop was meant to catch
+it, but nothing in that path can change a frame's size, so it was unreachable.)
+
+`export_video` now calls `unsupported_geometry(js, w, h)` **before** spawning ffmpeg and
+returns an `Err` naming every non-identity geometry control. Its crop test mirrors
+`image_processing::apply_crop`'s own rounding / clamping / full-frame-rect early-return
+step for step — the Crop panel writes a full-frame rect as soon as it opens, and that is
+not a crop — and the perspective test reuses `is_geometry_identity`, the same predicate
+`apply_geometry_warp` uses to decide whether to run at all.
+
+**To actually honour it** (roadmap item 15) four things have to move together: the encoder
+is spawned with fixed `out_w`/`out_h` before the loop; `grade_frame`'s
+`generate_mask_bitmap` calls pass `(0.0, 0.0)` as the crop offset where the live-preview
+path passes a real `scaled_crop_offset`; D-019's tracked mattes are baked at the un-cropped
+resolution *by documented assumption*; and h.264's `yuv420p` needs even dimensions a
+free-form crop rect won't guarantee.
+
 ## Verification (2026-09-01, `010BEB07-…MOV`, 1080×1920)
 
 - `cargo check --no-default-features` clean; `cargo clippy` clean on the new files; app

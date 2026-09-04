@@ -37,6 +37,23 @@ One or two lines per session. Detail lives in the decision it references.
   respawning every pipe on each Play toggle). B-041 logged, not fixed: an
   audio-only clip on a real `Audio` track still fails `chroma_audio_play`.
 
+- **2026-09-04** — **"Do we support crop?" answered end to end, and
+  on-canvas PIP handles scoped (D-127, B-042, B-043,
+  `docs/notes/on-canvas-transform.md`).** Crop is **real in Colorist**
+  (routed panel, applied in the preview — including on a video frame — and
+  on a still export), **absent in the Edit tab** (no field on `Clip`,
+  nothing in the compositor), and was **silently discarded on a video
+  export** along with straighten, flips, 90° steps and the lens warp:
+  `grade_frame` never ran the CPU geometry pre-pass, and the guard meant
+  to catch that was unreachable by construction. Video export now refuses
+  up front and names the offending controls (6 unit tests); actually
+  honouring the geometry is queued work, not a tweak. Scoping the drag
+  handles also turned up **B-043** — the Edit-tab composite's coordinate
+  space is preview-resolution-dependent, so a PIP overlay moves *and*
+  resizes when you press Play, a hard prerequisite before any handles get
+  built. Handles are planned, not built: the preview is a plain `<img>`,
+  not a canvas, so they're a DOM overlay writing the same
+  `set_clip_transform` op the numeric Inspector already writes.
 - **2026-09-04** — **The filmstrip's real cost: one 105-second decode per
   clip, re-triggered on every zoom step (D-124, B-039).** Round 3 on
   D-119's filmstrip, run empirically after two rounds of reading missed

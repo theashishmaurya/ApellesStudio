@@ -320,7 +320,11 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   READ_ONLY: no settle). `mcp/server.py` — `export(kind, path?, from_frame?, to_frame?,
   quality?)`, polls progress for video.
   · v1 limitations: no audio; parametric `color`/`luminance` masks skipped on video
-  export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors;
+  export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors
+  (**only true since B-042/D-127, 2026-09-04** — before that the whole CPU geometry
+  pre-pass, crop included, was silently dropped and the export "succeeded" with the
+  wrong pixels; `export_video`'s `unsupported_geometry` pre-flight is what makes this
+  line accurate);
   ~~decode is from frame 0 each export (proxy layer = later)~~ — fixed in D-030
   (`spawn_decoder` seeks via `-ss`+`-copyts`+timestamp `select`). Detail: `docs/notes/export.md`.
 

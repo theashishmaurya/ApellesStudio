@@ -42,6 +42,23 @@ restarted once each is done.
   (`fc87547`). Moved from `Shell.tsx`'s chrome-bar to `top-2 left-2` inside the
   panel area, mirroring D-118's Inspector toggle placement. Stayed shell-level
   (not per-tab) since Sources is genuinely shared across all three tabs.
+- ✅ **"Do we support crop?"** — answered, D-127. **Yes in Colorist** (real
+  routed panel, really applied to the preview — video frames included — and
+  to a still export); **no in the Edit tab** (no field on `Clip`, nothing in
+  the compositor — a real missing feature, not dead UI; queued as item 14's
+  Phase 3); and it was **silently dropped on a video export**, along with
+  straighten / flip / 90° steps / the lens warp — **B-042**, now a loud
+  pre-flight refusal naming the offending controls. Actually *honouring* it
+  on export is queue item 15.
+- 🔜 **On-canvas PIP transform (drag/resize the overlaid clip in the
+  preview)** — **scoped, not built**: `docs/notes/on-canvas-transform.md`,
+  queue item 14. Two things worth knowing before anyone starts — the preview
+  is a plain `<img>` fed a backend-composited JPEG, not a canvas (so handles
+  are a DOM overlay, and there's no cheap live re-render of the picture
+  mid-drag), and **B-042TEMP**: the composite's coordinate space is
+  preview-resolution-dependent today, so a PIP overlay already moves *and*
+  resizes when you press Play. That's Phase 0, and it needs the owner's call
+  on units before any code.
 
 ---
 
@@ -549,6 +566,61 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     permanent-link-only interaction model over Premiere's fuller toggle,
     since nothing in Palmier's own surface confirms the toggle is needed.
     **Scoped, not built.**
+14. **On-canvas clip transform — PIP drag/resize handles on the preview.**
+    Owner: "the player is canvas — once I have another video I can select,
+    drag and make it smaller or larger, PIP etc." Multi-layer stacking is
+    real (D-088) but only editable by typing numbers into the Inspector.
+    **Real scoping doc: `docs/notes/on-canvas-transform.md` (D-127,
+    2026-09-04)**, references checked live (Premiere's Effect Controls ▸
+    Motion handles in the Program Monitor; Resolve's viewer Transform /
+    Crop / Dynamic Zoom mode selector). Recommended phasing:
+    - **Phase 0 — prerequisites, both real, neither optional.** (0a)
+      **B-042TEMP**: the composite's coordinate space is preview-resolution-
+      dependent, so `position_x`/`position_y` and effective layer size both
+      change between scrub (960px) and play (640px) — give the timeline a
+      real composition space from `ProjectSettings.width`/`height` (D-038)
+      and redefine positions in resolution-independent units (normalised
+      recommended). **Needs an owner call** — it's a `Clip` field-semantics
+      change with a saved-project migration. (0b) A drag must commit
+      exactly one `set_clip_transform` op on pointer-up, not one per
+      pointermove — `applyOp` pushes an undo snapshot per call (D-051).
+      Same live-preview/commit-on-release split `RelightPuckLayer` (D-046)
+      already uses.
+    - **Phase 1 — reposition + uniform corner-scale only.** A new
+      `TransformOverlay.tsx` in `@chroma/editor`, rendered as a DOM/SVG
+      sibling of `PreviewPane`'s `<img>` (the preview is **not** a canvas;
+      `<Player>`'s `surface` prop already takes any ReactNode, so that
+      package needs no change). Reads the existing
+      `useEditorTimelineStore.selection`, writes the existing
+      `set_clip_transform` op — one value, two editors, exactly what both
+      references do. Needs `useImageRenderSize`'s letterbox math extracted
+      out of `app/src/hooks/` (D-039 forbids `packages/editor` reaching
+      into the app layer) — recommend into `@chroma/player`.
+    - **Phase 2 — rotation** (already a `Clip` field, mostly UI; note
+      Chroma has no anchor point and both references do) **and
+      non-uniform scale** (needs `scale_x`/`scale_y` replacing `scale`,
+      with a migration).
+    - **Phase 3 — crop as its own mode** (Resolve's shape, not extra
+      behaviour on the transform box): a `crop` rect on `Clip`, applied in
+      `composite_layer_onto`, a Crop row in `ClipInspectorPanel`, a mode
+      toggle on the overlay. **This is where the Edit tab's missing crop
+      gets built** — see D-127's finding 3.
+    - **Phase 4 — keyframe interaction** (does a drag set a key when the
+      clip is already keyframed?). Its own decision.
+    **Scoped, not built.**
+15. **Video export must honour the Colorist's geometry (crop / straighten /
+    flip / 90° / lens warp)** — **B-042**. Today it refuses (D-127), which
+    is honest but not the destination. Four real pieces, none of them a
+    tweak: the encoder is spawned with fixed `out_w`/`out_h` before the
+    frame loop; `grade_frame` builds its mask bitmaps at full frame size
+    with a `(0.0, 0.0)` crop offset where the live-preview path passes a
+    real `scaled_crop_offset`; D-019's tracked mattes are baked at the
+    un-cropped resolution *by documented assumption*, so a crop would
+    misalign them; and h.264's `yuv420p` needs even dimensions a free-form
+    crop rect doesn't guarantee. Related but separate: there is still **no
+    timeline export path at all** (`export_video` is Colorist's single-clip
+    exporter — item 3's deferred "shell-level export"), and that's the
+    other consumer a real composition space (item 14 Phase 0a) would serve.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
