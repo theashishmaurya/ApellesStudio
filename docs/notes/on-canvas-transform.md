@@ -17,27 +17,29 @@ end, plus B-042 / D-127.
 
 ---
 
-## STATUS (updated 2026-09-04 evening, D-132) — what is now built, what is not
+## STATUS (updated 2026-09-04 night, D-136) — what is now built, what is not
 
 The owner came back to this the same evening, live: *"no UI for crop"*, *"no canvas on
-player to do it."* That is Phase 3 and Phase 1 of this note respectively, asked for
-directly rather than left queued. **D-132 built Phase 3's data + compositor + Inspector
-half. Phase 0a's code, Phase 1, and crop's on-canvas mode are still exactly as scoped
-below — plans, not code.** Precisely:
+player to do it."* That is Phase 3 and Phase 1 of this note respectively. **D-132 built
+Phase 3's data + compositor + Inspector half. D-136 built Phase 0a's code (closing B-043)
+and Phase 1's actual on-canvas handles.** Phase 2, Phase 4, and crop's own on-canvas mode
+remain exactly as scoped below — plans, not code. Precisely:
 
-| Section below | Status after D-132 |
+| Section below | Status after D-136 |
 |---|---|
-| **0a — composition-space units** | **Decided, not implemented.** The unit question is answered and closed (see the section — normalised, as this note itself recommended); `position_x`/`position_y` are still absolute canvas pixels and still resolution-dependent. B-043 stays open. |
-| 0b — one undo entry per drag | Unchanged. Nothing drags yet, so nothing needed it. |
-| 1 — select / move / corner-scale handles | **Not built.** No `TransformOverlay.tsx`, no content-box extraction into `@chroma/player`. |
+| **0a — composition-space units** | **Built.** The timeline has a real composition space (`ProjectSettings.width`/`height`, or the first clip's probed resolution as fallback); `composite_video_frame`'s canvas is that composition, not the top layer's decode; `Clip::position_x`/`position_y` are normalised fractions of it. Existing pixel-valued positions are migrated via a real schema-minor gate on `chroma.project` (`1.1`, `Timeline::normalise_legacy_positions`), not silently reinterpreted in place. **B-043 closed.** See D-136 in `docs/08-decisions.md` for the full reasoning, including why this could only ever be a stated reinterpretation of the old values, not a recoverable conversion. |
+| 0b — one undo entry per drag | **Built**, as part of Phase 1: `TransformOverlay.tsx` keeps drag state local and uncommitted, applying exactly one `set_clip_transform` on pointer-up — the `RelightPuckLayer` pattern this section anticipated. |
+| **1 — select / move / corner-scale handles** | **Built.** `packages/editor/src/TransformOverlay.tsx`, a DOM overlay sibling of `PreviewPane`'s `<img>`. Content-box math extracted into `@chroma/player`'s new `useContentBox` (the original `useImageRenderSize.ts` stays in place, still owning every Colorist-tab call site — migrating those is separate, deliberately deferred work). Reads the existing `selection`, writes the existing `set_clip_transform` op. Box/drag/corner-scale math lives in `packages/editor/src/transformGeometry.ts`, pure and unit-tested (16 tests) since this package's vitest has no DOM. A new `chroma_timeline_clip_geometry` Tauri command supplies the one thing the frontend can't derive itself — a clip's own source footprint against the composition. |
 | 2 — rotation, anchor point, non-uniform scale | Not built. |
-| **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **No on-canvas crop handles and no Resolve-style mode toggle** — those are Phase 1's substrate, which does not exist yet. |
-| 4 — keyframes | Crop keyframes work exactly as the other five fields' do (explicit "Add key"). The auto-keyframe-on-drag question is untouched, because there is still no drag. |
+| **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **Phase 1's overlay substrate now exists**, but crop still has no edge handles or Resolve-style mode toggle of its own — its bounding box happens to be unaffected by crop (`composite_layer_onto` crops a layer's pixels in place without shrinking its footprint), so Phase 1's box is correct for a cropped clip by accident, not because crop has any on-canvas affordance yet. |
+| 4 — keyframes | Crop keyframes work exactly as the other five fields' do (explicit "Add key"). The auto-keyframe-on-drag question is still open — Phase 1's overlay writes the static/base transform, same as the Inspector's numeric fields always have. |
 
-Also fixed on the way through, because crop would have been invisible without it:
+Also fixed on the way through D-132, because crop would have been invisible without it:
 **B-053** — the single-layer preview path skipped compositing unconditionally, so a lone
 clip's opacity/position/scale/rotation (and any crop) were silently discarded. See that
-bug and D-132.
+bug and D-132. D-136 additionally tightened that same fast path's guard: a lone clip now
+also needs its own source resolution to equal the composition's before it can skip the
+real compositor — a smaller source must still render at its true, smaller footprint.
 
 ---
 
@@ -180,7 +182,7 @@ Recommend **normalised** for `position_*`: it survives a project-resolution chan
 the unit the drag math naturally produces (a pointer delta over a known content box is a
 fraction), and it removes any need for the frontend to know the backend's decode scale.
 
-#### DECIDED, 2026-09-04 (D-132): normalised, and this note's own recommendation stands
+#### DECIDED, 2026-09-04 (D-132): normalised, and this note's own recommendation stands — **BUILT, D-136 (same night)**
 
 The recommendation above was re-read rather than re-derived, and it holds — the three
 reasons it gives are each independently sufficient, and re-checking the code turned up
@@ -205,7 +207,9 @@ rather than a preference:
   right fraction, so the migration is a judgment call (reinterpret against the project
   resolution, i.e. treat old values as composition pixels, and accept a one-time shift on
   projects that used PIP offsets) and it belongs in Phase 0a's own commit with its own
-  before/after evidence — not smuggled into a crop change.
+  before/after evidence — not smuggled into a crop change. **Built, D-136**: a real
+  schema-minor gate (`chroma.project/1.1`) on `project.json`, so the reinterpretation runs
+  exactly once per file rather than being detectable-or-not by chance.
 - **D-132's crop does not wait for any of that.** Its four insets are normalised to the
   clip's **own source**, not to the composition, so they are already scale-invariant and
   already correct — the same reasoning, applied to a field whose natural reference frame
@@ -229,7 +233,7 @@ the new component has to follow.
 
 ## The recommended build, phased
 
-### Phase 1 — select, move, uniform corner-scale. Nothing else.
+### Phase 1 — select, move, uniform corner-scale. Nothing else. — **BUILT (D-136)**
 
 Smallest thing that is genuinely useful ("drag it, make it smaller") and stays inside what
 the `Clip` model can already express.
@@ -326,8 +330,9 @@ story, and the overlay should be read as editing the base transform.
    `position_x`/`position_y`.~~ **Answered 2026-09-04 (D-132): normalised, against a
    composition space of `ProjectSettings.width`/`height`.** Taken as a standing call
    rather than another round trip, on this note's own already-researched recommendation —
-   see the decision block under Phase 0a. The *migration* of existing `position_*` values
-   is still real, still unbuilt, and is now the whole of Phase 0a.
+   see the decision block under Phase 0a. ~~The *migration* of existing `position_*`
+   values is still real, still unbuilt.~~ **Built the same night, D-136** — a real
+   schema-minor gate on `project.json`, plus Phase 1's actual on-canvas handles.
 2. **Proportional-by-default (Resolve) vs free-with-Shift-to-constrain (Premiere).**
    Phase 1 can only do proportional; the question is whether Phase 2 keeps that default.
 3. **Click-on-picture to select** — genuinely useful, but it needs the backend to report

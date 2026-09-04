@@ -136,7 +136,12 @@ export function ClipInspectorPanel({
             <span className="text-text-secondary">Position X</span>
             <Input
               type="number"
-              step={1}
+              // D-136 — `position_x`/`position_y` are normalised fractions of
+              // the composition now (B-043 fix), not absolute pixels; `1`
+              // used to be a 1px nudge and is now a full frame-width jump.
+              // `0.01` matches the crop insets' own step below, the same
+              // stored unit.
+              step={CROP_STEP}
               disabled={trackLocked}
               className={numInput}
               value={clip.position_x ?? 0}
@@ -147,7 +152,7 @@ export function ClipInspectorPanel({
             <span className="text-text-secondary">Position Y</span>
             <Input
               type="number"
-              step={1}
+              step={CROP_STEP}
               disabled={trackLocked}
               className={numInput}
               value={clip.position_y ?? 0}

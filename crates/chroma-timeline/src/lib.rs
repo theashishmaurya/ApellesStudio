@@ -305,17 +305,59 @@ pub struct Clip {
     /// which every existing single/opaque-track render stays pixel-identical.
     #[serde(default = "default_opacity")]
     pub opacity: f64,
-    /// Composition-space pixel offset from this clip's natural (centred,
-    /// unscaled) position. `#[serde(default)]` is correct (`0.0` = no
-    /// offset, the only sane unset-field meaning).
+    /// **Normalised** offset from this clip's natural (centred, unscaled)
+    /// position — a fraction of the COMPOSITION's own width/height (D-136,
+    /// Phase 0a of `docs/notes/on-canvas-transform.md`). `0.5` on
+    /// `position_x` moves the layer right by half a frame width, whatever
+    /// the composition's pixel resolution and whatever resolution the
+    /// preview happens to be decoding at.
+    ///
+    /// **Why normalised, and what it fixes (B-043):** these used to be
+    /// absolute pixels in the compositor's canvas, and that canvas was the
+    /// *top layer's decoded* size — i.e. it followed whatever
+    /// `max_long_edge` the preview asked for. `position_x: 200` therefore
+    /// meant 20.8 % of the frame on a 960-wide canvas and 31.25 % on a
+    /// 640-wide one, so an overlay moved when the preview quality changed,
+    /// and the same offset meant different things for a 4K source and a
+    /// 720p one. A fraction of the composition is invariant under every
+    /// decode scale by construction — the exact reasoning D-132's crop
+    /// insets were built with from their first line (see `crop_left`), now
+    /// retrofitted onto the field that predates it.
+    ///
+    /// The composition is `ProjectSettings::width`/`height` (D-038), with
+    /// the top layer's own probed source resolution as the fallback for a
+    /// project that never recorded one; `chroma::edit`'s compositor owns
+    /// that resolution (this crate does no rendering — see the module doc).
+    ///
+    /// Per-axis: `position_x` is a fraction of the composition WIDTH,
+    /// `position_y` of its HEIGHT. Same per-axis convention `crop_left` /
+    /// `crop_top` already use.
+    ///
+    /// `#[serde(default)]` is correct (`0.0` = no offset, the only sane
+    /// unset-field meaning) — but note that unlike every other migration on
+    /// this struct, an ABSENT key is not what identifies a legacy value
+    /// here: a pre-D-136 clip has the key, with a number in the old unit.
+    /// That is why the migration is version-gated in
+    /// `chroma::project::load_manifest` and applied by
+    /// [`Timeline::normalise_legacy_positions`], rather than detected by a
+    /// serde default or a sentinel the way `start_frame`'s is.
     #[serde(default)]
     pub position_x: f64,
     #[serde(default)]
     pub position_y: f64,
-    /// Uniform scale multiplier. `#[serde(default = "default_scale")]` for
-    /// the same reason `opacity` isn't a bare `#[serde(default)]`:
-    /// `f64::default() == 0.0` would render every existing clip as a single
-    /// point.
+    /// Uniform scale multiplier, applied to the layer's **natural footprint
+    /// in composition space** — its own source pixel dimensions measured
+    /// against the composition's (D-136). `1.0` on a clip whose source
+    /// matches the project resolution is exactly full-frame; `1.0` on a
+    /// 640×360 clip in a 1920×1080 project is a third of the frame wide, and
+    /// stays a third at every preview quality. Before D-136 this multiplied
+    /// the layer's *decoded* size against a canvas that was some other
+    /// layer's decoded size, so it too changed meaning with the preview
+    /// scale (the second half of B-043).
+    ///
+    /// `#[serde(default = "default_scale")]` for the same reason `opacity`
+    /// isn't a bare `#[serde(default)]`: `f64::default() == 0.0` would
+    /// render every existing clip as a single point.
     #[serde(default = "default_scale")]
     pub scale: f64,
     /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
@@ -454,6 +496,40 @@ impl Clip {
     /// arithmetic this type exists to own.
     pub fn end_frame(&self) -> i64 {
         self.start_frame + self.duration
+    }
+
+    /// The per-clip half of [`Timeline::normalise_legacy_positions`] — see
+    /// that method for the whole reasoning. Migrates the static fields AND
+    /// the `position_x`/`position_y` keys inside every `chroma_keyframes`
+    /// entry: an animated position was stored in the same old unit, so
+    /// leaving the keys behind would migrate a clip's base transform and
+    /// then have the interpolator immediately override it with un-migrated
+    /// values — a keyframed PIP would be the one case the migration made
+    /// *worse*. Keys this clip doesn't animate are left exactly as they are;
+    /// a keyframes payload that isn't the expected `[{frame, params}]` array
+    /// is skipped rather than guessed at.
+    fn normalise_legacy_position(&mut self, comp_w: f64, comp_h: f64) {
+        self.position_x /= comp_w;
+        self.position_y /= comp_h;
+        let Some(serde_json::Value::Array(keys)) = self.chroma_keyframes.as_mut() else {
+            return;
+        };
+        for key in keys {
+            let Some(params) = key.get_mut("params").and_then(|p| p.as_object_mut()) else {
+                continue;
+            };
+            for (field, size) in [("position_x", comp_w), ("position_y", comp_h)] {
+                let Some(px) = params.get(field).and_then(serde_json::Value::as_f64) else {
+                    continue;
+                };
+                // `from_f64` is `None` only for NaN/±inf, which a params
+                // object should never carry — leave such a value untouched
+                // rather than dropping the key and silently un-animating it.
+                if let Some(n) = serde_json::Number::from_f64(px / size) {
+                    params.insert(field.to_string(), serde_json::Value::Number(n));
+                }
+            }
+        }
     }
 }
 
@@ -740,6 +816,46 @@ impl Timeline {
     pub fn backfill_legacy_positions(&mut self) {
         for track in &mut self.tracks {
             track.backfill_legacy_positions();
+        }
+    }
+
+    /// Reinterpret every clip's pre-D-136 `position_x`/`position_y` — and the
+    /// same two keys inside its `chroma_keyframes` — as **composition
+    /// pixels**, dividing them into the normalised fractions those fields
+    /// mean now. `comp_w`/`comp_h` are the project's composition size (see
+    /// `Clip::position_x`'s doc).
+    ///
+    /// **This is a stated reinterpretation, not a conversion, and it cannot
+    /// be anything else.** A stored `200` was pixels in the compositor's
+    /// canvas, and that canvas was the top layer's *decoded* size at the
+    /// preview quality in force when the number was typed — 960 long edge
+    /// while scrubbing, 640 while playing, per source resolution. That
+    /// context was never persisted, so the fraction the user actually saw is
+    /// unrecoverable, and no arithmetic here can recover it. Treating the
+    /// value as composition pixels is the reading that is exactly right for
+    /// the most common real case (a single-source project whose composition
+    /// was inferred from that same clip, previewed at full resolution) and
+    /// wrong by a bounded factor everywhere else. Any project that actually
+    /// used a PIP offset takes a one-time visual shift; every project that
+    /// did not — i.e. every clip still at `0.0`, which is all of them until
+    /// someone touches Position — migrates to exactly `0.0` and is
+    /// pixel-identical. See D-136 for the options weighed.
+    ///
+    /// **Not idempotent, by nature** — running it twice divides twice. It is
+    /// version-gated by `chroma::project::load_manifest` on the
+    /// `project.json` schema minor, which is the only place that can tell an
+    /// old value from a new one (the key is present either way, so no serde
+    /// default or sentinel can, unlike `backfill_legacy_positions` above).
+    /// A non-finite or non-positive composition size is a no-op rather than
+    /// a panic or an infinity written into the project file.
+    pub fn normalise_legacy_positions(&mut self, comp_w: f64, comp_h: f64) {
+        if !comp_w.is_finite() || !comp_h.is_finite() || comp_w <= 0.0 || comp_h <= 0.0 {
+            return;
+        }
+        for track in &mut self.tracks {
+            for clip in &mut track.clips {
+                clip.normalise_legacy_position(comp_w, comp_h);
+            }
         }
     }
 
@@ -2571,6 +2687,93 @@ mod tests {
         for i in [1usize, 2] {
             assert_eq!(t.tracks[0].clips[i].crop_left, 0.3);
             assert_eq!(t.tracks[0].clips[i].crop_bottom, 0.2);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // D-136: `position_x`/`position_y` become normalised (Phase 0a of
+    // `docs/notes/on-canvas-transform.md`, closes B-043).
+    // -----------------------------------------------------------------
+
+    /// The real migration case: a `project.json` clip written before D-136
+    /// carries absolute pixel positions, is loaded by serde exactly as it
+    /// always was (nothing about the *shape* changed — which is precisely why
+    /// this needs a version gate rather than a serde default), and comes out
+    /// of `normalise_legacy_positions` as the documented reinterpretation —
+    /// the stored number read as composition pixels. Then it round-trips back
+    /// through JSON in the new unit.
+    #[test]
+    fn a_pre_migration_clip_loads_and_normalises_against_the_composition() {
+        let json = r#"{"id":"tl","name":"T","tracks":[{"kind":"video","clips":[
+            {"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,
+             "source_len":10,"start_frame":0,"opacity":1.0,
+             "position_x":480.0,"position_y":-270.0,"scale":0.5,"rotation":0.0}
+        ],"gain":1.0,"locked":false,"hidden":false,"sync_locked":true}]}"#;
+        let mut tl: Timeline = serde_json::from_str(json).unwrap();
+        // loaded verbatim first — the old unit, untouched
+        assert_eq!(tl.tracks[0].clips[0].position_x, 480.0);
+
+        tl.normalise_legacy_positions(1920.0, 1080.0);
+        let c = &tl.tracks[0].clips[0];
+        assert_eq!(c.position_x, 0.25); // 480 px of 1920 → a quarter frame right
+        assert_eq!(c.position_y, -0.25); // 270 px of 1080 → a quarter frame up
+        assert_eq!(c.scale, 0.5, "scale is not touched by this migration");
+
+        // and the new value is what persists
+        let back: Timeline = serde_json::from_str(&serde_json::to_string(&tl).unwrap()).unwrap();
+        assert_eq!(back.tracks[0].clips[0].position_x, 0.25);
+        assert_eq!(back.tracks[0].clips[0].position_y, -0.25);
+    }
+
+    /// The overwhelmingly common case, and the reason this migration is safe
+    /// to run across every existing project: a clip nobody ever offset is at
+    /// `0.0`, and `0.0` divided by any composition is still exactly `0.0`. No
+    /// project that never used a PIP offset shifts by a pixel.
+    #[test]
+    fn migrating_an_unoffset_clip_changes_nothing() {
+        let mut tl = Timeline::from_shots(&shots());
+        tl.normalise_legacy_positions(3840.0, 2160.0);
+        assert!(tl.tracks[0]
+            .clips
+            .iter()
+            .all(|c| c.position_x == 0.0 && c.position_y == 0.0));
+    }
+
+    /// Keyframed positions are in the same old unit and must migrate with the
+    /// static fields — otherwise the interpolator would immediately override
+    /// a migrated base value with un-migrated keys, making a keyframed PIP the
+    /// one case the migration made worse. Params this clip doesn't animate are
+    /// left exactly as they are.
+    #[test]
+    fn migration_normalises_position_keyframes_too() {
+        let mut tl = Timeline::from_shots(&shots());
+        tl.tracks[0].clips[0].position_x = 192.0;
+        tl.tracks[0].clips[0].chroma_keyframes = Some(serde_json::json!([
+            { "frame": 0, "params": { "position_x": 0.0, "position_y": 108.0, "opacity": 1.0 } },
+            { "frame": 24, "params": { "position_x": 960.0, "scale": 2.0 } },
+        ]));
+        tl.normalise_legacy_positions(1920.0, 1080.0);
+
+        let c = &tl.tracks[0].clips[0];
+        assert_eq!(c.position_x, 0.1);
+        let keys = c.chroma_keyframes.as_ref().unwrap().as_array().unwrap();
+        assert_eq!(keys[0]["params"]["position_x"].as_f64().unwrap(), 0.0);
+        assert_eq!(keys[0]["params"]["position_y"].as_f64().unwrap(), 0.1);
+        assert_eq!(keys[0]["params"]["opacity"].as_f64().unwrap(), 1.0);
+        assert_eq!(keys[1]["params"]["position_x"].as_f64().unwrap(), 0.5);
+        assert_eq!(keys[1]["params"]["scale"].as_f64().unwrap(), 2.0);
+    }
+
+    /// A degenerate composition size is a no-op, not an infinity written into
+    /// the project file — the migration runs on load, before anything has
+    /// validated the settings it was handed.
+    #[test]
+    fn migration_refuses_a_degenerate_composition() {
+        let mut tl = Timeline::from_shots(&shots());
+        tl.tracks[0].clips[0].position_x = 200.0;
+        for (w, h) in [(0.0, 1080.0), (1920.0, 0.0), (-1.0, -1.0), (f64::NAN, 1080.0)] {
+            tl.normalise_legacy_positions(w, h);
+            assert_eq!(tl.tracks[0].clips[0].position_x, 200.0);
         }
     }
 

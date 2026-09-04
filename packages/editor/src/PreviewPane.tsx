@@ -44,6 +44,15 @@
  * keeps `isFullscreen` in sync with reality, since the browser's own Esc
  * handling exits fullscreen without ever calling this component's own click
  * handler.
+ *
+ * On-canvas transform handles (D-136, Phase 1 of
+ * `docs/notes/on-canvas-transform.md`): `<TransformOverlay>` renders as a
+ * sibling of the `<img>`, both children of `surfaceRef` — an
+ * absolutely-positioned DOM/SVG overlay, not a second `<canvas>`, per that
+ * note's own finding that the preview surface is a plain `<img>` and
+ * `<Player>`'s `surface` slot already accepts any ReactNode. No prop drilling
+ * needed: it reads the same `useEditorTimelineStore` selection this file
+ * does, independently.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -53,6 +62,7 @@ import { Player } from '@chroma/player';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
+import { TransformOverlay } from './TransformOverlay';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -105,6 +115,12 @@ export function PreviewPane() {
   const inFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+  // D-136 — the container `TransformOverlay` measures its content box
+  // against (`useContentBox`'s `containerRef`). Must be the same element the
+  // `<img>` is `object-contain`-fit within, i.e. its own parent, not
+  // `Player`'s outer viewport div (which also holds letterboxing bars this
+  // ref must NOT include).
+  const surfaceRef = useRef<HTMLDivElement>(null);
 
   // D-126 — mute/volume: local monitoring state, not project data (see the
   // module doc). `volume` is the last non-zero level, remembered across a
@@ -323,7 +339,10 @@ export function PreviewPane() {
           decodeErr ? (
             <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
           ) : frameSrc ? (
-            <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
+            <div ref={surfaceRef} className="relative flex h-full w-full items-center justify-center">
+              <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
+              <TransformOverlay containerRef={surfaceRef} />
+            </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">
               <Loader2 className="size-5 animate-spin" />

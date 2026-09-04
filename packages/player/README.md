@@ -115,6 +115,32 @@ The Editor tab (`@chroma/editor`'s `PreviewPane.tsx`) is the real consumer —
 read it for how the frame-fetch + rAF play-loop logic stays in the caller
 while only the rendered transport JSX moves to `<Player>`.
 
+## `useContentBox` — letterbox math for an overlay
+
+D-136 (Phase 1 of `docs/notes/on-canvas-transform.md`) added a second export
+alongside `<Player>`: `useContentBox(containerRef, size)`, extracted from
+`app/src/hooks/useImageRenderSize.ts` (D-046) so a tab built on this package
+can place a DOM/SVG overlay over its `object-contain`-fit `surface` without
+reaching into `app/` (`packages/editor` may not import from `app/` — D-039's
+one-way dependency rule). Given the container the picture is centred within
+and the picture's own natural size, it returns the on-screen rect
+(`offsetX`/`offsetY`/`width`/`height`, in the container's own local pixels)
+the picture actually occupies — the same "where did `object-contain` put the
+letterboxed image" question `RelightPuckLayer.tsx`'s markers answer for the
+Colorist tab.
+
+`@chroma/editor`'s `TransformOverlay.tsx` is the first real consumer: it
+renders as a sibling of `PreviewPane.tsx`'s `<img>`, both children of one
+`relative` wrapper div, and uses `useContentBox` on that same wrapper to map
+a selected clip's composition-fraction box (`Clip.position_x`/`position_y`/
+`scale`, D-136) onto real screen pixels for its drag handles.
+
+`app/src/hooks/useImageRenderSize.ts` itself is untouched and still owns
+every Colorist-tab call site — this hook is the shared copy a NEW call site
+should reach for, not (yet) a replacement for that one; see its own doc
+comment for why migrating Colorist onto it is a separate, deliberately
+deferred refactor.
+
 ## What's NOT here
 
 - No `@tauri-apps/api` invoke calls, no zustand store, no knowledge of what a

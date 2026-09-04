@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **`position_x`/`position_y` become normalised composition
+  fractions, with a real migration, and the Edit tab gets real on-canvas
+  drag/scale handles (D-136, B-043 closed).** Phase 0a's code, left undone by
+  D-132: the compositor's canvas is now the project's own composition
+  (`ProjectSettings.width`/`height`, or the first clip's probed resolution),
+  not the top layer's decoded size, so a PIP overlay no longer moves or
+  resizes when you press Play. Existing pixel-valued positions are migrated,
+  not silently reinterpreted — `chroma.project`'s schema gained a minor
+  (`1.1`), gating a one-time, non-idempotent reinterpretation of old values as
+  composition pixels (every clip nobody ever offset migrates to bit-identical
+  zeros). A new `chroma_timeline_clip_geometry` command reports a clip's
+  source footprint in composition space. Landed alongside it: `TransformOverlay.tsx`,
+  Phase 1's real select/drag/corner-scale handles over the Edit-tab preview —
+  a DOM overlay (`@chroma/player`'s new `useContentBox`) with live
+  overlay-only feedback while dragging and one `set_clip_transform` op on
+  release, the same pattern `RelightPuckLayer.tsx`/D-046 already used.
 - **2026-09-04** — **"Play and pause restart the audio, just audio": every
   session was starting at 0:00 (D-133, B-052).** Not a D-130 regression, and not
   D-050's by-design fresh-session-per-Play being misread — audio was literally

@@ -84,7 +84,18 @@ export interface Clip {
    *  way `Track.gain` already is — a pre-D-086 clip (or one this file
    *  builds without setting them) round-trips fine, `chroma_timeline_set`'s
    *  verbatim-storage contract means the server fills in real defaults on
-   *  the next `chroma_timeline_get`. */
+   *  the next `chroma_timeline_get`.
+   *
+   *  **`position_x`/`position_y` are normalised (D-136), not absolute
+   *  pixels** — a fraction of the project's own composition
+   *  (`ProjectSettings.width`/`height`), the same per-axis convention
+   *  `crop_left`/`crop_top` below already used. This closed B-043: before
+   *  D-136 these were canvas pixels in a compositor canvas that changed size
+   *  with the preview quality (960 scrubbing / 640 playing), so a PIP
+   *  offset visibly moved and resized when you pressed Play. A pre-D-136
+   *  `project.json`'s stored values are migrated once on load
+   *  (`chroma::project::load_manifest`, schema-minor gated) — this file
+   *  never sees the old unit. */
   opacity?: number;
   position_x?: number;
   position_y?: number;
@@ -100,10 +111,8 @@ export interface Clip {
    *  A fraction rather than pixels because the compositor decodes each
    *  layer at whatever preview scale the caller asked for (960 scrubbing /
    *  640 playing), so a pixel crop would cover a different part of the
-   *  picture at each quality — see the Rust field's own doc, and B-043 for
-   *  that same defect in `position_x`/`position_y`, which are still
-   *  absolute and still resolution-dependent until Phase 0a of
-   *  `docs/notes/on-canvas-transform.md` lands. */
+   *  picture at each quality — see the Rust field's own doc. `position_x`/
+   *  `position_y` above carried that same defect (B-043) until D-136. */
   crop_left?: number;
   crop_top?: number;
   crop_right?: number;

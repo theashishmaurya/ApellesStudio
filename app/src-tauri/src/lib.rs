@@ -2155,6 +2155,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_get,
             chroma::edit::chroma_timeline_set,
             chroma::edit::chroma_timeline_frame,
+            chroma::edit::chroma_timeline_clip_geometry,
             chroma::edit::chroma_timeline_list,
             chroma::edit::chroma_timeline_create,
             chroma::edit::chroma_timeline_set_active,

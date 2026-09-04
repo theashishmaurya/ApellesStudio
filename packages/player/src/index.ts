@@ -9,3 +9,5 @@
 export { Player } from './Player';
 export type { PlayerProps } from './Player';
 export { fmtTimecode } from './timecode';
+export { useContentBox } from './useContentBox';
+export type { ContentBox, ContentSize } from './useContentBox';

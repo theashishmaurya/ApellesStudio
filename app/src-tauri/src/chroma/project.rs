@@ -134,10 +134,53 @@ use crate::app_state::AppState;
 use super::state::{self, ProjectRef};
 use super::{load, video};
 
-/// Current manifest schema. `chroma.project/<major>` — bump the major only on a
-/// breaking change; [`load_manifest`] rejects a file with a newer major.
-pub const SCHEMA: &str = "chroma.project/1";
+/// Current manifest schema. `chroma.project/<major>[.<minor>]` — bump the
+/// **major** only on a breaking change ([`load_manifest`] rejects a file with a
+/// newer major); bump the **minor** for a change that a newer build can migrate
+/// an older file through, which is what the minor exists to make detectable.
+///
+/// D-136 raised this to `1.1` for the first such migration: `Clip::position_x`/
+/// `position_y` changed *unit* (absolute canvas pixels → a fraction of the
+/// composition) without changing shape, so no serde default and no sentinel can
+/// tell a migrated file from an un-migrated one — the key is a plain number
+/// either way. The file's own recorded minor is the only thing that can, so
+/// [`load_manifest`] reads it and [`chroma_timeline::Timeline::normalise_legacy_positions`]
+/// runs exactly once per file. The major is unchanged because an older build
+/// loading a `1.1` file still parses every field it knows: it would read the
+/// new positions in the old unit — a wrong PIP offset, not a load failure — and
+/// that is precisely the "the major is the compatibility gate" contract above.
+pub const SCHEMA: &str = "chroma.project/1.1";
 const CURRENT_MAJOR: u64 = 1;
+/// The schema minor at which `Clip::position_x`/`position_y` became normalised
+/// (D-136). A file recording anything less — including an untagged one, and
+/// every `chroma.project/1` file written before this decision — carries
+/// pre-D-136 pixel positions and is migrated on load.
+const NORMALISED_GEOMETRY_MINOR: u64 = 1;
+
+/// Composition size assumed by D-136's position migration for a project that
+/// records no `settings.width`/`height` (D-038) **and** has no probed pool
+/// resolution to fall back on either — a pre-D-038 project whose media was
+/// never successfully probed. 1080p, stated rather than inferred: the migration
+/// is a reinterpretation of unrecoverable data in the first place (see
+/// `normalise_legacy_positions`' own doc), and a project in this state that
+/// also used a PIP offset is a set this codebase can enumerate as "none
+/// observed." Every clip still at `0.0` — i.e. every clip nobody ever offset —
+/// migrates to exactly `0.0` under any divisor, so this constant only ever
+/// affects a project that is already accepting a one-time shift.
+const NOMINAL_COMPOSITION: (u32, u32) = (1920, 1080);
+
+/// Split a `chroma.project/<major>[.<minor>]` tag into its numbers. An untagged
+/// or unparseable file is `(None, 0)` — treated as v1.0, which is what every
+/// pre-schema file effectively is.
+fn parse_schema(schema: &str) -> (Option<u64>, u64) {
+    let Some(rest) = schema.strip_prefix("chroma.project/") else {
+        return (None, 0);
+    };
+    let mut parts = rest.split('.');
+    let major = parts.next().and_then(|m| m.parse::<u64>().ok());
+    let minor = parts.next().and_then(|m| m.parse::<u64>().ok()).unwrap_or(0);
+    (major, minor)
+}
 
 // --------------------------------------------------------------------------- //
 // the manifest
@@ -1267,10 +1310,7 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
         serde_json::from_str(&txt).map_err(|e| format!("parse {}: {e}", mp.display()))?;
 
     let schema = raw.get("schema").and_then(|s| s.as_str()).unwrap_or("");
-    let major = schema
-        .strip_prefix("chroma.project/")
-        .and_then(|m| m.split('.').next())
-        .and_then(|m| m.parse::<u64>().ok());
+    let (major, minor) = parse_schema(schema);
     match major {
         None | Some(1) => {}
         Some(m) if m > CURRENT_MAJOR => {
@@ -1287,9 +1327,16 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
 
     let mut manifest: ProjectManifest =
         serde_json::from_value(raw).map_err(|e| format!("project.json shape: {e}"))?;
-    if manifest.schema.is_empty() {
-        manifest.schema = SCHEMA.to_string();
-    }
+    // D-136 — **unconditionally** the current schema, not "only if empty."
+    // The position migration below is version-gated and NOT idempotent
+    // (dividing twice is silently wrong, not a no-op), so a file that was
+    // migrated in memory and then saved back under its own older tag would be
+    // migrated again on the next load. Restamping here is what makes the gate
+    // hold across a save. A file that is loaded but never saved keeps its old
+    // tag on disk and is re-migrated from the same original bytes on the next
+    // load — the same answer every time, since the migration is a pure
+    // function of the file.
+    manifest.schema = SCHEMA.to_string();
     if !manifest.shots.is_empty() && manifest.active_shot >= manifest.shots.len() {
         manifest.active_shot = 0;
     }
@@ -1299,7 +1346,58 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     for tl in &mut manifest.timelines {
         tl.backfill_legacy_positions();
     }
+    // D-136 — the one-shot, version-gated unit change on `Clip::position_x`/
+    // `position_y`. Runs after `backfill_legacy_positions` purely so all of a
+    // legacy file's migrations are in one place and in a fixed order; the two
+    // touch different fields and don't interact.
+    if minor < NORMALISED_GEOMETRY_MINOR {
+        let (cw, ch) = migration_composition_size(&manifest);
+        for tl in &mut manifest.timelines {
+            tl.normalise_legacy_positions(cw as f64, ch as f64);
+        }
+    }
     Ok(manifest)
+}
+
+/// The composition size D-136's position migration divides by, best-effort and
+/// **without probing** — [`load_manifest`] is on the per-preview-frame hot path
+/// and a legacy file is re-read (and so re-migrated) until something saves it,
+/// so shelling out to `ffprobe` here would be a real cost for a one-line
+/// reinterpretation.
+///
+/// In order: the project's own recorded output spec (D-038 —
+/// [`ProjectSettings::width`]/`height`, which every project created since then
+/// has); else the resolution already stored on the pool item behind the first
+/// clip of the active timeline, which is exactly the clip
+/// [`infer_settings_from_clip`] would have derived those settings from and is
+/// already on disk; else [`NOMINAL_COMPOSITION`].
+fn migration_composition_size(manifest: &ProjectManifest) -> (u32, u32) {
+    if let (Some(w), Some(h)) = (manifest.settings.width, manifest.settings.height)
+        && w > 0
+        && h > 0
+    {
+        return (w, h);
+    }
+    let first_clip = manifest
+        .timelines
+        .get(manifest.active_timeline)
+        .and_then(|tl| tl.tracks.iter().find(|t| !t.clips.is_empty()))
+        .and_then(|t| t.clips.first());
+    let pooled = first_clip.and_then(|c| {
+        manifest
+            .media
+            .iter()
+            .find(|m| {
+                c.media_id.as_deref() == Some(m.id.as_str()) || m.source_path == c.source_path
+            })
+            .and_then(|m| m.video.as_ref())
+    });
+    match pooled {
+        Some(v) if v.resolution.width > 0 && v.resolution.height > 0 => {
+            (v.resolution.width, v.resolution.height)
+        }
+        _ => NOMINAL_COMPOSITION,
+    }
 }
 
 /// Pretty-print `manifest` to `<project_dir>/project.json` (creating the dir),
@@ -2765,6 +2863,112 @@ mod tests {
         assert_eq!(m.schema, SCHEMA);
         assert_eq!(m.active_shot, 0, "out-of-range active_shot clamps to 0");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ------------------------------------------------------------------ //
+    // D-136 — the schema-minor gate on the normalised-position migration.
+    // ------------------------------------------------------------------ //
+
+    fn write_project(dir: &Path, json: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("project.json"), json).unwrap();
+    }
+
+    /// A `chroma.project/1` file's pixel positions are reinterpreted against
+    /// the project's own recorded composition (D-038 `settings`), and the
+    /// loaded manifest is restamped to the current schema so the same file,
+    /// once saved, is never migrated a second time. That restamp is the whole
+    /// gate: this migration divides, so running it twice is silently wrong,
+    /// not a no-op.
+    #[test]
+    fn legacy_positions_are_normalised_once_and_the_schema_restamped() {
+        let root = tmp("d136-gate");
+        let dir = root.join("pip.chroma");
+        write_project(
+            &dir,
+            r#"{"schema":"chroma.project/1","name":"pip","shots":[],
+                "settings":{"width":1920,"height":1080},
+                "timelines":[{"id":"t","name":"t","tracks":[{"kind":"video","clips":[
+                  {"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,
+                   "source_len":10,"start_frame":0,"position_x":480.0,"position_y":270.0}
+                ],"gain":1.0,"locked":false,"hidden":false,"sync_locked":true}]}],
+                "activeTimeline":0}"#,
+        );
+
+        let m = load_manifest(&dir).unwrap();
+        let c = &m.timelines[0].tracks[0].clips[0];
+        assert_eq!((c.position_x, c.position_y), (0.25, 0.25));
+        assert_eq!(m.schema, SCHEMA, "the load must restamp the schema");
+
+        // save it back (what any edit does) and reload: the gate holds, the
+        // value is not divided a second time.
+        save_manifest(&dir, &m).unwrap();
+        let again = load_manifest(&dir).unwrap();
+        let c2 = &again.timelines[0].tracks[0].clips[0];
+        assert_eq!((c2.position_x, c2.position_y), (0.25, 0.25), "migrated twice");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A project with no `settings` falls back to the resolution already
+    /// stored on the pool item behind its first clip — no probe, no
+    /// `NOMINAL_COMPOSITION` guess, for the case where the real answer is
+    /// sitting in the same file.
+    #[test]
+    fn the_migration_falls_back_to_the_pool_resolution() {
+        let root = tmp("d136-pool");
+        let dir = root.join("nosettings.chroma");
+        write_project(
+            &dir,
+            r#"{"schema":"chroma.project/1","name":"n","shots":[],
+                "media":[{"id":"m1","sourcePath":"/a.mov","name":"A","added":"",
+                          "video":{"width":1280,"height":720,"fps":24.0,
+                                   "frameCount":10,"durationSecs":0.4}}],
+                "timelines":[{"id":"t","name":"t","tracks":[{"kind":"video","clips":[
+                  {"id":"a","media_id":"m1","name":"A","source_path":"/a.mov","source_start":0,
+                   "duration":10,"source_len":10,"start_frame":0,"position_x":320.0,"position_y":180.0}
+                ],"gain":1.0,"locked":false,"hidden":false,"sync_locked":true}]}],
+                "activeTimeline":0}"#,
+        );
+        let m = load_manifest(&dir).unwrap();
+        let c = &m.timelines[0].tracks[0].clips[0];
+        assert_eq!((c.position_x, c.position_y), (0.25, 0.25));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file already tagged at the current schema is left alone — the gate
+    /// reads the file's own minor, not just its major.
+    #[test]
+    fn a_current_schema_file_is_not_migrated() {
+        let root = tmp("d136-current");
+        let dir = root.join("new.chroma");
+        write_project(
+            &dir,
+            &format!(
+                r#"{{"schema":"{SCHEMA}","name":"n","shots":[],
+                    "settings":{{"width":1920,"height":1080}},
+                    "timelines":[{{"id":"t","name":"t","tracks":[{{"kind":"video","clips":[
+                      {{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,
+                       "source_len":10,"start_frame":0,"position_x":0.25,"position_y":0.25}}
+                    ],"gain":1.0,"locked":false,"hidden":false,"sync_locked":true}}]}}],
+                    "activeTimeline":0}}"#
+            ),
+        );
+        let m = load_manifest(&dir).unwrap();
+        let c = &m.timelines[0].tracks[0].clips[0];
+        assert_eq!((c.position_x, c.position_y), (0.25, 0.25));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn schema_tag_parses_into_major_and_minor() {
+        assert_eq!(parse_schema("chroma.project/1"), (Some(1), 0));
+        assert_eq!(parse_schema("chroma.project/1.1"), (Some(1), 1));
+        assert_eq!(parse_schema("chroma.project/2.7"), (Some(2), 7));
+        assert_eq!(parse_schema(""), (None, 0));
+        assert_eq!(parse_schema("something-else"), (None, 0));
+        // the constant this file ships must itself be at (or past) the minor
+        // the migration gate keys on, or every load would re-migrate.
+        assert!(parse_schema(SCHEMA).1 >= NORMALISED_GEOMETRY_MINOR);
     }
 
     #[test]

@@ -218,8 +218,61 @@ fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectM
 /// `chroma::audio`'s mixer enumerates every genuine `TrackKind::Audio` track
 /// on the active timeline (`resolve_audio_track_positions`, below).
 pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
+    let (timeline, _settings) = resolve_timeline_and_settings(persist)?;
+    Ok(timeline)
+}
+
+/// [`resolve_timeline`] plus the project's output spec (D-038) — the pair
+/// [`timeline_frame`] needs, since D-136 made the compositor's canvas the
+/// **composition** rather than the top layer's decoded size. One load, not two:
+/// `load_and_ensure_timeline` is the per-preview-frame hot path (D-114 caches
+/// it, but a second call would still clone a whole manifest).
+pub(crate) fn resolve_timeline_and_settings(
+    persist: bool,
+) -> Result<(Timeline, project::ProjectSettings), String> {
     let (_dir, manifest) = load_and_ensure_timeline(persist)?;
-    Ok(manifest.timelines[manifest.active_timeline].clone())
+    Ok((
+        manifest.timelines[manifest.active_timeline].clone(),
+        manifest.settings.clone(),
+    ))
+}
+
+/// The **composition space** every clip's geometry is measured against
+/// (D-136, Phase 0a of `docs/notes/on-canvas-transform.md`): the project's
+/// recorded output resolution (D-038), or — for a project that never recorded
+/// one — the probed resolution of the timeline's first video clip, which is
+/// exactly the clip [`project::infer_settings_from_clip`] would have derived
+/// those settings from.
+///
+/// **Deliberately independent of the playhead.** The pre-D-136 canvas *was*
+/// playhead-dependent (it was whichever layer happened to be on top at that
+/// position, at whatever size it happened to decode to), and that is half of
+/// B-043: a value that means one thing at frame 100 and another at frame 400 is
+/// not a coordinate space. Taking the first clip in Vec order gives one answer
+/// for the whole timeline, for the preview and for
+/// [`chroma_timeline_clip_geometry`] alike, so the overlay and the picture
+/// cannot disagree.
+fn composition_size(
+    settings: &project::ProjectSettings,
+    timeline: &Timeline,
+) -> Result<(u32, u32), String> {
+    if let (Some(w), Some(h)) = (settings.width, settings.height)
+        && w > 0
+        && h > 0
+    {
+        return Ok((w, h));
+    }
+    let first = timeline
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Video)
+        .find_map(|t| t.clips.iter().find(|c| !c.source_path.is_empty()))
+        .ok_or_else(|| "no clip to derive a composition size from".to_string())?;
+    let info = probe_cached(&PathBuf::from(&first.source_path))?;
+    if info.resolution.width == 0 || info.resolution.height == 0 {
+        return Err(format!("{} has no usable resolution", first.source_path));
+    }
+    Ok((info.resolution.width, info.resolution.height))
 }
 
 /// Resolve timeline position `pos` on the **active** timeline to the single
@@ -514,7 +567,7 @@ pub async fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Resu
 /// command can hand it to `spawn_blocking` and so tests can call it directly
 /// without a tokio runtime.
 pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
-    let timeline = resolve_timeline(false)?;
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
     }
@@ -531,11 +584,34 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     let visible_tracks: Vec<usize> = layers.iter().map(|(i, _, _)| *i).collect();
     decode_pipe::retain_track_slots(&visible_tracks);
 
+    if layers.is_empty() {
+        return Ok(blank_frame());
+    }
+    let comp = composition_size(&settings, &timeline)?;
+
+    // D-136 — the fast path's second condition. A lone clip may be returned as
+    // a plain decode only if it really *is* the whole composition: same pixel
+    // dimensions as the composition space, so the picture a plain decode
+    // produces and the picture the compositor would produce are the same
+    // framing (the preview `<img>` is `object-contain`, so the two differing in
+    // resolution alone is invisible — differing in framing is not). A 640×360
+    // clip in a 1920×1080 project is a third of the frame wide with black
+    // around it, and must go through the compositor to look like that; before
+    // D-136 it filled the preview edge to edge, which is the same class of
+    // defect as B-043's position drift and would have made the transform
+    // overlay draw a box in a place the picture disagrees with.
+    let single_plain = match layers.as_slice() {
+        [(_, clip, source_frame)] => {
+            let info = probe_cached(&PathBuf::from(&clip.source_path))?;
+            resolve_clip_transform(clip, *source_frame).is_identity()
+                && (info.resolution.width, info.resolution.height) == comp
+        }
+        _ => false,
+    };
+
     let img = match layers.as_slice() {
         [] => return Ok(blank_frame()),
-        [(track, clip, source_frame)]
-            if resolve_clip_transform(clip, *source_frame).is_identity() =>
-        {
+        [(track, clip, source_frame)] if single_plain => {
             // Fast path: exactly one visible layer, with nothing to apply to
             // it, needs no compositing at all.
             //
@@ -565,7 +641,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
             )
             .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
         }
-        _ => composite_video_frame(&layers, max_long_edge)?,
+        _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
 
     let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
@@ -576,6 +652,72 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
         "data:image/jpeg;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(buf.get_ref())
     ))
+}
+
+/// One clip's placement geometry in composition space — what an on-canvas
+/// transform overlay needs and cannot work out for itself (D-136, Phase 1 of
+/// `docs/notes/on-canvas-transform.md`).
+///
+/// The frontend can already read a clip's `position_*`/`scale`, and after
+/// D-136 those are fractions of the composition, so the *offset* half of the
+/// overlay's box needs no backend help at all. What it can't know is how big
+/// the box is: that is the clip's source resolution measured against the
+/// composition's, and neither number is in the timeline JSON.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipGeometry {
+    /// The composition's own pixel size ([`composition_size`]) — reported so
+    /// the overlay can show a real resolution and so a caller that wants
+    /// composition pixels can convert, not because the box math needs it.
+    pub comp_width: u32,
+    pub comp_height: u32,
+    /// The clip's full-frame footprint at `scale == 1.0`, as a fraction of
+    /// the composition. `1.0`/`1.0` = its source exactly fills the frame.
+    pub natural_width: f64,
+    pub natural_height: f64,
+}
+
+/// [`ClipGeometry`] for the clip at `track`/`clip` on the active timeline.
+///
+/// Indices, not a clip id, to match every other per-clip command on this
+/// surface (`chroma_timeline_move_clip`, and the `set_clip_transform` op the
+/// overlay writes) — the caller resolving an id to an index once and using it
+/// for both is strictly better than two conventions in one interaction.
+///
+/// Probes the source (cached, [`probe_cached`]), so it is `async` +
+/// `spawn_blocking` for the same reason [`chroma_timeline_frame`] is: a cold
+/// probe is two `ffprobe` spawns and must not sit on Tauri's main thread.
+#[tauri::command]
+pub async fn chroma_timeline_clip_geometry(
+    track: usize,
+    clip: usize,
+) -> Result<ClipGeometry, String> {
+    tokio::task::spawn_blocking(move || clip_geometry(track, clip))
+        .await
+        .map_err(|e| format!("clip geometry task: {e}"))?
+}
+
+/// The synchronous body of [`chroma_timeline_clip_geometry`] — split out for
+/// the same reason [`timeline_frame`] is, so tests can call it without a
+/// tokio runtime.
+pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, String> {
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    let (comp_w, comp_h) = composition_size(&settings, &timeline)?;
+    let c = timeline
+        .tracks
+        .get(track)
+        .and_then(|t| t.clips.get(clip))
+        .ok_or_else(|| format!("no clip {clip} on track {track}"))?;
+    if c.source_path.is_empty() {
+        return Err("clip has no source".to_string());
+    }
+    let info = probe_cached(&PathBuf::from(&c.source_path))?;
+    Ok(ClipGeometry {
+        comp_width: comp_w,
+        comp_height: comp_h,
+        natural_width: info.resolution.width as f64 / comp_w as f64,
+        natural_height: info.resolution.height as f64 / comp_h as f64,
+    })
 }
 
 // --------------------------------------------------------------------------- //
@@ -695,20 +837,53 @@ fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
 /// highest priority); this function decodes in that order but PAINTS in
 /// reverse (lowest priority first, at the back; highest priority last, on
 /// top) — matches `resolve_visible_video_layers_at`'s own documented paint
-/// contract. The canvas is the TOP (highest-priority) layer's own scaled
-/// dimensions — every other layer is transformed (scale/rotate/opacity)
-/// then centered on that canvas plus its own `position_x`/`position_y`
-/// offset, not scaled to fill the canvas by default (a lower-priority
-/// layer showing through at its own native size, like a picture-in-picture,
-/// is the more useful default than a silent full-bleed stretch).
+/// contract.
+///
+/// **The canvas is the COMPOSITION** (`comp`, in pixels — see
+/// [`composition_size`]), downscaled to `max_long_edge` for the preview.
+/// Each layer is placed at its own **natural footprint in composition
+/// space** — its source pixel dimensions measured against the composition's
+/// — times `scale`, centred, then offset by `position_x`/`position_y` as
+/// fractions of the canvas. Not scaled to fill the canvas by default: a
+/// lower-priority layer showing through at its own native size, like a
+/// picture-in-picture, is the more useful default than a silent full-bleed
+/// stretch, and that intent is unchanged from D-088 — what changed (D-136)
+/// is that "native size" is now measured against a fixed composition
+/// instead of against another layer's decode.
+///
+/// **Why that closes B-043.** The canvas used to be `decoded[0].img`'s
+/// dimensions, i.e. the top layer decoded at whatever `max_long_edge` the
+/// caller asked for, and `scale_target` returns `None` for a source already
+/// under the cap. So the canvas changed size with the preview quality, with
+/// the top layer's source resolution, and with which clip was on top at that
+/// playhead — and `position_*`/`scale`, measured in that canvas's pixels,
+/// changed meaning with it. Here `max_long_edge` only chooses how many
+/// pixels the same composition is rendered into: every geometry field is a
+/// ratio of the composition, so the picture is identical at every preview
+/// quality up to resampling. Preview scale is a render-quality knob and
+/// nothing else, which is what it always claimed to be.
 fn composite_video_frame(
     layers: &[(usize, &Clip, i64)],
     max_long_edge: Option<u32>,
+    comp: (u32, u32),
 ) -> Result<DynamicImage, String> {
     struct Decoded {
         img: image::RgbaImage,
         transform: ClipTransform,
+        /// This layer's full-frame footprint on the canvas at `scale == 1.0`,
+        /// in canvas pixels — its source size mapped through the composition.
+        natural: (f64, f64),
     }
+
+    let (comp_w, comp_h) = comp;
+    let (canvas_w, canvas_h) = max_long_edge
+        .and_then(|le| decode_pipe::scale_target(comp_w, comp_h, le))
+        .unwrap_or((comp_w, comp_h));
+    // One uniform ratio for both axes (from the width): `scale_target`
+    // preserves aspect apart from its even-dimension rounding, and deriving
+    // x and y independently would let that ±1 px turn into a visible
+    // anisotropic squash on every layer.
+    let render_scale = canvas_w as f64 / comp_w as f64;
 
     let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
     for (track, clip, source_frame) in layers {
@@ -732,15 +907,21 @@ fn composite_video_frame(
         decoded.push(Decoded {
             img: img.to_rgba8(),
             transform: resolve_clip_transform(clip, *source_frame),
+            // The layer's **source** size, not its decoded size — that is the
+            // whole point: the decoded size follows the preview quality, the
+            // source size does not.
+            natural: (
+                info.resolution.width as f64 * render_scale,
+                info.resolution.height as f64 * render_scale,
+            ),
         });
     }
 
-    let (canvas_w, canvas_h) = decoded[0].img.dimensions();
     let mut canvas: image::RgbaImage =
         image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));
 
     for d in decoded.iter().rev() {
-        composite_layer_onto(&mut canvas, &d.img, &d.transform);
+        composite_layer_onto(&mut canvas, &d.img, &d.transform, d.natural);
     }
 
     Ok(DynamicImage::ImageRgba8(canvas))
@@ -791,7 +972,22 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 /// The cropped pixels keep their RGB and lose only alpha, so the resize
 /// filter below feathers the crop edge over a pixel instead of bleeding
 /// black into it.
-fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage, t: &ClipTransform) {
+///
+/// `natural` (D-136) is this layer's full-frame footprint on `canvas` at
+/// `scale == 1.0`, in canvas pixels — computed by the caller from the
+/// layer's SOURCE resolution and the composition, never from `layer`'s own
+/// decoded dimensions. That indirection is the fix for B-043's second half:
+/// resizing the decoded buffer by a plain `scale` made a layer's on-screen
+/// size follow the preview's decode quality (a 640×360 source under a
+/// 960-px cap isn't downscaled at all, so it was two thirds of a 4K-derived
+/// canvas at one quality and the entire canvas at another). The decoded
+/// buffer's size now only affects sharpness.
+fn composite_layer_onto(
+    canvas: &mut image::RgbaImage,
+    layer: &image::RgbaImage,
+    t: &ClipTransform,
+    natural: (f64, f64),
+) {
     let opacity = t.opacity.clamp(0.0, 1.0) as f32;
     if opacity <= 0.0 {
         return; // fully transparent — nothing to paint, skip the work
@@ -804,8 +1000,8 @@ fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage,
     let cropped = (cx0, cy0, cx1, cy1) != (0, 0, lw, lh);
     let scale = t.scale.max(0.0);
     let (sw, sh) = (
-        ((lw as f64) * scale).round().max(1.0) as u32,
-        ((lh as f64) * scale).round().max(1.0) as u32,
+        (natural.0 * scale).round().max(1.0) as u32,
+        (natural.1 * scale).round().max(1.0) as u32,
     );
     // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
     // buffer, no per-pixel pass — so an uncropped clip (every clip in every
@@ -849,8 +1045,12 @@ fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage,
 
     let (cw, ch) = canvas.dimensions();
     let (ww, wh) = work.dimensions();
-    let x = (cw as f64) / 2.0 - (ww as f64) / 2.0 + t.position_x;
-    let y = (ch as f64) / 2.0 - (wh as f64) / 2.0 + t.position_y;
+    // D-136 — `position_*` is a fraction of the composition, so it scales
+    // with the canvas: the same stored value lands on the same part of the
+    // picture at every preview quality. Per-axis (x against the width, y
+    // against the height), matching the crop insets' own convention.
+    let x = (cw as f64) / 2.0 - (ww as f64) / 2.0 + t.position_x * cw as f64;
+    let y = (ch as f64) / 2.0 - (wh as f64) / 2.0 + t.position_y * ch as f64;
     image::imageops::overlay(canvas, &work, x.round() as i64, y.round() as i64);
 }
 
@@ -861,6 +1061,16 @@ mod composite_tests {
 
     fn flat(w: u32, h: u32, px: [u8; 4]) -> image::RgbaImage {
         ImageBuffer::from_pixel(w, h, Rgba(px))
+    }
+
+    /// D-136 — a layer whose natural composition footprint is exactly its own
+    /// buffer size, i.e. "this layer's source fills the composition and the
+    /// canvas is at full resolution." Keeps every pre-D-136 case in this
+    /// module testing exactly what it tested before; the tests that exercise
+    /// the new indirection pass a different `natural` deliberately.
+    fn natural_of(layer: &image::RgbaImage) -> (f64, f64) {
+        let (w, h) = layer.dimensions();
+        (w as f64, h as f64)
     }
 
     fn identity_transform() -> ClipTransform {
@@ -928,7 +1138,7 @@ mod composite_tests {
         let before = canvas.clone();
         let layer = flat(4, 4, [255, 255, 255, 255]);
         let t = ClipTransform { opacity: 0.0, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(canvas, before);
     }
 
@@ -938,7 +1148,7 @@ mod composite_tests {
     fn composite_layer_onto_full_opacity_fully_replaces() {
         let mut canvas = flat(4, 4, [10, 20, 30, 255]);
         let layer = flat(4, 4, [200, 100, 50, 255]);
-        composite_layer_onto(&mut canvas, &layer, &identity_transform());
+        composite_layer_onto(&mut canvas, &layer, &identity_transform(), natural_of(&layer));
         assert_eq!(*canvas.get_pixel(2, 2), Rgba([200, 100, 50, 255]));
     }
 
@@ -951,7 +1161,7 @@ mod composite_tests {
         let mut canvas = flat(4, 4, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 255, 255, 255]);
         let t = ClipTransform { opacity: 0.5, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         let r = canvas.get_pixel(2, 2)[0];
         assert!(r > 20 && r < 235, "expected a real mid-blend, got {r}");
     }
@@ -963,9 +1173,10 @@ mod composite_tests {
     fn composite_layer_onto_respects_position_offset() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(2, 2, [255, 0, 0, 255]);
-        // centered would place the 2x2 layer at (4,4)-(5,5); shift +3,+0.
-        let t = ClipTransform { position_x: 3.0, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        // centered would place the 2x2 layer at (4,4)-(5,5); shift +0.3 of
+        // the canvas width = +3 px, +0 (D-136 — a FRACTION, not pixels).
+        let t = ClipTransform { position_x: 0.3, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(7, 4), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(4, 4), Rgba([0, 0, 0, 255])); // the un-shifted spot is untouched
     }
@@ -977,9 +1188,114 @@ mod composite_tests {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
         let t = ClipTransform { scale: 3.0, ..identity_transform() }; // -> 12x12, centered at (4,4)-(15,15)
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
+
+    // ---------------------------------------------------------------- //
+    // D-136 — composition space (Phase 0a of
+    // `docs/notes/on-canvas-transform.md`, closes B-043).
+    // ---------------------------------------------------------------- //
+
+    /// The painted region of `canvas` in the flat `colour`, as
+    /// `(x0, y0, x1, y1)` **fractions** of the canvas — the unit the geometry
+    /// fields are now in, so two renders of the same transform at different
+    /// canvas resolutions can be compared directly.
+    fn painted_fraction(canvas: &image::RgbaImage, colour: Rgba<u8>) -> (f64, f64, f64, f64) {
+        let (w, h) = canvas.dimensions();
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        for (x, y, p) in canvas.enumerate_pixels() {
+            if *p == colour {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+        assert!(x0 != u32::MAX, "nothing was painted");
+        (
+            x0 as f64 / w as f64,
+            y0 as f64 / h as f64,
+            x1 as f64 / w as f64,
+            y1 as f64 / h as f64,
+        )
+    }
+
+    /// **B-043, closed.** The same clip transform rendered into two canvases
+    /// of very different resolutions — from the *same* decoded layer buffer,
+    /// exactly as one decode gets re-used across preview qualities — must put
+    /// the picture on the same part of the frame. Before D-136 both halves of
+    /// this failed: `position_*` were canvas pixels (so the layer moved) and
+    /// `scale` multiplied the decoded buffer (so it resized).
+    #[test]
+    fn geometry_is_identical_at_every_render_scale() {
+        let layer = flat(40, 40, [255, 0, 0, 255]);
+        let red = Rgba([255, 0, 0, 255]);
+        let t = ClipTransform {
+            position_x: 0.1,
+            position_y: -0.2,
+            scale: 1.5,
+            ..identity_transform()
+        };
+
+        // "scrub quality": the composition rendered into 100×100, so the
+        // layer's natural footprint is 40 px.
+        let mut small = flat(100, 100, [0, 0, 0, 255]);
+        composite_layer_onto(&mut small, &layer, &t, (40.0, 40.0));
+
+        // "full quality": the same composition into 300×300 — every canvas
+        // length ×3, so the natural footprint is ×3 too, while the decoded
+        // buffer handed in is byte-for-byte the same one.
+        let mut large = flat(300, 300, [0, 0, 0, 255]);
+        composite_layer_onto(&mut large, &layer, &t, (120.0, 120.0));
+
+        let a = painted_fraction(&small, red);
+        let b = painted_fraction(&large, red);
+        let close = |x: f64, y: f64| (x - y).abs() < 0.01;
+        assert!(
+            close(a.0, b.0) && close(a.1, b.1) && close(a.2, b.2) && close(a.3, b.3),
+            "same transform, different render scale: {a:?} vs {b:?}"
+        );
+        // and it's the right place, not just consistently the wrong one:
+        // 1.5× of a 40 %-wide layer = 60 %, centred then nudged +10 % / −20 %.
+        assert!(close(a.0, 0.30) && close(a.2, 0.90), "x span {a:?}");
+        assert!(close(a.1, 0.00) && close(a.3, 0.60), "y span {a:?}");
+    }
+
+    /// A layer whose source is smaller than the composition sits in the frame
+    /// at that ratio — `scale: 1.0` means "its own size in the composition",
+    /// not "fill the canvas". The pre-D-136 compositor could not express this
+    /// at all: it resized the *decoded* buffer, which `scale_target` leaves
+    /// untouched whenever the source already fits under the preview cap, so a
+    /// small source silently became full-frame.
+    #[test]
+    fn a_sub_composition_layer_keeps_its_relative_size() {
+        let layer = flat(64, 36, [0, 200, 255, 255]);
+        let mut canvas = flat(192, 108, [0, 0, 0, 255]);
+        // a 64×36 source in a 192×108 composition, canvas at 1:1 → a third.
+        composite_layer_onto(&mut canvas, &layer, &identity_transform(), (64.0, 36.0));
+        let (x0, y0, x1, y1) = painted_fraction(&canvas, Rgba([0, 200, 255, 255]));
+        assert!((x1 - x0 - 1.0 / 3.0).abs() < 0.01, "width {}", x1 - x0);
+        assert!((y1 - y0 - 1.0 / 3.0).abs() < 0.01, "height {}", y1 - y0);
+        // centred, since `position_*` are zero
+        assert!((x0 - 1.0 / 3.0).abs() < 0.01 && (y0 - 1.0 / 3.0).abs() < 0.01);
+    }
+
+    /// `position_x` is a fraction of the **width** and `position_y` of the
+    /// **height** — the same per-axis convention the crop insets use. On a
+    /// deliberately non-square canvas the two must therefore land different
+    /// pixel distances for the same numeric value.
+    #[test]
+    fn position_is_normalised_per_axis() {
+        let layer = flat(2, 2, [255, 255, 255, 255]);
+        let mut canvas = flat(200, 100, [0, 0, 0, 255]);
+        let t = ClipTransform { position_x: 0.25, position_y: 0.25, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t, (2.0, 2.0));
+        // centre (100,50) → top-left (99,49), + 0.25 × 200 = +50 px in x,
+        // + 0.25 × 100 = +25 px in y → the 2×2 covers (149,74)-(150,75).
+        assert_eq!(*canvas.get_pixel(149, 74), Rgba([255, 255, 255, 255]));
+        assert_eq!(*canvas.get_pixel(149, 99), Rgba([0, 0, 0, 255]));
     }
 
     // ---------------------------------------------------------------- //
@@ -1019,7 +1335,8 @@ mod composite_tests {
         assert_eq!(crop_pixel_rect(100, 100, &t), None);
         let mut canvas = flat(4, 4, [10, 20, 30, 255]);
         let before = canvas.clone();
-        composite_layer_onto(&mut canvas, &flat(4, 4, [255, 255, 255, 255]), &t);
+        let layer = flat(4, 4, [255, 255, 255, 255]);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(canvas, before);
     }
 
@@ -1045,7 +1362,7 @@ mod composite_tests {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(10, 10, [255, 0, 0, 255]);
         let t = ClipTransform { crop_left: 0.5, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         // cropped-away left half: the canvas shows through, untouched
         assert_eq!(*canvas.get_pixel(1, 5), Rgba([0, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(4, 5), Rgba([0, 0, 0, 255]));
@@ -1062,7 +1379,7 @@ mod composite_tests {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(10, 10, [255, 0, 0, 255]);
         let t = ClipTransform { crop_top: 0.3, crop_right: 0.2, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(5, 1), Rgba([0, 0, 0, 255])); // cropped top
         assert_eq!(*canvas.get_pixel(9, 5), Rgba([0, 0, 0, 255])); // cropped right
         assert_eq!(*canvas.get_pixel(5, 9), Rgba([255, 0, 0, 255])); // bottom kept
@@ -1078,7 +1395,7 @@ mod composite_tests {
         let layer = flat(4, 4, [255, 0, 0, 255]);
         // scale 2 -> an 8x8 footprint centred at (6,6)-(13,13); left half cropped
         let t = ClipTransform { scale: 2.0, crop_left: 0.5, ..identity_transform() };
-        composite_layer_onto(&mut canvas, &layer, &t);
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(7, 10), Rgba([0, 0, 0, 255])); // cropped (left) half
         assert_eq!(*canvas.get_pixel(12, 10), Rgba([255, 0, 0, 255])); // kept (right) half
     }
@@ -1091,10 +1408,10 @@ mod composite_tests {
     fn an_uncropped_layer_is_unchanged_by_the_crop_pass() {
         let layer = flat(6, 6, [3, 200, 40, 255]);
         let mut with_zero_insets = flat(10, 10, [0, 0, 0, 255]);
-        composite_layer_onto(&mut with_zero_insets, &layer, &identity_transform());
+        composite_layer_onto(&mut with_zero_insets, &layer, &identity_transform(), natural_of(&layer));
         let mut with_negative_insets = flat(10, 10, [0, 0, 0, 255]);
         let t = ClipTransform { crop_left: -1.0, crop_bottom: -1.0, ..identity_transform() };
-        composite_layer_onto(&mut with_negative_insets, &layer, &t);
+        composite_layer_onto(&mut with_negative_insets, &layer, &t, natural_of(&layer));
         assert_eq!(with_zero_insets, with_negative_insets);
     }
 

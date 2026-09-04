@@ -51,19 +51,20 @@ restarted once each is done.
   pre-flight refusal naming the offending controls. Actually *honouring* it
   on export is queue item 15. **Edit-tab crop itself now exists — D-132**, see
   the second-round bullet below.
-- 🟡 **On-canvas PIP transform (drag/resize the overlaid clip in the
-  preview)** — **still scoped, not built**: `docs/notes/on-canvas-transform.md`,
-  queue item 14. Two things worth knowing before anyone starts — the preview
-  is a plain `<img>` fed a backend-composited JPEG, not a canvas (so handles
-  are a DOM overlay, and there's no cheap live re-render of the picture
-  mid-drag), and **B-043**: the composite's coordinate space is
-  preview-resolution-dependent today, so a PIP overlay already moves *and*
-  resizes when you press Play. **Phase 0a's unit question is now answered
-  (D-132 — normalised, against a composition space of
-  `ProjectSettings.width`/`height`); its `position_x`/`position_y` migration
-  is unbuilt and is the whole of what Phase 0a still is.** Phases 1 and 2
-  (the handles themselves, rotation, non-uniform scale) are untouched;
-  Phase 3 (crop) is built, minus its on-canvas mode.
+- ✅ **On-canvas PIP transform (drag/resize the overlaid clip in the
+  preview) — D-136, 2026-09-04.** `docs/notes/on-canvas-transform.md`,
+  queue item 14. The preview is a plain `<img>` fed a backend-composited
+  JPEG, not a canvas, so handles are a DOM overlay (`TransformOverlay.tsx`)
+  with no cheap live re-render of the picture mid-drag — only the overlay's
+  own box moves live, the composited picture catches up on commit. **B-043
+  closed**: the composite's coordinate space is now the project's own
+  composition (`ProjectSettings.width`/`height`), not the preview's decode
+  scale, so a PIP overlay no longer moves or resizes when you press Play.
+  Existing pixel-valued positions are migrated via a real schema-minor gate
+  on `chroma.project`, not silently reinterpreted. Phases 0 and 1 (the
+  handles themselves — select, drag, uniform corner-scale) are built; Phase
+  2 (rotation, non-uniform scale) is untouched; Phase 3 (crop) is built,
+  minus its own on-canvas mode.
 - ✅ **"It takes so long to open a project" + "if you are loading 4k that might
   be wrong"** — done, D-128 (B-044/B-045/B-046). Both instincts were right and
   they were two different defects. Every cache in the codebase was a
@@ -110,20 +111,23 @@ restarted once each is done.
   `symphonia`'s seek fails outright on the owner's camera original (a 0.042 s
   metadata track poisons the whole seek) and the failure was being thrown away.
   Sources now land on the requested time by packet timestamp.
-- 🟡 **No on-canvas crop/transform UI on the Edit-tab preview** — the owner
+- ✅ **No on-canvas crop/transform UI on the Edit-tab preview** — the owner
   asked live ("no UI for crop", "no canvas on player to do it").
-  **Half done, D-132.** The *crop* half is real: `Clip.crop_left`/`crop_top`/
-  `crop_right`/`crop_bottom` (normalised 0–1 insets into the clip's own
-  source), really applied by the Edit-tab compositor, with a real Crop
-  section in the Inspector alongside Transform, keyframeable through the
-  existing engine. The *on-canvas* half — drag handles on the preview, and
-  the Resolve-style Transform/Crop mode toggle — is **not built**: it needs
-  Phase 1's overlay substrate (`docs/notes/on-canvas-transform.md`), which
-  is still unwritten. Also fixed on the way: **B-053**, a lone clip's
-  transform was silently discarded by the preview's single-layer fast path,
-  which would have made crop look broken on the most obvious test case.
-  Phase 0a's unit question is answered (D-132); its `position_*` migration
-  and B-043 remain open.
+  **Crop done, D-132; transform handles done, D-136.** The *crop* half is
+  real: `Clip.crop_left`/`crop_top`/`crop_right`/`crop_bottom` (normalised
+  0–1 insets into the clip's own source), really applied by the Edit-tab
+  compositor, with a real Crop section in the Inspector alongside
+  Transform, keyframeable through the existing engine. The *on-canvas
+  transform* half — select, drag to reposition, drag a corner to
+  uniform-scale — is now real too (`TransformOverlay.tsx`, D-136); the
+  Resolve-style Transform/Crop mode toggle and on-canvas crop-edge handles
+  specifically are still **not built** (crop rides the same bounding box
+  Phase 1 draws, but has no edge handles of its own yet). Also fixed on the
+  way: **B-053**, a lone clip's transform was silently discarded by the
+  preview's single-layer fast path, which would have made crop look broken
+  on the most obvious test case. Phase 0a's unit question is answered
+  (D-132) and its code — the composition-space canvas and the
+  `position_*` migration — is built (D-136); **B-043 closed**.
 - ✅ **Video export must honour the Colorist's geometry** — done, **D-135**.
   All four pieces from the scoping above landed: `grade_frame` runs the same
   CPU geometry pre-pass the preview does, the encoder is sized lazily from
@@ -134,42 +138,6 @@ restarted once each is done.
   round-down-by-2 rule. **B-042 closed**; D-127's `unsupported_geometry`
   refusal is deleted — the only remaining refusal is a crop rounding to
   zero in either axis.
-
-### Session checkpoint (2026-09-04, ~23:10) — approaching a context limit, work continues next session
-
-All five second-round bugs are merged and verified on `main` (`cargo check` +
-`tsc` clean after each): **D-131** (player sliders + Sources-toggle overlap),
-**D-132** (Edit-tab crop), **D-133** (audio restarting from 0:00 on every
-Play — a real `symphonia` seek-failure bug, not a design gap), **D-134**
-(filmstrip zoom: 31.3s → 0.001s for a fine-band sweep), **D-135** (export
-geometry, above). Main tree is clean and buildable.
-
-**One fork still in flight, not yet landed:** `fork/on-canvas-transform`
-(worktree at `../chroma-worktrees/on-canvas-transform`, dispatched ~23:03) —
-Phase 0a (composition-space migration for `position_x`/`position_y`, closing
-B-043) and Phase 1 (real `TransformOverlay.tsx` drag/resize handles on the
-Edit-tab preview) of `docs/notes/on-canvas-transform.md`. Had made no commits
-yet as of this checkpoint. **Next session: check
-`git -C ../chroma-worktrees/on-canvas-transform log --oneline main..HEAD`** —
-if it finished, follow the same rebase/renumber/verify/merge process used for
-every fork tonight (check for `D-NNN`/`B-NNN` collisions against `main`'s
-current tip first, since numbering has collided on nearly every merge
-tonight); if it's dead/stalled, either resume it or re-dispatch fresh against
-the then-current `main` tip. Clean up the worktree and branch either way.
-
-**Also still uncommitted, unrelated to tonight's work, do not touch without
-checking first:** the E2E-testing fork's in-progress changes sit directly in
-the main tree (`Cargo.lock`, `app/src-tauri/Cargo.toml`,
-`app/src-tauri/capabilities/default.json`, `app/src-tauri/src/lib.rs`,
-`package-lock.json`, untracked `app/src-tauri/tauri.e2e.conf.json` and
-`e2e/`) — this is the owner's own separate work, stashed and restored intact
-around every merge tonight via `git stash push -u` / `pop`, never committed
-by design. Leave it as-is.
-
-**Not yet done tonight:** restarting the live dev app so the owner can test
-the accumulated D-131–D-135 batch together (it was left running from earlier
-in the session — check `ps aux` for a live `target/debug/RapidRAW` before
-assuming a restart is needed).
 
 ---
 
@@ -688,46 +656,54 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     permanent-link-only interaction model over Premiere's fuller toggle,
     since nothing in Palmier's own surface confirms the toggle is needed.
     **Scoped, not built.**
-14. **On-canvas clip transform — PIP drag/resize handles on the preview.**
+14. ✅ **On-canvas clip transform — PIP drag/resize handles on the preview
+    (D-136, 2026-09-04).**
     Owner: "the player is canvas — once I have another video I can select,
     drag and make it smaller or larger, PIP etc." Multi-layer stacking is
-    real (D-088) but only editable by typing numbers into the Inspector.
-    **Real scoping doc: `docs/notes/on-canvas-transform.md` (D-127,
-    2026-09-04)**, references checked live (Premiere's Effect Controls ▸
-    Motion handles in the Program Monitor; Resolve's viewer Transform /
-    Crop / Dynamic Zoom mode selector). Recommended phasing:
-    - **Phase 0 — prerequisites, both real, neither optional.** (0a)
-      **B-043**: the composite's coordinate space is preview-resolution-
-      dependent, so `position_x`/`position_y` and effective layer size both
-      change between scrub (960px) and play (640px) — give the timeline a
-      real composition space from `ProjectSettings.width`/`height` (D-038)
-      and redefine positions in resolution-independent units. **Unit
-      question ANSWERED, D-132: normalised, against that composition
-      space** — taken as a standing call on the scoping doc's own
-      recommendation rather than another round trip. **Still unbuilt:** the
-      composition-space canvas itself and the `position_x`/`position_y`
-      migration (old values are pixels in a canvas whose size depended on
-      the preview quality when they were typed, so the migration is a
-      judgment call with a one-time shift, not an arithmetic conversion).
-      B-043 stays open. (0b) A drag must commit
+    real (D-088); the owner's literal ask — select a clip, drag it, make it
+    smaller or larger — is **now real too**. **Real scoping doc:
+    `docs/notes/on-canvas-transform.md` (D-127, 2026-09-04)**, references
+    checked live (Premiere's Effect Controls ▸ Motion handles in the Program
+    Monitor; Resolve's viewer Transform / Crop / Dynamic Zoom mode
+    selector). Phasing, and what actually landed:
+    - **Phase 0 — prerequisites, both real, neither optional — ✅ BUILT.**
+      (0a) **B-043 closed.** The composite's coordinate space *was*
+      preview-resolution-dependent — `position_x`/`position_y` and
+      effective layer size both changed between scrub (960px) and play
+      (640px). The timeline now has a real composition space
+      (`ProjectSettings.width`/`height`, D-038, or the first clip's probed
+      resolution as fallback); `composite_video_frame`'s canvas IS that
+      composition, not the top layer's decode; `position_x`/`position_y`
+      are normalised fractions of it (D-132's unit call, now actually
+      built). **Existing pixel-valued positions are migrated**, not
+      silently reinterpreted — `chroma.project`'s schema gained a minor
+      (`1.1`) gating a one-time, non-idempotent reinterpretation of old
+      values as composition pixels, applied on load and restamped so it
+      never runs twice on the same file. See D-136. (0b) A drag commits
       exactly one `set_clip_transform` op on pointer-up, not one per
-      pointermove — `applyOp` pushes an undo snapshot per call (D-051).
-      Same live-preview/commit-on-release split `RelightPuckLayer` (D-046)
-      already uses.
-    - **Phase 1 — reposition + uniform corner-scale only.** A new
-      `TransformOverlay.tsx` in `@chroma/editor`, rendered as a DOM/SVG
-      sibling of `PreviewPane`'s `<img>` (the preview is **not** a canvas;
-      `<Player>`'s `surface` prop already takes any ReactNode, so that
-      package needs no change). Reads the existing
+      pointermove — the same live-preview/commit-on-release split
+      `RelightPuckLayer` (D-046) already uses, now actually implemented in
+      `TransformOverlay.tsx` (Phase 1, below).
+    - **Phase 1 — reposition + uniform corner-scale only — ✅ BUILT
+      (D-136).** `TransformOverlay.tsx` in `@chroma/editor`, a DOM overlay
+      rendered as a sibling of `PreviewPane`'s `<img>` (the preview is
+      **not** a canvas; `<Player>`'s `surface` prop took any ReactNode
+      already, so that package needed no change beyond a new
+      `useContentBox` export). Reads the existing
       `useEditorTimelineStore.selection`, writes the existing
       `set_clip_transform` op — one value, two editors, exactly what both
-      references do. Needs `useImageRenderSize`'s letterbox math extracted
-      out of `app/src/hooks/` (D-039 forbids `packages/editor` reaching
-      into the app layer) — recommend into `@chroma/player`.
+      references do. A new `chroma_timeline_clip_geometry` Tauri command
+      reports the one thing the frontend genuinely couldn't derive (a
+      clip's own source resolution against the composition); the actual
+      box/drag/corner-scale math is pure and unit-tested
+      (`transformGeometry.ts`, 16 tests). `useImageRenderSize`'s letterbox
+      math was extracted into `@chroma/player` as `useContentBox` — the
+      original stays in place, still owning every Colorist-tab call site;
+      migrating those is separate, deliberately deferred work.
     - **Phase 2 — rotation** (already a `Clip` field, mostly UI; note
       Chroma has no anchor point and both references do) **and
       non-uniform scale** (needs `scale_x`/`scale_y` replacing `scale`,
-      with a migration).
+      with a migration). **Still scoped, not built.**
     - **Phase 3 — crop — ✅ BUILT (D-132, 2026-09-04), except its
       on-canvas mode.** Four normalised (0–1) edge insets on `Clip`
       (`crop_left`/`crop_top`/`crop_right`/`crop_bottom`, relative to the
@@ -737,16 +713,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **in place** — alpha cleared, footprint kept, so the picture doesn't
       re-centre and rotation keeps its pivot), a real Crop section in
       `ClipInspectorPanel`, riding the existing `set_clip_transform` op.
-      **The Resolve-style mode toggle and on-canvas crop handles are NOT
-      built** — they need Phase 1's overlay, which doesn't exist.
+      **The Resolve-style mode toggle and on-canvas crop handles are still
+      NOT built** — Phase 1's overlay now exists, but crop rides the same
+      bounding box (unaffected by crop, since `composite_layer_onto` crops
+      a layer's pixels in place without shrinking its footprint) rather
+      than getting its own edge handles yet.
       Fixed on the way: **B-053** (the single-layer preview path discarded
       a lone clip's whole transform).
     - **Phase 4 — keyframe interaction** (does a drag set a key when the
-      clip is already keyframed?). Its own decision. Crop keyframes
-      themselves work today via the existing explicit "Add key" button,
-      like every other transform field.
-    **Phase 3 built (D-132); Phases 0a (code), 1, 2 and 4 still scoped, not
-    built.**
+      clip is already keyframed?). Its own decision, still open. Crop
+      keyframes themselves work today via the existing explicit "Add key"
+      button, like every other transform field.
+    **Phases 0, 1 and 3 built; Phase 2 (rotation/non-uniform scale) and
+    Phase 4 (auto-keyframe-on-drag) remain scoped, not built.**
 15. ✅ **Video export honours the Colorist's geometry — crop / straighten /
     flip / 90° / lens warp (D-135, 2026-09-04).** **B-042 closed**;
     D-127's `unsupported_geometry` refusal is deleted. All four scoped
