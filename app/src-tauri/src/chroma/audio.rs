@@ -1404,6 +1404,7 @@ mod tests {
             gain: 1.0,
             locked: false,
             hidden: false,
+            sync_locked: true,
         }];
         if let Some((audio_path, gain)) = audio_track {
             tracks.push(chroma_timeline::Track {
@@ -1423,6 +1424,7 @@ mod tests {
                 gain,
                 locked: false,
                 hidden: false,
+                sync_locked: true,
             });
         }
         let timeline = chroma_timeline::Timeline {

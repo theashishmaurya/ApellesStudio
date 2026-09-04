@@ -3231,7 +3231,7 @@ mod tests {
         assert_eq!(tl2.tracks[1].kind, chroma_timeline::TrackKind::Audio);
 
         // move_clip: from the video track (0) onto the fresh audio track (1)
-        super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500).unwrap();
+        super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500, false).unwrap();
         let tl3 = super::super::edit::chroma_timeline_get().unwrap();
         assert!(tl3.tracks[0].clips.is_empty(), "removed from track 0");
         assert_eq!(tl3.tracks[1].clips.len(), 1, "landed on track 1");
@@ -3239,7 +3239,7 @@ mod tests {
         assert_eq!(tl3.tracks[1].clips[0].start_frame, 500);
 
         // an out-of-range move errors and leaves the persisted timeline unchanged
-        assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0).is_err());
+        assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0, false).is_err());
         let tl4 = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(
             tl4.tracks[1].clips.len(),
@@ -3320,7 +3320,7 @@ mod tests {
             super::super::edit::chroma_timeline_add_track(chroma_timeline::TrackKind::Video)
                 .unwrap();
         assert_eq!(new_idx, 1);
-        super::super::edit::chroma_timeline_move_clip(0, 1, 1, 0).unwrap();
+        super::super::edit::chroma_timeline_move_clip(0, 1, 1, 0, false).unwrap();
 
         let tl2 = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl2.tracks[0].clips.len(), 1, "only A left on track 0");
@@ -3741,6 +3741,7 @@ mod tests {
                 gain: 1.0,
                 locked: false,
                 hidden: false,
+                sync_locked: true,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -3846,6 +3847,7 @@ mod tests {
                 gain: 1.0,
                 locked: false,
                 hidden: false,
+                sync_locked: true,
                 clips: vec![clip("clip-a"), clip("clip-b")],
             }],
         });
@@ -3891,6 +3893,7 @@ mod tests {
                 gain: 1.0,
                 locked: false,
                 hidden: false,
+                sync_locked: true,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -4047,6 +4050,7 @@ mod tests {
                     gain: 1.0,
                     locked: false,
                     hidden: false,
+                    sync_locked: true,
                     clips: vec![top.clone()],
                 },
                 chroma_timeline::Track {
@@ -4054,6 +4058,7 @@ mod tests {
                     gain: 1.0,
                     locked: false,
                     hidden: false,
+                    sync_locked: true,
                     clips: vec![bottom.clone()],
                 },
             ],
