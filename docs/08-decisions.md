@@ -8786,3 +8786,20 @@ Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-117 — Auto-create-a-track-on-drop, restored for dnd-kit clip moves (B-036)
+
+**Context.** Owner, live, single-track project: "i cant drag a clip to create a new track." This feature has existed since D-095/D-096, but only ever for the legacy native-HTML5 Sources-panel-add drag (`onDragOver`/`onDrop`, `trackInsertBoundary`) — D-100's later rewrite moved *clip move* (repositioning an already-placed clip) onto a separate `@dnd-kit/core` system and never carried the equivalent over.
+
+**Real cause, confirmed by trace not guess.** `TrackDropZone` (the droppable each track row registers for the dnd-kit clip-move system) mounts exactly one instance per **existing** track (`tracks.map`, `TimelinePane.tsx`). There is no droppable at all for "past the last row" (or above the first, or between two) in that system. `onDndDragEnd`'s existing guard — `if (!overData || overData.type !== 'track') return;` — silently cancelled the drag whenever the owner dropped there, with zero feedback: not a bug in the boundary math (`trackInsertBoundary` itself, still shared and correct), a genuine gap in what the newer drag system could ever resolve to.
+
+**Options considered.** (a) Mount additional `TrackDropZone`-style droppables at each insertion boundary — rejected: two different boundary-detection mechanisms (droppable-based for existing tracks, something else for insertion points) to keep in sync, more surface area for exactly the kind of drift that's caused several regressions tonight. (b) **Compute the boundary from the dragged item's own live rect** (`event.active.rect.current.translated`, dnd-kit's real "where is this being dragged right now" signal — it doesn't hand back a raw pointer position directly) and reuse `trackInsertBoundary` unchanged. Chosen: (b) — one boundary concept, shared by both drag systems, exactly the "one placement algorithm" principle this project has already converged on for insertion (`computeInsertion`) and clip-landing (`resolveClipLanding`) elsewhere tonight.
+
+**Change.** `dndBoundary(event)` — a small helper computing `trackInsertBoundary`'s `y` from `event.active.rect.current.translated.top` instead of `clientY`. `onDndDragMove`: when the drag isn't over a real `TrackDropZone`, checks `dndBoundary` and shows the same `insertPreview` ghost-row the Sources-panel path already renders (no new UI, reused). `onDndDragEnd`: same check — when a real boundary is found, runs the identical `add_track` (+ `move_track` when it's not a plain append, + the same selection-follow math the track-reorder drag uses) the Sources-panel `onDrop` already runs, resolves the dragged clip's own `fromTrack` index *after* that reposition (it can shift if the new track lands above it), then applies `move` onto the freshly-created, guaranteed-empty track using the drag's horizontal delta for the landing frame (no gap/ripple resolution needed — nothing else is on the new track yet).
+
+**Verification.** `tsc --noEmit` clean, 136/136 `packages/editor` tests pass (the reused `trackInsertBoundary`/op-sequence logic already has coverage via the Sources-panel path). **Honest gap, not silently skipped**: no dedicated test for the new dnd-kit wiring itself, and no real interactive (browser) verification this pass — `packages/editor`'s vitest runs in a `node` environment with no `@testing-library`/jsdom, and dnd-kit's pointer-sensor interaction genuinely needs a real DOM; standing up that harness from scratch was judged out of scope for a focused fix. Correct-by-careful-tracing, not yet interactively confirmed — the owner's own retest closes the loop.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

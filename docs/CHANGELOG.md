@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Auto-create-a-track-on-drop, restored for dnd-kit clip
+  moves (D-117, B-036).** D-100's rewrite moved clip repositioning onto
+  `@dnd-kit/core` but never carried over "drop past the last track (or
+  above the first, or between two) auto-creates one" — `TrackDropZone`
+  only ever registered a droppable per existing track, so the drag
+  silently cancelled. Now computes the same insertion boundary the
+  legacy Sources-panel path already uses, from the dragged clip's own
+  live rect instead of a droppable — one shared boundary concept, not
+  two to keep in sync.
 - **2026-09-04** — **Manifest read caching + a drop-target fix (D-114/D-115,
   B-035).** `chroma::edit::resolve_timeline` (the per-preview-frame hot path)
   no longer re-reads and re-parses `project.json` from disk when nothing has

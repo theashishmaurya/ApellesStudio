@@ -1535,6 +1535,29 @@ export function TimelinePane() {
   // per-tick handler in this file applies here just as strictly: the
   // `setClipDragPreview` call is gated to only actually dispatch when the
   // resolved landing genuinely changed, not on every pixel of movement.
+  /** D-117 — a dnd-kit clip drag has no `over` at all once the pointer is
+   *  past the last `TrackDropZone` (or above the first, or between two) —
+   *  `TrackDropZone` only ever mounts one instance per EXISTING track
+   *  (`tracks.map` below), so there was never a droppable there to resolve
+   *  to. That's the real cause of "i can't drag a clip to create a new
+   *  track" — the legacy Sources-panel `onDrop` path has always supported
+   *  this (`trackInsertBoundary`), the newer dnd-kit clip-move path
+   *  (D-100) never gained the equivalent. Rather than mount MORE
+   *  droppables (a real option, rejected: it would mean two different
+   *  boundary concepts to keep in sync), this computes the same boundary
+   *  `trackInsertBoundary` already defines, from the dragged item's own
+   *  live rect (`event.active.rect.current.translated`) instead of a
+   *  native `clientY` — dnd-kit doesn't hand you the raw pointer position
+   *  directly, but the dragged `ClipBody`'s own translated top edge is an
+   *  equally real, live signal of where the pointer is. */
+  const dndBoundary = (event: DragMoveEvent | DragEndEvent): number | null => {
+    const rect = editAreaRef.current?.getBoundingClientRect();
+    const translated = event.active.rect.current.translated;
+    if (!rect || !translated || tracks.length === 0) return null;
+    const y = translated.top - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+    return trackInsertBoundary(y, tracks.length);
+  };
+
   const onDndDragMove = useCallback(
     (event: DragMoveEvent) => {
       const data = event.active.data.current as
@@ -1542,10 +1565,29 @@ export function TimelinePane() {
         | { type: 'clip'; track: number; clipId: string }
         | undefined;
       const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
-      if (!data || data.type !== 'clip' || !overData || overData.type !== 'track') {
+      if (!data || data.type !== 'clip') {
         setClipDragPreview((prev) => (prev === null ? prev : null));
+        setInsertPreview((prev) => (prev === null ? prev : null));
         return;
       }
+      if (!overData || overData.type !== 'track') {
+        // Not over an existing track's droppable — check whether this is a
+        // real track-insertion boundary (same helper the Sources-panel add
+        // path uses) and show the identical ghost-row preview if so.
+        setClipDragPreview((prev) => (prev === null ? prev : null));
+        const boundary = dndBoundary(event);
+        setInsertPreview((prev) =>
+          boundary === null
+            ? prev === null
+              ? prev
+              : null
+            : prev?.kind === 'new_track' && prev.index === boundary
+              ? prev
+              : { kind: 'new_track', index: boundary },
+        );
+        return;
+      }
+      setInsertPreview((prev) => (prev === null ? prev : null));
       const { track: fromTrack, clipId } = data;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
@@ -1569,7 +1611,7 @@ export function TimelinePane() {
         return { fromTrack, toTrack, clipId, startFrame, duration: clip.duration, ripple };
       });
     },
-    [idxOf, clipsOf, pxPerSec, fps, tracks],
+    [idxOf, clipsOf, pxPerSec, fps, tracks, scrollTop],
   );
 
   const onDndDragEnd = useCallback(
@@ -1603,7 +1645,35 @@ export function TimelinePane() {
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
       const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
-      if (!overData || overData.type !== 'track') return; // dropped outside any track — cancel, nothing to do
+      if (!overData || overData.type !== 'track') {
+        setInsertPreview((prev) => (prev === null ? prev : null));
+        // D-117 — not over an existing track's droppable: check whether
+        // this is a real track-insertion boundary instead of just
+        // cancelling. Mirrors the Sources-panel `onDrop`'s own
+        // `add_track` (+ `move_track` when it's not a plain append) —
+        // same op sequence, same reasoning, just reached from a dnd-kit
+        // clip drag instead of a native-HTML5 media drag.
+        const boundary = dndBoundary(event);
+        if (boundary === null) return; // genuinely dropped nowhere real — cancel
+        const clip = clipsOf(fromTrack)[i];
+        const newTrackIdx = tracks.length;
+        applyOp({ kind: 'add_track', trackKind: inferNewTrackKind(boundary) });
+        if (boundary !== newTrackIdx) {
+          applyOp({ kind: 'move_track', from: newTrackIdx, to: boundary });
+        }
+        // The clip's own source track index may itself have shifted if the
+        // new track was inserted above it (`move_track`'s selection-follow
+        // math, same as the Sources-panel path) — resolve `fromTrack` AFTER
+        // that reposition, not before.
+        const resolvedFromTrack = boundary !== newTrackIdx ? trackIndexAfterMove(fromTrack, newTrackIdx, boundary) : fromTrack;
+        const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+        const intendedFrame = Math.max(0, clip.start_frame + deltaFrames);
+        // The new track is guaranteed empty — no gap/ripple resolution
+        // needed, `intendedFrame` is always a safe landing.
+        applyOp({ kind: 'move', fromTrack: resolvedFromTrack, toTrack: boundary, clip: i, startFrame: intendedFrame, ripple: false });
+        setSelection([{ track: boundary, id: clipId }]);
+        return;
+      }
       const toTrack = overData.track;
       const clip = clipsOf(fromTrack)[i];
       // D-104 — `event.delta.x` is the net pointer movement for the whole
@@ -1635,7 +1705,7 @@ export function TimelinePane() {
       // Phase 3 as multi-clip "Move to" (see `doMoveToTrack`'s own doc).
       setSelection([{ track: toTrack, id: clipId }]);
     },
-    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps, tracks],
+    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps, tracks, scrollTop],
   );
 
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
