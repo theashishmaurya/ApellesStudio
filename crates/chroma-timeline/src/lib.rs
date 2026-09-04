@@ -343,6 +343,11 @@ pub enum TimelineError {
     /// track list.
     #[error("track {0} is locked")]
     TrackLocked(usize),
+    /// D-105. `at_frame` is either inside a real clip (nothing to close) or
+    /// past every clip on the track (trailing empty space, not a real
+    /// "gap" — there's nothing after it to ripple earlier).
+    #[error("no closeable gap at frame {1} on track {0}")]
+    NoGapAt(usize, i64),
 }
 
 impl Timeline {
@@ -802,6 +807,31 @@ impl Timeline {
         t.clips.remove(clip_idx);
         Ok(())
     }
+
+    /// D-105 — the ONE ripple op besides `add_clip`'s own insertion ripple
+    /// (see that fn's doc): close the gap on `track` containing `at_frame` by
+    /// shifting every clip at/after the gap's end earlier by the gap's own
+    /// width. `remove` deliberately leaves a gap (D-054's "positions are
+    /// explicit, ops stay explicit-position-only" contract) — this is the
+    /// mirror-image op a real NLE always pairs with that: select the empty
+    /// space itself, delete IT, and have the timeline actually close up
+    /// around it, rather than leaving every later clip to be dragged left by
+    /// hand one at a time. `Track::gap_at` does the actual "is `at_frame`
+    /// inside a real, closeable gap" work — see its own doc for why trailing
+    /// empty space past the last clip does NOT count (nothing to ripple).
+    pub fn remove_gap(&mut self, track: usize, at_frame: i64) -> Result<(), TimelineError> {
+        let t = self.track_mut(track)?;
+        let (gap_start, gap_end) = t
+            .gap_at(at_frame)
+            .ok_or(TimelineError::NoGapAt(track, at_frame))?;
+        let shift = gap_end - gap_start;
+        for c in t.clips.iter_mut() {
+            if c.start_frame >= gap_end {
+                c.start_frame -= shift;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Track {
@@ -825,6 +855,37 @@ impl Track {
             .iter()
             .find(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame())
             .map(|c| (c, c.source_start + (timeline_frame - c.start_frame)))
+    }
+
+    /// D-105 — the exclusive `[gap_start, gap_end)` bounds of the **real,
+    /// closeable** gap containing `timeline_frame`, or `None` if there isn't
+    /// one. Two ways there isn't one: `timeline_frame` is inside a clip (use
+    /// `clip_at` for that), or it's past the last clip on the track — that's
+    /// trailing empty space, not a gap a ripple-close can do anything with
+    /// (there's nothing after it to shift earlier). `gap_start` is the
+    /// furthest clip-end at or before `timeline_frame` (0 if none — a gap
+    /// before the very first clip counts), `gap_end` the nearest clip-start
+    /// at or after it. Clips are walked in **value**, not Vec order (D-054:
+    /// Vec order is bookkeeping only) — this is correct regardless of
+    /// storage order, same discipline `clip_at` already follows.
+    pub fn gap_at(&self, timeline_frame: i64) -> Option<(i64, i64)> {
+        if timeline_frame < 0 || self.clip_at(timeline_frame).is_some() {
+            return None;
+        }
+        let gap_start = self
+            .clips
+            .iter()
+            .map(Clip::end_frame)
+            .filter(|&e| e <= timeline_frame)
+            .max()
+            .unwrap_or(0);
+        let gap_end = self
+            .clips
+            .iter()
+            .map(|c| c.start_frame)
+            .filter(|&s| s > gap_start)
+            .min()?;
+        Some((gap_start, gap_end))
     }
 
     /// See `Timeline::backfill_legacy_positions` — the per-track half of
@@ -1235,6 +1296,73 @@ mod tests {
             "B's old slot [100,150) is now a gap"
         );
         assert_eq!(t.remove(0, 9), Err(TimelineError::NoSuchClip(9, 0)));
+    }
+
+    // --- gap select + delete (D-105) -----------------------------------------
+
+    #[test]
+    fn remove_gap_closes_the_gap_and_ripples_everything_after_it() {
+        let mut t = Timeline::from_shots(&shots()); // A[0,100) B[100,150) C[150,350)
+        t.remove(0, 1).unwrap(); // opens B's old slot: A[0,100) gap[100,150) C@150
+        assert_eq!(t.tracks[0].gap_at(120), Some((100, 150)));
+
+        t.remove_gap(0, 120).unwrap();
+        let names_and_starts: Vec<_> = t.tracks[0]
+            .clips
+            .iter()
+            .map(|c| (c.name.clone(), c.start_frame))
+            .collect();
+        assert_eq!(names_and_starts, vec![("A".into(), 0), ("C".into(), 100)]);
+        assert_eq!(t.duration(), 300, "the whole gap's 50 frames are gone");
+        assert!(t.tracks[0].clip_at(50).is_some(), "A untouched");
+        assert!(
+            t.tracks[0].clip_at(120).is_some(),
+            "what used to be inside the gap is now inside C, shifted left"
+        );
+    }
+
+    #[test]
+    fn remove_gap_before_the_first_clip() {
+        let mut t = Timeline::from_shots(&shots());
+        t.remove(0, 2).unwrap(); // drop C
+        t.remove(0, 1).unwrap(); // drop B — only A[0,100) left
+        t.move_clip(0, 0, 0, 200, false).unwrap(); // A -> [200,300), opens [0,200) before it
+        assert_eq!(t.tracks[0].gap_at(10), Some((0, 200)));
+        t.remove_gap(0, 10).unwrap();
+        let a = t.tracks[0].clips.iter().find(|c| c.name == "A").unwrap();
+        assert_eq!(a.start_frame, 0, "everything shifts left by the gap's 200 frames");
+    }
+
+    #[test]
+    fn remove_gap_rejects_a_frame_inside_a_clip() {
+        let mut t = Timeline::from_shots(&shots()); // no gaps at all — back to back
+        assert_eq!(t.tracks[0].gap_at(50), None);
+        assert_eq!(t.remove_gap(0, 50), Err(TimelineError::NoGapAt(0, 50)));
+    }
+
+    #[test]
+    fn remove_gap_rejects_trailing_empty_space_past_the_last_clip() {
+        let mut t = Timeline::from_shots(&shots()); // C ends at 350
+        assert_eq!(
+            t.tracks[0].gap_at(500),
+            None,
+            "past the last clip isn't a real, closeable gap — nothing after it to ripple"
+        );
+        assert_eq!(t.remove_gap(0, 500), Err(TimelineError::NoGapAt(0, 500)));
+    }
+
+    #[test]
+    fn remove_gap_refuses_on_a_locked_track() {
+        let mut t = Timeline::from_shots(&shots());
+        t.remove(0, 1).unwrap(); // open a real gap first
+        t.tracks[0].locked = true;
+        assert_eq!(t.remove_gap(0, 120), Err(TimelineError::TrackLocked(0)));
+    }
+
+    #[test]
+    fn remove_gap_rejects_out_of_range_track() {
+        let mut t = Timeline::from_shots(&shots());
+        assert_eq!(t.remove_gap(9, 0), Err(TimelineError::NoSuchTrack(9)));
     }
 
     // --- track management (D-054) -------------------------------------------

@@ -160,6 +160,7 @@ import {
   Eye,
   EyeOff,
   Film,
+  FoldHorizontal,
   GripVertical,
   Lock,
   Scissors,
@@ -195,6 +196,7 @@ import {
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
+  gapAt,
   resolveClipLanding,
   timelineFps,
   videoTrackIndex,
@@ -583,6 +585,16 @@ export function TimelinePane() {
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const [selected, setSelected] = useState<Selection | null>(null);
+  /** D-105 — a selected GAP (empty track space, not a clip), mutually
+   *  exclusive with `selected`: selecting one clears the other, at the two
+   *  real interactive entry points (`onClickAction` for a clip, the edit
+   *  area's own empty-space click handler for a gap) — deliberately a
+   *  parallel piece of state rather than folding into `Selection` itself,
+   *  which would mean touching every one of that type's many existing call
+   *  sites (Inspector panel, "Move to" dropdown, Transform, drag handles) for
+   *  a feature that only needs two new entry points and one new toolbar/
+   *  keyboard action. */
+  const [selectedGap, setSelectedGap] = useState<{ track: number; frame: number } | null>(null);
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
@@ -1078,8 +1090,10 @@ export function TimelinePane() {
   );
 
   const onClickAction = useCallback(
-    (_e: unknown, { action, row }: { action: TimelineAction; row: TimelineRow }) =>
-      setSelected({ track: Number(row.id), id: action.id }),
+    (_e: unknown, { action, row }: { action: TimelineAction; row: TimelineRow }) => {
+      setSelectedGap(null); // D-105 — clicking a clip always supersedes a gap selection
+      setSelected({ track: Number(row.id), id: action.id });
+    },
     [],
   );
 
@@ -1165,6 +1179,15 @@ export function TimelinePane() {
     setSelected(null);
   };
 
+  /** D-105 — the deliberate mirror image of `doRemove`: close a selected
+   *  GAP, rippling everything after it earlier, rather than lifting a clip
+   *  and leaving the space behind. */
+  const doRemoveGap = () => {
+    if (!selectedGap) return;
+    applyOp({ kind: 'remove_gap', track: selectedGap.track, frame: selectedGap.frame });
+    setSelectedGap(null);
+  };
+
   // D-080: "Move to another track" — the library has no cross-row drag (see
   // the module doc), so this is a discoverable affordance for the same
   // cross-track move `ClipBody`'s drag handle does. D-104: lands via
@@ -1192,6 +1215,7 @@ export function TimelinePane() {
   const doRemoveTrack = (track: number) => {
     applyOp({ kind: 'remove_track', track });
     if (selected?.track === track) setSelected(null);
+    if (selectedGap?.track === track) setSelectedGap(null); // D-105
   };
 
   const toggleMute = (track: number) => {
@@ -1423,9 +1447,17 @@ export function TimelinePane() {
         }
         tabIndex={0}
         onKeyDown={(e) => {
-          if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
-            e.preventDefault();
-            doRemove();
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            // D-105 — a selected gap takes the same Delete/Backspace as a
+            // selected clip; the two are mutually exclusive (see
+            // `selectedGap`'s own doc), so at most one branch ever fires.
+            if (selected) {
+              e.preventDefault();
+              doRemove();
+            } else if (selectedGap) {
+              e.preventDefault();
+              doRemoveGap();
+            }
           }
         }}
       >
@@ -1453,6 +1485,31 @@ export function TimelinePane() {
             />
             <TooltipContent>Remove the selected clip</TooltipContent>
           </Tooltip>
+
+          {/* D-105 — the mirror-image toolbar action for a selected GAP
+              (empty track space, not a clip): closes it, rippling everything
+              after it earlier. A separate button rather than overloading
+              "Remove" itself — the two selections are mutually exclusive, so
+              at most one of these two buttons is ever enabled/relevant at
+              once, but a distinct label/icon ("Close Gap"/`FoldHorizontal`
+              vs. "Remove"/`Trash2`) makes clear this closes the space rather
+              than just deleting something, matching the real, different
+              underlying operation (D-105's `remove_gap` ripples; `remove`
+              deliberately doesn't). Same Delete/Backspace keybinding covers
+              both — see this component's `onKeyDown`. */}
+          {selectedGap && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button variant="ghost" size="sm" onClick={doRemoveGap} aria-label="Close gap">
+                    <FoldHorizontal />
+                    Close Gap
+                  </Button>
+                }
+              />
+              <TooltipContent>Close the selected gap — everything after it shifts left</TooltipContent>
+            </Tooltip>
+          )}
 
           {/* D-080: cross-track move — see the module doc for why this is a
               dropdown and not a drag gesture. */}
@@ -1584,8 +1641,34 @@ export function TimelinePane() {
             // THIS handler runs after, on the same click, and only clears
             // when `closest` finds no action ancestor — a real clip click
             // never reaches the clearing branch.
+            //
+            // D-105 — owner: "we should be able to delete the gap as well
+            // select and delete." Extended (not replaced): a click that
+            // isn't on a clip now also checks whether it landed on a REAL,
+            // closeable gap (`gapAt`, same helper `remove_gap`'s own `applyOp`
+            // case uses — the click target and the eventual op can never
+            // disagree about what counts as a gap) — if so, select the gap
+            // instead of just clearing. Anywhere else (a genuine dead zone —
+            // trailing empty space past the last clip, or below every track
+            // row) still falls through to a plain clear, same as before.
             onClick={(e) => {
-              if (!(e.target as HTMLElement).closest('.timeline-editor-action')) setSelected(null);
+              if ((e.target as HTMLElement).closest('.timeline-editor-action')) return;
+              const rect = editAreaRef.current?.getBoundingClientRect();
+              if (rect) {
+                const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
+                const trackIdx = Math.floor(y / ROW_HEIGHT);
+                if (trackIdx >= 0 && trackIdx < tracks.length) {
+                  const frame = Math.round(((e.clientX - rect.left + scrollLeft - START_LEFT_PX) / pxPerSec) * fps);
+                  const gap = gapAt(tracks[trackIdx], frame);
+                  if (gap) {
+                    setSelected(null);
+                    setSelectedGap({ track: trackIdx, frame });
+                    return;
+                  }
+                }
+              }
+              setSelected(null);
+              setSelectedGap(null);
             }}
           >
             <TimelineEditor
@@ -1649,6 +1732,32 @@ export function TimelinePane() {
                 }}
               />
             )}
+            {/* D-105 — the selected gap's own persistent highlight (not a
+                live drag preview like the two overlays above — this stays
+                up until the selection changes). `gapAt` re-derives the exact
+                pixel span from the SAME `selectedGap.frame` the toolbar/
+                keyboard delete action reads — recomputed from the live
+                `tracks[selectedGap.track]` on every render rather than
+                cached at selection time, so the highlight always matches
+                what a delete would actually close (e.g. if an unrelated edit
+                elsewhere shifted this gap's bounds since it was selected). */}
+            {selectedGap &&
+              (() => {
+                const t = tracks[selectedGap.track];
+                const gap = t && gapAt(t, selectedGap.frame);
+                if (!gap) return null;
+                return (
+                  <div
+                    className="pointer-events-none absolute z-20 border-2 border-dashed border-accent bg-accent/15"
+                    style={{
+                      left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
+                      width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,
+                      top: RULER_AND_MARGIN_PX + selectedGap.track * ROW_HEIGHT - scrollTop,
+                      height: ROW_HEIGHT,
+                    }}
+                  />
+                );
+              })()}
             {/* D-098 — one real `useDroppable` target per track, always
                 mounted (see `TrackDropZone`'s own doc for why — a real
                 mid-drag droppable-registration timing bug found live), only

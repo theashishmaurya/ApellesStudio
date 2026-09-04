@@ -316,6 +316,26 @@ export function resolveClipLanding(
   return { startFrame: nextAppendFrame(withoutSelf), ripple: false };
 }
 
+/** D-105 — the exclusive `[gapStart, gapEnd)` bounds of the REAL, closeable
+ *  gap containing `frame` on `tr`, or `null` if there isn't one. Mirrors
+ *  `chroma-timeline::Track::gap_at` field-for-field (same two "there isn't
+ *  one" cases: `frame` is inside a clip, or it's trailing empty space past
+ *  the last clip — nothing after it to ripple, so not a real gap). Clips are
+ *  walked by value, never assumed to be in position order (D-054). */
+export function gapAt(tr: Track, frame: number): { gapStart: number; gapEnd: number } | null {
+  if (frame < 0 || clipAt(tr, frame)) return null;
+  let gapStart = 0;
+  for (const c of tr.clips) {
+    const e = endFrame(c);
+    if (e <= frame && e > gapStart) gapStart = e;
+  }
+  let gapEnd: number | null = null;
+  for (const c of tr.clips) {
+    if (c.start_frame > gapStart && (gapEnd === null || c.start_frame < gapEnd)) gapEnd = c.start_frame;
+  }
+  return gapEnd === null ? null : { gapStart, gapEnd };
+}
+
 /** Where a new clip appended to `tr` should start — right after the
  *  furthest-out clip already on it (0 for an empty track). Mirrors what
  *  `backfill_legacy_positions` reconstructs for a legacy back-to-back track,
@@ -358,6 +378,17 @@ export type EditOp =
   | { kind: 'trim_end'; track: number; clip: number; delta: number }
   | { kind: 'split'; track: number; clip: number; atFrame: number }
   | { kind: 'remove'; track: number; clip: number }
+  /** D-105 — select an empty stretch of track (not a clip) and delete IT:
+   *  close the gap at `frame` on `track`, shifting every clip at/after the
+   *  gap's end earlier by the gap's own width. The deliberate mirror image
+   *  of `remove` (a "lift," leaves a gap, see that op's own doc) — a real
+   *  NLE always pairs the two: delete a CLIP and the space stays, delete a
+   *  GAP and the space closes. `frame` just needs to land anywhere inside
+   *  the gap being closed (`gapAt` finds its exact bounds); refused as a
+   *  no-op if `frame` isn't inside a real, closeable gap on `track` (either
+   *  it's inside a clip, the track is locked, or it's trailing empty space
+   *  past the last clip — nothing there to ripple). */
+  | { kind: 'remove_gap'; track: number; frame: number }
   /** D-046 pass 3 — drag a Sources-panel pool item onto the timeline. Appends
    *  a full-length clip referencing the media (or inserts at `atIndex`). If
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
@@ -484,6 +515,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Split ${clipLabel(before, op.track, op.clip)}`;
     case 'remove':
       return `Remove ${clipLabel(before, op.track, op.clip)}`;
+    case 'remove_gap':
+      return `Close gap on track ${op.track + 1}`;
     case 'add_clip':
       return `Add "${op.clip.name}"`;
     case 'move': {
@@ -706,6 +739,20 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       if (op.clip < 0 || op.clip >= tr.clips.length) return tl;
       const next = clone(tl);
       next.tracks[op.track].clips.splice(op.clip, 1);
+      return next;
+    }
+    case 'remove_gap': {
+      // D-105 — mirrors `chroma-timeline::Timeline::remove_gap` exactly:
+      // find the real gap `frame` is inside (`gapAt`), reject as a no-op if
+      // there isn't one, otherwise shift every clip at/after the gap's end
+      // earlier by its width.
+      const gap = gapAt(tr, op.frame);
+      if (!gap) return tl;
+      const shift = gap.gapEnd - gap.gapStart;
+      const next = clone(tl);
+      for (const c of next.tracks[op.track].clips) {
+        if (c.start_frame >= gap.gapEnd) c.start_frame -= shift;
+      }
       return next;
     }
     case 'trim_start': {

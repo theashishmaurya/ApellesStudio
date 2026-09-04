@@ -8058,3 +8058,86 @@ claimed clean.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-105 — Gap select + delete (ripple close), and a real timeline-feature research audit
+
+Owner, live: "we should be able to delete the gap as well select and delete
+:/ can you not do a Research and get all the cases for timeline instead of
+me telling you." Two deliverables, one dispatch — a real feature (empty
+track space becomes a selectable, deletable thing, the deliberate mirror
+image of `remove`'s existing "Lift" behavior) and a real audit against
+external references, not another one-off patch waiting on the next live
+click to find the next gap.
+
+**The feature.** `chroma-timeline::Track::gap_at`/`Timeline::remove_gap`
+(Rust) and `timeline.ts`'s matching `gapAt`/`EditOp`'s new `remove_gap` case
+mirror each other field-for-field, same discipline every op here has kept
+since D-058: the exclusive `[gapStart, gapEnd)` bounds of the real,
+*closeable* gap containing a frame — inside a clip, or trailing empty space
+past the last clip (nothing after it to ripple) both correctly return "no
+gap," matching `remove`'s own "a lift, not a ripple" framing already
+established for that op — `remove_gap` is its real complement. It shifts
+every clip at/after the gap's end earlier by the gap's own width — reuses
+the exact shift-by-delta math `add_clip`'s insertion ripple and D-104's
+`move` ripple already use, a fourth real caller of the same pattern, not a
+new one.
+
+`Selection` (`TimelinePane.tsx`, D-080) stays exactly as-is — a new,
+parallel `selectedGap: {track, frame} | null` state instead of folding gaps
+into that type, which would have meant touching every one of `Selection`'s
+many existing call sites (the Inspector panel, "Move to" dropdown,
+Transform, drag handles) for a feature that only needed two new interactive
+entry points (the edit area's existing empty-space click handler, extended
+to check `gapAt` before falling through to a plain deselect; and
+`onClickAction`, which now also clears `selectedGap`) and one new
+toolbar/keyboard action. A real, live, dashed-border overlay tracks the
+selection (recomputed from the live track on every render, not cached at
+select time, so it can never show something a delete wouldn't actually
+match); a new "Close Gap" toolbar button (`FoldHorizontal`, distinct from
+"Remove" — the two operations do genuinely different things, matching the
+distinct icon/label to the distinct underlying op rather than overloading
+one button); the same Delete/Backspace keybinding as clip-remove, routed to
+whichever of `selected`/`selectedGap` is actually set (the two are mutually
+exclusive by construction).
+
+**Verified against the real rendered component**, not just the 6 new
+`cargo test`/8 new `vitest` unit tests (67/67 Rust, 108/108 TS, `tsc` clean,
+app's 64-error baseline unchanged) — a scratch, never-committed harness
+(`TimelinePane` mounted directly against a seeded store, bypassing the full
+app's Tauri-IPC boot chain the same way D-096's fork first did this) driven
+by real Chrome DevTools MCP tooling: real `getBoundingClientRect()` reads to
+find the actual rendered gap (not hand-computed pixel math, which a first
+attempt got subtly wrong and would have produced a false pass), a real click
+dispatched on the actual hit-tested DOM node, a real `Backspace` keypress
+against real DOM focus. Confirmed the full loop: click the empty space
+between two clips → the overlay appears exactly matching the real gap's
+pixels → Backspace closes it → the trailing clip shifts left by exactly the
+gap's width → clicking a clip afterward correctly clears the gap selection
+and re-enables Split/Remove. The one earlier false alarm (a first synthetic
+click that appeared to corrupt clip order and trigger a spurious dnd-kit
+drop announcement) was traced to dispatching the event on the wrong DOM
+node, not a real bug — caught by re-deriving the actual hit-test target
+before concluding anything, not glossed over.
+
+**The audit.** `docs/notes/timeline-feature-audit.md` — real external
+references checked (Adobe's own Premiere Pro help pages, the official
+DaVinci Resolve manual, and this repo's own stated internal feature bar,
+Palmier Pro, read directly via its MCP tool descriptions rather than
+guessed), the actual current code walked feature-by-feature against them
+(not assumed from `docs/notes/multi-track-nle.md`, which this note extends
+rather than duplicates), and a real prioritized recommendation: multi-select
+first (blocks the most, blocks nothing), cross-track ripple/sync-lock second
+(the single most-cited real gap against every reference — Palmier's own
+`ripple_delete_ranges` treats propagating a ripple to sync-locked tracks as
+the *default* case, not an edge case; this gap-close op above is
+deliberately single-track-only, matching today's model, with the doc's own
+recommendation being the real next increment past it), real A/V linking
+third, everything else (speed/remap, transitions, native markers, a snap
+toggle, volume/crop/blur keyframing, copy/paste, an effects stack)
+independent and lower-urgency, picked up opportunistically rather than
+scheduled all at once. Multicam flagged as the one item worth treating as
+out of scope entirely given this product's actual use case, not a gap to
+prioritize.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

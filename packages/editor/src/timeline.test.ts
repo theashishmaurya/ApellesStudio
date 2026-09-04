@@ -10,6 +10,7 @@ import {
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
+  gapAt,
   labelForOp,
   nextAppendFrame,
   resolveClipLanding,
@@ -65,6 +66,10 @@ describe('labelForOp', () => {
 
   it('falls back to a generic "clip" when the referenced clip is out of range', () => {
     expect(labelForOp({ kind: 'remove', track: 0, clip: 99 }, before)).toBe('Remove clip');
+  });
+
+  it('names the track for remove_gap (D-105)', () => {
+    expect(labelForOp({ kind: 'remove_gap', track: 0, frame: 120 }, before)).toBe('Close gap on track 1');
   });
 
   it('names the clip for move (D-058/D-080)', () => {
@@ -345,6 +350,51 @@ describe('remove (D-058)', () => {
     const after = applyOp(before, { kind: 'remove', track: 0, clip: 0 });
     expect(after.tracks[0].clips).toHaveLength(1);
     expect(after.tracks[0].clips[0].start_frame).toBe(100); // b never moved
+  });
+});
+
+describe('gapAt / remove_gap (D-105)', () => {
+  it('finds the gap between two clips that do not touch', () => {
+    const t: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 150 })] };
+    // a is [0,100), b starts at 150 — a real 50-frame gap at [100,150).
+    expect(gapAt(t, 120)).toEqual({ gapStart: 100, gapEnd: 150 });
+  });
+
+  it('returns null for a frame inside a clip', () => {
+    const t: Track = { kind: 'video', clips: backToBack() };
+    expect(gapAt(t, 50)).toBeNull();
+  });
+
+  it('returns null for trailing empty space past the last clip — nothing after it to ripple', () => {
+    const t: Track = { kind: 'video', clips: backToBack() }; // ends at 200
+    expect(gapAt(t, 500)).toBeNull();
+  });
+
+  it('finds a gap before the very first clip', () => {
+    const t: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 200 })] };
+    expect(gapAt(t, 10)).toEqual({ gapStart: 0, gapEnd: 200 });
+  });
+
+  it('applyOp closes the gap and ripples every later clip earlier by its width', () => {
+    const before = tl([clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 150 })]); // 50-frame gap
+    const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 120 });
+    expect(after.tracks[0].clips[0].start_frame).toBe(0); // a untouched
+    expect(after.tracks[0].clips[1].start_frame).toBe(100); // b shifted left by 50
+  });
+
+  it('is a no-op when frame is not inside a real, closeable gap', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'remove_gap', track: 0, frame: 50 })).toBe(before); // inside clip a
+    expect(applyOp(before, { kind: 'remove_gap', track: 0, frame: 500 })).toBe(before); // trailing space
+  });
+
+  it('refuses on a locked track', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', locked: true, clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 150 })] }],
+    };
+    expect(applyOp(before, { kind: 'remove_gap', track: 0, frame: 120 })).toBe(before);
   });
 });
 

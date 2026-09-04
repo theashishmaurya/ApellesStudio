@@ -430,6 +430,49 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    -rf target/debug` + rebuild, app confirmed back to a clean boot before
    continuing. See D-101 for the full writeup.
 
+10. ~~**Gap select + delete (ripple close)**~~ — **done, D-105
+    (2026-09-04).** Owner: "we should be able to delete the gap as well
+    select and delete." Click empty track space to select it, Delete/
+    Backspace or a new "Close Gap" toolbar button ripples everything after
+    it earlier — the deliberate mirror of `remove`'s existing Lift (leaves
+    a gap, no ripple). `Track::gap_at`/`Timeline::remove_gap` (Rust)
+    mirror `gapAt`/`remove_gap` (TS) field-for-field, single-track only
+    (see item 11). Verified against the real rendered component via a
+    scratch Chrome-driven harness. See D-105.
+11. **Cross-track ripple / sync-lock** — real, prioritized next step from
+    `docs/notes/timeline-feature-audit.md` (D-105): the single most-cited
+    gap against every reference checked (Premiere's "ripple trailing clips
+    in all unlocked tracks," Resolve's Sync Lock, Palmier's `syncLocked`
+    track field — on by default there, treated as the norm not an edge
+    case). Today's ripple (`add_clip`'s insertion ripple, D-104's `move`
+    ripple, item 10's `remove_gap`) only ever shifts clips on the ONE track
+    being edited. Real scope per the audit: a `Track.sync_locked` boolean
+    (default `true`, mirroring Palmier's own default), extending every
+    existing ripple call site to also shift other sync-locked tracks by
+    the same delta — reuses proven shift-by-delta math, not new mechanics.
+    Sequenced after item 12 in the audit's own reasoning (a good
+    multi-select design changes what "select these, then ripple them
+    together" needs to mean) but listed here first per numbering — see the
+    audit doc for the real priority order. **Not started.**
+12. **Multi-select** — real, prioritized FIRST step from the same audit:
+    `Selection` (`TimelinePane.tsx`) is a single `{track, id} | null`, never
+    a set — no shift/cmd-click, no marquee/rubber-band select (every
+    reference checked has this). Blocks the most (batch move under a
+    future sync-locked ripple, multi-gap delete, multi-clip transform
+    edits) and blocks nothing else — the audit's own recommendation is to
+    build this before item 11, not after, since it changes what a
+    multi-track ripple even needs to select. **Not started.**
+13. **Real A/V linking (link/unlink, L-cut/J-cut)** — real, prioritized
+    third step from the same audit: today's model is all-or-nothing —
+    audio embedded in a video clip (D-050, inseparable) or a fully
+    independent audio-track clip (D-057, zero relationship to any video
+    clip) — no in-between "linked but independently trimmable" concept
+    Premiere's Linked Selection and Palmier's `manage_clip_links` both
+    have. Can't represent an L-cut/J-cut at all today. Bigger than 11/12 —
+    needs a real `link_group` concept touching selection, move, and a
+    deliberate unlink UI affordance; scope it properly as its own note
+    before starting, per the audit's own recommendation. **Not started.**
+
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
 Extract the leaf pure crates for real (`chroma-types`, `chroma-grade-model`,
@@ -624,6 +667,24 @@ panel wrapping stayed package-local since `@chroma/editor`'s real `@chroma/ui`
 (the `@react-three/fiber` JSX conflict). `Selection` stayed local per tab — `Shell.tsx`
 already keeps every tab mounted and just hides inactive ones, so there was no real
 cross-tab gap to close by lifting state.
+
+**Gap select + delete, and a real timeline-feature research audit (2026-09-04 morning,
+D-105):** owner pushback on the whole night's one-off-bug-report pattern — "can you not
+do a Research and get all the cases for timeline instead of me telling you." Built the
+concrete feature asked for (`Track::gap_at`/`Timeline::remove_gap`, TS-mirrored,
+`selectedGap` a new parallel state alongside `Selection` — click empty track space,
+Delete/Backspace or a "Close Gap" button ripples everything after it earlier, the
+deliberate mirror of `remove`'s existing Lift), verified against the real rendered
+component via a scratch Chrome-driven harness (not just the 67/108 new Rust/TS unit
+tests). Also `docs/notes/timeline-feature-audit.md` — the real feature set audited
+against Premiere Pro's and DaVinci Resolve's own official docs plus Palmier Pro's real
+MCP tool surface (this repo's own stated feature bar), not memory. Real prioritized
+recommendation: **multi-select first** (blocks the most, blocks nothing else), **cross-
+track ripple/sync-lock second** (the single most-cited gap against every reference —
+today's ripple, including this pass's own `remove_gap`, is single-track only), **real
+A/V linking third**; speed/remap, transitions, native markers, a snap toggle,
+volume/crop/blur keyframing, copy/paste, and an effects stack are real but independent
+and lower-urgency; multicam flagged as out of scope for this product entirely.
 
 **Real sidecar ownership (2026-09-04 early morning, D-101):** content-hash staleness
 detection (`ai/server.py`'s own bytes, SHA256) replacing "trust the first `/health`

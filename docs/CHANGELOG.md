@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Gap select + delete (ripple close), and a real
+  timeline-feature research audit (D-105).** Empty track space is now a
+  real, selectable thing — click a gap to select it (a dashed overlay
+  tracks the exact bounds), Delete/Backspace or a new "Close Gap" toolbar
+  button closes it, rippling every later clip on that track earlier by the
+  gap's width. The deliberate mirror image of `remove`'s existing Lift
+  behavior. `Track::gap_at`/`Timeline::remove_gap` (Rust) mirror
+  `gapAt`/`remove_gap` (TS) field-for-field. Verified against the real
+  rendered component via a scratch Chrome-driven harness, not just unit
+  tests (67/67 Rust, 108/108 TS). Also: `docs/notes/timeline-feature-
+  audit.md` — the actual timeline code audited feature-by-feature against
+  Premiere Pro's and DaVinci Resolve's own docs plus Palmier Pro's real MCP
+  tool surface, with a prioritized recommendation (multi-select, then
+  cross-track ripple/sync-lock, then real A/V linking).
 - **2026-09-04** — **Unified clip-move placement, reversing D-096: overlap
   is never a reachable outcome of a plain drag (D-104, B-030).** Cross-track
   move used to reuse a clip's own `start_frame` verbatim (ignoring where it
