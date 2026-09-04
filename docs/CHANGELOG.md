@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Timeline-header overlap fixed, real master mute/volume
+  added, real fullscreen wired (D-126).** The Sources/Inspector floating
+  toggles (D-118/D-120) now render as elevated chips
+  (background+border+shadow) instead of transparent `ghost` buttons, so
+  they no longer visually crowd Player's own title strip. `Player.tsx`
+  gains a real `muted`/`onMuteToggle`/`volume`/`onVolumeChange` control
+  backed by a new lock-free backend primitive, `chroma_audio_set_volume`
+  (separate from D-057's persisted per-track `gain` — this is unpersisted
+  monitoring volume only). The fullscreen button, previously unwired by any
+  caller, now uses the real browser Fullscreen API with `fullscreenchange`
+  sync so Esc-driven exits stay in sync. `packages/player` `tsc` confirmed
+  clean; `packages/editor`/`packages/shell` `tsc` and interactive
+  verification were blocked by genuine concurrent sibling-worktree build
+  load and are disclosed as an honest gap in D-126.
+
 - **2026-09-04** — **Play took 2-3 s and the audio lagged: one decode pipe
   serving N compositor layers, and an audio clock that started late
   (D-125, B-040).** The suspected cause — contention with the filmstrip

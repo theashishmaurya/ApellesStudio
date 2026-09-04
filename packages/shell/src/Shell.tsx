@@ -279,6 +279,15 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
               here in `Shell.tsx`, not duplicated per-tab, because Sources is
               genuinely shell-level (all three tabs), unlike the Inspector. */}
           {projectOpen && sourcesPanel && (
+            // A floating control positioned relative to the whole tab-content
+            // area (deliberately, D-120 — reachable regardless of which tab
+            // is active) will always land directly on top of *some* tab's
+            // own top-left content — the Edit tab's `Player` title strip
+            // ("Timeline") starts flush at that same corner, and a
+            // background-less `ghost` button reads as crowding/overlapping
+            // whatever's underneath rather than floating above it. A real
+            // elevated chip (background + border + shadow) makes it legible
+            // against any tab's content instead of blending into it.
             <Button
               variant="ghost"
               size="xs"
@@ -287,7 +296,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
               aria-label="Sources"
               aria-pressed={sourcesPanelOpen}
               className={
-                'absolute top-2 left-2 h-6 w-6 p-0 z-10 ' +
+                'absolute top-2 left-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
                 (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
               }
             >

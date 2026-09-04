@@ -27,6 +27,16 @@
  * thread so `chroma_audio_play` queued behind a full decode — arriving late,
  * which the open-loop audio clock then carried as a permanent offset. The
  * dominant cause was on the Rust side (`chroma/decode_pipe.rs`); see D-125.
+ *
+ * Mute/volume + fullscreen (D-126): `muted`/`volume` are local UI state, not
+ * project data — real-time monitoring volume, applied in `audio.rs`'s output
+ * callback via `chroma_audio_set_volume`, entirely separate from any track's
+ * actual `gain`. Fullscreen uses the real browser Fullscreen API on a local
+ * wrapper `<div>` around `<Player>` (not a ref forwarded through `Player`
+ * itself, which stays presentational-only) — a `fullscreenchange` listener
+ * keeps `isFullscreen` in sync with reality, since the browser's own Esc
+ * handling exits fullscreen without ever calling this component's own click
+ * handler.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -64,6 +74,35 @@ export function PreviewPane() {
   const inFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  // D-126 — mute/volume: local monitoring state, not project data (see the
+  // module doc). `volume` is the last non-zero level, remembered across a
+  // mute toggle so unmuting restores it instead of resetting to unity.
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  useEffect(() => {
+    invoke('chroma_audio_set_volume', { volume: muted ? 0 : volume }).catch(() => {});
+  }, [muted, volume]);
+
+  // D-126 — fullscreen: a local wrapper ref (not forwarded through `Player`,
+  // which stays presentational) + a real `fullscreenchange` listener, since
+  // the browser's own Esc handling exits fullscreen without ever calling
+  // `toggleFullscreen` below — this is the only reliable way to keep
+  // `isFullscreen` correct regardless of *how* fullscreen was exited.
+  const fullscreenRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === fullscreenRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void fullscreenRef.current?.requestFullscreen();
+    }
+  }, []);
 
   const fps = timelineFps(timeline);
   const duration = timelineDuration(timeline);
@@ -205,44 +244,57 @@ export function PreviewPane() {
   };
 
   return (
-    <Player
-      title="Timeline"
-      surface={
-        // D-062: a plain "no frame" text was doing double duty for two very
-        // different states — "still waiting on the first frame" (normal,
-        // e.g. right after dropping a clip onto an empty timeline — the
-        // scrub fetch just hasn't resolved yet) and "genuinely nothing to
-        // show." Both rendered identical static gray text, so a real fetch
-        // in flight read exactly like a stuck/broken preview — the owner's
-        // own live testing flagged this as ambiguous. Once any frame has
-        // loaded, `frameSrc` never goes back to `null` on its own (only a
-        // remount resets it — see the module doc's scrub-effect note), so
-        // this spinner only ever appears on a genuine first-load, not on
-        // ordinary scrub/play frame-to-frame fetches, which still keep the
-        // previous frame visible while the next one loads (unchanged).
-        decodeErr ? (
-          <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
-        ) : frameSrc ? (
-          <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
-        ) : timeline ? (
-          <div className="flex flex-col items-center gap-2 text-text-secondary">
-            <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs">Loading preview…</span>
-          </div>
-        ) : (
-          <div className="text-sm text-text-secondary">no frame</div>
-        )
-      }
-      frame={playhead}
-      total={lastFrame}
-      fps={fps}
-      playing={playing}
-      onPlayPause={() => setPlaying(!playing)}
-      onStep={step}
-      onSeek={(f) => {
-        setPlaying(false);
-        setPlayhead(f);
-      }}
-    />
+    // D-126 — the real fullscreen target. `bg-bg-primary` matters here: a
+    // fullscreened element has no ambient page background behind it, so
+    // without an explicit one this would show through to black/transparent
+    // outside the player's own content on displays with a different aspect
+    // ratio than the video.
+    <div ref={fullscreenRef} className="flex min-h-0 flex-1 flex-col bg-bg-primary">
+      <Player
+        title="Timeline"
+        muted={muted}
+        onMuteToggle={() => setMuted((m) => !m)}
+        volume={volume}
+        onVolumeChange={setVolume}
+        onFullscreen={toggleFullscreen}
+        isFullscreen={isFullscreen}
+        surface={
+          // D-062: a plain "no frame" text was doing double duty for two very
+          // different states — "still waiting on the first frame" (normal,
+          // e.g. right after dropping a clip onto an empty timeline — the
+          // scrub fetch just hasn't resolved yet) and "genuinely nothing to
+          // show." Both rendered identical static gray text, so a real fetch
+          // in flight read exactly like a stuck/broken preview — the owner's
+          // own live testing flagged this as ambiguous. Once any frame has
+          // loaded, `frameSrc` never goes back to `null` on its own (only a
+          // remount resets it — see the module doc's scrub-effect note), so
+          // this spinner only ever appears on a genuine first-load, not on
+          // ordinary scrub/play frame-to-frame fetches, which still keep the
+          // previous frame visible while the next one loads (unchanged).
+          decodeErr ? (
+            <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
+          ) : frameSrc ? (
+            <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
+          ) : timeline ? (
+            <div className="flex flex-col items-center gap-2 text-text-secondary">
+              <Loader2 className="size-5 animate-spin" />
+              <span className="text-xs">Loading preview…</span>
+            </div>
+          ) : (
+            <div className="text-sm text-text-secondary">no frame</div>
+          )
+        }
+        frame={playhead}
+        total={lastFrame}
+        fps={fps}
+        playing={playing}
+        onPlayPause={() => setPlaying(!playing)}
+        onStep={step}
+        onSeek={(f) => {
+          setPlaying(false);
+          setPlayhead(f);
+        }}
+      />
+    </div>
   );
 }

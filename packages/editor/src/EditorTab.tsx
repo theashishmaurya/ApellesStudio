@@ -118,7 +118,11 @@ export function EditorTab() {
               module doc for why it isn't a `Shell.tsx` chrome-bar button
               like Sources'), placed at the preview's top-right so it reads
               as "the same corner Sources' own toggle lives in," just scoped
-              to this tab. */}
+              to this tab. A real elevated chip, not a transparent `ghost`
+              button — it floats directly over the `Player`'s own title
+              strip ("Timeline"), and Shell's matching Sources toggle hit the
+              identical crowding problem for the same reason (see its own
+              comment in `Shell.tsx`). */}
           <Button
             variant="ghost"
             size="xs"
@@ -127,7 +131,7 @@ export function EditorTab() {
             aria-label="Inspector"
             aria-pressed={inspectorOpen}
             className={
-              'absolute top-2 right-2 h-6 w-6 p-0 z-10 ' +
+              'absolute top-2 right-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
               (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
             }
           >

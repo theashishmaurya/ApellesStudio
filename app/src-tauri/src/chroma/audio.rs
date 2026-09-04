@@ -554,6 +554,22 @@ static SESSION: Lazy<Mutex<AudioSession>> = Lazy::new(|| {
 /// (see [`chroma_audio_level`]); not wired to any meter UI.
 static LEVEL: Lazy<Mutex<(f32, f32)>> = Lazy::new(|| Mutex::new((0.0, 0.0)));
 
+/// Master preview-monitoring volume (D-126) — a linear multiplier applied to
+/// every sample as it leaves the ring buffer, in `build_typed`'s real-time
+/// output callback. Deliberately **not** [`AudioSourceSpec::gain`]/
+/// `chroma_timeline::Track::gain` — those are project data (D-057, persisted,
+/// per-track, feeds the actual mix). This is a local, unpersisted "how loud is
+/// the monitor" control the player's own transport bar drives, independent of
+/// what the project's tracks are actually set to. An `AtomicU32` holding an
+/// `f32`'s bits (not a `Mutex<f32>`) because the real-time audio callback must
+/// never block; `Ordering::Relaxed` is correct here since this is a single
+/// scalar with no other memory access that needs to stay ordered against it.
+/// Starts at real unity gain (`1.0`, not a sentinel) — `f32::to_bits` is a
+/// `const fn` on this workspace's Rust 1.98, so there's no ambiguous "unset"
+/// state to special-case.
+static MASTER_VOLUME_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(1.0f32.to_bits());
+
 fn is_current(my_gen: u64) -> bool {
     SESSION.lock().unwrap_or_else(|e| e.into_inner()).generation == my_gen
 }
@@ -589,6 +605,21 @@ fn stop_and_bump_generation() -> u64 {
 #[tauri::command(async)]
 pub fn chroma_audio_stop() {
     stop_and_bump_generation();
+}
+
+/// Set the master preview-monitoring volume (D-126) — a `0.0..=1.0` linear
+/// multiplier applied to every sample in the real `cpal` output callback
+/// (see [`MASTER_VOLUME_BITS`]'s own doc for why this exists separately from
+/// per-track `gain`). Takes effect on whatever's currently playing, not just
+/// the next session — there's nothing to restart. Out-of-range input is
+/// clamped rather than rejected: a UI slider can't produce anything outside
+/// `0.0..=1.0` by construction, and the one real caller most likely to send a
+/// slightly-off value is a mute toggle round-tripping a remembered volume, not
+/// a genuine error worth surfacing.
+#[tauri::command]
+pub fn chroma_audio_set_volume(volume: f32) {
+    let clamped = volume.clamp(0.0, 1.0);
+    MASTER_VOLUME_BITS.store(clamped.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
 /// One audio source for a play session (D-057) — a source path, the source
@@ -1290,9 +1321,17 @@ where
                     let mut buf = ring.lock().unwrap_or_else(|e| e.into_inner());
                     pull_or_silence(&mut buf, data.len())
                 };
+                // D-126: the master monitoring volume, applied here — after
+                // the ring buffer, before the device and before the RMS/peak
+                // meter — so `chroma_audio_level` (and any future meter UI)
+                // reports what's actually audible, not the pre-mute signal.
+                let volume = f32::from_bits(
+                    MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed),
+                );
                 for (dst, s) in data.iter_mut().zip(samples.iter()) {
-                    *dst = T::from_sample(*s);
-                    window_sumsq += (*s as f64) * (*s as f64);
+                    let s = s * volume;
+                    *dst = T::from_sample(s);
+                    window_sumsq += (s as f64) * (s as f64);
                     window_peak = window_peak.max(s.abs());
                 }
                 window_count += samples.len();
@@ -1314,6 +1353,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D-126: `chroma_audio_set_volume` clamps to `0.0..=1.0` and the real
+    /// `Ordering::Relaxed` atomic round-trips exactly — no other test in this
+    /// module touches `MASTER_VOLUME_BITS`, so this is safe against Rust's
+    /// default parallel test execution without needing its own lock.
+    #[test]
+    fn chroma_audio_set_volume_clamps_and_round_trips() {
+        let read = || {
+            f32::from_bits(MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed))
+        };
+
+        chroma_audio_set_volume(0.42);
+        assert_eq!(read(), 0.42);
+
+        chroma_audio_set_volume(-1.0);
+        assert_eq!(read(), 0.0, "negative volume clamps to silence, not a negative multiplier");
+
+        chroma_audio_set_volume(5.0);
+        assert_eq!(read(), 1.0, "volume above unity clamps to 1.0, not amplified beyond it");
+
+        chroma_audio_set_volume(1.0);
+        assert_eq!(read(), 1.0, "leave MASTER_VOLUME_BITS at real unity for any test that runs after this one");
+    }
 
     #[test]
     fn adapt_channels_mono_to_stereo_duplicates() {

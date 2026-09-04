@@ -2158,6 +2158,7 @@ pub fn run() {
             chroma::edit::chroma_clip_thumbnails,
             chroma::audio::chroma_audio_play,
             chroma::audio::chroma_audio_stop,
+            chroma::audio::chroma_audio_set_volume,
             chroma::audio::chroma_audio_level,
             chroma::audio::chroma_audio_waveform,
             chroma::mask::chroma_subject_mask,

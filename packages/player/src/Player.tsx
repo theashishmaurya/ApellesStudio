@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Maximize,
+  Minimize,
   Pause,
   Play,
   Search,
@@ -29,6 +30,9 @@ import {
   SkipForward,
   StepBack,
   StepForward,
+  Volume1,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { Button, Slider, cn } from '@chroma/ui';
 
@@ -64,8 +68,24 @@ export interface PlayerProps {
 
   /** Omit → button hidden. */
   onSnapshot?: () => void;
-  /** Omit → button hidden. */
+  /** Omit → button hidden. Reflects real fullscreen state — the caller
+   *  should keep this in sync with the browser's own `fullscreenchange`
+   *  event, not just its own click handler, since Esc/other exits happen
+   *  outside this component's control. */
   onFullscreen?: () => void;
+  isFullscreen?: boolean;
+  /** Master preview-monitoring volume, `0..1` — omit `onMuteToggle` →
+   *  the whole mute/volume control hidden, matching every other optional
+   *  control here. `volume`/`onVolumeChange` are independently optional on
+   *  top of that: a caller can offer mute-only with no slider by omitting
+   *  them (`volume` then just informs the muted-icon's own visual state via
+   *  `muted`). This is playback *monitoring* volume, not project data — see
+   *  `chroma_audio_set_volume`'s own doc in `audio.rs` for why it's a
+   *  separate primitive from any project-level per-track gain. */
+  muted?: boolean;
+  onMuteToggle?: () => void;
+  volume?: number;
+  onVolumeChange?: (volume: number) => void;
   /** e.g. 1 — omit → rate control hidden. */
   rate?: number;
   onRateChange?: (rate: number) => void;
@@ -105,6 +125,11 @@ export function Player({
   onSkipEnd,
   onSnapshot,
   onFullscreen,
+  isFullscreen,
+  muted,
+  onMuteToggle,
+  volume,
+  onVolumeChange,
   rate,
   onRateChange,
   zoom,
@@ -124,6 +149,17 @@ export function Player({
     },
     [onSeek],
   );
+
+  const handleVolumeSeek = useCallback(
+    (value: number | readonly number[]) => {
+      const v = Array.isArray(value) ? value[0] : (value as number);
+      onVolumeChange?.(v);
+    },
+    [onVolumeChange],
+  );
+
+  const showMute = Boolean(onMuteToggle);
+  const VolumeIcon = muted ? VolumeX : (volume ?? 1) < 0.5 ? Volume1 : Volume2;
 
   return (
     <div className={cn('flex flex-col min-h-0 flex-1 bg-bg-primary', className)}>
@@ -196,14 +232,47 @@ export function Player({
 
           <div className="flex-1" />
 
+          {showMute && (
+            <div className="flex items-center gap-1 group/volume">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onMuteToggle}
+                title={muted ? 'Unmute' : 'Mute'}
+                aria-label={muted ? 'Unmute' : 'Mute'}
+                aria-pressed={muted}
+              >
+                <VolumeIcon />
+              </Button>
+              {onVolumeChange && (
+                <div className="w-0 overflow-hidden group-hover/volume:w-16 focus-within:w-16 transition-[width] duration-150">
+                  <Slider
+                    value={muted ? 0 : (volume ?? 1)}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onValueChange={handleVolumeSeek}
+                    aria-label="Volume"
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {onSnapshot && (
             <Button variant="ghost" size="icon-sm" onClick={onSnapshot} title="Snapshot" aria-label="Snapshot">
               <Camera />
             </Button>
           )}
           {onFullscreen && (
-            <Button variant="ghost" size="icon-sm" onClick={onFullscreen} title="Fullscreen" aria-label="Fullscreen">
-              <Maximize />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onFullscreen}
+              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              aria-pressed={isFullscreen}
+            >
+              {isFullscreen ? <Minimize /> : <Maximize />}
             </Button>
           )}
 

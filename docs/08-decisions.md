@@ -9100,3 +9100,73 @@ Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-126 — Timeline-header overlap, master mute/volume, real fullscreen
+
+**Context.** Owner, live, three screenshots: the "Timeline" title strip and a
+floating panel-toggle icon visually crowding each other; "in the player there
+is no mute, voice control please add that"; a fullscreen icon that's supposed
+to make the video full screen with Esc returning to normal.
+
+**Issue 1 — real cause, traced not guessed.** `Shell.tsx`'s Sources toggle
+(D-120) and `EditorTab.tsx`'s Inspector toggle (D-118) are both absolutely
+positioned at a tab-content corner (`top-2 left-2` / `top-2 right-2`),
+deliberately reachable regardless of which tab is active or which panel is
+open. `Player.tsx`'s own title strip ("Timeline", from `PreviewPane.tsx`'s
+`title="Timeline"` prop) renders flush at that same corner. Both toggle
+buttons use the `ghost` `Button` variant — no background except on hover —
+so they read as crowding/overlapping whatever's underneath rather than
+floating above it. **Fix:** both toggles get a real elevated-chip treatment
+(`rounded-md border border-border-color bg-surface/90 shadow-sm
+backdrop-blur-sm`) — legible against any tab's content, spatial position
+unchanged.
+
+**Issue 2 — master mute/volume, a new real primitive.** `chroma_timeline::
+Track::gain` (D-057) already exists but is persisted *project* data feeding
+the actual mix — muting via it would edit the project, not just the monitor.
+Added `chroma_audio_set_volume` (Rust): a `0.0..=1.0` linear multiplier
+applied in `build_typed`'s live `cpal` output callback, stored in a
+lock-free `AtomicU32` (`MASTER_VOLUME_BITS`) since the real-time audio
+callback must never block on a `Mutex`. Applied after the ring buffer,
+before the device *and* before the RMS/peak meter, so `chroma_audio_level`
+reports what's actually audible. `Player.tsx` gains `muted`/`onMuteToggle`/
+`volume`/`onVolumeChange` props (the same "omit callback → hide control"
+convention every other optional control here already uses) with a
+hover-to-expand `Slider`; `PreviewPane.tsx` holds the local `muted`/`volume`
+state and calls the new command on change.
+
+**Issue 3 — fullscreen was never wired, not broken.** `Player.tsx` has
+supported a real `onFullscreen` prop since it was written; no caller —
+including the Edit tab — ever passed one, so the button never rendered at
+all in the Edit tab. Wired the real browser Fullscreen API
+(`requestFullscreen`/`exitFullscreen`) on a local wrapper `<div>` around
+`<Player>` in `PreviewPane.tsx` (not forwarded through `Player` itself,
+which stays presentational-only), plus a `fullscreenchange` listener so
+`isFullscreen` stays correct when the browser's own Esc handling exits
+fullscreen — which happens entirely outside any click handler this
+component owns, so polling the click handler's own state would have missed
+it. `Player.tsx` gains `isFullscreen` to swap the Maximize/Minimize icon.
+
+**Verification.** `packages/player` `tsc --noEmit` clean (confirmed,
+completed). Careful manual review of every changed line: the Rust
+atomic/clamping logic has a new unit test (`chroma_audio_set_volume_clamps_
+and_round_trips` — negative clamps to silence, above-unity clamps to 1.0,
+exact round-trip) and no other test in the module touches
+`MASTER_VOLUME_BITS`, so it's safe against parallel test execution without
+its own lock. **Honest gap:** `packages/editor`/`packages/shell` `tsc` and a
+real browser-preview render were both started but did not finish in this
+pass — the machine had 6+ concurrent `rustc` processes at 60–95% CPU each
+from sibling worktrees building in parallel (confirmed via `top`, not
+assumed), leaving effectively no CPU for these to progress in a reasonable
+time. `packages/shell`'s `tsc` process completed with zero output before I
+stopped waiting (the same clean-exit shape as the confirmed `packages/player`
+pass) but its exit code wasn't independently re-checked. This is a real,
+disclosed gap, not a claim of full clean type-checking — the owner's own
+retest closes the loop on all three issues, and is the only way to verify
+issue 2 at all, since a plain browser preview has no real Tauri IPC to call
+`chroma_audio_set_volume` through even if it were reachable.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
