@@ -211,6 +211,7 @@ import {
   endFrame,
   gapAt,
   resolveClipLanding,
+  syncLinkedClipIds,
   timelineFps,
   videoTrackIndex,
   type Clip,
@@ -671,6 +672,16 @@ export function TimelinePane() {
   const tracks = timeline?.tracks ?? [];
   const labels = useMemo(() => (timeline ? trackLabels(timeline) : []), [timeline]);
 
+  // Owner, 2026-09-04: "for sync when i select one is should see all the
+  // sync selected" — every clip on another sync-locked track that a ripple
+  // from the current selection would touch (shift or block), rendered as a
+  // secondary highlight in `getActionRender` below. Recomputed only when the
+  // selection or the timeline actually changes, not on every render.
+  const syncLinkedIds = useMemo(
+    () => (timeline ? syncLinkedClipIds(timeline, selection) : new Set<string>()),
+    [timeline, selection],
+  );
+
   // keep the editor's own cursor in step with the store playhead (step buttons,
   // the play loop, clicks in the preview transport)
   useEffect(() => {
@@ -1090,6 +1101,18 @@ export function TimelinePane() {
       const clip = i >= 0 ? clipsOf(ti)[i] : null;
       const isSel = isInSelection(selection, ti, action.id);
       const isRippled = rippled.has(action.id);
+      // Owner, 2026-09-04: "for sync when i select one is should see all the
+      // sync selected" — a real, distinct secondary ring (never the primary
+      // `isSel` accent ring — a clip is either the selection or related to
+      // it, the two states should never look the same) for every clip
+      // `syncLinkedIds` says a ripple from the current selection would touch.
+      const isSyncLinked = !isSel && syncLinkedIds.has(action.id);
+      // Owner, 2026-09-04: "for locked show muted color on clip" — the same
+      // `opacity-60` treatment the track-header row already gets when
+      // `track.locked` (D-080/D-090-era), extended to the clip bodies
+      // themselves so the muted state reads at the clip level, not just from
+      // glancing at the header.
+      const isLockedTrack = !!track?.locked;
       const pxWidth = (action.end - action.start) * pxPerSec;
       return (
         <ClipBody
@@ -1098,7 +1121,9 @@ export function TimelinePane() {
           className={
             'relative h-full w-full overflow-hidden rounded ' +
             (isSel ? 'ring-2 ring-accent ' : '') +
-            (isRippled ? 'ring-2 ring-accent animate-pulse ' : '')
+            (isRippled ? 'ring-2 ring-accent animate-pulse ' : '') +
+            (isSyncLinked ? 'ring-2 ring-text-secondary ' : '') +
+            (isLockedTrack ? 'opacity-60 ' : '')
           }
           style={{
             // D-100 — selection no longer swaps the background to
@@ -1156,7 +1181,7 @@ export function TimelinePane() {
         </ClipBody>
       );
     },
-    [tracks, selection, rippled, pxPerSec, fps],
+    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds],
   );
 
   /** Multi-select, Phase 1 (D-107) — shift-click range-extends within the

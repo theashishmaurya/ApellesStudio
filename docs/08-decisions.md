@@ -8431,3 +8431,87 @@ edits from several forks) avoids the race outright, same recommendation implicit
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-111 — "It hangs the UI so much" audit: one redundant IPC round-trip cut, sync-lock gets real visual language instead of a toast
+
+**decided (2026-09-04)** — measured, not assumed; redirected mid-flight by the owner.
+
+**Context.** Owner, live: "it hangs the UI so much we should do optimistic UI instead
+everywhere." Real audit requested rather than a blind global wrap.
+
+**Real measurement first.** `packages/editor/src/timelineStore.ts`'s `applyOp` was
+already fully optimistic — `set()`s the new `Timeline` locally, immediately, before any
+Tauri round-trip (`docs/notes/performance-instrumentation.md` confirmed this, don't
+re-derive). So the felt lag isn't "the edit feels slow" — it's the *settle*. Two real,
+measured contributors found:
+1. **System load, not app code**: `uptime` read `load averages: 41.47 23.73 14.89` on a
+   10-core machine — 4x oversubscribed, from this session's own many concurrent
+   agent/cargo processes. A direct real measurement corroborating it: writing this
+   project's actual 8KB `project.json` took **87.83ms** (should be low single-digit ms
+   for a file this size under normal load). This explains most of tonight's felt "hang"
+   and isn't fixable by app-level optimistic UI — it's contention, and self-resolves
+   once concurrent agent activity quiets down.
+2. **A real, fixable inefficiency**: `_flushSave` did `chroma_timeline_set` *then*
+   `.then(() => get().load())` — a full second IPC round-trip (manifest re-read +
+   re-parse + a brand-new `Timeline` object, forcing every consumer to re-render) after
+   **every single** debounced edit-settle. `chroma_timeline_set`'s own Rust contract:
+   "stores whatever is sent verbatim, no server-side clamping" — so the refetch could
+   never learn anything the caller didn't already have. Removed for `_flushSave` (the
+   hot, rapid-edit-stream path); kept for `restoreSnapshot` (undo/redo — rare, discrete,
+   the extra safety margin costs nothing there). Roughly halves the backend round-trips
+   per edit-settle, which matters more, not less, under contention.
+
+**Colorist's own adjustment path** (`app/src/hooks/useImageProcessing.ts`) already had
+its own pre-existing `debouncedSave` — old, established RapidRAW infrastructure, not
+part of tonight's NLE work and not implicated by the owner's recent testing (almost
+entirely Edit-tab). Not touched this pass; flagged as a real follow-up to measure
+properly (this pass's live-app access window closed before it could be), not assumed
+fine purely by inference.
+
+**Redirect, mid-flight — the sync-lock silent-rejection follow-up.** A related, separate
+report landed on the same file: B-033's reject-on-straddle (D-109) silently returned the
+unchanged timeline with zero feedback — "gap select does not work" was actually a
+*correct* rejection, indistinguishable from a broken button. First implementation pass
+added a `react-toastify` reactive error toast (a module-level rejection-reason side
+channel in `timeline.ts`, a return-value change on the store's `applyOp`) — **the owner
+redirected before this landed**: "instead of adding toast we should play with color...
+for locked show muted color on clip, for sync when i select on is should see all the
+sync selected." The toast work was fully reverted (package.json dependency, the
+side-channel plumbing, the store's return type, all four call sites) rather than
+shipping both — confirmed via a full `tsc`/vitest pass back at the pre-toast baseline
+before building the real ask.
+
+**What shipped instead** (`packages/editor/src/timeline.ts`, `TimelinePane.tsx`,
+`timeline.test.ts`):
+- **Locked clips are visually muted at the clip level**, not just the track-header row —
+  `getActionRender` now applies the same `opacity-60` treatment the header row already
+  had (D-080/D-090-era) to the clip body itself when `track.locked`.
+- **`syncLinkedClipIds(timeline, selection)`**, a real pure function reusing the exact
+  same two predicates the actual ripple mechanics use (`propagateSyncLockRipple`'s
+  "starts at/after the threshold" and `findStraddlingSyncLockedTrack`'s "straddles it")
+  — not a second, approximate definition of "related." For each selected clip, every
+  clip on an OTHER `sync_locked`, non-individually-`locked` track that a ripple from
+  that clip's position would shift or block gets collected into one `Set<string>`.
+  `TimelinePane.tsx` renders it as a distinct secondary ring (`ring-text-secondary`, a
+  real token, never the same visual as `ring-accent` primary selection — a clip is
+  either the selection or related to it, never rendered the same way). Memoized
+  (`useMemo`, keyed on `timeline`/`selection`) and threaded into `getActionRender`'s own
+  `useCallback` dependency array correctly — D-083's freeze-fix discipline (this file's
+  own six-round history stabilizing the drag-tick render path) applies to every new
+  dependency added here, not just the original five props.
+
+**Verification**: 8 new `syncLinkedClipIds` unit tests (starts-after linking, no-link
+when fully before, straddle-linking, own-track exclusion, `sync_locked: false`
+exclusion, individually-`locked` exclusion, multi-select union, empty selection/missing
+clip safety) — 131/131 total in `packages/editor`, `tsc` clean on both `packages/editor`
+and `app` (64-error `app` baseline unchanged, confirmed by count not just skim).
+Confirmed via the live dev server's own HMR log that `TimelinePane.tsx`'s changes loaded
+into a running instance with no new console errors traceable to this file (the one
+unhandled rejection present in the log at the time traces to a different, concurrent
+fork's `tauriListeners.ts`, not this work) — the process wasn't up for a full manual
+click-through by the time this pass finished, flagged rather than claimed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

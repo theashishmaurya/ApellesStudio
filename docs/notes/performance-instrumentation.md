@@ -91,3 +91,16 @@ None of these are blocking anything currently in flight; flagged here so the nex
 someone reaches for "are we faster now?" they know exactly which of these three places
 to check, and know that a real unified answer is still future work, not something
 already half-broken.
+
+## Real finding, 2026-09-04: check `uptime`/system load before blaming app code
+
+Chased a real "it hangs the UI so much" report (D-111) expecting an app-level
+optimistic-UI gap. `useEditorTimelineStore.applyOp` was already fully optimistic — the
+real, measured cause of most of the felt lag was **system load**: `uptime` read `41.47
+23.73 14.89` on this 10-core dev machine (4x oversubscribed) from the session's own many
+concurrent agent/cargo processes, corroborated by a direct measurement — writing this
+project's real 8KB `project.json` took 87.83ms, when a file that size should write in
+low single-digit ms under normal load. **Check `uptime` first** when a performance
+report comes in during a session with several concurrent agents/builds running — it's a
+five-second check that can save chasing an app-code bug that isn't there. Self-resolving
+once concurrent activity quiets down, not something to "fix" in the app.

@@ -419,11 +419,52 @@ function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void 
  *  sync-locked track REJECTS the whole op (same as an unresolvable
  *  same-track overlap), never splits. Auto-split may come back as a real,
  *  separately-scoped, separately-verified follow-up — see B-033. */
-function hasStraddlingSyncLockedClip(tracks: Track[], editedTrack: number, threshold: number): boolean {
-  return tracks.some((t, i) => {
-    if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return false;
-    return t.clips.some((c) => c.start_frame < threshold && endFrame(c) > threshold);
-  });
+/** Returns *which* track index has a clip straddling `threshold` (or `null`
+ *  if none does) — `applyOp` uses this to reject a ripple that can't clear a
+ *  straddling clip (B-033); the visual sync-highlight in `TimelinePane.tsx`
+ *  (owner, 2026-09-04: "for sync when i select on is should see all the sync
+ *  selected") reuses the same predicate to find which OTHER clips a
+ *  selection's own sync-locked tracks are really linked to. */
+function findStraddlingSyncLockedTrack(tracks: Track[], editedTrack: number, threshold: number): number | null {
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) continue;
+    if (t.clips.some((c) => c.start_frame < threshold && endFrame(c) > threshold)) return i;
+  }
+  return null;
+}
+
+/** Owner, 2026-09-04: "for sync when i select one is should see all the sync
+ *  selected" — a real, proactive visual instead of a reactive error toast
+ *  (see B-033's own UX follow-up for the toast approach this replaces).
+ *
+ *  For each selected clip, walks every OTHER `sync_locked` (and not
+ *  individually `locked`) track and collects every clip on it that a ripple
+ *  originating at the selected clip's own `start_frame` would touch —
+ *  exactly the same two predicates `propagateSyncLockRipple`/
+ *  `findStraddlingSyncLockedTrack` already use for the real ripple
+ *  mechanics, not a second, only-approximately-matching definition: a clip
+ *  starting at/after the threshold (would SHIFT together) or straddling it
+ *  (would BLOCK the ripple, B-033). Both read as "this clip is really tied
+ *  to the selection via sync-lock" — the caller renders one shared secondary
+ *  highlight for the whole set, distinct from the primary selection ring. */
+export function syncLinkedClipIds(tl: Timeline, selection: { track: number; id: string }[]): Set<string> {
+  const linked = new Set<string>();
+  for (const sel of selection) {
+    const track = tl.tracks[sel.track];
+    const clip = track?.clips.find((c) => c.id === sel.id);
+    if (!clip) continue;
+    const threshold = clip.start_frame;
+    tl.tracks.forEach((t, i) => {
+      if (i === sel.track || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return;
+      for (const c of t.clips) {
+        if (c.start_frame >= threshold || (c.start_frame < threshold && endFrame(c) > threshold)) {
+          linked.add(c.id);
+        }
+      }
+    });
+  }
+  return linked;
 }
 
 /** Propagate a ripple already applied to `editedTrack` (index into
@@ -433,8 +474,8 @@ function hasStraddlingSyncLockedClip(tracks: Track[], editedTrack: number, thres
  *  call as the Rust side's own doc: `locked` already means "protect this
  *  track's clips from edits through the normal ops," and a foreign ripple
  *  shifting this track's clips is exactly that. Plain shift only — callers
- *  MUST check `hasStraddlingSyncLockedClip` first and reject the whole op
- *  if it returns true (B-033); this function assumes that's already been
+ *  MUST check `findStraddlingSyncLockedTrack` first and reject the whole op
+ *  if it returns non-null (B-033); this function assumes that's already been
  *  done and never splits. */
 function propagateSyncLockRipple(tracks: Track[], editedTrack: number, threshold: number, delta: number): void {
   tracks.forEach((t, i) => {
@@ -659,8 +700,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         // B-033 — reject upfront (checked against the ORIGINAL, pre-clone
         // tracks) if a sync-locked track has a clip straddling the
         // insertion point; never auto-split. See the doc on
-        // `hasStraddlingSyncLockedClip` for why.
-        if (hasStraddlingSyncLockedClip(tl.tracks, trackIdx, startFrame)) return tl;
+        // `findStraddlingSyncLockedTrack` for why.
+        if (findStraddlingSyncLockedTrack(tl.tracks, trackIdx, startFrame) !== null) return tl;
         const dur = op.clip.duration;
         shiftClipsAtOrAfter(track, startFrame, dur);
         // D-106 — sync-locked tracks ripple too, same shift.
@@ -802,8 +843,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // B-033 — same reject-on-straddle now also covers every OTHER
     // sync-locked track this move's ripple would touch, checked against
     // the ORIGINAL tracks before any mutation.
-    const syncStraddles = overlaps && op.ripple && hasStraddlingSyncLockedClip(tl.tracks, op.toTrack, op.startFrame);
-    if (overlaps && (!op.ripple || straddles || syncStraddles)) return tl;
+    const syncLockBlocked =
+      overlaps && op.ripple && findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame) !== null;
+    if (overlaps && (!op.ripple || straddles || syncLockBlocked)) return tl;
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
     const destClips = next.tracks[op.toTrack].clips;
@@ -861,7 +903,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const shift = gap.gapEnd - gap.gapStart;
       // B-033 — reject upfront if a sync-locked track has a straddling
       // clip, checked against the ORIGINAL (pre-clone) tracks.
-      if (hasStraddlingSyncLockedClip(tl.tracks, op.track, gap.gapEnd)) return tl;
+      if (findStraddlingSyncLockedTrack(tl.tracks, op.track, gap.gapEnd) !== null) return tl;
       const next = clone(tl);
       shiftClipsAtOrAfter(next.tracks[op.track], gap.gapEnd, -shift);
       // D-106 — every OTHER sync-locked track ripples too, unconditionally

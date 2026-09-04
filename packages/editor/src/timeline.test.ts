@@ -14,6 +14,7 @@ import {
   labelForOp,
   nextAppendFrame,
   resolveClipLanding,
+  syncLinkedClipIds,
   type Clip,
   type Timeline,
   type Track,
@@ -948,5 +949,85 @@ describe('cross-track ripple sync (D-106)', () => {
     expect(tl.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(80); // never moved
     expect(tl.tracks[1].clips).toHaveLength(1);
     expect(tl.tracks[1].clips[0]).toMatchObject({ id: 'x', start_frame: 20, duration: 180 });
+  });
+});
+
+describe('syncLinkedClipIds — the visual "sync-linked to this selection" set (owner, 2026-09-04)', () => {
+  it('links a clip on another sync-locked track that starts at/after the selected clip (would shift together)', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 })],
+      [clip('x', 'X', { start_frame: 50, duration: 20 }), clip('y', 'Y', { start_frame: 100, duration: 20 })],
+    );
+    const linked = syncLinkedClipIds(tl, [{ track: 0, id: 'a' }]);
+    expect(linked).toEqual(new Set(['x', 'y']));
+  });
+
+  it('does not link a clip on another sync-locked track that ends before the selected clip starts', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 100, duration: 50 })],
+      [clip('x', 'X', { start_frame: 0, duration: 20 })], // fully before threshold=100, no straddle
+    );
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'a' }])).toEqual(new Set());
+  });
+
+  it('links a straddling clip too (the B-033 blocker case) — related to the selection whether it would shift or block', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 100, duration: 50 })],
+      [clip('x', 'X', { start_frame: 50, duration: 100 })], // straddles threshold=100
+    );
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'a' }])).toEqual(new Set(['x']));
+  });
+
+  it('never links a clip on the selected clip\'s own track', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 50, duration: 50 })],
+      [],
+    );
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'a' }])).toEqual(new Set());
+  });
+
+  it('excludes a track with sync_locked: false', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 })],
+      [clip('x', 'X', { start_frame: 50, duration: 20 })],
+    );
+    tl.tracks[1].sync_locked = false;
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'a' }])).toEqual(new Set());
+  });
+
+  it('excludes a track that is individually locked, even if sync_locked', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 })],
+      [clip('x', 'X', { start_frame: 50, duration: 20 })],
+    );
+    tl.tracks[1].locked = true;
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'a' }])).toEqual(new Set());
+  });
+
+  it('returns the union across a multi-clip selection', () => {
+    const tl: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 20 }), clip('b', 'B', { start_frame: 100, duration: 20 })] },
+        { kind: 'video', clips: [clip('x', 'X', { start_frame: 10, duration: 20 })] },
+        { kind: 'video', clips: [clip('y', 'Y', { start_frame: 105, duration: 20 })] },
+      ],
+    };
+    const linked = syncLinkedClipIds(tl, [
+      { track: 0, id: 'a' }, // threshold 0 -> links 'x' (starts 10 >= 0) and 'y' (105 >= 0)
+      { track: 0, id: 'b' }, // threshold 100 -> 'x' (10) is not >= 100 and doesn't straddle; 'y' (105 >= 100) still links
+    ]);
+    expect(linked).toEqual(new Set(['x', 'y']));
+  });
+
+  it('returns an empty set for an empty selection', () => {
+    const tl = twoTrack([clip('a', 'A')], [clip('x', 'X')]);
+    expect(syncLinkedClipIds(tl, [])).toEqual(new Set());
+  });
+
+  it('is a no-op-safe empty set when the selected clip id does not exist on its track', () => {
+    const tl = twoTrack([clip('a', 'A')], [clip('x', 'X')]);
+    expect(syncLinkedClipIds(tl, [{ track: 0, id: 'does-not-exist' }])).toEqual(new Set());
   });
 });

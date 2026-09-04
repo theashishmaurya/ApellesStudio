@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **"Hangs so much" audit (D-111): one redundant IPC round-trip
+  cut, sync-lock gets real visual language.** Measured, not assumed —
+  `applyOp` was already optimistic; the real hang was mostly this session's
+  own 4x-oversubscribed system load (a real 87ms write for an 8KB file
+  proves it), plus one genuine fix: `_flushSave` no longer refetches after
+  every save (`chroma_timeline_set` stores verbatim, so the refetch was
+  pure redundant latency). Sync-lock's silent B-033 rejection ("gap select
+  does not work") first got a toast, then the owner redirected to real
+  visual language instead — reverted the toast cleanly, shipped
+  muted-clip-on-locked-track + a secondary "sync-linked to this selection"
+  ring (`syncLinkedClipIds`) instead.
 - **2026-09-04** — **Cross-track sync-lock reverted from auto-split to
   reject-on-straddle after confirmed real data corruption (B-033/D-109).**
   D-106/D-107's auto-split let repeated real ripple operations keep
