@@ -7965,3 +7965,96 @@ done.** `docs/notes/global-inspector.md` updated as the historical record.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-104 — Unified clip-move placement, reversing D-096: overlap is never a reachable outcome of a plain drag, same-track or cross-track
+
+Owner, live, right after D-100 shipped the unified clip-move mechanism:
+dragging Video 2's clip onto Video 1 landed it stacked directly on top of
+what was already there. Follow-up, sharper and absolute: "i should be able
+to drop it before any clip, between two clip or after two clip, not on top
+of the clip in the same track that should not be possible." Not "pick a
+sensible default and allow intentional stacking via some signal" — overlap
+should never be a reachable outcome of a plain drag, full stop.
+
+**Real finding, not assumed:** cross-track `move` had reused the clip's own
+existing `start_frame` verbatim since D-094, unchanged through every
+drag-and-drop pass since (D-095/096/098/100) — never derived from where the
+drop actually happened. D-096 had separately made cross-track overlap an
+*explicitly allowed* outcome, reasoning it was a legitimate composited-layer
+stack (true in principle post-D-088's real compositor, but not what the
+owner wants from a plain drag). Same-track move only ever silently rejected
+an overlapping drop — no snap, no ripple, just nothing happening. Neither
+path went through `computeInsertion` (D-095/D-100's own "where does a new
+clip actually fit" algorithm) — an *existing* clip being moved had a
+strictly worse placement experience than a brand-new one dropped from
+Sources, for no real reason.
+
+**The fix — a real consolidation, not another patch on the old model, per
+the owner's own framing** ("one insertion/placement algorithm for every way
+a clip can land on a track, rather [than] three different placement
+rules"): new `resolveClipLanding` (`timeline.ts`) wraps `computeInsertion`
+for an EXISTING clip — excluding its own current slot (by id) from the
+candidate track so it never collides with itself — used by both
+`onDndDragEnd`'s move branch (drag) and `doMoveToTrack` (the "Move to ▾"
+dropdown), closing an identical latent bug in that second, less-obvious path
+too. `EditOp`'s `move` case gains `ripple?: boolean`, mirrored field-for-
+field into `chroma-timeline::Timeline::move_clip` (a real Rust-side caller
+exists — `chroma_timeline_move_clip`, unused by the frontend today but kept
+consistent per this repo's "mirrors X field-for-field" convention):
+
+- Overlap is now rejected for **every** move, same-track or cross-track —
+  this reverses D-096's cross-track-overlap-allowed policy outright. Real
+  intentional layer-stacking (V1/V2 compositing, D-088) stays possible
+  through other means; it's just no longer a side effect of where a drag
+  happens to land.
+- `ripple: true` shifts every clip on the destination track at/after the
+  landing point later by the moved clip's own duration, mirroring
+  `add_clip`'s existing ripple contract exactly — the same "make room"
+  semantics a brand-new Sources clip already gets, now available to an
+  existing clip being moved too.
+- Cross-track move now also reads `event.delta.x` (previously tracked only
+  for same-track, silently ignored for cross-track) to compute a real
+  intended landing frame, instead of always reusing the clip's pre-drag
+  position — the actual root cause of the reported bug.
+
+**A real edge case caught by testing, not shipped blind:** a first pass at
+the ripple shift (`other.start_frame >= landing_point`) only moves clips
+starting at or after the landing point — a clip that starts *before* the
+landing point but extends past it (straddling) wouldn't get cleared, and a
+hand-written test proved it (`vitest` caught this, not manual review). This
+shape isn't reachable through any real caller — `resolveClipLanding`/
+`computeInsertion` always produce an edge-aligned landing point (an existing
+clip's own `start_frame` or end), so a straddling clip can't exist at a
+chosen landing point in practice. Rather than leave `applyOp`'s public
+contract silently dependent on that invariant holding forever, both
+`applyOp`'s `move` case (TS) and `Timeline::move_clip` (Rust) now detect a
+straddling clip explicitly and reject the op (same as a non-ripple overlap)
+rather than risk a silently-still-overlapping result — defensive, not
+theoretical: the failing case is now a real regression test on both sides
+(`timeline.test.ts`'s "ripple: true still rejects a straddling clip it
+cannot cleanly shift out of the way", and Rust's
+`move_clip_ripple_makes_room_same_track_and_cross_track`, which exercises
+both the working ripple case and — via a second, separate scenario in the
+same test — the straddle rejection), alongside a dedicated
+`move_clip_rejects_overlap_across_tracks_too` replacing the now-stale D-096
+test that asserted the opposite policy.
+
+**Verified:** `packages/editor` — 100/100 `vitest` (was 91; 9 net new,
+covering `resolveClipLanding` directly plus the reversed/ripple/straddle
+`move` cases). `crates/chroma-timeline` — 61/61 `cargo test -p
+chroma-timeline` (was 60; 1 new, the straddle-rejection case),
+`cargo clippy -p chroma-timeline` clean (checked `ps aux | grep cargo`
+before each; a live compile from a concurrent agent's session was waited
+out first, not raced). `cargo check -p RapidRAW` (verifying the
+`chroma_timeline_move_clip` Tauri command's updated signature) could not
+complete — it fails at the build-script stage on an unrelated, in-progress
+`tauri-plugin-wdio` permission-capability mismatch from a concurrent
+session's `tauri-driver` E2E work, not from anything touched here (confirmed
+by reading the error: it names `wdio-webdriver:default`, a plugin/
+capability this pass never touched). That command has zero real callers in
+the app or MCP surface today (confirmed by grep) — a low-risk, mechanical
+signature change, but flagged honestly as not compiler-verified rather than
+claimed clean.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

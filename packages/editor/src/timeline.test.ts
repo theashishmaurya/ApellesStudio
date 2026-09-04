@@ -12,6 +12,7 @@ import {
   endFrame,
   labelForOp,
   nextAppendFrame,
+  resolveClipLanding,
   type Clip,
   type Timeline,
   type Track,
@@ -383,12 +384,14 @@ describe('move (D-058/D-080)', () => {
     expect(moved.source_path).toBe('/media/b.mov');
   });
 
-  // D-096: a cross-track move is now ALLOWED to overlap another clip
-  // already on the destination track — since D-088's real multi-layer
-  // compositor, that's a normal composited-layer stack (the whole point of
-  // V1/V2), not an error state. Only a SAME-track overlap is still rejected
-  // (see the test above) — two clips can't occupy one track at once.
-  it('allows a cross-track move to overlap a clip already on the destination track', () => {
+  // D-104: reverses D-096 — a cross-track move landing directly on top of
+  // another clip's time range is now rejected too, same as a same-track
+  // move (the test above). D-096 reasoned that since D-088's real
+  // multi-layer compositor renders every visible track together, cross-track
+  // overlap is a normal composited-layer stack, not an error — true in
+  // principle, but live-tested and explicitly overridden by the owner:
+  // overlap should never be a reachable outcome of a plain move.
+  it('rejects (no-op) a cross-track move that would overlap a clip already on the destination track', () => {
     const before: Timeline = {
       id: 't1',
       name: 'Timeline',
@@ -399,11 +402,43 @@ describe('move (D-058/D-080)', () => {
     };
     // moving `a` (duration 100) to start at 100 on track 1 -> [100,200), overlaps [50,150)
     const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100 });
+    expect(after).toBe(before);
+  });
+
+  it('ripple: true shifts everything on the destination track at/after the landing point, same-track or cross-track', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [clip('a', 'Intro', { start_frame: 0, duration: 100 })] },
+        { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 100, duration: 100 })] }, // [100,200)
+      ],
+    };
+    // landing exactly on x's own start (the real, edge-aligned case
+    // `resolveClipLanding` always produces) — x shifts later to make room.
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100, ripple: true });
     expect(after.tracks[0].clips).toHaveLength(0);
     expect(after.tracks[1].clips.map((c) => ({ id: c.id, start: c.start_frame }))).toEqual([
-      { id: 'x', start: 50 },
+      { id: 'x', start: 200 }, // shifted later by a's duration (100) to make room
       { id: 'a', start: 100 },
     ]);
+  });
+
+  it('ripple: true still rejects a straddling clip it cannot cleanly shift out of the way', () => {
+    // x starts BEFORE the landing point but extends past it — not a real
+    // ripple-insert scenario any NLE supports without splitting x first
+    // (and not a shape `resolveClipLanding` ever actually produces); ripple
+    // can't rescue this, so it's rejected the same as a plain overlap.
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [
+        { kind: 'video', clips: [clip('a', 'Intro', { start_frame: 0, duration: 100 })] },
+        { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 50, duration: 100 })] }, // [50,150)
+      ],
+    };
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 1, clip: 0, startFrame: 100, ripple: true });
+    expect(after).toBe(before);
   });
 
   it('a same-track, same-position move is a real no-op', () => {
@@ -416,6 +451,71 @@ describe('move (D-058/D-080)', () => {
     const before = tl(backToBack());
     expect(applyOp(before, { kind: 'move', fromTrack: 5, toTrack: 0, clip: 0, startFrame: 10 })).toBe(before);
     expect(applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 5, clip: 0, startFrame: 10 })).toBe(before);
+  });
+});
+
+// D-104 — the real bug fix: `TimelinePane`'s drag/"Move to" paths both go
+// through this to decide where an EXISTING clip lands, so overlap is never a
+// reachable outcome of a plain drag (owner, live-tested: "i should be able
+// to drop it before any clip, between two clip or after two clip, not on top
+// of the clip... that should not be possible").
+describe('resolveClipLanding (D-104)', () => {
+  const SNAP = 10;
+
+  it('lands exactly where intended when that spot is genuinely open', () => {
+    const dest: Track = { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 0, duration: 100 })] };
+    // moving clip "m" (not on this track) to an open spot at 500
+    expect(resolveClipLanding(dest, 'm', 50, 500, SNAP)).toEqual({ startFrame: 500, ripple: false });
+  });
+
+  it('excludes the clip\'s own current slot on the destination track — a same-track no-op drop stays put', () => {
+    const dest: Track = { kind: 'video', clips: backToBack() }; // a:[0,100) b:[100,200)
+    // "b" dropped back onto its own current position must not collide with itself
+    expect(resolveClipLanding(dest, 'b', 100, 100, SNAP)).toEqual({ startFrame: 100, ripple: false });
+  });
+
+  it('landing directly on top of another clip snaps to the nearest open edge instead', () => {
+    const dest: Track = { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 100, duration: 100 })] }; // [100,200)
+    // dropped right in the middle of x's span, closer to its start than its end
+    expect(resolveClipLanding(dest, 'm', 50, 130, SNAP)).toEqual({ startFrame: 100, ripple: true });
+    // dropped closer to x's end
+    expect(resolveClipLanding(dest, 'm', 50, 180, SNAP)).toEqual({ startFrame: 200, ripple: false });
+  });
+
+  it('drops right on the seam between two touching clips ripple-insert there, not overlap', () => {
+    const dest: Track = { kind: 'video', clips: backToBack() }; // a:[0,100) b:[100,200), zero gap between them
+    // a 30-frame clip dropped exactly on the seam snaps to it, but the seam
+    // has zero width — b starts exactly where a ends — so fitting the new
+    // clip there necessarily means shifting b later, not landing in an
+    // already-open spot.
+    expect(resolveClipLanding(dest, 'm', 30, 100, SNAP)).toEqual({ startFrame: 100, ripple: true });
+  });
+
+  it('a genuinely ambiguous drop (in a gap, but too big to fit, too far to snap) falls back to appending after the last clip', () => {
+    // a:[0,100), a real gap [100,150), c:[150,250) — dropping at 120 (inside
+    // the gap, not covered by any clip) with a 50-frame clip would still
+    // overflow into c ([120,170) overlaps [150,250)), and 120 is too far
+    // (>SNAP) from either the gap's start (100) or c's start (150) to snap —
+    // computeInsertion's own contract returns null here (neither an open
+    // fit, a clean snap, nor inside any clip's span to fall back to a half),
+    // and resolveClipLanding's own fallback is exactly this: land after
+    // everything else on the track instead of guessing.
+    const dest: Track = {
+      kind: 'video',
+      clips: [clip('a', 'A', { start_frame: 0, duration: 100 }), clip('c', 'C', { start_frame: 150, duration: 100 })],
+    };
+    expect(computeInsertion(dest, 120, 50, SNAP)).toBeNull(); // confirms the premise, not just the wrapper's fallback
+    expect(resolveClipLanding(dest, 'm', 50, 120, SNAP)).toEqual({ startFrame: 250, ripple: false });
+  });
+
+  it('an empty destination track always lands exactly at the intended frame', () => {
+    const dest: Track = { kind: 'video', clips: [] };
+    expect(resolveClipLanding(dest, 'm', 50, 42, SNAP)).toEqual({ startFrame: 42, ripple: false });
+  });
+
+  it('clamps a negative intended frame to 0', () => {
+    const dest: Track = { kind: 'video', clips: [] };
+    expect(resolveClipLanding(dest, 'm', 50, -20, SNAP)).toEqual({ startFrame: 0, ripple: false });
   });
 });
 

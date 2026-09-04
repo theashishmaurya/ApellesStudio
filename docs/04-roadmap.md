@@ -586,19 +586,28 @@ Rolldown-Babel toolchain (D-091), the stale `app/bench` perf harness revived and
 retargeted at the Edit-tab timeline (D-092), local-only user-action telemetry wired
 into `@chroma/bridge` (D-093).
 
-**The NLE drag-and-drop saga (2026-09-03 night → 2026-09-04, D-094 through D-100,
-B-026/027/028/029):** six live-tested rounds chasing the owner's real-time bug reports
-on the timeline UI — cross-track clip move, track reorder, ripple-insert-on-drop,
+**The NLE drag-and-drop saga (2026-09-03 night → 2026-09-04, D-094 through D-104,
+B-026/027/028/029/030):** seven live-tested rounds chasing the owner's real-time bug
+reports on the timeline UI — cross-track clip move, track reorder, ripple-insert-on-drop,
 mid-stack track insertion with kind inference, an oversized drag-ghost image — first
 built on raw HTML5 drag-and-drop, then twice caught passing a Chromium test harness
 while failing live in the real Tauri/WKWebView window. Root-caused and fixed for real
-in the end (D-100): a stuck `pointer-events` flag was silently blocking all
-interaction on a track row after an interrupted drag, and two competing drag systems
-(the timeline library's native same-track drag + a new dnd-kit cross-track mechanism)
-were racing for one gesture — unified onto a single `ClipBody`/`useDraggable` covering
-same-track and cross-track move alike, library's own move-drag disabled, edge-trim
-untouched. `docs/notes/dnd-kit-migration.md` has the real license/maintenance/
-StrictMode-risk evaluation behind the library choice.
+at D-100: a stuck `pointer-events` flag was silently blocking all interaction on a
+track row after an interrupted drag, and two competing drag systems (the timeline
+library's native same-track drag + a new dnd-kit cross-track mechanism) were racing
+for one gesture — unified onto a single `ClipBody`/`useDraggable` covering same-track
+and cross-track move alike, library's own move-drag disabled, edge-trim untouched.
+`docs/notes/dnd-kit-migration.md` has the real license/maintenance/StrictMode-risk
+evaluation behind the library choice. **One more round after that (D-104, B-030)**:
+the unified mechanism still let a cross-track drop land directly overlapping another
+clip — reused the source clip's own `start_frame` verbatim instead of deriving it from
+the drop, compounded by D-096's own explicit cross-track-overlap-allowed policy.
+Fixed by routing every way a clip lands on a track (new from Sources, moved same-track,
+moved cross-track) through one placement algorithm (`resolveClipLanding`, wrapping the
+existing `computeInsertion`) — overlap is no longer a reachable outcome of a plain
+drag, `ripple: true` makes room instead when landing between two touching clips. This
+reverses D-096's cross-track-overlap-allowed policy outright, per the owner's explicit,
+absolute direction.
 
 **Global Inspector, all 4 phases (2026-09-04 early morning, D-081/D-099/D-102/D-103):**
 a real typed property panel for Motion's 8 primitives (`InspectorPanel.tsx`/

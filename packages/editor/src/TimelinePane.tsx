@@ -195,6 +195,7 @@ import {
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
+  resolveClipLanding,
   timelineFps,
   videoTrackIndex,
   type Clip,
@@ -1165,17 +1166,20 @@ export function TimelinePane() {
   };
 
   // D-080: "Move to another track" — the library has no cross-row drag (see
-  // the module doc), so this is the real, working affordance for it: pick a
-  // destination track from the toolbar dropdown, the clip keeps its own
-  // `start_frame` (only the track changes) unless that would overlap
-  // something already there, in which case `applyOp` no-ops it (same
-  // "just don't do it" contract every other op here already has).
+  // the module doc), so this is a discoverable affordance for the same
+  // cross-track move `ClipBody`'s drag handle does. D-104: lands via
+  // `resolveClipLanding` (same as the drag path), trying to keep the clip's
+  // own current time position but snapping to a real open/ripple slot if
+  // that would land on top of something already on `toTrack` — never a
+  // silent overlap, never a silent no-op either.
   const doMoveToTrack = (toTrack: number) => {
     if (!selected) return;
     const i = idxOf(selected.track, selected.id);
     if (i < 0) return;
     const clip = clipsOf(selected.track)[i];
-    applyOp({ kind: 'move', fromTrack: selected.track, toTrack, clip: i, startFrame: clip.start_frame });
+    const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+    const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, clip.start_frame, snapFrames);
+    applyOp({ kind: 'move', fromTrack: selected.track, toTrack, clip: i, startFrame, ripple });
     setSelected({ track: toTrack, id: selected.id });
   };
 
@@ -1289,26 +1293,33 @@ export function TimelinePane() {
       if (!overData || overData.type !== 'track') return; // dropped outside any track — cancel, nothing to do
       const toTrack = overData.track;
       const clip = clipsOf(fromTrack)[i];
-      if (toTrack === fromTrack) {
-        // Same track: a real reposition (D-096/B-027's own fix, now the
-        // ONLY path for this, not a fallback) — `event.delta.x` is the net
-        // pointer movement for the whole drag, in screen px, converted to
-        // frames the same way `xToFrame` does, just relative rather than
-        // absolute (no `rect`/`clientX` needed).
-        const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
-        const startFrame = Math.max(0, clip.start_frame + deltaFrames);
-        applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame });
-      } else {
-        // Cross-track: keeps its own `start_frame` (D-094's original
-        // behaviour), overlap allowed (D-096).
-        applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame: clip.start_frame });
-      }
+      // D-104 — `event.delta.x` is the net pointer movement for the whole
+      // drag, in screen px, converted to frames the same way `xToFrame` does
+      // (relative rather than absolute — no `rect`/`clientX` needed). Used
+      // for BOTH cases now: cross-track previously ignored horizontal
+      // movement entirely and just kept the clip's original frame verbatim,
+      // which is what silently landed a cross-track drop directly on top of
+      // whatever already occupied that same time range on the destination
+      // track. `resolveClipLanding` (mirroring `computeInsertion`, the same
+      // placement algorithm a brand-new clip from Sources already uses) then
+      // resolves that intended frame to a real slot — before/after/rippled-
+      // between neighbours, never a silent overlap, for a same-track
+      // reposition or a cross-track move alike (owner, live-tested: "i
+      // should be able to drop it before any clip, between two clip or
+      // after two clip, not on top of the clip... that should not be
+      // possible"). This reverses D-096's cross-track-overlap-allowed
+      // policy — see `EditOp`'s `move` case for the full reasoning.
+      const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+      const intendedFrame = clip.start_frame + deltaFrames;
+      const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, intendedFrame, snapFrames);
+      applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame, ripple });
       // A drag also selects the clip it moved — same-track or cross-track —
       // matching normal NLE expectations (dragging a clip is also picking
       // it), not just the old cross-track-only behaviour.
       setSelected({ track: toTrack, id: clipId });
     },
-    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps],
+    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps, tracks],
   );
 
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);

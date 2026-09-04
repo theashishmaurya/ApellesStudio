@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Unified clip-move placement, reversing D-096: overlap
+  is never a reachable outcome of a plain drag (D-104, B-030).** Cross-track
+  move used to reuse a clip's own `start_frame` verbatim (ignoring where it
+  was actually dropped) and D-096 had made cross-track overlap an explicit
+  allowance — together, dragging a clip onto another track could land it
+  stacked directly on top of whatever was already there. New
+  `resolveClipLanding` wraps `computeInsertion` (the same "where does this
+  fit" algorithm a new clip from Sources already gets) for an EXISTING clip
+  being moved, used by both the drag path and the "Move to ▾" dropdown.
+  `move`/`move_clip` gain `ripple`, mirrored TS/Rust: overlap is now
+  rejected for every move, same-track or cross-track, unless `ripple`
+  shifts the way clear (same contract `add_clip` already has). A real edge
+  case (a clip straddling the landing point) is explicitly rejected rather
+  than left silently still-overlapping. `packages/editor` 91→100 tests,
+  `chroma-timeline` 60→61, `cargo clippy -p chroma-timeline` clean. The
+  `chroma_timeline_move_clip` Tauri command's signature update (a
+  zero-caller command) could not be `cargo check`-verified — blocked by an
+  unrelated, concurrent-session in-progress `tauri-plugin-wdio` permission
+  mismatch, not anything touched here.
 - **2026-09-04** — **Real sidecar ownership: content-hash staleness
   detection (D-101, roadmap item 9).** `ai/server.py` now reports a
   `content_sha256` of its own bytes in `/health`; `chroma::sidecar` computes

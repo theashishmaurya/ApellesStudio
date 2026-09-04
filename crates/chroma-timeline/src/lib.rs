@@ -534,24 +534,34 @@ impl Timeline {
     /// here" primitive; `reorder` (Vec-order only) does not move clips in
     /// time.
     ///
+    /// D-104 — **overlap is rejected for every move now, same-track or
+    /// cross-track**, unless `ripple` is true. This reverses D-096's
+    /// "cross-track overlap allowed" policy: D-096 reasoned that since
+    /// `resolve_visible_video_layers_at` composites every visible track
+    /// together, two clips overlapping in time on different tracks is a
+    /// normal layered edit, not an error — true in principle, but
+    /// live-tested and explicitly overridden: landing directly on top of
+    /// another clip should never be a reachable outcome of a plain move. If
+    /// `ripple` is true and the destination range overlaps something, every
+    /// clip on `to_track` at/after `to_start_frame` shifts later by this
+    /// clip's own `duration` to make room instead (mirrors the ripple-insert
+    /// contract the frontend's `add_clip`/`computeInsertion` already has for
+    /// a brand-new clip from Sources — same "make room" semantics, now
+    /// available to an existing clip being moved too).
+    ///
     /// Errors, none of which mutate the timeline: `NoSuchTrack`/`NoSuchClip`
     /// for an out-of-range source or destination track/clip index,
-    /// `NegativePosition` for `to_start_frame < 0`, `Overlap` if this is a
-    /// SAME-TRACK move (`from_track == to_track`) and the destination range
-    /// would intersect any *other* clip already there (the clip being moved
-    /// never counts as overlapping itself) — a cross-track move is allowed
-    /// to overlap another clip already on `to_track` (D-096): since
-    /// `resolve_visible_video_layers_at` composites every visible track
-    /// together, two clips overlapping in time on DIFFERENT tracks is the
-    /// normal, intended shape of a layered edit, not an error state. Only
-    /// within ONE track does an overlap still make no sense (a single track
-    /// can't show two different things at the same frame).
+    /// `NegativePosition` for `to_start_frame < 0`, `Overlap` if the
+    /// destination range intersects any *other* clip already on `to_track`
+    /// (the clip being moved never counts as overlapping itself) and
+    /// `ripple` isn't set.
     pub fn move_clip(
         &mut self,
         from_track: usize,
         from_idx: usize,
         to_track: usize,
         to_start_frame: i64,
+        ripple: bool,
     ) -> Result<(), TimelineError> {
         if to_start_frame < 0 {
             return Err(TimelineError::NegativePosition(to_start_frame));
@@ -577,20 +587,42 @@ impl Timeline {
         if dest.locked {
             return Err(TimelineError::TrackLocked(to_track));
         }
-        // D-096 — only a same-track move ever rejects an overlap; see this
-        // fn's own doc for why cross-track overlap is now allowed.
-        let overlaps = from_track == to_track
-            && dest.clips.iter().enumerate().any(|(i, c)| {
-                if i == from_idx {
-                    return false; // the clip being moved never overlaps itself
-                }
-                to_start_frame < c.end_frame() && new_end > c.start_frame
-            });
-        if overlaps {
+        // D-104 — overlap is rejected for EVERY move now, same-track or
+        // cross-track alike (see this fn's own doc for why this reverses
+        // D-096). `i == from_idx` excludes the clip's own current slot —
+        // only meaningful for a same-track move, a no-op filter for
+        // cross-track since the clip isn't in `dest.clips` yet.
+        let overlaps = dest.clips.iter().enumerate().any(|(i, c)| {
+            if from_track == to_track && i == from_idx {
+                return false; // the clip being moved never overlaps itself
+            }
+            to_start_frame < c.end_frame() && new_end > c.start_frame
+        });
+        // D-104 — ripple only ever shifts clips starting AT/AFTER the
+        // landing point (the real, edge-aligned case the frontend's
+        // `resolveClipLanding`/`computeInsertion` always produces). A clip
+        // that starts BEFORE the landing point but extends past it
+        // (straddling — not a real ripple-insert scenario any NLE supports
+        // without splitting the clip first) can't be cleared by this shift,
+        // so ripple can't rescue that case either.
+        let straddles = dest.clips.iter().enumerate().any(|(i, c)| {
+            if from_track == to_track && i == from_idx {
+                return false;
+            }
+            c.start_frame < to_start_frame && c.end_frame() > to_start_frame
+        });
+        if overlaps && (!ripple || straddles) {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
 
         let mut clip = self.tracks[from_track].clips.remove(from_idx);
+        if overlaps && ripple {
+            for other in self.tracks[to_track].clips.iter_mut() {
+                if other.start_frame >= to_start_frame {
+                    other.start_frame += duration;
+                }
+            }
+        }
         clip.start_frame = to_start_frame;
         self.tracks[to_track].clips.push(clip);
         Ok(())
@@ -1248,7 +1280,7 @@ mod tests {
         let mut t = Timeline::from_shots(&shots());
         t.add_track(TrackKind::Video);
         let moved_id = t.tracks[0].clips[1].id.clone(); // "s2" / clip B
-        t.move_clip(0, 1, 1, 500).unwrap();
+        t.move_clip(0, 1, 1, 500, false).unwrap();
 
         assert_eq!(t.tracks[0].clips.len(), 2, "removed from the source track");
         assert_eq!(
@@ -1263,30 +1295,80 @@ mod tests {
     }
 
     #[test]
-    fn move_clip_allows_overlap_across_tracks_but_not_within_one() {
-        // D-096 — a cross-track move may land directly on top of another
-        // clip's time range (a real, intended composited-layer stack since
-        // D-088); a same-track move still can't (covered separately by
-        // `move_clip_rejects_overlap`, unchanged).
+    fn move_clip_rejects_overlap_across_tracks_too() {
+        // D-104 — reverses D-096: a cross-track move landing directly on top
+        // of another clip's time range is now rejected, same as a same-track
+        // move (`move_clip_rejects_overlap`). Live-tested and explicitly
+        // overridden by the owner: overlap should never be a reachable
+        // outcome of a plain drag.
         let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
         t.add_track(TrackKind::Video);
-        t.move_clip(0, 1, 1, 0).unwrap(); // B -> track 1 at [0,50)
-        // C is now track 0's clip index 1 (A stayed at 0); move it onto
-        // track 1 at frame 0 too — directly overlapping B's [0,50) range.
-        t.move_clip(0, 1, 1, 0).unwrap();
-        assert_eq!(
-            t.tracks[1].clips.len(),
-            2,
-            "both clips land on track 1, overlapping in time — not rejected"
-        );
+        t.move_clip(0, 1, 1, 0, false).unwrap(); // B -> track 1 at [0,50)
+        // C is now track 0's clip index 1 (A stayed at 0); try to move it
+        // onto track 1 at frame 0 too — directly overlapping B's [0,50).
+        let err = t.move_clip(0, 1, 1, 0, false).unwrap_err();
+        assert_eq!(err, TimelineError::Overlap(1, 0));
+        assert_eq!(t.tracks[1].clips.len(), 1, "the overlapping move was rejected");
+    }
+
+    #[test]
+    fn move_clip_ripple_makes_room_same_track_and_cross_track() {
+        // D-104 — `ripple: true` shifts everything at/after the landing
+        // point later by the moved clip's own duration to make room, instead
+        // of overlapping — the same "make room" contract `add_clip`'s
+        // `computeInsertion` already gives a brand-new clip from Sources, now
+        // available to an EXISTING clip being moved too.
+        let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
+
+        // Cross-track: move B onto a fresh track 1 at frame 0, then ripple C
+        // (now index 1 on track 0) onto the SAME spot on track 1 — B should
+        // shift later by C's duration (200) instead of being overlapped.
+        t.add_track(TrackKind::Video);
+        t.move_clip(0, 1, 1, 0, false).unwrap(); // B -> track 1 @ [0,50)
+        t.move_clip(0, 1, 1, 0, true).unwrap(); // C -> track 1 @ [0,200), ripples B later
         let starts: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.start_frame).collect();
-        assert_eq!(starts, vec![0, 0], "genuinely overlapping, not shifted apart");
+        assert_eq!(starts, vec![200, 0], "B shifted to make room for C, not overlapped");
+        let durations: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.duration).collect();
+        assert_eq!(durations, vec![50, 200], "only start_frame moved, durations untouched");
+
+        // Same-track: a fresh timeline has A[0,100) B[100,150) C[150,350) on
+        // track 0. Rippling A onto B's exact start (100) should shift BOTH
+        // B and C later by A's duration (100), not just the nearest one.
+        let mut t2 = Timeline::from_shots(&shots());
+        t2.move_clip(0, 0, 0, 100, true).unwrap(); // A -> [100,200), ripples B and C
+        let by_name: std::collections::HashMap<&str, i64> = t2.tracks[0]
+            .clips
+            .iter()
+            .map(|c| (c.name.as_str(), c.start_frame))
+            .collect();
+        assert_eq!(by_name["A"], 100, "A landed at the requested frame");
+        assert_eq!(by_name["B"], 200, "B rippled later by A's duration");
+        assert_eq!(by_name["C"], 250, "C rippled later too, still after B's new start");
+    }
+
+    #[test]
+    fn move_clip_ripple_rejects_a_straddling_clip_it_cannot_cleanly_shift() {
+        // D-104 — ripple only ever shifts clips starting AT/AFTER the
+        // landing point (the real, edge-aligned case the frontend's
+        // `resolveClipLanding` always produces). B here starts BEFORE the
+        // landing point (50 < 70) but extends past it (100 > 70) — not a
+        // real ripple-insert scenario any NLE supports without splitting B
+        // first — so ripple can't rescue it; this must reject the same as a
+        // plain overlap.
+        let mut t = Timeline::from_shots(&shots());
+        t.add_track(TrackKind::Video);
+        t.move_clip(0, 1, 1, 50, false).unwrap(); // B -> track 1 @ [50,100)
+        // A (duration 100) dropped onto track 1 at frame 70 -> [70,170),
+        // straddling B's [50,100) span.
+        let err = t.move_clip(0, 0, 1, 70, true).unwrap_err();
+        assert_eq!(err, TimelineError::Overlap(1, 70));
+        assert_eq!(t.tracks[1].clips.len(), 1, "the straddling ripple attempt was rejected, nothing moved");
     }
 
     #[test]
     fn move_clip_within_the_same_track_repositions_it() {
         let mut t = Timeline::from_shots(&shots());
-        t.move_clip(0, 0, 0, 1000).unwrap(); // move A far to the right
+        t.move_clip(0, 0, 0, 1000, false).unwrap(); // move A far to the right
         assert_eq!(
             t.tracks[0].clips.len(),
             3,
@@ -1304,27 +1386,27 @@ mod tests {
     fn move_clip_rejects_overlap() {
         let mut t = Timeline::from_shots(&shots());
         // try to move C (start 150, dur 200) onto A's slot (start 0, dur 100)
-        let err = t.move_clip(0, 2, 0, 0).unwrap_err();
+        let err = t.move_clip(0, 2, 0, 0, false).unwrap_err();
         assert_eq!(err, TimelineError::Overlap(0, 0));
         // a partial overlap is rejected too
-        let err2 = t.move_clip(0, 2, 0, 50).unwrap_err();
+        let err2 = t.move_clip(0, 2, 0, 50, false).unwrap_err();
         assert_eq!(err2, TimelineError::Overlap(0, 50));
         // landing exactly back-to-back (no overlap) is fine
-        t.move_clip(0, 2, 0, 100 + 50).unwrap(); // right after B ends
+        t.move_clip(0, 2, 0, 100 + 50, false).unwrap(); // right after B ends
         assert_eq!(t.tracks[0].clips.len(), 3);
     }
 
     #[test]
     fn move_clip_rejects_out_of_range_and_negative_position() {
         let mut t = Timeline::from_shots(&shots());
-        assert_eq!(t.move_clip(9, 0, 0, 0), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(t.move_clip(9, 0, 0, 0, false), Err(TimelineError::NoSuchTrack(9)));
         assert_eq!(
-            t.move_clip(0, 9, 0, 0),
+            t.move_clip(0, 9, 0, 0, false),
             Err(TimelineError::NoSuchClip(9, 0))
         );
-        assert_eq!(t.move_clip(0, 0, 9, 0), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(t.move_clip(0, 0, 9, 0, false), Err(TimelineError::NoSuchTrack(9)));
         assert_eq!(
-            t.move_clip(0, 0, 0, -1),
+            t.move_clip(0, 0, 0, -1, false),
             Err(TimelineError::NegativePosition(-1))
         );
     }
@@ -1347,8 +1429,8 @@ mod tests {
     fn two_video_track_timeline() -> Timeline {
         let mut t = Timeline::from_shots(&shots()); // track 0: A[0,100) B[100,150) C[150,350)
         t.add_track(TrackKind::Video); // track 1, empty
-        t.move_clip(0, 1, 1, 0).unwrap(); // B: track0 -> track1 @ [0,50)
-        t.move_clip(0, 1, 1, 100).unwrap(); // C: track0 -> track1 @ [100,300)
+        t.move_clip(0, 1, 1, 0, false).unwrap(); // B: track0 -> track1 @ [0,50)
+        t.move_clip(0, 1, 1, 100, false).unwrap(); // C: track0 -> track1 @ [100,300)
         t
     }
 
@@ -1421,9 +1503,9 @@ mod tests {
         t.add_track(TrackKind::Video); // track 2, empty
         // Shrink track 0 to a short clip so it genuinely runs out early.
         t.trim_end(0, 0, -50).unwrap(); // A: 100 -> 50 frames, now [0,50)
-        t.move_clip(0, 1, 1, 0).unwrap(); // B -> track 1 @ [0,50), then trimmed below
+        t.move_clip(0, 1, 1, 0, false).unwrap(); // B -> track 1 @ [0,50), then trimmed below
         t.trim_end(1, 0, -20).unwrap(); // track 1's clip: 50 -> 30 frames, now [0,30)
-        t.move_clip(0, 1, 2, 0).unwrap(); // C -> track 2 @ [0, its own length)
+        t.move_clip(0, 1, 2, 0, false).unwrap(); // C -> track 2 @ [0, its own length)
         t
     }
 
@@ -1728,14 +1810,14 @@ mod tests {
     #[test]
     fn move_clip_refuses_when_the_source_track_is_locked() {
         let mut t = locked_two_track_timeline();
-        assert_eq!(t.move_clip(0, 0, 1, 200), Err(TimelineError::TrackLocked(0)));
+        assert_eq!(t.move_clip(0, 0, 1, 200, false), Err(TimelineError::TrackLocked(0)));
     }
 
     #[test]
     fn move_clip_refuses_when_the_destination_track_is_locked() {
         let mut t = two_video_track_timeline();
         t.tracks[1].locked = true;
-        assert_eq!(t.move_clip(0, 0, 1, 200), Err(TimelineError::TrackLocked(1)));
+        assert_eq!(t.move_clip(0, 0, 1, 200, false), Err(TimelineError::TrackLocked(1)));
     }
 
     /// A locked track's clips can't be edited, but the track LIST itself —

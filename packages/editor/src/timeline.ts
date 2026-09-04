@@ -285,6 +285,37 @@ export function computeInsertion(
   return null;
 }
 
+/** D-104 — where an EXISTING clip should land when dragged onto `dest`
+ *  (same-track reposition or cross-track move) at `intendedFrame`. Owner's
+ *  explicit, absolute direction after live-testing D-096/D-100: "i should be
+ *  able to drop it before any clip, between two clip or after two clip, not
+ *  on top of the clip... that should not be possible" — landing mid-overlap
+ *  is never a reachable outcome of a plain drag, full stop, not "allowed
+ *  unless you signal otherwise." This is the exact question `computeInsertion`
+ *  already answers for a brand-new clip dropped from Sources — reused here
+ *  rather than a second placement algorithm, with the moving clip's own
+ *  current slot excluded (by id) so it doesn't collide with itself when it's
+ *  already sitting on `dest`. Falls back to appending after everything else
+ *  on `dest` on the rare `computeInsertion` `null` case (a frame that's
+ *  neither near a snap edge nor inside/adjacent to any clip's span, and NOT
+ *  a plain open fit either), same safe default `add_clip` itself falls back
+ *  to. This REVERSES D-096's "cross-track overlap allowed" policy — see the
+ *  `move` `EditOp`'s own doc for why; real intentional layer-stacking (V1/V2
+ *  compositing, D-088) stays possible via other means, just not as a side
+ *  effect of where a drag happens to land. */
+export function resolveClipLanding(
+  dest: Track,
+  movingClipId: string,
+  duration: number,
+  intendedFrame: number,
+  snapFrames: number,
+): { startFrame: number; ripple: boolean } {
+  const withoutSelf: Track = { ...dest, clips: dest.clips.filter((c) => c.id !== movingClipId) };
+  const insertion = computeInsertion(withoutSelf, Math.max(0, intendedFrame), duration, snapFrames);
+  if (insertion) return insertion;
+  return { startFrame: nextAppendFrame(withoutSelf), ripple: false };
+}
+
 /** Where a new clip appended to `tr` should start — right after the
  *  furthest-out clip already on it (0 for an empty track). Mirrors what
  *  `backfill_legacy_positions` reconstructs for a legacy back-to-back track,
@@ -345,14 +376,26 @@ export type EditOp =
    *  different track (`fromTrack !== toTrack`) — the drag handle / "move to
    *  another track" affordance in the panel. Mirrors
    *  `chroma-timeline::Timeline::move_clip(from_track, from_idx, to_track,
-   *  to_start_frame)` field-for-field. Overlap is rejected (no-op) ONLY for
-   *  a same-track move (`fromTrack === toTrack`) — two clips can't occupy
-   *  the same frame on ONE track. A cross-track move is allowed to overlap
-   *  another clip already on `toTrack` (D-096) — since D-088's real
-   *  multi-layer compositor, that's a normal composited-layer stack, not an
-   *  error state; the earlier blanket rejection was stale "top wins" logic
-   *  from before D-088 existed. */
-  | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number }
+   *  to_start_frame)` field-for-field, extended with `ripple` (D-104).
+   *
+   *  D-104 — **overlap is rejected for every move now, same-track or
+   *  cross-track**, unless `ripple: true`. This reverses D-096's "cross-track
+   *  overlap allowed" policy: D-096 reasoned that since D-088's compositor
+   *  renders every visible track together, two clips overlapping in time
+   *  across tracks is a normal composited stack, not an error — true in
+   *  principle, but live-tested and explicitly overridden by the owner:
+   *  landing directly on top of another clip should never be a reachable
+   *  outcome of a plain drag. The caller (`TimelinePane`'s
+   *  `resolveClipLanding`, mirroring `computeInsertion`) is expected to
+   *  always resolve a real, non-overlapping `startFrame` before calling this
+   *  — before the first clip, snapped into an open gap, or `ripple: true`
+   *  to make room between two already-touching clips (shifting every clip on
+   *  `toTrack` at/after `startFrame` later by this clip's own duration,
+   *  mirroring `add_clip`'s existing ripple contract) — never a silent
+   *  overlap. If `startFrame` still overlaps something and `ripple` isn't
+   *  set (a caller bug, not an expected path), the op is rejected (no-op)
+   *  rather than corrupting the timeline. */
+  | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number; ripple?: boolean }
   /** D-080 — append a new empty track. Mirrors `chroma_timeline::Timeline::
    *  add_track`: always succeeds, no validation to mirror. */
   | { kind: 'add_track'; trackKind: 'video' | 'audio' }
@@ -598,33 +641,42 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (src.locked || dest.locked) return tl;
     if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
     const newEnd = op.startFrame + c.duration;
-    // D-096 — overlap is only ever rejected for a SAME-TRACK move now.
-    // Before D-088's real multi-layer compositor, only one video track's
-    // clip was ever visible per frame ("top wins"), so two clips
-    // overlapping in time on DIFFERENT tracks would have been meaningless —
-    // rejecting cross-track overlap made sense then. D-088 shipped
-    // `resolve_visible_video_layers_at`, which composites every visible
-    // track together — two clips overlapping in time across tracks is now
-    // the NORMAL, intended shape of a real edit (that's the entire point of
-    // V1/V2 stacking), not an error state, so continuing to reject it here
-    // was stale behaviour left over from the pre-compositing model, not a
-    // deliberate safety rule (confirmed live: dragging a clip from one
-    // track onto another that already held something in the same time
-    // range silently no-op'd instead of landing it as a new layer). WITHIN
-    // one track, two clips overlapping in time still makes no sense (a
-    // single track can't show two different things at once) — that
-    // rejection is unchanged.
-    const overlaps =
-      op.fromTrack === op.toTrack &&
-      dest.clips.some((other, i) => {
-        if (i === op.clip) return false;
-        return op.startFrame < endFrame(other) && newEnd > other.start_frame;
-      });
-    if (overlaps) return tl;
+    // D-104 — overlap is rejected for EVERY move now, same-track or
+    // cross-track alike (reverses D-096's cross-track allowance, see this
+    // op's own doc comment for why). `i === op.clip` excludes the clip's own
+    // current slot from the check — only meaningful for a same-track move,
+    // a no-op filter for cross-track since the clip isn't in `dest.clips` yet.
+    const overlaps = dest.clips.some((other, i) => {
+      if (op.fromTrack === op.toTrack && i === op.clip) return false;
+      return op.startFrame < endFrame(other) && newEnd > other.start_frame;
+    });
+    // D-104 — ripple only ever shifts clips starting AT/AFTER the landing
+    // point (the real, edge-aligned case `resolveClipLanding` always
+    // produces — computeInsertion's ripple positions are always an existing
+    // clip's own start_frame or endFrame). A clip that starts BEFORE the
+    // landing point but extends past it (straddling — not a real
+    // ripple-insert scenario any NLE supports without splitting the clip
+    // first) can't be cleared by this shift, so ripple can't rescue that
+    // case either; reject the same as a non-ripple overlap rather than
+    // leave a silently still-overlapping result.
+    const straddles = dest.clips.some((other, i) => {
+      if (op.fromTrack === op.toTrack && i === op.clip) return false;
+      return other.start_frame < op.startFrame && endFrame(other) > op.startFrame;
+    });
+    if (overlaps && (!op.ripple || straddles)) return tl;
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
+    const destClips = next.tracks[op.toTrack].clips;
+    if (overlaps && op.ripple) {
+      // D-104 — mirrors `add_clip`'s own ripple contract: everything on the
+      // destination track at/after the landing point shifts later by this
+      // clip's own duration to make room, rather than overlapping it.
+      for (const other of destClips) {
+        if (other.start_frame >= op.startFrame) other.start_frame += moved.duration;
+      }
+    }
     moved.start_frame = op.startFrame;
-    next.tracks[op.toTrack].clips.push(moved);
+    destClips.push(moved);
     return next;
   }
 
