@@ -60,6 +60,23 @@ One or two lines per session. Detail lives in the decision it references.
   that had been failing on `main` since they first used A/V linking. Not
   verified in the assembled window — same environment constraint
   D-125/D-127/D-130 each disclosed.
+- **2026-09-04** — **The zoom step itself: one storage level for the whole
+  fine band, so a level change is a decimation and not a decode (D-134,
+  B-049, B-055).** Owner, after D-124/D-128: everything fast now *except*
+  clicking zoom. Measured, not assumed — a fine filmstrip chunk costs the
+  same to decode at 0.0625s spacing as at 0.5s (8s of the owner's 4K HEVC is
+  ~2.15s either way; the real shape is ~0.8s of ffmpeg spawn plus ~0.24s per
+  second of source), so D-128's four fine LOD levels were paying full price
+  four times for the same seconds — and awaiting a viewport's five chunks
+  one at a time while two of three semaphore permits sat idle. Every fine
+  level is now decoded once at the finest rung and the rest decimated from
+  it (exact, because the ladder is powers of two), a request's chunks load
+  concurrently, and a coarse chunk is derived free from cached finer ones.
+  **A fine-band zoom sweep over an already-decoded range: 31.3s → 0.001s**;
+  the cold first window 9.45s → 7.15s. B-055 found and fixed alongside: a
+  window overrunning the source used to lose its whole filmstrip, not just
+  the out-of-range tail. Not confirmed in the assembled Tauri window — same
+  honest gap as D-124/D-128.
 - **2026-09-04** — **Timeline-header overlap fixed, real master mute/volume
   added, real fullscreen wired (D-126).** The Sources/Inspector floating
   toggles (D-118/D-120) now render as elevated chips

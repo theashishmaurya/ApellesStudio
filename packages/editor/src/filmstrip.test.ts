@@ -59,6 +59,43 @@ describe('quantizeStepSecs', () => {
   });
 });
 
+describe('LEVEL_STEPS_SECONDS — the ladder the backend decodes against', () => {
+  it('is strictly powers of two, which is what makes a zoom step free (D-134, B-049)', () => {
+    // `chroma::filmstrip` decodes every sub-1s rung ONCE, at the finest one,
+    // and serves the rest by decimating it — exact only because each rung is
+    // exactly twice the one below. Insert a rung that isn't (a 0.3s, say) and
+    // the backend's `decimation()` returns `None` for it, so every zoom step
+    // in the fine band silently goes back to a full 5-chunk ffmpeg decode:
+    // the owner-reported stall, reintroduced with no visible symptom here.
+    for (let i = 1; i < LEVEL_STEPS_SECONDS.length; i += 1) {
+      expect(LEVEL_STEPS_SECONDS[i]).toBeCloseTo(LEVEL_STEPS_SECONDS[i - 1] * 2, 10);
+    }
+  });
+
+  it('makes every fine rung a whole-number decimation of the finest', () => {
+    const finest = LEVEL_STEPS_SECONDS[0];
+    for (const step of LEVEL_STEPS_SECONDS.filter((s) => s < 1)) {
+      const stride = step / finest;
+      expect(stride).toBe(Math.round(stride));
+      expect(Number.isInteger(Math.log2(stride))).toBe(true);
+    }
+  });
+
+  it('the whole fine band is reachable from the zoom range the UI allows', () => {
+    // If no real zoom ever selected a fine rung, the storage level the backend
+    // decodes at would be dead code and this property would be vacuous.
+    const fine = new Set<number>();
+    for (const pxPerSec of everyRealZoom()) {
+      const width = A001_SECS * pxPerSec;
+      const w = requestWindow(0, A001_SECS, width, 0, Math.min(width, VIEWPORT));
+      if (w && w.stepSecs < 1) fine.add(w.stepSecs);
+    }
+    expect([...fine].sort((a, b) => a - b)).toEqual(
+      LEVEL_STEPS_SECONDS.filter((s) => s < 1),
+    );
+  });
+});
+
 describe('desiredStepSecs', () => {
   it('asks for one tile per ~PX_PER_FRAME px, at any zoom', () => {
     for (const pxPerSec of everyRealZoom()) {

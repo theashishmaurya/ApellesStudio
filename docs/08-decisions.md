@@ -9809,6 +9809,65 @@ as D-131. By the time this rebased onto main's actual tip, two concurrent forks
 had landed D-131 (the player-slider variant typo) and D-132 (Edit-tab crop) —
 renumbered to **D-133**. Same renumbering-at-merge process D-127 and D-132
 document.
+---
+
+## D-134 — The zoom step itself: one storage level for the whole fine band, so a level change is a decimation and not a decode (B-049, B-055)
+
+**decided (2026-09-04) · built (2026-09-04)**
+
+**Context.** Owner, live, on the build with D-124 and D-128 merged: *"i do zoom in and zoom out its takes like forever to calculate the thumbnail also thumblain rest looks amazing... very fast now."* Two statements, and the second one is what makes the first diagnosable — scroll and project-open are genuinely fixed and confirmed so; the stall that is left is the **zoom action alone**. B-049 logged the obvious hypothesis (D-128 keys a chunk by `(source, level, index)`, so moving the level is cache-cold) as a hypothesis, explicitly not a conclusion, and listed three rival explanations. This pass tested it rather than assuming it.
+
+### What the measurement actually says
+
+Two things were timed before touching any code, both against the owner's own `A001_08302215_C019.MOV` (2.3 GB, 517s, 4K HEVC, real keyframe interval 0.875s), by reproducing `chroma::video::extract_thumb_chunk`'s exact `ffmpeg` invocation:
+
+**1. A fine chunk's cost is its *span*, not its tile count.** The same 8 seconds of this file:
+
+| spacing | tiles | cost |
+|---|---|---|
+| 0.125s | 64 | **2.15s** |
+| 0.25s | 32 | **2.11s** |
+| 0.5s | 16 | **2.18s** |
+
+Identical. Below the keyframe gate ffmpeg decodes every frame regardless of how many it is asked to emit; only the `scale`+mjpeg encode differs, and at a 104px strip height that is noise beside a 4K decode. Sweeping the span at a fixed spacing gives the real shape — **~0.8s of fixed spawn/seek plus ~0.24s per second of source read** (2s → 1.03s, 4s → 1.45s, 8s → 2.75s, 16s → 4.90s, 32s → 8.37s; a single-tile chunk still costs 0.82s). Seek position barely matters (1.64s at t=400s vs 2.05s at t=5s), so it is process spawn and decoder init, not the seek.
+
+**2. So D-128 was paying full price four times for the same seconds.** Levels 0.0625/0.125/0.25/0.5 all cover the fine band, all cost the same per second of source, and all get stored separately. At the default 90 px/s a 517s clip's viewport window is ~40s of source = 5 chunks, and D-128's request loop `await`ed them **one at a time** — so two of `EXTRACT_SEMAPHORE`'s three permits sat idle while the user waited on a serial 5 × ~2.2s.
+
+Measured end to end through the real command, same 32-second window of source, one zoom rung at a time — this is B-049 reproduced, not modelled:
+
+| request | D-128 | D-134 |
+|---|---|---|
+| cold window, 0.5s spacing | 9.45s | **7.15s** |
+| zoom in → 0.25s | 9.18s | **0.001s** |
+| zoom in → 0.125s | 9.63s | **0.000s** |
+| zoom in → 0.0625s | 12.51s | **0.000s** |
+| zoom out → 1.0s (coarse) | 1.52s | 1.62s |
+| zoom back → 0.5s | 0.000s | 0.000s |
+| **the fine sweep, total** | **31.3s** | **0.001s** |
+
+The hypothesis in B-049 was right about the mechanism and understated the size: it is not one cold level per zoom step, it is one cold level per zoom step *paid serially across five chunks*. Rival explanation (b), a debounce/throttle pile-up, turned out to be a *consequence* rather than a cause and is fixed by the same change (see below). Rival (c), a blocking main-thread decode, was disproved by reading the path: `chroma_clip_thumbnails` is `async` and `extract` already goes through `spawn_blocking`.
+
+### The fix: storage levels
+
+The LOD ladder is powers of two, and D-128 wrote down why ("so that a chunk at one level lines up with chunks at every coarser level") without then using it. **A coarser level's sample times are a strict subset of a finer level's**, so decimating a 0.0625s strip by 8 yields exactly the 0.5s strip — the same JPEGs, not approximations.
+
+So a **storage level** is now separated from a requested level. Every fine level is decoded and stored once, at the finest rung (`FINE_STORAGE_LEVEL`), in chunks that span a fixed 8 seconds at every fine level so the boundaries line up; a request at any other fine level is `.step_by(stride)` over that. Coarse levels still store at themselves — their spans are 64s and up, far too much source to read at 0.0625s spacing — but a coarse chunk is still assembled for free from the rung below when those chunks happen to be cached already (`derive_from_finer`), which is the zoom-out case. Derived chunks are memoised but deliberately **not** written to disk: the bytes are already there under another key, and re-deriving after a restart costs a file read, not a decode.
+
+The cost of this is that a fine chunk now yields 128 tiles where it yielded 16-64. That is real and it is small: same decode, ~112 more 185×104 mjpeg encodes, ~280 KB of base64 per chunk instead of ~36 KB. The in-memory chunk cap drops 400 → 200 to hold the same ~55 MB ceiling; the 1 GB disk budget holds ~3,700 of them. Measured, the cold window got **faster** anyway (9.45s → 7.15s), because the second half of the fix is loading a request's chunks **concurrently** (`join_all`) instead of one at a time — the semaphore still bounds real `ffmpeg` processes, it just is not the request loop's job to serialise them any more.
+
+**And it dissolves the pile-up.** Clicking zoom four times fires four requests that D-128 resolved to four disjoint chunk sets, all queued behind one semaphore. They now resolve to the *same* storage chunks, which `CHUNK_LOCKS` already de-duplicates — so the fourth click waits on the first click's decode rather than on a queue of four.
+
+**Alternatives considered.** *Cancelling superseded requests* (a `seq` token, the shape D-130 gave the audio commands) — the honest fix for a genuinely stale in-flight decode, and it is now mostly moot: a zoom step within a warm fine band issues no decode at all, and a cold one is shared rather than queued. Named, not built. *Keeping per-level storage and deriving both directions* — impossible upward; you cannot invent frames a coarse decode never read. *A bigger `FINE_CHUNK_SECS`* — 16s halves the chunk count but nearly doubles each chunk (4.90s), which is a wash serially and worse with three permits (2 rounds × 4.90s vs 3 rounds × 2.75s).
+
+**The cache key changed, and had to.** `level 0` means something different now (128 tiles over 8s, not 64 over 4s), and a D-128 build's entries live in the same `app_cache_dir()`. The key carries the tile count now, alongside the strip height that was already there for the same reason, so a stale entry can never be read as a current one — it simply never matches and the budget prunes it.
+
+### B-055, found while fixing this
+
+`ffmpeg -ss` at or past a file's last frame reads no packets, never opens its encoder, and exits non-zero. That `Err` used to fail the **whole** `chroma_clip_thumbnails` call, so a window overrunning the source lost its entire filmstrip rather than its out-of-range tail. The owner's own 8.023s screen recording has exactly this shape: a chunk boundary lands at 8.000s with 0.023s of empty tail behind it. Reproduced identically on `main`, so it is D-128's, not this pass's — but D-134 makes it worse (under `join_all` one such chunk would abort every sibling decode), so it is fixed here: chunks with no real frame in them are dropped before the request, and a chunk that genuinely fails now costs its own tiles rather than every other chunk's — logged at `warn`, with the real error still returned when *nothing* in a request worked.
+
+**Verification.** `cargo check -p RapidRAW -p chroma-timeline --all-targets` clean (6 pre-existing warnings, unchanged count). `cargo clippy -p RapidRAW --all-targets`: **zero** warnings in `filmstrip.rs`; the crate's 20 are pre-existing and untouched. `cargo test -p RapidRAW --lib chroma::` 213 passed / 0 failed. `tsc --noEmit -p packages/editor` clean; `@chroma/editor` vitest 204/204. Rust tests added: the env-gated `a_zoom_step_over_an_already_decoded_range_costs_no_decode` (the table above — it *fails* on `main`, with the message "got 7.62s against a cold 9.45s"), `a_window_running_past_the_end_of_the_source_still_returns_its_real_tiles` (B-055), and five pure ones pinning the arithmetic the whole thing rests on — that every fine rung is a whole-number decimation of the storage level *and lands on the same source seconds*, that a coarse level tiles evenly out of the rung below it, that `decimation` refuses to derive a finer level from a coarser one, and `derive_from_finer` against seeded caches where each synthetic tile is labelled with the source second it stands for (so a wrong stride shows up as wrong seconds, not merely a wrong count) including its refusal of a partial cover. The whole env-gated suite passes against **both** of the owner's real clips. 3 new `packages/editor` vitest cases pin the frontend half of the invariant: the mirrored ladder must stay strictly powers of two, because a rung that is not (a 0.3s, say) sends the backend's `decimation()` to `None` and silently restores the full per-zoom decode with no symptom visible on that side.
+
+**Honest gaps.** (1) **No interactive confirmation in the assembled Tauri app** — same as D-124 and D-128 before it, launching the built binary is blocked in this environment. Everything above is the real shipped `chroma_clip_thumbnails` against the owner's real files, not the shipped window; the owner's own look still closes it, and the thing to look at is whether clicking zoom +/- repeatedly now redraws immediately after the first pass over a range. (2) **The first zoom into a range the user has never viewed still decodes**, ~7s for a full viewport at the default zoom on a 517s 4K source. That is real work — those frames have never been read — and the remaining lever on it is proxies/optimized media, which D-128 already named as a roadmap item and not a subsystem to smuggle in. (3) **No request cancellation**, per above. (4) **Two pre-existing test failures found in passing, both verified identical on `main` and neither touched here.** `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields` fails when the whole `chroma::` suite runs `--test-threads=1` with `CHROMA_TEST_VIDEO` set — global `AppState` cross-talk between tests. And `chroma_timeline::tests::the_owners_real_project_json_loads_with_every_clip_unlinked` (D-129) fails outright: it reads the owner's **live** `~/Movies/Chroma/New.chroma/project.json` and asserts every clip is unlinked, which stopped being true the moment the owner used D-129's own feature and made a `link_group`. A test whose fixture is a file the user edits will keep doing this; it wants a checked-in snapshot. Both belong to their own decisions, not this one.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

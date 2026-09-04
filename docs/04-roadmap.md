@@ -82,10 +82,19 @@ restarted once each is done.
 
 ### Second round (2026-09-04 evening) — after D-124–D-130 landed and the app restarted
 
-- 🔲 **B-049 — filmstrip zoom in/out is slow to recompute**, even though load
+- ✅ **B-049 — filmstrip zoom in/out is slow to recompute**, even though load
   and scroll are now fast (confirmed by the owner: "very fast now" for
-  everything except the zoom action itself). Likely D-128's windowed LOD
-  treating a zoom-triggered `level` change as fully cache-cold.
+  everything except the zoom action itself) — done, **D-134**. The suspected
+  cause was right and understated: a zoom-triggered `level` change is
+  cache-cold for the *whole viewport at once*, and D-128 decoded those chunks
+  one at a time. Since a fine chunk costs the same to decode at any fine
+  spacing (measured — ~0.8s of ffmpeg spawn plus ~0.24s per second of source,
+  independent of tile count), every fine level is now decoded once at the
+  finest rung and decimated down; a request's chunks load concurrently; a
+  coarse chunk derives free from cached finer ones. **A fine-band zoom sweep
+  over an already-decoded range: 31.3s → 0.001s.** **B-055** (a window
+  overrunning the source lost its *whole* filmstrip, not just the
+  out-of-range tail) found and fixed alongside.
 - ✅ **B-050 — Player's seek bar and volume slider are effectively invisible.**
   Not a token issue — `slider.tsx`'s Track/Indicator used the Tailwind
   shorthand `data-horizontal:`/`data-vertical:`, which checks for a literal

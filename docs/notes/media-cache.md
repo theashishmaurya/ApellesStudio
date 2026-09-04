@@ -1,8 +1,9 @@
 # Media cache & the project-open critical path
 
-**D-128, 2026-09-04.** What actually happens between clicking a project card and
-having a scrubbable timeline with visible thumbnails and waveforms, what each step
-costs, and which of it was being recomputed from scratch every single time.
+**D-128, 2026-09-04**, extended by **D-134** (section 6, and a banner in section 3).
+What actually happens between clicking a project card and having a scrubbable
+timeline with visible thumbnails and waveforms, what each step costs, and which of
+it was being recomputed from scratch every single time.
 
 Owner, live, twice in a row:
 
@@ -154,6 +155,17 @@ The shape:
   **source file's** t=0 — never the clip's trim point. That is what makes a chunk
   shareable between two clips cut from one file, between scroll positions, and between
   every zoom that lands on the same rung.
+> **Updated by D-134 (B-049).** The bullet below describes D-128's chunk sizing,
+> which is still how the *coarse* band works. In the **fine** band it is
+> superseded: every fine level (<1s spacing) is now decoded and stored **once**,
+> at the finest rung, in chunks spanning a fixed 8s, and every other fine level
+> is served by decimating that — exact, because the ladder is powers of two. The
+> reason is a measurement D-128 did not take: a fine chunk's cost is its *span*,
+> not its tile count (8s of the owner's 4K HEVC is ~2.15s whether it yields 16
+> tiles or 64), so storing four separate fine levels paid the same price four
+> times for the same seconds. That is what made a zoom step cost a full
+> re-decode. See D-134 and section 6 below.
+
 - **Chunk width is level-dependent** (`tiles_per_chunk`). Coarse levels (≥1s spacing)
   get the full 64 tiles: essentially all real footage has keyframes denser than that, so
   the decode is keyframe-only and cheap per second of source (measured: 64 tiles over
@@ -228,3 +240,83 @@ Real numbers, this machine, the owner's own `A001_08302215_C019.MOV`:
 - **`MANIFEST_CACHE` (D-114) stays memory-only, deliberately.** It caches a file the app
   itself writes constantly; the read it avoids is a few ms of JSON parse, and persisting
   a mutable document across restarts buys nothing and risks staleness.
+
+---
+
+## 6. Storage levels, and what a zoom step really cost (D-134, B-049)
+
+The owner tested D-128 live and reported everything fast **except clicking the
+zoom buttons**. The catalogue in section 1 is what made that diagnosable: load
+and scroll were confirmed fixed, so the remaining stall had to be something the
+zoom action does that scrolling does not — change the LOD level.
+
+### The measurement D-128 never took
+
+`chroma::video::extract_thumb_chunk`'s exact `ffmpeg` invocation, replayed by
+hand against `A001_08302215_C019.MOV`:
+
+| what | cost |
+|---|---|
+| 8s of source at 0.125s spacing (64 tiles) | 2.15s |
+| 8s of source at 0.25s spacing (32 tiles) | 2.11s |
+| 8s of source at 0.5s spacing (16 tiles) | 2.18s |
+| 2s / 4s / 8s / 16s / 32s span, 0.0625s spacing | 1.03 / 1.45 / 2.75 / 4.90 / 8.37s |
+| one single tile | 0.82s |
+| 64s at 1s spacing, keyframe-only | 1.50s |
+
+Two readings. **A fine chunk's cost is its span, not its tile count** — below
+the keyframe gate ffmpeg decodes every frame regardless of how many it emits.
+And the shape is **~0.8s of fixed spawn/seek plus ~0.24s per second of source**;
+seek position barely matters (1.64s at t=400s vs 2.05s at t=5s), so the fixed
+part is process spawn and decoder init.
+
+So D-128's four fine levels were four separate full-price decodes of the same
+seconds. And a viewport at the default zoom is ~5 chunks, which D-128's request
+loop `await`ed one at a time while two of `EXTRACT_SEMAPHORE`'s three permits
+sat idle.
+
+### What changed
+
+- **Storage level ≠ requested level.** Every fine level maps to
+  `FINE_STORAGE_LEVEL` (0.0625s), chunks spanning a fixed 8s at every fine
+  level so the boundaries coincide. A request at a coarser fine rung is
+  `.step_by(stride)` over that. Exact, not approximate: the ladder is powers of
+  two, so a coarser level's sample times are a strict subset of a finer one's.
+- **Coarse levels still store at themselves** — 64s and up is far too much
+  source to read at 0.0625s spacing — but a coarse chunk is assembled free from
+  the rung below when those chunks are already cached (`derive_from_finer`,
+  cache-only, never decodes to find out). Derived chunks are memoised but not
+  written to disk: the bytes are already there under another key.
+- **A request's chunks load concurrently.** The semaphore still bounds real
+  `ffmpeg` processes; it is no longer the request loop's job to serialise them.
+- **The cache key carries the tile count**, because "level 0" now means
+  something different (128 tiles over 8s, not 64 over 4s) and a D-128 build's
+  entries live in the same `app_cache_dir()`.
+
+### Real numbers, one fixed 32s window of source, rung by rung
+
+| request | D-128 | D-134 |
+|---|---|---|
+| cold window, 0.5s spacing | 9.45s | **7.15s** |
+| zoom in → 0.25s | 9.18s | **0.001s** |
+| zoom in → 0.125s | 9.63s | **0.000s** |
+| zoom in → 0.0625s | 12.51s | **0.000s** |
+| zoom out → 1.0s (coarse, span not covered) | 1.52s | 1.62s |
+| zoom back → 0.5s | 0.000s | 0.000s |
+| **the fine sweep, total** | **31.3s** | **0.001s** |
+
+The cold window got faster despite each chunk now yielding 128 tiles instead of
+16, because the concurrency more than pays for the extra mjpeg encodes.
+
+Side effect worth knowing: four zoom clicks in a row used to resolve to four
+disjoint chunk sets queued behind one semaphore. They now resolve to the *same*
+storage chunks, which `CHUNK_LOCKS` already de-duplicates — so the fourth click
+waits on the first click's decode rather than on a queue of four. No request
+cancellation was needed; it stays a named, unbuilt improvement.
+
+### Still true
+
+The first zoom into a range never viewed before still decodes it — ~7s for a
+full viewport at the default zoom on a 517s 4K source. Those frames have never
+been read; the remaining lever is proxies/optimized media, still a roadmap item
+(section 5) rather than a subsystem smuggled in here.
