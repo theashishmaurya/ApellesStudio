@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **The filmstrip's real cost: one 105-second decode per
+  clip, re-triggered on every zoom step (D-124, B-039).** Round 3 on
+  D-119's filmstrip, run empirically after two rounds of reading missed
+  it. `extract_thumb_strip_range` decoded every frame of a clip's range
+  and threw ~99.5% away — measured 105.5s for the owner's 517s 4K clip —
+  while `count` was derived from on-screen width, so a zoom sweep fired
+  four more of them and blanked the strip each time. Anything queued
+  behind them (a short clip's one-second strip) waited minutes with no
+  error and no log line, because nothing logged a *slow* decode. Now
+  keyframe-only decode above a measured threshold, `fps=` time-based
+  sampling (also fixes VFR sources), thumbnails at 2x the row height
+  instead of 150px, and a fetch keyed on clip duration rather than pixel
+  width — **105.5s → 9.27s**, and a 59-step zoom sweep went from one
+  backend call per bucket to 2 total. Real decodes now log, too.
+- **2026-09-04** — **Fixed two `chroma::project` tests red on `main` since
+  D-123 (B-038).** Both still asserted the pre-D-123 "empty tracks
+  persist" contract; one panicked outright. Found by re-running the clean
+  tree to check whether D-124's own failures were pre-existing.
 - **2026-09-04** — **Sources panel's opener moved to the corner it actually
   opens into (D-120).** D-116 moved the panel to the left but left its
   toggle stranded in the chrome bar's top-right — now a `top-2 left-2`

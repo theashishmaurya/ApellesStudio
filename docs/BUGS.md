@@ -27,6 +27,24 @@ Still real:
 
 ## Open
 
+## B-039 — A clip's filmstrip never appeared, with no error and nothing in any log, because generating it took 105 seconds and every zoom step started another one
+status: fixed (2026-09-04, D-124) · severity: high (a shipped feature that looked simply broken for two rounds of fixes, because the failure was invisible by construction) · area: `app/src-tauri/src/chroma/video.rs`, `packages/editor/src/{Filmstrip.tsx,TimelinePane.tsx,ruler.ts}`
+- **repro:** open the owner's real project (a 6.9s screen recording on track 0, a 517s 4K HEVC clip on tracks 1-2), then zoom. The screen recording's filmstrip never appears; `/tmp/chroma-tauri-dev.log` contains no thumbnail/ffmpeg/hwaccel line at all.
+- **expected:** every video clip shows its filmstrip promptly, and zooming re-tiles it without refetching.
+- **actual:** nothing renders on that clip, indefinitely, with no error anywhere.
+- **cause, measured not guessed:** `extract_thumb_strip_range` decoded *every* frame of the clip's source range and discarded ~99.5% of them in a `select` filter — **105.5s** for one strip of the 517s 4K clip (timed directly, `-hwaccel videotoolbox` already on). Separately, D-119 derived the requested frame `count` from the clip's **on-screen pixel width**, so a zoom sweep produced `count` 64 → 41 → 20 → 10: four cache keys, four more 105-second decodes, each blanking the strip until it returned. Three of those saturate D-121's `Semaphore(3)`, and a short clip's one-second request queued behind them waits minutes. Nothing logged because `chroma_clip_thumbnails` only logged on hwaccel *failure* — a slow decode and an absent one were indistinguishable from outside. Two disproved leads are recorded in D-124 (the clip's project data is valid, and its codec decodes fine in 1.1s) so neither gets re-chased.
+- **fix:** keyframe-only decode above a measured 4.0s sampling threshold (`-skip_frame nokey`), `fps=` time-based sampling instead of a frame-index stride (also fixes VFR sources and an off-by-one), thumbnails scaled to 2x the 52px row instead of 150px, `count` derived from clip duration instead of pixel width, render-time downsampling for zoom, and one `log::info!` per real decode. Also fixed: the fetch effect early-returned on `width <= 0` with `width` absent from its dependency array, and a failed fetch was cached permanently.
+- **verification:** 105.5s → **9.27s** for a whole-file 64-frame strip plus a 4s sub-range, through a new env-gated integration test against the owner's actual 4K file (2.96s for the screen recording); a live 59-step zoom sweep on the real component went from one backend call per zoom bucket to **2 total**, with 1 blank render instead of one per bucket. Full writeup: D-124.
+
+## B-038 — Two `chroma::project` tests have been failing on `main` since D-123 landed, one of them panicking outright
+status: fixed (2026-09-04, D-124) · severity: medium (a red test suite on `main` — no user-facing symptom, but it hides the next real regression) · area: `app/src-tauri/src/chroma/project.rs`
+- **repro:** `cargo test -p RapidRAW --no-default-features chroma::` on `main` at `cf94658`.
+- **expected:** green, as D-119 last reported it (165 passed, 0 failed).
+- **actual:** 2 failed — `remove_clip_by_id_lifts_it_and_clears_active_clip` panics `index out of bounds: the len is 0 but the index is 0`, and `track_commands_add_remove_and_move_clip_on_the_active_timeline` fails `removed from track 0`.
+- **cause:** D-123 made a track that an edit just emptied get pruned automatically. Both tests still asserted the old "empty tracks persist" contract — one indexing `tracks[0]` after the only clip on the only track was removed (so `tracks` is now empty), the other expecting the source track to survive a cross-track move. D-123 updated `timeline.ts`'s mirrored test for exactly this and missed the two Rust-side ones; its verification covered `chroma-timeline` and `packages/editor` but never ran the app crate's own suite.
+- **found:** during D-124, which stashed its own changes and re-ran on the clean tree to confirm the failures were pre-existing rather than its own.
+- **fix:** both assertions brought up to the shipped contract (no behaviour change) — `cargo test -p RapidRAW chroma::` is 167 passed / 0 failed.
+
 ## B-010 — `ExportPanel` (`Panel.Export`) is reachable and appears usable while a video clip is loaded, but silently attempts a still-image export against the video's own path
 status: open · severity: low (a working, prominent alternative — `ExportDialog`, D-049 — now exists; this is dead-end UX, not data loss) · area: `app/src/components/panel/right/ExportPanel.tsx`, `app/src-tauri/src/export_processing.rs`
 - **repro:** open a video clip in the Colorist tab, click the "Export" icon

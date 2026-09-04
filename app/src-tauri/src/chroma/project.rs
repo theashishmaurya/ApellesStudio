@@ -3472,29 +3472,36 @@ mod tests {
         assert_eq!(tl2.tracks.len(), 2);
         assert_eq!(tl2.tracks[1].kind, chroma_timeline::TrackKind::Audio);
 
-        // move_clip: from the video track (0) onto the fresh audio track (1)
+        // move_clip: from the video track (0) onto the fresh audio track (1).
+        // B-038 — this block used to expect track 0 to survive the move as an
+        // empty track. D-123 changed that contract: a cross-track move that
+        // empties its source track now prunes it, so the audio track shifts
+        // down into index 0 and ONE track remains. D-123 updated
+        // `timeline.ts`'s mirrored test for exactly this and missed the two
+        // Rust-side ones, which have been red on `main` ever since. Stale
+        // assertion brought up to the shipped contract, not a behaviour change.
         super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500, false).unwrap();
         let tl3 = super::super::edit::chroma_timeline_get().unwrap();
-        assert!(tl3.tracks[0].clips.is_empty(), "removed from track 0");
-        assert_eq!(tl3.tracks[1].clips.len(), 1, "landed on track 1");
-        assert_eq!(tl3.tracks[1].clips[0].id, clip_id, "identity preserved");
-        assert_eq!(tl3.tracks[1].clips[0].start_frame, 500);
+        assert_eq!(tl3.tracks.len(), 1, "the emptied source track 0 was pruned");
+        assert_eq!(tl3.tracks[0].kind, chroma_timeline::TrackKind::Audio);
+        assert_eq!(tl3.tracks[0].clips.len(), 1, "landed on the audio track");
+        assert_eq!(tl3.tracks[0].clips[0].id, clip_id, "identity preserved");
+        assert_eq!(tl3.tracks[0].clips[0].start_frame, 500);
 
         // an out-of-range move errors and leaves the persisted timeline unchanged
         assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0, false).is_err());
         let tl4 = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(
-            tl4.tracks[1].clips.len(),
+            tl4.tracks[0].clips.len(),
             1,
             "unchanged after the failed move"
         );
 
         // remove_track (including the clip now sitting on it)
-        super::super::edit::chroma_timeline_remove_track(1).unwrap();
+        super::super::edit::chroma_timeline_remove_track(0).unwrap();
         let tl5 = super::super::edit::chroma_timeline_get().unwrap();
-        assert_eq!(
-            tl5.tracks.len(),
-            1,
+        assert!(
+            tl5.tracks.is_empty(),
             "the audio track (and its clip) is gone"
         );
 
@@ -3911,7 +3918,15 @@ mod tests {
         assert_eq!(manifest.active_clip_id.as_deref(), Some(clip.id.as_str()));
 
         remove_clip_by_id(&mut manifest, 0, &clip.id).unwrap();
-        assert!(manifest.timelines[0].tracks[0].clips.is_empty());
+        // B-038 — the clip was the track's only one, so D-123 prunes the track
+        // itself rather than leaving it behind empty. The old assertion indexed
+        // `tracks[0]` unconditionally and panicked outright ("len is 0 but the
+        // index is 0") once that shipped; what it was really checking is that
+        // the clip is gone, which is now true by the track being gone.
+        assert!(
+            manifest.timelines[0].tracks.is_empty(),
+            "the track the last clip was lifted from is pruned"
+        );
         assert_eq!(
             manifest.active_clip_id, None,
             "removing the active clip clears the pointer"

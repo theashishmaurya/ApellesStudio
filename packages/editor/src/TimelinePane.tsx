@@ -202,7 +202,13 @@ import {
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { Waveform } from './Waveform';
 import { Filmstrip } from './Filmstrip';
-import { niceTickIntervalSeconds, formatTimecode } from './ruler';
+import {
+  niceTickIntervalSeconds,
+  formatTimecode,
+  MIN_PX_PER_SEC,
+  MAX_PX_PER_SEC,
+  DEFAULT_PX_PER_SEC,
+} from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_SYNC_LOCKED,
@@ -226,15 +232,11 @@ const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
  *  item 4 — `niceTickIntervalSeconds`'s target, see `ruler.ts`). */
 const TICK_TARGET_PX = 70;
-/** zoom is now tracked as px-per-second directly (renamed from the old
- *  `scaleWidth`, which only meant "px per second" because `scale` used to be
- *  hardcoded to 1 — see the D-058 ruler doc below); same bounds as before. */
-const DEFAULT_PX_PER_SEC = 90;
-// Owner, 2026-09-04: 16 (18%) was too tight a floor to see a whole
-// multi-minute project at once - lowered so a long timeline can actually
-// be zoomed out to fit the visible width.
-const MIN_PX_PER_SEC = 1;
-const MAX_PX_PER_SEC = 480;
+// Zoom bounds (px per second) now live in `ruler.ts` and are imported above
+// (D-124) — `Filmstrip.tsx` needs the same ceiling to size its fetch, and one
+// definition beats two that can drift. Owner, 2026-09-04: the floor was 16
+// (18%), too tight to see a whole multi-minute project at once; it is 1 so a
+// long timeline can actually be zoomed out to fit the visible width.
 const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
 /** how long a rippled clip's highlight stays visible (ms) */

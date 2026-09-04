@@ -14,6 +14,19 @@
  * zoom, which is exactly the "1, 2, 3…49" clutter at low zoom the owner hit.
  */
 
+/**
+ * Timeline zoom, in px per second of source. Lives here rather than in
+ * `TimelinePane.tsx` (D-124) because it is no longer only the pane's own
+ * business: `Filmstrip.tsx` sizes its one-and-only thumbnail fetch so the
+ * frames it gets are enough to tile a clip at *maximum* zoom, and it can only
+ * do that against the same ceiling the zoom control clamps to. Two copies of
+ * that number drifting apart would quietly reintroduce the stretched-tile
+ * defect this pass fixed, so there is exactly one.
+ */
+export const MIN_PX_PER_SEC = 1;
+export const MAX_PX_PER_SEC = 480;
+export const DEFAULT_PX_PER_SEC = 90;
+
 /** Candidate labeled-tick intervals, in seconds, on a 1-2-5 progression from
  *  a tenth of a second (finer than that is visually indistinguishable at any
  *  zoom this UI allows) up to an hour. `niceTickIntervalSeconds` never
