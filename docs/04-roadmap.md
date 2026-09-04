@@ -820,13 +820,28 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
-Extract the leaf pure crates for real (`chroma-types`, `chroma-grade-model`,
-`chroma-timeline` — currently stubs) → `chroma-gpu`/`chroma-media`/`chroma-project` →
-`chroma-agent`/`chroma-ai` → `chroma-grade` wraps `app/`, `chroma-app` goes thin →
-**`chroma-compositor`** (the real multi-track engine) + `@chroma/editor` greenfield.
-This is where isolated-worktree parallel subagents start making sense — each crate is
-self-contained by design (see the "worktrees" discussion, 2026-09-02: file-boundary
-discipline is the actual lever, not the worktree flag itself).
+**→ The execution map is `docs/notes/crate-extraction-plan.md` (D-141, 2026-09-05).**
+Read it before starting any slice; it replaces the sketch below, which was written
+before `app/src-tauri/src/chroma/` had been read for extractability. What it changes:
+`#[tauri::command]` functions **stay in `app/src-tauri`** (a real `tauri-macros`
+constraint plus an `AppState` dependency cycle, both traced in D-141), every
+extraction leaves a `pub use` shim in the same commit so `lib.rs`'s handler list is
+never contended, and **`chroma-agent` is rescoped out of this wave** — `control.rs`
+has no Tauri-free core and its op registry lives in the frontend. Real order:
+
+1. **wave 1, parallel** — `chroma-grade-model`, `chroma-ai`, `chroma-gpu`
+2. **wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
+   leave `edit.rs` first, or `chroma-media` would depend on the app)
+3. **wave 3** — `chroma-project` (needs `chroma-media`; an edge
+   `architecture-lock.md`'s table is missing)
+4. **wave 4** — delete the shims, fix the doc set
+5. **later, gated** — `chroma-grade` wraps `app/`, `chroma-app` goes thin, then
+   **`chroma-compositor`** (the real multi-track engine) + `@chroma/editor` greenfield
+
+This is where isolated-worktree parallel subagents start making sense — the plan says
+which slices are genuinely disjoint and which must be sequential (see the "worktrees"
+discussion, 2026-09-02: file-boundary discipline is the actual lever, not the worktree
+flag itself).
 
 - ~~**Step 2 — `chroma-types` real extraction**~~ — **done, partial-by-design,
   D-053 (2026-09-03).** Audited `app/src-tauri/src/chroma/*` for real duplicates
@@ -844,9 +859,22 @@ discipline is the actual lever, not the worktree flag itself).
   `ProjectSettings`/`ExportOpts`'s width/height (independently-optional
   patch/override fields — a genuinely different concept from an atomic
   `Resolution`, not forced in). Full audit + reasoning in D-053. **Next:**
-  steps 3–7 (`chroma-grade-model`, `chroma-timeline` real-per-type work is
-  already done per D-041/045/046; `chroma-gpu`/`chroma-media`/`chroma-project`
-  remain) — see `architecture-lock.md`'s migration strategy.
+  steps 3–7 — scoped for real in **D-141**,
+  `docs/notes/crate-extraction-plan.md`. (Correcting this line's own stale
+  premise: `chroma-timeline` is not a stub, it is 3,758 production lines;
+  `chroma-grade-model` is a stub and is not even a dependency of
+  `app/src-tauri` yet.) D-053's deferred `chroma-types` pickups —
+  `VideoInfo.fps_num`/`fps_den` → `Rational`, `TimeRange`, `Frame` — are
+  carried in that plan as flagged item **F-4**, to be decided when `video.rs`
+  moves rather than left to drift.
+
+- **Steps 3–7 — scoped, not started (D-141, 2026-09-05).**
+  `docs/notes/crate-extraction-plan.md` is the map: per-crate real contents with
+  line ranges, real dependency edges in both directions (including the five
+  places RapidRAW core calls *up* into `chroma/`), the extraction order and its
+  three hard constraints, which slices are parallel-safe, and the Tauri
+  command-macro constraints traced out of `tauri-macros-2.6.3`. No code moved
+  in that pass by design.
 
 ---
 

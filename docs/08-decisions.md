@@ -10147,7 +10147,6 @@ The new group id is `format!("lg-{video_id}-{audio_id}")` — derived from both 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
 
-
 ---
 
 ## D-139 — Research pass: audio/rhythm/pacing assistance (beats, cut-to-beat, footage-pacing analysis) — no feature designed
@@ -10226,6 +10225,137 @@ Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
 **Honest gaps the plan cannot close without building.** (1) The owner's own music is the worst case for the chosen tracker — D-139's 60–80% figures are mixed-genre benchmarks, explicitly weaker on rubato/freeform material, and cinematic tension beds sit at that end; the general numbers may not transfer, and only Phase 0 on those exact files answers it. (2) No throughput benchmark exists at all. (3) librosa pulls numba/scikit-learn — real install weight and a real first-call JIT warm-up the sidecar's other routes don't have. (4) This couples the Edit tab to sidecar health for the first time (mitigated by beats being purely additive, but new). (5) Edge-trim snapping is blocked, verified. (6) Timeline-derived cut frequency says nothing about an unedited single-take source — correct behaviour, real limit on day-one usefulness. (7) `pulse_steadiness` is a proxy, not ground truth. (8) Nothing here was seen in the assembled app — the same disclosed constraint every entry since D-125 carries.
 
 **Numbering.** Drafted as D-140 and re-confirmed free immediately before committing — `git show <branch>:docs/08-decisions.md | grep '^## D-140'` across every branch in the repo returned nothing.
+
+---
+
+## D-141 — Scoping the rest of the D-039 crate extraction from the real code: commands never move, every extraction leaves a re-export shim, and `chroma-agent` gets rescoped out of the wave
+
+**decided (2026-09-05)** — a scoping pass, not a build. Deliverable is
+`docs/notes/crate-extraction-plan.md`; no extraction code, no new crate
+scaffolding, no `Cargo.toml`/`Cargo.lock` change.
+
+- **Context.** D-053 finished step 2 (`chroma-types`). Steps 3–7 in
+  `architecture-lock.md` are a one-paragraph skeleton written before any of
+  `app/src-tauri/src/chroma/` was read for extractability, and the roadmap
+  line under "Then — the deeper migration" points at it. A later wave of
+  parallel agents is meant to execute from it, one crate each. That needs a
+  real map: what is actually in each proposed crate, what its real edges are,
+  what breaks when it moves, and which slices can genuinely run beside each
+  other. This pass produces that map by reading all 18,908 lines of
+  `chroma/` plus the fork's call sites into it.
+
+- **Three findings that changed the plan, not just filled it in.**
+
+  1. **`#[tauri::command]` functions must stay in `app/src-tauri`.** Read out
+     of `tauri-macros-2.6.3` rather than assumed: the attribute emits two
+     `#[macro_export] macro_rules!` items (`__cmd__<name>`,
+     `__tauri_command_name_<name>`), and `generate_handler![a::b::foo]`
+     invokes them *at the function's own path* — but `#[macro_export]` puts
+     them at the defining crate's **root**, so a command in a crate submodule
+     needs both macros `pub use`d into the named module (Tauri's own source
+     comment names this route). Worse, the wrapper body expands
+     `::tauri::ipc::private::*`, so a crate hosting a command needs a real
+     `tauri` dependency — which breaks D-039 principles 2 and 7 outright. And
+     any command taking `tauri::State<'_, AppState>` is not merely awkward but
+     impossible: `AppState` lives in the app crate, so hosting such a command
+     in a crate is a dependency cycle. That is 8 of `project.rs`'s 20 commands
+     plus all of `mask.rs`/`session.rs`/`commands.rs`/`playback.rs`/`load.rs`.
+     The `chroma-motion`/`motion.rs` pair (D-046) is already the right shape
+     and becomes the template for every slice. **ACL is a non-issue** —
+     `capabilities/default.json` declares no application commands, so
+     `filter_unused_commands` allows everything; command *names* stay frozen
+     because they are the `packages/bridge` contract.
+
+  2. **Every extraction leaves a `pub use` shim at the old path, in the same
+     commit.** This is what makes parallel agents safe. With shims, no call
+     site outside a slice changes and `lib.rs`'s `generate_handler!` block —
+     the one file every slice would otherwise contend on — is touched by
+     none of them. Shims are deleted in one mechanical sweep at the end.
+     Without this rule the wave is effectively sequential.
+
+  3. **`chroma-agent` is rescoped out of this wave, not scheduled in it.**
+     `control.rs` is 164 lines whose entire purpose is
+     `AppHandle` → `emit`/`once`; there is no Tauri-free core to lift. And
+     its own module doc says the op registry *lives in the frontend*. The
+     crate becomes real when the op registry moves into Rust — a product
+     decision — not because the crate list has a row for it. Shipping a
+     40-line crate to tick the box is exactly the ceremony D-053's standard
+     rejects.
+
+- **The order, and why.** Three hard constraints, everything else decoupled by
+  the shim rule: `probe_cached` must leave `edit.rs` before `chroma-media` can
+  exist (`filmstrip`/`audio`/`project` all consume it, and `edit.rs` stays in
+  the app — otherwise a cycle); `chroma-project` needs `chroma-media`
+  (`VideoInfo`, `extract_thumb`, `probe_cached`), an edge
+  `architecture-lock.md`'s table does not list and which this corrects; and
+  `chroma-grade` needs `chroma-gpu`. So: **wave 1** = `chroma-grade-model`,
+  `chroma-ai`, `chroma-gpu` in parallel (disjoint files; they share only an
+  append to `chroma/mod.rs` and `Cargo.toml`); **wave 2** = `chroma-media`
+  alone, in three ordered commits; **wave 3** = `chroma-project`; **wave 4** =
+  the shim sweep + doc corrections.
+
+- **What deliberately does not move, each for a stated reason** (~1,700 lines
+  of correctly app-layer code, not migration debt): `relight.rs` (imports
+  `image_processing::RelightLightGpu` while `image_processing` calls back into
+  it — a genuine two-way binding to the fork's uniform layout; it is
+  `chroma-grade` material), `mask.rs`'s frame-grabbing half (needs
+  `get_cached_full_warped_image` + `AiSubjectMaskParameters`), `control.rs`,
+  `playback.rs`, `commands.rs`, `session.rs`, `load.rs`, and every
+  `#[tauri::command]` in the repo. `audio.rs` is explicitly **not** moved
+  whole: its symphonia/cpal engine and waveform are media, but its source
+  resolution goes through `edit::resolve_video_position` — timeline logic,
+  which sits above media and is really `chroma-compositor`'s.
+
+- **Options considered.** (a) *Move commands into the crates and let each crate
+  own its Tauri surface* — rejected on the macro/`AppState` evidence above,
+  and it would have put `tauri` in the domain layer. (b) *Big-bang: one commit
+  per crate with call sites rewritten in place* — rejected because it
+  serialises the whole wave on `lib.rs` and `chroma/mod.rs`, which is the
+  opposite of what the wave is for. (c) *Follow `architecture-lock.md`'s step
+  order literally (gpu/media/project → agent/ai → grade)* — rejected: `ai` is
+  ready now and `agent` is not ready at all, so the stated order would have an
+  agent spend a session producing a crate that should not exist yet.
+
+- **Consequences.** `architecture-lock.md` owes two corrections (the
+  `project → media` edge; the agent/ai split), `crates/README.md` owes a status
+  fix (`chroma-timeline` is 3,758 real lines, not a stub), and
+  `docs/03-architecture.md`'s Phase-0 staleness is best fixed in wave 4 when the
+  crate graph is finally the real one. Two real defects found while reading and
+  filed: **B-056** (`edit::PROBE_CACHE` never invalidates and is keyed on path
+  alone, shadowing the mtime+size staleness contract of the disk cache directly
+  beneath it) and **B-057** (`filmstrip::CHUNK_LOCKS` leaks on the extraction
+  error path). Four further observations are recorded as flagged items in the
+  plan rather than forced into bug entries they do not deserve — notably that
+  the Edit-tab preview decodes composited layers **serially** and
+  `decode_pipe`'s single global `PIPES` mutex prevents fixing that without
+  restructuring, which is a `chroma-compositor` design requirement rather than
+  a patch to `edit.rs`.
+
+**Honest gaps.** (1) **The Tauri cross-crate command route was read, not
+compiled.** I traced `wrapper.rs`/`handler.rs` in the pinned `tauri-macros-2.6.3`
+and am confident about the two `#[macro_export]`ed macros, the
+`::tauri`-rooted body and the `AppState` cycle — but this pass writes no code,
+so the `pub use`-both-macros workaround is unproven end-to-end. Nothing in the
+plan depends on it; if a future slice ever wants a command in a crate, spike it
+first. (2) **`chroma-gpu`'s real size is not pinned.** `render_core.rs` is 120
+lines, but `GpuContext` is defined in `image_processing.rs` and holds an
+`Arc<Mutex<Option<WgpuDisplay>>>`; whether that splits cleanly into a
+Chroma-side device/queue struct and an app-side display wrapper was not
+determined, and it is the one thing that could turn slice C from small into
+medium. (3) **No build was run against a moved file**, by design — `cargo check`
+and `tsc` were run only to confirm this pass touched no source. (4) **Effort is
+not estimated per slice** — file counts and line ranges are given so an
+executing agent can size its own slice, but nothing here claims how long any of
+them takes.
+
+**Numbering.** Drafted as D-139 (D-138 was the highest on `main` at `ea43e48`,
+where this fork branched), self-renumbered to D-140 at commit time when `main`
+had moved to `da6a924` and claimed D-139 first — and renumbered again to
+**D-141** at rebase time, since `main`'s tip by then had landed its own D-140
+("Scoping pass: pacing & audio assistance"), a genuine coincidence: two
+independent forks both proposed the exact title "D-140" for two unrelated
+scoping passes on the same night. **B-056**/**B-057** were re-verified free
+against `main`'s real tip at rebase time and kept as drafted.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

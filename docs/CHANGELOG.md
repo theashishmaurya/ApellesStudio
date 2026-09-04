@@ -36,6 +36,23 @@ One or two lines per session. Detail lives in the decision it references.
   rejected as non-credible). Write-up:
   `docs/notes/pacing-audio-assistance-research.md`. A separate pass scopes
   the actual feature from these findings.
+- **2026-09-05** — **The rest of the D-039 crate extraction is scoped from the
+  real code (D-141)** — `docs/notes/crate-extraction-plan.md`, the execution map
+  a later wave of parallel agents works from. Three findings changed the plan
+  rather than filling it in: `#[tauri::command]` functions must stay in
+  `app/src-tauri` (read out of `tauri-macros-2.6.3` — the attribute's two
+  `#[macro_export]`ed macros land at the *crate root*, the wrapper body needs a
+  real `tauri` dep, and any `State<AppState>` command in a crate is a dependency
+  cycle); every extraction leaves a `pub use` shim in the same commit, which is
+  what keeps `lib.rs`'s handler list off every slice's diff and makes the wave
+  genuinely parallel; and `chroma-agent` is rescoped *out* of the wave, because
+  `control.rs` has no Tauri-free core and its own doc says the op registry lives
+  in the frontend. Order: `chroma-grade-model`/`chroma-ai`/`chroma-gpu` in
+  parallel → `chroma-media` (three ordered commits) → `chroma-project` → shim
+  sweep. Two real defects found while reading and filed: **B-056**
+  (`edit::PROBE_CACHE` never invalidates, shadowing the mtime+size staleness
+  contract of the disk cache beneath it) and **B-057** (`filmstrip::CHUNK_LOCKS`
+  leaks on the extraction error path). No code changed.
 - **2026-09-05** — **Marquee-select on the Edit timeline (D-137, roadmap item
   12 Phase 2).** Click-drag on empty timeline canvas rubber-bands a selection;
   every clip the rect intersects is selected, shift/cmd/ctrl unions onto the
