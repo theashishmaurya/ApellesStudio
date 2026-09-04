@@ -233,7 +233,10 @@ const TICK_TARGET_PX = 70;
  *  `scaleWidth`, which only meant "px per second" because `scale` used to be
  *  hardcoded to 1 — see the D-058 ruler doc below); same bounds as before. */
 const DEFAULT_PX_PER_SEC = 90;
-const MIN_PX_PER_SEC = 16;
+// Owner, 2026-09-04: 16 (18%) was too tight a floor to see a whole
+// multi-minute project at once - lowered so a long timeline can actually
+// be zoomed out to fit the visible width.
+const MIN_PX_PER_SEC = 1;
 const MAX_PX_PER_SEC = 480;
 const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
