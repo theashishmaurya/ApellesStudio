@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **"Play and pause restart the audio, just audio": every
+  session was starting at 0:00 (D-133, B-052).** Not a D-130 regression, and not
+  D-050's by-design fresh-session-per-Play being misread — audio was literally
+  decoding from the head of the file on *every* Play, at any playhead, while the
+  picture (which seeks through `ffmpeg`) carried on correctly. `open_source` and
+  `decode_mono_range` threw away `symphonia`'s seek result, and on the owner's
+  own camera original that seek fails every time: `symphonia-format-isomp4`
+  seeks every *other* track first with `?`, and that MOV carries an ordinary
+  metadata track exactly one 24 fps frame long, so anything past 0.042 s is
+  out-of-range for it. Measured, not inferred — `decode_mono_range` at 0 s, 60 s
+  and 120 s returned byte-identical samples. Sources now reach their start time
+  by trimming on the packets' own timestamps (correct whether the seek succeeds,
+  fails, or lands early); the seek is kept only as the fast path and its failure
+  is logged instead of swallowed. Catch-up measured at 56 ms to 60 s / 249 ms to
+  300 s on that 2.3 GB file. Still not verified by clicking Play in the
+  assembled app — the same honest gap D-125/D-130 disclosed.
 - **2026-09-04** — **Player seek/volume sliders were invisible from a
   Tailwind `data-*` variant typo, not a missing token; Sources toggle still
   overlapped "Timeline" because D-126 only fixed legibility (D-131, B-050,

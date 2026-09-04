@@ -94,9 +94,13 @@ restarted once each is done.
 - ✅ **B-051 — Sources toggle still sits on top of "Timeline" title text.**
   D-126 fixed legibility (opaque chip) but not position; `Player.tsx`'s title
   strip now reserves `pl-10` to clear the toggle's real 32px footprint. D-131.
-- 🔲 **B-052 — Play/Pause restarts just the audio**, even with a real D-129
+- ~~🔲 **B-052 — Play/Pause restarts just the audio**, even with a real D-129
   linked audio track on the timeline. Not yet clear if this is D-130
-  incomplete or expected per-Play-session behavior being misread.
+  incomplete or expected per-Play-session behavior being misread.~~ ✅ **D-133**
+  — neither. Audio was starting at 0:00 of the source on *every* Play, because
+  `symphonia`'s seek fails outright on the owner's camera original (a 0.042 s
+  metadata track poisons the whole seek) and the failure was being thrown away.
+  Sources now land on the requested time by packet timestamp.
 - 🟡 **No on-canvas crop/transform UI on the Edit-tab preview** — the owner
   asked live ("no UI for crop", "no canvas on player to do it").
   **Half done, D-132.** The *crop* half is real: `Clip.crop_left`/`crop_top`/

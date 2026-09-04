@@ -9677,6 +9677,138 @@ The cropped pixels keep their RGB and lose only alpha, so the `Triangle` resize 
 **Honest gaps.** (1) **Not seen in the assembled app** — this environment cannot launch the Tauri window and the main tree is the owner's live dev server, the same constraint D-125/D-127/D-130 each disclosed. The crop math is proved at the level it lives at (real `RgbaImage` composites with asserted pixels, not mocks), but "crop a clip in the Inspector and watch the preview" is still the owner's own look to close. (2) **B-053's fix is the riskiest thing here**, because it changes what the preview does for every single-clip project that has ever had a transform value set — those clips will start rendering that transform. That is correct behaviour arriving late, but it is a visible change, and for `position_*` specifically it arrives still carrying B-043. (3) The crop-edge feather from the `Triangle` resize is reasoned, not measured — no test asserts the exact alpha ramp at a cropped edge under scale.
 
 **Numbering.** Drafted against `main` at `6628f99` (where D-130/B-052 were the highest) as D-131/B-053/B-054. By the time this rebased onto main's actual tip, the concurrently-landed player-controls-followup pass had already claimed D-131 (its own real fix, seek/volume slider invisibility + the Sources-toggle overlap) — renumbered this entry to **D-132**; B-053/B-054 were still free and kept. Same renumbering-at-merge process D-127 documents.
+## D-133 — "Play and pause restart the audio, just audio": every session was starting at 0:00, because the container's seek fails and the failure was thrown away (B-052)
+
+**decided (2026-09-04) · built (2026-09-04) · direct follow-up to D-129/D-130**
+
+- **Context.** Owner, live, on the build with D-129 (linked audio tracks) and
+  D-130 (the session-restart fix) both merged: *"play nad pause restart the
+  audio just audio even though its showing timeline and this is here"*, with a
+  screenshot of a real `Audio 1` track carrying a waveform, correctly linked to
+  `Video 2`. The report is specific in a way that matters: **only the audio
+  restarts.** The picture resumes from the playhead correctly.
+
+- **What "restart" turned out to mean, measured.** Not a double-start (D-130's
+  failure), and not D-050's by-design "each Play opens a fresh session at the
+  current playhead" being misread either. Audio was **literally starting from
+  0:00 of the source file on every Play, at any playhead** — so pressing Play,
+  Pause, Play made the take begin again from the top each time, while the video
+  preview (which seeks through `ffmpeg`) carried on correctly from wherever the
+  playhead was. Every Play was a restart; pause/resume is just where a user
+  notices it.
+
+- **Root cause — one ignored `Result`, and an upstream seek that really does
+  fail on the owner's own footage.** `open_source` (and `decode_mono_range`)
+  asked `symphonia` to seek and discarded the outcome:
+  `let _ = format.seek(...)`, with the comment *"A seek failure this early
+  isn't fatal — worst case playback starts from wherever the reader already is
+  (typically the very start)."* That worst case is the actual case here, every
+  time.
+
+  Measured against the owner's real `~/Movies/Chroma/New.chroma` source,
+  `A001_08302215_C019.MOV`, through this crate's own code:
+  `format.seek(... 60s ...)` → `Err("seek error: requested seek timestamp is
+  out-of-range for stream")`, and `decode_mono_range` at `0s`, `60s` and `120s`
+  returned **byte-identical samples**. The audio track's first packet after the
+  failed seek is `pts = 0`.
+
+  Why the seek fails, read from the dependency source rather than guessed:
+  `symphonia-format-isomp4-0.6.1`'s `IsoMp4Reader::seek`, in its `SeekTo::Time`
+  arm, seeks *every other track* to the requested time with `?` before seeking
+  the one that was asked for — under a comment that says it will "discard the
+  result", which it does not. That MOV carries a third, non-media data track
+  alongside its HEVC and AAC: timebase `1/1_000_000_000`, total duration
+  `41_666_667` ns — exactly one 24 fps frame. Any seek past 0.042 s is
+  out-of-range *for that track*, so the whole call fails and the audio track is
+  never seeked at all. This is a completely ordinary camera-original metadata
+  track; the file is a Sony camera take, not something exotic.
+
+  **Why it looked like a D-130 regression and is not.** D-130's own tests still
+  pass and its two causes were real. This one is older than both — it has been
+  there since D-050 — and it was masked in exactly the way B-047 describes:
+  before D-125 a session emitted silence for its first 157-635 ms, and before
+  D-129 the same wrong-position audio came out of the *embedded* path instead of
+  the linked audio clip. D-129 put a visible `Audio 1` track with a waveform on
+  screen next to it, which is what made "the audio is not where the timeline says
+  it is" something the owner could see as well as hear.
+
+- **Fix — stop trusting the seek; land on the requested time by the packets'
+  own timestamps.** `DecodedSource` (playback) and `decode_mono_range`
+  (waveforms) now carry a `StartTrim` and skip forward until the packet
+  timestamps say they have reached `start_secs`: a packet entirely before the
+  target is dropped **without being decoded at all**, the packet that straddles
+  it is decoded and trimmed at the head, and the trim then switches itself off.
+  `packet_skip` is the pure classification behind it, unit-tested on its own.
+  The seek is kept as the fast path — it works on well-formed containers and
+  makes the catch-up free — but its failure is now `log::warn!`ed rather than
+  swallowed.
+
+  This is correct in all three cases, not just the broken one: seek succeeded,
+  seek failed, or seek landed *early* (that reader ignores `SeekMode` entirely
+  and lands on a sample boundary — a measured 13 ms early on a well-formed
+  file, which this now also corrects, tightening A/V start alignment).
+
+  **Cost, measured on the same 2.3 GB file:** catching up to 60 s takes **56 ms**
+  and to 300 s **249 ms**, reading 1.4 MB / 6.1 MB. It is that cheap for two
+  reasons — packets before the target are never decoded, and the failed seek has
+  already moved the *video* track forward, so the reader hands back almost
+  nothing but audio packets while catching up. Worst case (the end of a
+  517-second take) is under half a second, absorbed by D-125's existing
+  start-skew compensation the same way any other warm-up cost is, and strictly
+  better than today's alternative of playing the wrong audio instantly.
+
+- **Considered and rejected.**
+  - **Patching/forking `symphonia-format-isomp4`.** It is a genuine upstream
+    bug and worth reporting, but a `[patch.crates-io]` git fork is a real
+    maintenance burden for one `?`, and it would still leave this module
+    trusting a seek result it never reads. Trimming by timestamp is correct
+    against *every* container, including ones we have not met yet, and is
+    testable here.
+  - **Treating a failed seek as a hard error.** Honest, but it turns the
+    owner's main footage from "wrong audio" into "no audio", which is not a fix.
+  - **Decoding, rather than skipping, the packets before the target.** Cleaner
+    codec state, but AAC resynchronises within one frame and decoding 300 s of
+    packets costs seconds instead of 249 ms. Skipping is what a seek does
+    anyway.
+  - **Closing B-052 as by-design (D-050's "each Play is a fresh session").**
+    Considered seriously, because that model genuinely does restart the audio
+    pipeline on every Play and could be misread as this. Ruled out by
+    measurement, not argument: a fresh session at the playhead is *correct*
+    behaviour and would have resumed; this one returned the same samples for
+    every playhead.
+
+- **Verified.**
+  - `packet_skip`: 4 pure unit tests (whole-packet drops, the straddling
+    packet's frame count at two sample rates, the at/past-target and
+    sub-frame-rounding "arrived" cases, and non-finite timing erring towards
+    playing rather than discarding).
+  - `a_source_starts_where_it_was_asked_to_even_when_the_container_seek_fails`:
+    a real `ffmpeg`-synthesized fixture that reproduces the upstream failure
+    with no camera original needed — a `.mov` whose **video track is shorter
+    than its audio track**, which trips the identical "one short sibling track
+    poisons the whole seek" path. Its audio is silent for 2 s then a loud 1 kHz
+    tone, so "did it start where it was asked to" is answerable from amplitude.
+    The test asserts the precondition (the seek really does fail) before
+    asserting the behaviour, so it cannot quietly stop testing the fallback.
+  - `two_ranges_of_a_real_source_decode_to_different_audio`: the owner's own
+    `A001_08302215_C019.MOV` through the waveform path — 0 s and 60 s must not
+    decode identically. **Confirmed failing before this fix** (that identity is
+    the measurement this decision opens with) and passing after.
+  - Full counts in the commit message.
+
+- **Honest gap.** **Not verified by clicking Play in the assembled app** — same
+  constraint D-125 and D-130 disclosed, for the same reasons (this environment
+  cannot launch the Tauri window; the main tree is the owner's live dev server).
+  What is proved here is proved against the real file the bug was reported on,
+  through the real decode path, which is a stronger position than either of
+  those two had. Still unproved by anyone *listening*: a sandboxed agent cannot
+  hear lip-sync. The owner pressing Play on `New.chroma` is what closes it.
+
+**Numbering.** Drafted against `main` at `6628f99` (where D-130 was the highest)
+as D-131. By the time this rebased onto main's actual tip, two concurrent forks
+had landed D-131 (the player-slider variant typo) and D-132 (Edit-tab crop) —
+renumbered to **D-133**. Same renumbering-at-merge process D-127 and D-132
+document.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -145,6 +145,29 @@
 //! already overtaken — see [`begin_request`] for the full reasoning and B-047
 //! for what it looked like when they raced.
 //!
+//! ### Starting where you asked (D-133 — the container seek cannot be trusted)
+//!
+//! Everything above also assumes a session that is told to start at second N
+//! *starts at second N*. Until D-133 that rested entirely on one ignored
+//! `Result`: both [`open_source`] and [`decode_mono_range`] asked `symphonia`
+//! to seek and then discarded the outcome, on the reasoning that "worst case
+//! playback starts from wherever the reader already is."
+//!
+//! On the owner's real camera original that worst case is what happens on
+//! **every** play, and "wherever the reader already is" means **the start of
+//! the file** — so every Play, at any playhead, replayed the take from 0:00
+//! while the picture carried on correctly from the playhead (the video preview
+//! seeks through `ffmpeg`, which has no such problem). That is B-052's
+//! "play and pause restart the audio, just audio."
+//!
+//! The cause is upstream and measured, not inferred: see [`StartTrim`] for the
+//! `symphonia-format-isomp4` behaviour, the property of the file that trips it,
+//! and the cost of the fix. Sources now reach their start time by **trimming on
+//! the packets' own timestamps** ([`packet_skip`] / [`StartTrim`]), which is
+//! correct whether the container's seek succeeded, failed, or landed early, and
+//! the seek itself is kept only as the fast path — with its failure logged
+//! rather than swallowed.
+//!
 //! ## Multi-track mixing (D-057, Phase C of `docs/notes/multi-track-nle.md`)
 //!
 //! D-049/D-050 (above) deliberately did not populate `chroma-timeline`'s
@@ -314,6 +337,61 @@ pub(crate) fn skew_compensation(
     let capped = skew_secs.min(MAX_SKEW_COMPENSATION_SECS);
     let samples = (capped * out_rate as f64) as usize * out_channels.max(1);
     (samples, capped)
+}
+
+/// What to do with one packet while a source is still working its way forward
+/// to the exact source time it was asked to start at (B-052 / D-133) — see
+/// [`StartTrim`] for why that is done by packet timestamp rather than by
+/// trusting the container's own seek.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PacketSkip {
+    /// Every frame in this packet is before the target — drop the whole packet
+    /// without decoding it at all.
+    DropWhole,
+    /// The packet straddles the target — decode it, then drop this many
+    /// **source frames** off the front. Never zero (a packet starting exactly
+    /// at the target is [`PacketSkip::Arrived`]).
+    DropFrames(usize),
+    /// The packet starts at or after the target — the source has arrived;
+    /// nothing to trim on this packet or any later one.
+    Arrived,
+}
+
+/// Classify one packet against the source time the session asked to start at.
+/// `packet_secs` is the packet's presentation time and `packet_dur_secs` its
+/// duration, both in real seconds; `src_rate` is the source's own sample rate,
+/// so the frame count returned is in **source** frames — before channel
+/// adaptation and resampling, which is where [`DecodedSource::ensure`] applies
+/// it. Pure — no I/O.
+///
+/// Non-finite input, or a target at or behind the packet, is "arrived":
+/// playing a few extra milliseconds is always the better failure than silently
+/// discarding audio over a value that could not be interpreted.
+pub(crate) fn packet_skip(
+    packet_secs: f64,
+    packet_dur_secs: f64,
+    target_secs: f64,
+    src_rate: u32,
+) -> PacketSkip {
+    if !packet_secs.is_finite() || !target_secs.is_finite() || packet_secs >= target_secs {
+        return PacketSkip::Arrived;
+    }
+    let dur = if packet_dur_secs.is_finite() {
+        packet_dur_secs.max(0.0)
+    } else {
+        0.0
+    };
+    if packet_secs + dur <= target_secs {
+        return PacketSkip::DropWhole;
+    }
+    let frames = ((target_secs - packet_secs) * src_rate as f64)
+        .round()
+        .max(0.0) as usize;
+    if frames == 0 {
+        PacketSkip::Arrived
+    } else {
+        PacketSkip::DropFrames(frames)
+    }
 }
 
 /// Reduce mono `samples` to `bucket_count` (min, max) peak pairs — the
@@ -1099,19 +1177,18 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
         .make_audio_decoder(&codec_params, &Default::default())
         .map_err(|e| format!("make decoder: {e}"))?;
 
-    if start_secs > 0.0
-        && let Some(time) = Time::try_from_secs_f64(start_secs)
-    {
-        // Same "not fatal" treatment as `run_session`'s seek: worst case, the
-        // extracted range starts a little late in the source.
-        let _ = format.seek(
-            SeekMode::Accurate,
-            SeekTo::Time {
-                time,
-                track_id: Some(track_id),
-            },
-        );
-    }
+    seek_source(
+        format.as_mut(),
+        track_id,
+        start_secs,
+        &path.display().to_string(),
+    );
+    // B-052 / D-133 — and then land on `start_secs` exactly, by packet
+    // timestamp, whatever that seek did. A waveform drawn from the wrong part
+    // of the file is the same defect as playing the wrong part of it; the
+    // reason it was never *seen* is that every clip the app creates today
+    // starts at `source_start: 0`, where there is nothing to seek to.
+    let mut trim = start_trim(track.time_base, start_secs, src_rate);
 
     let target_frames = (duration_secs * src_rate as f64).ceil() as usize;
     let mut mono: Vec<f32> = Vec::with_capacity(target_frames.min(8 * 1024 * 1024));
@@ -1127,6 +1204,20 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
         if packet.track_id != track_id {
             continue;
         }
+        let head_drop_frames = match trim {
+            None => 0,
+            Some(t) => match t.classify(packet.pts, packet.dur) {
+                PacketSkip::DropWhole => continue,
+                PacketSkip::DropFrames(n) => {
+                    trim = None;
+                    n
+                }
+                PacketSkip::Arrived => {
+                    trim = None;
+                    0
+                }
+            },
+        };
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
             Err(SymError::DecodeError(_)) => continue, // skip the bad packet, keep going
@@ -1135,7 +1226,10 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
 
         let mut interleaved = vec![0f32; decoded.samples_interleaved()];
         decoded.copy_to_slice_interleaved(&mut interleaved);
-        for frame in interleaved.chunks_exact(src_channels) {
+        for frame in interleaved
+            .chunks_exact(src_channels)
+            .skip(head_drop_frames)
+        {
             mono.push(frame.iter().sum::<f32>() / src_channels as f32);
             if mono.len() >= target_frames {
                 break;
@@ -1152,6 +1246,116 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
 // ever moved to another thread (sidesteps needing `cpal::Stream: Send`, which
 // varies by host backend — see the `run_session` doc below)
 // --------------------------------------------------------------------------- //
+
+/// How far into a source a session still has to skip before it is really at
+/// the time it was asked to start at, and the track timebase to read packet
+/// timestamps with (B-052 / D-133).
+///
+/// **Why the container's own seek is not trusted.** `open_source` and
+/// [`decode_mono_range`] both ask `symphonia` to seek and then, until this
+/// existed, ignored the result — "worst case playback starts from wherever the
+/// reader already is." On the owner's real camera original
+/// (`A001_08302215_C019.MOV`) that worst case is what actually happens, every
+/// single time, and "wherever the reader already is" is **the start of the
+/// file**. Measured, not theorised: that MOV carries a third, non-media data
+/// track (a nanosecond-timebase metadata track, total duration `41666667` ns —
+/// exactly one 24 fps frame) alongside its HEVC and AAC tracks, and
+/// `symphonia-format-isomp4-0.6.1`'s `IsoMp4Reader::seek` seeks *every other*
+/// track to the requested time with `?` before seeking the one that was asked
+/// for (`demuxer.rs`, `SeekTo::Time`, whose own comment says it will "discard
+/// the result" — it does not). So any seek past 0.042 s fails the whole call
+/// with `SeekErrorKind::OutOfRange`, the audio track is left un-seeked at
+/// sample 0, and every Play produced audio from 0:00 no matter where the
+/// playhead was.
+///
+/// Trimming by the packets' own timestamps is correct whether the seek
+/// succeeded, failed, or (`SeekMode` is ignored outright by that reader) landed
+/// on an earlier sample than asked for — a measured 13 ms early on a
+/// well-formed file, which this now also corrects. The catch-up costs one pass
+/// of packet reads with no decoding: measured on that same 2.3 GB file, **56 ms
+/// to reach 60 s and 249 ms to reach 300 s**, because the failed seek has
+/// already moved the *video* track forward, so the reader hands back almost
+/// nothing but the audio track's own packets while it catches up.
+#[derive(Debug, Clone, Copy)]
+struct StartTrim {
+    target_secs: f64,
+    time_base: symphonia::core::units::TimeBase,
+    src_rate: u32,
+}
+
+impl StartTrim {
+    /// [`packet_skip`] for one packet's `(pts, dur)` in this track's timebase.
+    /// A timestamp the timebase cannot convert counts as arrived rather than as
+    /// something to skip — see [`packet_skip`]'s own doc.
+    fn classify(
+        &self,
+        pts: symphonia::core::units::Timestamp,
+        dur: symphonia::core::units::Duration,
+    ) -> PacketSkip {
+        match (
+            self.time_base.calc_time(pts).map(|t| t.as_secs_f64()),
+            self.time_base.calc_duration(dur).map(|t| t.as_secs_f64()),
+        ) {
+            (Some(secs), Some(dur_secs)) => {
+                packet_skip(secs, dur_secs, self.target_secs, self.src_rate)
+            }
+            _ => PacketSkip::Arrived,
+        }
+    }
+}
+
+/// The [`StartTrim`] for a source asked to start at `start_secs`, or `None`
+/// when there is nothing to trim to (the very start of the file) or no timebase
+/// to measure against. Shared by [`open_source`] and [`decode_mono_range`],
+/// which otherwise deliberately duplicate their symphonia setup (see
+/// `decode_mono_range`'s own doc).
+fn start_trim(
+    time_base: Option<symphonia::core::units::TimeBase>,
+    start_secs: f64,
+    src_rate: u32,
+) -> Option<StartTrim> {
+    if start_secs <= 0.0 || !start_secs.is_finite() {
+        return None;
+    }
+    time_base.map(|time_base| StartTrim {
+        target_secs: start_secs,
+        time_base,
+        src_rate,
+    })
+}
+
+/// Ask `format` to seek `track_id` to `start_secs`, logging rather than
+/// swallowing a failure. The return value is deliberately nothing: what the
+/// caller does next is driven by [`StartTrim`], not by whether this worked —
+/// see that type's doc for why the result cannot be trusted either way.
+fn seek_source(
+    format: &mut dyn symphonia::core::formats::FormatReader,
+    track_id: u32,
+    start_secs: f64,
+    label: &str,
+) {
+    if start_secs <= 0.0 {
+        return;
+    }
+    let Some(time) = Time::try_from_secs_f64(start_secs) else {
+        return;
+    };
+    if let Err(e) = format.seek(
+        SeekMode::Accurate,
+        SeekTo::Time {
+            time,
+            track_id: Some(track_id),
+        },
+    ) {
+        // Not fatal, and not silent either (B-052): the caller trims forward by
+        // packet timestamp regardless, but a container that cannot be seeked is
+        // a real, diagnosable property of the media worth one line per session.
+        log::warn!(
+            "chroma audio: {label} could not seek to {start_secs:.3}s ({e}) — \
+             skipping forward by packet timestamps instead"
+        );
+    }
+}
 
 /// One already-open, mid-decode audio source (D-057) — a `symphonia`
 /// format reader + decoder for a single source file, already resampled and
@@ -1189,6 +1393,11 @@ struct DecodedSource {
     /// audio underneath it. Reported as the voice overlapping / not matching
     /// the picture.
     remaining: Option<usize>,
+    /// How far this source still has to skip to reach the source time it was
+    /// asked to start at, cleared the moment it gets there (B-052 / D-133). See
+    /// [`StartTrim`] for why a source cannot simply trust that the seek in
+    /// [`open_source`] put it in the right place.
+    start_trim: Option<StartTrim>,
 }
 
 impl DecodedSource {
@@ -1216,6 +1425,26 @@ impl DecodedSource {
             if packet.track_id != self.track_id {
                 continue;
             }
+            // B-052 / D-133 — land on the source time this session actually
+            // asked for, by the packets' own timestamps, instead of assuming
+            // `open_source`'s seek put us there. A packet entirely before the
+            // target is dropped without being decoded at all (the whole reason
+            // catching up on an unseekable container costs tens of
+            // milliseconds rather than seconds).
+            let head_drop_frames = match self.start_trim {
+                None => 0,
+                Some(trim) => match trim.classify(packet.pts, packet.dur) {
+                    PacketSkip::DropWhole => continue,
+                    PacketSkip::DropFrames(n) => {
+                        self.start_trim = None;
+                        n
+                    }
+                    PacketSkip::Arrived => {
+                        self.start_trim = None;
+                        0
+                    }
+                },
+            };
             let decoded = match self.decoder.decode(&packet) {
                 Ok(d) => d,
                 Err(SymError::DecodeError(_)) => continue, // skip the bad packet, keep going
@@ -1223,7 +1452,8 @@ impl DecodedSource {
             };
             let mut interleaved = vec![0f32; decoded.samples_interleaved()];
             decoded.copy_to_slice_interleaved(&mut interleaved);
-            let adapted = adapt_channels(&interleaved, self.src_channels, out_channels);
+            let head = (head_drop_frames * self.src_channels).min(interleaved.len());
+            let adapted = adapt_channels(&interleaved[head..], self.src_channels, out_channels);
             let resampled = self.resample.push(&adapted)?;
             self.carry.extend(resampled);
         }
@@ -1320,25 +1550,13 @@ fn open_source(
         .make_audio_decoder(&codec_params, &Default::default())
         .map_err(|e| format!("make decoder: {e}"))?;
 
-    if start_secs > 0.0
-        && let Some(time) = Time::try_from_secs_f64(start_secs)
-    {
-        // A seek failure this early (e.g. a container that can't seek
-        // precisely) isn't fatal — worst case playback starts from wherever
-        // the reader already is (typically the very start).
-        let _ = format.seek(
-            SeekMode::Accurate,
-            SeekTo::Time {
-                time,
-                track_id: Some(track_id),
-            },
-        );
-    }
+    let label = path.display().to_string();
+    seek_source(format.as_mut(), track_id, start_secs, &label);
 
     let resample = Resample::new(src_rate, out_rate, out_channels)?;
 
     Ok(DecodedSource {
-        label: path.display().to_string(),
+        label,
         format,
         decoder,
         track_id,
@@ -1347,6 +1565,9 @@ fn open_source(
         carry: VecDeque::new(),
         exhausted: false,
         remaining: duration_secs.map(|d| clip_limit_samples(d, out_rate, out_channels)),
+        // B-052 / D-133 — the seek above is an optimisation, not the thing that
+        // establishes where playback starts; this is.
+        start_trim: start_trim(track.time_base, start_secs, src_rate),
     })
 }
 
@@ -2215,6 +2436,245 @@ mod tests {
         assert!(
             after_one_second_peak > 0.05,
             "with no out-point the source keeps playing (peak {after_one_second_peak})"
+        );
+    }
+
+    // ------------------------------------------------------------------ //
+    // B-052 / D-133 — a source starts where it was asked to, even when the
+    // container's own seek fails.
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn packet_skip_drops_packets_wholly_before_the_target() {
+        // a 1024-frame AAC packet at 48 kHz is ~21.3 ms
+        assert_eq!(
+            packet_skip(0.0, 0.021_333, 3.0, 48_000),
+            PacketSkip::DropWhole
+        );
+        assert_eq!(
+            packet_skip(2.9, 0.021_333, 3.0, 48_000),
+            PacketSkip::DropWhole
+        );
+        // exactly touching the target from below is still wholly before it
+        assert_eq!(packet_skip(2.5, 0.5, 3.0, 48_000), PacketSkip::DropWhole);
+    }
+
+    #[test]
+    fn packet_skip_trims_the_packet_that_straddles_the_target() {
+        // starts 10 ms before the target -> drop 480 source frames at 48 kHz
+        assert_eq!(
+            packet_skip(2.99, 0.021_333, 3.0, 48_000),
+            PacketSkip::DropFrames(480)
+        );
+        // a different source rate scales the frame count, not the time
+        assert_eq!(
+            packet_skip(2.99, 0.021_333, 3.0, 44_100),
+            PacketSkip::DropFrames(441)
+        );
+    }
+
+    #[test]
+    fn packet_skip_at_or_past_the_target_has_arrived() {
+        assert_eq!(packet_skip(3.0, 0.021, 3.0, 48_000), PacketSkip::Arrived);
+        assert_eq!(packet_skip(4.0, 0.021, 3.0, 48_000), PacketSkip::Arrived);
+        // sub-frame difference rounds to nothing to drop, which is "arrived",
+        // never `DropFrames(0)` — a distinction `ensure` relies on to stop
+        // classifying every subsequent packet.
+        assert_eq!(
+            packet_skip(3.0 - 1e-9, 0.021, 3.0, 48_000),
+            PacketSkip::Arrived
+        );
+    }
+
+    #[test]
+    fn packet_skip_of_uninterpretable_timing_plays_rather_than_discards() {
+        assert_eq!(
+            packet_skip(f64::NAN, 0.021, 3.0, 48_000),
+            PacketSkip::Arrived
+        );
+        assert_eq!(
+            packet_skip(0.0, 0.021, f64::NAN, 48_000),
+            PacketSkip::Arrived
+        );
+        // a non-finite duration is treated as zero-length rather than as
+        // covering the target, so the packet is still correctly skipped
+        assert_eq!(
+            packet_skip(0.0, f64::INFINITY, 3.0, 48_000),
+            PacketSkip::DropWhole
+        );
+    }
+
+    /// Synthesize a `.mov` whose **video track is shorter than its audio
+    /// track** — the structural property that makes
+    /// `symphonia-format-isomp4-0.6.1` fail a seek outright (its `SeekTo::Time`
+    /// seeks every *other* track to the requested time with `?` first, so one
+    /// short sibling track poisons the whole call). This is the same failure
+    /// the owner's real camera original hits via its 0.042-second metadata
+    /// track, reproduced with nothing but `ffmpeg`, since a 2.3 GB camera
+    /// original is not something this repo can carry as a fixture (D-050's own
+    /// convention: real media is env-var-gated, synthesized media is built at
+    /// test time).
+    ///
+    /// The audio is deliberately **silent for the first `tone_from_secs`
+    /// seconds** and a loud 1 kHz tone after it, so "did this source start
+    /// where it was asked to" is a question a test can answer from amplitude
+    /// alone.
+    fn synth_short_video_long_audio(dir: &Path, video_secs: f64, tone_from_secs: f64) -> PathBuf {
+        let out = dir.join("short_video.mov");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc=size=160x120:rate=24:duration={video_secs}"),
+                "-f",
+                "lavfi",
+                "-i",
+                &format!(
+                    "aevalsrc=if(gte(t\\,{tone_from_secs})\\,0.5*sin(2*PI*1000*t)\\,0):s=48000:d=6"
+                ),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ac",
+                "2",
+            ])
+            .arg(&out)
+            .status()
+            .expect("spawn ffmpeg to synthesize a short-video/long-audio fixture");
+        assert!(status.success(), "ffmpeg fixture synthesis failed");
+        out
+    }
+
+    /// Open `path`'s audio track and report whether seeking it to `secs`
+    /// actually works — the precondition the fixture above exists to create.
+    fn container_seek_fails(path: &Path, secs: f64) -> bool {
+        let file = std::fs::File::open(path).expect("open fixture");
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let mut format = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
+            .expect("probe fixture");
+        let track_id = format
+            .default_track(TrackType::Audio)
+            .expect("fixture has an audio track")
+            .id;
+        format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: Time::try_from_secs_f64(secs).expect("valid time"),
+                    track_id: Some(track_id),
+                },
+            )
+            .is_err()
+    }
+
+    /// Peak amplitude of the first `secs` seconds a source hands out.
+    fn opening_peak(ds: &mut DecodedSource, secs: f64, rate: u32, channels: usize) -> f32 {
+        let want = clip_limit_samples(secs, rate, channels);
+        let chunk = 1024 * channels;
+        let mut peak = 0f32;
+        let mut taken = 0usize;
+        while taken < want {
+            let buf = ds.take(chunk, channels).expect("take");
+            for s in &buf {
+                peak = peak.max(s.abs());
+            }
+            taken += chunk;
+        }
+        peak
+    }
+
+    /// B-052, the real regression test. A source asked to start 3 seconds in
+    /// must actually start 3 seconds in — even in a container `symphonia`
+    /// refuses to seek, where before D-133 it silently started at 0:00 instead
+    /// and every Play replayed the take from the top.
+    #[test]
+    fn a_source_starts_where_it_was_asked_to_even_when_the_container_seek_fails() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let channels = 2usize;
+        // video 2s, audio 6s, tone from t=2s
+        let path = synth_short_video_long_audio(dir.path(), 2.0, 2.0);
+
+        assert!(
+            container_seek_fails(&path, 3.0),
+            "this fixture only tests anything if symphonia really cannot seek it — if this \
+             assertion ever fails, the upstream isomp4 seek was fixed and D-133's fallback \
+             should be re-examined rather than the test relaxed"
+        );
+
+        // The control: at 0.0 there is nothing to skip to, and the fixture is
+        // genuinely silent there. This is exactly what the broken path
+        // produced for *every* start time.
+        let mut from_zero =
+            open_source(&path, 0.0, Some(6.0), rate, channels).expect("open at the start");
+        let silent_peak = opening_peak(&mut from_zero, 0.5, rate, channels);
+        assert!(
+            silent_peak < 0.01,
+            "the fixture's first half-second must be silent for this test to mean anything \
+             (peak {silent_peak})"
+        );
+
+        let mut from_three =
+            open_source(&path, 3.0, Some(3.0), rate, channels).expect("open three seconds in");
+        let tone_peak = opening_peak(&mut from_three, 0.5, rate, channels);
+        assert!(
+            tone_peak > 0.1,
+            "a source opened at 3.0s must start in the tone, not back at the silent head of \
+             the file (peak {tone_peak}) — this is B-052: audio restarting from 0:00 on every \
+             Play while the picture carried on from the playhead"
+        );
+    }
+
+    /// The same property through the batch/waveform path, which had the
+    /// identical swallowed seek: two different ranges of a real, unseekable
+    /// source must decode to different audio. Env-gated on the owner's own
+    /// camera original — the file the bug was actually reported against.
+    /// Before D-133 these two came back **byte-identical**, because both
+    /// silently decoded from 0:00.
+    #[test]
+    fn two_ranges_of_a_real_source_decode_to_different_audio() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+        let path = PathBuf::from(&video_path);
+        let head = decode_mono_range(&path, 0.0, 0.5).expect("decode the head");
+        let later = decode_mono_range(&path, 60.0, 0.5).expect("decode a minute in");
+        assert!(
+            head.iter().any(|s| s.abs() > 1e-4) || later.iter().any(|s| s.abs() > 1e-4),
+            "at least one of the two ranges must be non-silent for this comparison to mean \
+             anything"
+        );
+        let n = head.len().min(later.len());
+        assert!(n > 0, "both ranges must decode some samples");
+        assert_ne!(
+            head[..n],
+            later[..n],
+            "0s and 60s of the same source must not decode to the same samples — identical \
+             output is the signature of a swallowed seek failure (B-052)"
         );
     }
 
