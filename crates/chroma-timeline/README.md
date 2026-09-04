@@ -20,5 +20,15 @@ tracks of clips, position helpers, and the edit ops.
 
 ## Status
 
-D-041 — the Edit-tab MVP model. Multi-track / audio / gaps / ripple-roll-slip-slide
-/ transcript→EDL / OTIO export land in later, tracked steps.
+D-041 — the Edit-tab MVP model. Grown since, each field in its own decision (the
+module doc in `src/lib.rs` is the authoritative, per-field version of this list):
+multi-track with explicit `Clip::start_frame` and real gaps (D-054), track `gain`
+(D-057), `locked` / `hidden` plus the compositing transform
+`opacity`/`position_x`/`position_y`/`scale`/`rotation` and `chroma_keyframes`
+(D-082/D-086), cross-track `sync_locked` (D-106), A/V `link_group` (D-129), and
+per-clip **crop** — `crop_left`/`crop_top`/`crop_right`/`crop_bottom`, normalised
+0–1 edge insets into the clip's own source (D-132). Every one of those is
+*carried* here and *applied* one layer up, in `app/src-tauri` — this crate still
+renders nothing.
+
+Ripple-roll-slip-slide / transcript→EDL / OTIO export land in later, tracked steps.

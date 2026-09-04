@@ -6,12 +6,38 @@ already real (D-088); what's missing is being able to **grab the overlaid clip i
 program monitor and move/resize it directly**, instead of typing numbers into the
 Inspector.
 
-This note is the scoping pass. **Nothing here is built yet** — deliberately, because
-scoping turned up two real prerequisites (below) that would make handles feel broken if
-they were built on top of today's model as-is.
+This note is the scoping pass. **Nothing here was built when it was written** —
+deliberately, because scoping turned up two real prerequisites (below) that would make
+handles feel broken if they were built on top of today's model as-is. *(Phase 3 has since
+been built — see **STATUS** immediately below for what is and isn't real as of the D-132
+pass; the phase sections themselves are annotated in place.)*
 
 Companion finding from the same pass: **crop** — see "Where crop actually stands" at the
 end, plus B-042 / D-127.
+
+---
+
+## STATUS (updated 2026-09-04 evening, D-132) — what is now built, what is not
+
+The owner came back to this the same evening, live: *"no UI for crop"*, *"no canvas on
+player to do it."* That is Phase 3 and Phase 1 of this note respectively, asked for
+directly rather than left queued. **D-132 built Phase 3's data + compositor + Inspector
+half. Phase 0a's code, Phase 1, and crop's on-canvas mode are still exactly as scoped
+below — plans, not code.** Precisely:
+
+| Section below | Status after D-132 |
+|---|---|
+| **0a — composition-space units** | **Decided, not implemented.** The unit question is answered and closed (see the section — normalised, as this note itself recommended); `position_x`/`position_y` are still absolute canvas pixels and still resolution-dependent. B-043 stays open. |
+| 0b — one undo entry per drag | Unchanged. Nothing drags yet, so nothing needed it. |
+| 1 — select / move / corner-scale handles | **Not built.** No `TransformOverlay.tsx`, no content-box extraction into `@chroma/player`. |
+| 2 — rotation, anchor point, non-uniform scale | Not built. |
+| **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **No on-canvas crop handles and no Resolve-style mode toggle** — those are Phase 1's substrate, which does not exist yet. |
+| 4 — keyframes | Crop keyframes work exactly as the other five fields' do (explicit "Add key"). The auto-keyframe-on-drag question is untouched, because there is still no drag. |
+
+Also fixed on the way through, because crop would have been invisible without it:
+**B-053** — the single-layer preview path skipped compositing unconditionally, so a lone
+clip's opacity/position/scale/rotation (and any crop) were silently discarded. See that
+bug and D-132.
 
 ---
 
@@ -154,6 +180,39 @@ Recommend **normalised** for `position_*`: it survives a project-resolution chan
 the unit the drag math naturally produces (a pointer delta over a known content box is a
 fraction), and it removes any need for the frontend to know the backend's decode scale.
 
+#### DECIDED, 2026-09-04 (D-132): normalised, and this note's own recommendation stands
+
+The recommendation above was re-read rather than re-derived, and it holds — the three
+reasons it gives are each independently sufficient, and re-checking the code turned up
+nothing that weakens them (`ProjectSettings.width`/`height` really do exist and really are
+inferred from the first clip, D-038/`infer_settings_from_clip`; `scale_target`'s
+`long <= long_edge → None` early return really does make a small layer full-frame at play
+quality). The only thing the reasoning was missing is a name for what it buys:
+**normalised units make the field correct at every preview scale by construction, rather
+than correct once the canvas is fixed.** That distinction is why crop could ship today,
+ahead of the canvas work — see below.
+
+So, settled: **composition space is `ProjectSettings.width`/`height`, and geometry on a
+`Clip` is normalised against it.**
+
+Two consequences worth being explicit about, because they are what makes this a decision
+rather than a preference:
+
+- **`position_x`/`position_y` still have to be migrated, and that is the whole remaining
+  cost of Phase 0a.** Existing values are absolute pixels in a canvas whose size depended
+  on the preview quality *at the moment they were typed* — which is unrecoverable, not
+  merely unconverted. There is no honest arithmetic that turns a stored `200` into the
+  right fraction, so the migration is a judgment call (reinterpret against the project
+  resolution, i.e. treat old values as composition pixels, and accept a one-time shift on
+  projects that used PIP offsets) and it belongs in Phase 0a's own commit with its own
+  before/after evidence — not smuggled into a crop change.
+- **D-132's crop does not wait for any of that.** Its four insets are normalised to the
+  clip's **own source**, not to the composition, so they are already scale-invariant and
+  already correct — the same reasoning, applied to a field whose natural reference frame
+  is the layer rather than the canvas. That is not a shortcut around Phase 0a; it is the
+  decision above being unit-correct from the first line of a new field instead of being
+  retrofitted onto an old one.
+
 ### 0b. A drag must not push 60 undo entries per second
 
 `useEditorTimelineStore.applyOp` pushes a whole-`Timeline` before/after snapshot onto
@@ -218,13 +277,38 @@ Non-uniform scale (side handles that squeeze/stretch) needs `scale_x`/`scale_y` 
 `scale`/`opacity` already document. Recommend `scale_x`/`scale_y` **replacing** `scale`
 with a migration rather than a third field, so there is never a question of which wins.
 
-### Phase 3 — crop, as its own mode
+### Phase 3 — crop, as its own mode — **BUILT (D-132), except the on-canvas mode**
 
 Both references treat crop as a **separate mode**, not an extra behaviour on the transform
-box. Chroma has **no crop on a timeline clip at all** (no field on `Clip`, nothing in the
-compositor — see below). So Phase 3 is: a `crop` rect field on `Clip`, `composite_layer_onto`
+box. Chroma had **no crop on a timeline clip at all** (no field on `Clip`, nothing in the
+compositor). This phase was scoped as: a `crop` rect field on `Clip`, `composite_layer_onto`
 cropping the layer before scale/rotate, a `Crop` row in `ClipInspectorPanel`, and a
-Resolve-style mode toggle on the overlay. Sized as a real feature, not a handle variant.
+Resolve-style mode toggle on the overlay.
+
+**Four of those five are done (D-132); the fifth is the overlay, which does not exist.**
+What actually shipped, and where it differs from the sketch above:
+
+- **Four flat normalised insets, not a rect.** `crop_left`/`crop_top`/`crop_right`/
+  `crop_bottom` on `Clip`, each the 0–1 fraction of the clip's **own source** trimmed off
+  that edge. Flat scalars because that is the only shape the D-034 keyframe engine can
+  interpolate — a nested `CropRect` would have stored fine and animated never. Insets
+  rather than x/y/w/h because that is what both references expose (Premiere's Crop effect
+  is Left/Right/Top/Bottom percentages; Resolve's Crop mode is one handle per side).
+- **`composite_layer_onto` crops first, and crops *in place*.** The cropped-away pixels
+  lose their alpha while the layer keeps its full footprint, rather than the buffer being
+  shrunk to the kept rect. Two real reasons, both reference-matching: the remaining
+  picture stays where it is instead of re-centring as you drag an edge in, and
+  `scale`/`rotation` keep acting about the layer's own full-frame centre (a shrunk buffer
+  would silently move `rotate_about_center`'s pivot).
+- **The Inspector gets its own `Crop` section**, four numeric fields in Resolve's own
+  Left/Right/Top/Bottom order, in the stored unit (a 0–1 fraction, like the existing
+  Opacity field) rather than a percentage.
+- **Crop rides the existing `set_clip_transform` op**, not a `set_clip_crop` of its own —
+  crop is a separate *mode* in a viewer, but not a separate *write path*: one clip's
+  geometry, one form, one history entry, no ordering question between two ops.
+- **Not built: the Resolve-style mode toggle and any on-canvas crop handle.** Those need
+  Phase 1's overlay substrate, which is still unwritten. Numeric fields only, exactly the
+  half of the owner's ask that could be landed correctly tonight.
 
 ### Phase 4 — keyframes
 
@@ -238,9 +322,12 @@ story, and the overlay should be read as editing the base transform.
 
 ## Open questions for the owner
 
-1. **Phase 0a's unit choice** — normalised (recommended) vs composition pixels for
-   `position_x`/`position_y`. It changes saved-project migration, so it wants an explicit
-   call.
+1. ~~**Phase 0a's unit choice** — normalised (recommended) vs composition pixels for
+   `position_x`/`position_y`.~~ **Answered 2026-09-04 (D-132): normalised, against a
+   composition space of `ProjectSettings.width`/`height`.** Taken as a standing call
+   rather than another round trip, on this note's own already-researched recommendation —
+   see the decision block under Phase 0a. The *migration* of existing `position_*` values
+   is still real, still unbuilt, and is now the whole of Phase 0a.
 2. **Proportional-by-default (Resolve) vs free-with-Shift-to-constrain (Premiere).**
    Phase 1 can only do proportional; the question is whether Phase 2 keeps that default.
 3. **Click-on-picture to select** — genuinely useful, but it needs the backend to report
@@ -275,6 +362,12 @@ Traced independently in both paths, because they share nothing but a word:
   `scaled_crop_offset`; the export path passes `(0.0, 0.0)`), tracked D-019 mattes are
   baked at the un-cropped resolution by explicit assumption, and h.264's `yuv420p` needs
   even dimensions a free-form crop rect won't guarantee.
-- **Edit tab — does not exist at all.** No `crop` field on `chroma_timeline::Clip`, no
-  crop in `composite_layer_onto`, no Crop row in `ClipInspectorPanel`. Not a stub, not a
-  dead control — the concept is simply absent. That's Phase 3 above.
+- **Edit tab — did not exist at all** (true as written, 2026-09-04 afternoon): no `crop`
+  field on `chroma_timeline::Clip`, no crop in `composite_layer_onto`, no Crop row in
+  `ClipInspectorPanel`. Not a stub, not a dead control — the concept was simply absent.
+  **Now built, that same evening — D-132**, see Phase 3 above for exactly what shipped and
+  what didn't. Two things this earlier paragraph implied that turned out to matter: the
+  Edit tab's crop shares **nothing** with Colorist's (per-layer, normalised, inside a
+  multi-layer compositor vs. absolute-pixel geometry on one loaded still), and it is
+  **preview-only** — there is still no timeline video export path of any kind, so "does
+  Edit-tab crop survive an export" is not yet a question the code can be asked.

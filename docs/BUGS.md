@@ -27,6 +27,25 @@ Still real:
 
 ## Open
 
+## B-053 — A lone clip's transform was silently discarded by the preview: the single-layer fast path skipped compositing unconditionally
+status: fixed (2026-09-04, D-132) · severity: high (an Inspector control that writes the file and changes nothing on screen) · area: `app/src-tauri/src/chroma/edit.rs` (`timeline_frame`)
+- **found:** 2026-09-04, while wiring D-132's per-clip crop through the Edit-tab compositor. Not reported by the owner — found by asking "what happens when there's only one clip," which is the first thing anyone would try a crop on.
+- **repro:** one video clip on one track, nothing above or below it. Select it, set Opacity `0.5` (or Scale `2`, or Rotation `45`) in the Edit-tab Inspector.
+- **expected:** the preview shows the change, the way it does the moment a second visible video track exists.
+- **actual:** nothing changes on screen, at any playhead position or preview quality. The value really is written to `project.json` and really is read back into the Inspector field — only the picture never reflects it.
+- **cause:** `timeline_frame`'s `match layers.as_slice()` had `[(track, clip, source_frame)]` as an **unconditional** arm — "exactly one visible layer needs no compositing at all" (D-088). True for a *plain* clip, and a real, worthwhile fast path (it skips a full-frame RGBA clone, an alpha pass and an `overlay`); false for a clip carrying any of the D-082 transform fields, which only `composite_layer_onto` ever applies. So the transform was reachable in the UI, persisted, keyframeable — and invisible, for the entire single-track case, which is most projects.
+- **fix (D-132):** the arm is now guarded by `resolve_clip_transform(clip, *source_frame).is_identity()`. A genuinely untransformed clip still takes the plain-decode path byte-for-byte (the common case costs exactly what it did before); anything else falls through to the real compositor. `is_identity()` deliberately shares `crop_pixel_rect`'s clamp semantics so the predicate can never disagree with what would actually be painted.
+- **real remaining caveat:** this makes a lone clip's `position_x`/`position_y` visible for the first time — and those are still **B-043**-affected (absolute pixels in a canvas whose size follows the preview decode scale), so a lone clip's *position* will still shift between scrubbing and playing until Phase 0a of `docs/notes/on-canvas-transform.md` lands. Opacity, scale, rotation and D-132's crop are all ratio-based and are correct at every preview scale. Strictly better than before (four of five fields go from "silently ignored" to "correct"), but not "the transform is now fully trustworthy on one clip."
+
+## B-054 — A `chroma-timeline` test pinned to the owner's live `project.json` asserted a premise that expired the moment they used the feature it was testing
+status: fixed (2026-09-04, D-132) · severity: low (test-suite only — but it fails on `main`, on correct data) · area: `crates/chroma-timeline/src/lib.rs` tests
+- **found:** 2026-09-04, the first `cargo test -p chroma-timeline` run of the D-132 fork, before any of that fork's own code existed.
+- **repro:** `cargo test -p chroma-timeline` on any machine where `~/Movies/Chroma/New.chroma/project.json` exists and has had a clip dropped into it since D-129 shipped.
+- **actual:** `tests::the_owners_real_project_json_loads_with_every_clip_unlinked` fails — `left: Some("lg-54a79586-…"), right: None`.
+- **cause:** the test read the owner's **live** project file and asserted `link_group == None` on every clip, as D-129's backward-compatibility evidence. True when written, but its actual premise was "the owner has not used A/V linking yet" — and D-129 shipped the feature that makes the app write `lg-…` groups into that very file. The test was therefore guaranteed to start failing, on correct data, on the owner's own machine, as soon as the feature worked.
+- **fix (D-132):** the test keeps its live-file evidence and its skip-if-absent guard, but now asserts only claims that stay true as the user works — that every clip in the real file loads with the migration defaults of a field that file genuinely predates (D-132's four crop insets), and that `backfill_legacy_positions` resolved every `start_frame`. Renamed `the_owners_real_project_json_loads_with_migration_defaults`.
+- **standing lesson:** a test pointed at live user data may only assert properties that are monotone under the user using the app. "This file has no X yet" is not one; "a field added after this file was written defaults correctly" is.
+
 ## B-049 — Timeline filmstrip zoom (in or out) recomputes thumbnails very slowly, even though normal scroll/load is now fast (D-124/D-128)
 status: open · severity: medium (D-124/D-128 fixed load/scroll but zoom itself regressed) · area: `packages/editor/src/Filmstrip.tsx`, `app/src-tauri/src/chroma/filmstrip.rs`
 - **found:** owner, live, 2026-09-04: "i do zoom in and zoom out its takes like forever to calculate the thumbnail also thumblain rest looks amazing... very fast now" — so this is scoped specifically to the zoom action, not general scroll/load, which the owner confirms is fixed.

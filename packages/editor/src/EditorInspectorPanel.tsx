@@ -36,7 +36,7 @@ import {
   removeClipKeyframe,
   upsertClipKeyframe,
 } from './clipKeyframes';
-import { ClipInspectorPanel } from './ClipInspectorPanel';
+import { ClipInspectorPanel, type TransformPatch } from './ClipInspectorPanel';
 import { findClip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 
@@ -62,9 +62,10 @@ export function EditorInspectorPanel() {
   const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
   const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
 
-  const applyTransform = (
-    patch: Partial<{ opacity: number; position_x: number; position_y: number; scale: number; rotation: number }>,
-  ) => {
+  // D-132 — crop joins the transform patch rather than getting its own op:
+  // one clip-geometry write, one history entry, one save. See the
+  // `set_clip_transform` op's own doc in `timeline.ts` for why.
+  const applyTransform = (patch: TransformPatch) => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
     applyOp({
       kind: 'set_clip_transform',
@@ -75,6 +76,10 @@ export function EditorInspectorPanel() {
       position_y: patch.position_y ?? selectedClip.position_y ?? 0,
       scale: patch.scale ?? selectedClip.scale ?? 1,
       rotation: patch.rotation ?? selectedClip.rotation ?? 0,
+      crop_left: patch.crop_left ?? selectedClip.crop_left ?? 0,
+      crop_top: patch.crop_top ?? selectedClip.crop_top ?? 0,
+      crop_right: patch.crop_right ?? selectedClip.crop_right ?? 0,
+      crop_bottom: patch.crop_bottom ?? selectedClip.crop_bottom ?? 0,
     });
   };
 
@@ -90,6 +95,15 @@ export function EditorInspectorPanel() {
         position_y: selectedClip.position_y ?? 0,
         scale: selectedClip.scale ?? 1,
         rotation: selectedClip.rotation ?? 0,
+        // D-132 — the crop insets are keyed with everything else, which is
+        // what makes them animatable at all: `resolve_clip_transform` (Rust)
+        // reads them out of this same flat params object through the D-034
+        // interpolator, and a key that omitted them would snap a cropped
+        // clip back to full frame the moment it became keyframed.
+        crop_left: selectedClip.crop_left ?? 0,
+        crop_top: selectedClip.crop_top ?? 0,
+        crop_right: selectedClip.crop_right ?? 0,
+        crop_bottom: selectedClip.crop_bottom ?? 0,
       }),
     });
   };

@@ -995,5 +995,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   code, not an upstream-fork file) wires the same resolver into
   `grade_frame` — see D-054 for the full write-up.
 
+- **2026-09-04** — **Per-clip crop in the Edit-tab compositor (D-132)** ·
+  **zero upstream-file edits** — the whole change lives in Chroma's own
+  `chroma/edit.rs` (`crop_pixel_rect`, crop applied at the head of
+  `composite_layer_onto`, `ClipTransform::is_identity` gating the
+  single-layer fast path) plus the `chroma-timeline` crate. Logged anyway
+  because it *deliberately did not* reach for the upstream function that
+  looks like it fits: `image_processing::apply_crop` (Colorist's) takes an
+  absolute-pixel `{x, y, width, height}` on one loaded still and physically
+  shrinks the image. The Edit tab needs a normalised, per-layer window that
+  crops **in place** inside a multi-layer composite (D-127 Finding 3) — the
+  two share a word, not a code path, and folding them together would have
+  pushed compositor concerns into the stills path. Also fixed here:
+  **B-053**, the single-layer preview path skipping compositing — and so the
+  whole D-082 transform — unconditionally.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

@@ -66,6 +66,20 @@
 //! a *new* linked pair (the drop path) is `audio_track_with_room` /
 //! `ensure_audio_track_with_room` here plus `@chroma/editor`'s `add_clip`
 //! op — this crate still has no clip-*creation* op of its own.
+//!
+//! **Per-clip crop (D-132, Phase 3 of `docs/notes/on-canvas-transform.md`):**
+//! `Clip::crop_left`/`crop_top`/`crop_right`/`crop_bottom` — four normalised
+//! (0.0–1.0) edge insets into the clip's own **source** frame, the Edit
+//! tab's first real crop (D-127 Finding 3 traced that the concept was
+//! absent here entirely, while Colorist had its own unrelated one). Same
+//! division of labour as every other compositing field on `Clip`: this
+//! crate carries the values and their migration defaults, and
+//! `app/src-tauri`'s `chroma::edit::composite_layer_onto` is what actually
+//! applies them to pixels (no `crop_is_identity`-style predicate here for
+//! the same reason there is no `is_opaque` for `opacity` — the consumer
+//! that clamps is the consumer that decides). See the fields' own docs for
+//! why they are normalised to the source rather than pixels, and flat
+//! scalars rather than a nested rect.
 
 use serde::{Deserialize, Serialize};
 
@@ -307,8 +321,62 @@ pub struct Clip {
     /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
     #[serde(default)]
     pub rotation: f64,
-    /// D-034-shaped keyframes for the five fields above — `[{frame, params:
-    /// {opacity?, position_x?, position_y?, scale?, rotation?}}, …]`, the
+
+    // --- Crop (D-132, Phase 3 of `docs/notes/on-canvas-transform.md`) -----
+    // Four **normalised edge insets** — the fraction of this clip's own
+    // SOURCE width/height trimmed off each edge. All four `0.0` = no crop;
+    // `crop_left: 0.25` hides the leftmost quarter of the picture.
+    //
+    // **Why normalised to the source, not pixels** (D-132): the Edit-tab
+    // compositor decodes each layer at whatever `max_long_edge` the caller
+    // asked for — 960 while scrubbing, 640 while playing (`PreviewPane.tsx`)
+    // — so a crop expressed in decoded pixels would cover a different
+    // fraction of the picture at each preview quality. That is exactly
+    // B-043's defect, in a second field. A fraction of the source is
+    // invariant under every decode scale by construction, so this field is
+    // correct at any preview resolution *today*, before Phase 0a's
+    // composition-space work lands. It also deliberately differs from
+    // Colorist's `adjustments.crop`, an absolute-pixel `{x, y, width,
+    // height}` on one loaded still — that path has a single fixed source
+    // image and no decode-scale knob, so pixels are fine there and wrong
+    // here (D-127 Finding 3: the two crops share a word, not a code path).
+    //
+    // **Why four flat scalars, not a nested `crop: CropRect`:** these ride
+    // the D-034 keyframe engine (`chroma_keyframes` below), which
+    // interpolates a flat `{name: number}` params object — a nested rect
+    // could be stored but never animated, and a second, parallel
+    // interpolation path for one field is exactly the "don't invent a new
+    // mechanism" this repo refuses. Insets (rather than an x/y/w/h rect)
+    // are also what both references expose: Premiere's Crop effect is
+    // Left/Right/Top/Bottom percentages, Resolve's Crop mode is one handle
+    // per side.
+    //
+    // `#[serde(default)]` is correct here (unlike `opacity`/`scale`):
+    // `f64::default() == 0.0` and zero inset genuinely IS "no crop", so a
+    // pre-D-132 `project.json` clip with none of these keys loads uncropped
+    // and renders pixel-identically. No migration sentinel, no backfill
+    // pass — the same reasoning `position_x`/`rotation` already use.
+    //
+    // Stored verbatim, **clamped by the consumer**: this crate does no
+    // rendering (see the module doc), and the compositor already clamps
+    // `opacity` at the point of use for the same reason. A degenerate crop
+    // (insets summing to ≥ 1 on an axis) means "nothing left of this layer"
+    // and the compositor paints nothing.
+    /// Fraction of the source width cropped off the LEFT edge (0.0–1.0).
+    #[serde(default)]
+    pub crop_left: f64,
+    /// Fraction of the source height cropped off the TOP edge (0.0–1.0).
+    #[serde(default)]
+    pub crop_top: f64,
+    /// Fraction of the source width cropped off the RIGHT edge (0.0–1.0).
+    #[serde(default)]
+    pub crop_right: f64,
+    /// Fraction of the source height cropped off the BOTTOM edge (0.0–1.0).
+    #[serde(default)]
+    pub crop_bottom: f64,
+    /// D-034-shaped keyframes for the nine fields above — `[{frame, params:
+    /// {opacity?, position_x?, position_y?, scale?, rotation?, crop_left?,
+    /// crop_top?, crop_right?, crop_bottom?}}, …]`, the
     /// *exact* `[{frame, params}]` shape `chroma::keyframes::
     /// interpolated_parameters` (already generic over any params `Value`,
     /// already used by a mask's shape geometry AND by `RelightLight`,
@@ -362,6 +430,10 @@ impl Default for Clip {
             position_y: 0.0,
             scale: default_scale(),
             rotation: 0.0,
+            crop_left: 0.0,
+            crop_top: 0.0,
+            crop_right: 0.0,
+            crop_bottom: 0.0,
             chroma_keyframes: None,
         }
     }
@@ -2436,6 +2508,72 @@ mod tests {
         assert_eq!(c.rotation, 0.0);
     }
 
+    // -----------------------------------------------------------------
+    // D-132: per-clip crop (four normalised source-space edge insets).
+    // -----------------------------------------------------------------
+
+    /// The migration case, and the whole reason these are a bare
+    /// `#[serde(default)]` rather than `opacity`/`scale`'s named-default
+    /// treatment: a pre-D-132 `project.json` clip has none of the four keys
+    /// and must load **uncropped**, so every existing project renders
+    /// exactly as it did before this field existed.
+    #[test]
+    fn clip_json_without_crop_fields_loads_uncropped() {
+        let json = r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,"source_len":10,"start_frame":0,"opacity":1.0,"position_x":0.0,"position_y":0.0,"scale":1.0,"rotation":0.0}"#;
+        let c: Clip = serde_json::from_str(json).unwrap();
+        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.0, 0.0, 0.0, 0.0));
+    }
+
+    /// `Clip::default()` (the `..Default::default()` every construction site
+    /// in this crate uses) is uncropped too — the same "a manual `Default`
+    /// impl must be checked separately from serde's" point
+    /// `clip_default_is_fully_opaque_and_unscaled` makes for `opacity`/
+    /// `scale`, which is exactly how those two were nearly shipped wrong.
+    #[test]
+    fn clip_default_is_uncropped() {
+        let c = Clip::default();
+        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.0, 0.0, 0.0, 0.0));
+        assert!(Timeline::from_shots(&shots()).tracks[0]
+            .clips
+            .iter()
+            .all(|c| c.crop_left == 0.0 && c.crop_bottom == 0.0));
+    }
+
+    /// A real crop survives a full `Timeline` → JSON → `Timeline` round trip
+    /// with its four values intact — this is what `chroma_timeline_set`
+    /// (verbatim storage) then `chroma_timeline_get` actually does to every
+    /// edit the Inspector makes.
+    #[test]
+    fn crop_round_trips_through_a_whole_timeline() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[0].crop_left = 0.25;
+        t.tracks[0].clips[0].crop_top = 0.1;
+        t.tracks[0].clips[0].crop_right = 0.5;
+        t.tracks[0].clips[0].crop_bottom = 0.0;
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        let c = &back.tracks[0].clips[0];
+        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.25, 0.1, 0.5, 0.0));
+        // and the untouched clip beside it is still uncropped
+        assert!(back.tracks[0].clips[1].crop_left == 0.0);
+    }
+
+    /// Crop is a per-clip *appearance* value, not a timing one: a `split`
+    /// hands both halves the same crop, the same way `media_id` and every
+    /// other non-positional field already propagate. Guards against a future
+    /// op that rebuilds a `Clip` field-by-field and quietly drops the crop.
+    #[test]
+    fn split_preserves_crop_on_both_halves() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[1].crop_left = 0.3;
+        t.tracks[0].clips[1].crop_bottom = 0.2;
+        t.split(0, 1, 120).unwrap();
+        for i in [1usize, 2] {
+            assert_eq!(t.tracks[0].clips[i].crop_left, 0.3);
+            assert_eq!(t.tracks[0].clips[i].crop_bottom, 0.2);
+        }
+    }
+
     #[test]
     fn move_track_reorders_the_track_list() {
         let mut t = two_video_track_timeline();
@@ -2743,12 +2881,25 @@ mod tests {
     /// Real backward-compat evidence, not just a hand-written fixture: parse
     /// the owner's actual `~/Movies/Chroma/New.chroma/project.json` (the same
     /// file `backfill_matches_the_real_project_json_single_clip_shape` was
-    /// written against) and assert every clip in every timeline loads
-    /// **unlinked**, so D-129 changes nothing about how that project plays or
-    /// edits until the owner drops a new clip. Skipped cleanly when the file
-    /// isn't there — this crate must stay runnable on any machine.
+    /// written against) and assert every clip in every timeline loads with
+    /// the defaults a *newly added* field is supposed to give an existing
+    /// project. Skipped cleanly when the file isn't there — this crate must
+    /// stay runnable on any machine.
+    ///
+    /// **B-053/D-132 — this test used to assert `link_group == None` on
+    /// every clip, and that assertion has expired.** It was true when D-129
+    /// shipped (the file predated linking), but its premise was "the owner
+    /// has not used the feature yet," which stopped holding the moment they
+    /// dropped a clip and got a real linked audio half — the file now
+    /// genuinely contains `lg-…` groups and the test failed on `main`, on
+    /// correct data, for a correct reason. A test pinned to live user data
+    /// can only assert things that stay true as the user works; "the
+    /// migration default for a field this file predates" is exactly that
+    /// shape of claim, so it now covers D-132's crop insets (which this
+    /// file genuinely predates) instead of D-129's link groups (which it no
+    /// longer does).
     #[test]
-    fn the_owners_real_project_json_loads_with_every_clip_unlinked() {
+    fn the_owners_real_project_json_loads_with_migration_defaults() {
         let Some(home) = std::env::var_os("HOME") else {
             return;
         };
@@ -2772,8 +2923,13 @@ mod tests {
                 for clip in &track.clips {
                     clips_seen += 1;
                     assert_eq!(
-                        clip.link_group, None,
-                        "every pre-D-129 clip loads unlinked — no behaviour change for this project"
+                        (clip.crop_left, clip.crop_top, clip.crop_right, clip.crop_bottom),
+                        (0.0, 0.0, 0.0, 0.0),
+                        "every pre-D-132 clip loads uncropped — no picture change for this project"
+                    );
+                    assert_ne!(
+                        clip.start_frame, LEGACY_MISSING_START,
+                        "the backfill above resolved every position"
                     );
                 }
             }

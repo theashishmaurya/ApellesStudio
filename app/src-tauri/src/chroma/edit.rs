@@ -481,7 +481,11 @@ fn blank_frame() -> String {
 /// more than one, real-composites them (`composite_video_frame`) instead of
 /// showing only the top one. The exactly-one-layer case (still the
 /// overwhelming common one) takes the same fast plain-decode path as
-/// before — byte-identical output, no new cost. Deliberately does NOT call
+/// before — byte-identical output, no new cost — **unless that one layer
+/// carries a real transform** (D-132/B-053: it used to take the fast path
+/// even then, silently discarding that clip's own crop / opacity /
+/// position / scale / rotation; see the guard in [`timeline_frame`]).
+/// Deliberately does NOT call
 /// `resolve_video_position` (that resolver stays single-winner, unchanged,
 /// for its OTHER two callers — Colorist's active-clip resolution and the
 /// embedded-audio baseline, both genuinely single-clip concerns this
@@ -529,9 +533,23 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
 
     let img = match layers.as_slice() {
         [] => return Ok(blank_frame()),
-        [(track, clip, source_frame)] => {
-            // Fast path, unchanged from pre-D-088: exactly one visible
-            // layer needs no compositing at all.
+        [(track, clip, source_frame)]
+            if resolve_clip_transform(clip, *source_frame).is_identity() =>
+        {
+            // Fast path: exactly one visible layer, with nothing to apply to
+            // it, needs no compositing at all.
+            //
+            // **The `is_identity()` guard is D-132/B-053.** Pre-D-132 this
+            // arm matched *every* single-layer frame unconditionally, so a
+            // lone clip's opacity / position / scale / rotation were silently
+            // ignored in the preview — the Inspector wrote them, the file
+            // stored them, and the picture never changed until a second video
+            // track happened to exist. That was already wrong for the D-082
+            // fields; shipping crop into it would have made it the first
+            // thing the owner tried ("crop one clip") and the first thing
+            // that appeared to do nothing. A clip that really has no
+            // transform still takes this path, so the overwhelmingly common
+            // case is byte-identical and no slower than before.
             let path = PathBuf::from(&clip.source_path);
             let info = probe_cached(&path)?;
             let frame = (*source_frame).max(0) as u64;
@@ -577,6 +595,40 @@ struct ClipTransform {
     position_y: f64,
     scale: f64,
     rotation: f64,
+    /// D-132 — normalised (0.0–1.0) edge insets into the layer's own source
+    /// frame, resolved for this frame exactly like every field above (static
+    /// value, or its keyframe-interpolated one). See `Clip::crop_left`'s doc
+    /// for why the unit is a fraction of the source and not pixels.
+    crop_left: f64,
+    crop_top: f64,
+    crop_right: f64,
+    crop_bottom: f64,
+}
+
+impl ClipTransform {
+    /// D-132/B-053 — whether applying this transform to a layer would change
+    /// nothing at all, so [`timeline_frame`]'s single-layer fast path may
+    /// skip compositing entirely and return the plain decoded frame.
+    ///
+    /// Exact comparisons, not epsilons: these values come from the
+    /// Inspector's own numeric inputs (or the keyframe interpolator over
+    /// them), so "the user has not touched this field" really is the exact
+    /// literal default, and a tolerance would only invent a second,
+    /// silently different notion of identity from the one
+    /// [`composite_layer_onto`] itself acts on. A **negative** crop inset
+    /// counts as no crop, matching [`crop_pixel_rect`]'s own clamp — the
+    /// predicate has to agree with what would actually be painted.
+    fn is_identity(&self) -> bool {
+        self.opacity >= 1.0
+            && self.position_x == 0.0
+            && self.position_y == 0.0
+            && self.scale == 1.0
+            && self.rotation == 0.0
+            && self.crop_left <= 0.0
+            && self.crop_top <= 0.0
+            && self.crop_right <= 0.0
+            && self.crop_bottom <= 0.0
+    }
 }
 
 /// Resolve `clip`'s transform at `source_frame`. Deliberately does NOT call
@@ -598,6 +650,10 @@ fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
         position_y: clip.position_y,
         scale: clip.scale,
         rotation: clip.rotation,
+        crop_left: clip.crop_left,
+        crop_top: clip.crop_top,
+        crop_right: clip.crop_right,
+        crop_bottom: clip.crop_bottom,
     };
     let Some(kf_value) = &clip.chroma_keyframes else {
         return base;
@@ -622,6 +678,14 @@ fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
         position_y: f64_or("position_y", base.position_y),
         scale: f64_or("scale", base.scale),
         rotation: f64_or("rotation", base.rotation),
+        // D-132 — crop keyframes go through the same D-034 engine as every
+        // other field here, which is the whole reason the crop insets are
+        // four flat scalars on `Clip` rather than a nested rect (that
+        // interpolator takes a flat `{name: number}` params object).
+        crop_left: f64_or("crop_left", base.crop_left),
+        crop_top: f64_or("crop_top", base.crop_top),
+        crop_right: f64_or("crop_right", base.crop_right),
+        crop_bottom: f64_or("crop_bottom", base.crop_bottom),
     }
 }
 
@@ -682,12 +746,51 @@ fn composite_video_frame(
     Ok(DynamicImage::ImageRgba8(canvas))
 }
 
-/// Scale → rotate → apply opacity (as an alpha multiply) → overlay `layer`
-/// onto `canvas`, centered plus `transform`'s position offset. Real
+/// The **kept** (un-cropped) region of a `w`×`h` layer under `t`'s normalised
+/// insets, as an exclusive `(x0, y0, x1, y1)` pixel rect in the layer's own
+/// space — D-132.
+///
+/// Returns `None` when the crop leaves nothing to paint (insets summing to
+/// ≥ 1 on either axis, or rounding to an empty span on a small layer). The
+/// clamp to `0.0..=1.0` lives here, at the point of use, for the reason
+/// `Clip::crop_left`'s own doc gives: the model stores what the UI wrote and
+/// the consumer decides what it means, exactly as `opacity` already does one
+/// line below its own read.
+///
+/// **Normalised in, pixels out, per decoded layer** — which is what makes the
+/// crop invariant under `PreviewPane`'s 960-while-scrubbing / 640-while-
+/// playing decode scales (B-043's failure mode for `position_*`, avoided here
+/// by construction rather than fixed after the fact).
+fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, u32)> {
+    let span = |size: u32, near: f64, far: f64| -> (u32, u32) {
+        let s = size as f64;
+        let lo = (s * near.clamp(0.0, 1.0)).round() as u32;
+        let hi = size.saturating_sub((s * far.clamp(0.0, 1.0)).round() as u32);
+        (lo, hi)
+    };
+    let (x0, x1) = span(w, t.crop_left, t.crop_right);
+    let (y0, y1) = span(h, t.crop_top, t.crop_bottom);
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+}
+
+/// Crop → scale → rotate → apply opacity (as an alpha multiply) → overlay
+/// `layer` onto `canvas`, centered plus `transform`'s position offset. Real
 /// arbitrary-angle rotation via `imageproc::geometric_transformations::
 /// rotate_about_center` — the exact same function + transparent-border
 /// pattern `image_processing.rs`'s own `apply_rotation` already uses for
 /// the Colorist's rotate adjustment, not a second rotation implementation.
+///
+/// **Crop is first, and it does not move the picture** (D-132). The pixels
+/// cropped away have their **alpha** zeroed while the layer keeps its full
+/// footprint, rather than the buffer being physically shrunk to the kept
+/// rect. Two real consequences, both matching Premiere's Crop effect and
+/// Resolve's Crop mode: the remaining picture stays exactly where it was
+/// instead of re-centring as you drag an edge in, and `scale`/`rotation`
+/// keep acting about the layer's own full-frame centre (a shrunk buffer
+/// would silently move `rotate_about_center`'s pivot to the crop's centre).
+/// The cropped pixels keep their RGB and lose only alpha, so the resize
+/// filter below feathers the crop edge over a pixel instead of bleeding
+/// black into it.
 fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage, t: &ClipTransform) {
     let opacity = t.opacity.clamp(0.0, 1.0) as f32;
     if opacity <= 0.0 {
@@ -695,12 +798,31 @@ fn composite_layer_onto(canvas: &mut image::RgbaImage, layer: &image::RgbaImage,
     }
 
     let (lw, lh) = layer.dimensions();
+    let Some((cx0, cy0, cx1, cy1)) = crop_pixel_rect(lw, lh, t) else {
+        return; // cropped away entirely — nothing to paint
+    };
+    let cropped = (cx0, cy0, cx1, cy1) != (0, 0, lw, lh);
     let scale = t.scale.max(0.0);
     let (sw, sh) = (
         ((lw as f64) * scale).round().max(1.0) as u32,
         ((lh as f64) * scale).round().max(1.0) as u32,
     );
-    let mut work: image::RgbaImage = if (sw, sh) != (lw, lh) {
+    // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
+    // buffer, no per-pixel pass — so an uncropped clip (every clip in every
+    // existing project) costs exactly what it did before.
+    let mut work: image::RgbaImage = if cropped {
+        let mut masked = layer.clone();
+        for (x, y, px) in masked.enumerate_pixels_mut() {
+            if x < cx0 || x >= cx1 || y < cy0 || y >= cy1 {
+                px[3] = 0;
+            }
+        }
+        if (sw, sh) != (lw, lh) {
+            image::imageops::resize(&masked, sw, sh, image::imageops::FilterType::Triangle)
+        } else {
+            masked
+        }
+    } else if (sw, sh) != (lw, lh) {
         image::imageops::resize(layer, sw, sh, image::imageops::FilterType::Triangle)
     } else {
         layer.clone()
@@ -748,6 +870,10 @@ mod composite_tests {
             position_y: 0.0,
             scale: 1.0,
             rotation: 0.0,
+            crop_left: 0.0,
+            crop_top: 0.0,
+            crop_right: 0.0,
+            crop_bottom: 0.0,
         }
     }
 
@@ -854,6 +980,171 @@ mod composite_tests {
         composite_layer_onto(&mut canvas, &layer, &t);
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
+
+    // ---------------------------------------------------------------- //
+    // D-132 — per-clip crop.
+    // ---------------------------------------------------------------- //
+
+    /// The normalised-inset → pixel-rect conversion, on its own: a quarter
+    /// off the left and a half off the bottom of a 100×100 layer keeps
+    /// x ∈ [25, 100), y ∈ [0, 50).
+    #[test]
+    fn crop_pixel_rect_converts_normalised_insets_to_pixels() {
+        let t = ClipTransform { crop_left: 0.25, crop_bottom: 0.5, ..identity_transform() };
+        assert_eq!(crop_pixel_rect(100, 100, &t), Some((25, 0, 100, 50)));
+    }
+
+    /// **The reason the unit is a fraction and not pixels** (D-132, and the
+    /// class of defect B-043 is): the SAME crop value keeps the same
+    /// *fraction* of the picture at every decode scale `PreviewPane` asks
+    /// for (960 scrubbing / 640 playing / full-res later), where a pixel
+    /// rect would keep a different fraction at each one.
+    #[test]
+    fn crop_is_invariant_under_the_decode_scale() {
+        let t = ClipTransform { crop_left: 0.5, ..identity_transform() };
+        let big = crop_pixel_rect(960, 540, &t).unwrap();
+        let small = crop_pixel_rect(640, 360, &t).unwrap();
+        let frac = |(x0, _, x1, _): (u32, u32, u32, u32), w: u32| (x1 - x0) as f64 / w as f64;
+        assert!((frac(big, 960) - frac(small, 640)).abs() < 1e-9);
+        assert!((frac(big, 960) - 0.5).abs() < 1e-9);
+    }
+
+    /// A crop that leaves nothing (insets summing past the whole frame) is
+    /// `None` — and the compositor must then paint nothing at all, rather
+    /// than panicking on an empty rect or painting the un-cropped layer.
+    #[test]
+    fn a_degenerate_crop_paints_nothing() {
+        let t = ClipTransform { crop_left: 0.7, crop_right: 0.7, ..identity_transform() };
+        assert_eq!(crop_pixel_rect(100, 100, &t), None);
+        let mut canvas = flat(4, 4, [10, 20, 30, 255]);
+        let before = canvas.clone();
+        composite_layer_onto(&mut canvas, &flat(4, 4, [255, 255, 255, 255]), &t);
+        assert_eq!(canvas, before);
+    }
+
+    /// Out-of-range insets are clamped at the point of use, not rejected by
+    /// the model (`Clip::crop_left`'s own doc) — a negative inset is no
+    /// crop, `> 1.0` is the whole edge.
+    #[test]
+    fn crop_insets_are_clamped_by_the_consumer() {
+        let neg = ClipTransform { crop_left: -0.5, ..identity_transform() };
+        assert_eq!(crop_pixel_rect(100, 100, &neg), Some((0, 0, 100, 100)));
+        let over = ClipTransform { crop_left: 4.0, ..identity_transform() };
+        assert_eq!(crop_pixel_rect(100, 100, &over), None);
+    }
+
+    /// The real compositing behaviour: cropping the left half of a layer
+    /// clears the left half of its footprint back to the canvas underneath
+    /// and leaves the right half **exactly where it already was** — it does
+    /// NOT re-centre the remaining picture (Premiere's Crop effect and
+    /// Resolve's Crop mode both crop in place; see `composite_layer_onto`'s
+    /// own doc).
+    #[test]
+    fn composite_layer_onto_crops_in_place_without_recentring() {
+        let mut canvas = flat(10, 10, [0, 0, 0, 255]);
+        let layer = flat(10, 10, [255, 0, 0, 255]);
+        let t = ClipTransform { crop_left: 0.5, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        // cropped-away left half: the canvas shows through, untouched
+        assert_eq!(*canvas.get_pixel(1, 5), Rgba([0, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(4, 5), Rgba([0, 0, 0, 255]));
+        // kept right half: still the layer, still at its original x
+        assert_eq!(*canvas.get_pixel(5, 5), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(9, 5), Rgba([255, 0, 0, 255]));
+    }
+
+    /// Each edge crops its own side — a top crop must not take pixels off
+    /// the bottom (the kind of thing an axis mix-up in `crop_pixel_rect`
+    /// would produce and a single-edge test would miss).
+    #[test]
+    fn composite_layer_onto_crops_each_edge_independently() {
+        let mut canvas = flat(10, 10, [0, 0, 0, 255]);
+        let layer = flat(10, 10, [255, 0, 0, 255]);
+        let t = ClipTransform { crop_top: 0.3, crop_right: 0.2, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        assert_eq!(*canvas.get_pixel(5, 1), Rgba([0, 0, 0, 255])); // cropped top
+        assert_eq!(*canvas.get_pixel(9, 5), Rgba([0, 0, 0, 255])); // cropped right
+        assert_eq!(*canvas.get_pixel(5, 9), Rgba([255, 0, 0, 255])); // bottom kept
+        assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255])); // left kept
+    }
+
+    /// Crop composes with the rest of the transform rather than replacing
+    /// it: scaled ×2, the kept half of a 4×4 layer still lands on the
+    /// scaled footprint's own right half, and the cropped side stays clear.
+    #[test]
+    fn crop_composes_with_scale() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        // scale 2 -> an 8x8 footprint centred at (6,6)-(13,13); left half cropped
+        let t = ClipTransform { scale: 2.0, crop_left: 0.5, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t);
+        assert_eq!(*canvas.get_pixel(7, 10), Rgba([0, 0, 0, 255])); // cropped (left) half
+        assert_eq!(*canvas.get_pixel(12, 10), Rgba([255, 0, 0, 255])); // kept (right) half
+    }
+
+    /// An uncropped layer takes the untouched pre-D-132 path — proved by
+    /// output equality with the same composite run through the explicit
+    /// zero-inset transform, so the "no crop costs nothing" claim in
+    /// `composite_layer_onto`'s doc is a tested one.
+    #[test]
+    fn an_uncropped_layer_is_unchanged_by_the_crop_pass() {
+        let layer = flat(6, 6, [3, 200, 40, 255]);
+        let mut with_zero_insets = flat(10, 10, [0, 0, 0, 255]);
+        composite_layer_onto(&mut with_zero_insets, &layer, &identity_transform());
+        let mut with_negative_insets = flat(10, 10, [0, 0, 0, 255]);
+        let t = ClipTransform { crop_left: -1.0, crop_bottom: -1.0, ..identity_transform() };
+        composite_layer_onto(&mut with_negative_insets, &layer, &t);
+        assert_eq!(with_zero_insets, with_negative_insets);
+    }
+
+    /// D-132 — crop rides the same D-034 keyframe engine as every other
+    /// transform field (which is why the insets are four flat scalars and
+    /// not a nested rect: that interpolator takes a flat params object).
+    #[test]
+    fn resolve_clip_transform_interpolates_crop_keyframes() {
+        let clip = Clip {
+            crop_left: 0.0,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "crop_left": 0.0 } },
+                { "frame": 100, "params": { "crop_left": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+        let t = resolve_clip_transform(&clip, 50);
+        assert!((t.crop_left - 0.5).abs() < 0.01, "expected ~0.5, got {}", t.crop_left);
+    }
+
+    /// D-132 — the static crop fields are read straight off the clip when
+    /// it isn't keyframed, the same way the D-082 five already are.
+    #[test]
+    fn resolve_clip_transform_reads_static_crop_fields() {
+        let clip = Clip { crop_left: 0.1, crop_top: 0.2, crop_right: 0.3, crop_bottom: 0.4, ..Default::default() };
+        let t = resolve_clip_transform(&clip, 0);
+        assert_eq!((t.crop_left, t.crop_top, t.crop_right, t.crop_bottom), (0.1, 0.2, 0.3, 0.4));
+    }
+
+    /// B-053 — the predicate `timeline_frame`'s single-layer fast path is
+    /// gated on. A freshly-defaulted clip is identity (so the common case
+    /// still skips compositing entirely and stays byte-identical); a clip
+    /// with a crop — or with any of the D-082 fields set, which used to be
+    /// silently ignored on that path — is not.
+    #[test]
+    fn only_a_genuinely_untransformed_clip_takes_the_fast_path() {
+        assert!(resolve_clip_transform(&Clip::default(), 0).is_identity());
+        for clip in [
+            Clip { crop_left: 0.01, ..Default::default() },
+            Clip { crop_bottom: 0.5, ..Default::default() },
+            Clip { opacity: 0.5, ..Default::default() },
+            Clip { position_x: 4.0, ..Default::default() },
+            Clip { scale: 1.5, ..Default::default() },
+            Clip { rotation: 90.0, ..Default::default() },
+        ] {
+            assert!(!resolve_clip_transform(&clip, 0).is_identity(), "{clip:?} should not be identity");
+        }
+        // a negative inset changes no pixel, so it must not force the slow
+        // path either — the predicate has to agree with `crop_pixel_rect`.
+        assert!(resolve_clip_transform(&Clip { crop_top: -0.2, ..Default::default() }, 0).is_identity());
     }
 }
 

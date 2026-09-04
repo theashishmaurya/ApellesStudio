@@ -19,6 +19,31 @@ One or two lines per session. Detail lives in the decision it references.
   of D-126's untouched uniform `px-3`. `packages/editor`/`packages/player`
   `tsc` clean, `packages/editor` vitest 201/201; no live-window verification
   possible in this sandbox (disclosed in D-131).
+- **2026-09-04** — **The Edit tab has a real crop, and Phase 0a's unit
+  question is answered (D-132, B-053, B-054).** Owner, live: "no UI for
+  crop", "no canvas on player to do it". The crop half is built:
+  `Clip.crop_left`/`crop_top`/`crop_right`/`crop_bottom` — four normalised
+  0–1 insets into the clip's **own source**, so they are correct at every
+  preview decode scale by construction rather than needing the
+  composition-space fix first — really applied by `composite_layer_onto`
+  (crop first, and **in place**: alpha cleared, footprint kept, so the
+  picture doesn't re-centre and rotation keeps its pivot), with a real Crop
+  section in the Inspector and keyframes for free through the existing D-034
+  engine (flat scalars rather than a nested rect precisely so that
+  interpolator can reach them). The **on-canvas half is not built** — no
+  drag handles, no Resolve-style mode toggle; that is Phase 1 of
+  `docs/notes/on-canvas-transform.md` and it needs an overlay substrate that
+  doesn't exist yet. Phase 0a's open unit question is now closed
+  (**normalised, against `ProjectSettings.width`/`height`**, adopting the
+  scoping doc's own recommendation), but its `position_*` migration is
+  unwritten and **B-043 stays open**. Found and fixed on the way: **B-053**
+  — the preview's single-layer fast path skipped compositing
+  unconditionally, so a lone clip's opacity/position/scale/rotation were
+  written to disk, read back into the Inspector, and never applied to a
+  pixel. Also **B-054**, a test pinned to the owner's live `project.json`
+  that had been failing on `main` since they first used A/V linking. Not
+  verified in the assembled window — same environment constraint
+  D-125/D-127/D-130 each disclosed.
 - **2026-09-04** — **Timeline-header overlap fixed, real master mute/volume
   added, real fullscreen wired (D-126).** The Sources/Inspector floating
   toggles (D-118/D-120) now render as elevated chips

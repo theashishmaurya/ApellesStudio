@@ -90,8 +90,27 @@ export interface Clip {
   position_y?: number;
   scale?: number;
   rotation?: number;
-  /** D-086 — `[{frame, params: {opacity?, position_x?, position_y?, scale?,
-   *  rotation?}}]`, the exact shape `utils/maskKeyframes.ts` already writes
+  /** Crop (D-132) — mirrors `chroma_timeline::Clip::crop_left`/`crop_top`/
+   *  `crop_right`/`crop_bottom`. Four **normalised (0–1) edge insets** into
+   *  the clip's own SOURCE frame: the fraction of the picture trimmed off
+   *  that edge, all four `0` = uncropped. Optional here for the same reason
+   *  the five fields above are — a pre-D-132 clip has no such key and the
+   *  backend defaults it to `0`.
+   *
+   *  A fraction rather than pixels because the compositor decodes each
+   *  layer at whatever preview scale the caller asked for (960 scrubbing /
+   *  640 playing), so a pixel crop would cover a different part of the
+   *  picture at each quality — see the Rust field's own doc, and B-043 for
+   *  that same defect in `position_x`/`position_y`, which are still
+   *  absolute and still resolution-dependent until Phase 0a of
+   *  `docs/notes/on-canvas-transform.md` lands. */
+  crop_left?: number;
+  crop_top?: number;
+  crop_right?: number;
+  crop_bottom?: number;
+  /** D-086/D-132 — `[{frame, params: {opacity?, position_x?, position_y?,
+   *  scale?, rotation?, crop_left?, crop_top?, crop_right?, crop_bottom?}}]`,
+   *  the exact shape `utils/maskKeyframes.ts` already writes
    *  for mask/relight-light keyframes, reused verbatim rather than a
    *  second keyframe shape. `chroma::keyframes`'s D-034 engine
    *  (Rust-side) interpolates it at render time relative to the clip's own
@@ -841,14 +860,25 @@ export type EditOp =
    *  `add_track`/`remove_track`). */
   | { kind: 'move_track'; from: number; to: number }
   /** D-088/D-089 — set a clip's compositing transform (opacity/position/
-   *  scale/rotation), the interim popover's write op. Always replaces the
+   *  scale/rotation, **and D-132's four crop insets**), the interim
+   *  popover's write op. Always replaces the
    *  full set together (no partial-field variant) since the UI edits one
    *  clip's transform as a single form; refused (no-op) if the clip's track
    *  is locked, same as every other per-clip op. Keyframes are a SEPARATE
    *  op (`set_clip_keyframes`, below) — a transform edit while keyframes
    *  exist is a "set the base/unkeyframed value" edit, matching how
    *  `resolve_clip_transform` (Rust, D-088) only falls back to the static
-   *  fields when no keyframe covers the requested frame or none exist. */
+   *  fields when no keyframe covers the requested frame or none exist.
+   *
+   *  **D-132 — crop rides this op rather than getting a `set_clip_crop` of
+   *  its own.** Both references present crop as a separate *mode* in the
+   *  viewer, but that is an on-canvas affordance question, not a write-path
+   *  one: crop and the D-082 five are one clip's geometry, edited from one
+   *  form, and two ops would mean two history entries, two save round trips
+   *  and a real ordering question between them for no gain. The fields are
+   *  **required**, not optional-with-fallback, precisely because this op
+   *  replaces the full set — an optional crop field would silently reset a
+   *  clip's crop to zero on any caller that forgot it. */
   | {
       kind: 'set_clip_transform';
       track: number;
@@ -858,6 +888,10 @@ export type EditOp =
       position_y: number;
       scale: number;
       rotation: number;
+      crop_left: number;
+      crop_top: number;
+      crop_right: number;
+      crop_bottom: number;
     }
   /** D-089 — replace a clip's keyframe track outright (add/move/remove a
    *  keyframe is "recompute the array, then set it" client-side — mirrors
@@ -933,6 +967,14 @@ export function labelForOp(op: EditOp, before: Timeline): string {
 /** Clamp `v` into `[lo, hi]` — used throughout to mirror Rust's `i64::clamp`. */
 function clampInt(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
+}
+
+/** Clamp a normalised 0–1 value (D-132's crop insets), mirroring the Rust
+ *  compositor's own `clamp(0.0, 1.0)` in `crop_pixel_rect`. `NaN` — what a
+ *  numeric `<input>` produces when it is cleared — becomes `0`, i.e. "no
+ *  crop on this edge", rather than propagating into the stored timeline. */
+function clamp01(v: number): number {
+  return Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0;
 }
 
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
@@ -1073,6 +1115,17 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.position_y = op.position_y;
     nc.scale = op.scale;
     nc.rotation = op.rotation;
+    // D-132 — clamped here, on the way in, so a value out of the 0–1 inset
+    // range can never reach `project.json`. The Rust compositor clamps again
+    // at the point of use (it has to: `chroma_timeline_set` stores whatever
+    // it is given, and MCP/agent writes don't come through this file), but
+    // the UI's own writes should be well-formed at rest, not merely
+    // survivable — the same reason `trim_end` clamps here rather than
+    // leaving it all to the backend.
+    nc.crop_left = clamp01(op.crop_left);
+    nc.crop_top = clamp01(op.crop_top);
+    nc.crop_right = clamp01(op.crop_right);
+    nc.crop_bottom = clamp01(op.crop_bottom);
     return next;
   }
   if (op.kind === 'set_clip_keyframes') {

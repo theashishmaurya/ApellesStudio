@@ -3,7 +3,9 @@
  * `docs/notes/global-inspector.md`).
  *
  * A real, persistent property panel for the selected clip's compositing
- * transform (opacity/position/scale/rotation) and keyframes — the same
+ * transform (opacity/position/scale/rotation), its **crop** (D-132, four
+ * normalised source-space edge insets — the owner's "no UI for crop" ask,
+ * and Phase 3 of `docs/notes/on-canvas-transform.md`) and keyframes — the same
  * fields, the same ops (`set_clip_transform`/`set_clip_keyframes`), and the
  * same keyframe CRUD (`clipKeyframes.ts`, itself mirroring `RelightPanel.
  * tsx`'s pattern) the D-090 popover this replaced already used. This
@@ -58,10 +60,28 @@ export type TransformPatch = Partial<{
   position_y: number;
   scale: number;
   rotation: number;
+  crop_left: number;
+  crop_top: number;
+  crop_right: number;
+  crop_bottom: number;
 }>;
 
 const row = 'flex items-center justify-between gap-2';
 const numInput = 'h-7 w-20 text-right';
+
+/** D-132 — the four crop rows, in Resolve's own Left/Right/Top/Bottom order
+ *  (its Crop palette's own control order, not alphabetical), each a
+ *  normalised 0–1 inset. `0.01` steps because a percent of the frame is the
+ *  finest crop anyone nudges by hand; `min`/`max` bound the input, and
+ *  `applyOp` clamps again on the way into the timeline for the values a
+ *  keyboard can still type past them. */
+const CROP_FIELDS: Array<{ key: 'crop_left' | 'crop_right' | 'crop_top' | 'crop_bottom'; label: string }> = [
+  { key: 'crop_left', label: 'Left' },
+  { key: 'crop_right', label: 'Right' },
+  { key: 'crop_top', label: 'Top' },
+  { key: 'crop_bottom', label: 'Bottom' },
+];
+const CROP_STEP = 0.01;
 
 export function ClipInspectorPanel({
   clip,
@@ -157,6 +177,34 @@ export function ClipInspectorPanel({
               onChange={(e) => onTransformChange({ rotation: Number(e.target.value) })}
             />
           </label>
+        </InspectorSection>
+
+        {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3: the concept
+            was absent here entirely, while Colorist had its own unrelated
+            pixel-space one). Its own section rather than four more Transform
+            rows, because both references treat crop as a separate thing from
+            the motion/transform controls — Premiere splits it into its own
+            Crop effect, Resolve into its own viewer mode. Values are the
+            stored unit itself (a 0–1 fraction of the source), not a
+            percentage: this panel already shows Opacity as 0–1 rather than
+            0–100, and a display-only unit conversion is a rounding-bug
+            surface for no real gain at this size. */}
+        <InspectorSection label="Crop">
+          {CROP_FIELDS.map(({ key, label }) => (
+            <label className={row} key={key}>
+              <span className="text-text-secondary">{label}</span>
+              <Input
+                type="number"
+                step={CROP_STEP}
+                min={0}
+                max={1}
+                disabled={trackLocked}
+                className={numInput}
+                value={clip[key] ?? 0}
+                onChange={(e) => onTransformChange({ [key]: Number(e.target.value) })}
+              />
+            </label>
+          ))}
         </InspectorSection>
 
         {/* the exact interaction `RelightPanel.tsx` uses for relight-light

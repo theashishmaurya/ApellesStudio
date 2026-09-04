@@ -103,7 +103,7 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'move_track', from: 0, to: 1 }, before)).toBe('Reorder track 1');
     expect(
       labelForOp(
-        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0 },
+        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP },
         before,
       ),
     ).toBe('Adjust "Intro"');
@@ -731,8 +731,13 @@ describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () =>
   });
 });
 
-describe('set_clip_transform / set_clip_keyframes (D-088/D-089)', () => {
-  it('set_clip_transform writes all five transform fields together', () => {
+/** D-132 — the four crop insets the `set_clip_transform` op now requires,
+ *  at their "uncropped" values. Spelled once here so a test that is about
+ *  something else (a label, a lock refusal) doesn't have to restate them. */
+const NO_CROP = { crop_left: 0, crop_top: 0, crop_right: 0, crop_bottom: 0 } as const;
+
+describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
+  it('set_clip_transform writes all nine transform fields together (D-088/D-132)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, {
       kind: 'set_clip_transform',
@@ -743,6 +748,10 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089)', () => {
       position_y: -20,
       scale: 1.5,
       rotation: 90,
+      crop_left: 0.1,
+      crop_top: 0.2,
+      crop_right: 0.3,
+      crop_bottom: 0.4,
     });
     const c = after.tracks[0].clips[0];
     expect(c.opacity).toBe(0.5);
@@ -750,11 +759,67 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089)', () => {
     expect(c.position_y).toBe(-20);
     expect(c.scale).toBe(1.5);
     expect(c.rotation).toBe(90);
+    expect(c.crop_left).toBe(0.1);
+    expect(c.crop_top).toBe(0.2);
+    expect(c.crop_right).toBe(0.3);
+    expect(c.crop_bottom).toBe(0.4);
+  });
+
+  /** D-132 — the op clamps its crop insets into 0–1 on the way in (mirroring
+   *  the Rust compositor's own `crop_pixel_rect` clamp), so an out-of-range
+   *  value can never reach `project.json` from this UI. A cleared numeric
+   *  input arrives as `NaN`; that has to land on "no crop", not propagate. */
+  it('set_clip_transform clamps crop insets into 0-1 and turns NaN into no crop', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 1,
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      rotation: 0,
+      crop_left: -0.5,
+      crop_top: 4,
+      crop_right: Number.NaN,
+      crop_bottom: 0.25,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.crop_left).toBe(0);
+    expect(c.crop_top).toBe(1);
+    expect(c.crop_right).toBe(0);
+    expect(c.crop_bottom).toBe(0.25);
+  });
+
+  /** D-132 — a clip built before crop existed has none of the four keys;
+   *  writing a transform must leave it with real zeros rather than
+   *  `undefined`s, so what this file computes and what the Rust
+   *  `#[serde(default)]` produces agree (this file is what actually lands on
+   *  disk — see the module doc's verbatim-storage note). */
+  it('set_clip_transform fills in crop on a pre-D-132 clip that has none', () => {
+    const before = tl(backToBack());
+    expect(before.tracks[0].clips[0].crop_left).toBeUndefined();
+    const after = applyOp(before, {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 1,
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      rotation: 0,
+      ...NO_CROP,
+    });
+    const c = after.tracks[0].clips[0];
+    expect([c.crop_left, c.crop_top, c.crop_right, c.crop_bottom]).toEqual([0, 0, 0, 0]);
   });
 
   it('set_clip_transform is a no-op for an out-of-range clip', () => {
     const before = tl(backToBack());
-    expect(applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 99, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0 })).toBe(before);
+    expect(
+      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 99, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP }),
+    ).toBe(before);
   });
 
   it('set_clip_keyframes writes the keyframe array', () => {
@@ -804,7 +869,7 @@ describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::Time
   it('set_clip_transform is refused on a locked track', () => {
     const before = lockedTl();
     expect(
-      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 0.5, position_x: 0, position_y: 0, scale: 1, rotation: 0 }),
+      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 0.5, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP }),
     ).toBe(before);
   });
 
