@@ -374,7 +374,13 @@ impl Clip {
     }
 
     /// The exclusive upper bound of this clip's occupied timeline range.
-    fn end_frame(&self) -> i64 {
+    ///
+    /// `pub` (D-130): `chroma::audio` needs a clip's out-point to know where a
+    /// source must stop contributing to the mix, and `chroma::edit` needs it to
+    /// report that out-point. Both would otherwise re-spell
+    /// `start_frame + duration` at the call site, which is exactly the
+    /// arithmetic this type exists to own.
+    pub fn end_frame(&self) -> i64 {
         self.start_frame + self.duration
     }
 }

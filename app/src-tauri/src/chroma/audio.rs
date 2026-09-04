@@ -33,8 +33,10 @@
 //!   untouched by this module), re-resolving which sources are active mid-
 //!   session (a source's set is fixed at the moment `chroma_audio_play` is
 //!   called, same as D-050's "no re-seek mid-play" — a clip beginning after a
-//!   gap mid-session won't be picked up until the next Play/seek), or long-
-//!   session drift correction between the audio and video clocks (see below).
+//!   gap mid-session won't be picked up until the next Play/seek; each source
+//!   does stop dead at its own clip's out-point rather than running on into the
+//!   rest of the file, B-048), or long-session drift correction between the
+//!   audio and video clocks (see below).
 //!
 //! ## Waveform extraction (D-051 — the mature timeline UI pass)
 //!
@@ -130,6 +132,18 @@
 //! restarts its own wall-clock baseline fresh on every Play toggle, so the
 //! frontend only ever needs to call this at that same transition (see
 //! `PreviewPane.tsx`).
+//!
+//! ### Request ordering (D-130 — the follow-up D-125 made necessary)
+//!
+//! Everything above assumes the transport commands happen in the order the
+//! frontend issued them: the pause's `chroma_audio_stop` before the resume's
+//! `chroma_audio_play`, and the newest play last. That was free while both were
+//! plain `#[tauri::command]`s running inline on Tauri's main thread; D-125's
+//! `(async)` turned each invoke into its own `tokio::spawn`ed task on a
+//! multi-threaded runtime, which orders nothing. Both commands now carry a
+//! monotonic `seq` stamped by the frontend at issue time and drop anything
+//! already overtaken — see [`begin_request`] for the full reasoning and B-047
+//! for what it looked like when they raced.
 //!
 //! ## Multi-track mixing (D-057, Phase C of `docs/notes/multi-track-nle.md`)
 //!
@@ -546,12 +560,20 @@ struct AudioSession {
     /// as soon as it no longer matches — the teardown signal for both a
     /// deliberate stop and a rapid re-play superseding it.
     generation: u64,
+    /// Highest frontend request sequence accepted so far (D-130). Every
+    /// [`chroma_audio_play`] / [`chroma_audio_stop`] carries the `seq` the
+    /// frontend stamped it with *at the moment it was issued*; anything at or
+    /// below this has been overtaken by a newer request and is dropped. This
+    /// is what makes the two commands order-insensitive now that Tauri no
+    /// longer runs them in issue order — see [`begin_request`].
+    last_seq: u64,
     join: Option<thread::JoinHandle<()>>,
 }
 
 static SESSION: Lazy<Mutex<AudioSession>> = Lazy::new(|| {
     Mutex::new(AudioSession {
         generation: 0,
+        last_seq: 0,
         join: None,
     })
 });
@@ -582,11 +604,55 @@ fn is_current(my_gen: u64) -> bool {
     SESSION.lock().unwrap_or_else(|e| e.into_inner()).generation == my_gen
 }
 
-/// Bump the generation (invalidating any in-flight audio thread) and join
-/// whatever thread was previously running. Returns the new generation.
-fn stop_and_bump_generation() -> u64 {
+/// The generation and the newest accepted request stamp — for tests to assert
+/// that a stale command really was dropped rather than acted on. Test-only:
+/// nothing in the running app needs to ask, and the house rule is no dead code
+/// shipped "just in case".
+#[cfg(test)]
+fn session_snapshot() -> (u64, u64) {
+    let guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    (guard.generation, guard.last_seq)
+}
+
+/// Claim `seq` as the newest audio-transport request and tear down whatever
+/// session is running, returning the new generation — or `None` if a **newer**
+/// request has already been accepted, in which case this one is stale and must
+/// do nothing at all (B-047 / D-130).
+///
+/// **Why this exists.** The play/stop protocol has always rested on one
+/// invariant: the commands run in the order the frontend issued them. Until
+/// D-125 that was free — both were plain `#[tauri::command]`, i.e.
+/// `ExecutionContext::Blocking`, which Tauri runs inline on the main thread as
+/// it drains IPC messages, so they were strictly FIFO *and* mutually exclusive.
+/// D-125 changed both to `#[tauri::command(async)]` to keep a pause's thread
+/// join off the main thread; for a synchronous `fn` that expands (read from
+/// `tauri-macros-2.6.3`'s `command/wrapper.rs` → `tauri-2.11.5`'s
+/// `ipc::InvokeResolver::respond_async_serialized`) to
+/// `async_runtime::spawn(..)` → `tokio::spawn` on the **multi-threaded**
+/// runtime. Two invokes issued back to back therefore become two independent
+/// tasks with no ordering and no mutual exclusion, and the invariant the
+/// protocol depends on silently disappeared.
+///
+/// Restoring it by reverting to `Blocking` would put the join back on the main
+/// thread — the very thing D-125 fixed — and would leave the invariant implicit
+/// and untested, exactly the shape of thing that broke here. So the ordering is
+/// made **explicit** instead: the frontend stamps every request with a
+/// monotonic sequence number at the instant it issues it (the same
+/// request-token pattern `timelineStore.ts`'s `load()` already uses for the
+/// same class of bug — B-034/D-112), and this function drops anything that has
+/// been overtaken. Both commands become idempotent and order-insensitive, so it
+/// no longer matters which tokio worker picks up which task first.
+fn begin_request(seq: u64) -> Option<u64> {
     let (my_gen, old_join) = {
         let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+        if seq <= guard.last_seq {
+            log::debug!(
+                "chroma audio: dropping stale request seq={seq} (newest accepted is {})",
+                guard.last_seq
+            );
+            return None;
+        }
+        guard.last_seq = seq;
         guard.generation += 1;
         (guard.generation, guard.join.take())
     };
@@ -594,7 +660,7 @@ fn stop_and_bump_generation() -> u64 {
         let _ = j.join();
     }
     *LEVEL.lock().unwrap_or_else(|e| e.into_inner()) = (0.0, 0.0);
-    my_gen
+    Some(my_gen)
 }
 
 // --------------------------------------------------------------------------- //
@@ -610,9 +676,14 @@ fn stop_and_bump_generation() -> u64 {
 /// would stall the window and every other in-flight command. `(async)` on a
 /// synchronous `fn` is Tauri's own "run this command off the main thread"
 /// mechanism, and keeps the function directly callable from tests.
+///
+/// `seq` (D-130) is the frontend's monotonic request stamp — a stop that has
+/// already been overtaken by a newer play/stop is dropped rather than killing
+/// the session that superseded it. See [`begin_request`] for why that is
+/// necessary rather than paranoid.
 #[tauri::command(async)]
-pub fn chroma_audio_stop() {
-    stop_and_bump_generation();
+pub fn chroma_audio_stop(seq: u64) {
+    begin_request(seq);
 }
 
 /// Set the master preview-monitoring volume (D-126) — a `0.0..=1.0` linear
@@ -639,6 +710,14 @@ pub fn chroma_audio_set_volume(volume: f32) {
 struct AudioSourceSpec {
     path: PathBuf,
     start_secs: f64,
+    /// How much of the source this clip actually covers, measured forward from
+    /// `start_secs` — the clip's **out-point** in source seconds (B-048 /
+    /// D-130). Past it the source contributes silence, not the file's next few
+    /// seconds: those belong to some other part of the timeline (or to nothing
+    /// at all), and playing them is playing media the picture is not showing.
+    /// `None` only when the clip's own length is unknown, which no caller
+    /// produces today.
+    duration_secs: Option<f64>,
     gain: f32,
 }
 
@@ -664,15 +743,23 @@ struct AudioSourceSpec {
 /// `chroma_timeline::Clip::link_group` for what the field means on a video
 /// clip. A pre-D-129 clip has no `link_group` and takes the unchanged
 /// D-050 path.
+/// `seq` (D-130) is the frontend's monotonic request stamp; a play that a newer
+/// request has already overtaken is dropped instead of starting a session from
+/// a stale `start_frame`. See [`begin_request`].
 #[tauri::command(async)]
-pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
+pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     // The instant the frontend asked for playback — the same moment the video
     // rAF loop re-baselines its own `performance.now()` clock. Everything
     // between here and the first sample reaching the DAC is skew the audio
     // would otherwise carry for the whole session (D-125); `run_session`
     // measures against this and compensates for it.
     let requested_at = Instant::now();
-    let my_gen = stop_and_bump_generation();
+    let Some(my_gen) = begin_request(seq) else {
+        // Overtaken by a newer request before this task got a worker thread.
+        // Starting anyway would replay the timeline from a playhead the
+        // picture has already moved past (B-047).
+        return Ok(());
+    };
 
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
 
@@ -698,9 +785,14 @@ pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
                 clip.source_path
             );
         } else if info.has_audio {
+            // How much of this clip is still ahead of the playhead, in the
+            // clip's own frame space — the out-point past which this source
+            // must fall silent (B-048).
+            let remaining_frames = (clip.end_frame() - start_frame as i64).max(0) as u64;
             sources.push(AudioSourceSpec {
                 path: PathBuf::from(&clip.source_path),
                 start_secs: info.frame_to_secs(source_frame),
+                duration_secs: Some(info.frame_to_secs(remaining_frames)),
                 gain: 1.0,
             });
         } else {
@@ -711,10 +803,13 @@ pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
         }
     }
 
-    for (path, start_secs, gain) in super::edit::resolve_audio_track_positions(start_frame)? {
+    for (path, start_secs, duration_secs, gain) in
+        super::edit::resolve_audio_track_positions(start_frame)?
+    {
         sources.push(AudioSourceSpec {
             path,
             start_secs,
+            duration_secs: Some(duration_secs),
             gain,
         });
     }
@@ -1082,6 +1177,18 @@ struct DecodedSource {
     /// [`Self::take`]), not an end to the whole session (other sources may
     /// still be playing; see `run_session`'s loop condition).
     exhausted: bool,
+    /// Interleaved samples still inside the **clip's** out-point (B-048 /
+    /// D-130), counting down as [`Self::take`] hands them out. `None` means no
+    /// out-point is known and the source plays to the end of the file — the
+    /// pre-D-130 behaviour, which no caller asks for any more.
+    ///
+    /// Without this, a session opened the source file and streamed it to EOF
+    /// regardless of how long the clip under the playhead actually was: play a
+    /// 7-second clip that sits above a different 517-second one and, the moment
+    /// the picture cut to the clip below, you kept hearing the *first* file's
+    /// audio underneath it. Reported as the voice overlapping / not matching
+    /// the picture.
+    remaining: Option<usize>,
 }
 
 impl DecodedSource {
@@ -1127,20 +1234,34 @@ impl DecodedSource {
     /// [`Self::ensure`] if needed, padding with silence once this source is
     /// exhausted (its own contribution simply becomes silence for the rest
     /// of the session; the other sources are unaffected).
+    ///
+    /// Never hands out more than [`Self::remaining`] real samples: past the
+    /// clip's out-point the rest of the window is silence and nothing further
+    /// is decoded (B-048). Always returns exactly `want` samples either way, so
+    /// every source stays in lockstep for [`mix_sources`].
     fn take(&mut self, want: usize, out_channels: usize) -> Result<Vec<f32>, String> {
-        self.ensure(want, out_channels)?;
+        let allowed = match self.remaining {
+            Some(r) => want.min(r),
+            None => want,
+        };
+        self.ensure(allowed, out_channels)?;
         let mut out = Vec::with_capacity(want);
-        for _ in 0..want {
+        for _ in 0..allowed {
             out.push(self.carry.pop_front().unwrap_or(0.0));
+        }
+        out.resize(want, 0.0);
+        if let Some(r) = self.remaining.as_mut() {
+            *r -= allowed;
         }
         Ok(out)
     }
 
     /// True once this source will never produce another non-silent sample —
     /// `run_session`'s whole-session-done check (every source, not just
-    /// one) is `.all(DecodedSource::is_done)`.
+    /// one) is `.all(DecodedSource::is_done)`. Reaching the clip's out-point
+    /// counts as done just as much as reaching the file's end (B-048).
     fn is_done(&self) -> bool {
-        self.exhausted && self.carry.is_empty()
+        self.remaining == Some(0) || (self.exhausted && self.carry.is_empty())
     }
 }
 
@@ -1154,6 +1275,7 @@ impl DecodedSource {
 fn open_source(
     path: &Path,
     start_secs: f64,
+    duration_secs: Option<f64>,
     out_rate: u32,
     out_channels: usize,
 ) -> Result<DecodedSource, String> {
@@ -1224,7 +1346,20 @@ fn open_source(
         resample,
         carry: VecDeque::new(),
         exhausted: false,
+        remaining: duration_secs.map(|d| clip_limit_samples(d, out_rate, out_channels)),
     })
+}
+
+/// How many interleaved output samples a clip of `duration_secs` covers at the
+/// session's `(out_rate, out_channels)` — the clip out-point arithmetic behind
+/// [`DecodedSource::remaining`] (B-048 / D-130). A non-finite or negative
+/// duration is zero samples (nothing to play), not a panic or a wrap. Pure — no
+/// I/O.
+pub(crate) fn clip_limit_samples(duration_secs: f64, out_rate: u32, out_channels: usize) -> usize {
+    if !duration_secs.is_finite() || duration_secs <= 0.0 {
+        return 0;
+    }
+    (duration_secs * out_rate as f64) as usize * out_channels.max(1)
 }
 
 /// How much audio to have buffered before the output device is started
@@ -1341,7 +1476,13 @@ fn run_session(
     let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
     let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
     for (i, spec) in sources.iter().enumerate() {
-        match open_source(&spec.path, spec.start_secs, out_rate, out_channels) {
+        match open_source(
+            &spec.path,
+            spec.start_secs,
+            spec.duration_secs,
+            out_rate,
+            out_channels,
+        ) {
             Ok(ds) => {
                 decoded.push(ds);
                 gains.push(spec.gain);
@@ -1355,11 +1496,15 @@ fn run_session(
     }
 
     // Every non-baseline source failed to open too (or `sources` somehow
-    // ended up empty) — nothing to actually mix. Idle exactly like the EOF
-    // case below rather than erroring, since the caller (`chroma_audio_play`)
-    // already treats "nothing to play" as a non-error.
+    // ended up empty) — nothing to actually mix. Idle rather than erroring,
+    // since the caller (`chroma_audio_play`) already treats "nothing to play"
+    // as a non-error; the device is simply never started, so this session holds
+    // no output stream open while it waits to be told to stop.
     if decoded.is_empty() {
-        stream.play().map_err(|e| format!("stream.play: {e}"))?;
+        // Same "a stop landed during warm-up means never make a sound" gate the
+        // real path below has (D-130) — this branch used to start the device
+        // unconditionally, which opened an output stream for a session that had
+        // already been superseded.
         while is_current(my_gen) {
             thread::sleep(Duration::from_millis(50));
         }
@@ -1814,16 +1959,263 @@ mod tests {
         assert!(mixed[0] > 0.9, "still louder than any one source alone");
     }
 
+    /// A process-wide monotonic stamp for tests, standing in for the
+    /// frontend's `nextAudioSeq()`. `SESSION` is one `Lazy` static shared by
+    /// every `#[test]` in this binary, so a per-test counter starting at 1
+    /// would be rejected as stale by whatever ran before it; this mirrors the
+    /// real frontend's own "seeded well above anything already accepted"
+    /// property.
+    fn next_test_seq() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// `SESSION` (and, for the integration tests, `state::SESSION`'s open
+    /// project) is one process-global shared by every `#[test]` in this
+    /// binary, which `cargo test` runs in parallel threads. Any test that
+    /// starts, stops or asserts on a playback session takes this first, so two
+    /// of them can never interleave their generation bumps — the same class of
+    /// cross-test interference B-038 documents for `chroma::export`/`relight`,
+    /// avoided here rather than discovered later.
+    fn session_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn generation_bump_invalidates_a_session() {
-        // stop_and_bump_generation with nothing running just advances the
-        // counter and is safe to call repeatedly (mirrors chroma_audio_stop
-        // being called on an already-silent preview / on unmount).
-        let g1 = stop_and_bump_generation();
-        let g2 = stop_and_bump_generation();
+        let _guard = session_test_guard();
+        // begin_request with nothing running just advances the counter and is
+        // safe to call repeatedly (mirrors chroma_audio_stop being called on
+        // an already-silent preview / on unmount).
+        let g1 = begin_request(next_test_seq()).expect("fresh seq is accepted");
+        let g2 = begin_request(next_test_seq()).expect("fresh seq is accepted");
         assert!(g2 > g1);
         assert!(!is_current(g1));
         assert!(is_current(g2));
+    }
+
+    // ------------------------------------------------------------------ //
+    // B-047 / D-130 — request ordering. `chroma_audio_play`/`_stop` are
+    // `(async)` Tauri commands since D-125, so two invokes become two
+    // independently scheduled `tokio::spawn`ed tasks: they can run
+    // concurrently and in either order. These assert the protocol survives
+    // that, which before D-130 it did not — a stop that lost the race landed
+    // on the session that had already superseded it (silence), and a play
+    // that lost the race won the generation with an out-of-date `start_frame`
+    // (the audio replaying a stretch the picture had already gone past —
+    // "the voice is overlapping / just loops").
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn a_stale_stop_cannot_kill_the_play_that_superseded_it() {
+        let _guard = session_test_guard();
+        let newer = next_test_seq();
+        let older = newer - 1; // issued first, but reaches the runtime second
+
+        let gen_after_play = begin_request(newer).expect("the newer request is accepted");
+        chroma_audio_stop(older);
+
+        let (generation, last_seq) = session_snapshot();
+        assert_eq!(
+            generation, gen_after_play,
+            "a stale stop must not bump the generation — bumping it is exactly what tore down \
+             the session the frontend had just asked for"
+        );
+        assert_eq!(last_seq, newer, "the newest accepted stamp still stands");
+        assert!(
+            is_current(gen_after_play),
+            "the superseding session is still the live one"
+        );
+    }
+
+    #[test]
+    fn a_stale_play_cannot_supersede_a_newer_request() {
+        let _guard = session_test_guard();
+        let newer = next_test_seq();
+        let older = newer - 1;
+
+        let gen_after_newer = begin_request(newer).expect("the newer request is accepted");
+        // No project is open, so this would return Ok(()) either way — what is
+        // under test is that it never gets as far as claiming the session.
+        let stale = chroma_audio_play(0, older);
+
+        assert!(stale.is_ok(), "a dropped stale play is not an error");
+        let (generation, last_seq) = session_snapshot();
+        assert_eq!(
+            generation, gen_after_newer,
+            "a stale play must not claim the session — claiming it is what made playback \
+             restart from an out-of-date playhead"
+        );
+        assert_eq!(last_seq, newer);
+    }
+
+    #[test]
+    fn a_newer_stop_does_stop_a_running_session() {
+        let _guard = session_test_guard();
+        // The other half of the contract: ordering is enforced, not "stops are
+        // ignored". A stop genuinely newer than the running session's request
+        // still tears it down.
+        let gen_after_play = begin_request(next_test_seq()).expect("accepted");
+        chroma_audio_stop(next_test_seq());
+        assert!(
+            !is_current(gen_after_play),
+            "a newer stop must still invalidate the running session"
+        );
+    }
+
+    #[test]
+    fn concurrent_out_of_order_requests_leave_exactly_the_newest_in_charge() {
+        let _guard = session_test_guard();
+        // The real shape of the race: N transport commands, stamped in issue
+        // order, handed to threads that start in an arbitrary order — which is
+        // exactly what `tokio::spawn` does with them. Whatever the interleaving,
+        // the highest stamp must be the one holding the session at the end.
+        let base = next_test_seq();
+        for _ in 0..7 {
+            next_test_seq(); // reserve the stamps this round hands out
+        }
+        let stamps: Vec<u64> = (base..base + 8).collect();
+        let newest = *stamps.last().expect("non-empty");
+
+        let mut handles = Vec::new();
+        for (i, seq) in stamps.iter().copied().enumerate() {
+            handles.push(thread::spawn(move || {
+                // Stagger nothing deliberately — let the OS interleave these
+                // however it likes, including newest-first.
+                if i % 2 == 0 {
+                    let _ = chroma_audio_play(0, seq);
+                } else {
+                    chroma_audio_stop(seq);
+                }
+            }));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
+
+        let (_, last_seq) = session_snapshot();
+        assert_eq!(
+            last_seq, newest,
+            "the newest request must own the session no matter which order the tasks ran in"
+        );
+    }
+
+    // ------------------------------------------------------------------ //
+    // B-048 / D-130 — a source stops at its clip's out-point.
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn clip_limit_samples_converts_seconds_to_interleaved_samples() {
+        assert_eq!(clip_limit_samples(1.0, 48_000, 2), 96_000);
+        assert_eq!(clip_limit_samples(0.5, 44_100, 1), 22_050);
+    }
+
+    #[test]
+    fn clip_limit_samples_of_nothing_is_nothing() {
+        assert_eq!(clip_limit_samples(0.0, 48_000, 2), 0);
+        assert_eq!(clip_limit_samples(-1.0, 48_000, 2), 0);
+        assert_eq!(clip_limit_samples(f64::NAN, 48_000, 2), 0);
+        assert_eq!(clip_limit_samples(f64::INFINITY, 48_000, 2), 0);
+    }
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// B-048, the real regression test: a source must fall silent at its
+    /// **clip's** out-point, not at the end of the file it happens to live in.
+    ///
+    /// Real decode, real `symphonia`, the real `open_source`/`take` path — a
+    /// 3-second tone opened as a clip covering only its first second. Before
+    /// this fix `DecodedSource` had no idea a clip had an out-point and
+    /// streamed the file to EOF, so seconds two and three came out as loud as
+    /// the first. On the owner's real timeline (a 166-frame screen recording
+    /// stacked over a 12414-frame camera take, both starting at frame 0) that
+    /// is the first clip's audio still playing underneath the picture after
+    /// the compositor cut to the clip below it.
+    #[test]
+    fn a_source_falls_silent_at_its_clips_out_point_not_the_files_end() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let channels = 2usize;
+        let tone = synth_test_tone(dir.path(), 440, 3.0, rate);
+
+        let mut ds = open_source(&tone, 0.0, Some(1.0), rate, channels)
+            .expect("open the tone as a one-second clip");
+
+        let chunk = 1024 * channels;
+        let one_second = clip_limit_samples(1.0, rate, channels);
+        let mut inside_peak = 0f32;
+        let mut outside_peak = 0f32;
+        let mut taken = 0usize;
+        // Pull two and a half seconds' worth — well past the out-point.
+        while taken < one_second * 5 / 2 {
+            let buf = ds.take(chunk, channels).expect("take");
+            for (i, s) in buf.iter().enumerate() {
+                if taken + i < one_second {
+                    inside_peak = inside_peak.max(s.abs());
+                } else {
+                    outside_peak = outside_peak.max(s.abs());
+                }
+            }
+            taken += chunk;
+        }
+
+        assert!(
+            inside_peak > 0.05,
+            "inside the clip the tone must actually be audible (peak {inside_peak})"
+        );
+        assert_eq!(
+            outside_peak, 0.0,
+            "past the clip's out-point every sample must be exact silence — anything else is \
+             the next part of the file playing under a picture that has already cut away"
+        );
+        assert!(ds.is_done(), "a source at its out-point is done");
+    }
+
+    /// The other half of that contract: `duration_secs: None` (no out-point
+    /// known) still streams the whole file, so the change is genuinely scoped
+    /// to clips that declare one.
+    #[test]
+    fn a_source_with_no_out_point_still_plays_past_one_second() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let channels = 2usize;
+        let tone = synth_test_tone(dir.path(), 440, 3.0, rate);
+
+        let mut ds = open_source(&tone, 0.0, None, rate, channels).expect("open with no out-point");
+        let chunk = 1024 * channels;
+        let one_second = clip_limit_samples(1.0, rate, channels);
+        let mut taken = 0usize;
+        let mut after_one_second_peak = 0f32;
+        while taken < one_second * 2 {
+            let buf = ds.take(chunk, channels).expect("take");
+            if taken >= one_second {
+                after_one_second_peak = buf
+                    .iter()
+                    .fold(after_one_second_peak, |m, s| m.max(s.abs()));
+            }
+            taken += chunk;
+        }
+        assert!(
+            after_one_second_peak > 0.05,
+            "with no out-point the source keeps playing (peak {after_one_second_peak})"
+        );
     }
 
     /// Build a throwaway one-clip-video-track `.chroma` project on disk
@@ -1970,6 +2362,7 @@ mod tests {
     // helpers above.
     #[test]
     fn chroma_audio_play_produces_non_silent_pcm_end_to_end() {
+        let _guard = session_test_guard();
         let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
             eprintln!(
                 "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
@@ -1978,10 +2371,10 @@ mod tests {
         };
 
         let _tmp = open_test_project(&video_path);
-        let played = chroma_audio_play(0);
+        let played = chroma_audio_play(0, next_test_seq());
         thread::sleep(Duration::from_millis(1500));
         let (rms, peak) = chroma_audio_level();
-        chroma_audio_stop();
+        chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
 
         played.expect("chroma_audio_play");
@@ -2002,6 +2395,7 @@ mod tests {
     // pins that "silent is correct, not a bug" behaviour.
     #[test]
     fn chroma_audio_play_on_a_source_with_no_audio_is_a_silent_no_op() {
+        let _guard = session_test_guard();
         let Ok(video_path) = std::env::var("CHROMA_TEST_SILENT_VIDEO") else {
             eprintln!(
                 "skip: set CHROMA_TEST_SILENT_VIDEO to run (a real file confirmed to have no audio stream)"
@@ -2010,10 +2404,10 @@ mod tests {
         };
 
         let _tmp = open_test_project(&video_path);
-        let played = chroma_audio_play(0);
+        let played = chroma_audio_play(0, next_test_seq());
         thread::sleep(Duration::from_millis(300));
         let (rms, peak) = chroma_audio_level();
-        chroma_audio_stop();
+        chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
 
         played.expect("chroma_audio_play should be Ok even when the source has no audio stream");
@@ -2111,6 +2505,7 @@ mod tests {
     /// agent can't literally listen — see that decision).
     #[test]
     fn chroma_audio_play_mixes_a_genuine_audio_track_with_the_video_track() {
+        let _guard = session_test_guard();
         let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
             eprintln!(
                 "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
@@ -2125,10 +2520,10 @@ mod tests {
             &video_path,
             Some((&tone_path.display().to_string(), 1.0)),
         );
-        let played = chroma_audio_play(0);
+        let played = chroma_audio_play(0, next_test_seq());
         thread::sleep(Duration::from_millis(1500));
         let (rms, peak) = chroma_audio_level();
-        chroma_audio_stop();
+        chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
 
         played.expect("chroma_audio_play with a video track + a genuine audio track");
@@ -2148,6 +2543,7 @@ mod tests {
     /// exact, deterministic version of the same property.
     #[test]
     fn chroma_audio_play_with_a_muted_audio_track_still_plays_the_video() {
+        let _guard = session_test_guard();
         let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
             eprintln!(
                 "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
@@ -2162,10 +2558,10 @@ mod tests {
             &video_path,
             Some((&tone_path.display().to_string(), 0.0)),
         );
-        let played = chroma_audio_play(0);
+        let played = chroma_audio_play(0, next_test_seq());
         thread::sleep(Duration::from_millis(1500));
         let (_rms, peak) = chroma_audio_level();
-        chroma_audio_stop();
+        chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
 
         played.expect("chroma_audio_play with a muted audio track");

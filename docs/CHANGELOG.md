@@ -18,6 +18,26 @@ One or two lines per session. Detail lives in the decision it references.
   clean; `packages/editor`/`packages/shell` `tsc` and interactive
   verification were blocked by genuine concurrent sibling-worktree build
   load and are disclosed as an honest gap in D-126.
+- **2026-09-04** — **"The voice loops / overlaps a couple of seconds": the
+  audio session was being restarted mid-playback, and D-125 took away the
+  ordering that made restarts safe (D-130, B-047, B-048).** Direct follow-up to
+  D-125, against a binary rebuilt after it. The repeat is not one session
+  playing twice — the prefill and the ring FIFO were read and cleared of that —
+  it is **two sessions starting a moment apart from two different playheads**:
+  `PreviewPane`'s audio effect was keyed on the `timeline` *object*, which
+  `load()` replaces on every window `focus` (i.e. on the click that starts
+  playback) and every edit. D-125 then made both audio commands `(async)`,
+  which — traced through `tauri-macros` into `tokio::spawn` — removed the
+  main-thread FIFO ordering the play/stop protocol depends on, so those
+  restarts could land in any order; a stale play winning means audio starts from
+  a playhead the picture has already passed. Fixed by keying the effect on
+  whether a timeline exists, and by stamping every transport command with a
+  monotonic `seq` that Rust uses to drop overtaken requests. Also fixed (B-048,
+  pre-existing): a source streamed to the end of its **file** rather than its
+  clip's out-point, so a short clip's audio played on underneath the picture
+  that had cut away from it. 8 new tests, each confirmed to fail against the
+  pre-fix behaviour. Not verified in the assembled window — same gap D-125
+  disclosed.
 
 - **2026-09-04** — **Play took 2-3 s and the audio lagged: one decode pipe
   serving N compositor layers, and an audio clock that started late

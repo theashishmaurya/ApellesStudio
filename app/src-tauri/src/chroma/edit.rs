@@ -260,8 +260,9 @@ pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, Vide
 }
 
 /// Resolve every genuine `TrackKind::Audio` clip on the active timeline that
-/// overlaps `pos` to `(source path, source start in seconds, that track's
-/// gain)` — the Phase C (D-056) counterpart to [`resolve_video_position`]'s
+/// overlaps `pos` to `(source path, source start in seconds, how many seconds
+/// of that clip are still ahead of `pos`, that track's gain)` — the Phase C
+/// (D-056) counterpart to [`resolve_video_position`]'s
 /// single video-track lookup, feeding `chroma::audio`'s mixer the extra
 /// sources to sum in alongside the baseline video-embedded audio. Uses
 /// [`chroma_timeline::Track::clip_at`] exactly like the video path — a track
@@ -270,7 +271,14 @@ pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, Vide
 /// `chroma::audio`'s module doc) contributes nothing, silently, same "not an
 /// error" contract `resolve_video_position` already has. A clip whose source
 /// turns out to have no audio stream is skipped the same way.
-pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<(PathBuf, f64, f32)>, String> {
+///
+/// The third element is the clip's **out-point** measured forward from `pos`
+/// (B-048): `chroma::audio` streams each source until it runs out, so it has to
+/// be told where the clip actually ends or it keeps playing the rest of the
+/// file underneath whatever the timeline cut to next.
+pub(crate) fn resolve_audio_track_positions(
+    pos: u64,
+) -> Result<Vec<(PathBuf, f64, f64, f32)>, String> {
     let timeline = resolve_timeline(false)?;
     let mut out = Vec::new();
     for track in timeline
@@ -289,7 +297,13 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<(PathBuf, f6
             continue;
         }
         let start_secs = info.frame_to_secs(source_frame.max(0) as u64);
-        out.push((PathBuf::from(&clip.source_path), start_secs, track.gain));
+        let remaining_frames = (clip.end_frame() - pos as i64).max(0) as u64;
+        out.push((
+            PathBuf::from(&clip.source_path),
+            start_secs,
+            info.frame_to_secs(remaining_frames),
+            track.gain,
+        ));
     }
     Ok(out)
 }

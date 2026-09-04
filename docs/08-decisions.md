@@ -9429,3 +9429,160 @@ obvious next namespace.
 **Verification.** `cargo test -p chroma-timeline` 107/107, including a test that parses the owner's real `~/Movies/Chroma/New.chroma/project.json` and asserts every clip in it loads unlinked — real backward-compat evidence, not a hand-written fixture. `cargo check`/`cargo clippy -p RapidRAW --all-targets` both exit 0, with every one of clippy's 30 warnings outside the lines this pass touches; both `app/src-tauri` files rustfmt-clean, and `chroma-timeline` left at its pre-existing 25-diff rustfmt baseline rather than reformatting untouched lines into the diff. `tsc`: 64 errors, all pre-existing in the vendored `app/src` fork, none in any file changed here. vitest 197/197 in `@chroma/editor`. **Not exercised in the running app** — three concurrent worktree builds and a live dev server the owner was testing against made launching a second one the wrong trade; the owner's own drop is what closes that, and it is the one claim not made here.
 
 **Deferred, named rather than half-built.** A manual `link` op (Palmier's own `link`, Premiere's `Clip > Link`) and relink-after-unlink — the model is group-shaped and ready, nothing in the ask needed them, and `unlink` is the half a shipped feature genuinely can't do without. A ripple-insert of a linked pair onto a track whose audio side is *not* sync-locked rejects rather than guessing at room that was never made. An MCP/Tauri `unlink` command — `Timeline::unlink` is built and tested, exposing it is a one-liner when the MCP surface wants it.
+---
+
+## D-130 — "The voice is lagging or just loops… overlapping a couple of seconds": the audio session was being torn down and restarted mid-playback, and D-125 took away the ordering that made restarts safe (B-047, B-048)
+
+**decided (2026-09-04) · built (2026-09-04) · direct follow-up to D-125**
+
+- **Context.** Owner, live, on a binary rebuilt *after* D-125 merged: *"the
+  voice is lagging or just loops"*, then moments later *"yeah voice is
+  overlapping couple of seconds also."* The symptom is not D-125's original one
+  (a single 2-3 s startup lag, one-time); it is audio **repeating** content the
+  picture has already gone past. So this is a different failure, and the
+  starting assumption was that D-125's own new prefill / skew-compensation
+  logic caused it.
+
+- **That starting assumption is wrong, and the code says so.** `run_session`'s
+  prefill is a bounded `while ring.len() < prefill_len` loop over a ring that is
+  created fresh per session and dropped with it, and the `cpal` callback's
+  `pull_or_silence` is a strict FIFO pop — nothing in either can emit the same
+  sample range twice. Nor can two sessions ever be audible at once: a session
+  checks `is_current(my_gen)` *immediately before* `stream.play()`, and after
+  that once per mixed chunk and once per 5 ms of back-pressure, so a superseded
+  session either never starts the device or leaves it within milliseconds.
+  Recorded explicitly so the "the prefill double-buffers" theory is not
+  re-chased. The repeat is not one session playing twice — it is **two sessions
+  starting, a moment apart, from two different playheads.**
+
+- **Root cause 1 — the audio session restarted whenever the `timeline` *object*
+  changed, which is far more often than the timeline does.** `PreviewPane`'s
+  audio effect was keyed `[playing, timeline]`. `timeline` is replaced by a
+  brand-new object on every `timelineStore.load()` — and `EditorTab` calls
+  `load()` on the window `focus` event, i.e. on the very click that starts
+  playback if the window was not already focused — and on every `applyOp`. Each
+  such replacement ran the effect's cleanup (`chroma_audio_stop`) and body
+  (`chroma_audio_play` at whatever the playhead had reached by then). Result:
+  press Play, hear the take start, and a fraction of a second later hear it
+  start again from a *different* point. Nothing about the session depends on
+  that object — `chroma_audio_play` resolves its sources in Rust from the open
+  project's own active timeline — so the dependency was buying nothing and
+  costing a restart. Now keyed on `timeline !== null`.
+
+  **Why this only became audible after D-125.** Before D-125 a session spent its
+  first 157-635 ms emitting silence while it warmed up (D-125's root cause 2), so
+  a session that was superseded within a few hundred ms had never made a sound
+  and the double-start was inaudible. D-125's prefill + skew compensation makes
+  a session produce real audio essentially immediately — which is correct, and
+  which is exactly what exposed this.
+
+- **Root cause 2 — D-125 removed the ordering guarantee the whole play/stop
+  protocol rests on, and put nothing in its place (B-047).** The protocol has
+  one invariant: the commands take effect in the order the frontend issued them
+  (a pause's stop before the resume's play; the newest play last). Until D-125
+  that was free — both were plain `#[tauri::command]`, i.e.
+  `ExecutionContext::Blocking`, which Tauri runs **inline on the main thread**
+  as it drains IPC messages: strictly FIFO *and* mutually exclusive. D-125 made
+  both `#[tauri::command(async)]` so a pause's thread join would not stall the
+  main thread. Read from the source rather than assumed — `tauri-macros-2.6.3`'s
+  `command/wrapper.rs` (`ExecutionContext::Async` on a sync `fn` → `body_async`)
+  into `tauri-2.11.5`'s `ipc::InvokeResolver::respond_async_serialized` →
+  `async_runtime::spawn` → **`tokio::spawn` on the multi-threaded runtime** —
+  each invoke becomes an independently scheduled task. Two invokes issued back
+  to back now have no defined order and no mutual exclusion.
+
+  With root cause 1 firing two plays and a stop within a few hundred ms, that
+  matters constantly, and it makes the failure erratic in exactly the way the
+  report describes: if the *older* play's task reaches a worker last, it wins
+  the generation and playback starts from a **stale `start_frame`** — audio
+  replaying a stretch the picture has already passed, which is "overlapping a
+  couple of seconds"; if the pause's stop lands after the resume's play, the new
+  session is killed and there is no voice at all (which is the other half of what
+  the owner reported before D-125, and was never fully explained).
+
+  **Fix:** make the ordering explicit rather than inherited. Both commands now
+  carry a monotonic `seq` the frontend stamps at issue time; `begin_request`
+  drops anything a newer request has already overtaken, so both commands are
+  idempotent and order-insensitive and it no longer matters which worker picks
+  up which task. This is the same request-token pattern `timelineStore.ts`'s
+  `load()` already uses for the same class of bug (B-034/D-112). The frontend
+  counter is seeded from `Date.now()` so a page reload (dev HMR, or a webview
+  reload) still produces stamps above whatever the process-global high-water
+  mark reached under the previous page.
+
+  **Considered and rejected: reverting both commands to `Blocking`.** It does
+  restore the invariant, and it is tempting because D-125's *own* root cause 3
+  (making `chroma_timeline_frame` `async` + `spawn_blocking`) is what actually
+  removed the main-thread queueing that delayed `chroma_audio_play` — the
+  `(async)` on the audio commands was belt-and-braces on top of that. But it
+  puts the thread join back on the main thread (up to a 50 ms idle-poll interval,
+  and much longer if the outgoing session is still inside `open_source` on a
+  2.3 GB container), and it leaves the invariant implicit and untestable —
+  precisely the shape of thing that broke here without anyone noticing. An
+  explicit, asserted ordering is the structurally correct answer.
+
+- **Root cause 3 — a source played past its clip's out-point (B-048).**
+  `run_session` opened each source and streamed it until the **file** ended,
+  with no idea the clip under the playhead had a length. On a timeline where a
+  short clip sits above a long one — the owner's real project is exactly this: a
+  166-frame screen recording on track 0 over a 12414-frame camera take on track
+  1, both starting at frame 0 — the compositor cuts the picture to the clip
+  below at frame 166 while the audio keeps playing the *first* file underneath
+  it. That is audio that is not on the timeline at that position, which is a
+  correctness bug regardless of how it sounds. `AudioSourceSpec` now carries the
+  clip's out-point, `DecodedSource` counts down to it and pads silence past it,
+  and `is_done` respects it.
+
+  **Scoped out deliberately:** re-resolving *which* sources are active as the
+  playhead crosses a clip boundary mid-session. That is D-050's documented,
+  deliberate limitation ("a source's set is fixed at the moment
+  `chroma_audio_play` is called") and a real feature, not a drive-by inside a
+  regression fix — the correct behaviour until it exists is silence past the
+  clip, not the wrong clip's audio. Logged on the roadmap.
+
+- **Also fixed, small:** `run_session`'s "every source failed to open" branch
+  started the `cpal` output stream without the `is_current` gate the real path
+  has, so an already-superseded session could open an output device and hold it
+  until told to stop. It now idles without starting the device at all.
+
+- **Verified.**
+  - `cargo test -p RapidRAW --lib chroma::` — see the commit message for the
+    exact counts; 9 new tests: 4 on request ordering (including one that runs 8
+    stamped transport commands from 8 threads in whatever order the OS gives
+    them and asserts the highest stamp owns the session at the end), 2 on the
+    clip-out-point arithmetic, 2 real-decode tests that open a synthesized
+    3-second tone as a 1-second clip through the real `open_source`/`take` path
+    and assert exact silence past the out-point (and that a source with no
+    out-point still plays on), plus the existing generation test moved onto
+    `begin_request`.
+  - The four existing session-touching integration tests, and all four new
+    ordering tests, now take a shared test guard: `SESSION` is one process
+    global and `cargo test` runs tests in parallel threads, so without it two
+    tests' generation bumps interleave. Same class of cross-test interference
+    B-038 documents for `chroma::export`/`relight`, headed off rather than
+    discovered later.
+
+- **Honest gap.** **Not verified by clicking Play in the assembled app** — same
+  constraint D-125 disclosed, and for the same reasons (this environment cannot
+  launch the Tauri window; the main tree is the owner's live dev server). Root
+  causes 2 and 3 are proved at the level they live at, by tests against the real
+  command surface and the real decoder. **Root cause 1 is the weakest link in
+  the chain and it is the one closest to the reported symptom:** it is a React
+  effect-dependency change, argued from the real call graph (`EditorTab`'s focus
+  listener → `load()` → a new `timeline` object → the audio effect's cleanup and
+  body) but not observed firing in a running window, and `packages/editor` has
+  no React-render test harness today to assert an effect's dependency behaviour.
+  What actually closes this is the owner pressing Play on `New.chroma` and
+  reporting whether the voice still repeats. A second, unchanged gap from D-125:
+  nobody has *listened* for lip-sync — a sandboxed agent cannot hear.
+
+- **Note written when this branched, now stale:** this was drafted flagging
+  "no backend volume/mute primitive to hook a UI control onto" for the
+  concurrent `fork/player-controls` pass. That pass landed independently as
+  D-126 (above) and added exactly that primitive — `chroma_audio_set_volume`,
+  a lock-free `AtomicU32` gain read inside the live `cpal` callback — before
+  this branch rebased onto it. Left here only as a record of what was true
+  when this fix was written, not as current state.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

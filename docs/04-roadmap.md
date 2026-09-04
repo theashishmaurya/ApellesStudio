@@ -176,6 +176,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    mute/volume controls, audio scrubbing while
    paused, and long-play-session drift correction between the audio/video
    clocks (open-loop by design this pass — see D-050's sync-model note).
+   - **Re-resolve the active sources at a clip boundary mid-session** — D-050's
+     "a source's set is fixed at the moment `chroma_audio_play` is called" is
+     still true, and since D-130 a source correctly falls **silent** at its
+     clip's out-point instead of playing the rest of its file underneath the
+     next clip's picture (B-048). Correct, but it means a multi-clip timeline
+     goes quiet after the first clip until the next Play/seek. The real fix is
+     for the audio thread to re-resolve as the playhead crosses a boundary.
+   - ~~**A backend volume/mute primitive**~~ — **done, D-126.** Noted as
+     missing while fixing D-130; landed independently by the concurrent
+     player-controls pass as `chroma_audio_set_volume`, a lock-free
+     `AtomicU32` gain read inside the live `cpal` callback.
 2. ~~**A mature timeline UI**~~ — **done, D-051 (2026-09-03).** Scoped against
    `react-timeline-editor`'s actual API first, as directed: **edge-drag trim and
    snapping (to adjacent clip edges + the playhead) turned out to already be fully

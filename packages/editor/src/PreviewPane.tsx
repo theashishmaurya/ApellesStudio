@@ -10,6 +10,13 @@
  * stays here — only the rendered transport JSX (the hand-rolled button row)
  * moved to `<Player>`, which is purely presentational.
  *
+ * Audio session churn (D-130): the audio effect is keyed on whether a timeline
+ * exists, not on the timeline object — see that effect's comment. And both
+ * audio commands carry a monotonic `seq` (`nextAudioSeq`), because since D-125
+ * they are `(async)` Tauri commands and so no longer execute in the order they
+ * were invoked — see that constant's comment and `chroma/audio.rs`'s
+ * `begin_request`.
+ *
  * Audio (D-049): `chroma_audio_play(playhead)` / `chroma_audio_stop()` are
  * fired at exactly the same `playing` transitions that (re)baseline the video
  * rAF loop below — both start from the same playhead frame at the same
@@ -61,6 +68,30 @@ import { timelineDuration, timelineFps } from './timeline';
  * existing sequential decode.
  */
 const PREVIEW_LONG_EDGE = 960;
+
+/**
+ * Monotonic stamp for every audio transport command (D-130).
+ *
+ * `chroma_audio_play` / `chroma_audio_stop` are `#[tauri::command(async)]`
+ * since D-125, which means each `invoke` becomes its own `tokio::spawn`ed task
+ * on a multi-threaded runtime — they no longer run in the order they were
+ * issued, and two can run at once. The play/stop protocol depends entirely on
+ * that order (a pause's stop must not land on top of the resume's play; the
+ * newest play must win), so the order is sent explicitly instead of assumed:
+ * Rust drops any request a newer one has already overtaken.
+ *
+ * Seeded from `Date.now()` rather than starting at 1 so a page reload (dev HMR,
+ * or a webview reload in the shipped app) still produces stamps above whatever
+ * the previous page got to — the Rust side's high-water mark lives in the
+ * process, which outlives the page. That holds unless a page issues more than
+ * one command per elapsed millisecond of its whole lifetime, which a
+ * user-driven transport never does.
+ *
+ * Same request-token pattern `timelineStore.ts`'s `load()` uses for the same
+ * class of bug (B-034 / D-112).
+ */
+let audioSeq = Date.now();
+const nextAudioSeq = () => ++audioSeq;
 
 export function PreviewPane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -220,13 +251,31 @@ export function PreviewPane() {
   // playhead frame at the same moment, then free-run independently against
   // real wall-clock time (see chroma/audio.rs's module doc for why). No
   // audio during scrub (paused) — only real Play produces sound.
+  //
+  // Keyed on whether a timeline exists, NOT on the timeline object (D-130).
+  // `timeline` is replaced by a brand-new object on every `load()` — including
+  // the `EditorTab` window-`focus` refetch, which fires on the very click that
+  // starts playback — and on every `applyOp`. Depending on its identity meant
+  // any of those tore the audio session down and started a fresh one from
+  // whatever the playhead had reached by then: you heard a second of audio,
+  // then heard it again from a slightly different point. That is the "voice
+  // loops / overlaps by a couple of seconds" report, and it only became
+  // audible once D-125 made a session produce sound immediately instead of
+  // spending its first few hundred ms emitting silence.
+  //
+  // Nothing about the session actually depends on this object: `run_session`
+  // resolves its sources in Rust from the open project's own active timeline,
+  // not from anything passed in here. A real change that matters — the project
+  // closing, a different timeline becoming active — still stops playback,
+  // because that flips `playing` or empties `timeline` outright.
+  const hasTimeline = timeline !== null;
   useEffect(() => {
-    if (!playing || !timeline) {
-      invoke('chroma_audio_stop').catch(() => {});
+    if (!playing || !hasTimeline) {
+      invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
       return;
     }
     const startFrame = useEditorTimelineStore.getState().playhead;
-    invoke('chroma_audio_play', { startFrame }).catch((e) => {
+    invoke('chroma_audio_play', { startFrame, seq: nextAudioSeq() }).catch((e) => {
       // A clip with no audio stream isn't an error on the Rust side
       // (chroma_audio_play returns Ok(()) and just plays nothing) — a
       // rejection here is a real decode/device failure. Not fatal to video
@@ -234,9 +283,9 @@ export function PreviewPane() {
       console.warn('chroma_audio_play failed:', e);
     });
     return () => {
-      invoke('chroma_audio_stop').catch(() => {});
+      invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
     };
-  }, [playing, timeline]);
+  }, [playing, hasTimeline]);
 
   const step = (d: number) => {
     if (playing) setPlaying(false);
