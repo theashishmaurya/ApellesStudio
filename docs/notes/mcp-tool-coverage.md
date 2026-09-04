@@ -75,6 +75,22 @@ MCP equivalent at all:
   computes, `chroma_timeline_set` persists) — same "which path does a tool
   call" question as above applies to all of them, not just the track ops.
 
+> **The "which path does a tool call" question is answered — D-140, 2026-09-05.**
+> A *mutating* Edit-tab tool goes through the GUI's own path
+> (`@chroma/editor`'s `timelineStore.applyOp` → debounced `chroma_timeline_set`),
+> not the dedicated Rust commands. Reason: `applyOp` pushes a before/after
+> snapshot pair onto the shared `@chroma/history` undo stack (D-051) and
+> `chroma_timeline_move_clip` does not, so calling the Rust command directly
+> would produce an agent edit the user cannot undo — a violation of MCP design
+> rule 7 ("one shared state… the UI and the agent never diverge") and of
+> `00-vision.md`'s "reviewable and undoable, not a black box." No new plumbing
+> is needed: `useChromaControl()` is mounted app-level in `App.tsx` (verified),
+> and `app` already depends on `@chroma/editor`. The dedicated Rust commands
+> stay what D-138 built them for — headless/scripting callers outside the app.
+> D-140's own Phase 1 also ships the minimal read op this whole section
+> presupposes: `get_timeline` (shaped `chroma_timeline_get`), without which no
+> tool can name a clip. See `docs/notes/pacing-audio-assistance-plan.md` §6.
+
 **Net effect: an agent cannot touch the Edit tab / NLE at all right now** — no
 adding clips, no trimming, no track management, none of tonight's new
 compositing/lock/hide/rearrange/keyframe work either, once it ships.

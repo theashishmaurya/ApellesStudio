@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Pacing & audio assistance scoped (D-140), no feature code.**
+  Turned D-139's research into a buildable plan:
+  `docs/notes/pacing-audio-assistance-plan.md`. Beat detection runs in the `ai/`
+  sidecar on librosa (BSD-3, no weights — essentia/madmom excluded on their
+  models' non-commercial licences), decoded via ffmpeg, **without** the `_GPU`
+  lock and with no `_MODEL_REGISTRY` entry; results cache in a new `media_cache`
+  `"beats"` namespace keyed exactly like the waveform peaks, so Phase 1 adds
+  **no** field to `Clip`/`Track`/`Timeline` (a `Timeline::markers` model was
+  considered and rejected for v1, with reasons). Beat positions become timeline
+  guides + snap targets inside the two functions Chroma already owns
+  (`computeInsertion`/`resolveClipLanding`); edge-trim snapping is genuinely
+  blocked by the timeline library's `dragLine?: boolean` (verified in its
+  bundled types) and is named as a gap rather than promised. MCP is designed in,
+  not appended: `get_timeline` + `detect_beats` in Phase 1, `inspect_pacing` +
+  `snap_clip_to_beat` in Phase 2, `pulse_steadiness` instead of an invented
+  `confidence`, and a real answer to the question `mcp-tool-coverage.md` left
+  open (a mutating Edit-tab tool goes through `timelineStore.applyOp` so agent
+  edits land on the shared undo stack). Phase 0 first: benchmark librosa on the
+  owner's own CassetteAI tension beds, which are the worst case for this class
+  of tracker — it can invalidate the premise before anything is built.
 - **2026-09-05** — **Audio/rhythm/pacing-assistance research pass (D-139), no
   feature built.** Owner asked about beat/emotion/pacing understanding —
   "the things sound engineers do." Researched beat/onset detection

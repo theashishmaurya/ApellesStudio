@@ -896,7 +896,22 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   search, B-roll auto-tagging, shot classification, auto-reframe hints, highlight
   detection. Needs the media pool first. First concrete task: a real local throughput
   benchmark (current numbers are extrapolated, not measured). Molmo 2 stays
-  excluded from shipping (licence). `docs/notes/video-search.md`.
+  excluded from shipping (licence). `docs/notes/video-search.md`. The *audio/rhythm*
+  half of "understanding the footage" is the separate item below — researched and
+  scoped, deliberately not merged into this one.
+- **Pacing & audio assistance for the Editor tab** — beat/onset detection on a clip's
+  audio (librosa in the `ai/` sidecar, ffmpeg-decoded, cached in a new `media_cache`
+  `"beats"` namespace) surfaced as timeline guides + snap targets, plus a read-only
+  pacing inspector (cut frequency straight from the timeline model, loudness from the
+  existing waveform cache, optional motion intensity) and full MCP parity
+  (`get_timeline`, `detect_beats`, then `inspect_pacing` / `snap_clip_to_beat`).
+  Researched: `docs/notes/pacing-audio-assistance-research.md` (D-139). Scoped:
+  `docs/notes/pacing-audio-assistance-plan.md` (D-140). **First concrete task is
+  Phase 0** — a real wall-clock benchmark (none exists; D-139 searched) *and* a run
+  against the owner's own CassetteAI tension beds, which are the weak-pulse worst case
+  for this class of tracker and can invalidate the premise before anything is built.
+  Auto-cut-to-beat, downbeat/meter and "emotional arc" understanding are explicitly
+  out, with reasons, not deferred.
 - **Multi-subject batch tracking** (D-017) — independent per-subject tracking already
   works; batching N objects into one SAM propagation pass is a pure perf optimization,
   niche for a single-subject talking-head grade.
