@@ -454,7 +454,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     Chrome-DevTools harness attempt against the dev server couldn't clear
     the full app's Tauri-IPC boot requirements in bounded time) — the
     algorithmic core is thoroughly unit-tested, the React wiring itself is
-    reviewed but not click-tested.
+    reviewed but not click-tested. **Correction, same day (B-033/D-109):**
+    the auto-split call above was reverted within the hour after it
+    corrupted a real saved project — repeated real ripple operations kept
+    re-splitting an already-split fragment, something the (thorough but
+    single-operation-only) test suite above never exercised. Sync-lock now
+    rejects a ripple on straddle again (D-104's original contract,
+    generalized cross-track) — a real feature loss versus what's described
+    above, deliberate given the stakes. Auto-split is a legitimate,
+    separately-scoped future follow-up, not abandoned.
 12. ~~**Multi-select**~~ — **Phase 1 done, D-107 (2026-09-04).** The audit's
     own FIRST priority. `Selection` is now `{track, id}[]`; shift-click
     range-extend + cmd/ctrl-click toggle wired into `onClickAction`;

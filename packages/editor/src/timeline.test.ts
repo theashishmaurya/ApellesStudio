@@ -886,24 +886,16 @@ describe('cross-track ripple sync (D-106)', () => {
     expect(after.tracks[1].clips.find((c) => c.id === 'x')!.start_frame).toBe(200);
   });
 
-  it('remove_gap auto-splits a straddling clip on a synced track', () => {
+  it('remove_gap rejects (B-033, reverted from auto-split) when a straddling clip sits on a synced track', () => {
+    // B-033: auto-split let a repeated ripple keep re-splitting an already-
+    // split fragment, confirmed to corrupt a real project. Reverted to
+    // D-104's own reject-on-straddle contract, generalized to cross-track.
     const before = twoTrack(
       [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 80, duration: 50 })],
       [clip('x', 'X', { start_frame: 20, duration: 180, source_len: 10_000 })],
     );
     const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
-    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(50);
-
-    const track1 = after.tracks[1].clips;
-    expect(track1).toHaveLength(2);
-    const left = track1.find((c) => c.id === 'x')!;
-    expect(left.start_frame).toBe(20);
-    expect(left.duration).toBe(60);
-    const right = track1.find((c) => c.id !== 'x')!;
-    expect(right.id).toBe('x·80');
-    expect(right.start_frame).toBe(50);
-    expect(right.duration).toBe(120);
-    expect(right.source_start).toBe(60);
+    expect(after).toBe(before); // whole op rejected, nothing moves anywhere
   });
 
   it('remove_gap ripple propagates without a matching gap on the synced track', () => {
@@ -913,5 +905,48 @@ describe('cross-track ripple sync (D-106)', () => {
     );
     const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
     expect(after.tracks[1].clips.find((c) => c.id === 'y')!.start_frame).toBe(60);
+  });
+
+  it('B-033 regression: repeated remove_gap calls never fragment a straddling clip, no matter how many times applied', () => {
+    // Reproduces the shape of the real corruption on the owner's project:
+    // several tracks, one clip on the receiving track straddling the ripple
+    // point. Before the fix this would auto-split further on every call
+    // that still found a (new) straddle; now every call that would touch a
+    // straddling clip is rejected outright, so applying it 5x in a row is
+    // provably a no-op past the first successful shift, never a cascade of
+    // ever-smaller fragments.
+    let tl: Timeline = {
+      id: 't',
+      name: 'n',
+      rate: { num: 30, den: 1 },
+      tracks: [
+        {
+          kind: 'video',
+          clips: [
+            clip('a', 'A', { start_frame: 0, duration: 50 }),
+            clip('b', 'B', { start_frame: 80, duration: 50 }),
+          ],
+          gain: 1,
+          sync_locked: true,
+        },
+        {
+          kind: 'video',
+          clips: [clip('x', 'X', { start_frame: 20, duration: 180, source_len: 10_000 })],
+          gain: 1,
+          sync_locked: true,
+        },
+      ],
+    };
+    // A real, closeable gap on track 0 ([50,80)) whose close-point (80)
+    // straddles track 1's clip 'x' ([20,200)) — the exact shape that used
+    // to auto-split. Apply it 5x in a row: every single call must reject
+    // (same reason each time — the straddle never goes away since nothing
+    // ever moves), never partially apply, never fragment further.
+    for (let i = 0; i < 5; i++) {
+      tl = applyOp(tl, { kind: 'remove_gap', track: 0, frame: 60 });
+    }
+    expect(tl.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(80); // never moved
+    expect(tl.tracks[1].clips).toHaveLength(1);
+    expect(tl.tracks[1].clips[0]).toMatchObject({ id: 'x', start_frame: 20, duration: 180 });
   });
 });

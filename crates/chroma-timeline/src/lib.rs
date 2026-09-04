@@ -373,6 +373,11 @@ pub enum TimelineError {
     /// "gap" — there's nothing after it to ripple earlier).
     #[error("no closeable gap at frame {1} on track {0}")]
     NoGapAt(usize, i64),
+    /// B-033. A sync-locked OTHER track has a clip straddling the ripple
+    /// point this op would shift — rejected rather than auto-split (see
+    /// `has_straddling_sync_locked_clip`'s own doc for why).
+    #[error("a sync-locked track has a clip straddling the ripple point at frame {0}")]
+    SyncLockedStraddle(i64),
 }
 
 /// Shift every clip on `track` starting at/after `threshold` by `delta`
@@ -388,38 +393,29 @@ fn shift_clips_at_or_after(track: &mut Track, threshold: i64, delta: i64) {
     }
 }
 
-/// The sync-lock version of [`shift_clips_at_or_after`] (D-106) — for a
-/// track receiving SOMEONE ELSE's ripple (never the track directly being
-/// edited, which still uses the plain shift above and D-104's own
-/// reject-on-straddle contract unchanged). A clip that straddles
-/// `threshold` (starts before it, ends after it) is auto-split there FIRST,
-/// matching DaVinci Resolve's own real, confirmed behavior — the owner's own
-/// explicit call, reversing this doc's first-pass "reject" recommendation:
-/// rejecting would make sync-lock block ripples constantly whenever a
-/// straddling clip (a music bed, room tone — sync-lock's own headline
-/// use case) sits on a synced track, defeating a default-on feature in its
-/// primary scenario. The split clip's right half gets a derived id
-/// (`{left_id}·{threshold}`, this codebase's existing split-id convention,
-/// `Timeline::split`'s own scheme) so the frontend's ripple-flash diff
-/// picks it up as a new clip and flashes it — an auto-split is automatic
-/// but never silent, the real UX mitigation for splitting a clip on a track
-/// the user may not even be looking at.
-fn ripple_shift_with_auto_split(track: &mut Track, threshold: i64, delta: i64) {
-    if let Some(idx) = track
-        .clips
-        .iter()
-        .position(|c| c.start_frame < threshold && c.end_frame() > threshold)
-    {
-        let mut right = track.clips[idx].clone();
-        let offset = threshold - track.clips[idx].start_frame;
-        right.id = format!("{}·{}", track.clips[idx].id, threshold);
-        right.start_frame = threshold;
-        right.source_start += offset;
-        right.duration -= offset;
-        track.clips[idx].duration = offset;
-        track.clips.insert(idx + 1, right);
-    }
-    shift_clips_at_or_after(track, threshold, delta);
+/// B-033 — REVERTED from auto-split to reject-on-straddle, a deliberate
+/// safety rollback, not a redesign. The auto-split version (D-106/D-107)
+/// let a REPEATED ripple (several real remove_gap/move/add_clip ops in the
+/// same session, each individually correct in isolation) keep re-splitting
+/// a fragment created by a PREVIOUS ripple — confirmed on the owner's real
+/// `New.chroma` project: the same source clip ended up split into a chain
+/// of ever-smaller slivers (four consecutive 166-frame fragments of one
+/// clip) and the same clip id appearing three times on one track at wildly
+/// different positions, with the project's total duration growing instead
+/// of shrinking after closing a gap. This reverts to exactly D-104's own
+/// already-proven-safe same-track contract, generalized cross-track: a
+/// straddling clip on a sync-locked track REJECTS the whole op, never
+/// splits. Auto-split may come back as a real, separately-scoped,
+/// separately-verified follow-up — see B-033.
+fn has_straddling_sync_locked_clip(tracks: &[Track], edited_track: usize, threshold: i64) -> bool {
+    tracks.iter().enumerate().any(|(i, t)| {
+        if i == edited_track || !t.sync_locked || t.locked {
+            return false;
+        }
+        t.clips
+            .iter()
+            .any(|c| c.start_frame < threshold && c.end_frame() > threshold)
+    })
 }
 
 /// Propagate a ripple from `edited_track` (already shifted by the caller) to
@@ -429,14 +425,15 @@ fn ripple_shift_with_auto_split(track: &mut Track, threshold: i64, delta: i64) {
 /// is BOTH sync-locked AND individually `locked` is skipped — a real
 /// judgment call, not explicitly resolved in the scoping doc: `Track.locked`
 /// already means "protect this track's clips from edits through the normal
-/// ops" (D-082's own doc), and a foreign ripple auto-splitting/shifting this
-/// track's clips is exactly that kind of edit, so the same protection
-/// applies rather than a `locked` track being silently modified by someone
-/// else's ripple.
+/// ops" (D-082's own doc), and a foreign ripple shifting this track's clips
+/// is exactly that kind of edit, so the same protection applies rather than
+/// a `locked` track being silently modified by someone else's ripple. Plain
+/// shift only (B-033) — callers MUST call `has_straddling_sync_locked_clip`
+/// first and reject the whole op if it returns `true`; this never splits.
 fn propagate_sync_lock_ripple(tracks: &mut [Track], edited_track: usize, threshold: i64, delta: i64) {
     for (i, t) in tracks.iter_mut().enumerate() {
         if i != edited_track && t.sync_locked && !t.locked {
-            ripple_shift_with_auto_split(t, threshold, delta);
+            shift_clips_at_or_after(t, threshold, delta);
         }
     }
 }
@@ -709,7 +706,12 @@ impl Timeline {
             }
             c.start_frame < to_start_frame && c.end_frame() > to_start_frame
         });
-        if overlaps && (!ripple || straddles) {
+        // B-033 — same reject-on-straddle now also covers every OTHER
+        // sync-locked track this move's ripple would touch, checked before
+        // any mutation.
+        let sync_straddles =
+            overlaps && ripple && has_straddling_sync_locked_clip(&self.tracks, to_track, to_start_frame);
+        if overlaps && (!ripple || straddles || sync_straddles) {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
 
@@ -922,6 +924,11 @@ impl Timeline {
                 .ok_or(TimelineError::NoGapAt(track, at_frame))?
         };
         let shift = gap_end - gap_start;
+        // B-033 — reject upfront if a sync-locked track has a straddling
+        // clip, checked before any mutation.
+        if has_straddling_sync_locked_clip(&self.tracks, track, gap_end) {
+            return Err(TimelineError::SyncLockedStraddle(gap_end));
+        }
         shift_clips_at_or_after(&mut self.tracks[track], gap_end, -shift);
         // D-106 — every OTHER sync-locked track ripples too, unconditionally
         // (not gated on THAT track having a matching gap at `gap_end` —
@@ -2158,31 +2165,40 @@ mod tests {
         assert_eq!(track1_x.start_frame, 200, "locked overrides sync_locked — protected from a foreign ripple too");
     }
 
-    /// The real design question this whole feature turned on: a clip on a
-    /// synced track that STRADDLES the ripple point gets auto-split there,
-    /// not rejected — Resolve's own real behavior, the owner's explicit call.
+    /// B-033 — REVERTED from auto-split to reject-on-straddle. Auto-split
+    /// let a repeated ripple keep re-splitting an already-split fragment,
+    /// confirmed to corrupt a real project (the owner's `New.chroma`: the
+    /// same clip split into a chain of ever-smaller slivers, and the same
+    /// clip id appearing three times on one track). Now generalizes D-104's
+    /// own same-track reject-on-straddle contract to sync-locked tracks.
     #[test]
-    fn remove_gap_auto_splits_a_straddling_clip_on_a_synced_track() {
-        // track0: A[0,50) gap[50,80) B[80,130) — closing the gap shifts
+    fn remove_gap_rejects_a_straddling_clip_on_a_synced_track() {
+        // track0: A[0,50) gap[50,80) B[80,130) — closing the gap would shift
         // everything at/after 80 earlier by 30. track1: a single long clip
-        // X[20,200) that straddles frame 80 (starts at 20, ends at 200).
+        // X[20,200) that straddles frame 80 (starts at 20, ends at 200) —
+        // the whole op must reject, nothing on either track moves.
         let mut t = two_track(vec![c("a", 0, 50), c("b", 80, 50)], vec![c("x", 20, 180)]);
-        t.remove_gap(0, 60).unwrap(); // 60 is inside the [50,80) gap
-        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
-        assert_eq!(track0_b.start_frame, 50, "edited track: gap closed, b shifted from 80 to 50");
+        let err = t.remove_gap(0, 60).unwrap_err();
+        assert!(matches!(err, TimelineError::SyncLockedStraddle(80)));
 
+        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(track0_b.start_frame, 80, "rejected: edited track untouched");
         let track1 = &t.tracks[1];
-        assert_eq!(track1.clips.len(), 2, "x split into two halves at the ripple point (frame 80)");
-        let left = track1.clips.iter().find(|c| c.id == "x").unwrap();
-        assert_eq!((left.start_frame, left.duration), (20, 60), "left half: unchanged start, shortened to end exactly at 80");
-        let right = track1.clips.iter().find(|c| c.id != "x").unwrap();
-        assert_eq!(right.id, "x·80", "right half gets the derived split id, matching Timeline::split's own scheme");
-        assert_eq!(
-            (right.start_frame, right.duration),
-            (50, 120),
-            "right half: split at 80 then shifted -30 to 50, duration 200-80=120 preserved"
-        );
-        assert_eq!(right.source_start, 60, "right half's source_start advanced by the split offset (80-20)");
+        assert_eq!(track1.clips.len(), 1, "rejected: no split, no fragment, x untouched");
+        assert_eq!((track1.clips[0].start_frame, track1.clips[0].duration), (20, 180));
+    }
+
+    /// Real regression for B-033: applying the same rejected op repeatedly
+    /// must never partially apply or fragment further — every call rejects
+    /// identically, since the straddle never goes away when nothing moves.
+    #[test]
+    fn remove_gap_repeated_calls_on_a_straddle_never_fragment() {
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 80, 50)], vec![c("x", 20, 180)]);
+        for _ in 0..5 {
+            assert!(t.remove_gap(0, 60).is_err());
+        }
+        assert_eq!(t.tracks[1].clips.len(), 1, "still exactly one clip, no cascade of fragments");
+        assert_eq!(t.tracks[1].clips[0].id, "x");
     }
 
     #[test]

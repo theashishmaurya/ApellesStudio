@@ -401,35 +401,45 @@ function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void 
  *  this file's existing `split` id convention) so the ripple-flash diff
  *  effect in `TimelinePane.tsx` picks it up and flashes it — an auto-split
  *  is automatic but never silent. */
-function rippleShiftWithAutoSplit(tr: Track, threshold: number, delta: number): void {
-  const idx = tr.clips.findIndex((c) => c.start_frame < threshold && endFrame(c) > threshold);
-  if (idx >= 0) {
-    const left = tr.clips[idx];
-    const offset = threshold - left.start_frame;
-    const right: Clip = {
-      ...left,
-      id: `${left.id}·${threshold}`,
-      start_frame: threshold,
-      source_start: left.source_start + offset,
-      duration: left.duration - offset,
-    };
-    left.duration = offset;
-    tr.clips.splice(idx + 1, 0, right);
-  }
-  shiftClipsAtOrAfter(tr, threshold, delta);
+/** B-033 — REVERTED from auto-split to reject-on-straddle, a deliberate
+ *  safety rollback, not a redesign. The auto-split version (D-106/D-107)
+ *  let a REPEATED ripple (several real remove_gap/move/add_clip ops in the
+ *  same session, each individually correct in isolation) keep re-splitting
+ *  a fragment created by a PREVIOUS ripple — confirmed on the owner's real
+ *  `New.chroma` project: the same source clip ended up split into a chain
+ *  of ever-smaller slivers (four consecutive 166-frame fragments of one
+ *  clip) and the same clip id appearing three times on one track at wildly
+ *  different positions, with the project's total duration growing instead
+ *  of shrinking after closing a gap. All 93 existing single-operation unit
+ *  tests passed throughout — the bug is in the cross-operation, cumulative
+ *  case those tests never exercised, not in any single call's math. Rather
+ *  than ship a fix for a multi-operation interaction not fully reproduced
+ *  and verified under time pressure, this reverts to exactly D-104's own
+ *  already-proven-safe same-track contract: a straddling clip on a
+ *  sync-locked track REJECTS the whole op (same as an unresolvable
+ *  same-track overlap), never splits. Auto-split may come back as a real,
+ *  separately-scoped, separately-verified follow-up — see B-033. */
+function hasStraddlingSyncLockedClip(tracks: Track[], editedTrack: number, threshold: number): boolean {
+  return tracks.some((t, i) => {
+    if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return false;
+    return t.clips.some((c) => c.start_frame < threshold && endFrame(c) > threshold);
+  });
 }
 
 /** Propagate a ripple already applied to `editedTrack` (index into
- *  `next.tracks`) to every OTHER track whose `sync_locked` is on — mirrors
+ *  `tracks`) to every OTHER track whose `sync_locked` is on — mirrors
  *  `chroma-timeline::propagate_sync_lock_ripple`. A track that's BOTH
  *  sync-locked AND individually `locked` is skipped, same real judgment
  *  call as the Rust side's own doc: `locked` already means "protect this
  *  track's clips from edits through the normal ops," and a foreign ripple
- *  auto-splitting/shifting this track's clips is exactly that. */
+ *  shifting this track's clips is exactly that. Plain shift only — callers
+ *  MUST check `hasStraddlingSyncLockedClip` first and reject the whole op
+ *  if it returns true (B-033); this function assumes that's already been
+ *  done and never splits. */
 function propagateSyncLockRipple(tracks: Track[], editedTrack: number, threshold: number, delta: number): void {
   tracks.forEach((t, i) => {
     if (i !== editedTrack && (t.sync_locked ?? DEFAULT_SYNC_LOCKED) && !t.locked) {
-      rippleShiftWithAutoSplit(t, threshold, delta);
+      shiftClipsAtOrAfter(t, threshold, delta);
     }
   });
 }
@@ -646,6 +656,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // confirmed to fit in an open gap, so nothing else moves.
       startFrame = Math.max(0, op.startFrame);
       if (op.ripple) {
+        // B-033 — reject upfront (checked against the ORIGINAL, pre-clone
+        // tracks) if a sync-locked track has a clip straddling the
+        // insertion point; never auto-split. See the doc on
+        // `hasStraddlingSyncLockedClip` for why.
+        if (hasStraddlingSyncLockedClip(tl.tracks, trackIdx, startFrame)) return tl;
         const dur = op.clip.duration;
         shiftClipsAtOrAfter(track, startFrame, dur);
         // D-106 — sync-locked tracks ripple too, same shift.
@@ -784,7 +799,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       if (op.fromTrack === op.toTrack && i === op.clip) return false;
       return other.start_frame < op.startFrame && endFrame(other) > op.startFrame;
     });
-    if (overlaps && (!op.ripple || straddles)) return tl;
+    // B-033 — same reject-on-straddle now also covers every OTHER
+    // sync-locked track this move's ripple would touch, checked against
+    // the ORIGINAL tracks before any mutation.
+    const syncStraddles = overlaps && op.ripple && hasStraddlingSyncLockedClip(tl.tracks, op.toTrack, op.startFrame);
+    if (overlaps && (!op.ripple || straddles || syncStraddles)) return tl;
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
     const destClips = next.tracks[op.toTrack].clips;
@@ -840,6 +859,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const gap = gapAt(tr, op.frame);
       if (!gap) return tl;
       const shift = gap.gapEnd - gap.gapStart;
+      // B-033 — reject upfront if a sync-locked track has a straddling
+      // clip, checked against the ORIGINAL (pre-clone) tracks.
+      if (hasStraddlingSyncLockedClip(tl.tracks, op.track, gap.gapEnd)) return tl;
       const next = clone(tl);
       shiftClipsAtOrAfter(next.tracks[op.track], gap.gapEnd, -shift);
       // D-106 — every OTHER sync-locked track ripples too, unconditionally

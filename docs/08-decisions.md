@@ -8301,6 +8301,73 @@ several other UI passes tonight.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
+## D-109 — Cross-track sync-lock: reverted auto-split back to reject-on-straddle after real data corruption (B-033)
+
+**decided (2026-09-04)** — a safety rollback under time pressure, not a redesign;
+verified, not a guess.
+
+**Context.** D-106/D-107 shipped cross-track sync-lock with a real, deliberate design
+call: a clip on a sync-locked OTHER track that straddles a ripple point gets
+auto-split there rather than rejecting the whole op, matching DaVinci Resolve's own
+documented behavior and avoiding sync-lock blocking ripples constantly whenever a
+straddling clip (a music bed, room tone — sync-lock's own headline use case) sits on
+a synced track. Shipped with 93 passing single-operation unit tests.
+
+**What went wrong.** The owner hit real, confirmed corruption on their actual saved
+project (`~/Movies/Chroma/New.chroma/project.json`) within the hour: the same clip id
+appearing three times on one track at unrelated positions, a second clip id split into
+four consecutive 166-frame slivers, and total project duration *growing* after closing
+a gap (should only ever shrink). Root cause: auto-split had no way to distinguish "an
+untouched original clip" from "a fragment a PREVIOUS ripple already created" — several
+genuine, independently-correct ripple operations across one real editing session
+(closing more than one gap, moving more than one clip — an entirely ordinary usage
+pattern) could keep re-splitting whatever the last operation had already split,
+cascading into the fragmentation and duplication pattern found on disk. All 93 existing
+tests covered only single-operation cases and never caught this, because the bug lives
+entirely in the cross-operation, cumulative case.
+
+**Real options at the point of finding this, mid-incident:**
+1. Root-cause and fix the auto-split cascade precisely (e.g. tag synthetic split
+   fragments so they're never re-split, or track a generation/lineage per clip).
+2. Revert to reject-on-straddle (D-104's own already-shipped, already-proven-safe
+   same-track contract, generalized cross-track) — a real feature loss (sync-lock now
+   blocks a ripple whenever a straddling clip sits on a synced track) but zero risk of
+   the corruption pattern recurring, since a rejected op can never fragment anything.
+3. Fully disable/hide sync-lock pending a redesign.
+
+**Choice: (2), reject-on-straddle.** Given real user data was actively at risk and the
+fix needed to land fast and be trustworthy without an extended investigation window,
+shipping a fix for a multi-operation interaction not fully reproduced and verified was
+judged worse than a clean, simple, already-proven-safe rollback. Auto-split's own
+straddle-detection primitive (`hasStraddlingSyncLockedClip`/
+`has_straddling_sync_locked_clip`) is reused as a pure upfront check at all three
+ripple call sites (`add_clip` insert, `move`, `remove_gap`) — checked against the
+tracks BEFORE any clone/mutation, so a rejected op is a true no-op, not a partial
+mutation. New Rust `TimelineError::SyncLockedStraddle`. New regression tests in both
+languages apply the same rejected op 5 times in a row and assert zero fragmentation —
+proving the cascade is now structurally impossible, not merely less likely.
+
+**Deliberately not done this pass:** re-deriving and re-verifying a correct auto-split
+implementation. That remains a real, legitimate follow-up (Resolve's real behavior is
+still the better UX for the music-bed/room-tone case sync-lock exists for) but deserves
+its own dedicated scoping and verification window, not a rushed fix under active-
+data-loss pressure.
+
+**Real data-recovery assessment, for the record:** the owner's actual project file was
+confirmed corrupted on disk. No usable recent backup exists — the only one found
+(`~/Movies/Chroma/_backups/project.json.pre-unify-20260903-131757`) predates a full
+day of legitimate editing. The in-app undo/redo stack almost certainly did not survive
+several dev-app restarts that happened between the corrupting operations and this fix.
+The corruption itself is irregular (not a uniform fragmentation chain — some
+duplicate positions are unrelated, not adjacent split slivers), so an automated
+reconstruction script was judged too risky to attempt blind. Recommended path:
+manually rebuild the affected clip positions through the UI (now fixed) — the
+underlying media files are completely untouched, only timeline clip-position
+bookkeeping was corrupted.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
 ## D-108 — `safeUnlisten`: every Tauri listener cleanup guarded against the dev-mode HMR/async-IPC race (B-032)
 
 **decided (2026-09-04)** — real root cause found, a shared defensive fix shipped

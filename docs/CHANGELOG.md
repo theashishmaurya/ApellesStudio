@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Cross-track sync-lock reverted from auto-split to
+  reject-on-straddle after confirmed real data corruption (B-033/D-109).**
+  D-106/D-107's auto-split let repeated real ripple operations keep
+  re-splitting an already-split fragment — confirmed on the owner's actual
+  `New.chroma` project (a clip id duplicated 3x on one track, another split
+  into 4 slivers, total duration growing after closing a gap). Reverted to
+  D-104's own proven-safe reject-on-straddle contract, generalized
+  cross-track, checked upfront at all three ripple call sites before any
+  mutation. New regression tests apply the rejected op 5x in a row and
+  prove zero fragmentation. Real feature loss, deliberate: sync-lock now
+  blocks a ripple when a straddling clip sits on a synced track — auto-split
+  may return as its own separately-scoped, separately-verified follow-up.
+  The owner's real project file is confirmed corrupted on disk with no
+  clean automated recovery; manual rebuild through the UI is the
+  recommended path — underlying media is untouched, only clip-position
+  bookkeeping was corrupted.
 - **2026-09-04** — **A third, distinct root cause behind "No project open"
   found and fixed (B-032/D-108).** Tauri listener cleanup (`unlisten.then((f)
   => f())`) could throw when Vite's dev-mode HMR reloaded mid-flight,
