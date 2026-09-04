@@ -117,7 +117,7 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
   half now has a real home — Phase 3 of `docs/notes/on-canvas-transform.md`, which also
   confirms the absence directly (no `crop` field on `Clip`, nothing in
   `composite_layer_onto`) and finds a prerequisite nobody had noticed: the compositor's
-  coordinate space is preview-resolution-dependent (**B-042TEMP**).
+  coordinate space is preview-resolution-dependent (**B-043**).
 
 ## Don't have at all
 

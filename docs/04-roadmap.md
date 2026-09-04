@@ -55,7 +55,7 @@ restarted once each is done.
   queue item 14. Two things worth knowing before anyone starts — the preview
   is a plain `<img>` fed a backend-composited JPEG, not a canvas (so handles
   are a DOM overlay, and there's no cheap live re-render of the picture
-  mid-drag), and **B-042TEMP**: the composite's coordinate space is
+  mid-drag), and **B-043**: the composite's coordinate space is
   preview-resolution-dependent today, so a PIP overlay already moves *and*
   resizes when you press Play. That's Phase 0, and it needs the owner's call
   on units before any code.
@@ -575,7 +575,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     Motion handles in the Program Monitor; Resolve's viewer Transform /
     Crop / Dynamic Zoom mode selector). Recommended phasing:
     - **Phase 0 — prerequisites, both real, neither optional.** (0a)
-      **B-042TEMP**: the composite's coordinate space is preview-resolution-
+      **B-043**: the composite's coordinate space is preview-resolution-
       dependent, so `position_x`/`position_y` and effective layer size both
       change between scrub (960px) and play (640px) — give the timeline a
       real composition space from `ProjectSettings.width`/`height` (D-038)

@@ -121,7 +121,7 @@ becomes representable at all.
 Neither is optional. Handles built before these are fixed would be handles that visibly
 lie about where the clip is.
 
-### 0a. The composite's coordinate space is preview-resolution-dependent (B-042TEMP)
+### 0a. The composite's coordinate space is preview-resolution-dependent (B-043)
 
 `composite_video_frame` builds its canvas from **the top layer's decoded pixel
 dimensions** — and each layer is decoded through `decode_pipe::scale_target(w, h,
