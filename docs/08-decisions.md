@@ -315,7 +315,16 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
 - **Consequences:** removed the `TRACK_DIRS` session map + `chroma_subject_matte_for_frame`
   + `trackedSubMaskIds`. `tracked_full_mask` does a `read_dir` + `image::open` per
   render (~2–5 ms) — cache later if it shows up. Assumes the matte PNG is at the
-  warped-image resolution (true for v1: no crop/geometry on video).
+  warped-image resolution (**corrected by D-135, 2026-09-04**: still true, and now
+  load-bearing rather than incidental. This originally read "true for v1: no
+  crop/geometry on video", which implied a crop would break it. It doesn't — the
+  assumption is about the *matte*, and `generate_ai_bitmap_from_full_mask` already
+  walks each output pixel back through the crop offset, straighten, flips and 90°
+  steps into that full-resolution matte. Now that video export really applies the
+  geometry, a matte tracked before a crop existed still lands correctly: no
+  re-track, no migration. What the assumption genuinely constrains is a *scale*
+  mismatch — a future proxy / half-res decode path must tell `TransformParams`
+  about its scale rather than feed a half-res frame past a full-res matte).
 - **Also fixed:** `ChromaTimeline`'s root `onPointerDownCapture` stopPropagation was
   eating the strip's own `onPointerDown` (clicks did nothing) — moved onto the strip.
 
@@ -414,6 +423,15 @@ inline. `render_core` adds: `render(...)` (headless pass-through), `init_gpu_con
     behaviour — crop (and straighten / flip / 90° / the lens warp) was *silently
     discarded* on a video export, from D-022 landing until B-042 was found. The guard
     that was supposed to error was unreachable by construction. It really errors now.
+  - **Both limitations are gone (2026-09-04, D-135).** Video export now really
+    *applies* crop / straighten / flip / 90° / lens warp — `grade_frame` runs the same
+    `apply_all_transformations` pre-pass the preview does, the encoder is sized from
+    the first graded frame, and D-019's matte-resolution assumption turned out to hold
+    (its alignment code already un-does crop/rotation/flip). Parametric
+    `color`/`luminance` masks work too: `prepare_frame` builds the warped image itself
+    rather than needing `resolve_warped_image_for_masks`' `tauri::State`. Still true:
+    no audio passthrough. The only geometry an export refuses is a crop that rounds to
+    zero in either axis (the `yuv420p` even-dimension rule).
 
 ## D-023 — Mask include/exclude refinement = RapidRAW's Add/Subtract/Intersect composition, not a +/− point mechanism
 **decided (2026-09-01)**
@@ -9868,6 +9886,89 @@ The cost of this is that a fine chunk now yields 128 tiles where it yielded 16-6
 **Verification.** `cargo check -p RapidRAW -p chroma-timeline --all-targets` clean (6 pre-existing warnings, unchanged count). `cargo clippy -p RapidRAW --all-targets`: **zero** warnings in `filmstrip.rs`; the crate's 20 are pre-existing and untouched. `cargo test -p RapidRAW --lib chroma::` 213 passed / 0 failed. `tsc --noEmit -p packages/editor` clean; `@chroma/editor` vitest 204/204. Rust tests added: the env-gated `a_zoom_step_over_an_already_decoded_range_costs_no_decode` (the table above — it *fails* on `main`, with the message "got 7.62s against a cold 9.45s"), `a_window_running_past_the_end_of_the_source_still_returns_its_real_tiles` (B-055), and five pure ones pinning the arithmetic the whole thing rests on — that every fine rung is a whole-number decimation of the storage level *and lands on the same source seconds*, that a coarse level tiles evenly out of the rung below it, that `decimation` refuses to derive a finer level from a coarser one, and `derive_from_finer` against seeded caches where each synthetic tile is labelled with the source second it stands for (so a wrong stride shows up as wrong seconds, not merely a wrong count) including its refusal of a partial cover. The whole env-gated suite passes against **both** of the owner's real clips. 3 new `packages/editor` vitest cases pin the frontend half of the invariant: the mirrored ladder must stay strictly powers of two, because a rung that is not (a 0.3s, say) sends the backend's `decimation()` to `None` and silently restores the full per-zoom decode with no symptom visible on that side.
 
 **Honest gaps.** (1) **No interactive confirmation in the assembled Tauri app** — same as D-124 and D-128 before it, launching the built binary is blocked in this environment. Everything above is the real shipped `chroma_clip_thumbnails` against the owner's real files, not the shipped window; the owner's own look still closes it, and the thing to look at is whether clicking zoom +/- repeatedly now redraws immediately after the first pass over a range. (2) **The first zoom into a range the user has never viewed still decodes**, ~7s for a full viewport at the default zoom on a 517s 4K source. That is real work — those frames have never been read — and the remaining lever on it is proxies/optimized media, which D-128 already named as a roadmap item and not a subsystem to smuggle in. (3) **No request cancellation**, per above. (4) **Two pre-existing test failures found in passing, both verified identical on `main` and neither touched here.** `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields` fails when the whole `chroma::` suite runs `--test-threads=1` with `CHROMA_TEST_VIDEO` set — global `AppState` cross-talk between tests. And `chroma_timeline::tests::the_owners_real_project_json_loads_with_every_clip_unlinked` (D-129) fails outright: it reads the owner's **live** `~/Movies/Chroma/New.chroma/project.json` and asserts every clip is unlinked, which stopped being true the moment the owner used D-129's own feature and made a `link_group`. A test whose fixture is a file the user edits will keep doing this; it wants a checked-in snapshot. Both belong to their own decisions, not this one.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-135 — Video export really applies the Colorist's geometry: the same CPU pre-pass the preview runs, an encoder sized from the frame that pass produced, and a stated even-dimension rule (B-042 closed, D-127's refusal removed)
+
+**Context.** D-127 traced B-042 end to end and stopped one step short on purpose: the Colorist's crop / straighten / flip / 90° / lens warp were being *silently dropped* on a video export, and rather than ship wrong pixels it added `unsupported_geometry`, a pre-flight that refused the export and named every offending control. Its own words: option (a), honouring the geometry, was "correct, and genuinely not small… four separate places to get right, one of them a stated invariant of another decision," and it was queued as roadmap item 15 rather than improvised. This entry is that work. All four pieces landed; the refusal is gone.
+
+### 1. `grade_frame` now runs the geometry pass — and it is the *same* one, not a second copy
+
+`chroma::export::grade_frame` went from decoded frame straight into `render_core::render`. It now calls `adjustment_utils::apply_all_transformations` first — the identical function the live preview reaches through `compute_full_transformed_res` and the still export calls directly in `lib.rs::generate_preview_for_path`. Not a re-implementation of the chain, the chain itself: perspective/lens warp → lens blur → 90° steps → flips → straighten → crop, in that order, with that rounding.
+
+Two things fell out of using the real function rather than writing an export-flavoured one:
+
+- **A grade with no geometry still copies nothing.** Every stage of `apply_all_transformations` is a `Cow` that returns `Cow::Borrowed` at identity, including `apply_crop`'s full-frame-rect early return — the case that matters most, because the Crop panel writes a full-frame rect the moment it is opened and most exports have merely had the panel looked at. There is a test asserting the returned `Cow` is still `Borrowed`, so a future refactor that quietly starts cloning every frame of a 4K export fails a test instead of a stopwatch.
+- **The lens blur and the parametric masks came back for free.** `apply_lens_blur` sits inside that same pre-pass, so it had been dropped on export by the same omission and nobody had written it down. And `prepare_frame` can now build the warped image that `color` / `luminance` masks sample, because it holds the source frame — the GUI gets it from `AppState`'s `full_warped_cache` via `resolve_warped_image_for_masks`, which an export has no `tauri::State` to reach, which is why `grade_frame` passed `None` and documented those mask types as "skipped on video export." That v1 limitation is retired; the build is conditional on a mask actually needing it, and `apply_geometry_warp` is a borrow at identity, so grades without one cost nothing.
+
+### 2. The encoder is sized from the frame the pipeline produced, not from the clip
+
+`export_video` spawned ffmpeg with `out_w`/`out_h` computed from the source clip's probe before the loop. A crop or a 90° step changes the real output size, so that number was wrong by construction the moment geometry existed.
+
+The obvious fix — a `geometry_output_size(js, w, h)` that predicts the size analytically — is the trap D-127 spent a paragraph avoiding elsewhere: a second copy of `apply_all_transformations`' arithmetic, free to drift from it, and drifting silently (a one-pixel disagreement doesn't crash, it shears every frame). **So the encoder is spawned lazily, on the first graded frame, from that frame's measured dimensions.** It cannot disagree with the pass, because it *is* the pass. The cost is one `Option<EncoderPipe>` and one branch per frame; the decoder still starts first, so nothing about the streaming shape changed.
+
+The old in-loop `(gw, gh) != (w, h)` check — which D-127 correctly described as unreachable by construction — is replaced by one that can actually fire: **every frame must transform to the same size as the first**. A grade's geometry is frame-independent (`apply_all_transformations` reads only `adjustments`), so this can only mean the transform or the render resized mid-stream, and by then ffmpeg has been told one fixed size. It fails rather than emitting a stream of misaligned frames.
+
+### 3. Masks: export and preview now agree about where a mask *is*
+
+Export built its mask bitmaps at full frame size with a hardcoded `(0.0, 0.0)` crop offset. The preview passes `scaled_crop_offset` — the crop rect's origin scaled by the preview downscale factor. With a crop set, those are different answers, and the mask machinery uses that offset as the *only* thing that maps an output pixel back into un-cropped source space (`generate_ai_bitmap_from_full_mask`'s `x_uncrop = x_out + crop_offset.0`, and the same term in every shape generator).
+
+`prepare_frame` now rasterises at the **transformed** size with the **real** offset, and passes the same pair to the two relight resolvers, which had the same hardcoded zero. The scale term is `EXPORT_MASK_SCALE = 1.0`, named rather than a bare literal because it is exactly the preview's `effective_scale` collapsed for a full-resolution render — that is *why* the export's unscaled offset and the preview's scaled one are the same number, and a nameless `1.0` hides the reason.
+
+The test for this asserts both directions: the mask lands on the right pixels of the cropped frame, **and** the old `(0.0, 0.0)` produces a visibly different bitmap. A test that only asserted the new answer would still pass if the offset stopped mattering.
+
+### 4. D-019's tracked mattes — the assumption held, and is now load-bearing rather than vacuous
+
+D-019 ends with: *"Assumes the matte PNG is at the warped-image resolution (true for v1: no crop/geometry on video)."* Read as a warning, that says a crop would misalign every tracked matte. Read against the code, it says something better: the assumption is about the **matte**, not about the frame, and the alignment machinery was already written for a cropped, rotated, flipped image.
+
+`generate_ai_bitmap_from_full_mask` walks each *output* pixel back through crop offset → straighten → flips → 90° steps to a source coordinate in the full-resolution matte, using the sub-mask's own stored `rotation`/`flipHorizontal`/`flipVertical`/`orientationSteps` (written by `useAiMasking.ts` when the mask was made) and the crop offset the caller passes. Tracked mattes are baked from source video frames by `chroma::mask::tracked_full_mask`, i.e. at exactly the warped-image resolution — `warp_image_geometry` allocates `width * height * 3` and preserves dimensions, so "source resolution" and "warped resolution" are the same number. So the fix for piece 3 **is** the fix for piece 2: pass the real offset and the transformed size, and a matte tracked before the crop existed lands correctly on the cropped frame. No re-tracking, no matte migration, no cache invalidation.
+
+The parenthetical in D-019 is now the wrong way round and is corrected in place: the assumption stays true, and it stops being incidentally true. What it genuinely constrains is unchanged and worth restating — a matte is only valid at the resolution it was baked at, so a future proxy/half-res decode path must not feed a half-res frame past a full-res matte without telling `TransformParams` about the scale.
+
+### 5. Even dimensions: round down, uniformly, and say so
+
+h.264 is written here as `yuv420p`, which subsamples 2× on both axes — libx264 rejects an odd width or height outright. ProRes is `yuv422p10le`, which needs an even width. `react-image-crop` writes whatever rect the user dragged.
+
+**The rule: round the encoder's frame size DOWN to a multiple of 2, for every codec.**
+
+- **Down, not up.** Rounding up must invent the extra row — pad it with black (content that is not in the shot) or resample the whole frame to stretch into it (softens every pixel to fix one edge). Rounding down drops at most one row and one column of real pixels off the right/bottom, with no resampling: `fit_frame_to_encoder` does it with `crop_imm`, so the surviving pixels are bit-identical to what the grade produced. This is what ffmpeg users write by hand (`scale=trunc(iw/2)*2:trunc(ih/2)*2`) and what HandBrake's "modulus" setting, which defaults to 2, does to a free-form crop.
+- **Uniformly, not per-codec.** ProRes only needs the width, but making the output height depend on which codec button was pressed means the same crop frames differently in a master and a review copy. One row is cheaper than that surprise.
+- **Premiere and Resolve are not a precedent here, and it's worth saying why.** Neither ever reaches this case: their Crop is a *filter inside a fixed sequence resolution*, so a crop rect cannot change the encoded size at all. Chroma's Colorist crop is a stills-style crop that genuinely sets the output size (D-127 Finding 1) — inherited from RapidRAW, where an arbitrary-pixel crop is exactly right. That difference is why this needs a written rule rather than a borrowed one, and it is the same "shared word, not shared code path" split D-127 found between Colorist crop and Edit-tab crop (D-132).
+- **It also fixes a latent D-049 bug on the way past.** The Export dialog's custom-resolution field could send an odd width straight to libx264, which would have failed the encode. Same rule, same place, now impossible.
+
+### What still refuses, and it is only this
+
+`unsupported_geometry` is **deleted** — all five geometry kinds it named are really applied now, and every one of its six tests is replaced by a test that asserts the transform actually happened. One narrow refusal survives, in `resolve_encoder_dims`: **a crop that rounds to zero in either axis** (a sub-2-pixel drag) cannot be encoded by anything, and it errors before the encoder is spawned, naming the size and the rule. That is a genuine impossibility, not a deferral.
+
+### Verification
+
+`cargo check -p RapidRAW -p chroma-timeline --all-targets` — **clean**; the 6 warnings are the pre-existing unused CLIP constants in `ai_processing.rs`, unchanged in count and identity from `main`. `cargo clippy -p RapidRAW --all-targets` — **33 warnings, exactly the baseline 33**, and the only two in `chroma/export.rs` are the pre-existing doc-list-indentation findings on `export_tracked_range`'s comment (I fixed the one new `identity_op` my tests introduced).
+
+- `cargo test -p RapidRAW --lib -- chroma::export::` — **29 passed, 0 failed** (18 new, 6 of D-127's removed).
+- `cargo test -p RapidRAW --lib -- chroma::` — **231 passed, 0 failed, 1 ignored**. No regression: D-132 measured 219 on the tip this branched from, and 219 − 6 + 18 = 231.
+- `cargo test -p chroma-timeline` — **111 passed, 0 failed**, untouched.
+
+**The end-to-end tests encode real files with real ffmpeg and probe them back**, and — unlike the export tests that were already here — they do not need `CHROMA_TEST_VIDEO` set: a `testsrc` fixture is synthesised per test, chosen for its contrast so a mis-placed crop cannot average out against it.
+
+- **`export_encodes_a_real_crop`** — a `{x:20, y:10, 100×60}` crop on a 160×120 clip produces a file `ffprobe` reports as **100×60**, and frame 0 of that file is compared *pixel-for-pixel* against the source clip's own frame 0 cropped by `image`: mean |Δ| **< 10** (near-lossless ProRes round-trip). The same comparison against the *un-offset* top-left 100×60 is asserted to be **> 20**, so the first assertion cannot be passing by coincidence. The export is then run a second time and the two files asserted **byte-identical** — CLAUDE.md's render-path determinism rule, which the new CPU float work (`rotate_about_center`, `warp_image_geometry`) now falls under.
+- **`export_encodes_a_90_degree_step`** — `orientationSteps: 1` on a 160×120 clip encodes a **120×160** file. This is the case the old code could not have produced at all.
+- **`export_evens_an_odd_crop_for_h264`** — a `101×61` crop exported as h.264 succeeds and lands at **100×60**, rather than libx264 rejecting the odd `yuv420p` frame.
+- **`export_refuses_a_sub_pixel_crop`** — a 1-pixel-wide crop errors with the even-dimension message and **leaves no output file** (nothing was spawned).
+- **`export_without_geometry_is_unchanged`** — a plain grade still encodes at the clip's own 160×120.
+
+The unit half runs on real `RgbImage`/`GrayImage` pixels with asserted values and needs neither a GPU nor ffmpeg, because `prepare_frame` was split out of `grade_frame` for exactly that: a frame whose every pixel encodes its own coordinates (`R = x*16`, `G = y*16`) makes "which source pixel ended up where" an exact assertion. Covered: identity is zero-copy and offset-free; a full-frame crop rect is not a crop; a real crop's size, offset and corner pixels; both flips; a 90° step swapping the dimensions of a *non-square* frame; a full revolution staying zero-copy; straighten keeping the frame size while rotating the content out of the corners; the mask-offset pair described in §3; `align_encoder_dims`/`resolve_encoder_dims` across override, no-override, odd, partial and degenerate inputs; and `fit_frame_to_encoder` trimming without resampling versus resampling only for an override.
+
+**Honest gaps.**
+
+1. **Not seen in the assembled app.** This sandbox cannot launch the Tauri window and the main tree is the owner's live dev server — the same constraint D-125, D-127, D-130 and D-132 each disclosed. Every claim above is a measured `ffprobe` reading or an asserted pixel through the real code path, but "crop a video in Colorist, hit Export, open the file" is still the owner's own look to close. It is now a *positive* check rather than reading an error message, which makes it a more useful one.
+2. **The tracked-matte alignment is proved through the base64 arm, not a real `/track` directory.** `generate_ai_subject_bitmap` chooses the tracked PNG over the base64 and hands *both* to the same `generate_ai_bitmap_from_full_mask` with the same `TransformParams`, so the arithmetic under test is identical — but the tracked arm additionally depends on `chroma::state::current_video()`, a process-global that would race the end-to-end export tests running in parallel in the same binary. The existing `export_tracked_range` test covers that arm and stays env-gated on `CHROMA_TEST_MATTE_DIR`; a cropped export over a real tracked take is the owner's confirmation to make.
+3. **`apply_all_transformations` logs a timing line at `info` per call**, which on the still path is once and on an export is now once per frame. Noise, not a defect, and fixing it means changing an upstream RapidRAW signature for a log line — left alone deliberately, recorded here so the next person reading a 14,000-line export log knows it is expected.
+4. **The straighten path is measurably correct but not perceptually reviewed.** `rotate_about_center` keeps the canvas and leaves transparent corners, which `to_rgb8` writes as black — identical to what the preview shows, and in practice the Crop panel auto-writes a centred crop alongside a straighten, so those corners are normally cropped away. Nobody has watched a straightened export at full size to judge the resampling quality against, say, Lightroom's.
+5. **No timeline export still exists.** `export_video` remains Colorist's single-clip exporter (roadmap items 3/15). D-132's per-clip Edit-tab crop is a different field on a different type in a different compositor and is untouched by this — deliberately, per D-127 Finding 3.
+
+**Numbering.** Drafted against `main` at `8bcaa25`, where D-132/B-054 were the highest, as D-133. By rebase time three more forks had landed concurrently (D-133 audio restart, D-134 filmstrip zoom, plus D-131 player controls before that) — renumbered to **D-135**. B-042 is a status update to the existing entry, not a new number, so it needed none.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

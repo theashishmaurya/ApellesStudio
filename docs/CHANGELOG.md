@@ -20,6 +20,28 @@ One or two lines per session. Detail lives in the decision it references.
   is logged instead of swallowed. Catch-up measured at 56 ms to 60 s / 249 ms to
   300 s on that 2.3 GB file. Still not verified by clicking Play in the
   assembled app — the same honest gap D-125/D-130 disclosed.
+- **2026-09-04** — **Video export really applies the Colorist's geometry
+  (D-135, B-042 closed).** D-127 made a cropped export refuse; this makes it
+  work. `grade_frame` now runs `apply_all_transformations` — the same CPU
+  pre-pass the live preview and the still export run — and builds its mask
+  bitmaps at the transformed size with the real crop offset instead of a
+  hardcoded `(0.0, 0.0)`, so export and preview finally agree about where a
+  mask sits. The encoder is spawned **lazily, from the first graded frame's
+  measured dimensions**, so a crop or a 90° step really changes the encoded
+  size and that number can't drift from the pass that produced it. D-019's
+  tracked mattes needed no change (their alignment code already un-does
+  crop/rotation/flip; its parenthetical is corrected in place). `yuv420p`'s
+  even-dimension requirement is now a written rule — round **down** to a
+  multiple of 2 for every codec, trimming ≤1 row/column rather than padding
+  or resampling — which also closes an odd custom export resolution reaching
+  libx264 (D-049). The lens blur and parametric `color`/`luminance` masks,
+  dropped by the same omission, work on video export too.
+  `unsupported_geometry` is deleted; the only remaining refusal is a crop
+  that rounds to zero. Verified with real ffmpeg encodes probed back (a
+  100×60 crop lands at 100×60 and matches the source's own cropped frame 0
+  pixel-for-pixel, byte-identical across two runs) plus 13 GPU-free pixel
+  tests; `chroma::` 231/231, `chroma-timeline` 111/111. No live-window
+  verification possible in this sandbox (disclosed in D-135).
 - **2026-09-04** — **Player seek/volume sliders were invisible from a
   Tailwind `data-*` variant typo, not a missing token; Sources toggle still
   overlapped "Timeline" because D-126 only fixed legibility (D-131, B-050,

@@ -701,19 +701,40 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       like every other transform field.
     **Phase 3 built (D-132); Phases 0a (code), 1, 2 and 4 still scoped, not
     built.**
-15. **Video export must honour the Colorist's geometry (crop / straighten /
-    flip / 90° / lens warp)** — **B-042**. Today it refuses (D-127), which
-    is honest but not the destination. Four real pieces, none of them a
-    tweak: the encoder is spawned with fixed `out_w`/`out_h` before the
-    frame loop; `grade_frame` builds its mask bitmaps at full frame size
-    with a `(0.0, 0.0)` crop offset where the live-preview path passes a
-    real `scaled_crop_offset`; D-019's tracked mattes are baked at the
-    un-cropped resolution *by documented assumption*, so a crop would
-    misalign them; and h.264's `yuv420p` needs even dimensions a free-form
-    crop rect doesn't guarantee. Related but separate: there is still **no
-    timeline export path at all** (`export_video` is Colorist's single-clip
-    exporter — item 3's deferred "shell-level export"), and that's the
-    other consumer a real composition space (item 14 Phase 0a) would serve.
+15. ✅ **Video export honours the Colorist's geometry — crop / straighten /
+    flip / 90° / lens warp (D-135, 2026-09-04).** **B-042 closed**;
+    D-127's `unsupported_geometry` refusal is deleted. All four scoped
+    pieces landed. (1) `grade_frame` runs
+    `adjustment_utils::apply_all_transformations` — the *same* pre-pass the
+    live preview and the still export run, not a second copy of it —
+    still zero-copy at identity, including the full-frame crop rect the
+    Crop panel writes on open. (2) Mask bitmaps are built at the
+    **transformed** size with the **real** crop offset (and the two
+    relight resolvers, which carried the same hardcoded `(0.0, 0.0)`);
+    `EXPORT_MASK_SCALE = 1.0` is the preview's `effective_scale` collapsed
+    for a full-res render, which is *why* the two paths now agree. (3) The
+    encoder is spawned **lazily, from the first graded frame's measured
+    size**, so a crop or a 90° step really changes the encoded dimensions
+    and the number ffmpeg is told cannot drift from the pass that produced
+    it; the dead in-loop dimension check becomes a live "every frame must
+    transform to the same size" invariant. (4) D-019's tracked mattes
+    needed **no** change — `generate_ai_bitmap_from_full_mask` already
+    un-does crop/rotation/flip against a full-resolution matte, so passing
+    the real offset *is* the fix (D-019's parenthetical corrected in
+    place). (5) The `yuv420p` even-dimension requirement is a stated rule:
+    round the encoder size **down** to a multiple of 2 for every codec,
+    trimming ≤1 row/column with `crop_imm` rather than padding or
+    resampling (ffmpeg's own `trunc(iw/2)*2`, HandBrake's modulus-2;
+    Premiere/Resolve never hit the case because their crop is a filter
+    inside a fixed sequence resolution). Also fixed on the way past: an
+    odd custom export resolution reaching libx264 (D-049), the **lens
+    blur**, and parametric **`color`/`luminance` masks**, all dropped by
+    the same original omission. **Still refused, and only this:** a crop
+    that rounds to zero in either axis. **Still separate and still open:**
+    there is **no timeline export path at all** (`export_video` remains
+    Colorist's single-clip exporter — item 3's deferred "shell-level
+    export"), and that's the other consumer a real composition space
+    (item 14 Phase 0a) would serve.
 13. ✅ **Real A/V linking — dropping a clip creates a linked audio clip
     (D-129, 2026-09-04).** The owner's own ask ("in palmier and other
     anytime i drop a clip it… created a linked track in audio"), which

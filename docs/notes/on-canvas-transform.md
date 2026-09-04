@@ -348,20 +348,24 @@ Traced independently in both paths, because they share nothing but a word:
   `adjustment_utils::apply_all_transformations` → `image_processing::apply_crop`. That
   holds for a **video** frame too, since a decoded frame is installed as the editor's base
   image (`seek_and_install`). Still export applies it as well.
-- **Colorist video export — silently dropped (B-042, fixed to fail loudly; D-127).**
-  `chroma::export::grade_frame` never calls `apply_all_transformations` — it goes straight
-  to `render_core::render`, and `AllAdjustments` carries no geometry at all. So crop,
-  straighten, 90° orientation, flips and the perspective/lens warp were all silently
-  discarded on a video export: the preview showed one thing, the file contained another.
-  (The in-loop dimension check that claimed to catch this could never fire — nothing in
-  that path can change the frame size.) Now guarded up front by
-  `export::unsupported_geometry`, which refuses the export and names the offending
-  controls. **Making video export actually honour crop is a real, separate piece of work**
-  — the encoder is spawned with fixed dimensions before the loop, mask bitmaps are
-  generated at full frame size with a zero crop offset (the preview path passes a real
-  `scaled_crop_offset`; the export path passes `(0.0, 0.0)`), tracked D-019 mattes are
-  baked at the un-cropped resolution by explicit assumption, and h.264's `yuv420p` needs
-  even dimensions a free-form crop rect won't guarantee.
+- **Colorist video export — applied for real since D-135 (B-042 closed).** It was
+  silently dropped: `chroma::export::grade_frame` never called
+  `apply_all_transformations`, going straight to `render_core::render` with an
+  `AllAdjustments` that carries no geometry, so crop, straighten, 90° orientation, flips
+  and the perspective/lens warp all vanished on a video export — the preview showed one
+  thing, the file contained another. (The in-loop dimension check that claimed to catch
+  this could never fire — nothing in that path could change the frame size.) **D-127**
+  made it refuse up front; **D-135** made it work, and deleted the refusal.
+  `grade_frame` → `prepare_frame` now runs the *same* `apply_all_transformations` the
+  preview and the still export run, rasterises masks at the transformed size with the
+  real crop offset (the preview's `scaled_crop_offset` at `effective_scale == 1.0`, not
+  the old `(0.0, 0.0)`), and the encoder is spawned **lazily from the first graded
+  frame's measured size** so a crop or a 90° step really changes the encoded dimensions.
+  D-019's tracked mattes needed no change — their alignment code already un-does
+  crop/rotation/flip against a full-resolution matte. `yuv420p`'s even-dimension
+  requirement is a stated rule: round **down** to a multiple of 2 for every codec,
+  trimming ≤1 row/column rather than padding or resampling. The only geometry a video
+  export still refuses is a crop that rounds to zero in either axis.
 - **Edit tab — did not exist at all** (true as written, 2026-09-04 afternoon): no `crop`
   field on `chroma_timeline::Clip`, no crop in `composite_layer_onto`, no Crop row in
   `ClipInspectorPanel`. Not a stub, not a dead control — the concept was simply absent.

@@ -319,12 +319,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   · Frontend: `src/hooks/useChromaControl.ts` — `export` / `export_progress` ops (both
   READ_ONLY: no settle). `mcp/server.py` — `export(kind, path?, from_frame?, to_frame?,
   quality?)`, polls progress for video.
-  · v1 limitations: no audio; parametric `color`/`luminance` masks skipped on video
-  export (need GUI-state `resolve_warped_image_for_masks`); crop/ROI on video errors
-  (**only true since B-042/D-127, 2026-09-04** — before that the whole CPU geometry
-  pre-pass, crop included, was silently dropped and the export "succeeded" with the
-  wrong pixels; `export_video`'s `unsupported_geometry` pre-flight is what makes this
-  line accurate);
+  · v1 limitations: no audio;
+  ~~parametric `color`/`luminance` masks skipped on video export (need GUI-state
+  `resolve_warped_image_for_masks`)~~ — fixed in **D-135**: `prepare_frame` holds the
+  source frame, so it builds the warped image itself with `apply_geometry_warp` (a
+  borrow at identity), conditional on a mask actually needing it;
+  ~~crop/ROI on video errors~~ — **superseded by D-135, 2026-09-04**. The history is
+  worth keeping straight: originally the whole CPU geometry pre-pass was silently
+  *dropped* and the export "succeeded" with the wrong pixels (B-042); D-127 made it
+  refuse, which is what briefly made this line accurate; D-135 makes the export
+  actually **apply** crop / straighten / flip / 90° / lens warp, spawning the encoder
+  from the first graded frame's measured size and rasterising masks at that size with
+  the real crop offset. `unsupported_geometry` is deleted. The only geometry an export
+  still refuses is a crop that rounds to zero in either axis under the even-dimension
+  rule (`yuv420p` needs a multiple of 2; we round **down**, trimming ≤1 row/column);
   ~~decode is from frame 0 each export (proxy layer = later)~~ — fixed in D-030
   (`spawn_decoder` seeks via `-ss`+`-copyts`+timestamp `select`). Detail: `docs/notes/export.md`.
 
@@ -1009,6 +1017,24 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   pushed compositor concerns into the stills path. Also fixed here:
   **B-053**, the single-layer preview path skipping compositing — and so the
   whole D-082 transform — unconditionally.
+
+- **2026-09-04** — **Video export honours the Colorist's geometry (D-135,
+  B-042)** · **zero upstream-file edits** — everything is in Chroma's own
+  `chroma/export.rs` (`prepare_frame`, `align_encoder_dims`,
+  `resolve_encoder_dims`, `fit_frame_to_encoder`, `EncoderPipe`, and
+  `unsupported_geometry` deleted). Logged because it is the opposite move to
+  D-132's: where the Edit-tab crop *deliberately did not* reach for
+  `image_processing::apply_crop`, this one deliberately **calls the upstream
+  chain wholesale** — `adjustment_utils::apply_all_transformations`, plus
+  `image_processing::apply_geometry_warp` for the parametric-mask warp — rather
+  than re-implementing warp → lens blur → 90° → flip → straighten → crop with
+  export-flavoured rounding. Same principle both times (extend upstream, don't
+  reimplement it); the two crops just sit on opposite sides of it because
+  Colorist's geometry *is* the stills pre-pass and the Edit tab's is not. A
+  second copy of that chain's arithmetic is also why the encoder is now sized
+  from the first graded frame's measured dimensions instead of a predicted
+  size: a predicted one could drift from the upstream function by a pixel and
+  shear the whole file.
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

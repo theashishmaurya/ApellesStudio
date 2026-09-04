@@ -95,31 +95,63 @@ Frontend bridge op (`app/src/hooks/useChromaControl.ts`): `export` /
 `export_progress`, both marked READ_ONLY (no settle/re-render), pull
 `useEditorStore.getState().adjustments` and `invoke` the command.
 
-## Geometry is NOT applied here — the export refuses instead (B-042 / D-127)
+## Geometry IS applied here (B-042 / D-127 → D-135)
 
 Crop, straighten (`rotation`), 90° `orientationSteps`, horizontal/vertical flip and the
 perspective/lens warp are all a **CPU pre-pass**, `adjustment_utils::
 apply_all_transformations`, that runs *before* the GPU grade. `AllAdjustments` — the
-struct `render_core::render` actually consumes — carries no geometry at all. The Colorist
-preview runs that pre-pass (`process_preview_job` → `compute_full_transformed_res`) and so
-does the still export; **`grade_frame` above does not**, and until 2026-09-04 that meant a
-video export silently produced a full-frame file that disagreed with the preview the user
-had just been looking at. (The dimension check inside the encode loop was meant to catch
-it, but nothing in that path can change a frame's size, so it was unreachable.)
+struct `render_core::render` actually consumes — carries no geometry at all.
 
-`export_video` now calls `unsupported_geometry(js, w, h)` **before** spawning ffmpeg and
-returns an `Err` naming every non-identity geometry control. Its crop test mirrors
-`image_processing::apply_crop`'s own rounding / clamping / full-frame-rect early-return
-step for step — the Crop panel writes a full-frame rect as soon as it opens, and that is
-not a crop — and the perspective test reuses `is_geometry_identity`, the same predicate
-`apply_geometry_warp` uses to decide whether to run at all.
+**History, because it matters for reading the code.** The Colorist preview runs that
+pre-pass (`process_preview_job` → `compute_full_transformed_res`) and so does the still
+export; `grade_frame` did **not**, which until 2026-09-04 meant a video export silently
+produced a full-frame file that disagreed with the preview the user had just been looking
+at (the dimension check inside the encode loop was meant to catch it, but nothing in that
+path could change a frame's size, so it was unreachable). **D-127** made `export_video`
+refuse up front, naming every non-identity control. **D-135** replaced that refusal with
+the real thing; `unsupported_geometry` is deleted.
 
-**To actually honour it** (roadmap item 15) four things have to move together: the encoder
-is spawned with fixed `out_w`/`out_h` before the loop; `grade_frame`'s
-`generate_mask_bitmap` calls pass `(0.0, 0.0)` as the crop offset where the live-preview
-path passes a real `scaled_crop_offset`; D-019's tracked mattes are baked at the un-cropped
-resolution *by documented assumption*; and h.264's `yuv420p` needs even dimensions a
-free-form crop rect won't guarantee.
+**How it works now.**
+
+- `grade_frame` → `prepare_frame` calls `apply_all_transformations` — *the same function*
+  the preview and the still export call, not a re-implementation of the chain. Every stage
+  is a `Cow` that stays `Borrowed` at identity, including `apply_crop`'s full-frame-rect
+  early return, so a grade with no geometry copies nothing (there is a test asserting the
+  `Cow` is still `Borrowed`).
+- Mask bitmaps are rasterised at the **transformed** size with the **real** crop offset —
+  `EXPORT_MASK_SCALE = 1.0` is the preview's `effective_scale` collapsed for a full-res
+  render, which is exactly why the export's unscaled offset and the preview's
+  `scaled_crop_offset` are the same number. The two relight resolvers get the same pair;
+  they carried the same hardcoded `(0.0, 0.0)`.
+- **The encoder is spawned lazily, on the first graded frame**, from that frame's measured
+  dimensions. Predicting the size analytically would be a second copy of
+  `apply_all_transformations`' arithmetic, free to drift by a pixel and shear every frame;
+  measuring it cannot disagree with the pass, because it *is* the pass. The dead in-loop
+  dimension check is now a live invariant: every frame must transform to the same size as
+  the first.
+- **D-019's tracked mattes needed no change.** `generate_ai_bitmap_from_full_mask` already
+  walks each output pixel back through crop offset → straighten → flips → 90° steps into
+  the full-resolution matte, so passing the real offset *is* the fix. D-019's parenthetical
+  ("true for v1: no crop/geometry on video") was corrected in place: the assumption is
+  about the matte's resolution, not about the frame being uncropped.
+- **Even dimensions:** `yuv420p` (h.264) needs both even, `yuv422p10le` (ProRes) needs an
+  even width, and `react-image-crop` guarantees neither. The rule is **round down to a
+  multiple of 2, for every codec** — `align_encoder_dims` / `resolve_encoder_dims`, applied
+  by `fit_frame_to_encoder` as a `crop_imm` trim of ≤1 row/column so the surviving pixels
+  are bit-identical (never a pad, never a resample). Down rather than up because up has to
+  invent the extra row; uniform across codecs so the same crop frames identically in a
+  master and a review copy. Same convention as ffmpeg's `trunc(iw/2)*2` and HandBrake's
+  modulus-2. Premiere/Resolve are not a precedent — their crop is a filter inside a fixed
+  sequence resolution and cannot change the encoded size at all.
+- Two things dropped by the same original omission also came back: the **lens blur** (it
+  lives inside `apply_all_transformations`) and parametric **`color`/`luminance` masks**
+  (`prepare_frame` builds the warped image they sample with `apply_geometry_warp`, only
+  when a mask needs it — the GUI's `resolve_warped_image_for_masks` needs a `tauri::State`
+  an export doesn't have).
+
+**Still refused, and only this:** a crop that rounds to zero in either axis (a sub-2-pixel
+drag). `resolve_encoder_dims` errors before the encoder is spawned, naming the size and the
+rule. Nothing can encode that frame.
 
 ## Verification (2026-09-01, `010BEB07-…MOV`, 1080×1920)
 

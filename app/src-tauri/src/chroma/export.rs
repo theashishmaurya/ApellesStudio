@@ -21,21 +21,29 @@
 //! caller: it polls `chroma_export_progress` for its progress bar and passes
 //! explicit `out_width`/`out_height` for its resolution field (see
 //! `resolve_export_resolution`). No export-logic change beyond that param.
+//!
+//! D-135: the export **honours the Colorist's geometry** — crop, straighten,
+//! flips, 90° steps and the perspective/lens warp. `grade_frame` runs the same
+//! `adjustment_utils::apply_all_transformations` CPU pre-pass the still export
+//! and the live preview run, builds its mask bitmaps against the *transformed*
+//! frame with the real crop offset, and the encoder is spawned from the size
+//! that pass actually produced rather than the source clip's. This replaces
+//! D-127's `unsupported_geometry` refusal, which is gone.
 
+use std::borrow::Cow;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use image::{DynamicImage, GenericImageView, RgbImage};
+use image::{DynamicImage, GenericImageView, GrayImage, RgbImage};
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
+use crate::adjustment_utils::apply_all_transformations;
 use crate::gpu_processing::RenderRequest;
-use crate::image_processing::{
-    Crop, get_all_adjustments_from_json, get_geometry_params_from_json, is_geometry_identity,
-};
+use crate::image_processing::{apply_geometry_warp, get_all_adjustments_from_json};
 use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
 use crate::render_core::{self, OwnedRenderCaches};
 
@@ -242,100 +250,209 @@ fn spawn_encoder(
 }
 
 // --------------------------------------------------------------------------- //
-// pre-flight: the geometry a video export genuinely cannot honour (B-042)
+// output geometry: what size the encoder is actually told to expect (D-135)
 // --------------------------------------------------------------------------- //
 
-/// `adjustments.orientationSteps` counts 90° turns, so this many of them is a
-/// full revolution — i.e. the same upright image, not a real transform.
-/// Matches `image_processing::apply_coarse_rotation`, which only ever acts on
-/// steps 1/2/3.
-const ORIENTATION_STEPS_PER_TURN: u64 = 4;
-
-/// Every geometry control in the Colorist's Crop panel is applied **on the
-/// CPU**, in `adjustment_utils::apply_all_transformations`, as a pre-pass
-/// before the GPU grade — `AllAdjustments` carries no geometry at all.
-/// [`grade_frame`] deliberately doesn't run that pre-pass (see D-127 for why
-/// it can't yet), so on a video export every one of these is silently
-/// dropped: the preview shows the cropped/straightened frame, the encoded
-/// file doesn't. This function names exactly which of them are non-identity
-/// in `js` so [`export_video`] can refuse up front with an actionable
-/// message instead of shipping the wrong pixels.
+/// Chroma-subsampling alignment for the encoder's frame size.
 ///
-/// `width`/`height` are the source clip's real dimensions — needed because a
-/// full-frame crop rect is a no-op, and the Crop panel writes a full-frame
-/// rect the moment it's opened. The rounding/clamping here mirrors
-/// [`crate::image_processing::apply_crop`]'s own, step for step, so this
-/// guard and the still path can never disagree about what counts as "a real
-/// crop."
-fn unsupported_geometry(js: &Value, width: u32, height: u32) -> Vec<&'static str> {
-    let mut found: Vec<&'static str> = Vec::new();
+/// h.264 here is written as `yuv420p`, which subsamples 2× on **both** axes —
+/// libx264 rejects an odd width or an odd height outright. ProRes here is
+/// `yuv422p10le`, which subsamples 2× horizontally only, so it needs an even
+/// width. We apply the stricter of the two to every codec, so the same crop
+/// frames identically in a ProRes master and an h.264 review copy instead of
+/// differing by a row depending on which button was pressed.
+const ENCODER_DIM_ALIGN: u32 = 2;
 
-    if let Some(crop_val) = js.get("crop")
-        && !crop_val.is_null()
-        && let Ok(c) = serde_json::from_value::<Crop>(crop_val.clone())
-    {
-        let x = c.x.round().max(0.0) as u32;
-        let y = c.y.round().max(0.0) as u32;
-        let w = c.width.round().max(0.0) as u32;
-        let h = c.height.round().max(0.0) as u32;
-        if w > 0 && h > 0 && x < width && y < height {
-            let cw = (width - x).min(w);
-            let ch = (height - y).min(h);
-            let is_full_frame = x == 0 && y == 0 && cw == width && ch == height;
-            if cw > 0 && ch > 0 && !is_full_frame {
-                found.push("crop");
-            }
-        }
-    }
+/// The mask/relight raster scale for an export.
+///
+/// The live-preview path rasterises masks at *preview* resolution and passes
+/// the downscale factor as `effective_scale`, with `scaled_crop_offset =
+/// unscaled_crop_offset * effective_scale` (`lib.rs::process_preview_job`).
+/// An export renders every frame at full resolution, so that factor is 1 and
+/// the scaled offset is just the unscaled one — the same arithmetic, with the
+/// scale term collapsed. Named rather than a bare `1.0` because it is the
+/// thing that makes [`prepare_frame`]'s crop offset and the preview's agree.
+const EXPORT_MASK_SCALE: f32 = 1.0;
 
-    if js.get("rotation").and_then(Value::as_f64).unwrap_or(0.0) != 0.0 {
-        found.push("straighten (rotation)");
-    }
-    // `apply_coarse_rotation` only acts on steps 1/2/3; 0 and any whole number
-    // of turns are the same upright image.
-    let orientation_steps = js
-        .get("orientationSteps")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    if !orientation_steps.is_multiple_of(ORIENTATION_STEPS_PER_TURN) {
-        found.push("90° orientation");
-    }
-    if js
-        .get("flipHorizontal")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        found.push("horizontal flip");
-    }
-    if js
-        .get("flipVertical")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        found.push("vertical flip");
-    }
-    // The perspective / lens-correction warp — same identity test
-    // `apply_geometry_warp` itself uses to decide whether to run at all.
-    if !is_geometry_identity(&get_geometry_params_from_json(js)) {
-        found.push("perspective / lens correction");
-    }
+/// The frame size the encoder is spawned with, and how a graded frame gets
+/// there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EncoderDims {
+    width: u32,
+    height: u32,
+    /// `true` → the graded frame is **resampled** to `width`×`height` (the
+    /// D-038 project / D-049 dialog output-resolution override). `false` →
+    /// it is at most **trimmed** by the even-dimension rule, never resampled,
+    /// so every kept pixel is bit-identical to what the grade produced.
+    resample: bool,
+}
 
-    found
+/// Round a frame size DOWN to [`ENCODER_DIM_ALIGN`].
+///
+/// Down, not up. Rounding up has to invent the extra row/column — pad it with
+/// black (content that isn't in the shot) or resample the whole frame to
+/// stretch into it (softens every pixel to fix one edge). Rounding down drops
+/// at most one row and one column of real pixels off the right/bottom edge
+/// with no resampling at all. That is the rule ffmpeg users write by hand
+/// (`scale=trunc(iw/2)*2:trunc(ih/2)*2`) and the one HandBrake applies through
+/// its "modulus" setting, which defaults to 2.
+///
+/// Premiere and Resolve never hit this case: their Crop is a *filter* inside a
+/// fixed sequence/timeline resolution, so the encoded size is whatever the
+/// sequence says and a free-form crop rect can't change it. Chroma's Colorist
+/// crop is a stills-style crop that genuinely sets the output size (D-127
+/// Finding 1, and it is `react-image-crop` writing absolute pixels), so it is
+/// the one place that needs a stated rounding policy.
+fn align_encoder_dims(width: u32, height: u32) -> (u32, u32) {
+    (
+        width - width % ENCODER_DIM_ALIGN,
+        height - height % ENCODER_DIM_ALIGN,
+    )
+}
+
+/// Decide the encoder's frame size from what the geometry pass actually
+/// produced, plus any explicit output-resolution override.
+///
+/// `geometry` is the size of a *graded, transformed* frame — measured, not
+/// predicted (see [`export_video`]: the encoder is spawned after the first
+/// frame has been through the pipeline, precisely so this can't drift from
+/// `apply_all_transformations`' own arithmetic).
+fn resolve_encoder_dims(
+    geometry: (u32, u32),
+    override_dims: (Option<u32>, Option<u32>),
+) -> Result<EncoderDims, String> {
+    // Same "both set and positive, or it's absent" convention as `ExportOpts`
+    // and `resolve_export_resolution`.
+    let (target, resample) = match override_dims {
+        (Some(ow), Some(oh)) if ow > 0 && oh > 0 => ((ow, oh), true),
+        _ => (geometry, false),
+    };
+    let (width, height) = align_encoder_dims(target.0, target.1);
+    if width == 0 || height == 0 {
+        return Err(format!(
+            "the requested output frame is {}x{}, which rounds to {width}x{height} under the \
+             even-dimension rule the encoder's pixel format requires — an encodable frame needs \
+             at least {ENCODER_DIM_ALIGN}x{ENCODER_DIM_ALIGN} pixels. Widen the crop (or the \
+             output resolution) and export again.",
+            target.0, target.1
+        ));
+    }
+    Ok(EncoderDims {
+        width,
+        height,
+        resample,
+    })
+}
+
+/// Bring one graded frame to the size the encoder was spawned with.
+///
+/// Three cases, in the order they're cheap: already the right size (the
+/// overwhelmingly common one — zero copy); an explicit output-resolution
+/// override (resample, D-038's existing Lanczos3 behaviour); or the ≤1px
+/// even-dimension trim, which crops the right/bottom edge rather than
+/// resampling so the surviving pixels are untouched.
+fn fit_frame_to_encoder(graded: RgbImage, dims: EncoderDims) -> RgbImage {
+    if graded.dimensions() == (dims.width, dims.height) {
+        return graded;
+    }
+    if dims.resample {
+        return image::imageops::resize(
+            &graded,
+            dims.width,
+            dims.height,
+            image::imageops::FilterType::Lanczos3,
+        );
+    }
+    image::imageops::crop_imm(&graded, 0, 0, dims.width, dims.height).to_image()
+}
+
+/// The encoder child plus everything needed to talk to it and to report its
+/// failures. Held in an `Option` by [`export_video`] because it can only be
+/// spawned once the first frame's real output size is known (D-135).
+struct EncoderPipe {
+    child: Child,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    stdin: ChildStdin,
+    dims: EncoderDims,
 }
 
 // --------------------------------------------------------------------------- //
 // per-frame grade (the still export path, wrapped in a video loop)
 // --------------------------------------------------------------------------- //
 
-/// Render one decoded RGB frame through the grade. Mirrors RapidRAW's
-/// `generate_preview_for_path` (JSON → `AllAdjustments` + mask bitmaps →
-/// `RenderRequest` → render) but the base image is a video frame we already hold,
-/// so there is no file decode / `load_and_composite`.
+/// The CPU pre-pass one export frame goes through before the GPU grade:
+/// `adjustment_utils::apply_all_transformations` (perspective/lens warp → lens
+/// blur → 90° steps → flips → straighten → crop) plus the mask bitmaps, built
+/// against the **transformed** frame and offset by the real crop origin.
 ///
-/// v1 limitation: parametric `color` / `luminance` masks need the de-warped image
-/// (`resolve_warped_image_for_masks`, GUI-state coupled) — we pass `None`, so
-/// those mask types are skipped on video export. Shape masks and AI / tracked
-/// subject mattes (the talking-head case) work.
+/// This is the fix at the centre of D-135. Before it, [`grade_frame`] ran no
+/// geometry pass at all and rasterised its masks at full frame size with a
+/// hardcoded `(0.0, 0.0)` crop offset, while the live-preview path
+/// (`lib.rs::process_preview_job`) passed a real `scaled_crop_offset` — so the
+/// two disagreed about where a mask sits the moment a crop existed, on top of
+/// the export dropping the crop itself (B-042). The shape here is deliberately
+/// the same as the still path's (`lib.rs::generate_preview_for_path`):
+/// transform, measure the transformed size, rasterise the masks at that size
+/// with that offset.
+///
+/// Split out of [`grade_frame`] so the geometry and the mask alignment — the
+/// two halves B-042 got wrong — are unit-testable on real pixels without a GPU
+/// adapter.
+///
+/// Returns the transformed frame (borrowed, zero-copy, when every geometry
+/// control is at identity), its mask bitmaps, and the unscaled crop offset the
+/// relight resolvers in [`grade_frame`] need to reuse.
+fn prepare_frame<'a>(
+    frame: &'a DynamicImage,
+    js: &Value,
+) -> (Cow<'a, DynamicImage>, Vec<GrayImage>, (f32, f32)) {
+    let (transformed, crop_offset) = apply_all_transformations(Cow::Borrowed(frame), js);
+    let (tw, th) = transformed.dimensions();
+
+    let mask_defs: Vec<MaskDefinition> = js
+        .get("masks")
+        .and_then(|m| serde_json::from_value(m.clone()).ok())
+        .unwrap_or_default();
+
+    // Parametric `color` / `luminance` masks sample the *warped* (pre-crop,
+    // pre-rotation) picture to decide what's in the mask. The GUI reads that
+    // out of `AppState`'s `full_warped_cache` via
+    // `resolve_warped_image_for_masks`, which an export has no `tauri::State`
+    // to reach — which is why `grade_frame` used to pass `None` and document
+    // those mask types as skipped on video export. But the source frame is
+    // right here, and `apply_geometry_warp` is a plain borrow when the
+    // lens/perspective params are identity, so we can just build it, only for
+    // grades that actually contain such a mask. That v1 limitation is gone.
+    let warped = mask_defs
+        .iter()
+        .any(MaskDefinition::requires_warped_image)
+        .then(|| apply_geometry_warp(frame, js));
+
+    let bitmaps = mask_defs
+        .iter()
+        .filter_map(|def| {
+            generate_mask_bitmap(
+                def,
+                tw,
+                th,
+                EXPORT_MASK_SCALE,
+                crop_offset,
+                warped.as_deref(),
+            )
+        })
+        .collect();
+
+    (transformed, bitmaps, crop_offset)
+}
+
+/// Render one decoded RGB frame through the geometry pre-pass and the grade.
+/// Mirrors RapidRAW's `generate_preview_for_path` (transform → mask bitmaps →
+/// `AllAdjustments` → `RenderRequest` → render) but the base image is a video
+/// frame we already hold, so there is no file decode / `load_and_composite`.
+///
+/// The returned frame is at the **transformed** size, which a crop or a 90°
+/// step makes different from the source clip's — [`export_video`] measures it
+/// and spawns the encoder from it (D-135).
 fn grade_frame(
     ctx: &crate::image_processing::GpuContext,
     caches: &OwnedRenderCaches,
@@ -343,17 +460,8 @@ fn grade_frame(
     frame_index: u64,
     js: &Value,
 ) -> Result<RgbImage, String> {
-    let (w, h) = frame.dimensions();
-
-    let mask_defs: Vec<MaskDefinition> = js
-        .get("masks")
-        .and_then(|m| serde_json::from_value(m.clone()).ok())
-        .unwrap_or_default();
-
-    let mut mask_bitmaps: Vec<_> = mask_defs
-        .iter()
-        .filter_map(|def| generate_mask_bitmap(def, w, h, 1.0, (0.0, 0.0), None))
-        .collect();
+    let (transformed, mut mask_bitmaps, crop_offset) = prepare_frame(&frame, js);
+    let (w, h) = transformed.dimensions();
 
     let mut adjustments = get_all_adjustments_from_json(js, false, None);
     // Interactive relight follow-up (D-054): D-048 deliberately left every
@@ -368,8 +476,13 @@ fn grade_frame(
     // the `grade_frame` call already points at this exact frame) and falls
     // back to a static single-frame bake when no track exists.
     if adjustments.relight_light_count > 0
-        && let Some(depth_bitmap) =
-            crate::mask_generation::resolve_relight_depth_bitmap(js, w, h, 1.0, (0.0, 0.0))
+        && let Some(depth_bitmap) = crate::mask_generation::resolve_relight_depth_bitmap(
+            js,
+            w,
+            h,
+            EXPORT_MASK_SCALE,
+            crop_offset,
+        )
     {
         adjustments.relight_depth_layer = mask_bitmaps.len() as i32;
         mask_bitmaps.push(depth_bitmap);
@@ -379,8 +492,13 @@ fn grade_frame(
     // depth-derived approximation just because it's a different code path
     // from live preview.
     if adjustments.relight_light_count > 0
-        && let Some(normal_bitmaps) =
-            crate::mask_generation::resolve_relight_normal_bitmap(js, w, h, 1.0, (0.0, 0.0))
+        && let Some(normal_bitmaps) = crate::mask_generation::resolve_relight_normal_bitmap(
+            js,
+            w,
+            h,
+            EXPORT_MASK_SCALE,
+            crop_offset,
+        )
     {
         adjustments.relight_normal_layer = mask_bitmaps.len() as i32;
         mask_bitmaps.extend(normal_bitmaps);
@@ -396,7 +514,7 @@ fn grade_frame(
     let graded = render_core::render(
         ctx,
         caches.as_ref(),
-        &frame,
+        transformed.as_ref(),
         frame_index.wrapping_add(1),
         RenderRequest { adjustments, mask_bitmaps: &mask_bitmaps, lut, roi: None },
         "export",
@@ -414,6 +532,13 @@ fn grade_frame(
 /// Render `[from_frame, to_frame]` of the clip at `video_path` through
 /// `js_adjustments` and encode to `out_path`. Blocking (ffmpeg + GPU) — call it
 /// off the async runtime (the Tauri command wraps it in `spawn_blocking`).
+///
+/// D-135: the encoded frame size is the size the Colorist's geometry actually
+/// produces, not the source clip's — a crop or a 90° step changes it. The
+/// encoder is therefore spawned lazily, on the first graded frame, so the size
+/// ffmpeg is told is measured from the real pipeline rather than predicted by a
+/// second copy of `apply_all_transformations`' arithmetic that could drift from
+/// it.
 pub fn export_video(
     video_path: &Path,
     out_path: &Path,
@@ -429,34 +554,19 @@ pub fn export_video(
         return Err("probe returned zero dimensions".into());
     }
 
-    // B-042: fail before spawning ffmpeg rather than encoding a file that
-    // silently disagrees with the preview. See `unsupported_geometry` / D-127.
-    let dropped = unsupported_geometry(js_adjustments, w, h);
-    if !dropped.is_empty() {
-        return Err(format!(
-            "video export can't apply {} yet — the Colorist applies geometry on the CPU, \
-             before the grade, and the video path doesn't run that pass (D-127). Reset it \
-             (Crop / Transform panels) and export again, or export a still if you need the \
-             geometry.",
-            dropped.join(", ")
-        ));
-    }
-
     let last = info.frame_count.saturating_sub(1);
     let from = from_frame.min(last);
     let to = to_frame.min(last).max(from);
     let total = to - from + 1;
 
-    // D-038: the output resolution. When a loaded project sets `settings.width`
-    // + `settings.height`, the graded composite (rendered at clip res `w`×`h`)
-    // is resized to `(out_w, out_h)` right before the encoder. No override ⇒
-    // `(out_w, out_h) == (w, h)` and the resize is skipped — byte-identical to
-    // before this decision.
-    let (out_w, out_h) = match (opts.out_width, opts.out_height) {
-        (Some(ow), Some(oh)) if ow > 0 && oh > 0 => (ow, oh),
-        _ => (w, h),
-    };
-    let resize_output = (out_w, out_h) != (w, h);
+    // D-135: the encoder's frame size is no longer knowable here. The
+    // Colorist's crop / 90° steps change it, and the only non-drifting way to
+    // learn what `apply_all_transformations` produces is to run it — so the
+    // encoder is spawned from the *first graded frame's* measured size, inside
+    // the loop below (`resolve_encoder_dims`). Before D-135 this was computed
+    // up front from the source clip's `(w, h)` plus the D-038/D-049 override,
+    // which is exactly why a crop could never reach the file.
+    let override_dims = (opts.out_width, opts.out_height);
 
     let codec = match opts.codec.as_deref() {
         Some("h264") => "h264",
@@ -500,13 +610,16 @@ pub fn export_video(
         let dec_err = drain_stderr(&mut dec);
         let mut dec_out = BufReader::new(dec.stdout.take().ok_or("decoder stdout unavailable")?);
 
-        let mut enc = spawn_encoder(out_path, out_w, out_h, &fps_str, codec, opts.quality)?;
-        let enc_err = drain_stderr(&mut enc);
-        let mut enc_in = enc.stdin.take().ok_or("encoder stdin unavailable")?;
-
         let frame_bytes = (w as usize) * (h as usize) * 3;
         let mut buf = vec![0u8; frame_bytes];
         let mut done: u64 = 0;
+
+        // D-135: spawned on the first graded frame, once its real (post-
+        // geometry) size is known. `geometry` remembers that size so a later
+        // frame that somehow transforms differently is caught rather than
+        // silently letter-boxed by the encoder.
+        let mut enc: Option<EncoderPipe> = None;
+        let mut geometry: (u32, u32) = (0, 0);
 
         for i in 0..total {
             match dec_out.read_exact(&mut buf) {
@@ -532,47 +645,58 @@ pub fn export_video(
                 frame_index,
                 js_adjustments,
             )?;
-
             let (gw, gh) = graded.dimensions();
-            if (gw, gh) != (w, h) {
-                // Defensive invariant, not the crop guard it used to claim to
-                // be (B-042): `grade_frame` runs no geometry pass at all, so a
-                // size change here would mean `render_core::render` itself
-                // resized — a real engine bug, not a user-set crop. Real crop /
-                // straighten / flip is caught by `unsupported_geometry` before
-                // the encoder is ever spawned.
+
+            if enc.is_none() {
+                geometry = (gw, gh);
+                let dims = resolve_encoder_dims(geometry, override_dims)?;
+                let mut child = spawn_encoder(
+                    out_path,
+                    dims.width,
+                    dims.height,
+                    &fps_str,
+                    codec,
+                    opts.quality,
+                )?;
+                let stderr = drain_stderr(&mut child);
+                let stdin = child.stdin.take().ok_or("encoder stdin unavailable")?;
+                enc = Some(EncoderPipe { child, stderr, stdin, dims });
+            } else if (gw, gh) != geometry {
+                // A grade's geometry is frame-independent by construction
+                // (`apply_all_transformations` reads only `adjustments`), so
+                // this can't happen from a user setting — it would mean the
+                // transform or the render resized mid-stream, and the encoder
+                // has already been told one fixed size. Fail rather than ship a
+                // file whose frames are silently misaligned.
                 return Err(format!(
-                    "graded frame {frame_index} is {gw}x{gh} (expected {w}x{h}) — \
-                     the grade must not change frame dimensions",
+                    "graded frame {frame_index} is {gw}x{gh}, but frame {from} was {}x{} — the \
+                     geometry pass must produce the same size for every frame of one export",
+                    geometry.0, geometry.1
                 ));
             }
-            // D-038: last-step resize to the project output resolution. Skipped
-            // (zero-copy) when no project override is in effect.
-            let raw = if resize_output {
-                image::imageops::resize(
-                    &graded,
-                    out_w,
-                    out_h,
-                    image::imageops::FilterType::Lanczos3,
-                )
-                .into_raw()
-            } else {
-                graded.into_raw()
-            };
-            enc_in
+            let pipe = enc.as_mut().ok_or("encoder pipe unavailable")?;
+
+            let raw = fit_frame_to_encoder(graded, pipe.dims).into_raw();
+            pipe.stdin
                 .write_all(&raw)
-                .map_err(|e| format!("write to encoder stdin: {e} — {}", tail(&enc_err)))?;
+                .map_err(|e| format!("write to encoder stdin: {e} — {}", tail(&pipe.stderr)))?;
 
             done += 1;
             progress_tick(done);
         }
 
-        drop(enc_in); // EOF → encoder flushes and exits
         let _ = dec.wait();
 
-        let status = enc.wait().map_err(|e| format!("wait for encoder: {e}"))?;
+        // `total` is always >= 1 (`to = to.max(from)`), so the encoder exists
+        // unless the loop returned early — but a `?` on an empty range is
+        // still better than an `unwrap`.
+        let EncoderPipe { mut child, stderr, stdin, .. } =
+            enc.ok_or("no frames were graded, so no encoder was ever spawned")?;
+        drop(stdin); // EOF → encoder flushes and exits
+
+        let status = child.wait().map_err(|e| format!("wait for encoder: {e}"))?;
         if !status.success() {
-            return Err(format!("encoder exited {status}: {}", tail(&enc_err)));
+            return Err(format!("encoder exited {status}: {}", tail(&stderr)));
         }
         Ok(done)
     };
@@ -874,83 +998,503 @@ mod tests {
         );
     }
 
-    // --- B-042: the geometry pre-flight ------------------------------------
-    // No fixture video needed — `unsupported_geometry` is pure JSON in, names
-    // out, which is exactly the part that must not drift from
-    // `apply_all_transformations`' own identity tests.
+    // --- D-135 / B-042: the geometry pass is really in the export path -----
+    //
+    // These run on real `RgbImage`/`GrayImage` pixels with asserted values, no
+    // GPU adapter and no fixture video: `prepare_frame` is deliberately split
+    // out of `grade_frame` so the two halves B-042 got wrong — the geometry
+    // itself, and the mask crop offset — are testable without one.
 
-    const FIXTURE_W: u32 = 1920;
-    const FIXTURE_H: u32 = 1080;
-
-    fn dropped(js: &Value) -> Vec<&'static str> {
-        unsupported_geometry(js, FIXTURE_W, FIXTURE_H)
+    /// An 8×8 frame whose every pixel encodes its own coordinates in R and G
+    /// (`R = x * 16`, `G = y * 16`), so any assertion about *which* source
+    /// pixel ended up where is exact rather than "it looks cropped".
+    fn coordinate_frame(w: u32, h: u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([(x * 16) as u8, (y * 16) as u8, 0])
+        }))
     }
 
-    #[test]
-    fn unsupported_geometry_is_empty_for_a_plain_grade() {
-        assert!(dropped(&json!({})).is_empty());
-        assert!(dropped(&json!({ "exposure": 1.0, "crop": null })).is_empty());
+    fn at(img: &DynamicImage, x: u32, y: u32) -> (u8, u8) {
+        let p = img.to_rgb8();
+        let px = p.get_pixel(x, y);
+        (px[0], px[1])
     }
 
-    /// The Crop panel writes a full-frame rect as soon as it's opened — that
-    /// is not a crop, and must not block an export.
-    #[test]
-    fn unsupported_geometry_ignores_a_full_frame_crop_rect() {
-        let js = json!({ "crop": { "x": 0.0, "y": 0.0, "width": 1920.0, "height": 1080.0 } });
-        assert!(dropped(&js).is_empty());
-    }
+    /// A base64 PNG data URL for a full-frame matte that is white inside
+    /// `rect` and black elsewhere — the shape `chromaTrackDir`-less AI masks
+    /// (and, at the same resolution, D-019's tracked mattes) are read from.
+    fn matte_data_url(w: u32, h: u32, rect: (u32, u32, u32, u32)) -> String {
+        use base64::{Engine as _, engine::general_purpose};
+        use image::{ImageFormat, Luma};
+        use std::io::Cursor;
 
-    #[test]
-    fn unsupported_geometry_reports_a_real_crop() {
-        let js = json!({ "crop": { "x": 100.0, "y": 0.0, "width": 1280.0, "height": 720.0 } });
-        assert_eq!(dropped(&js), vec!["crop"]);
-    }
-
-    #[test]
-    fn unsupported_geometry_reports_straighten_flip_and_orientation() {
-        assert_eq!(
-            dropped(&json!({ "rotation": 2.5 })),
-            vec!["straighten (rotation)"]
-        );
-        assert_eq!(
-            dropped(&json!({ "orientationSteps": 1 })),
-            vec!["90° orientation"]
-        );
-        // a full turn is the same upright image
-        assert!(dropped(&json!({ "orientationSteps": 4 })).is_empty());
-        assert_eq!(
-            dropped(&json!({ "flipHorizontal": true })),
-            vec!["horizontal flip"]
-        );
-        assert_eq!(
-            dropped(&json!({ "flipVertical": true })),
-            vec!["vertical flip"]
-        );
-    }
-
-    #[test]
-    fn unsupported_geometry_reports_the_perspective_warp() {
-        assert_eq!(
-            dropped(&json!({ "transformVertical": 10.0 })),
-            vec!["perspective / lens correction"]
-        );
-    }
-
-    #[test]
-    fn unsupported_geometry_names_every_offender_at_once() {
-        let js = json!({
-            "crop": { "x": 10.0, "y": 10.0, "width": 100.0, "height": 100.0 },
-            "rotation": 1.0,
-            "flipHorizontal": true,
+        let (rx, ry, rw, rh) = rect;
+        let matte = GrayImage::from_fn(w, h, |x, y| {
+            let inside = x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+            Luma([if inside { 255 } else { 0 }])
         });
+        let mut buf = Cursor::new(Vec::new());
+        matte.write_to(&mut buf, ImageFormat::Png).unwrap();
+        format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(buf.get_ref())
+        )
+    }
+
+    /// An `ai-subject` mask carrying a full-frame matte. This is the same
+    /// `generate_ai_bitmap_from_full_mask` alignment path a **tracked** matte
+    /// (D-019, `params.chromaTrackDir`) takes — `generate_ai_subject_bitmap`
+    /// picks the tracked PNG over the base64 and hands both to that one
+    /// function with the same `TransformParams` — but it needs no
+    /// `chroma::state::current_video()`, so it doesn't race the end-to-end
+    /// export tests over that global.
+    fn subject_mask_grade(data_url: &str, crop: Option<Value>) -> Value {
+        let mut js = json!({
+            "masks": [{
+                "id": "m1", "name": "subject", "visible": true, "invert": false,
+                "opacity": 100.0, "adjustments": { "exposure": 1.0 },
+                "subMasks": [{
+                    "id": "s1", "type": "ai-subject", "visible": true,
+                    "mode": "additive", "invert": false, "opacity": 100.0,
+                    "parameters": {
+                        "startX": 0.0, "startY": 0.0, "endX": 8.0, "endY": 8.0,
+                        "maskDataBase64": data_url
+                    }
+                }]
+            }]
+        });
+        if let Some(c) = crop {
+            js["crop"] = c;
+        }
+        js
+    }
+
+    /// A grade with no geometry must not copy a single pixel — the transformed
+    /// frame is still a borrow of the decoded one, and the offset is zero.
+    #[test]
+    fn prepare_frame_is_zero_copy_and_offset_free_without_geometry() {
+        let frame = coordinate_frame(8, 8);
+        let (transformed, masks, offset) = prepare_frame(&frame, &json!({ "exposure": 1.0 }));
+
+        assert!(
+            matches!(transformed, Cow::Borrowed(_)),
+            "an ungeometried export frame must not be cloned"
+        );
+        assert_eq!(transformed.dimensions(), (8, 8));
+        assert_eq!(offset, (0.0, 0.0));
+        assert!(masks.is_empty());
+    }
+
+    /// A full-frame crop rect — which the Crop panel writes the moment it is
+    /// opened — is not a crop, and must stay zero-copy (D-127 made a point of
+    /// this for the refusal; it matters just as much now that the pass runs).
+    #[test]
+    fn prepare_frame_treats_a_full_frame_crop_rect_as_no_crop() {
+        let frame = coordinate_frame(8, 8);
+        let js = json!({ "crop": { "x": 0.0, "y": 0.0, "width": 8.0, "height": 8.0 } });
+        let (transformed, _, offset) = prepare_frame(&frame, &js);
+
+        assert!(matches!(transformed, Cow::Borrowed(_)));
+        assert_eq!(transformed.dimensions(), (8, 8));
+        assert_eq!(offset, (0.0, 0.0));
+    }
+
+    /// The core of B-042: a real crop changes the export frame's size AND
+    /// picks the right pixels out of the source.
+    #[test]
+    fn prepare_frame_really_crops() {
+        let frame = coordinate_frame(8, 8);
+        let js = json!({ "crop": { "x": 2.0, "y": 1.0, "width": 4.0, "height": 3.0 } });
+        let (transformed, _, offset) = prepare_frame(&frame, &js);
+
+        assert_eq!(transformed.dimensions(), (4, 3));
+        assert_eq!(offset, (2.0, 1.0));
+        // top-left of the cropped frame is source (2, 1); bottom-right is (5, 3)
+        assert_eq!(at(&transformed, 0, 0), (2 * 16, 16));
+        assert_eq!(at(&transformed, 3, 2), (5 * 16, 3 * 16));
+    }
+
+    #[test]
+    fn prepare_frame_really_flips_and_rotates_by_90() {
+        let frame = coordinate_frame(8, 8);
+
+        let flipped = prepare_frame(&frame, &json!({ "flipHorizontal": true })).0;
+        assert_eq!(flipped.dimensions(), (8, 8));
+        assert_eq!(at(&flipped, 0, 0), (7 * 16, 0));
+
+        let flipped_v = prepare_frame(&frame, &json!({ "flipVertical": true })).0;
+        assert_eq!(at(&flipped_v, 0, 0), (0, 7 * 16));
+
+        // A 90° step on a non-square frame swaps the encoded dimensions — the
+        // single most obvious way the old "spawn the encoder with the clip's
+        // own size" code shipped a wrong file.
+        let wide = coordinate_frame(8, 4);
+        let turned = prepare_frame(&wide, &json!({ "orientationSteps": 1 })).0;
+        assert_eq!(turned.dimensions(), (4, 8));
+        // rotate90 sends source (0, h-1) to output (0, 0)
+        assert_eq!(at(&turned, 0, 0), (0, 3 * 16));
+
+        // A whole revolution is the same upright image, and stays zero-copy.
+        let full_turn = prepare_frame(&wide, &json!({ "orientationSteps": 4 })).0;
+        assert!(matches!(full_turn, Cow::Borrowed(_)));
+        assert_eq!(full_turn.dimensions(), (8, 4));
+    }
+
+    /// Straighten keeps the frame size (`imageproc::rotate_about_center` fills
+    /// the same canvas) and rotates the content, leaving transparent corners —
+    /// which is why the Crop panel auto-writes a centred crop alongside it.
+    #[test]
+    fn prepare_frame_really_straightens() {
+        let white = DynamicImage::ImageRgb8(RgbImage::from_pixel(16, 16, image::Rgb([255; 3])));
+        let straightened = prepare_frame(&white, &json!({ "rotation": 20.0 })).0;
+
+        assert_eq!(straightened.dimensions(), (16, 16));
+        // centre survives, the corner is rotated out of frame (border is
+        // transparent black, so `to_rgb8` reads 0)
+        assert_eq!(at(&straightened, 8, 8), (255, 255));
+        assert_eq!(at(&straightened, 0, 0), (0, 0));
+    }
+
+    /// Piece 2 + piece 3 of roadmap item 15, together: the mask bitmap is
+    /// rasterised at the *cropped* size and shifted by the *real* crop offset,
+    /// so a matte baked at the un-cropped resolution (D-019's documented
+    /// assumption, which tracked mattes still satisfy) lands on the right
+    /// pixels. The `(0.0, 0.0)` the export used to hardcode is asserted here
+    /// to be a genuinely different, wrong answer — not a harmless default.
+    #[test]
+    fn mask_bitmaps_follow_the_crop_offset() {
+        let frame = coordinate_frame(8, 8);
+        // white matte square at source (4..6, 2..4)
+        let url = matte_data_url(8, 8, (4, 2, 2, 2));
+        let js = subject_mask_grade(
+            &url,
+            Some(json!({ "x": 3.0, "y": 1.0, "width": 4.0, "height": 4.0 })),
+        );
+
+        let (transformed, masks, offset) = prepare_frame(&frame, &js);
+        assert_eq!(transformed.dimensions(), (4, 4));
+        assert_eq!(offset, (3.0, 1.0));
+        assert_eq!(masks.len(), 1);
+
+        let m = &masks[0];
+        assert_eq!(m.dimensions(), (4, 4));
+        // source (4,2) → cropped (1,1); source (5,3) → cropped (2,2)
+        assert_eq!(m.get_pixel(1, 1)[0], 255);
+        assert_eq!(m.get_pixel(2, 2)[0], 255);
+        // just outside the square
+        assert_eq!(m.get_pixel(0, 0)[0], 0);
+        assert_eq!(m.get_pixel(3, 3)[0], 0);
+
+        // What the export did before D-135: same mask definition, same output
+        // size, but the hardcoded zero offset. It puts the subject two pixels
+        // up and three across from where the picture actually has it.
+        let defs: Vec<MaskDefinition> =
+            serde_json::from_value(js["masks"].clone()).expect("mask defs");
+        let wrong = generate_mask_bitmap(&defs[0], 4, 4, EXPORT_MASK_SCALE, (0.0, 0.0), None)
+            .expect("bitmap");
+        assert_ne!(
+            wrong.as_raw(),
+            m.as_raw(),
+            "a (0,0) crop offset must produce a visibly different mask — if it doesn't, \
+             this test isn't proving anything"
+        );
+        assert_eq!(wrong.get_pixel(1, 1)[0], 0);
+    }
+
+    /// Without a crop, the mask path is unchanged from before D-135 — the same
+    /// bitmap, at the same size, with the same (zero) offset.
+    #[test]
+    fn mask_bitmaps_are_unchanged_without_a_crop() {
+        let frame = coordinate_frame(8, 8);
+        let url = matte_data_url(8, 8, (4, 2, 2, 2));
+        let js = subject_mask_grade(&url, None);
+
+        let (_, masks, offset) = prepare_frame(&frame, &js);
+        assert_eq!(offset, (0.0, 0.0));
+        let defs: Vec<MaskDefinition> =
+            serde_json::from_value(js["masks"].clone()).expect("mask defs");
+        let reference = generate_mask_bitmap(&defs[0], 8, 8, EXPORT_MASK_SCALE, (0.0, 0.0), None)
+            .expect("bitmap");
+        assert_eq!(masks[0].as_raw(), reference.as_raw());
+        assert_eq!(masks[0].get_pixel(4, 2)[0], 255);
+    }
+
+    // --- D-135: the encoder's frame size ------------------------------------
+
+    #[test]
+    fn align_encoder_dims_rounds_down_to_even() {
+        assert_eq!(align_encoder_dims(1920, 1080), (1920, 1080));
+        assert_eq!(align_encoder_dims(1281, 721), (1280, 720));
+        assert_eq!(align_encoder_dims(1, 1), (0, 0));
+    }
+
+    #[test]
+    fn resolve_encoder_dims_uses_the_measured_geometry_size() {
+        // no override: the geometry's own size, evened down
         assert_eq!(
-            dropped(&js),
-            vec!["crop", "straighten (rotation)", "horizontal flip"]
+            resolve_encoder_dims((1280, 720), (None, None)).unwrap(),
+            EncoderDims { width: 1280, height: 720, resample: false }
+        );
+        assert_eq!(
+            resolve_encoder_dims((1281, 721), (None, None)).unwrap(),
+            EncoderDims { width: 1280, height: 720, resample: false }
+        );
+    }
+
+    #[test]
+    fn resolve_encoder_dims_honours_and_evens_an_override() {
+        assert_eq!(
+            resolve_encoder_dims((1920, 1080), (Some(1280), Some(720))).unwrap(),
+            EncoderDims { width: 1280, height: 720, resample: true }
+        );
+        // D-049 let an odd custom resolution through to libx264, which rejects
+        // it outright — the same rule fixes that on the way past.
+        assert_eq!(
+            resolve_encoder_dims((1920, 1080), (Some(1281), Some(721))).unwrap(),
+            EncoderDims { width: 1280, height: 720, resample: true }
+        );
+        // a partial / non-positive override is absent, same as `ExportOpts`
+        assert_eq!(
+            resolve_encoder_dims((1920, 1080), (Some(1280), None)).unwrap(),
+            EncoderDims { width: 1920, height: 1080, resample: false }
+        );
+    }
+
+    /// The one geometry case that still can't be encoded, and says so.
+    #[test]
+    fn resolve_encoder_dims_refuses_a_sub_pixel_crop() {
+        let err = resolve_encoder_dims((1, 400), (None, None)).unwrap_err();
+        assert!(err.contains("1x400"), "{err}");
+        assert!(err.contains("even-dimension rule"), "{err}");
+    }
+
+    /// The even trim is a crop, not a resample: the kept pixels come through
+    /// bit-identical and only the odd row/column is dropped.
+    #[test]
+    fn fit_frame_to_encoder_trims_rather_than_resampling() {
+        let graded =
+            RgbImage::from_fn(5, 3, |x, y| image::Rgb([(x * 16) as u8, (y * 16) as u8, 0]));
+        let dims = resolve_encoder_dims((5, 3), (None, None)).unwrap();
+        assert_eq!((dims.width, dims.height), (4, 2));
+
+        let fitted = fit_frame_to_encoder(graded, dims);
+        assert_eq!(fitted.dimensions(), (4, 2));
+        assert_eq!(fitted.get_pixel(0, 0).0, [0, 0, 0]);
+        assert_eq!(fitted.get_pixel(3, 1).0, [3 * 16, 16, 0]);
+    }
+
+    #[test]
+    fn fit_frame_to_encoder_resamples_only_for_an_override() {
+        let graded = RgbImage::from_pixel(8, 8, image::Rgb([200, 100, 50]));
+        let dims = resolve_encoder_dims((8, 8), (Some(4), Some(4))).unwrap();
+        let fitted = fit_frame_to_encoder(graded.clone(), dims);
+        assert_eq!(fitted.dimensions(), (4, 4));
+
+        // and an already-correct frame is handed straight back
+        let same = resolve_encoder_dims((8, 8), (None, None)).unwrap();
+        assert_eq!(
+            fit_frame_to_encoder(graded.clone(), same).into_raw(),
+            graded.into_raw()
         );
     }
 
     fn test_video() -> Option<PathBuf> {
         std::env::var("CHROMA_TEST_VIDEO").ok().map(PathBuf::from).filter(|p| p.exists())
+    }
+
+    /// Synthesise a tiny high-contrast clip with ffmpeg, so the end-to-end
+    /// encode tests below prove something on any machine instead of quietly
+    /// skipping unless `CHROMA_TEST_VIDEO` happens to be set. `testsrc` is
+    /// chosen for the contrast: a mis-placed crop can't average out against it.
+    fn synth_clip(name: &str, w: u32, h: u32, frames: u32) -> Option<PathBuf> {
+        let out = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_file(&out);
+        let ok = Command::new(ffmpeg_bin())
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+            .arg(format!("testsrc=size={w}x{h}:rate=24:duration=2"))
+            .args([
+                "-frames:v",
+                &frames.to_string(),
+                "-c:v",
+                "libx264",
+                "-crf",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&out)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        (ok && out.exists()).then_some(out)
+    }
+
+    /// Mean absolute per-channel difference between two same-sized RGB images.
+    fn mean_abs_diff(a: &RgbImage, b: &RgbImage) -> f64 {
+        assert_eq!(a.dimensions(), b.dimensions());
+        let sum: u64 = a
+            .as_raw()
+            .iter()
+            .zip(b.as_raw())
+            .map(|(p, q)| (*p as i32 - *q as i32).unsigned_abs() as u64)
+            .sum();
+        sum as f64 / a.as_raw().len() as f64
+    }
+
+    fn gpu_or_skip(what: &str) -> bool {
+        if render_core::init_gpu_context().is_err() {
+            eprintln!("skip: no GPU adapter available for {what}");
+            return false;
+        }
+        true
+    }
+
+    // --- D-135 end-to-end: real ffmpeg, real encoded files ------------------
+
+    /// The headline B-042 fix. A crop must change the encoded file's real
+    /// dimensions AND land on the right pixels — asserted against the source
+    /// clip's own frame, cropped by `image` rather than by our pipeline.
+    #[test]
+    fn export_encodes_a_real_crop() {
+        if !gpu_or_skip("export_encodes_a_real_crop") {
+            return;
+        }
+        let Some(vid) = synth_clip("chroma_geom_src_crop.mp4", 160, 120, 6) else {
+            eprintln!("skip: ffmpeg unavailable");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_geom_cropped.mov");
+        let _ = std::fs::remove_file(&out);
+
+        let js = json!({ "crop": { "x": 20.0, "y": 10.0, "width": 100.0, "height": 60.0 } });
+        let res = export_video(&vid, &out, &js, 0, 5, ExportOpts::default()).expect("export");
+        assert_eq!(res.frames, 6);
+
+        let probed = video::probe(&out).expect("probe output");
+        assert_eq!(
+            (probed.resolution.width, probed.resolution.height),
+            (100, 60),
+            "the encoder was still told the source clip's size"
+        );
+
+        // and the encoded pixels are the cropped region, not the top-left 100×60
+        let src_info = video::probe(&vid).expect("probe source");
+        let src0 = video::decode_frame(&vid, video::FramePos::Index(0), &src_info)
+            .expect("decode source frame 0");
+        let expected = src0.crop_imm(20, 10, 100, 60).to_rgb8();
+        let got = video::decode_frame(&out, video::FramePos::Index(0), &probed)
+            .expect("decode exported frame 0")
+            .to_rgb8();
+        let mad = mean_abs_diff(&expected, &got);
+        assert!(mad < 10.0, "exported crop is not the region the user chose: mean|Δ| {mad}");
+
+        // sanity: the WRONG crop (the un-offset top-left) really is a different
+        // picture, so the assertion above isn't passing by coincidence.
+        let wrong = src0.crop_imm(0, 0, 100, 60).to_rgb8();
+        assert!(mean_abs_diff(&wrong, &got) > 20.0);
+
+        // CLAUDE.md's render-path rule: same doc + same frames ⇒ identical
+        // pixels. The geometry pass is CPU float work (`rotate_about_center`,
+        // `warp_image_geometry`), so it belongs under that rule too.
+        let again = std::env::temp_dir().join("chroma_geom_cropped_again.mov");
+        let _ = std::fs::remove_file(&again);
+        export_video(&vid, &again, &js, 0, 5, ExportOpts::default()).expect("second export");
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            std::fs::read(&again).unwrap(),
+            "a cropped export is not deterministic"
+        );
+    }
+
+    /// A 90° step swaps the encoded dimensions — the case the old
+    /// spawn-with-the-clip's-size code could not have produced at all.
+    #[test]
+    fn export_encodes_a_90_degree_step() {
+        if !gpu_or_skip("export_encodes_a_90_degree_step") {
+            return;
+        }
+        let Some(vid) = synth_clip("chroma_geom_src_turn.mp4", 160, 120, 4) else {
+            eprintln!("skip: ffmpeg unavailable");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_geom_turned.mov");
+        let _ = std::fs::remove_file(&out);
+
+        export_video(&vid, &out, &json!({ "orientationSteps": 1 }), 0, 3, ExportOpts::default())
+            .expect("export");
+        let probed = video::probe(&out).expect("probe output");
+        assert_eq!((probed.resolution.width, probed.resolution.height), (120, 160));
+    }
+
+    /// An odd-sized crop must produce a valid h.264 file, not a libx264
+    /// rejection — `yuv420p` needs even dimensions and `react-image-crop`
+    /// never guarantees them. Rounded DOWN, so at most one row/column is lost.
+    #[test]
+    fn export_evens_an_odd_crop_for_h264() {
+        if !gpu_or_skip("export_evens_an_odd_crop_for_h264") {
+            return;
+        }
+        let Some(vid) = synth_clip("chroma_geom_src_odd.mp4", 160, 120, 4) else {
+            eprintln!("skip: ffmpeg unavailable");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_geom_odd.mp4");
+        let _ = std::fs::remove_file(&out);
+
+        let js = json!({ "crop": { "x": 11.0, "y": 7.0, "width": 101.0, "height": 61.0 } });
+        export_video(
+            &vid,
+            &out,
+            &js,
+            0,
+            3,
+            ExportOpts { codec: Some("h264".into()), ..Default::default() },
+        )
+        .expect("odd-crop h264 export");
+
+        let probed = video::probe(&out).expect("probe output");
+        assert_eq!((probed.resolution.width, probed.resolution.height), (100, 60));
+    }
+
+    /// The refusal that replaces D-127's: a crop too small to encode names
+    /// itself, and no file is produced.
+    #[test]
+    fn export_refuses_a_sub_pixel_crop() {
+        if !gpu_or_skip("export_refuses_a_sub_pixel_crop") {
+            return;
+        }
+        let Some(vid) = synth_clip("chroma_geom_src_tiny.mp4", 160, 120, 2) else {
+            eprintln!("skip: ffmpeg unavailable");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_geom_tiny.mov");
+        let _ = std::fs::remove_file(&out);
+
+        let js = json!({ "crop": { "x": 0.0, "y": 0.0, "width": 1.0, "height": 60.0 } });
+        let err = export_video(&vid, &out, &js, 0, 1, ExportOpts::default())
+            .expect_err("a 1px-wide crop is not encodable");
+        assert!(err.contains("even-dimension rule"), "{err}");
+        assert!(!out.exists(), "no encoder should have been spawned");
+    }
+
+    /// A grade with no geometry must encode exactly as it did before D-135 —
+    /// the source clip's own dimensions, no trim, no resample.
+    #[test]
+    fn export_without_geometry_is_unchanged() {
+        if !gpu_or_skip("export_without_geometry_is_unchanged") {
+            return;
+        }
+        let Some(vid) = synth_clip("chroma_geom_src_plain.mp4", 160, 120, 4) else {
+            eprintln!("skip: ffmpeg unavailable");
+            return;
+        };
+        let out = std::env::temp_dir().join("chroma_geom_plain.mov");
+        let _ = std::fs::remove_file(&out);
+
+        export_video(&vid, &out, &json!({ "exposure": 0.0 }), 0, 3, ExportOpts::default())
+            .expect("export");
+        let probed = video::probe(&out).expect("probe output");
+        assert_eq!((probed.resolution.width, probed.resolution.height), (160, 120));
     }
 
     /// D-030: the seeked decoder must hand back the *same* absolute frames the
