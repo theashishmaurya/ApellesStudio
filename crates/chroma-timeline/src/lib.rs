@@ -119,10 +119,35 @@ pub struct Track {
     /// visible, correctly.
     #[serde(default)]
     pub hidden: bool,
+    /// Cross-track ripple sync (D-106/roadmap item 11). Whether this track
+    /// RECEIVES a ripple shift triggered by an edit on a DIFFERENT track —
+    /// independent of whether THIS track's own edits ripple (they always do,
+    /// unconditionally, same as before this field existed). Matches DaVinci
+    /// Resolve's and Palmier Pro's real Sync Lock semantics exactly (checked
+    /// live against both, not assumed — see `docs/notes/
+    /// cross-track-ripple-sync-lock.md`): per-track, default ON, a distinct
+    /// concept from `locked` (which protects a track's own clips from being
+    /// edited at all, not whether it receives someone ELSE's ripple — the
+    /// same "don't fold two different concepts into one flag" discipline
+    /// `hidden` vs. `gain == 0.0` already keeps separate on this struct).
+    /// `#[serde(default = "default_sync_locked")]`, not a bare
+    /// `#[serde(default)]`, for the identical reason `gain` isn't: `bool::
+    /// default() == false` would silently turn sync-lock OFF for every
+    /// track in every existing project on load — the opposite of matching
+    /// Resolve/Palmier's real default and a real, visible behavior change
+    /// for existing projects, not a silent one (see that doc's own
+    /// "Backward compatibility" section for why `true` is still the right
+    /// call despite that).
+    #[serde(default = "default_sync_locked")]
+    pub sync_locked: bool,
 }
 
 fn default_track_gain() -> f32 {
     1.0
+}
+
+fn default_sync_locked() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,6 +375,72 @@ pub enum TimelineError {
     NoGapAt(usize, i64),
 }
 
+/// Shift every clip on `track` starting at/after `threshold` by `delta`
+/// frames (positive = later, negative = earlier) — the one real ripple-shift
+/// primitive shared by `move_clip`'s ripple and `remove_gap` (D-106; a real,
+/// pre-existing duplication between those two this pass cleans up rather
+/// than adding a third copy — see `docs/notes/cross-track-ripple-sync-lock.md`).
+fn shift_clips_at_or_after(track: &mut Track, threshold: i64, delta: i64) {
+    for c in track.clips.iter_mut() {
+        if c.start_frame >= threshold {
+            c.start_frame += delta;
+        }
+    }
+}
+
+/// The sync-lock version of [`shift_clips_at_or_after`] (D-106) — for a
+/// track receiving SOMEONE ELSE's ripple (never the track directly being
+/// edited, which still uses the plain shift above and D-104's own
+/// reject-on-straddle contract unchanged). A clip that straddles
+/// `threshold` (starts before it, ends after it) is auto-split there FIRST,
+/// matching DaVinci Resolve's own real, confirmed behavior — the owner's own
+/// explicit call, reversing this doc's first-pass "reject" recommendation:
+/// rejecting would make sync-lock block ripples constantly whenever a
+/// straddling clip (a music bed, room tone — sync-lock's own headline
+/// use case) sits on a synced track, defeating a default-on feature in its
+/// primary scenario. The split clip's right half gets a derived id
+/// (`{left_id}·{threshold}`, this codebase's existing split-id convention,
+/// `Timeline::split`'s own scheme) so the frontend's ripple-flash diff
+/// picks it up as a new clip and flashes it — an auto-split is automatic
+/// but never silent, the real UX mitigation for splitting a clip on a track
+/// the user may not even be looking at.
+fn ripple_shift_with_auto_split(track: &mut Track, threshold: i64, delta: i64) {
+    if let Some(idx) = track
+        .clips
+        .iter()
+        .position(|c| c.start_frame < threshold && c.end_frame() > threshold)
+    {
+        let mut right = track.clips[idx].clone();
+        let offset = threshold - track.clips[idx].start_frame;
+        right.id = format!("{}·{}", track.clips[idx].id, threshold);
+        right.start_frame = threshold;
+        right.source_start += offset;
+        right.duration -= offset;
+        track.clips[idx].duration = offset;
+        track.clips.insert(idx + 1, right);
+    }
+    shift_clips_at_or_after(track, threshold, delta);
+}
+
+/// Propagate a ripple from `edited_track` (already shifted by the caller) to
+/// every OTHER track whose `sync_locked` is on — D-106, question 1's
+/// resolved "applies uniformly to every ripple call site" answer, one real
+/// shared implementation rather than duplicated per call site. A track that
+/// is BOTH sync-locked AND individually `locked` is skipped — a real
+/// judgment call, not explicitly resolved in the scoping doc: `Track.locked`
+/// already means "protect this track's clips from edits through the normal
+/// ops" (D-082's own doc), and a foreign ripple auto-splitting/shifting this
+/// track's clips is exactly that kind of edit, so the same protection
+/// applies rather than a `locked` track being silently modified by someone
+/// else's ripple.
+fn propagate_sync_lock_ripple(tracks: &mut [Track], edited_track: usize, threshold: i64, delta: i64) {
+    for (i, t) in tracks.iter_mut().enumerate() {
+        if i != edited_track && t.sync_locked && !t.locked {
+            ripple_shift_with_auto_split(t, threshold, delta);
+        }
+    }
+}
+
 impl Timeline {
     /// Build a single-video-track timeline from a project's shots, each shot a
     /// full-length clip laid back to back in order. `shots` is
@@ -388,6 +479,7 @@ impl Timeline {
                 gain: default_track_gain(),
                 locked: false,
                 hidden: false,
+                sync_locked: default_sync_locked(),
             }],
         }
     }
@@ -491,6 +583,7 @@ impl Timeline {
             gain: default_track_gain(),
             locked: false,
             hidden: false,
+            sync_locked: default_sync_locked(),
         });
         self.tracks.len() - 1
     }
@@ -622,14 +715,17 @@ impl Timeline {
 
         let mut clip = self.tracks[from_track].clips.remove(from_idx);
         if overlaps && ripple {
-            for other in self.tracks[to_track].clips.iter_mut() {
-                if other.start_frame >= to_start_frame {
-                    other.start_frame += duration;
-                }
-            }
+            shift_clips_at_or_after(&mut self.tracks[to_track], to_start_frame, duration);
         }
         clip.start_frame = to_start_frame;
         self.tracks[to_track].clips.push(clip);
+        // D-106 — propagate to every OTHER sync-locked track, same
+        // `to_start_frame`/`duration` shift, only when this move's own
+        // ripple actually fired (no shift on `to_track` means nothing to
+        // keep in sync elsewhere either).
+        if overlaps && ripple {
+            propagate_sync_lock_ripple(&mut self.tracks, to_track, to_start_frame, duration);
+        }
         Ok(())
     }
 
@@ -820,16 +916,22 @@ impl Timeline {
     /// inside a real, closeable gap" work — see its own doc for why trailing
     /// empty space past the last clip does NOT count (nothing to ripple).
     pub fn remove_gap(&mut self, track: usize, at_frame: i64) -> Result<(), TimelineError> {
-        let t = self.track_mut(track)?;
-        let (gap_start, gap_end) = t
-            .gap_at(at_frame)
-            .ok_or(TimelineError::NoGapAt(track, at_frame))?;
+        let (gap_start, gap_end) = {
+            let t = self.track_mut(track)?;
+            t.gap_at(at_frame)
+                .ok_or(TimelineError::NoGapAt(track, at_frame))?
+        };
         let shift = gap_end - gap_start;
-        for c in t.clips.iter_mut() {
-            if c.start_frame >= gap_end {
-                c.start_frame -= shift;
-            }
-        }
+        shift_clips_at_or_after(&mut self.tracks[track], gap_end, -shift);
+        // D-106 — every OTHER sync-locked track ripples too, unconditionally
+        // (not gated on THAT track having a matching gap at `gap_end` —
+        // Resolve's own real behavior, confirmed live: the whole point of
+        // sync-lock is that another track may have a long, unrelated clip
+        // spanning straight through the edit point, handled by the
+        // straddle-auto-split in `ripple_shift_with_auto_split` rather than
+        // requiring a matching gap to exist there too). The gap-*finding*
+        // requirement above stays exactly as-is for `track` itself only.
+        propagate_sync_lock_ripple(&mut self.tracks, track, gap_end, -shift);
         Ok(())
     }
 }
@@ -1063,6 +1165,7 @@ mod tests {
             gain: default_track_gain(),
             locked: false,
             hidden: false,
+            sync_locked: default_sync_locked(),
             clips: vec![
                 Clip {
                     id: "a".into(),
@@ -1223,6 +1326,7 @@ mod tests {
             gain: default_track_gain(),
             locked: false,
             hidden: false,
+            sync_locked: default_sync_locked(),
             clips: vec![
                 Clip {
                     id: "x".into(),
@@ -1957,5 +2061,140 @@ mod tests {
         assert!(t.move_track(0, 1).is_ok());
         assert_eq!(t.add_track(TrackKind::Audio), 2);
         assert!(t.remove_track(2).is_ok());
+    }
+
+    // -------------------------------------------------------------------- //
+    // cross-track ripple sync (D-106)
+    // -------------------------------------------------------------------- //
+
+    fn two_track(track0: Vec<Clip>, track1: Vec<Clip>) -> Timeline {
+        let mk = |clips: Vec<Clip>| Track {
+            kind: TrackKind::Video,
+            clips,
+            gain: default_track_gain(),
+            locked: false,
+            hidden: false,
+            sync_locked: default_sync_locked(),
+        };
+        Timeline {
+            id: "t".into(),
+            name: "t".into(),
+            rate: None,
+            tracks: vec![mk(track0), mk(track1)],
+        }
+    }
+
+    fn c(id: &str, start: i64, dur: i64) -> Clip {
+        Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: format!("/{id}.mov"),
+            duration: dur,
+            source_len: 10_000,
+            start_frame: start,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sync_locked_defaults_true_on_a_pre_d106_track() {
+        let j = r#"{"kind":"video","clips":[]}"#;
+        let t: Track = serde_json::from_str(j).unwrap();
+        assert!(t.sync_locked, "a track with no sync_locked key defaults ON, matching Resolve/Palmier");
+    }
+
+    /// A move ripple on track 0 shifts an unrelated clip on sync-locked
+    /// track 1 by the same amount — the headline behavior this whole
+    /// feature is for.
+    #[test]
+    fn move_clip_ripple_propagates_to_a_sync_locked_track() {
+        // track0: A[0,50) B[50,100) — moving a new clip in at 50 with ripple
+        // pushes B to [50+30, 100+30). track1: X[0,200) — clear of the
+        // shift point, unaffected in position, only shifted if >= threshold.
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 50, 50)], vec![c("x", 200, 50)]);
+        // Move a same-track clip (b) is awkward to use as the ripple driver
+        // here (it IS the clip moving) — use a fresh clip via a helper move
+        // from a third track instead: simplest is to ripple-insert via
+        // move_clip itself, landing at frame 50 with ripple=true, moving a
+        // clip that starts past everything (append target) into that slot.
+        // Simpler: directly assert via remove_gap instead, which has a
+        // cleaner "ripple driven by track 0 alone" shape — see the dedicated
+        // remove_gap tests below for the primary coverage of the propagation
+        // path; this test specifically exercises move_clip's own call site.
+        t.tracks[0].clips.push(c("new", 300, 30)); // parked clip to move
+        t.move_clip(0, 2, 0, 50, true).unwrap(); // land at 50, ripple b and x
+        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(track0_b.start_frame, 80, "b shifted by the new clip's own 30-frame duration");
+        let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
+        assert_eq!(track1_x.start_frame, 230, "sync-locked track 1's clip shifted by the same 30 frames");
+    }
+
+    #[test]
+    fn move_clip_ripple_skips_a_track_with_sync_locked_false() {
+        // `b` at [50,100) is required so the move genuinely overlaps and
+        // ripples on track 0 itself — without it (a single, non-overlapping
+        // `a`) this test would pass vacuously (nothing ripples anywhere,
+        // track 1 "untouched" for the wrong reason). Asserting `b` DID shift
+        // proves track 1's exclusion below is real.
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 50, 50)], vec![c("x", 200, 50)]);
+        t.tracks[1].sync_locked = false;
+        t.tracks[0].clips.push(c("new", 300, 30));
+        t.move_clip(0, 2, 0, 50, true).unwrap();
+        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(track0_b.start_frame, 80, "ripple genuinely fired on track 0");
+        let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
+        assert_eq!(track1_x.start_frame, 200, "sync_locked: false — untouched by the other track's ripple");
+    }
+
+    #[test]
+    fn move_clip_ripple_skips_a_locked_track_even_if_sync_locked() {
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 50, 50)], vec![c("x", 200, 50)]);
+        t.tracks[1].locked = true; // sync_locked stays true (the default)
+        t.tracks[0].clips.push(c("new", 300, 30));
+        t.move_clip(0, 2, 0, 50, true).unwrap();
+        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(track0_b.start_frame, 80, "ripple genuinely fired on track 0");
+        let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
+        assert_eq!(track1_x.start_frame, 200, "locked overrides sync_locked — protected from a foreign ripple too");
+    }
+
+    /// The real design question this whole feature turned on: a clip on a
+    /// synced track that STRADDLES the ripple point gets auto-split there,
+    /// not rejected — Resolve's own real behavior, the owner's explicit call.
+    #[test]
+    fn remove_gap_auto_splits_a_straddling_clip_on_a_synced_track() {
+        // track0: A[0,50) gap[50,80) B[80,130) — closing the gap shifts
+        // everything at/after 80 earlier by 30. track1: a single long clip
+        // X[20,200) that straddles frame 80 (starts at 20, ends at 200).
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 80, 50)], vec![c("x", 20, 180)]);
+        t.remove_gap(0, 60).unwrap(); // 60 is inside the [50,80) gap
+        let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
+        assert_eq!(track0_b.start_frame, 50, "edited track: gap closed, b shifted from 80 to 50");
+
+        let track1 = &t.tracks[1];
+        assert_eq!(track1.clips.len(), 2, "x split into two halves at the ripple point (frame 80)");
+        let left = track1.clips.iter().find(|c| c.id == "x").unwrap();
+        assert_eq!((left.start_frame, left.duration), (20, 60), "left half: unchanged start, shortened to end exactly at 80");
+        let right = track1.clips.iter().find(|c| c.id != "x").unwrap();
+        assert_eq!(right.id, "x·80", "right half gets the derived split id, matching Timeline::split's own scheme");
+        assert_eq!(
+            (right.start_frame, right.duration),
+            (50, 120),
+            "right half: split at 80 then shifted -30 to 50, duration 200-80=120 preserved"
+        );
+        assert_eq!(right.source_start, 60, "right half's source_start advanced by the split offset (80-20)");
+    }
+
+    #[test]
+    fn remove_gap_ripple_propagates_without_a_matching_gap_on_the_synced_track() {
+        // Real Resolve behavior (D-106, question 3): the OTHER track doesn't
+        // need a gap of its own at the same point — a single clip spanning
+        // straight through still ripples (via the straddle-split above), and
+        // a clip entirely AFTER the ripple point on an otherwise-untouched
+        // synced track shifts too, with no gap requirement at all.
+        let mut t = two_track(vec![c("a", 0, 50), c("b", 80, 50)], vec![c("y", 90, 20)]);
+        t.remove_gap(0, 60).unwrap();
+        let track1_y = t.tracks[1].clips.iter().find(|c| c.id == "y").unwrap();
+        assert_eq!(track1_y.start_frame, 60, "y (start 90, at/after the gap's own end 80) shifted -30, no gap needed on track 1");
     }
 }

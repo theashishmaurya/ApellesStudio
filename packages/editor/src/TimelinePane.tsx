@@ -136,7 +136,17 @@
  * bundled source before writing this).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import type { TimelineRow, TimelineAction } from '@xzdarcy/timeline-engine';
 import { Timeline as TimelineEditor, type TimelineState } from '@xzdarcy/react-timeline-editor';
 import '@xzdarcy/react-timeline-editor/dist/react-timeline-editor.css';
@@ -162,9 +172,11 @@ import {
   Film,
   FoldHorizontal,
   GripVertical,
+  Link2,
   Lock,
   Scissors,
   Trash2,
+  Unlink2,
   Unlock,
   Volume2,
   VolumeX,
@@ -192,6 +204,7 @@ import { ClipInspectorPanel } from './ClipInspectorPanel';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
+  DEFAULT_SYNC_LOCKED,
   DEFAULT_TRACK_GAIN,
   clipFromDraggedMedia,
   computeInsertion,
@@ -368,10 +381,12 @@ function SortableTrackHeader({
   muted,
   locked,
   hidden,
+  syncLocked,
   label,
   onToggleLock,
   onToggleHidden,
   onToggleMute,
+  onToggleSyncLocked,
   onRemove,
 }: {
   index: number;
@@ -380,10 +395,12 @@ function SortableTrackHeader({
   muted: boolean;
   locked: boolean;
   hidden: boolean;
+  syncLocked: boolean;
   label: string;
   onToggleLock: () => void;
   onToggleHidden: () => void;
   onToggleMute: () => void;
+  onToggleSyncLocked: () => void;
   onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -434,6 +451,23 @@ function SortableTrackHeader({
           title={locked ? 'Unlock track' : 'Lock track'}
         >
           {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+        </Button>
+        {/* D-106 — cross-track ripple sync toggle, a real per-track concept
+            distinct from `locked` above (see `Track.sync_locked`'s own
+            doc). Placed right next to lock/hide, matching where Resolve
+            puts its own Sync Lock in the track header. */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleSyncLocked}
+          aria-label={syncLocked ? 'Disable sync lock' : 'Enable sync lock'}
+          title={
+            syncLocked
+              ? 'Sync lock on — ripples on other tracks shift this one too'
+              : 'Sync lock off — ripples on other tracks skip this one'
+          }
+        >
+          {syncLocked ? <Link2 className="size-3" /> : <Unlink2 className="size-3" />}
         </Button>
         {isVideo && (
           <Button
@@ -584,7 +618,30 @@ export function TimelinePane() {
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  const [selected, setSelected] = useState<Selection | null>(null);
+  /** Multi-select, Phase 1 (D-107, `docs/notes/multi-select.md`) — an array
+   *  of the same `{track, id}` shape D-080 always used singularly, not a
+   *  bare `Set<string>` of ids: `Clip.id`'s own doc only promises "stable,
+   *  survives reorder/trim," never global uniqueness across tracks, so
+   *  `{track, id}` pairs remove that ambiguity for free (verified against
+   *  the real id-generation call sites, not assumed — `clipFromDraggedMedia`
+   *  and `Timeline::split`'s `${id}·${frame}` scheme both produce ids
+   *  scoped to their own construction, not guaranteed unique globally).
+   *  `[]` is "nothing selected" — the doc's own recommended replacement for
+   *  `null`, since every consumer below already treats an empty selection
+   *  and a null one identically. */
+  const [selection, setSelection] = useState<Selection[]>([]);
+  const isInSelection = (sel: Selection[], track: number, id: string) =>
+    sel.some((s) => s.track === track && s.id === id);
+  const toggleInSelection = (sel: Selection[], track: number, id: string): Selection[] =>
+    isInSelection(sel, track, id) ? sel.filter((s) => !(s.track === track && s.id === id)) : [...sel, { track, id }];
+  /** The many pre-existing single-clip-only consumers below (Inspector,
+   *  transform, keyframes, the "Move to" dropdown) intentionally fall back
+   *  to their existing empty/disabled state whenever the selection isn't
+   *  exactly one clip — `docs/notes/multi-select.md`'s own Phase 1
+   *  recommendation, not a real N-clip contract for those this pass
+   *  (multi-clip cross-track move and richer Inspector batch-editing are
+   *  explicitly scoped to a later Phase 3, once Phase 1 has real usage). */
+  const primary = selection.length === 1 ? selection[0] : null;
   /** D-105 — a selected GAP (empty track space, not a clip), mutually
    *  exclusive with `selected`: selecting one clears the other, at the two
    *  real interactive entry points (`onClickAction` for a clip, the edit
@@ -670,7 +727,20 @@ export function TimelinePane() {
     const shifted = new Set<string>();
     starts.forEach((start, id) => {
       const before = prev.get(id);
-      if (before !== undefined && before !== start) shifted.add(id);
+      if (before !== undefined && before !== start) {
+        shifted.add(id);
+      } else if (before === undefined && id.includes('·')) {
+        // D-106 — a brand-new split-derived clip (this file's own
+        // `${leftId}·${frame}` id convention, both here and in
+        // `rippleShiftWithAutoSplit`). Flash it too: sync-lock's real
+        // auto-split can create one of these on a track the user isn't even
+        // looking at, as a side effect of a ripple elsewhere — never
+        // silent, the owner's own explicit mitigation ask. A plain
+        // user-initiated `split` flashing its own new right half too is a
+        // harmless, honestly-simpler side effect of the same generic rule,
+        // not worth a second signalling path just to suppress it there.
+        shifted.add(id);
+      }
     });
     if (shifted.size === 0) return;
     setRippled(shifted);
@@ -962,10 +1032,7 @@ export function TimelinePane() {
         // track-reorder drag already uses (`trackIndexAfterMove`), not a
         // second version of that logic.
         applyOp({ kind: 'move_track', from: newTrackIdx, to: boundary });
-        if (selected) {
-          const followed = trackIndexAfterMove(selected.track, newTrackIdx, boundary);
-          if (followed !== selected.track) setSelected({ track: followed, id: selected.id });
-        }
+        setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, newTrackIdx, boundary) })));
       }
       applyOp({ kind: 'add_clip', track: boundary, clip });
       return;
@@ -1018,7 +1085,7 @@ export function TimelinePane() {
       const track = tracks[ti];
       const i = idxOf(ti, action.id);
       const clip = i >= 0 ? clipsOf(ti)[i] : null;
-      const isSel = selected?.track === ti && selected.id === action.id;
+      const isSel = isInSelection(selection, ti, action.id);
       const isRippled = rippled.has(action.id);
       const pxWidth = (action.end - action.start) * pxPerSec;
       return (
@@ -1086,15 +1153,52 @@ export function TimelinePane() {
         </ClipBody>
       );
     },
-    [tracks, selected, rippled, pxPerSec, fps],
+    [tracks, selection, rippled, pxPerSec, fps],
   );
 
+  /** Multi-select, Phase 1 (D-107) — shift-click range-extends within the
+   *  clicked clip's own track (ordered by `start_frame`, this model's real
+   *  time order — Vec order is bookkeeping only, D-054); cmd/ctrl-click
+   *  toggles the clicked clip in/out of the selection; a plain click
+   *  replaces the whole selection with just this clip, unchanged from
+   *  before. `e` is the library's own real `React.MouseEvent<HTMLElement,
+   *  MouseEvent>` (checked against its `.d.ts`, not the loosely-typed
+   *  `unknown` this handler used to cast it to) — `shiftKey`/`metaKey`/
+   *  `ctrlKey` are real fields on it. */
   const onClickAction = useCallback(
-    (_e: unknown, { action, row }: { action: TimelineAction; row: TimelineRow }) => {
+    (e: ReactMouseEvent<HTMLElement, MouseEvent>, { action, row }: { action: TimelineAction; row: TimelineRow }) => {
       setSelectedGap(null); // D-105 — clicking a clip always supersedes a gap selection
-      setSelected({ track: Number(row.id), id: action.id });
+      const track = Number(row.id);
+      const id = action.id;
+      if (e.shiftKey && selection.length > 0) {
+        const anchor = selection[selection.length - 1];
+        if (anchor.track === track) {
+          const ids = clipsOf(track)
+            .slice()
+            .sort((a, b) => a.start_frame - b.start_frame)
+            .map((c) => c.id);
+          const ai = ids.indexOf(anchor.id);
+          const ci = ids.indexOf(id);
+          if (ai >= 0 && ci >= 0) {
+            const [lo, hi] = ai <= ci ? [ai, ci] : [ci, ai];
+            setSelection(ids.slice(lo, hi + 1).map((cid) => ({ track, id: cid })));
+            return;
+          }
+        }
+        // Different track than the anchor — this model has no cross-track
+        // "range" concept (that would need a real 2D grid, out of scope for
+        // Phase 1). Fall back to a plain toggle rather than silently
+        // ignoring the shift-click.
+        setSelection((prev) => toggleInSelection(prev, track, id));
+        return;
+      }
+      if (e.metaKey || e.ctrlKey) {
+        setSelection((prev) => toggleInSelection(prev, track, id));
+        return;
+      }
+      setSelection([{ track, id }]);
     },
-    [],
+    [selection, clipsOf],
   );
 
   const onTimelineScroll = useCallback(({ scrollTop: st, scrollLeft: sl }: { scrollTop: number; scrollLeft: number }) => {
@@ -1165,18 +1269,44 @@ export function TimelinePane() {
   // reading: split whatever's currently selected, if the playhead actually
   // falls inside it (the existing `atFrame` bounds check inside `applyOp`
   // already no-ops otherwise).
+  /** Groups `selection` by track — every per-clip generalized op below needs
+   *  this same grouping (splitting/removing multiple clips on the SAME
+   *  track must process the highest Vec index first, since `remove`'s
+   *  splice and `split`'s insert both shift every later index on that
+   *  track — see `doRemove`'s own comment for why this matters). */
+  const selectionByTrack = (): Map<number, string[]> => {
+    const m = new Map<number, string[]>();
+    for (const s of selection) m.set(s.track, [...(m.get(s.track) ?? []), s.id]);
+    return m;
+  };
+
+  // Multi-select, Phase 1 (D-107) — "Split every selected clip at the
+  // playhead" is a real, commonly-used batch operation in every reference
+  // checked (`docs/notes/multi-select.md`), generalizing cleanly since each
+  // clip's own split is independent of the others.
   const doSplit = () => {
-    if (!selected) return;
-    const i = idxOf(selected.track, selected.id);
-    if (i < 0) return;
-    applyOp({ kind: 'split', track: selected.track, clip: i, atFrame: playhead });
+    for (const [track, ids] of selectionByTrack()) {
+      // Highest index first: `split` inserts the new right half immediately
+      // after the split clip's own index, shifting every later index on
+      // this track by one — processing descending means an earlier
+      // (lower-index) split in this same batch is never affected by a
+      // later one, and vice versa never needs it to be.
+      const indices = ids.map((id) => idxOf(track, id)).filter((i) => i >= 0).sort((a, b) => b - a);
+      for (const i of indices) applyOp({ kind: 'split', track, clip: i, atFrame: playhead });
+    }
   };
 
   const doRemove = () => {
-    if (!selected) return;
-    const i = idxOf(selected.track, selected.id);
-    if (i >= 0) applyOp({ kind: 'remove', track: selected.track, clip: i });
-    setSelected(null);
+    for (const [track, ids] of selectionByTrack()) {
+      // Same descending-index reasoning as `doSplit`: `remove`'s splice
+      // shifts every later same-track index down by one, so removing two
+      // selected clips on one track by their ORIGINAL indices in ascending
+      // order would remove the wrong clip the second time through — highest
+      // index first sidesteps that entirely.
+      const indices = ids.map((id) => idxOf(track, id)).filter((i) => i >= 0).sort((a, b) => b - a);
+      for (const i of indices) applyOp({ kind: 'remove', track, clip: i });
+    }
+    setSelection([]);
   };
 
   /** D-105 — the deliberate mirror image of `doRemove`: close a selected
@@ -1196,14 +1326,21 @@ export function TimelinePane() {
   // that would land on top of something already on `toTrack` — never a
   // silent overlap, never a silent no-op either.
   const doMoveToTrack = (toTrack: number) => {
-    if (!selected) return;
-    const i = idxOf(selected.track, selected.id);
+    // Multi-select, Phase 1 (D-107): multi-clip cross-track move is a real,
+    // deliberately deferred Phase 3 (`docs/notes/multi-select.md`) — N
+    // landing positions that must be mutually non-overlapping with EACH
+    // OTHER, not just with what's already on the track, is a real
+    // sequencing problem this pass doesn't take on. `primary` (only set
+    // when exactly one clip is selected) keeps this dropdown single-clip
+    // only, same as before this pass.
+    if (!primary) return;
+    const i = idxOf(primary.track, primary.id);
     if (i < 0) return;
-    const clip = clipsOf(selected.track)[i];
+    const clip = clipsOf(primary.track)[i];
     const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
     const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, clip.start_frame, snapFrames);
-    applyOp({ kind: 'move', fromTrack: selected.track, toTrack, clip: i, startFrame, ripple });
-    setSelected({ track: toTrack, id: selected.id });
+    applyOp({ kind: 'move', fromTrack: primary.track, toTrack, clip: i, startFrame, ripple });
+    setSelection([{ track: toTrack, id: primary.id }]);
   };
 
   // D-096 — no more explicit "add track" buttons (removed per owner
@@ -1214,7 +1351,14 @@ export function TimelinePane() {
 
   const doRemoveTrack = (track: number) => {
     applyOp({ kind: 'remove_track', track });
-    if (selected?.track === track) setSelected(null);
+    // Multi-select, Phase 1 (D-107): drops every selected clip that was on
+    // the removed track. Pre-existing limitation, unchanged from before
+    // this pass — like the old single-`selected` code, this doesn't shift
+    // the `.track` index of a selected clip on a track AFTER the removed
+    // one (removing a track shifts every later track index down by one);
+    // out of scope here, matching prior behavior exactly rather than fixing
+    // an unrelated gap while generalizing this.
+    setSelection((prev) => prev.filter((s) => s.track !== track));
     if (selectedGap?.track === track) setSelectedGap(null); // D-105
   };
 
@@ -1242,6 +1386,14 @@ export function TimelinePane() {
     applyOp({ kind: 'set_track_hidden', track, hidden: !t.hidden });
   };
 
+  // D-106 — cross-track ripple sync toggle. Same unconditional-success
+  // reasoning as `toggleLock`/`toggleHidden` above.
+  const toggleSyncLocked = (track: number) => {
+    const t = tracks[track];
+    if (!t) return;
+    applyOp({ kind: 'set_track_sync_locked', track, syncLocked: !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) });
+  };
+
   // D-094 — track reorder is now a real drag handle on each header row
   // (`GripVertical`, plain HTML5 drag/drop — same mechanism as the
   // Sources-panel clip drop, just scoped to the header sidebar's own DOM,
@@ -1263,10 +1415,7 @@ export function TimelinePane() {
   const doMoveTrack = (from: number, to: number) => {
     if (from < 0 || from >= tracks.length || to < 0 || to >= tracks.length || from === to) return;
     applyOp({ kind: 'move_track', from, to });
-    if (selected) {
-      const newTrack = trackIndexAfterMove(selected.track, from, to);
-      if (newTrack !== selected.track) setSelected({ track: newTrack, id: selected.id });
-    }
+    setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, from, to) })));
   };
 
   // D-098 — the one shared `<DndContext>`'s handlers, covering both drag
@@ -1340,8 +1489,11 @@ export function TimelinePane() {
       applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame, ripple });
       // A drag also selects the clip it moved — same-track or cross-track —
       // matching normal NLE expectations (dragging a clip is also picking
-      // it), not just the old cross-track-only behaviour.
-      setSelected({ track: toTrack, id: clipId });
+      // it), not just the old cross-track-only behaviour. Multi-select,
+      // Phase 1 (D-107): a drag always replaces the whole selection with
+      // just the dragged clip — multi-clip drag-move is the same deferred
+      // Phase 3 as multi-clip "Move to" (see `doMoveToTrack`'s own doc).
+      setSelection([{ track: toTrack, id: clipId }]);
     },
     [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps, tracks],
   );
@@ -1358,16 +1510,16 @@ export function TimelinePane() {
   const tickSeconds = niceTickIntervalSeconds(pxPerSec, TICK_TARGET_PX, 1 / fps);
   const libScaleWidth = tickSeconds * pxPerSec;
 
-  const otherTracks = selected ? tracks.map((_, i) => i).filter((i) => i !== selected.track) : [];
+  const otherTracks = primary ? tracks.map((_, i) => i).filter((i) => i !== primary.track) : [];
 
   // D-090 — clip-transform popover + keyframing, wired to `set_clip_
   // transform`/`set_clip_keyframes` (D-089). `selectedClip` is `null` for a
   // stale selection (removed clip/track) — the trigger button below is
   // disabled in that case, same guard every other selection-gated toolbar
   // action here already uses.
-  const selectedIdx = selected ? idxOf(selected.track, selected.id) : -1;
-  const selectedClip: Clip | null = selected && selectedIdx >= 0 ? clipsOf(selected.track)[selectedIdx] : null;
-  const selectedTrackLocked = selected ? !!tracks[selected.track]?.locked : false;
+  const selectedIdx = primary ? idxOf(primary.track, primary.id) : -1;
+  const selectedClip: Clip | null = primary && selectedIdx >= 0 ? clipsOf(primary.track)[selectedIdx] : null;
+  const selectedTrackLocked = primary ? !!tracks[primary.track]?.locked : false;
   // Keyframes are interpolated against the clip's own SOURCE frame, not the
   // absolute timeline position — see `clipKeyframes.ts`'s doc.
   const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead) : 0;
@@ -1377,10 +1529,10 @@ export function TimelinePane() {
   const applyTransform = (
     patch: Partial<{ opacity: number; position_x: number; position_y: number; scale: number; rotation: number }>,
   ) => {
-    if (!selected || !selectedClip || selectedIdx < 0) return;
+    if (!primary || !selectedClip || selectedIdx < 0) return;
     applyOp({
       kind: 'set_clip_transform',
-      track: selected.track,
+      track: primary.track,
       clip: selectedIdx,
       opacity: patch.opacity ?? selectedClip.opacity ?? 1,
       position_x: patch.position_x ?? selectedClip.position_x ?? 0,
@@ -1391,10 +1543,10 @@ export function TimelinePane() {
   };
 
   const doUpsertKeyframe = () => {
-    if (!selected || !selectedClip || selectedIdx < 0) return;
+    if (!primary || !selectedClip || selectedIdx < 0) return;
     applyOp({
       kind: 'set_clip_keyframes',
-      track: selected.track,
+      track: primary.track,
       clip: selectedIdx,
       keyframes: upsertClipKeyframe(clipKeyframes, clipKfSourceFrame, {
         opacity: selectedClip.opacity ?? 1,
@@ -1407,20 +1559,20 @@ export function TimelinePane() {
   };
 
   const doRemoveKeyframeHere = () => {
-    if (!selected || selectedIdx < 0) return;
+    if (!primary || selectedIdx < 0) return;
     applyOp({
       kind: 'set_clip_keyframes',
-      track: selected.track,
+      track: primary.track,
       clip: selectedIdx,
       keyframes: removeClipKeyframe(clipKeyframes, clipKfSourceFrame) ?? [],
     });
   };
 
   const doClearKeyframes = () => {
-    if (!selected || selectedIdx < 0) return;
+    if (!primary || selectedIdx < 0) return;
     applyOp({
       kind: 'set_clip_keyframes',
-      track: selected.track,
+      track: primary.track,
       clip: selectedIdx,
       keyframes: clearClipKeyframes() ?? [],
     });
@@ -1451,7 +1603,7 @@ export function TimelinePane() {
             // D-105 — a selected gap takes the same Delete/Backspace as a
             // selected clip; the two are mutually exclusive (see
             // `selectedGap`'s own doc), so at most one branch ever fires.
-            if (selected) {
+            if (selection.length > 0) {
               e.preventDefault();
               doRemove();
             } else if (selectedGap) {
@@ -1466,24 +1618,36 @@ export function TimelinePane() {
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button variant="ghost" size="sm" onClick={doSplit} disabled={!selected} aria-label="Split at playhead">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={doSplit}
+                  disabled={selection.length === 0}
+                  aria-label="Split at playhead"
+                >
                   <Scissors />
                   Split
                 </Button>
               }
             />
-            <TooltipContent>Split the selected clip at the playhead</TooltipContent>
+            <TooltipContent>Split every selected clip at the playhead</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button variant="ghost" size="sm" onClick={doRemove} disabled={!selected} aria-label="Remove clip">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={doRemove}
+                  disabled={selection.length === 0}
+                  aria-label="Remove clip"
+                >
                   <Trash2 />
                   Remove
                 </Button>
               }
             />
-            <TooltipContent>Remove the selected clip</TooltipContent>
+            <TooltipContent>Remove every selected clip</TooltipContent>
           </Tooltip>
 
           {/* D-105 — the mirror-image toolbar action for a selected GAP
@@ -1513,7 +1677,7 @@ export function TimelinePane() {
 
           {/* D-080: cross-track move — see the module doc for why this is a
               dropdown and not a drag gesture. */}
-          {selected && otherTracks.length > 0 && (
+          {primary && otherTracks.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -1603,6 +1767,7 @@ export function TimelinePane() {
                 const muted = !isVideo && (track.gain ?? DEFAULT_TRACK_GAIN) <= 0;
                 const locked = !!track.locked;
                 const hidden = isVideo && !!track.hidden;
+                const syncLocked = track.sync_locked ?? DEFAULT_SYNC_LOCKED;
                 return (
                   <SortableTrackHeader
                     key={i}
@@ -1612,10 +1777,12 @@ export function TimelinePane() {
                     muted={muted}
                     locked={locked}
                     hidden={hidden}
+                    syncLocked={syncLocked}
                     label={labels[i]}
                     onToggleLock={() => toggleLock(i)}
                     onToggleHidden={() => toggleHidden(i)}
                     onToggleMute={() => toggleMute(i)}
+                    onToggleSyncLocked={() => toggleSyncLocked(i)}
                     onRemove={() => doRemoveTrack(i)}
                   />
                 );
@@ -1661,13 +1828,13 @@ export function TimelinePane() {
                   const frame = Math.round(((e.clientX - rect.left + scrollLeft - START_LEFT_PX) / pxPerSec) * fps);
                   const gap = gapAt(tracks[trackIdx], frame);
                   if (gap) {
-                    setSelected(null);
+                    setSelection([]);
                     setSelectedGap({ track: trackIdx, frame });
                     return;
                   }
                 }
               }
-              setSelected(null);
+              setSelection([]);
               setSelectedGap(null);
             }}
           >

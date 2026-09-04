@@ -114,9 +114,25 @@ export interface Track {
    *  video track) — `applyOp` has nothing to refuse for it. */
   locked?: boolean;
   hidden?: boolean;
+  /** Cross-track ripple sync (D-106/roadmap item 11) — mirrors
+   *  `chroma_timeline::Track::sync_locked`. Whether this track RECEIVES a
+   *  ripple shift triggered by an edit on a DIFFERENT track; independent of
+   *  whether THIS track's own edits ripple (always, unconditionally, same
+   *  as before this field existed). Matches DaVinci Resolve's/Palmier Pro's
+   *  real Sync Lock semantics (checked live, `docs/notes/
+   *  cross-track-ripple-sync-lock.md`), a distinct concept from `locked`
+   *  (protects THIS track's own clips from being edited at all — not the
+   *  same as whether it receives someone else's ripple). Optional here for
+   *  the same reason `gain` is: absent on a pre-D-106 track, defaulted to
+   *  `true` (NOT the bare-optional "falsy" reading) wherever a `Track` is
+   *  constructed or migrated — see `DEFAULT_SYNC_LOCKED`. */
+  sync_locked?: boolean;
 }
 
 export const DEFAULT_TRACK_GAIN = 1.0;
+/** Mirrors Rust's `default_sync_locked()` — see `Track.sync_locked`'s own
+ *  doc for why this is `true`, not a bare falsy default. */
+export const DEFAULT_SYNC_LOCKED = true;
 
 export interface Timeline {
   /** Stable id (D-045) — distinguishes this timeline among a project's others. */
@@ -359,6 +375,65 @@ export function clipAt(tr: Track, frame: number): { clip: Clip; index: number; s
   return null;
 }
 
+/** Shift every clip on `tr` starting at/after `threshold` by `delta` frames
+ *  (positive = later, negative = earlier) — mirrors `chroma-timeline::
+ *  shift_clips_at_or_after` (D-106) exactly, the one real ripple-shift
+ *  primitive shared by `add_clip`'s insertion ripple, `move`'s ripple, and
+ *  `remove_gap` (a real, pre-existing triplication in this file this pass
+ *  cleans up rather than adding a fourth copy). Mutates `tr.clips` in place
+ *  — callers already work on a `clone()`d timeline before calling this. */
+function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void {
+  for (const c of tr.clips) {
+    if (c.start_frame >= threshold) c.start_frame += delta;
+  }
+}
+
+/** The sync-lock version of `shiftClipsAtOrAfter` (D-106) — mirrors
+ *  `chroma-timeline::ripple_shift_with_auto_split` field-for-field. For a
+ *  track receiving someone ELSE's ripple (never the track directly being
+ *  edited, which keeps using the plain shift above and D-104's own
+ *  reject-on-straddle contract unchanged). A clip straddling `threshold`
+ *  (starts before it, ends after it) is auto-split there first — the
+ *  owner's own explicit call, matching Resolve's real behavior: rejecting
+ *  would make sync-lock block ripples constantly whenever a straddling clip
+ *  (a music bed, room tone — sync-lock's own headline use case) sits on a
+ *  synced track. The new right half gets a derived id (`${id}·${threshold}`,
+ *  this file's existing `split` id convention) so the ripple-flash diff
+ *  effect in `TimelinePane.tsx` picks it up and flashes it — an auto-split
+ *  is automatic but never silent. */
+function rippleShiftWithAutoSplit(tr: Track, threshold: number, delta: number): void {
+  const idx = tr.clips.findIndex((c) => c.start_frame < threshold && endFrame(c) > threshold);
+  if (idx >= 0) {
+    const left = tr.clips[idx];
+    const offset = threshold - left.start_frame;
+    const right: Clip = {
+      ...left,
+      id: `${left.id}·${threshold}`,
+      start_frame: threshold,
+      source_start: left.source_start + offset,
+      duration: left.duration - offset,
+    };
+    left.duration = offset;
+    tr.clips.splice(idx + 1, 0, right);
+  }
+  shiftClipsAtOrAfter(tr, threshold, delta);
+}
+
+/** Propagate a ripple already applied to `editedTrack` (index into
+ *  `next.tracks`) to every OTHER track whose `sync_locked` is on — mirrors
+ *  `chroma-timeline::propagate_sync_lock_ripple`. A track that's BOTH
+ *  sync-locked AND individually `locked` is skipped, same real judgment
+ *  call as the Rust side's own doc: `locked` already means "protect this
+ *  track's clips from edits through the normal ops," and a foreign ripple
+ *  auto-splitting/shifting this track's clips is exactly that. */
+function propagateSyncLockRipple(tracks: Track[], editedTrack: number, threshold: number, delta: number): void {
+  tracks.forEach((t, i) => {
+    if (i !== editedTrack && (t.sync_locked ?? DEFAULT_SYNC_LOCKED) && !t.locked) {
+      rippleShiftWithAutoSplit(t, threshold, delta);
+    }
+  });
+}
+
 // --------------------------------------------------------------------------- //
 // pure edit ops — return a NEW timeline (or the same ref if the op is a no-op)
 // --------------------------------------------------------------------------- //
@@ -451,6 +526,10 @@ export type EditOp =
    *  `chroma_timeline::Track::hidden`. Always succeeds — same reasoning as
    *  `set_track_locked`. */
   | { kind: 'set_track_hidden'; track: number; hidden: boolean }
+  /** D-106 — toggle a track's cross-track ripple sync. Mirrors
+   *  `chroma_timeline::Track::sync_locked`. Always succeeds — same
+   *  track-list-level reasoning as `set_track_locked`/`set_track_hidden`. */
+  | { kind: 'set_track_sync_locked'; track: number; syncLocked: boolean }
   /** D-086/D-089 — reorder the track list itself (compositing z-order,
    *  D-086's own doc: "track index order is compositing z-order, not
    *  cosmetic"). Mirrors `chroma_timeline::Timeline::move_track(from, to)`
@@ -533,6 +612,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.locked ? `Lock track ${op.track + 1}` : `Unlock track ${op.track + 1}`;
     case 'set_track_hidden':
       return op.hidden ? `Hide track ${op.track + 1}` : `Show track ${op.track + 1}`;
+    case 'set_track_sync_locked':
+      return op.syncLocked ? `Sync-lock track ${op.track + 1}` : `Unsync track ${op.track + 1}`;
     case 'move_track':
       return `Reorder track ${op.from + 1}`;
     case 'set_clip_transform':
@@ -552,7 +633,8 @@ function clampInt(v: number, lo: number, hi: number): number {
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   if (op.kind === 'add_clip') {
     const next = clone(tl);
-    if (next.tracks.length === 0) next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN });
+    if (next.tracks.length === 0)
+      next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
     const trackIdx = op.track < next.tracks.length ? op.track : 0;
     const track = next.tracks[trackIdx];
     let startFrame: number;
@@ -565,9 +647,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       startFrame = Math.max(0, op.startFrame);
       if (op.ripple) {
         const dur = op.clip.duration;
-        for (const c of track.clips) {
-          if (c.start_frame >= startFrame) c.start_frame += dur;
-        }
+        shiftClipsAtOrAfter(track, startFrame, dur);
+        // D-106 — sync-locked tracks ripple too, same shift.
+        propagateSyncLockRipple(next.tracks, trackIdx, startFrame, dur);
       }
     } else {
       // D-058 — always an append: the position a dragged clip lands at is
@@ -590,7 +672,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   if (op.kind === 'add_track') {
     // Mirrors `chroma_timeline::Timeline::add_track` — always succeeds.
     const next = clone(tl);
-    next.tracks.push({ kind: op.trackKind, clips: [], gain: DEFAULT_TRACK_GAIN });
+    next.tracks.push({ kind: op.trackKind, clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
     return next;
   }
   if (op.kind === 'remove_track') {
@@ -619,6 +701,12 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (op.track < 0 || op.track >= tl.tracks.length) return tl;
     const next = clone(tl);
     next.tracks[op.track].hidden = op.hidden;
+    return next;
+  }
+  if (op.kind === 'set_track_sync_locked') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    next.tracks[op.track].sync_locked = op.syncLocked;
     return next;
   }
   if (op.kind === 'move_track') {
@@ -704,12 +792,15 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // D-104 — mirrors `add_clip`'s own ripple contract: everything on the
       // destination track at/after the landing point shifts later by this
       // clip's own duration to make room, rather than overlapping it.
-      for (const other of destClips) {
-        if (other.start_frame >= op.startFrame) other.start_frame += moved.duration;
-      }
+      shiftClipsAtOrAfter(next.tracks[op.toTrack], op.startFrame, moved.duration);
     }
     moved.start_frame = op.startFrame;
     destClips.push(moved);
+    // D-106 — propagate to every OTHER sync-locked track, same shift, only
+    // when this move's own ripple actually fired.
+    if (overlaps && op.ripple) {
+      propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, moved.duration);
+    }
     return next;
   }
 
@@ -750,9 +841,12 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       if (!gap) return tl;
       const shift = gap.gapEnd - gap.gapStart;
       const next = clone(tl);
-      for (const c of next.tracks[op.track].clips) {
-        if (c.start_frame >= gap.gapEnd) c.start_frame -= shift;
-      }
+      shiftClipsAtOrAfter(next.tracks[op.track], gap.gapEnd, -shift);
+      // D-106 — every OTHER sync-locked track ripples too, unconditionally
+      // (not gated on THAT track having a matching gap — Resolve's own real
+      // behavior; see `propagateSyncLockRipple`'s own doc). The gap-*finding*
+      // requirement above (`gapAt`) stays exactly as-is for `op.track` only.
+      propagateSyncLockRipple(next.tracks, op.track, gap.gapEnd, -shift);
       return next;
     }
     case 'trim_start': {

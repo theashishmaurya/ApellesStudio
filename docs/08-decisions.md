@@ -8212,3 +8212,91 @@ prioritize.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-107 — Multi-select Phase 1 and cross-track ripple/sync-lock, built per D-106's scoping docs
+
+**decided (2026-09-04)** — built, both real features shipped
+
+Owner reviewed D-106's scoping docs and gave two real, specific directions rather than a
+blanket go-ahead: build both now, and on the one open sync-lock design question the doc
+itself flagged as unresolved (straddling-clip handling), the owner's call reversed the
+doc's own first-pass recommendation — auto-split (Resolve's real behavior), not reject.
+Reasoning, worth recording since it's not obvious: `docs/notes/cross-track-ripple-sync-lock.md`'s
+own headline example for *why* sync-lock must ripple regardless of a matching gap is "a
+continuous music bed spanning straight through the edit point" — that same scenario is
+also the one most likely to straddle any given ripple point, so "reject on straddle"
+would make sync-lock block ripples constantly in its own primary use case, defeating a
+default-on feature. The doc's real concern (silently splitting a clip on a track the
+user isn't even looking at) is mitigated for real, not waved away: the auto-split's new
+clip id gets picked up by the existing D-051 ripple-flash `animate-pulse` diff (extended
+to also flash any brand-new split-derived id, not just a shifted existing one) — an
+auto-split is automatic but never silent.
+
+**Multi-select, Phase 1** (`packages/editor/src/TimelinePane.tsx`): `Selection` is now
+`{track, id}[]`, not a singular `| null` (D-080's original shape kept as the array
+element, per the doc's own "not a bare `Set<string>`" reasoning — `Clip.id` only
+promises stability, never global uniqueness across tracks). Shift-click range-extends
+within the clicked clip's own track (ordered by `start_frame`, falling back to a plain
+toggle across tracks — no 2D range concept); cmd/ctrl-click toggles; a plain click
+replaces the selection, unchanged. `Remove`/`Split at playhead` generalize to the whole
+selection, grouped per track and processed in **descending Vec-index order** — a real
+correctness requirement, not a style choice: `remove`'s splice and `split`'s insert both
+shift every later same-track index, so removing/splitting two selected clips on one
+track by ascending index would target the wrong clip the second time through. The many
+pre-existing single-clip-only consumers (`ClipInspectorPanel`, transform, keyframes,
+"Move to ▾") key off a derived `primary` (only set when the selection is exactly one
+clip) and fall back to their existing empty/disabled state otherwise, exactly matching
+Phase 1's own scoped recommendation — multi-clip cross-track move and richer batch
+Inspector editing stay real, deferred Phase 3 work.
+
+**Cross-track ripple/sync-lock**: `Track.sync_locked: bool`, `#[serde(default = "default_sync_locked")]`
+→ `true` (Rust, `crates/chroma-timeline/src/lib.rs`) mirrored as `sync_locked?: boolean`
++ `DEFAULT_SYNC_LOCKED = true` (TS). Two new shared helpers per side —
+`shift_clips_at_or_after`/`shiftClipsAtOrAfter` (the plain shift, extracted from what was
+a real, pre-existing triplication across `move_clip`/`remove_gap`/TS's `add_clip`
+branch) and `ripple_shift_with_auto_split`/`rippleShiftWithAutoSplit` (the sync-lock
+version: auto-splits a straddling clip first, mirrors `Timeline::split`'s own
+`{id}·{frame}` derived-id scheme) — called once per sync-locked *other* track from
+`move_clip`/`remove_gap` (Rust) and `add_clip`/`move`/`remove_gap` (TS; `add_clip` has no
+Rust mirror at all — `chroma_timeline_set` stores the frontend's computed result
+verbatim, confirmed by grepping for `fn add_clip` and finding none, a real correction to
+D-106's own scoping doc, which had described a `Timeline::add_clip` Rust method that
+never existed — fixed in that doc's own text, not left to mislead the next reader). A
+track that's both sync-locked and individually `locked` is skipped — a real judgment
+call not resolved in the scoping doc: `Track.locked`'s own doc already means "protect
+this track's clips from edits through the normal ops," and a foreign ripple
+splitting/shifting a locked track's clips is exactly that. A new track-header toggle
+(`Link2`/`Unlink2`, next to lock/hide, matching where Resolve puts its own Sync Lock)
+and `set_track_sync_locked` op round it out.
+
+**Backward compatibility, verified via tests, not assumed**: an existing project's
+tracks (no `sync_locked` key at all) default to `true` on both sides — a real, intended
+behavior change for existing projects (ripple now reaches tracks it didn't before,
+since every track defaults to synced), the same call D-106's doc already made explicit
+rather than silently claiming "nothing changes." A dedicated test on each side
+(`sync_locked_defaults_true_on_a_pre_d106_track` / the TS equivalent) pins this.
+
+**Verification**: 73/73 Rust tests (6 new — propagation, `sync_locked: false` skip,
+`locked` skip, the straddle-auto-split itself with exact byte-for-byte assertions on
+both halves' `start_frame`/`duration`/`source_start`, and the no-matching-gap-required
+case), 115/115 TS tests (8 new, mirroring each Rust case), `cargo clippy` clean, `tsc`
+clean on both `packages/editor` and `app` (the pre-existing 64-error `app` baseline
+unchanged, none trace to files this pass touched). Two of the "skip" tests were
+initially **vacuous** — caught and fixed during this same pass, not shipped blind: the
+first draft's fixture never actually forced the edited track's own ripple to fire (no
+overlap), so "track 1 stays put" passed for the wrong reason (nothing rippled anywhere)
+regardless of whether the `sync_locked`/`locked` skip logic was even present. Fixed by
+adding a real overlapping clip to the edited track and asserting it DID shift, making
+the "the other track didn't" assertion meaningful. **Not** verified via real interactive
+clicking this pass — attempted a Chrome-DevTools-driven scratch harness (the pattern
+D-105's gap-delete fork used successfully) against the live dev server's Vite URL, but
+the app's full boot sequence needs substantially more of the Tauri API surface stubbed
+than a bounded attempt could cover (window chrome, settings, project-open all reach
+different `@tauri-apps/api` modules); stopped rather than keep chasing it, and relied
+instead on the (thorough, and in two cases self-corrected) unit-test suite plus a full
+manual re-read of the real diff. Flagged honestly, not silently claimed closed — the
+owner's own hands-on check in the real app is what closes this particular loop, same as
+several other UI passes tonight.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

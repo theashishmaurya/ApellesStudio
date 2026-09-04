@@ -48,8 +48,18 @@ fold two different concepts into one flag" discipline D-082's own doc comment ar
   `locked`, `hidden`** — no sync-lock field or concept anywhere, not even a stub (matches
   the audit's "Don't have" finding exactly). The TS mirror (`packages/editor/src/
   timeline.ts`) has the identical field set.
+- **Correction (D-107, found while implementing this doc): no `Timeline::add_clip` Rust
+  method exists at all** — `grep -n "fn add_clip"` on `chroma-timeline/src/lib.rs` finds
+  nothing. `add_clip` is a TypeScript/frontend-only op; `chroma_timeline_set` stores
+  whatever the frontend computes verbatim (this crate's own module doc: "no
+  server-side clamping"), so there's no Rust-side ripple call site for it to generalize.
+  The Rust side only ever needed `move_clip` and `remove_gap` touched; TS needed all
+  three (`add_clip`/`move`/`remove_gap`). This doc's line below is left as originally
+  written (with this correction) rather than silently edited, so the record of what was
+  initially assumed — and caught — stays visible.
 - **Three real ripple call sites, all single-track, all needing the same generalization**:
-  1. `Timeline::add_clip`'s insertion ripple (`chroma-timeline`) / `applyOp`'s `'add_clip'`
+  1. ~~`Timeline::add_clip`'s insertion ripple (`chroma-timeline`)~~ — TS-only, see the
+     correction above. `applyOp`'s `'add_clip'`
      case with `ripple: true` (`timeline.ts`) — D-095/D-100.
   2. `Timeline::move_clip`'s ripple (`chroma-timeline`) / `applyOp`'s `'move'` case with
      `ripple: true` (`timeline.ts`) — D-104, including its own straddle-rejection guard
@@ -150,7 +160,15 @@ not a hard dependency for building either first.
 
 ## Status
 
-Scoped 2026-09-04, not built. Real references checked and cited (Resolve, Palmier,
-Premiere). Three open design questions above need the owner's call before Phase 2 starts
-— Phase 1 (the field + UI toggle, no ripple-logic change) is safe to start independent of
-those answers.
+**Built, D-107 (2026-09-04).** All three open design questions above resolved by the
+owner: question 1 (uniform across all ripple sites) and 3 (unconditional propagation,
+no matching-gap requirement) adopted exactly as recommended; question 2 (straddling-clip
+handling) went the OTHER way from this doc's own first-pass recommendation — **auto-split
+(Resolve's real behavior), not reject** — see D-107's own entry in `docs/08-decisions.md`
+for the owner's reasoning (reject would make sync-lock block ripples constantly in its
+own headline use case, a straddling music bed). The silent-split concern this doc raised
+is real but mitigated, not ignored: the new split clip's id is picked up by the existing
+D-051 ripple-flash animation, so an auto-split is automatic but never silent. `Track.
+sync_locked`, the shared shift/auto-split helpers, and the track-header toggle are all
+real and shipped — 73/73 Rust + 115/115 TS tests, both including the exact straddle case
+this doc's own question 2 was about.

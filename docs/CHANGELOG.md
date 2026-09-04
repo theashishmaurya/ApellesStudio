@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Multi-select Phase 1 + cross-track ripple/sync-lock,
+  built (D-107).** `Selection` is a real array now (shift/cmd-click,
+  generalized Remove/Split); `Track.sync_locked` (default on) makes a
+  ripple on one track shift every other synced track too, auto-splitting a
+  straddling clip rather than blocking the ripple (the owner's call,
+  reversing D-106's own first-pass "reject" recommendation) with a real
+  ripple-flash so it's never silent. 73/73 Rust + 115/115 TS tests;
+  real-window interactive verification not achieved this pass, disclosed
+  honestly. Roadmap items 11/12 marked done.
+
 - **2026-09-04** — **Real scoping docs for the audit's top 3 gaps (D-106):
   multi-select, cross-track ripple/sync-lock, A/V linking.** No code —
   three real design docs (`docs/notes/multi-select.md`,

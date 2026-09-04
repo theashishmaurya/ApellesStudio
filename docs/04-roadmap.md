@@ -439,31 +439,38 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     mirror `gapAt`/`remove_gap` (TS) field-for-field, single-track only
     (see item 11). Verified against the real rendered component via a
     scratch Chrome-driven harness. See D-105.
-11. **Cross-track ripple / sync-lock** — the single most-cited gap against
-    every reference checked (Premiere's "ripple trailing clips in all
-    unlocked tracks," Resolve's Sync Lock, Palmier's `syncLocked` track
-    field). **Real scoping doc now exists: `docs/notes/cross-track-ripple-
-    sync-lock.md` (D-106, 2026-09-04)** — a `Track.sync_locked` boolean
-    (default `true`), extending the three existing single-track ripple
-    call sites to also shift every other sync-locked track, real
-    references confirmed live (Resolve's exact per-track semantics via
-    Blackmagic's own docs). Three open design questions flagged for the
-    owner in the doc (straddling-clip handling — auto-split vs. reject —
-    is the real fork in the road). Sequenced after item 12. **Scoped, not
-    built.**
-12. **Multi-select** — the audit's own FIRST priority. **Real scoping doc
-    now exists: `docs/notes/multi-select.md` (D-106, 2026-09-04)** — traced
-    every real consumer of `selected` (not just where it's set), found the
-    "just extend the click handler" first impression didn't hold once
-    `ClipInspectorPanel`'s single-clip contract and cross-track-move
-    landing-conflict for N clips were accounted for. Recommends a phased
-    build: Phase 1 (array `Selection`, shift/cmd-click, generalized
-    Remove/Split, Inspector empty-state for N≠1) is low-risk and the real
-    next increment; marquee-select is deliberately deferred (a genuinely
-    new pointer gesture, real coexistence risk given this session's own
-    six-round history stabilizing single-clip drag, D-094–D-100). **Scoped,
-    not built** — judged not safe enough to build blind in the same pass
-    despite being lower architectural risk than 11/13.
+11. ~~**Cross-track ripple / sync-lock**~~ — **done, D-107 (2026-09-04).** The
+    single most-cited gap against every reference checked (Premiere's
+    "ripple trailing clips in all unlocked tracks," Resolve's Sync Lock,
+    Palmier's `syncLocked` track field). `Track.sync_locked` (default
+    `true`), shared shift + auto-split-with-ripple-flash helpers on both
+    Rust and TS, wired into every real ripple call site. The scoping doc's
+    own straddling-clip question was resolved the OWNER's way, not the
+    doc's first-pass recommendation: **auto-split** (Resolve's real
+    behavior), not reject — see D-107 for the reasoning (reject would
+    block sync-lock's own headline use case). A track-header toggle
+    (`Link2`/`Unlink2`) rounds it out. 73/73 Rust + 115/115 TS tests. Real,
+    disclosed gap: not verified via live interactive clicking this pass (a
+    Chrome-DevTools harness attempt against the dev server couldn't clear
+    the full app's Tauri-IPC boot requirements in bounded time) — the
+    algorithmic core is thoroughly unit-tested, the React wiring itself is
+    reviewed but not click-tested.
+12. ~~**Multi-select**~~ — **Phase 1 done, D-107 (2026-09-04).** The audit's
+    own FIRST priority. `Selection` is now `{track, id}[]`; shift-click
+    range-extend + cmd/ctrl-click toggle wired into `onClickAction`;
+    `Remove`/`Split at playhead` generalized across the whole selection
+    (grouped per track, processed in descending Vec-index order — removing/
+    splitting shifts later same-track indices, so ascending order would
+    target the wrong clip the second time through); `ClipInspectorPanel`/
+    transform/keyframes/"Move to ▾" correctly fall back to their existing
+    single-clip path via a derived `primary` for any selection size ≠ 1,
+    exactly as the doc recommended. Same live-interaction verification gap
+    as item 11 above — disclosed, not claimed closed. **Phase 2
+    (marquee-select) and Phase 3 (multi-clip cross-track move, richer batch
+    Inspector editing) remain real, deliberately deferred** — a genuinely
+    new pointer gesture with real dnd-kit coexistence risk, per this
+    session's own six-round history stabilizing single-clip drag
+    (D-094–D-100); wait for Phase 1's own real usage first.
 13. **Real A/V linking (link/unlink, L-cut/J-cut)** — today's model is
     all-or-nothing (D-050 embedded / D-057 independent, no in-between).
     **Real scoping doc now exists: `docs/notes/av-linking.md` (D-106,

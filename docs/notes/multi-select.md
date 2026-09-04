@@ -127,7 +127,19 @@ another reason to land Phase 1 first.
 
 ## Status
 
-Scoped 2026-09-04, not built. **Recommendation: Phase 1 is the right next increment** —
-bounded, enumerable, no new gesture risk, real value (covers the common multi-select
-cases). Phases 2 and 3 are real but should wait for Phase 1's own real usage before
-starting, per the reasoning above.
+**Phase 1 built, D-107 (2026-09-04).** `Selection` is now `{track, id}[]`, shift/cmd-click
+wired into `onClickAction`, `Remove`/`Split at playhead` generalized (processed in
+descending per-track Vec-index order — a real correctness requirement this doc didn't
+spell out in that much detail, since removing/splitting is what actually surfaces the
+index-shift hazard). `ClipInspectorPanel`/transform/keyframes/"Move to ▾" all correctly
+fall back to their single-clip-only path via a derived `primary`, exactly as recommended.
+73/73 Rust + 115/115 TS tests pass (this phase's own logic lives entirely in
+`TimelinePane.tsx`, not the pure `timeline.ts` ops, so most new coverage is on the
+sync-lock half built alongside it — see D-107). **Not verified via real interactive
+clicking this pass** (a Chrome-DevTools scratch-harness attempt against the live dev
+server hit a wall booting the full app shell without Tauri IPC — see D-107's own
+verification note) — relied on careful code review + the type-checked, exhaustively
+reasoned-through descending-index logic instead; flagged honestly rather than claimed
+closed. **Phases 2 (marquee-select) and 3 (multi-clip cross-track move, richer batch
+Inspector editing) remain real, deliberately deferred** — pick up once Phase 1 has real
+usage, per the original reasoning above, unchanged.

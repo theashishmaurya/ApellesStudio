@@ -574,7 +574,7 @@ describe('add_track / remove_track / set_track_gain (D-080)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, { kind: 'add_track', trackKind: 'audio' });
     expect(after.tracks).toHaveLength(2);
-    expect(after.tracks[1]).toEqual({ kind: 'audio', clips: [], gain: 1.0 });
+    expect(after.tracks[1]).toEqual({ kind: 'audio', clips: [], gain: 1.0, sync_locked: true });
   });
 
   it('remove_track drops the track and every clip on it', () => {
@@ -804,5 +804,114 @@ describe('clipFromDraggedMedia (D-070)', () => {
   it('returns null for media with no known frame count (unprobed/offline)', () => {
     expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov', frameCount: null })).toBeNull();
     expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov' })).toBeNull();
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// cross-track ripple sync (D-106) — mirrors crates/chroma-timeline's own
+// sync-lock test suite field-for-field, same fixtures/assertions.
+// -------------------------------------------------------------------------- //
+
+function twoTrack(track0: Clip[], track1: Clip[]): Timeline {
+  return {
+    id: 't',
+    name: 't',
+    tracks: [
+      { kind: 'video', clips: track0 },
+      { kind: 'video', clips: track1 },
+    ],
+  };
+}
+
+describe('cross-track ripple sync (D-106)', () => {
+  it('treats an absent sync_locked key as true (backward compat) — a pre-D-106 track still ripples', () => {
+    // The fixture deliberately never sets `sync_locked` on track 1 — a real
+    // pre-D-106 project's tracks have no such key at all. It must still
+    // receive the ripple, matching a freshly-built track's own default.
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 50, duration: 50 })],
+      [clip('x', 'X', { start_frame: 200, duration: 50 })],
+    );
+    expect(before.tracks[1].sync_locked).toBeUndefined();
+    before.tracks[0].clips.push(clip('new', 'New', { start_frame: 300, duration: 30 }));
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 2, startFrame: 50, ripple: true });
+    expect(after.tracks[1].clips.find((c) => c.id === 'x')!.start_frame).toBe(230);
+  });
+
+  it('add_track produces a track with sync_locked: true', () => {
+    const before = twoTrack([], []);
+    const after = applyOp(before, { kind: 'add_track', trackKind: 'audio' });
+    expect(after.tracks[2].sync_locked).toBe(true);
+  });
+
+  it('move ripple propagates to a sync-locked track', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 50, duration: 50 })],
+      [clip('x', 'X', { start_frame: 200, duration: 50 })],
+    );
+    before.tracks[0].clips.push(clip('new', 'New', { start_frame: 300, duration: 30 }));
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 2, startFrame: 50, ripple: true });
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(80);
+    expect(after.tracks[1].clips.find((c) => c.id === 'x')!.start_frame).toBe(230);
+  });
+
+  it('move ripple skips a track with sync_locked: false', () => {
+    // Note the fixture MUST force a real ripple on track 0 (via clip `b`
+    // overlapping the landing point) — otherwise this test would pass
+    // vacuously (nothing ripples anywhere, track 1 "unaffected" for the
+    // wrong reason). Asserting `b` DID shift proves the ripple genuinely
+    // fired and track 1 was deliberately excluded, not just untouched.
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 50, duration: 50 })],
+      [clip('x', 'X', { start_frame: 200, duration: 50 })],
+    );
+    before.tracks[1].sync_locked = false;
+    before.tracks[0].clips.push(clip('new', 'New', { start_frame: 300, duration: 30 }));
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 2, startFrame: 50, ripple: true });
+    // ripple genuinely fired on track 0 — track 1's exclusion below is real, not vacuous
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(80);
+    expect(after.tracks[1].clips.find((c) => c.id === 'x')!.start_frame).toBe(200);
+  });
+
+  it('move ripple skips a locked track even if sync_locked', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 50, duration: 50 })],
+      [clip('x', 'X', { start_frame: 200, duration: 50 })],
+    );
+    before.tracks[1].locked = true;
+    before.tracks[0].clips.push(clip('new', 'New', { start_frame: 300, duration: 30 }));
+    const after = applyOp(before, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 2, startFrame: 50, ripple: true });
+    // ripple genuinely fired on track 0 — track 1's exclusion below is real, not vacuous
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(80);
+    expect(after.tracks[1].clips.find((c) => c.id === 'x')!.start_frame).toBe(200);
+  });
+
+  it('remove_gap auto-splits a straddling clip on a synced track', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 80, duration: 50 })],
+      [clip('x', 'X', { start_frame: 20, duration: 180, source_len: 10_000 })],
+    );
+    const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(50);
+
+    const track1 = after.tracks[1].clips;
+    expect(track1).toHaveLength(2);
+    const left = track1.find((c) => c.id === 'x')!;
+    expect(left.start_frame).toBe(20);
+    expect(left.duration).toBe(60);
+    const right = track1.find((c) => c.id !== 'x')!;
+    expect(right.id).toBe('x·80');
+    expect(right.start_frame).toBe(50);
+    expect(right.duration).toBe(120);
+    expect(right.source_start).toBe(60);
+  });
+
+  it('remove_gap ripple propagates without a matching gap on the synced track', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 80, duration: 50 })],
+      [clip('y', 'Y', { start_frame: 90, duration: 20 })],
+    );
+    const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
+    expect(after.tracks[1].clips.find((c) => c.id === 'y')!.start_frame).toBe(60);
   });
 });
