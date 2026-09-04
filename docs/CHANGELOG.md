@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **A third, distinct root cause behind "No project open"
+  found and fixed (B-032/D-108).** Tauri listener cleanup (`unlisten.then((f)
+  => f())`) could throw when Vite's dev-mode HMR reloaded mid-flight,
+  corrupting the IPC bridge — Tauri's own console warning names the exact
+  scenario. Dev-mode-only (no HMR in production), but frequent enough this
+  session (many concurrent forks editing files against one shared dev
+  instance) to repeatedly masquerade as the project-open bug already fixed
+  twice under different real causes (B-004, B-031). Fixed with a shared
+  `safeUnlisten()` helper across all 6 real call sites. Idle-window
+  verified (150s+, zero recurrence); honestly flagged as not
+  force-reproduced on demand.
 - **2026-09-04** — **Multi-select Phase 1 + cross-track ripple/sync-lock,
   built (D-107).** `Selection` is a real array now (shift/cmd-click,
   generalized Remove/Split); `Track.sync_locked` (default on) makes a

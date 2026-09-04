@@ -8,6 +8,7 @@ import Slider from '../ui/Slider';
 import Text from '../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { listen } from '@tauri-apps/api/event';
+import { safeUnlisten } from '../../utils/tauriListeners';
 
 interface DenoiseModalProps {
   isOpen: boolean;
@@ -248,7 +249,7 @@ export default function DenoiseModal({
       setBatchProgress(e.payload);
     });
     return () => {
-      unlisten.then((f) => f());
+      safeUnlisten(unlisten);
     };
   }, []);
 

@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { platform } from '@tauri-apps/plugin-os';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, X } from 'lucide-react';
+import { safeUnlisten } from '../utils/tauriListeners';
 
 const RestoreDownIcon = ({ size = 14, className = '' }) => (
   <svg
@@ -51,15 +52,12 @@ export default function TitleBar() {
 
     updateMaximizedState();
 
-    let unlisten: () => void;
-    appWindow
-      .onResized(() => {
-        updateMaximizedState();
-      })
-      .then((u) => (unlisten = u));
+    const unlistenPromise = appWindow.onResized(() => {
+      updateMaximizedState();
+    });
 
     return () => {
-      if (unlisten) unlisten();
+      safeUnlisten(unlistenPromise);
     };
   }, [appWindow]);
 

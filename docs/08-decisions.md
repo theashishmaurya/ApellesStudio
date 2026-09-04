@@ -8300,3 +8300,67 @@ several other UI passes tonight.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+## D-108 — `safeUnlisten`: every Tauri listener cleanup guarded against the dev-mode HMR/async-IPC race (B-032)
+
+**decided (2026-09-04)** — real root cause found, a shared defensive fix shipped
+
+The owner hit "No project open" again, freshly, on a clean app instance — the third
+distinct root cause behind this same surface symptom this session (after the historical
+B-004 and this session's own B-031). Traced via the live dev log, not guessed: at
+11:43:57am, ~2 minutes after a clean boot and well before any project-open attempt,
+`app.log` showed `TypeError: Cannot read properties of undefined (reading
+'unregisterListener')` inside `@tauri-apps/api/event.js`'s internal `_unlisten`, called
+from `App.tsx`'s own listener-cleanup effects. B-004's fix (`app/index.html` pointing at
+the correct `main.tsx` entry) was verified still correctly in place — this is not a
+regression of that bug, it's a distinct cause producing the same symptom class.
+
+**Real root cause**: Tauri's own console warning names it directly — `[TAURI] Couldn't
+find callback id N. This might happen when the app is reloaded while Rust is running an
+asynchronous operation` — confirmed live in a genuinely idle window (no concurrent Rust
+builds, no other fork active) at 12:19pm on a freshly restarted instance. Every `listen`/
+`onResized` call in this app returns a `Promise<UnlistenFn>`; the standard cleanup
+(`unlistenPromise.then((f) => f())`) races Vite's dev-mode HMR module-reload against that
+promise's resolution — if HMR reloads the module graph (very frequent this session, given
+many forks concurrently editing frontend/backend files against one shared running dev
+instance) while the promise is still pending, the resolved unlisten function can be
+invoked against a `window.__TAURI_INTERNALS__` bridge that no longer matches what
+registered it, and `_unlisten` throws. **This is a dev-mode-only failure class** — no HMR
+exists in a production build, so this specific mechanism cannot occur in a shipped app —
+but in dev, with this session's practice of many concurrent editors sharing one live
+instance, it was frequent enough to repeatedly masquerade as a "project won't open" bug.
+
+**Fix**: a new shared `safeUnlisten()` helper (`app/src/utils/tauriListeners.ts`) wrapping
+both the promise rejecting and the resolved function itself throwing — every real call
+site (`App.tsx` ×2, `useTauriListeners.ts`, `useChromaControl.ts` — which already had an
+ad-hoc `.catch(() => {})` that only guarded the promise, not the resolved-function-throws
+case — `TitleBar.tsx`, `NegativeConversionModal.tsx`, `DenoiseModal.tsx`) now goes through
+it instead of six independent, inconsistent hand-rolled patterns. This does not eliminate
+the underlying HMR-vs-async-IPC race (a dev-tooling interaction, not something app code
+can fully prevent) — it makes the failure mode silent and harmless instead of an unhandled
+rejection that can cascade into a broken IPC bridge for the rest of the session.
+
+**Verification**: `tsc --noEmit -p app` clean on every touched file, 64-error baseline
+unchanged. Restarted the app fully clean (no concurrent cargo/other-fork activity) and
+watched the live log for 150+ seconds of genuinely idle running — well past the ~2-minute
+window the original error fired in — zero recurrences of `unregisterListener`/`Couldn't
+find callback`. Attempted a Chrome-DevTools-driven check against the Vite dev server
+directly (same technique D-105's gap-delete fork used) — confirmed this doesn't work for
+whole-app verification the way it did for an isolated component: a plain browser tab has
+no `window.__TAURI_INTERNALS__` at all (Tauri's bridge only exists inside the real native
+WKWebView), so the app throws immediately on anything touching Tauri's window APIs
+(`<WindowControls>`'s own `.metadata` read) — an expected, unrelated failure, not a
+finding about this fix. **Honestly flagged, not claimed closed**: I could not force-
+reproduce the exact HMR-timing race on demand (it depends on external file-edit activity
+this fork didn't control), so this is idle-window-negative plus a structurally sound
+defensive guard, not a deterministic repro-then-fix-then-repro-again proof. The owner's
+own continued use across a session with concurrent editing is the real test.
+
+**Process note, worth the owner reading directly**: an operational pattern, not a code
+fix, would remove this failure class' entire trigger — a clean dev-server restart right
+before testing (rather than trusting HMR through a burst of concurrent Rust/frontend
+edits from several forks) avoids the race outright, same recommendation implicit in every
+"the app may need a restart to pick this up" note across tonight's other passes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

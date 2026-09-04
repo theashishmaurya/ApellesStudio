@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { safeUnlisten } from '../utils/tauriListeners';
 import { Status } from '../components/ui/ExportImportProperties';
 import { useProcessStore } from '../store/useProcessStore';
 import { useEditorStore } from '../store/useEditorStore';
@@ -314,7 +315,7 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
       }
       thumbnailBuffer.current = {};
       ratingBuffer.current = {};
-      listeners.forEach((p) => p.then((unlisten) => unlisten()));
+      listeners.forEach(safeUnlisten);
     };
   }, []);
 }

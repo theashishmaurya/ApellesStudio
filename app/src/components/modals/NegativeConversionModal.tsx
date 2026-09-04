@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation, Trans } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { safeUnlisten } from '../../utils/tauriListeners';
 import { RotateCcw, ZoomIn, ZoomOut, Maximize, Save, Loader2, Eye, EyeOff, Info } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Button from '../ui/Button';
@@ -64,7 +65,7 @@ export default function NegativeConversionModal({
       setProgress(e.payload);
     });
     return () => {
-      unlisten.then((f) => f());
+      safeUnlisten(unlisten);
     };
   }, []);
 

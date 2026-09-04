@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
+import { safeUnlisten } from '../utils/tauriListeners';
 
 import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
@@ -1513,7 +1514,7 @@ export function useChromaControl() {
     });
 
     return () => {
-      unlistenP.then((f) => f()).catch(() => {});
+      safeUnlisten(unlistenP);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

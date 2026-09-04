@@ -1,6 +1,7 @@
 import { type PointerEvent as ReactPointerEvent, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { safeUnlisten } from './utils/tauriListeners';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ToastContainer, toast, Slide } from 'react-toastify';
 import {
@@ -434,7 +435,7 @@ function App() {
     const interval = setInterval(() => invoke(Invokes.CheckAIConnectorStatus), 10000);
     return () => {
       clearInterval(interval);
-      unlisten.then((f) => f());
+      safeUnlisten(unlisten);
     };
   }, [setEditor]);
 
@@ -557,7 +558,7 @@ function App() {
     checkFullscreen();
     const unlistenPromise = appWindow.onResized(checkFullscreen);
     return () => {
-      unlistenPromise.then((unlisten: any) => unlisten());
+      safeUnlisten(unlistenPromise);
     };
   }, [setUI]);
 
