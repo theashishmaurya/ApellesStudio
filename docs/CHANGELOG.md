@@ -53,6 +53,21 @@ One or two lines per session. Detail lives in the decision it references.
   (`edit::PROBE_CACHE` never invalidates, shadowing the mtime+size staleness
   contract of the disk cache beneath it) and **B-057** (`filmstrip::CHUNK_LOCKS`
   leaks on the extraction error path). No code changed.
+- **2026-09-05** — **A reusable pointer-gesture test harness + a permanent
+  real-DOM regression test for marquee-select (D-142).** This repo had built
+  the same real-`PointerEvent`-against-a-real-component browser harness from
+  scratch five times (D-095/096/098/100/137), always deleted after use, never
+  committed. `packages/editor/src/testUtils/pointerHarness.ts` extracts the
+  real common pattern (real `PointerEvent` dispatch with rAF waits, real
+  `<StrictMode>` mounting, jsdom's missing layout/pointer-capture APIs
+  stubbed, a Tauri `invoke` stand-in, an enforced zero-console-errors check)
+  as an importable module; `TimelinePane.marquee.dom.test.tsx` uses it to
+  mount the REAL `TimelinePane` and re-verify 9 of D-137's own scenarios
+  permanently — runs on every `npm test --workspace @chroma/editor` (277
+  passing, 9 new). `app/harness.html` + `harness-main.tsx` (the real-Chromium
+  tier for what jsdom's fake layout can't check — dnd-kit's own drop-target
+  resolution) are promoted from scratch-and-delete to permanent and checked
+  in, cross-validated live via `chrome-devtools` MCP tonight.
 - **2026-09-05** — **Marquee-select on the Edit timeline (D-137, roadmap item
   12 Phase 2).** Click-drag on empty timeline canvas rubber-bands a selection;
   every clip the rect intersects is selected, shift/cmd/ctrl unions onto the

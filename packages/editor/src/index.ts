@@ -14,6 +14,14 @@
  */
 
 export { EditorTab } from './EditorTab';
+/** Exported alongside `EditorTab` (D-142) so `app/harness.html`'s permanent
+ *  isolated pointer-gesture harness — and any future one — can mount the
+ *  timeline strip standalone, matching the precedent D-095 established
+ *  (mounting `TimelinePane` alone sidesteps `PreviewPane`'s own decode/canvas
+ *  surface and the full app's Tauri-IPC boot chain, neither relevant to a
+ *  pointer-gesture check) without reaching past this package's public API to
+ *  do it. */
+export { TimelinePane } from './TimelinePane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';

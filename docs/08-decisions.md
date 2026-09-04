@@ -10357,5 +10357,168 @@ independent forks both proposed the exact title "D-140" for two unrelated
 scoping passes on the same night. **B-056**/**B-057** were re-verified free
 against `main`'s real tip at rebase time and kept as drafted.
 
+---
+
+## D-142 — A reusable, checked-in pointer-gesture test harness (`testUtils/pointerHarness.ts`), a permanent real-DOM regression test for marquee-select, and `app/harness.html` promoted from scratch-and-delete to permanent
+
+**Context.** This codebase has built the same real-`PointerEvent`-against-a-real-component
+browser harness from scratch at least five separate times — D-095, D-096, D-098, D-100,
+D-137 — every time as `app/harness.html` + `app/src/harness-main.tsx`, every time deleted
+right after use, never committed. Each pass independently re-derived the same real lessons
+about this exact class of bug (pointer-gesture code that looks correct and passes pure-logic
+unit tests, but breaks against real DOM/pointer-capture/dnd-kit behaviour). Owner directive
+tonight: stop rebuilding it, extract the real common pattern from the real prior
+implementations (not a theoretical one), and give it permanent regression coverage using a
+feature that's already known-tricky (D-137's marquee-select) rather than a synthetic example.
+
+**Research done before building anything.** Read D-095/096/098/100/137 in full and grepped
+`git log --all` for `harness`/`pointer` across every branch — confirmed the harness code
+itself has genuinely never been committed (every entry says so in as many words; the search
+found only the decision-doc prose, no surviving implementation). The real, load-bearing facts
+extracted from those five entries, not invented:
+
+1. **The shape**: a scratch Vite entry (`app/harness.html` + `app/src/harness-main.tsx`)
+   mounting one real component standalone (`TimelinePane`) against a hand-seeded
+   `useEditorTimelineStore` fixture, with `window.__TAURI_INTERNALS__`/`invoke` stubbed —
+   sidesteps the full app's Tauri-IPC boot chain (D-095 tried loading the real app in a plain
+   tab first; it crashed in `<WindowControls>` reading native window metadata that doesn't
+   exist outside Tauri's shell).
+2. **Real `PointerEvent`s, not native `DragEvent`s and not React synthetic events** — D-098's
+   own finding: `mcp__chrome-devtools__drag` (this session's usual CDP drag tool) does not
+   trigger dnd-kit's `PointerSensor` at all, because dnd-kit deliberately doesn't listen for
+   the events that class of tool produces.
+3. **Real `requestAnimationFrame` waits between every event** — also D-098: firing a whole
+   gesture synchronously in one script call never lets dnd-kit's or React's own
+   measurement/commit effects run between steps; a real human moving a real mouse takes many
+   multiples of one frame to get anywhere, so this is a synthetic-test-speed artifact, not
+   something real usage would hit.
+4. **`window.blur` + a real synthetic `pointercancel`, not just resetting local state** —
+   D-100: resetting only this app's own `activeDrag` left dnd-kit's `AbstractPointerSensor`
+   still internally tracking the interrupted `pointerId`, silently breaking the NEXT drag on a
+   different clip. A real `pointercancel` dispatched on `document` releases dnd-kit's own
+   internal state too, confirmed by reading its bundled source.
+5. **Real `<React.StrictMode>`**, not just "does it install" — D-098/D-100/D-137 all
+   specifically re-verified under StrictMode's double-invoke, which is what surfaces a real
+   class of effect bug (dnd-kit issue #2116 was checked this way, not assumed fine).
+6. **The persistent, honest gap every entry discloses**: none of this is the real Tauri/
+   WKWebView window — Chromium driven by real `PointerEvent`s is meaningfully stronger than
+   the native-drag harness D-095/096 used, but WKWebView is a different rendering/DnD engine,
+   and "looked fine in code, broke on real pointer input" is this feature area's own history.
+
+**What was built.**
+
+1. **`packages/editor/src/testUtils/pointerHarness.ts`** — the extracted common pattern, as a
+   real, importable module (not a doc, not a template to copy-paste): `firePointerEvent`/
+   `dragPointer`/`linearPath` (real `PointerEvent` construction + dispatch, act()-wrapped —
+   see below), `nextFrame`/`waitFrames` (real rAF waits), `mount` (real `react-dom/client`
+   `createRoot` into an attached DOM node, `<React.StrictMode>` by default), `stubOffsetMetrics`/
+   `installResizeObserverStub`/`installPointerCaptureStub` (the three jsdom-specific gaps found
+   empirically while building the test below — see "jsdom, for real" below), `createInvokeStub`
+   (a Tauri `invoke` stand-in), and `captureConsole` (makes "zero console errors/warnings" — every
+   prior harness's own stated bar for "clean" — a real, enforced assertion instead of an
+   eyeballed log read).
+
+2. **`packages/editor/src/TimelinePane.marquee.dom.test.tsx`** — 9 permanent scenarios built on
+   the harness above, mounting the REAL `TimelinePane` (not a stand-in) against a real 3-track/
+   4-clip fixture: a plain marquee drag replacing the selection; shift- and cmd/meta-drag
+   unioning onto it; a sub-threshold press falling through to a plain click-clear; a press on a
+   real rendered `[data-chroma-clip-drag]` clip never starting a marquee (the D-100/D-137
+   dnd-kit coexistence rule, checked against real DOM, not the hand-written fake `closest()`
+   `marquee.test.ts` itself admits to using); a right-button press never starting one; Escape
+   abandoning an in-flight marquee without the terminating click wiping the pre-existing
+   selection (the exact live-found regression D-137's own entry records); a completed marquee
+   superseding a selected gap; and a ctrl-wheel zoom mid-drag proving the band's live-viewport
+   read (not one closed over at `pointerdown`) by rescaling the painted band by exactly
+   `ZOOM_STEP^ticks` with zero intervening pointer movement. Runs on every `npm test
+   --workspace @chroma/editor` — **277 tests passed, 9 new**, stable across repeated runs.
+
+3. **`TimelinePane` is now a real, intentional export of `@chroma/editor`** (`index.ts`,
+   alongside `EditorTab`) — needed so `app/harness.html` (a different package, `app/`) can mount
+   it without reaching past the package's public API, which this repo's own D-039 layering
+   discipline would otherwise flag.
+
+4. **`app/harness.html` + `app/src/harness-main.tsx` — promoted from scratch-and-delete to
+   permanent, checked in.** Same shape D-095 established (mount `TimelinePane` standalone,
+   stub `window.__TAURI_INTERNALS__.invoke`, a hand-seeded fixture), but committed this time,
+   with a CDP-reachable `window.__chromaHarness` control surface (`seed`/`reset`/
+   `setStrictMode`/live `timeline`/`selection` getters) so the next session can reseed or
+   introspect without editing the file.
+
+**jsdom, for real — three genuine gaps found empirically, not assumed, each with a disclosed,
+non-hack fix:**
+
+- **No layout engine at all.** Every element's `offsetWidth`/`clientWidth`/
+  `getBoundingClientRect()` is zero unless stubbed. `@xzdarcy/react-timeline-editor`'s
+  `react-virtualized`-backed rows read exactly that as "nothing to render" — confirmed by a
+  spike mount that rendered zero clips before the fix. `stubOffsetMetrics` (a fixed
+  1200×600 `HTMLElement.prototype` override) is what makes the REAL virtualized clip rows —
+  not a stand-in — actually paint, with real inline pixel positions computed by the real
+  library. A second, useful consequence checked directly: jsdom's unstubbed
+  `getBoundingClientRect()` returns `{top:0,left:0,...}` for every element, which means a
+  dispatched event's raw `clientX`/`clientY` is already edit-area-relative with no rect
+  subtraction needed — simplifies the test's own coordinate math, stated explicitly in that
+  file rather than relied on silently.
+- **No Pointer Events capture API.** `setPointerCapture`/`releasePointerCapture`/
+  `hasPointerCapture` are absent from `Element.prototype` in the installed jsdom (checked
+  directly, not assumed) — dnd-kit's `PointerSensor` activator calls `setPointerCapture` as
+  part of starting to track a press, so every real `pointerdown` on a `useDraggable` node threw
+  without a stub. `installPointerCaptureStub` supplies no-op versions — jsdom has no
+  hit-testing to retarget anyway, and this app's own marquee gesture deliberately never uses
+  capture at all (`TimelinePane.tsx`'s own doc), so only dnd-kit needed this.
+- **React's act() warnings fire on the update, not on whether it's eventually flushed.**
+  First attempt wrapped only the post-event `await nextFrame()` in `act()`; state updates from
+  a plain `window.addEventListener` listener (this app's own marquee/dnd-kit move+up handlers,
+  deliberately window-level, not React props — see `TimelinePane.tsx`'s own doc on why) happen
+  SYNCHRONOUSLY inside `dispatchEvent`, before that later `act()` call even starts, so the
+  warning still fired and — more importantly — a store `setState` made directly from a test
+  body without `act()` could race a handler's stale closure (found live: a shift-drag test's
+  additive union came back missing the pre-existing selection, because the pointerdown handler
+  had already closed over the OLD selection by the time the update was visible). Fixed by
+  wrapping the dispatch itself, not just the wait (`firePointerEvent`'s own `act(() => {...})`,
+  and `actSync` for direct test-body mutations).
+
+**Real, live cross-validation in an actual Chromium tab, not just jsdom.** Started `app`'s
+plain `vite` dev server (no Tauri needed for this), opened `app/harness.html` via
+`mcp__chrome-devtools__new_page`, and drove two of the same scenarios the jsdom test covers
+using hand-written `evaluate_script` calls replicating `pointerHarness.ts`'s own event
+construction: a plain marquee drag over the real, really-laid-out clips selected exactly
+`[{track:0,id:'a'},{track:1,id:'c'}]` (the geometrically correct hit set, computed from REAL
+`getBoundingClientRect()` values this time, not jsdom's zero stand-in) and the band correctly
+disappeared on release; a press-and-drag starting on a real rendered clip never raised a band.
+Zero new console errors in either case. Screenshot taken of the live band mid-drag. This is
+the strongest verification any of D-095 through this entry has actually run — a real browser,
+the real permanent harness file, not a rebuilt scratch one.
+
+**Note on concurrent forks.** Two other sibling worktrees' own scratch harnesses ("TimelinePane
+harness (scratch)", ports 1428/1429) were already open in the same Chrome instance when this
+session connected — left untouched, per the standing instruction not to interfere with
+concurrent work; this session's own tab (port 4173, a plain `vite` process this session started
+and stopped) was closed and the process killed before finishing.
+
+**Verification.** `npm test --workspace @chroma/editor` — **277 passed** (was 268; 9 new,
+`TimelinePane.marquee.dom.test.tsx`), stable across 3 repeated runs (StrictMode double-invoke
+is exercised every run, not just once). `npx tsc --noEmit -p packages/editor` — clean, zero
+output. `npx tsc --noEmit -p app` — exactly the same 64 pre-existing errors, unchanged baseline,
+none in `harness-main.tsx`. Live Chromium cross-check above. Worktree infra: this worktree's
+`node_modules` was, again, a symlink into the main tree's (the same trap D-136/D-138 each
+independently re-found in their own fresh worktrees) — replaced with a real local `npm install`
+before trusting any `tsc`/`vitest` output; the resulting `package-lock.json` diff is only the
+new `jsdom`/`react-dom`/`@types/react-dom` devDependencies this entry adds to
+`packages/editor/package.json`, nothing else changed.
+
+**Honest gaps.** (1) **The jsdom tier cannot check dnd-kit's own drop-target resolution** — its
+collision detection measures real rects via `getBoundingClientRect()`, which is zero/degenerate
+for every element under the `stubOffsetMetrics` fixture, so a same-track/cross-track clip MOVE
+or a track REORDER actually landing correctly is not something this jsdom test asserts (it
+proves the MARQUEE side of coexistence — a press on a clip never raises a band — not dnd-kit's
+own drag outcome). That coverage still exists only via the real-Chromium tier, now permanent but
+still manual. (2) **`app/harness.html` was cross-checked for two scenarios live tonight, not
+D-137's full 13/14** — a real, stronger start than "trust the file compiles," but re-running the
+complete original scenario list through this specific permanent file is real remaining work for
+whoever next touches this feature, not claimed done here. (3) **Still not the real Tauri/
+WKWebView window** — same disclosed constraint every entry since D-125 states; a real Chromium
+tab, even one driving the real permanent harness with real `PointerEvent`s, is not proof against
+WKWebView's own DnD engine.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

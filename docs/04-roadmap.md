@@ -658,6 +658,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       raise a band), which caught one real bug (Escape wiped the pre-existing
       selection via the terminating click) before it shipped. Still not the
       real Tauri/WKWebView window — disclosed in D-137, not claimed closed.
+      **D-142 (2026-09-05) made that verification permanent**: a reusable
+      `testUtils/pointerHarness.ts` plus a real-DOM jsdom regression test
+      (`TimelinePane.marquee.dom.test.tsx`, 9 scenarios, runs on every `npm
+      test`) replace the scratch-and-delete browser session this entry
+      originally described, and `app/harness.html` (also now permanent) is
+      the same real-Chromium tier for whatever this jsdom tier still can't
+      check (dnd-kit's own rect-based drop-target resolution).
     - **Phase 3 — multi-clip cross-track move, richer batch Inspector
       editing — still real, still deliberately deferred.** Wait for Phases 1
       and 2's own real usage first.
