@@ -32,6 +32,14 @@ export interface MediaVideoInfo {
   fps: number;
   frameCount: number;
   durationSecs: number;
+  /** D-129 — whether this source has a decodeable audio stream. The Edit tab
+   *  reads it at drop time to decide whether the dropped clip gets a linked
+   *  audio half (`@chroma/editor`'s `linkedClipsFromDraggedMedia`).
+   *  **Absent/`null` means "not probed for this yet", NOT "silent"** — a pool
+   *  item imported before D-129 has no value until `chroma_media_list`'s
+   *  one-time backfill resolves it (see the Rust field's own doc). Treated
+   *  conservatively as "no audio half" while it's unknown. */
+  hasAudio?: boolean | null;
 }
 
 /** Mirrors `chroma::project::MediaItemDto` (serde camelCase). */

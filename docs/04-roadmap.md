@@ -636,6 +636,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     timeline export path at all** (`export_video` is Colorist's single-clip
     exporter — item 3's deferred "shell-level export"), and that's the
     other consumer a real composition space (item 14 Phase 0a) would serve.
+13. ✅ **Real A/V linking — dropping a clip creates a linked audio clip
+    (D-129, 2026-09-04).** The owner's own ask ("in palmier and other
+    anytime i drop a clip it… created a linked track in audio"), which
+    required the exact model change `docs/notes/av-linking.md` had flagged
+    as a blocking prerequisite and deferred: **a video clip's embedded
+    audio is now a real, separate `Clip`.** Built: `Clip.link_group`
+    (group-based, `media_id`'s back-link shape); a dropped source with
+    audio produces a linked pair in **one atomic `add_clip` op**, with the
+    audio track found-or-created through the existing `add_track`
+    mechanism (D-095/096/117), never a second one; `MediaVideoInfo::
+    has_audio` (the signal D-097 flagged as missing, with a one-time
+    backfill for existing pool items); `move`/`trim_start`/`trim_end`/
+    `split`/`remove` all propagate across a link group or reject whole
+    (`LinkDesync` — B-033's reject-rather-than-corrupt discipline);
+    `unlink` dissolving the complete group, per Palmier's own semantics.
+    `chroma_audio_play` skips a linked video clip's embedded stream so the
+    same audio is never summed with itself. Pre-D-129 clips are unlinked
+    and unchanged, with **no retroactive migration on purpose** (it would
+    rewrite the owner's timeline layout unasked). Interaction model is
+    `av-linking.md`'s own recommended option (b). **Deferred and named**: a
+    manual `link`/relink op, Premiere's global Linked-Selection toggle +
+    Option/Alt override, a ripple-insert of a pair onto a non-sync-locked
+    audio track, an MCP/Tauri `unlink` command.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

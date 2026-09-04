@@ -7,12 +7,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyOp,
+  audioTrackWithRoom,
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
+  ensureAudioTrackWithRoom,
   findClip,
   gapAt,
   labelForOp,
+  linkedClipIds,
+  linkedClipsFromDraggedMedia,
   nextAppendFrame,
   resolveClipLanding,
   syncLinkedClipIds,
@@ -1154,5 +1158,309 @@ describe('findClip (D-118)', () => {
 
   it('returns null for a null timeline — the "nothing loaded yet" case', () => {
     expect(findClip(null, 0, 'a')).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// A/V link groups (D-129, `docs/notes/av-linking.md`) — mirrors the Rust
+// crate's own link tests, plus the `add_clip` drop path the Rust crate has no
+// equivalent of (it has no clip-creation op).
+// --------------------------------------------------------------------------- //
+
+/** A video track + an audio track holding one linked A/V pair — the exact
+ *  shape dropping a clip with embedded audio now produces: V1 [0,100) and
+ *  A1 [0,100), same source, same `link_group`. */
+function linkedPair(): Timeline {
+  return {
+    id: 't',
+    name: 't',
+    tracks: [
+      { kind: 'video', clips: [clip('v', 'Shot', { link_group: 'g1' })] },
+      { kind: 'audio', clips: [clip('a', 'Shot', { link_group: 'g1' })] },
+    ],
+  };
+}
+
+const startOf = (t: Timeline, track: number, id: string) =>
+  t.tracks[track].clips.find((c) => c.id === id)?.start_frame;
+
+describe('linkedClipsFromDraggedMedia (D-129)', () => {
+  const media = { id: 'm1', sourcePath: '/media/m1.mov', name: 'Shot', frameCount: 120 };
+
+  it('builds a linked audio half for a source that really has audio', () => {
+    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: true });
+    expect(pair).not.toBeNull();
+    expect(pair!.audio).not.toBeNull();
+    expect(pair!.video.link_group).toBeTruthy();
+    expect(pair!.audio!.link_group).toBe(pair!.video.link_group);
+    expect(pair!.audio!.id).not.toBe(pair!.video.id);
+    // congruent by construction — same source window and length as the picture
+    expect(pair!.audio!.source_path).toBe(pair!.video.source_path);
+    expect(pair!.audio!.duration).toBe(pair!.video.duration);
+    expect(pair!.audio!.source_start).toBe(pair!.video.source_start);
+  });
+
+  it('builds NO audio half, and leaves the video unlinked, for a silent source', () => {
+    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: false });
+    expect(pair!.audio).toBeNull();
+    expect(pair!.video.link_group).toBeNull();
+  });
+
+  it('treats an unknown hasAudio (a pre-D-129 pool item) as no audio half — never guesses', () => {
+    const pair = linkedClipsFromDraggedMedia(media); // hasAudio absent entirely
+    expect(pair!.audio).toBeNull();
+    expect(pair!.video.link_group).toBeNull();
+  });
+
+  it('still rejects media with no usable frame count, exactly as before', () => {
+    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: 0, hasAudio: true })).toBeNull();
+    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: null, hasAudio: true })).toBeNull();
+  });
+
+  it('clipFromDraggedMedia keeps returning just the video half (unchanged callers)', () => {
+    const v = clipFromDraggedMedia({ ...media, hasAudio: true });
+    expect(v?.name).toBe('Shot');
+    expect(v?.duration).toBe(120);
+  });
+});
+
+describe('audio-track placement for a dropped pair (D-129)', () => {
+  it('finds a free audio track, and never a video or locked one', () => {
+    const t = linkedPair();
+    expect(audioTrackWithRoom(t, 0, 100)).toBeNull(); // A1 busy over [0,100)
+    expect(audioTrackWithRoom(t, 200, 100)).toBe(1); // past it — room
+    t.tracks[1].locked = true;
+    expect(audioTrackWithRoom(t, 200, 100)).toBeNull();
+  });
+
+  it('creates a new audio track only when no existing one has room', () => {
+    const busy = linkedPair();
+    expect(ensureAudioTrackWithRoom(busy, 0, 100)).toBe(2);
+    expect(busy.tracks[2]).toMatchObject({ kind: 'audio', clips: [], gain: 1, sync_locked: true });
+
+    const free = linkedPair();
+    expect(ensureAudioTrackWithRoom(free, 500, 100)).toBe(1);
+    expect(free.tracks).toHaveLength(2); // reused A1 — no pile-up of empty tracks
+  });
+});
+
+describe('add_clip with a linked audio half (D-129)', () => {
+  const pair = () => linkedClipsFromDraggedMedia({
+    id: 'm1',
+    sourcePath: '/media/m1.mov',
+    name: 'Shot',
+    frameCount: 100,
+    hasAudio: true,
+  })!;
+
+  it('drops the picture on the video track and its audio on a NEW audio track', () => {
+    const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'video', clips: [] }] };
+    const p = pair();
+    const after = applyOp(before, { kind: 'add_clip', track: 0, clip: p.video, linkedAudio: p.audio! });
+    expect(after.tracks).toHaveLength(2);
+    expect(after.tracks[1].kind).toBe('audio');
+    expect(after.tracks[0].clips[0].start_frame).toBe(0);
+    expect(after.tracks[1].clips[0].start_frame).toBe(0);
+    expect(after.tracks[1].clips[0].link_group).toBe(after.tracks[0].clips[0].link_group);
+  });
+
+  it('reuses an existing audio track that has room rather than adding another', () => {
+    const before: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('x', 'X', { start_frame: 0, duration: 50 })] },
+        { kind: 'audio', clips: [clip('xa', 'X', { start_frame: 0, duration: 50 })] },
+      ],
+    };
+    const p = pair();
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: p.video,
+      startFrame: 50,
+      linkedAudio: p.audio!,
+    });
+    expect(after.tracks).toHaveLength(2);
+    expect(after.tracks[1].clips).toHaveLength(2);
+    expect(after.tracks[1].clips.find((c) => c.id === p.audio!.id)?.start_frame).toBe(50);
+  });
+
+  it('is ONE atomic op — a ripple insert makes room on both tracks and lands the pair together', () => {
+    const before: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('x', 'X', { duration: 50 }), clip('y', 'Y', { start_frame: 50, duration: 50 })] },
+        { kind: 'audio', clips: [clip('xa', 'X', { duration: 50 }), clip('ya', 'Y', { start_frame: 50, duration: 50 })] },
+      ],
+    };
+    const p = pair(); // 100 frames long
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: p.video,
+      startFrame: 50,
+      ripple: true,
+      linkedAudio: p.audio!,
+    });
+    expect(after.tracks).toHaveLength(2); // no extra audio track needed
+    expect(startOf(after, 0, 'y')).toBe(150); // video rippled by the pair's 100
+    expect(startOf(after, 1, 'ya')).toBe(150); // sync-locked audio track too
+    expect(startOf(after, 0, p.video.id)).toBe(50);
+    expect(startOf(after, 1, p.audio!.id)).toBe(50);
+  });
+
+  it('without linkedAudio, behaves exactly as it did before D-129', () => {
+    const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'video', clips: [] }] };
+    const after = applyOp(before, { kind: 'add_clip', track: 0, clip: clipFromDraggedMedia({
+      id: 'm2', sourcePath: '/m2.mov', name: 'Silent', frameCount: 40,
+    })! });
+    expect(after.tracks).toHaveLength(1);
+    expect(after.tracks[0].clips[0].link_group).toBeNull();
+  });
+});
+
+describe('link-aware edit ops (D-129)', () => {
+  it('move drags the linked half along, from either side', () => {
+    const fromVideo = applyOp(linkedPair(), { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 300 });
+    expect(startOf(fromVideo, 0, 'v')).toBe(300);
+    expect(startOf(fromVideo, 1, 'a')).toBe(300);
+
+    const fromAudio = applyOp(linkedPair(), { kind: 'move', fromTrack: 1, toTrack: 1, clip: 0, startFrame: 250 });
+    expect(startOf(fromAudio, 1, 'a')).toBe(250);
+    expect(startOf(fromAudio, 0, 'v')).toBe(250);
+  });
+
+  it('rejects the whole move when the linked half has nowhere to land', () => {
+    const t = linkedPair();
+    t.tracks[1].clips.push(clip('blocker', 'Blocker', { start_frame: 300 }));
+    const after = applyOp(t, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 300 });
+    expect(after).toBe(t); // exact same ref — a real no-op, nothing half-applied
+  });
+
+  it('ripples both tracks so a linked pair can be dropped between two touching clips', () => {
+    const t = linkedPair();
+    t.tracks[0].clips[0].start_frame = 1000;
+    t.tracks[1].clips[0].start_frame = 1000;
+    t.tracks[0].clips.push(clip('X', 'X', { duration: 50 }), clip('Y', 'Y', { start_frame: 50, duration: 50 }));
+    t.tracks[1].clips.push(clip('x', 'x', { duration: 50 }), clip('y', 'y', { start_frame: 50, duration: 50 }));
+    const after = applyOp(t, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 50, ripple: true });
+    expect(startOf(after, 0, 'v')).toBe(50);
+    expect(startOf(after, 1, 'a')).toBe(50);
+    expect(startOf(after, 0, 'Y')).toBe(150);
+    expect(startOf(after, 1, 'y')).toBe(150);
+    expect(startOf(after, 0, 'X')).toBe(0);
+  });
+
+  it('refuses a move when the linked half sits on a locked track', () => {
+    const t = linkedPair();
+    t.tracks[1].locked = true;
+    expect(applyOp(t, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 300 })).toBe(t);
+  });
+
+  it('trims both halves in lockstep, from either side', () => {
+    const head = applyOp(linkedPair(), { kind: 'trim_start', track: 0, clip: 0, delta: 20 });
+    for (const [ti, id] of [[0, 'v'], [1, 'a']] as const) {
+      const c = head.tracks[ti].clips.find((x) => x.id === id)!;
+      expect([c.source_start, c.start_frame, c.duration]).toEqual([20, 20, 80]);
+    }
+    const tail = applyOp(linkedPair(), { kind: 'trim_end', track: 1, clip: 0, delta: -30 });
+    expect(tail.tracks[0].clips[0].duration).toBe(70);
+    expect(tail.tracks[1].clips[0].duration).toBe(70);
+  });
+
+  it('rejects a trim that would clamp differently on the two halves', () => {
+    const t = linkedPair();
+    t.tracks[0].clips[0].source_len = 10000;
+    t.tracks[1].clips[0].source_len = 10000;
+    t.tracks[1].clips.push(clip('neighbour', 'N', { start_frame: 120, duration: 50 }));
+    expect(applyOp(t, { kind: 'trim_end', track: 0, clip: 0, delta: 200 })).toBe(t);
+  });
+
+  it('splits both halves at the same frame, leaving two intact pairs', () => {
+    const after = applyOp(linkedPair(), { kind: 'split', track: 0, clip: 0, atFrame: 40 });
+    expect(after.tracks[0].clips).toHaveLength(2);
+    expect(after.tracks[1].clips).toHaveLength(2);
+    expect(after.tracks[0].clips.map((c) => [c.start_frame, c.duration])).toEqual([[0, 40], [40, 60]]);
+    expect(after.tracks[1].clips.map((c) => [c.start_frame, c.duration])).toEqual([[0, 40], [40, 60]]);
+    expect(after.tracks[0].clips[0].link_group).toBe('g1');
+    expect(after.tracks[1].clips[0].link_group).toBe('g1');
+    expect(after.tracks[0].clips[1].link_group).toBe('g1·40');
+    expect(after.tracks[1].clips[1].link_group).toBe('g1·40');
+  });
+
+  it('rejects a split whose frame is not inside every member (an already-slipped L-cut)', () => {
+    const t = linkedPair();
+    t.tracks[1].clips[0].start_frame = 60;
+    expect(applyOp(t, { kind: 'split', track: 0, clip: 0, atFrame: 40 })).toBe(t);
+  });
+
+  it('deletes every member of the group, and prunes each track it empties', () => {
+    const kept = linkedPair();
+    kept.tracks[0].clips.push(clip('keepV', 'K', { start_frame: 500, duration: 10 }));
+    kept.tracks[1].clips.push(clip('keepA', 'K', { start_frame: 500, duration: 10 }));
+    const after = applyOp(kept, { kind: 'remove', track: 0, clip: 0 });
+    expect(after.tracks[0].clips.map((c) => c.id)).toEqual(['keepV']);
+    expect(after.tracks[1].clips.map((c) => c.id)).toEqual(['keepA']);
+
+    // both tracks emptied by the one delete → both auto-decommission
+    expect(applyOp(linkedPair(), { kind: 'remove', track: 1, clip: 0 }).tracks).toHaveLength(0);
+  });
+
+  it('refuses a delete when a linked half is on a locked track', () => {
+    const t = linkedPair();
+    t.tracks[1].locked = true;
+    expect(applyOp(t, { kind: 'remove', track: 0, clip: 0 })).toBe(t);
+  });
+
+  it('leaves every op on an UNLINKED clip byte-for-byte as it was (backward compat)', () => {
+    const plain = tl(backToBack());
+    expect(applyOp(plain, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 500 })
+      .tracks[0].clips.find((c) => c.id === 'a')!.start_frame).toBe(500);
+    expect(applyOp(plain, { kind: 'trim_start', track: 0, clip: 0, delta: 20 })
+      .tracks[0].clips[0]).toMatchObject({ source_start: 20, start_frame: 20, duration: 80 });
+    expect(applyOp(plain, { kind: 'trim_end', track: 0, clip: 0, delta: -30 }).tracks[0].clips[0].duration).toBe(70);
+    expect(applyOp(plain, { kind: 'split', track: 0, clip: 0, atFrame: 40 }).tracks[0].clips).toHaveLength(3);
+    expect(applyOp(plain, { kind: 'remove', track: 0, clip: 0 }).tracks[0].clips.map((c) => c.id)).toEqual(['b']);
+  });
+});
+
+describe('unlink (D-129)', () => {
+  it('dissolves the COMPLETE group, not just the named clip', () => {
+    const after = applyOp(linkedPair(), { kind: 'unlink', track: 0, clip: 0 });
+    expect(after.tracks[0].clips[0].link_group).toBeNull();
+    expect(after.tracks[1].clips[0].link_group).toBeNull();
+  });
+
+  it('is the L-cut escape hatch — after it, each half moves on its own', () => {
+    const unlinked = applyOp(linkedPair(), { kind: 'unlink', track: 0, clip: 0 });
+    const moved = applyOp(unlinked, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 400 });
+    expect(startOf(moved, 0, 'v')).toBe(400);
+    expect(startOf(moved, 1, 'a')).toBe(0);
+  });
+
+  it('is a no-op on an already-unlinked clip, and on a locked track', () => {
+    const plain = tl(backToBack());
+    expect(applyOp(plain, { kind: 'unlink', track: 0, clip: 0 })).toBe(plain);
+    const locked = linkedPair();
+    locked.tracks[0].locked = true;
+    expect(applyOp(locked, { kind: 'unlink', track: 0, clip: 0 })).toBe(locked);
+  });
+
+  it('labels itself in the history', () => {
+    expect(labelForOp({ kind: 'unlink', track: 0, clip: 0 }, linkedPair())).toBe('Unlink "Shot"');
+  });
+});
+
+describe('linkedClipIds (D-129)', () => {
+  it('returns the other half of the selection’s link group, never the selection itself', () => {
+    const t = linkedPair();
+    expect([...linkedClipIds(t, [{ track: 0, id: 'v' }])]).toEqual(['a']);
+    expect([...linkedClipIds(t, [{ track: 1, id: 'a' }])]).toEqual(['v']);
+  });
+
+  it('is empty for an unlinked selection', () => {
+    expect(linkedClipIds(tl(backToBack()), [{ track: 0, id: 'a' }]).size).toBe(0);
   });
 });

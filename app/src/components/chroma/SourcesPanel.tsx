@@ -574,6 +574,12 @@ export function SourcesPanel() {
                             sourcePath: it.sourcePath,
                             name: it.name,
                             frameCount: it.video?.frameCount ?? null,
+                            // D-129 — lets the drop build a linked audio half
+                            // for a source that really has one. `null` (a pool
+                            // item not yet resolved by `chroma_media_list`'s
+                            // one-time backfill) means "unknown", and the drop
+                            // conservatively creates no audio half.
+                            hasAudio: it.video?.hasAudio ?? null,
                           }),
                         );
                         setCompactDragImage(e, it.name);

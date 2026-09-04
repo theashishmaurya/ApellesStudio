@@ -138,11 +138,19 @@
 //! source. This module now reads one when it exists
 //! ([`super::edit::resolve_audio_track_positions`]), while leaving the
 //! baseline video-embedded-audio path from D-050 completely intact as the
-//! default/first source. **Still nothing in the app populates an
-//! `Audio` track** (Phase D UI is blocked on this landing — see the note) —
-//! this is the mixing *capability*, exercised in this module's own tests via
-//! a hand-built `Timeline`, same spirit as D-054 landing `add_track`/
-//! `move_clip` before any UI called them.
+//! default/first source. When D-057 landed, nothing in the app populated an
+//! `Audio` track at all — it was the mixing *capability* only, exercised in
+//! this module's own tests via a hand-built `Timeline`, same spirit as D-054
+//! landing `add_track`/`move_clip` before any UI called them.
+//!
+//! **D-129 changed that: the app really does populate audio tracks now.**
+//! Dropping a video clip whose source has an audio stream creates a linked
+//! audio `Clip` beside it (`docs/notes/av-linking.md`), so this mixer's
+//! audio-track path is the live, everyday path for that clip's sound — and
+//! that video clip's own embedded stream is deliberately **skipped**, or the
+//! same audio would be summed with itself. See [`chroma_audio_play`] and
+//! `chroma_timeline::Clip::link_group`. Clips that predate D-129 have no
+//! link group and keep the unchanged D-050 embedded path.
 //!
 //! **Where per-track gain lives:** `chroma_timeline::Track::gain` (a plain
 //! `f32`, default `1.0`) — on the model, not a side table in this module or
@@ -648,6 +656,14 @@ struct AudioSourceSpec {
 /// `(async)` (D-125): see [`chroma_audio_stop`] — same reason, and here it also
 /// means the command isn't itself queued behind a main-thread preview decode,
 /// which is precisely the latency the video clock does not wait for.
+///
+/// D-129 — a video clip carrying a `link_group` is **skipped** as an
+/// embedded-audio source: its sound now lives in a real, linked audio clip
+/// that the audio-track walk below picks up on its own. See the inline
+/// comment at that check for why the suppression is unconditional, and
+/// `chroma_timeline::Clip::link_group` for what the field means on a video
+/// clip. A pre-D-129 clip has no `link_group` and takes the unchanged
+/// D-050 path.
 #[tauri::command(async)]
 pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
     // The instant the frontend asked for playback — the same moment the video
@@ -661,7 +677,27 @@ pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
 
     if let Some((clip, source_frame, info)) = super::edit::resolve_video_position(start_frame)? {
-        if info.has_audio {
+        if clip.link_group.is_some() {
+            // D-129 — this video clip's audio has been externalized into a
+            // linked audio clip (see `chroma_timeline::Clip::link_group`), so
+            // it contributes NO embedded-audio source here: the linked clip
+            // is picked up below by `resolve_audio_track_positions` like any
+            // other audio-track clip, with its own track's gain/mute, its own
+            // trim and its own position. Without this, both would play and
+            // the same audio would be summed with itself (≈+6 dB, phase
+            // doubled) for every clip dropped after D-129.
+            //
+            // Unconditional, not "only when the linked half really covers
+            // this position": if the user slipped the audio half elsewhere
+            // (an L-cut) the picture is correctly silent here, and if they
+            // deleted it, the clip stays silent — exactly what Premiere and
+            // Resolve do with a deleted audio half. `unlink` is the way back
+            // to embedded playback.
+            log::debug!(
+                "chroma_audio_play: {} is A/V-linked — audio comes from its linked clip, not its embedded stream",
+                clip.source_path
+            );
+        } else if info.has_audio {
             sources.push(AudioSourceSpec {
                 path: PathBuf::from(&clip.source_path),
                 start_secs: info.frame_to_secs(source_frame),

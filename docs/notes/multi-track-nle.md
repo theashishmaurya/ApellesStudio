@@ -130,14 +130,20 @@ makes "mute a track via `gain: 0.0`" an exact, checkable property rather than an
 approximation. Streamed via one audio thread pulling N `DecodedSource`s in lockstep by
 a fixed-size window (`open_source` factored out of the old single-source `run_session`
 body). Pan/stereo positioning deliberately scoped out — mono gain scaling covers this
-phase's actual goal, real extra scope nothing here asked for. **Still nothing in the
-app populates a real audio track** — this is the mixing *capability*, exercised in
-`chroma::audio`'s own tests via a hand-built `Timeline` (a real 2-track project +
-`chroma_audio_play`/`_level`/`_stop` through the real command surface, plus a
-deterministic decode-and-mix test against two distinct real audio files) — Phase D
-(the UI to actually place an audio-track clip) is still not started. See D-057 for the
-full writeup (mixing architecture, the three headroom options considered, where
+phase's actual goal, real extra scope nothing here asked for. When D-057 landed
+**nothing in the app populated a real audio track** — it was the mixing *capability*,
+exercised in `chroma::audio`'s own tests via a hand-built `Timeline` (a real 2-track
+project + `chroma_audio_play`/`_level`/`_stop` through the real command surface, plus a
+deterministic decode-and-mix test against two distinct real audio files). See D-057 for
+the full writeup (mixing architecture, the three headroom options considered, where
 `Track.gain` lives and why).
+
+**D-129 (2026-09-04) gave it a real producer.** Dropping a video clip whose source has
+an audio stream now creates a linked audio `Clip` on an audio track — found or created
+by `Timeline::ensure_audio_track_with_room` — so this mixer's audio-track path is the
+live, everyday path for that clip's sound rather than a capability with no caller. The
+same clip's *embedded* stream is deliberately skipped for it (`Clip::link_group`), or
+the identical audio would be summed with itself. See `docs/notes/av-linking.md`.
 
 ### Phase D — Multi-track UI
 

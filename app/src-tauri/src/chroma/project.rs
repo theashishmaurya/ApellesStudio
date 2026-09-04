@@ -334,6 +334,25 @@ pub struct MediaVideoInfo {
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
+    /// D-129 — whether this source has a decodeable audio stream
+    /// (`video::VideoInfo::has_audio`). The Edit tab reads it at drop time to
+    /// decide whether a dropped clip gets a linked audio half at all; before
+    /// this field, `MediaItem` carried **no** audio-vs-video signal at all,
+    /// which is exactly the gap D-097's `inferNewTrackKind` had to work
+    /// around ("without a real backend model change").
+    ///
+    /// `Option<bool>`, not a bare `bool`, with `#[serde(default)]` — `None`
+    /// is a real **"never probed for this"** sentinel, not "no audio". A pool
+    /// item imported before D-129 has no key here, and a bare `bool` would
+    /// deserialize it to `false`: indistinguishable from a genuinely silent
+    /// source, and permanently wrong for every existing project (no linked
+    /// audio would ever be created for its media again).
+    /// [`backfill_has_audio`] resolves the sentinel once, on the next media
+    /// list, and persists the real answer. The same "an absent value is not
+    /// the value" discipline `Clip::start_frame`'s own migration sentinel
+    /// already keeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_audio: Option<bool>,
 }
 
 impl From<&video::VideoInfo> for MediaVideoInfo {
@@ -343,8 +362,38 @@ impl From<&video::VideoInfo> for MediaVideoInfo {
             fps: info.fps(),
             frame_count: info.frame_count,
             duration_secs: info.duration_secs,
+            has_audio: Some(info.has_audio),
         }
     }
+}
+
+/// D-129 — resolve the `has_audio: None` migration sentinel for every pool
+/// item that predates the field, by re-probing its source once. Returns
+/// `true` if anything changed, so the caller can persist the manifest — which
+/// makes this a genuinely **one-time** pass per project, not a re-probe on
+/// every media list.
+///
+/// Deliberately cheap and forgiving: [`super::edit::probe_cached`] is the same
+/// memoised probe the preview and waveform paths already share, so a source
+/// touched anywhere else this session costs nothing here; an offline or
+/// unprobeable source is left as `None` (still *unknown*, never falsely
+/// recorded as silent) rather than failing the whole list, matching this
+/// module's standing "offline is flagged, not fatal" discipline.
+fn backfill_has_audio(manifest: &mut ProjectManifest) -> bool {
+    let mut changed = false;
+    for item in manifest.media.iter_mut() {
+        let Some(video) = item.video.as_mut() else {
+            continue;
+        };
+        if video.has_audio.is_some() {
+            continue;
+        }
+        if let Ok(info) = super::edit::probe_cached(Path::new(&item.source_path)) {
+            video.has_audio = Some(info.has_audio);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// One item in the project's media pool — referenced in place by absolute
@@ -638,6 +687,16 @@ fn find_or_create_media(
 /// integration-tested against the real project instead). Errors (leaving
 /// `manifest` unchanged) if `media_id` isn't in the pool, or `timeline_idx`
 /// is out of range.
+///
+/// **D-129 — if the source has an audio stream, this also appends its own
+/// audio as a second, linked `Clip` on an audio track** (found or created via
+/// `Timeline::ensure_audio_track_with_room`), both halves sharing one
+/// `link_group`. That is the same "drop a clip, get V1 + a linked A1"
+/// behaviour `@chroma/editor`'s `add_clip` op gives the Edit-tab drag — kept
+/// in step deliberately, so which entry point created a clip never changes
+/// whether it has a linked audio half. Returns the **video** clip (the one
+/// that becomes `active_clip_id`); the audio half is reachable through its
+/// `link_group` like any other member.
 fn append_media_clip(
     manifest: &mut ProjectManifest,
     timeline_idx: usize,
@@ -650,10 +709,10 @@ fn append_media_clip(
     if timeline_idx >= manifest.timelines.len() {
         return Err(format!("timeline index {timeline_idx} out of range"));
     }
-    let frames = super::edit::probe_cached(Path::new(&item.source_path))
-        .map(|i| i.frame_count as i64)
-        .unwrap_or(0);
+    let probed = super::edit::probe_cached(Path::new(&item.source_path)).ok();
+    let frames = probed.as_ref().map(|i| i.frame_count as i64).unwrap_or(0);
     let duration = frames.max(1);
+    let has_audio = probed.as_ref().is_some_and(|i| i.has_audio);
 
     let tl = &mut manifest.timelines[timeline_idx];
     let track_idx = tl
@@ -662,11 +721,15 @@ fn append_media_clip(
         .position(|t| t.kind == TrackKind::Video)
         .unwrap_or_else(|| tl.add_track(TrackKind::Video));
     let start_frame = tl.tracks[track_idx].duration();
+    // `None` for a silent (or unprobeable) source — that clip keeps D-050's
+    // embedded-audio playback and gains no audio half, exactly as before.
+    let link_group = has_audio.then(|| format!("lg-{}", uuid::Uuid::new_v4()));
 
     let clip = Clip {
         id: uuid::Uuid::new_v4().to_string(),
         shot_id: None,
         media_id: Some(media_id.to_string()),
+        link_group: link_group.clone(),
         name: item.name.clone(),
         source_path: item.source_path.clone(),
         source_start: 0,
@@ -676,6 +739,14 @@ fn append_media_clip(
         ..Default::default()
     };
     tl.tracks[track_idx].clips.push(clip.clone());
+    if link_group.is_some() {
+        let audio_track = tl.ensure_audio_track_with_room(start_frame, duration);
+        let audio = Clip {
+            id: uuid::Uuid::new_v4().to_string(),
+            ..clip.clone()
+        };
+        tl.tracks[audio_track].clips.push(audio);
+    }
     manifest.active_clip_id = Some(clip.id.clone());
     Ok(clip)
 }
@@ -1556,7 +1627,7 @@ async fn open_manifest(
 
         if online {
             let src = PathBuf::from(&source_path);
-            // D-128 — probe-and-register, not decode. See
+            // D-129 — probe-and-register, not decode. See
             // `load::register_video_shot` for why this loop never needed the
             // pixels it used to pay ~1.9s per 4K clip for.
             match load::register_video_shot(&src, frame) {
@@ -1715,7 +1786,7 @@ pub async fn chroma_project_resync_clips(
         if online {
             let src = PathBuf::from(&source_path);
             if !known_paths.contains(&src) {
-                // genuinely new — probe it in (D-128: registration only,
+                // genuinely new — probe it in (D-129: registration only,
                 // no decode). Upserts into the session; does not disturb
                 // whichever shot is currently active unless this path
                 // happens to already be it (a re-add) — which is now true of
@@ -2214,11 +2285,29 @@ pub async fn chroma_media_folders() -> Result<Vec<String>, String> {
 /// frontend derives the bin tree from the flat list of folder path strings
 /// plus [`chroma_media_folders`] — no separate bin-hierarchy API. `async`
 /// (D-059/B-014) — see [`chroma_media_import`]'s doc.
+///
+/// D-129 — also the one-time home of [`backfill_has_audio`]: any pool item
+/// imported before `MediaVideoInfo::has_audio` existed gets probed once here
+/// and the answer persisted, so an existing project's media starts producing
+/// linked audio halves on drop without needing a manual re-import. Runs on
+/// `spawn_blocking` (probing is a subprocess spawn) for the same reason
+/// [`chroma_media_import`]'s own doc gives, and writes the manifest only when
+/// something actually changed — a project whose items are all resolved
+/// already does no I/O beyond the read it was doing anyway.
 #[tauri::command]
 pub async fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     let dir = require_open_project()?;
-    let manifest = load_manifest(&dir)?;
-    Ok(manifest.media.iter().map(MediaItemDto::from).collect())
+    let items = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
+        let mut manifest = load_manifest(&dir)?;
+        if backfill_has_audio(&mut manifest) {
+            manifest.modified = now_rfc3339();
+            save_manifest(&dir, &manifest)?;
+        }
+        Ok(manifest.media.clone())
+    })
+    .await
+    .map_err(|e| format!("media list task panicked: {e}"))??;
+    Ok(items.iter().map(MediaItemDto::from).collect())
 }
 
 /// D-070: repurposed — "add to grading" now means "append a clip to the
@@ -2880,6 +2969,147 @@ mod tests {
         assert_eq!(resolve_shot(&m2, &m2.shots[0]).0, "/a.mov");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // --- has_audio, the A/V-link signal (D-129) ----------------------------
+
+    /// The whole backward-compat story for `MediaVideoInfo::has_audio`: a
+    /// pool item saved before D-129 has no key at all, and must load as the
+    /// **unknown** sentinel (`None`) — NOT as `false`, which a bare `bool`
+    /// would have given and which is indistinguishable from a genuinely
+    /// silent source. Everything downstream keys off that distinction.
+    #[test]
+    fn legacy_media_json_without_has_audio_loads_as_unknown_not_silent() {
+        let legacy = r#"{"id":"m1","sourcePath":"/a.mov","name":"a.mov","added":"2026-01-01T00:00:00Z",
+            "video":{"width":1920,"height":1080,"fps":24.0,"frameCount":100,"durationSecs":4.16}}"#;
+        let item: MediaItem = serde_json::from_str(legacy).unwrap();
+        let v = item.video.expect("video facts present");
+        assert_eq!(v.frame_count, 100, "the pre-D-129 fields are unaffected");
+        assert_eq!(
+            v.has_audio, None,
+            "absent means never probed, not 'no audio' — the migration sentinel"
+        );
+    }
+
+    /// A known value round-trips, and `None` stays off the wire entirely
+    /// (`skip_serializing_if`), so an unresolved item's JSON is byte-identical
+    /// to what a pre-D-129 build wrote.
+    #[test]
+    fn has_audio_round_trips_and_none_omits_the_key() {
+        let mut v = MediaVideoInfo {
+            resolution: chroma_types::Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            fps: 24.0,
+            frame_count: 100,
+            duration_secs: 4.16,
+            has_audio: Some(true),
+        };
+        let json = serde_json::to_string(&v).unwrap();
+        assert!(json.contains("\"hasAudio\":true"), "{json}");
+        let back: MediaVideoInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.has_audio, Some(true));
+
+        v.has_audio = None;
+        let json2 = serde_json::to_string(&v).unwrap();
+        assert!(!json2.contains("hasAudio"), "None omits the key: {json2}");
+    }
+
+    /// `backfill_has_audio` is the one-time migration that resolves the
+    /// sentinel. Three real properties: an already-resolved item is left
+    /// alone (so the pass is idempotent and does no I/O on a settled
+    /// project), an item whose source can't be probed stays **unknown**
+    /// rather than being falsely recorded as silent, and "nothing changed"
+    /// is reported as `false` so the caller skips the manifest write.
+    #[test]
+    fn backfill_has_audio_is_idempotent_and_never_guesses_silent() {
+        let root = tmp("has_audio_backfill");
+        let (_dir, mut manifest) = new_project_in(&root, "has-audio", &[]).unwrap();
+
+        let info = |has: Option<bool>| MediaVideoInfo {
+            resolution: chroma_types::Resolution {
+                width: 640,
+                height: 360,
+            },
+            fps: 24.0,
+            frame_count: 10,
+            duration_secs: 0.41,
+            has_audio: has,
+        };
+        manifest.media.push(MediaItem {
+            id: "resolved".into(),
+            source_path: "/nonexistent-resolved.mov".into(),
+            name: "resolved".into(),
+            added: now_rfc3339(),
+            video: Some(info(Some(true))),
+            folder: None,
+        });
+        manifest.media.push(MediaItem {
+            id: "unprobeable".into(),
+            source_path: root
+                .join("definitely-not-a-real-file.mov")
+                .to_string_lossy()
+                .to_string(),
+            name: "unprobeable".into(),
+            added: now_rfc3339(),
+            video: Some(info(None)),
+            folder: None,
+        });
+        // An item that never probed at all (`video: None`) is skipped
+        // outright — there are no video facts to attach an answer to.
+        manifest.media.push(MediaItem {
+            id: "no-video-facts".into(),
+            source_path: "/nonexistent-offline.mov".into(),
+            name: "offline".into(),
+            added: now_rfc3339(),
+            video: None,
+            folder: None,
+        });
+
+        assert!(
+            !backfill_has_audio(&mut manifest),
+            "nothing resolvable changed, so the caller must not rewrite the manifest"
+        );
+        assert_eq!(
+            manifest.media[0].video.as_ref().unwrap().has_audio,
+            Some(true),
+            "an already-resolved item is untouched"
+        );
+        assert_eq!(
+            manifest.media[1].video.as_ref().unwrap().has_audio,
+            None,
+            "an unprobeable source stays UNKNOWN — never falsely recorded as silent"
+        );
+        assert!(manifest.media[2].video.is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The end-to-end shape the Edit tab depends on: importing a real clip
+    /// records a **definite** answer, so a freshly-imported item can decide
+    /// about a linked audio half on drop without waiting for any backfill.
+    /// (The synthesised fixture is silent, so the answer here is `Some(false)`
+    /// — the point being that it is `Some`, not the unknown sentinel.)
+    #[test]
+    fn add_media_records_a_definite_has_audio_for_a_real_clip() {
+        let Some(clip) = make_test_clip("has_audio_probe", 320, 240, "30", 1) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("has_audio_import");
+        let (_dir, mut manifest) = new_project_in(&root, "has-audio-import", &[]).unwrap();
+        let added = add_media(&mut manifest, &[clip.to_string_lossy().to_string()], None);
+        let v = added[0]
+            .video
+            .as_ref()
+            .expect("a real clip probes successfully");
+        assert!(
+            v.has_audio.is_some(),
+            "a real probe always yields a definite answer, never the unknown sentinel"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip);
     }
 
     // --- bins / folders (D-045) --------------------------------------------

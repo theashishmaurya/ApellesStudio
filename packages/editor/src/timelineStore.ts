@@ -302,33 +302,30 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     set((s) => ({ timeline: after, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
 
     // Auto-decommission (owner, live) — `applyOpPure` may have just pruned
-    // an emptied track for `remove`/cross-track `move` (see
-    // `pruneIfEmptyTrack`'s own doc). The op itself already tells us which
-    // index *could* have been pruned — `after.tracks.length` shrinking
-    // confirms it actually was, without needing to diff two track arrays
-    // that have no stable per-track id to diff by. Any selection/gap
-    // pointing at that exact index is gone with it (its track had zero
-    // clips, so nothing selected could still live there); anything after it
-    // shifts down by one, the same index-shift class `trackIndexAfterMove`
-    // already handles for the track-reorder drag.
-    const prunedTrack =
-      after.tracks.length < before.tracks.length
-        ? op.kind === 'remove'
-          ? op.track
-          : op.kind === 'move' && op.fromTrack !== op.toTrack
-            ? op.fromTrack
-            : null
-        : null;
-    if (prunedTrack !== null) {
-      const remap = (t: number) => (t > prunedTrack ? t - 1 : t);
+    // one or more emptied tracks for `remove`/cross-track `move` (see
+    // `pruneIfEmptyTrack`'s own doc), which renumbers every later track.
+    //
+    // D-129 — this used to derive the ONE pruned index from the op itself
+    // (`op.track` for `remove`, `op.fromTrack` for a cross-track `move`).
+    // That stopped being sufficient the moment a `remove` could delete a
+    // whole A/V link group: deleting a linked pair can empty — and so prune
+    // — TWO tracks at once, at indices the op never names. Rather than
+    // extend the index arithmetic to a list, selection is remapped by each
+    // clip's own **stable id**, which is correct however many tracks were
+    // pruned, without knowing what the op did: find where that clip lives
+    // now, or drop it if it's gone. `selectedGap` has no id to follow, so
+    // it's simply cleared — a gap selection is transient and trivially
+    // re-made, and a silently-wrong track index is far worse than none.
+    //
+    // Gated on the track list SHRINKING, not merely changing: every
+    // track-ADDING path appends (`add_track`, and D-129's
+    // `ensureAudioTrackWithRoom` for a dropped clip's audio half), so a
+    // growing list renumbers nothing and neither selection needs touching.
+    if (after.tracks.length < before.tracks.length) {
+      const locate = (id: string): number => after.tracks.findIndex((t) => t.clips.some((c) => c.id === id));
       set((s) => ({
-        selection: s.selection.filter((sel) => sel.track !== prunedTrack).map((sel) => ({ ...sel, track: remap(sel.track) })),
-        selectedGap:
-          s.selectedGap === null
-            ? null
-            : s.selectedGap.track === prunedTrack
-              ? null
-              : { ...s.selectedGap, track: remap(s.selectedGap.track) },
+        selection: s.selection.map((sel) => ({ ...sel, track: locate(sel.id) })).filter((sel) => sel.track >= 0),
+        selectedGap: null,
       }));
     }
 

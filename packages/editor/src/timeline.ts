@@ -58,6 +58,17 @@ export interface Clip {
    *  panel; absent/`null` for a clip built before D-070 (`Timeline::
    *  from_shots`), which only ever set `shot_id`. */
   media_id?: string | null;
+  /** A/V link group (D-129) — mirrors `chroma_timeline::Clip::link_group`.
+   *  The id of the group of clips this one is linked to; absent/`null` =
+   *  unlinked, which is what every pre-D-129 clip deserializes to.
+   *
+   *  **On a video clip it additionally means "this clip's audio lives in a
+   *  linked audio clip — don't play its embedded stream"** (Rust-side
+   *  `chroma_audio_play` reads it for exactly that). See the Rust field's own
+   *  doc for the full reasoning; this is the single fact "this video clip's
+   *  sound has been externalized," which is what Premiere/Resolve mean by a
+   *  linked A/V pair. */
+  link_group?: string | null;
   name: string;
   source_path: string;
   source_start: number;
@@ -167,6 +178,17 @@ export interface DraggedMedia {
   sourcePath: string;
   name: string;
   frameCount?: number | null;
+  /** D-129 — whether this source has a decodeable audio stream, so the drop
+   *  knows whether to build a linked audio half at all. Mirrors
+   *  `MediaItem.video.hasAudio` (`@chroma/bridge`), which mirrors
+   *  `chroma::video::VideoInfo::has_audio`. Absent/`null` = **not known**
+   *  (a pool item imported before D-129 that hasn't been re-probed), which is
+   *  treated as "no audio half" — the same conservative reading
+   *  `clipFromDraggedMedia` already gives an absent `frameCount`. This is the
+   *  real signal D-097's `inferNewTrackKind` explicitly flagged as missing
+   *  ("`DraggedMedia`/`MediaItem` carry NO real audio-vs-video signal today
+   *  … without a real backend model change"). */
+  hasAudio?: boolean | null;
 }
 
 /** Every `Clip` field except `start_frame` — a dropped clip doesn't know its
@@ -181,10 +203,35 @@ export type NewClipFields = Omit<Clip, 'start_frame'>;
  *  referencing a dropped pool item, or `null` if it has no known frame count
  *  (unprobed / offline — nothing to place). */
 export function clipFromDraggedMedia(media: DraggedMedia): NewClipFields | null {
+  const pair = linkedClipsFromDraggedMedia(media);
+  return pair && pair.video;
+}
+
+/** D-129 — the real "drop a clip, get V1 + a linked A1" pair, the owner's
+ *  own ask ("in palmier and other, any time i drop a clip it … created a
+ *  linked track in audio") and the default behaviour of every reference NLE
+ *  (Premiere patches a dropped clip to V1 *and* A1; Resolve links the two
+ *  and propagates every move/trim/delete between them).
+ *
+ *  Returns the video half plus, when the source really has an audio stream,
+ *  a second full `Clip` for that audio — a genuinely separate, independently
+ *  addressable clip (confirmed against both references: the audio half is a
+ *  real clip on its own track that Unlink makes fully independent, not a
+ *  sub-part of the video clip) — with both halves carrying the same
+ *  `link_group`. `audio: null` for a silent source, or one whose audio status
+ *  isn't known (`hasAudio` absent, a pre-D-129 pool item): no audio half is
+ *  invented, and the video clip stays `link_group`-free so `chroma::audio`
+ *  keeps playing its embedded stream exactly as it does today (D-050).
+ *
+ *  `null` overall for media with no usable frame count, same as before. */
+export function linkedClipsFromDraggedMedia(
+  media: DraggedMedia,
+): { video: NewClipFields; audio: NewClipFields | null } | null {
   const frames = media.frameCount ?? 0;
   if (!frames || frames <= 0) return null;
-  return {
-    id: `${media.id}-${Date.now().toString(36)}`,
+  const stamp = Date.now().toString(36);
+  const linkGroup = media.hasAudio ? `lg-${media.id}-${stamp}` : null;
+  const common = {
     shot_id: null,
     // D-070: the pool-item link — this is the one real place a Clip gets
     // built from a known media pool item on the frontend (a Sources-panel
@@ -196,6 +243,13 @@ export function clipFromDraggedMedia(media: DraggedMedia): NewClipFields | null 
     duration: frames,
     source_len: frames,
   };
+  const video: NewClipFields = { id: `${media.id}-${stamp}`, link_group: linkGroup, ...common };
+  if (!linkGroup) return { video, audio: null };
+  // Same source window, same length — the audio half starts life exactly
+  // congruent with the picture, and only diverges if the user deliberately
+  // unlinks and slips it (an L-cut).
+  const audio: NewClipFields = { id: `${media.id}-${stamp}-a`, link_group: linkGroup, ...common };
+  return { video, audio };
 }
 
 export function timelineFps(tl: Timeline | null): number {
@@ -539,6 +593,125 @@ function propagateSyncLockRipple(tracks: Track[], editedTrack: number, threshold
 }
 
 // --------------------------------------------------------------------------- //
+// A/V link groups (D-129, `docs/notes/av-linking.md`) — mirrors the Rust
+// crate's own link helpers field-for-field.
+// --------------------------------------------------------------------------- //
+
+/** Every `[trackIndex, clipIndex]` whose clip belongs to `group`, ascending —
+ *  mirrors `chroma-timeline::Timeline::link_group_members`. Index-based, so
+ *  only valid until the next mutation. */
+export function linkGroupMembers(tl: Timeline, group: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  tl.tracks.forEach((t, ti) => {
+    t.clips.forEach((c, ci) => {
+      if (c.link_group && c.link_group === group) out.push([ti, ci]);
+    });
+  });
+  return out;
+}
+
+/** The group id + member locations for the clip at `(track, clip)`, or `null`
+ *  when it's unlinked — mirrors Rust's `link_targets`, the lookup every
+ *  link-aware op starts from. */
+function linkTargets(
+  tl: Timeline,
+  track: number,
+  clip: number,
+): { group: string; members: Array<[number, number]> } | null {
+  const group = tl.tracks[track]?.clips[clip]?.link_group;
+  if (!group) return null;
+  return { group, members: linkGroupMembers(tl, group) };
+}
+
+/** Every clip id linked to any clip in `selection` (excluding the selection's
+ *  own ids) — what `TimelinePane` paints its link highlight from, so grabbing
+ *  one half visibly shows the other. The link-group counterpart of
+ *  `syncLinkedClipIds`, deliberately a SEPARATE set: sync-lock ("these tracks
+ *  ripple together") and an A/V link ("these clips ARE one shot") are
+ *  different relationships and read as different things on screen. */
+export function linkedClipIds(tl: Timeline, selection: { track: number; id: string }[]): Set<string> {
+  const own = new Set(selection.map((s) => s.id));
+  const linked = new Set<string>();
+  for (const sel of selection) {
+    const group = tl.tracks[sel.track]?.clips.find((c) => c.id === sel.id)?.link_group;
+    if (!group) continue;
+    for (const [ti, ci] of linkGroupMembers(tl, group)) {
+      const id = tl.tracks[ti].clips[ci].id;
+      if (!own.has(id)) linked.add(id);
+    }
+  }
+  return linked;
+}
+
+/** Where `startFrame` ends up once a pending ripple is applied — mirrors
+ *  `chroma-timeline::start_after_ripple`. Lets a linked move be accepted or
+ *  rejected before anything is mutated. */
+function startAfterRipple(startFrame: number, rippled: boolean, threshold: number, delta: number): number {
+  return rippled && startFrame >= threshold ? startFrame + delta : startFrame;
+}
+
+/** The clamped head-trim delta `trim_start` would really apply — mirrors
+ *  `chroma-timeline::clamped_trim_start_delta`, extracted for the same D-129
+ *  reason (asking every link-group member for its own clamp before mutating).
+ *  Caller guarantees `clipIdx` is in range. */
+function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number): number {
+  const c = tr.clips[clipIdx];
+  const ceiling = Math.max(c.source_len, 0);
+  const prevEnd = tr.clips.reduce((max, other, i) => {
+    if (i === clipIdx) return max;
+    const oe = endFrame(other);
+    return oe <= c.start_frame ? Math.max(max, oe) : max;
+  }, 0);
+  const d = clampInt(delta, -c.source_start, Math.max(ceiling - 1, 0) - c.source_start);
+  return Math.max(d, prevEnd - c.start_frame);
+}
+
+/** The clamped new `duration` `trim_end` would really apply — mirrors
+ *  `chroma-timeline::clamped_trim_end_duration`. */
+function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number): number {
+  const c = tr.clips[clipIdx];
+  const ceiling = Math.max(c.source_len, 0);
+  const maxDurSource = Math.max(ceiling - c.source_start, 1);
+  let nextStart: number | null = null;
+  for (const [i, other] of tr.clips.entries()) {
+    if (i === clipIdx || other.start_frame < c.start_frame) continue;
+    if (nextStart === null || other.start_frame < nextStart) nextStart = other.start_frame;
+  }
+  const maxDurPosition = nextStart === null ? Infinity : Math.max(nextStart - c.start_frame, 1);
+  const maxDur = Math.max(Math.min(maxDurSource, maxDurPosition), 1);
+  return clampInt(c.duration + delta, 1, maxDur);
+}
+
+/** First unlocked audio track with room for `[startFrame, startFrame +
+ *  duration)`, or `null` — mirrors
+ *  `chroma-timeline::Timeline::audio_track_with_room`. */
+export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number | null {
+  const end = startFrame + duration;
+  const i = tl.tracks.findIndex(
+    (t) =>
+      t.kind === 'audio' &&
+      !t.locked &&
+      !t.clips.some((c) => startFrame < endFrame(c) && end > c.start_frame),
+  );
+  return i >= 0 ? i : null;
+}
+
+/** [`audioTrackWithRoom`], appending a brand-new audio track when none has
+ *  room — mirrors `chroma-timeline::Timeline::ensure_audio_track_with_room`.
+ *  Mutates `tracks` in place (callers already hold a `clone()`d timeline) and
+ *  uses the SAME track shape `add_track` builds, rather than a second
+ *  track-creation path (D-095/D-096/D-117's one real mechanism). A fresh
+ *  track is empty, so the returned index is always genuinely free — which is
+ *  what makes "a dropped clip's audio half always lands somewhere valid" a
+ *  guarantee with no failure branch. */
+export function ensureAudioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number {
+  const existing = audioTrackWithRoom(tl, startFrame, duration);
+  if (existing !== null) return existing;
+  tl.tracks.push({ kind: 'audio', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+  return tl.tracks.length - 1;
+}
+
+// --------------------------------------------------------------------------- //
 // pure edit ops — return a NEW timeline (or the same ref if the op is a no-op)
 // --------------------------------------------------------------------------- //
 
@@ -580,8 +753,26 @@ export type EditOp =
    *  new clip's `duration` to make room — the one place this model
    *  intentionally gains ripple behaviour, see `computeInsertion`'s own doc
    *  for why (this is NOT extended to `remove`/`trim`/`split`/`move`, all of
-   *  which stay explicit-position-only by design, D-054). */
-  | { kind: 'add_clip'; track: number; clip: NewClipFields; atIndex?: number; startFrame?: number; ripple?: boolean }
+   *  which stay explicit-position-only by design, D-054).
+   *
+   *  D-129 — `linkedAudio` is the dropped source's **own embedded audio, as a
+   *  second real clip**: when set, this op also places it on an audio track
+   *  (the first one with room at the same `startFrame`, else a brand-new one
+   *  appended via the same shape `add_track` builds — see
+   *  `ensureAudioTrackWithRoom`), both halves already carrying the same
+   *  `link_group`. Deliberately ONE op rather than two chained ones so the
+   *  pair is atomic: one history entry, one undo, and never a half-linked
+   *  timeline in between. Absent = today's behaviour exactly (a silent
+   *  source, or a pool item whose audio status isn't known). */
+  | {
+      kind: 'add_clip';
+      track: number;
+      clip: NewClipFields;
+      atIndex?: number;
+      startFrame?: number;
+      ripple?: boolean;
+      linkedAudio?: NewClipFields;
+    }
   /** D-058/D-080 — reposition a clip in time, and optionally onto a
    *  different track (`fromTrack !== toTrack`) — the drag handle / "move to
    *  another track" affordance in the panel. Mirrors
@@ -634,6 +825,14 @@ export type EditOp =
    *  `chroma_timeline::Track::sync_locked`. Always succeeds — same
    *  track-list-level reasoning as `set_track_locked`/`set_track_hidden`. */
   | { kind: 'set_track_sync_locked'; track: number; syncLocked: boolean }
+  /** D-129 — dissolve the COMPLETE A/V link group the clip at `(track, clip)`
+   *  belongs to (not just remove that one clip from it): Palmier Pro's own
+   *  documented `manage_clip_links` unlink semantics, and what Premiere's
+   *  `Clip > Unlink` / Resolve's "Unlink Clips" both do. The escape hatch for
+   *  an L-cut — unlink, slip one half, and (a later pass) relink. A no-op for
+   *  an already-unlinked clip; refused if the clip's own track is locked.
+   *  Mirrors `chroma_timeline::Timeline::unlink`. */
+  | { kind: 'unlink'; track: number; clip: number }
   /** D-086/D-089 — reorder the track list itself (compositing z-order,
    *  D-086's own doc: "track index order is compositing z-order, not
    *  cosmetic"). Mirrors `chroma_timeline::Timeline::move_track(from, to)`
@@ -701,7 +900,9 @@ export function labelForOp(op: EditOp, before: Timeline): string {
     case 'remove_gap':
       return `Close gap on track ${op.track + 1}`;
     case 'add_clip':
-      return `Add "${op.clip.name}"`;
+      return op.linkedAudio ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
+    case 'unlink':
+      return `Unlink ${clipLabel(before, op.track, op.clip)}`;
     case 'move': {
       const label = clipLabel(before, op.fromTrack, op.clip);
       return op.fromTrack === op.toTrack ? `Move ${label}` : `Move ${label} to another track`;
@@ -771,6 +972,36 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const defaultAt = track.clips.filter((c) => c.start_frame < startFrame).length;
     const at = Math.min(Math.max(op.atIndex ?? defaultAt, 0), track.clips.length);
     track.clips.splice(at, 0, clip);
+    // D-129 — the dropped source's own audio, as a second real clip on a
+    // linked audio track. Placed AFTER the video half (and after any ripple
+    // above) so `ensureAudioTrackWithRoom` sees the timeline's real final
+    // shape: on a sync-locked audio track the ripple has already made the
+    // same room there, so the existing track is normally reused; only when
+    // it genuinely can't fit is a new track appended. Never fails — a fresh
+    // track is always free — so there is no half-applied outcome here.
+    if (op.linkedAudio) {
+      const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, op.linkedAudio.duration);
+      const audioTrack = next.tracks[audioTrackIdx];
+      const audioClip: Clip = { ...op.linkedAudio, start_frame: startFrame };
+      const audioAt = audioTrack.clips.filter((c) => c.start_frame < startFrame).length;
+      audioTrack.clips.splice(audioAt, 0, audioClip);
+    }
+    return next;
+  }
+
+  if (op.kind === 'unlink') {
+    // Mirrors `chroma_timeline::Timeline::unlink` — dissolves the clip's
+    // COMPLETE group, no-op when it isn't linked, refused on a locked track.
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const group = tr.clips[op.clip]?.link_group;
+    if (!group) return tl;
+    const next = clone(tl);
+    for (const t of next.tracks) {
+      for (const c of t.clips) {
+        if (c.link_group === group) c.link_group = null;
+      }
+    }
     return next;
   }
 
@@ -899,6 +1130,47 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const syncLockBlocked =
       overlaps && op.ripple && findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame) !== null;
     if (overlaps && (!op.ripple || straddles || syncLockBlocked)) return tl;
+
+    // D-129 — every other member of this clip's A/V link group moves by the
+    // SAME delta, staying on its own track (Resolve's own "any change made to
+    // one … automatically applies to the other"; a linked pair keeps sync, it
+    // does not follow the video half onto the video half's new track).
+    // Validated in full here, BEFORE any mutation, so a move that can't be
+    // applied to every member is rejected whole rather than desyncing the
+    // halves — the reject-rather-than-corrupt discipline B-033 established.
+    // Mirrors `chroma-timeline::Timeline::move_clip`'s own link block.
+    const rippleFires = overlaps && !!op.ripple;
+    const delta = op.startFrame - c.start_frame;
+    // `[track, clip id, where it must end up]` captured by STABLE id before
+    // anything moves — the mutation below invalidates every clip index.
+    const siblingTargets: Array<[number, string, number]> = [];
+    const link = linkTargets(tl, op.fromTrack, op.clip);
+    if (link) {
+      for (const [ti, ci] of link.members) {
+        if (ti === op.fromTrack && ci === op.clip) continue;
+        const ot = tl.tracks[ti];
+        if (ot.locked) return tl;
+        const sib = ot.clips[ci];
+        const target = sib.start_frame + delta;
+        if (target < 0) return tl;
+        siblingTargets.push([ti, sib.id, target]);
+        // Whether THIS member's track receives the pending ripple — the same
+        // predicate `propagateSyncLockRipple` uses, so the prediction here
+        // and the real shift below can never disagree.
+        const rippled =
+          rippleFires && (ti === op.toTrack || ((ot.sync_locked ?? DEFAULT_SYNC_LOCKED) && !ot.locked));
+        const sibEnd = target + sib.duration;
+        const clash = ot.clips.some((o, i) => {
+          // Other members of the same group shift by the same delta from a
+          // non-overlapping start, so they can never collide with each other.
+          if (i === ci || link.members.some(([mt, mc]) => mt === ti && mc === i)) return false;
+          const os = startAfterRipple(o.start_frame, rippled, op.startFrame, c.duration);
+          return target < os + o.duration && sibEnd > os;
+        });
+        if (clash) return tl;
+      }
+    }
+
     const next = clone(tl);
     const [moved] = next.tracks[op.fromTrack].clips.splice(op.clip, 1);
     const destClips = next.tracks[op.toTrack].clips;
@@ -914,6 +1186,17 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // when this move's own ripple actually fired.
     if (overlaps && op.ripple) {
       propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, moved.duration);
+    }
+    // D-129 — place each linked sibling at the target computed (and fully
+    // validated) above, resolved by its stable id rather than the index it
+    // was validated with: splicing the primary out of `fromTrack` shifted
+    // every later index there, and the ripple/sync shifts may have moved
+    // siblings too. The target is absolute and already accounts for both, so
+    // this is a plain assignment, never a second relative shift. Runs BEFORE
+    // the prune below, while every track index is still the validated one.
+    for (const [ti, sibId, target] of siblingTargets) {
+      const sib = next.tracks[ti]?.clips.find((s) => s.id === sibId && s.id !== moved.id);
+      if (sib) sib.start_frame = target;
     }
     // Auto-decommission — only the source track can have been emptied by a
     // cross-track move; a same-track move never changes clip *count* on
@@ -947,9 +1230,19 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // `chroma-timeline::Timeline::remove` exactly; the gap it leaves is
       // implicit (nothing occupies that `start_frame` range any more).
       if (op.clip < 0 || op.clip >= tr.clips.length) return tl;
+      // D-129 — deleting one member of an A/V link group deletes every
+      // member (Resolve's own "…or deleting… automatically applies to the
+      // other"). Refused whole if any member's track is locked; each emptied
+      // track prunes, highest index first so lower ones stay valid. Mirrors
+      // `chroma-timeline::Timeline::remove`.
+      const link = linkTargets(tl, op.track, op.clip);
+      if (link && link.members.some(([ti]) => tl.tracks[ti].locked)) return tl;
+      const targets: Array<[number, number]> = link ? [...link.members] : [[op.track, op.clip]];
+      targets.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
       const next = clone(tl);
-      next.tracks[op.track].clips.splice(op.clip, 1);
-      pruneIfEmptyTrack(next.tracks, op.track);
+      for (const [ti, ci] of targets) next.tracks[ti].clips.splice(ci, 1);
+      const touched = [...new Set(targets.map(([ti]) => ti))].sort((a, b) => b - a);
+      for (const ti of touched) pruneIfEmptyTrack(next.tracks, ti);
       return next;
     }
     case 'remove_gap': {
@@ -978,23 +1271,31 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // the same clamped delta, `duration` shrinks by it.
       const c = tr.clips[op.clip];
       if (!c) return tl;
-      const ceiling = Math.max(c.source_len, 0);
-      // nearest preceding clip's end on this track (0 if none) — start_frame
-      // may never move earlier than this (no overlap with it).
-      const prevEnd = tr.clips.reduce((max, other, i) => {
-        if (i === op.clip) return max;
-        const oe = endFrame(other);
-        return oe <= c.start_frame ? Math.max(max, oe) : max;
-      }, 0);
-      let d = clampInt(op.delta, -c.source_start, Math.max(ceiling - 1, 0) - c.source_start);
-      d = Math.max(d, prevEnd - c.start_frame);
-      const newDur = c.duration - d;
-      if (newDur < 1) return tl;
+      const d = clampedTrimStartDelta(tr, op.clip, op.delta);
+      if (c.duration - d < 1) return tl;
+      // D-129 — a linked clip trims in lockstep with every other member of
+      // its group; if any member would clamp to a DIFFERENT delta (its own
+      // source runs out first, a neighbour blocks it) the whole op is
+      // rejected rather than leaving the halves out of sync. Unlink first for
+      // a deliberate L-cut — that's what unlink is for, in both references.
+      // Mirrors `chroma-timeline::Timeline::trim_start`.
+      const link = linkTargets(tl, op.track, op.clip);
+      if (link) {
+        for (const [ti, ci] of link.members) {
+          if (ti === op.track && ci === op.clip) continue;
+          const ot = tl.tracks[ti];
+          if (ot.locked) return tl;
+          if (clampedTrimStartDelta(ot, ci, op.delta) !== d || ot.clips[ci].duration - d < 1) return tl;
+        }
+      }
       const next = clone(tl);
-      const nc = next.tracks[op.track].clips[op.clip];
-      nc.source_start = c.source_start + d;
-      nc.start_frame = c.start_frame + d;
-      nc.duration = newDur;
+      const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
+      for (const [ti, ci] of targets) {
+        const nc = next.tracks[ti].clips[ci];
+        nc.source_start += d;
+        nc.start_frame += d;
+        nc.duration -= d;
+      }
       return next;
     }
     case 'trim_end': {
@@ -1004,19 +1305,22 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // overlap with it).
       const c = tr.clips[op.clip];
       if (!c) return tl;
-      const ceiling = Math.max(c.source_len, 0);
-      const maxDurSource = Math.max(ceiling - c.source_start, 1);
-      let nextStart: number | null = null;
-      for (const [i, other] of tr.clips.entries()) {
-        if (i === op.clip || other.start_frame < c.start_frame) continue;
-        if (nextStart === null || other.start_frame < nextStart) nextStart = other.start_frame;
-      }
-      const maxDurPosition = nextStart === null ? Infinity : Math.max(nextStart - c.start_frame, 1);
-      const maxDur = Math.max(Math.min(maxDurSource, maxDurPosition), 1);
-      const newDur = clampInt(c.duration + op.delta, 1, maxDur);
+      const newDur = clampedTrimEndDuration(tr, op.clip, op.delta);
       if (newDur === c.duration) return tl;
+      const applied = newDur - c.duration;
+      // D-129 — same lockstep-or-reject contract as `trim_start` above.
+      const link = linkTargets(tl, op.track, op.clip);
+      if (link) {
+        for (const [ti, ci] of link.members) {
+          if (ti === op.track && ci === op.clip) continue;
+          const ot = tl.tracks[ti];
+          if (ot.locked) return tl;
+          if (clampedTrimEndDuration(ot, ci, op.delta) - ot.clips[ci].duration !== applied) return tl;
+        }
+      }
       const next = clone(tl);
-      next.tracks[op.track].clips[op.clip].duration = newDur;
+      const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
+      for (const [ti, ci] of targets) next.tracks[ti].clips[ci].duration += applied;
       return next;
     }
     case 'split': {
@@ -1028,18 +1332,46 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       if (!c) return tl;
       const offset = op.atFrame - c.start_frame;
       if (offset <= 0 || offset >= c.duration) return tl;
+      // D-129 — a razor through one member of a link group cuts every member
+      // at the same frame ("clicking a linked clip with the Razor Tool cuts
+      // both tracks at once"), producing two INTACT pairs: left halves keep
+      // the group, right halves move to a derived one (`{group}·{frame}`,
+      // matching the clip-id derivation already used here). Rejected whole if
+      // the frame isn't strictly inside every member (an already-slipped
+      // L-cut). Mirrors `chroma-timeline::Timeline::split`.
+      const link = linkTargets(tl, op.track, op.clip);
+      if (link) {
+        for (const [ti, ci] of link.members) {
+          if (ti === op.track && ci === op.clip) continue;
+          const ot = tl.tracks[ti];
+          if (ot.locked) return tl;
+          const o = ot.clips[ci];
+          const off = op.atFrame - o.start_frame;
+          if (off <= 0 || off >= o.duration) return tl;
+        }
+      }
+      const rightGroup = link ? `${link.group}·${op.atFrame}` : null;
       const next = clone(tl);
-      const clips = next.tracks[op.track].clips;
-      const left = clips[op.clip];
-      const right: Clip = {
-        ...left,
-        id: `${left.id}·${op.atFrame}`,
-        start_frame: left.start_frame + offset,
-        source_start: left.source_start + offset,
-        duration: left.duration - offset,
-      };
-      left.duration = offset;
-      clips.splice(op.clip + 1, 0, right);
+      // Descending, so inserting each right half at `ci + 1` never shifts an
+      // index still to be processed (only matters when two members share a
+      // track — possible for a richer group, harmless for a plain pair).
+      const targets: Array<[number, number]> = link ? [...link.members] : [[op.track, op.clip]];
+      targets.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
+      for (const [ti, ci] of targets) {
+        const clips = next.tracks[ti].clips;
+        const left = clips[ci];
+        const off = op.atFrame - left.start_frame;
+        const right: Clip = {
+          ...left,
+          id: `${left.id}·${op.atFrame}`,
+          link_group: rightGroup,
+          start_frame: left.start_frame + off,
+          source_start: left.source_start + off,
+          duration: left.duration - off,
+        };
+        left.duration = off;
+        clips.splice(ci + 1, 0, right);
+      }
       return next;
     }
     default:

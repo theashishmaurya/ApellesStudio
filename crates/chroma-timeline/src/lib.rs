@@ -52,6 +52,20 @@
 //! crate; `chroma::audio` (`app/src-tauri`) is what actually reads it to
 //! scale a track's contribution to the mixed output. See D-057 for why it
 //! lives on `Track` here rather than in `chroma::audio` itself.
+//!
+//! **A/V link groups (D-129, `docs/notes/av-linking.md`):** `Clip.link_group`
+//! makes a video clip and its own audio two real, separately-addressable
+//! `Clip`s that behave as one — the model change D-050's embedded-audio
+//! playback was blocking. Every per-clip op here is link-aware: `move_clip`,
+//! `trim_start`, `trim_end`, `split` and `remove` apply to **every** member
+//! of a clip's group or to none of it (`TimelineError::LinkDesync`), matching
+//! Resolve's own documented "any change made to one — moving, trimming, or
+//! deleting — automatically applies to the other" and Premiere's Razor
+//! cutting both halves at once. `unlink` dissolves a complete group (both
+//! references' own escape hatch, and the way to make an L-cut). Placement of
+//! a *new* linked pair (the drop path) is `audio_track_with_room` /
+//! `ensure_audio_track_with_room` here plus `@chroma/editor`'s `add_clip`
+//! op — this crate still has no clip-*creation* op of its own.
 
 use serde::{Deserialize, Serialize};
 
@@ -215,6 +229,31 @@ pub struct Clip {
     /// `shot_id`/`source_path` matching for those.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_id: Option<String>,
+    /// A/V link group (D-129, `docs/notes/av-linking.md` Phase 1) — the id of
+    /// the group of clips this one is linked to; `None` = unlinked.
+    /// **Group-based, not pairwise**, matching Palmier Pro's own
+    /// `manage_clip_links` shape ("merges the complete existing groups touched
+    /// by clipIds"), and the same `Option<String>` back-link shape `media_id`
+    /// above already uses. `#[serde(default, skip_serializing_if =
+    /// "Option::is_none")]` — a pre-D-129 clip has no key, deserializes to
+    /// `None` (unlinked), zero migration needed, exactly `media_id`'s own
+    /// precedent.
+    ///
+    /// **On a VIDEO clip this field additionally means "this clip's audio has
+    /// been externalized to a linked audio clip — do NOT play its embedded
+    /// audio stream."** That is not two concepts folded into one flag (the
+    /// discipline `hidden` vs. `gain == 0.0` keeps separate on `Track`): it is
+    /// the single fact "this video clip's sound lives in a separate, linked
+    /// clip," which is precisely what Premiere/Resolve mean by a linked A/V
+    /// pair. `chroma::audio::chroma_audio_play` reads it for exactly that
+    /// (D-129) — a linked video clip contributes no embedded-audio source; its
+    /// linked audio clip supplies the sound instead, wherever on the timeline
+    /// that half currently sits (an L-cut), and silence if the user deleted
+    /// that half (matching both references, where deleting the audio half
+    /// really does leave the picture silent). A pre-D-129 clip is `None` here
+    /// and keeps D-050's embedded-audio playback byte-for-byte unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_group: Option<String>,
     pub name: String,
     pub source_path: String,
     pub source_start: i64,
@@ -311,6 +350,7 @@ impl Default for Clip {
             id: String::new(),
             shot_id: None,
             media_id: None,
+            link_group: None,
             name: String::new(),
             source_path: String::new(),
             source_start: 0,
@@ -378,6 +418,18 @@ pub enum TimelineError {
     /// `has_straddling_sync_locked_clip`'s own doc for why).
     #[error("a sync-locked track has a clip straddling the ripple point at frame {0}")]
     SyncLockedStraddle(i64),
+    /// D-129. An op on one member of an A/V link group could not be applied
+    /// identically to every other member — the linked halves would have ended
+    /// up out of sync (a different trim delta because a member hit its own
+    /// source/neighbour clamp first, a member landing on top of another clip
+    /// on its own track, or a split frame that isn't inside every member).
+    /// **Rejected whole rather than partially applied**, the exact
+    /// reject-rather-than-corrupt discipline B-033 established for the
+    /// sync-lock straddle case. `unlink` first if the halves really are meant
+    /// to diverge (an L-cut) — that is what it exists for, and it matches
+    /// both references' own "unlink, edit independently, relink" workflow.
+    #[error("this edit cannot be applied identically to every clip in link group {0}")]
+    LinkDesync(String),
 }
 
 /// Shift every clip on `track` starting at/after `threshold` by `delta`
@@ -438,6 +490,66 @@ fn propagate_sync_lock_ripple(tracks: &mut [Track], edited_track: usize, thresho
     }
 }
 
+// --------------------------------------------------------------------------- //
+// A/V link groups (D-129, `docs/notes/av-linking.md`)
+// --------------------------------------------------------------------------- //
+
+/// Where `start_frame` will be once a pending ripple has been applied — the
+/// pure prediction D-129's link validation needs so a linked move can be
+/// accepted or rejected **before** any mutation, without cloning the whole
+/// timeline or unwinding a half-applied op. `rippled` is whether this clip's
+/// own track receives the shift at all (the edited track always does; every
+/// other track only if it's `sync_locked` and not `locked` — the exact
+/// predicate [`propagate_sync_lock_ripple`] itself uses, kept in agreement by
+/// callers passing the same answer to both).
+fn start_after_ripple(start_frame: i64, rippled: bool, threshold: i64, delta: i64) -> i64 {
+    if rippled && start_frame >= threshold {
+        start_frame + delta
+    } else {
+        start_frame
+    }
+}
+
+/// The clamped head-trim delta `trim_start` would really apply to
+/// `track.clips[clip_idx]` for a requested `delta` — factored out of
+/// `trim_start` itself (D-129) so the same clamp can be asked of every OTHER
+/// member of a link group *before* anything is mutated, rather than
+/// duplicated or approximated. Caller guarantees `clip_idx` is in range.
+fn clamped_trim_start_delta(track: &Track, clip_idx: usize, delta: i64) -> i64 {
+    let c = &track.clips[clip_idx];
+    let ceiling = c.source_ceiling();
+    let prev_end = track
+        .clips
+        .iter()
+        .enumerate()
+        .filter(|(i, o)| *i != clip_idx && o.end_frame() <= c.start_frame)
+        .map(|(_, o)| o.end_frame())
+        .max()
+        .unwrap_or(0);
+    let d = delta.clamp(-c.source_start, (ceiling - 1).max(0) - c.source_start);
+    d.max(prev_end - c.start_frame)
+}
+
+/// The clamped new `duration` `trim_end` would really apply — the tail-trim
+/// counterpart of [`clamped_trim_start_delta`], factored out for the same
+/// D-129 reason. Caller guarantees `clip_idx` is in range.
+fn clamped_trim_end_duration(track: &Track, clip_idx: usize, delta: i64) -> i64 {
+    let c = &track.clips[clip_idx];
+    let max_dur_source = (c.source_ceiling() - c.source_start).max(1);
+    let next_start = track
+        .clips
+        .iter()
+        .enumerate()
+        .filter(|(i, o)| *i != clip_idx && o.start_frame >= c.start_frame)
+        .map(|(_, o)| o.start_frame)
+        .min();
+    let max_dur_position = next_start
+        .map(|s| (s - c.start_frame).max(1))
+        .unwrap_or(i64::MAX);
+    let max_dur = max_dur_source.min(max_dur_position).max(1);
+    (c.duration + delta).clamp(1, max_dur)
+}
+
 impl Timeline {
     /// Build a single-video-track timeline from a project's shots, each shot a
     /// full-length clip laid back to back in order. `shots` is
@@ -456,6 +568,7 @@ impl Timeline {
                     id: id.clone(),
                     shot_id: Some(id.clone()),
                     media_id: None,
+                    link_group: None,
                     name: name.clone(),
                     source_path: path.clone(),
                     source_start: 0,
@@ -585,6 +698,119 @@ impl Timeline {
         self.tracks.len() - 1
     }
 
+    // --- A/V link groups (D-129) -----------------------------------------
+
+    /// Every `(track index, clip index)` whose clip belongs to `group`, in
+    /// ascending track-then-clip order. Empty for an unknown group.
+    /// Index-based, so it is only valid until the next mutation — every
+    /// caller here either uses it purely for validation before mutating, or
+    /// re-resolves members by their stable `Clip::id` afterwards.
+    pub fn link_group_members(&self, group: &str) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for (ti, t) in self.tracks.iter().enumerate() {
+            for (ci, c) in t.clips.iter().enumerate() {
+                if c.link_group.as_deref() == Some(group) {
+                    out.push((ti, ci));
+                }
+            }
+        }
+        out
+    }
+
+    /// The member locations of the link group the clip at `(track,
+    /// clip_idx)` belongs to, plus that group's id — `None` when the clip is
+    /// unlinked. The one lookup every link-aware op starts from.
+    fn link_targets(&self, track: usize, clip_idx: usize) -> Option<(String, Vec<(usize, usize)>)> {
+        let group = self
+            .tracks
+            .get(track)?
+            .clips
+            .get(clip_idx)?
+            .link_group
+            .clone()?;
+        let members = self.link_group_members(&group);
+        Some((group, members))
+    }
+
+    /// The first audio track (lowest index — the same "index order is the
+    /// order" convention every other resolver in this crate uses) with room
+    /// for a clip occupying `[start_frame, start_frame + duration)`, or
+    /// `None` if every audio track is occupied there (or there are none).
+    /// A `locked` audio track never counts — placing a clip on it would be
+    /// refused by every op anyway (D-082's `TrackLocked`), so offering it as
+    /// a landing spot would only produce a guaranteed failure.
+    pub fn audio_track_with_room(&self, start_frame: i64, duration: i64) -> Option<usize> {
+        let end = start_frame + duration;
+        self.tracks.iter().position(|t| {
+            t.kind == TrackKind::Audio
+                && !t.locked
+                && !t
+                    .clips
+                    .iter()
+                    .any(|c| start_frame < c.end_frame() && end > c.start_frame)
+        })
+    }
+
+    /// [`Self::audio_track_with_room`], creating a new audio track (via
+    /// [`Self::add_track`] — the one real track-creation mechanism, D-095/
+    /// D-096/D-117, not a second one) when no existing one has room. A
+    /// brand-new track is empty, so the returned track is always genuinely
+    /// free at `[start_frame, start_frame + duration)` — which is what makes
+    /// D-129's "dropping a video clip always gets its linked audio half
+    /// somewhere valid" guarantee hold without a failure path.
+    pub fn ensure_audio_track_with_room(&mut self, start_frame: i64, duration: i64) -> usize {
+        match self.audio_track_with_room(start_frame, duration) {
+            Some(i) => i,
+            None => self.add_track(TrackKind::Audio),
+        }
+    }
+
+    /// Dissolve the **complete** link group the clip at `(track, clip_idx)`
+    /// belongs to — every member's `link_group` becomes `None`, not just this
+    /// one clip's. That is Palmier Pro's own documented `manage_clip_links`
+    /// `unlink` semantics ("dissolves each member's complete link group")
+    /// and matches Premiere's `Clip > Unlink` / Resolve's "Unlink Clips",
+    /// both of which break the pair rather than peel one clip out of it.
+    ///
+    /// A no-op (`Ok`) for an already-unlinked clip. **Not** gated on the
+    /// track's `locked` flag for any member other than the clip's own track:
+    /// unlinking changes no clip's position, duration or source window, so it
+    /// is a relationship edit rather than the kind of content edit
+    /// `Track::locked` exists to protect against — the same distinction
+    /// `add_track`/`remove_track`/`move_track` already draw.
+    ///
+    /// Unlinking a video clip restores D-050's embedded-audio playback for it
+    /// (its `link_group` is what suppressed that — see `Clip::link_group`),
+    /// so the ex-linked audio clip left behind on its own track will then
+    /// play *alongside* the video's own embedded audio. That is the honest
+    /// consequence of unlinking a pair built from one source file, not a bug:
+    /// the audio clip is now an independent clip the user is free to delete,
+    /// move, or keep as a doubled layer, exactly as in either reference NLE.
+    pub fn unlink(&mut self, track: usize, clip_idx: usize) -> Result<(), TimelineError> {
+        let t = self
+            .tracks
+            .get(track)
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
+        let clip = t
+            .clips
+            .get(clip_idx)
+            .ok_or(TimelineError::NoSuchClip(clip_idx, track))?;
+        let Some(group) = clip.link_group.clone() else {
+            return Ok(());
+        };
+        for t in self.tracks.iter_mut() {
+            for c in t.clips.iter_mut() {
+                if c.link_group.as_deref() == Some(group.as_str()) {
+                    c.link_group = None;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Remove the track at `track`, **including every clip on it** — a track
     /// with clips is not protected or emptied-then-kept, it's just gone
     /// (recovery is the caller's job, e.g. undo — D-052 — not a special case
@@ -673,6 +899,7 @@ impl Timeline {
             .get(from_idx)
             .ok_or(TimelineError::NoSuchClip(from_idx, from_track))?;
         let duration = clip.duration;
+        let clip_start_frame = clip.start_frame;
         let new_end = to_start_frame + duration;
 
         let dest = self
@@ -715,18 +942,88 @@ impl Timeline {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
 
+        // D-129 — every OTHER member of this clip's A/V link group moves by
+        // the SAME delta, staying on its own track (Resolve's own documented
+        // "any change made to one — moving, trimming, deleting — automatically
+        // applies to the other"; a linked pair keeps sync, it does not follow
+        // the video half onto the video half's new track). Validated in full
+        // here, BEFORE any mutation, so a move that can't be applied to every
+        // member is rejected whole rather than leaving the halves desynced —
+        // the reject-rather-than-corrupt discipline B-033 established.
+        let ripple_fires = overlaps && ripple;
+        let delta = to_start_frame - clip_start_frame;
+        // `(track, clip id, where it must end up)` for every sibling —
+        // captured by stable id here, before anything moves, because the
+        // mutation below invalidates every clip index it was validated with.
+        let mut sibling_targets: Vec<(usize, String, i64)> = Vec::new();
+        let link = self.link_targets(from_track, from_idx);
+        if let Some((group, members)) = &link {
+            for &(ti, ci) in members {
+                if (ti, ci) == (from_track, from_idx) {
+                    continue;
+                }
+                let ot = &self.tracks[ti];
+                if ot.locked {
+                    return Err(TimelineError::TrackLocked(ti));
+                }
+                let sib = &ot.clips[ci];
+                let target = sib.start_frame + delta;
+                if target < 0 {
+                    return Err(TimelineError::NegativePosition(target));
+                }
+                sibling_targets.push((ti, sib.id.clone(), target));
+                // Whether THIS member's own track receives the pending
+                // ripple — same predicate `propagate_sync_lock_ripple` uses,
+                // so the prediction below and the real shift agree.
+                let rippled = ripple_fires && (ti == to_track || (ot.sync_locked && !ot.locked));
+                let sib_end = target + sib.duration;
+                let clash = ot.clips.iter().enumerate().any(|(i, o)| {
+                    // Other members of the same group shift by the same delta
+                    // from a non-overlapping start, so they can never collide
+                    // with each other — and the member itself obviously
+                    // doesn't collide with itself.
+                    if i == ci || members.contains(&(ti, i)) {
+                        return false;
+                    }
+                    let os = start_after_ripple(o.start_frame, rippled, to_start_frame, duration);
+                    target < os + o.duration && sib_end > os
+                });
+                if clash {
+                    return Err(TimelineError::LinkDesync(group.clone()));
+                }
+            }
+        }
+
         let mut clip = self.tracks[from_track].clips.remove(from_idx);
-        if overlaps && ripple {
+        if ripple_fires {
             shift_clips_at_or_after(&mut self.tracks[to_track], to_start_frame, duration);
         }
         clip.start_frame = to_start_frame;
+        let moved_id = clip.id.clone();
         self.tracks[to_track].clips.push(clip);
         // D-106 — propagate to every OTHER sync-locked track, same
         // `to_start_frame`/`duration` shift, only when this move's own
         // ripple actually fired (no shift on `to_track` means nothing to
         // keep in sync elsewhere either).
-        if overlaps && ripple {
+        if ripple_fires {
             propagate_sync_lock_ripple(&mut self.tracks, to_track, to_start_frame, duration);
+        }
+        // D-129 — now place each linked sibling at the target computed (and
+        // fully validated) above. Resolved by its stable `Clip::id`, never by
+        // the index it was validated with: removing the primary from
+        // `from_track` shifted every later index on that track down by one,
+        // and the ripple/sync shifts above may have moved siblings too. The
+        // absolute target already accounts for both, so this is a plain
+        // assignment, never a second relative shift. Runs BEFORE the prune
+        // below, while every track index is still the one validated against.
+        for (ti, sib_id, target) in &sibling_targets {
+            if let Some(sib) = self.tracks.get_mut(*ti).and_then(|t| {
+                t.clips
+                    .iter_mut()
+                    .find(|c| &c.id == sib_id && c.id != moved_id)
+            }) {
+                sib.start_frame = *target;
+            }
         }
         // Only the source track can have been emptied by a cross-track move
         // — a same-track move never changes either track's clip count.
@@ -777,50 +1074,63 @@ impl Timeline {
     /// track (extending left can shrink a gap before it, never overlap it) —
     /// trimming right (`delta > 0`) only ever opens a gap before the clip,
     /// which can't violate that bound.
+    ///
+    /// **D-129 — a linked clip trims in lockstep with every other member of
+    /// its A/V link group**, matching Resolve's own documented "any change
+    /// made to one (moving, trimming, or deleting) automatically applies to
+    /// the other." Every member must accept the *identical* clamped delta; if
+    /// any one of them would clamp differently (its own source runs out
+    /// first, a neighbouring clip on its track blocks it) the whole op is
+    /// rejected with [`TimelineError::LinkDesync`] rather than silently
+    /// leaving the halves out of sync — `unlink` first if divergence is
+    /// actually what's wanted (an L-cut), which is exactly what both
+    /// references' unlink action exists for.
     pub fn trim_start(
         &mut self,
         track: usize,
         clip_idx: usize,
         delta: i64,
     ) -> Result<(), TimelineError> {
-        let t = self.track_mut(track)?;
+        let t = self
+            .tracks
+            .get(track)
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
         if clip_idx >= t.clips.len() {
             return Err(TimelineError::NoSuchClip(clip_idx, track));
         }
-        let (ceiling, cur_source_start, cur_start_frame, cur_duration) = {
-            let c = &t.clips[clip_idx];
-            (
-                c.source_ceiling(),
-                c.source_start,
-                c.start_frame,
-                c.duration,
-            )
-        };
-        // nearest preceding clip's end on this track (0 if none)
-        let prev_end = t
-            .clips
-            .iter()
-            .enumerate()
-            .filter(|(i, c)| *i != clip_idx && c.end_frame() <= cur_start_frame)
-            .map(|(_, c)| c.end_frame())
-            .max()
-            .unwrap_or(0);
-
-        // clamp delta so the new source_start stays in [0, ceiling-1]...
-        let mut d = delta.clamp(-cur_source_start, (ceiling - 1).max(0) - cur_source_start);
-        // ...and so the new start_frame never moves before the preceding clip's end.
-        d = d.max(prev_end - cur_start_frame);
-
-        let new_source_start = cur_source_start + d;
-        let new_start_frame = cur_start_frame + d;
-        let new_dur = cur_duration - d;
-        if new_dur < 1 {
+        let d = clamped_trim_start_delta(t, clip_idx, delta);
+        if t.clips[clip_idx].duration - d < 1 {
             return Err(TimelineError::EmptyClip);
         }
-        let clip = &mut t.clips[clip_idx];
-        clip.source_start = new_source_start;
-        clip.start_frame = new_start_frame;
-        clip.duration = new_dur;
+
+        let link = self.link_targets(track, clip_idx);
+        if let Some((group, members)) = &link {
+            for &(ti, ci) in members {
+                if (ti, ci) == (track, clip_idx) {
+                    continue;
+                }
+                let ot = &self.tracks[ti];
+                if ot.locked {
+                    return Err(TimelineError::TrackLocked(ti));
+                }
+                if clamped_trim_start_delta(ot, ci, delta) != d || ot.clips[ci].duration - d < 1 {
+                    return Err(TimelineError::LinkDesync(group.clone()));
+                }
+            }
+        }
+
+        let targets = link
+            .map(|(_, m)| m)
+            .unwrap_or_else(|| vec![(track, clip_idx)]);
+        for (ti, ci) in targets {
+            let clip = &mut self.tracks[ti].clips[ci];
+            clip.source_start += d;
+            clip.start_frame += d;
+            clip.duration -= d;
+        }
         Ok(())
     }
 
@@ -830,41 +1140,52 @@ impl Timeline {
     /// does not run past `source_len`, and (D-054) never grows past the
     /// `start_frame` of the nearest following clip on the same track (no
     /// overlap) — shrinking only ever opens/grows a gap after the clip.
+    ///
+    /// **D-129 — trims in lockstep with every other member of the clip's A/V
+    /// link group**, on the same "identical applied delta or reject the whole
+    /// op" contract as [`Self::trim_start`] — see that method's doc.
     pub fn trim_end(
         &mut self,
         track: usize,
         clip_idx: usize,
         delta: i64,
     ) -> Result<(), TimelineError> {
-        let t = self.track_mut(track)?;
+        let t = self
+            .tracks
+            .get(track)
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
         if clip_idx >= t.clips.len() {
             return Err(TimelineError::NoSuchClip(clip_idx, track));
         }
-        let (ceiling, source_start, start_frame, duration) = {
-            let c = &t.clips[clip_idx];
-            (
-                c.source_ceiling(),
-                c.source_start,
-                c.start_frame,
-                c.duration,
-            )
-        };
-        let max_dur_source = (ceiling - source_start).max(1);
-        // nearest following clip's start on this track, if any
-        let next_start = t
-            .clips
-            .iter()
-            .enumerate()
-            .filter(|(i, c)| *i != clip_idx && c.start_frame >= start_frame)
-            .map(|(_, c)| c.start_frame)
-            .min();
-        let max_dur_position = next_start
-            .map(|s| (s - start_frame).max(1))
-            .unwrap_or(i64::MAX);
-        let max_dur = max_dur_source.min(max_dur_position).max(1);
+        let new_dur = clamped_trim_end_duration(t, clip_idx, delta);
+        let applied = new_dur - t.clips[clip_idx].duration;
 
-        let new_dur = (duration + delta).clamp(1, max_dur);
-        t.clips[clip_idx].duration = new_dur;
+        let link = self.link_targets(track, clip_idx);
+        if let Some((group, members)) = &link {
+            for &(ti, ci) in members {
+                if (ti, ci) == (track, clip_idx) {
+                    continue;
+                }
+                let ot = &self.tracks[ti];
+                if ot.locked {
+                    return Err(TimelineError::TrackLocked(ti));
+                }
+                if clamped_trim_end_duration(ot, ci, delta) - ot.clips[ci].duration != applied {
+                    return Err(TimelineError::LinkDesync(group.clone()));
+                }
+            }
+        }
+
+        let targets = link
+            .map(|(_, m)| m)
+            .unwrap_or_else(|| vec![(track, clip_idx)]);
+        for (ti, ci) in targets {
+            let clip = &mut self.tracks[ti].clips[ci];
+            clip.duration += applied;
+        }
         Ok(())
     }
 
@@ -872,13 +1193,31 @@ impl Timeline {
     /// clips (the right half starts exactly where the left half now ends —
     /// splitting never introduces a gap). `at_timeline_frame` must land
     /// strictly inside `clip_idx` (not on either edge).
+    ///
+    /// **D-129 — a razor through one member of an A/V link group cuts every
+    /// member at the same frame**, matching both references exactly ("clicking
+    /// a linked clip with the Razor Tool cuts both tracks at once"). The two
+    /// resulting halves are two intact pairs, not one four-way group: the left
+    /// halves keep the original group id, the right halves all move to a
+    /// derived one (`{group}·{frame}`, the same derivation this method already
+    /// uses for the right half's clip id). If `at_timeline_frame` isn't
+    /// strictly inside *every* member (the halves have been slipped apart into
+    /// an L-cut), the whole op is rejected with
+    /// [`TimelineError::LinkDesync`] rather than cutting some members and not
+    /// others.
     pub fn split(
         &mut self,
         track: usize,
         clip_idx: usize,
         at_timeline_frame: i64,
     ) -> Result<(), TimelineError> {
-        let t = self.track_mut(track)?;
+        let t = self
+            .tracks
+            .get(track)
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
         if clip_idx >= t.clips.len() {
             return Err(TimelineError::NoSuchClip(clip_idx, track));
         }
@@ -887,28 +1226,95 @@ impl Timeline {
         if offset <= 0 || offset >= clip.duration {
             return Err(TimelineError::SplitOutsideClip(at_timeline_frame, clip_idx));
         }
-        let mut right = clip.clone();
-        right.id = format!("{}·{}", clip.id, at_timeline_frame);
-        right.start_frame = clip.start_frame + offset;
-        right.source_start = clip.source_start + offset;
-        right.duration = clip.duration - offset;
 
-        let left = &mut t.clips[clip_idx];
-        left.duration = offset;
-        t.clips.insert(clip_idx + 1, right);
+        let link = self.link_targets(track, clip_idx);
+        if let Some((group, members)) = &link {
+            for &(ti, ci) in members {
+                if (ti, ci) == (track, clip_idx) {
+                    continue;
+                }
+                let ot = &self.tracks[ti];
+                if ot.locked {
+                    return Err(TimelineError::TrackLocked(ti));
+                }
+                let o = &ot.clips[ci];
+                let off = at_timeline_frame - o.start_frame;
+                if off <= 0 || off >= o.duration {
+                    return Err(TimelineError::LinkDesync(group.clone()));
+                }
+            }
+        }
+
+        let right_group = link
+            .as_ref()
+            .map(|(g, _)| format!("{g}·{at_timeline_frame}"));
+        // Descending, so inserting each right half at `ci + 1` never shifts
+        // an index still to be processed (only matters when two members share
+        // a track — possible for a richer group, harmless for a plain pair).
+        let mut targets = link
+            .map(|(_, m)| m)
+            .unwrap_or_else(|| vec![(track, clip_idx)]);
+        targets.sort_unstable();
+        targets.reverse();
+        for (ti, ci) in targets {
+            let t = &mut self.tracks[ti];
+            let src = &t.clips[ci];
+            let off = at_timeline_frame - src.start_frame;
+            let mut right = src.clone();
+            right.id = format!("{}·{}", src.id, at_timeline_frame);
+            right.start_frame = src.start_frame + off;
+            right.source_start = src.source_start + off;
+            right.duration = src.duration - off;
+            right.link_group = right_group.clone();
+            t.clips[ci].duration = off;
+            t.clips.insert(ci + 1, right);
+        }
         Ok(())
     }
 
     /// Remove the clip at `clip_idx` on `track`. Unlike a "ripple delete",
     /// nothing else on the track moves (D-054: positions are explicit now) —
     /// this simply opens (or grows) a gap where the clip used to be.
+    ///
+    /// **D-129 — deleting one member of an A/V link group deletes every
+    /// member**, matching both references ("any change made to one — moving,
+    /// trimming, or deleting — automatically applies to the other"). Refused
+    /// whole if any member's own track is locked. Each emptied track is
+    /// pruned, highest index first so the lower ones stay valid.
     pub fn remove(&mut self, track: usize, clip_idx: usize) -> Result<(), TimelineError> {
-        let t = self.track_mut(track)?;
+        let t = self
+            .tracks
+            .get(track)
+            .ok_or(TimelineError::NoSuchTrack(track))?;
+        if t.locked {
+            return Err(TimelineError::TrackLocked(track));
+        }
         if clip_idx >= t.clips.len() {
             return Err(TimelineError::NoSuchClip(clip_idx, track));
         }
-        t.clips.remove(clip_idx);
-        self.prune_if_empty(track);
+
+        let link = self.link_targets(track, clip_idx);
+        if let Some((_, members)) = &link {
+            for &(ti, _) in members {
+                if self.tracks[ti].locked {
+                    return Err(TimelineError::TrackLocked(ti));
+                }
+            }
+        }
+        let mut targets = link
+            .map(|(_, m)| m)
+            .unwrap_or_else(|| vec![(track, clip_idx)]);
+        targets.sort_unstable();
+        targets.reverse();
+        let mut touched: Vec<usize> = targets.iter().map(|(ti, _)| *ti).collect();
+        for (ti, ci) in targets {
+            self.tracks[ti].clips.remove(ci);
+        }
+        touched.sort_unstable();
+        touched.dedup();
+        for ti in touched.into_iter().rev() {
+            self.prune_if_empty(ti);
+        }
         Ok(())
     }
 
@@ -2287,5 +2693,484 @@ mod tests {
         t.remove_gap(0, 60).unwrap();
         let track1_y = t.tracks[1].clips.iter().find(|c| c.id == "y").unwrap();
         assert_eq!(track1_y.start_frame, 60, "y (start 90, at/after the gap's own end 80) shifted -30, no gap needed on track 1");
+    }
+
+    // -------------------------------------------------------------------- //
+    // A/V link groups (D-129, `docs/notes/av-linking.md`)
+    // -------------------------------------------------------------------- //
+
+    /// A video track + an audio track holding one linked A/V pair — the exact
+    /// shape dropping a clip with embedded audio now produces (D-129):
+    /// V1 `[0, 100)` and A1 `[0, 100)`, same source, same `link_group`.
+    fn linked_pair() -> Timeline {
+        let mk = |kind, clips| Track {
+            kind,
+            clips,
+            gain: default_track_gain(),
+            locked: false,
+            hidden: false,
+            sync_locked: default_sync_locked(),
+        };
+        let mut v = c("v", 0, 100);
+        v.link_group = Some("g1".into());
+        v.source_len = 100;
+        let mut a = c("a", 0, 100);
+        a.link_group = Some("g1".into());
+        a.source_path = "/v.mov".into();
+        a.source_len = 100;
+        Timeline {
+            id: "t".into(),
+            name: "t".into(),
+            rate: None,
+            tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
+        }
+    }
+
+    fn start_of(t: &Timeline, track: usize, id: &str) -> Option<i64> {
+        t.tracks[track]
+            .clips
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.start_frame)
+    }
+
+    /// Real backward-compat evidence, not just a hand-written fixture: parse
+    /// the owner's actual `~/Movies/Chroma/New.chroma/project.json` (the same
+    /// file `backfill_matches_the_real_project_json_single_clip_shape` was
+    /// written against) and assert every clip in every timeline loads
+    /// **unlinked**, so D-129 changes nothing about how that project plays or
+    /// edits until the owner drops a new clip. Skipped cleanly when the file
+    /// isn't there — this crate must stay runnable on any machine.
+    #[test]
+    fn the_owners_real_project_json_loads_with_every_clip_unlinked() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let path = std::path::Path::new(&home).join("Movies/Chroma/New.chroma/project.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            eprintln!("skip: {} not present on this machine", path.display());
+            return;
+        };
+        let doc: serde_json::Value = serde_json::from_str(&raw).expect("real project.json parses");
+        let timelines = doc
+            .get("timelines")
+            .and_then(|t| t.as_array())
+            .expect("the real project has a `timelines` array");
+        assert!(!timelines.is_empty(), "the real project has timelines");
+        let mut clips_seen = 0usize;
+        for value in timelines {
+            let mut tl: Timeline =
+                serde_json::from_value(value.clone()).expect("a real timeline deserializes");
+            tl.backfill_legacy_positions();
+            for track in &tl.tracks {
+                for clip in &track.clips {
+                    clips_seen += 1;
+                    assert_eq!(
+                        clip.link_group, None,
+                        "every pre-D-129 clip loads unlinked — no behaviour change for this project"
+                    );
+                }
+            }
+        }
+        assert!(clips_seen > 0, "the real project has at least one clip");
+    }
+
+    #[test]
+    fn legacy_clip_json_without_link_group_is_unlinked() {
+        let j = r#"{"id":"c1","name":"old","source_path":"/o.mov","source_start":0,"duration":40,"start_frame":0}"#;
+        let c: Clip = serde_json::from_str(j).unwrap();
+        assert_eq!(
+            c.link_group, None,
+            "every pre-D-129 project.json clip loads unlinked — the whole backward-compat story"
+        );
+    }
+
+    #[test]
+    fn link_group_round_trips_and_none_omits_the_key() {
+        let t = linked_pair();
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains("\"link_group\":\"g1\""), "{json}");
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tracks[1].clips[0].link_group.as_deref(), Some("g1"));
+
+        let plain = Timeline::from_shots(&shots());
+        let json2 = serde_json::to_string(&plain).unwrap();
+        assert!(
+            !json2.contains("link_group"),
+            "None omits the key entirely, matching media_id: {json2}"
+        );
+    }
+
+    #[test]
+    fn link_group_members_finds_every_member_across_tracks() {
+        let t = linked_pair();
+        assert_eq!(t.link_group_members("g1"), vec![(0, 0), (1, 0)]);
+        assert!(t.link_group_members("nope").is_empty());
+    }
+
+    // --- track auto-creation for the audio half ------------------------------
+
+    #[test]
+    fn audio_track_with_room_finds_a_free_audio_track() {
+        let t = linked_pair(); // A1 is occupied over [0,100)
+        assert_eq!(t.audio_track_with_room(0, 100), None, "A1 is busy there");
+        assert_eq!(
+            t.audio_track_with_room(200, 100),
+            Some(1),
+            "same track, past the existing clip — room"
+        );
+    }
+
+    #[test]
+    fn audio_track_with_room_ignores_video_and_locked_tracks() {
+        let mut t = linked_pair();
+        assert_eq!(
+            t.audio_track_with_room(500, 10),
+            Some(1),
+            "never track 0 — that's the video track"
+        );
+        t.tracks[1].locked = true;
+        assert_eq!(
+            t.audio_track_with_room(500, 10),
+            None,
+            "a locked track is never offered — every op would refuse it anyway"
+        );
+    }
+
+    #[test]
+    fn ensure_audio_track_with_room_creates_one_when_every_existing_track_is_busy() {
+        let mut t = linked_pair();
+        let idx = t.ensure_audio_track_with_room(0, 100);
+        assert_eq!(idx, 2, "a brand-new audio track, appended via add_track");
+        assert_eq!(t.tracks[2].kind, TrackKind::Audio);
+        assert!(t.tracks[2].clips.is_empty());
+        assert_eq!(t.tracks[2].gain, 1.0, "unity, same as any other new track");
+        assert!(
+            t.tracks[2].sync_locked,
+            "sync-locked by default, same as any other new track"
+        );
+    }
+
+    #[test]
+    fn ensure_audio_track_with_room_reuses_a_free_one_rather_than_piling_up_tracks() {
+        let mut t = linked_pair();
+        assert_eq!(t.ensure_audio_track_with_room(200, 50), 1);
+        assert_eq!(t.tracks.len(), 2, "no new track created — A1 had room");
+    }
+
+    // --- move ----------------------------------------------------------------
+
+    #[test]
+    fn move_clip_drags_the_linked_audio_half_along() {
+        let mut t = linked_pair();
+        t.move_clip(0, 0, 0, 300, false).unwrap();
+        assert_eq!(start_of(&t, 0, "v"), Some(300));
+        assert_eq!(
+            start_of(&t, 1, "a"),
+            Some(300),
+            "the audio half moved by the same delta, staying on its own track"
+        );
+    }
+
+    #[test]
+    fn move_clip_from_the_audio_half_drags_the_video_half_too() {
+        // Symmetry: grabbing either half moves the pair — neither is "the"
+        // primary, matching both references' linked selection.
+        let mut t = linked_pair();
+        t.move_clip(1, 0, 1, 250, false).unwrap();
+        assert_eq!(start_of(&t, 1, "a"), Some(250));
+        assert_eq!(start_of(&t, 0, "v"), Some(250));
+    }
+
+    #[test]
+    fn move_clip_cross_track_keeps_the_audio_half_on_its_own_track() {
+        let mut t = linked_pair();
+        t.add_track(TrackKind::Video); // track 2
+        t.move_clip(0, 0, 2, 400, false).unwrap();
+        // The old V1 was emptied by the move and auto-decommissioned, so the
+        // remaining tracks renumber: audio at 0, the new video track at 1.
+        assert_eq!(t.tracks.len(), 2, "the emptied V1 was pruned");
+        let audio = t
+            .tracks
+            .iter()
+            .find(|tr| tr.kind == TrackKind::Audio)
+            .expect("the audio track survives — it still holds the audio half");
+        assert_eq!(audio.clips.len(), 1);
+        assert_eq!(audio.clips[0].id, "a");
+        assert_eq!(
+            audio.clips[0].start_frame, 400,
+            "the audio half followed in TIME but stayed on an audio track — it does \
+             NOT follow the video half onto the video half's new track"
+        );
+        let video = t
+            .tracks
+            .iter()
+            .find(|tr| tr.kind == TrackKind::Video)
+            .expect("the destination video track");
+        assert_eq!(video.clips[0].id, "v");
+        assert_eq!(video.clips[0].start_frame, 400);
+    }
+
+    #[test]
+    fn move_clip_rejects_whole_when_the_audio_half_has_nowhere_to_land() {
+        let mut t = linked_pair();
+        // Park an unrelated audio clip exactly where the pair would land.
+        t.tracks[1].clips.push(c("blocker", 300, 100));
+        let err = t.move_clip(0, 0, 0, 300, false).unwrap_err();
+        assert_eq!(err, TimelineError::LinkDesync("g1".into()));
+        assert_eq!(
+            start_of(&t, 0, "v"),
+            Some(0),
+            "rejected whole — nothing moved"
+        );
+        assert_eq!(start_of(&t, 1, "a"), Some(0));
+    }
+
+    #[test]
+    fn move_clip_ripple_makes_room_on_both_tracks_for_a_linked_pair() {
+        // The everyday NLE gesture: drop a linked pair between two already-
+        // touching clips. The video track ripples for the video half, and
+        // the sync-locked audio track ripples for the audio half — so the
+        // pair lands intact, one delta, no desync.
+        let mut t = linked_pair();
+        // V1: existing X[0,50) Y[50,50); A1: x[0,50) y[50,50); the pair
+        // parked far to the right at 1000.
+        t.tracks[0].clips[0].start_frame = 1000;
+        t.tracks[1].clips[0].start_frame = 1000;
+        t.tracks[0].clips.push(c("X", 0, 50));
+        t.tracks[0].clips.push(c("Y", 50, 50));
+        t.tracks[1].clips.push(c("x", 0, 50));
+        t.tracks[1].clips.push(c("y", 50, 50));
+
+        t.move_clip(0, 0, 0, 50, true).unwrap();
+        assert_eq!(
+            start_of(&t, 0, "v"),
+            Some(50),
+            "video half landed at the seam"
+        );
+        assert_eq!(
+            start_of(&t, 1, "a"),
+            Some(50),
+            "audio half landed at the same frame"
+        );
+        assert_eq!(
+            start_of(&t, 0, "Y"),
+            Some(150),
+            "video's Y rippled by the pair's 100 frames"
+        );
+        assert_eq!(
+            start_of(&t, 1, "y"),
+            Some(150),
+            "the sync-locked audio track rippled by the same 100 — room for the audio half"
+        );
+        assert_eq!(
+            start_of(&t, 0, "X"),
+            Some(0),
+            "before the insert point, untouched"
+        );
+        assert_eq!(start_of(&t, 1, "x"), Some(0));
+    }
+
+    #[test]
+    fn move_clip_refuses_when_the_linked_half_sits_on_a_locked_track() {
+        let mut t = linked_pair();
+        t.tracks[1].locked = true;
+        assert_eq!(
+            t.move_clip(0, 0, 0, 300, false),
+            Err(TimelineError::TrackLocked(1))
+        );
+        assert_eq!(start_of(&t, 0, "v"), Some(0), "nothing moved");
+    }
+
+    #[test]
+    fn move_clip_on_an_unlinked_clip_is_unchanged_by_d125() {
+        // The whole backward-compat guarantee in one test: a clip with no
+        // link_group behaves exactly as it did before this feature.
+        let mut t = Timeline::from_shots(&shots());
+        t.move_clip(0, 0, 0, 1000, false).unwrap();
+        let a = t.tracks[0].clips.iter().find(|c| c.name == "A").unwrap();
+        assert_eq!(a.start_frame, 1000);
+        assert_eq!(t.tracks[0].clips.len(), 3);
+    }
+
+    // --- trim ----------------------------------------------------------------
+
+    #[test]
+    fn trim_start_applies_to_both_halves() {
+        let mut t = linked_pair();
+        t.trim_start(0, 0, 20).unwrap();
+        for (ti, id) in [(0, "v"), (1, "a")] {
+            let c = t.tracks[ti].clips.iter().find(|c| c.id == id).unwrap();
+            assert_eq!(
+                (c.source_start, c.start_frame, c.duration),
+                (20, 20, 80),
+                "{id} half"
+            );
+        }
+    }
+
+    #[test]
+    fn trim_end_applies_to_both_halves() {
+        let mut t = linked_pair();
+        t.trim_end(1, 0, -30).unwrap(); // grab the AUDIO half's tail
+        assert_eq!(t.tracks[0].clips[0].duration, 70, "video half followed");
+        assert_eq!(t.tracks[1].clips[0].duration, 70);
+    }
+
+    #[test]
+    fn trim_rejects_whole_when_one_half_would_clamp_differently() {
+        // The audio half has a neighbour immediately after it, so a tail
+        // EXTEND clamps there while the video half has room — the two would
+        // end up different lengths. Reject, don't desync.
+        let mut t = linked_pair();
+        t.tracks[0].clips[0].source_len = 10_000;
+        t.tracks[1].clips[0].source_len = 10_000;
+        t.tracks[1].clips.push(c("neighbour", 120, 50));
+        let err = t.trim_end(0, 0, 200).unwrap_err();
+        assert_eq!(err, TimelineError::LinkDesync("g1".into()));
+        assert_eq!(t.tracks[0].clips[0].duration, 100, "rejected whole");
+        assert_eq!(t.tracks[1].clips[0].duration, 100);
+    }
+
+    #[test]
+    fn trim_start_still_clamps_and_errors_exactly_as_before_for_an_unlinked_clip() {
+        // The pre-D-129 trim_start test's own assertions, re-run against the
+        // refactored (clamp extracted into a free fn) implementation.
+        let mut t = Timeline::from_shots(&shots());
+        t.trim_start(0, 0, 20).unwrap();
+        let c = &t.tracks[0].clips[0];
+        assert_eq!((c.source_start, c.start_frame, c.duration), (20, 20, 80));
+        t.trim_start(0, 0, -100).unwrap();
+        let c = &t.tracks[0].clips[0];
+        assert_eq!((c.source_start, c.start_frame, c.duration), (0, 0, 100));
+        t.trim_end(0, 1, -40).unwrap();
+        assert_eq!(t.trim_start(0, 1, 10), Err(TimelineError::EmptyClip));
+    }
+
+    // --- split ---------------------------------------------------------------
+
+    #[test]
+    fn split_cuts_both_halves_and_leaves_two_intact_pairs() {
+        let mut t = linked_pair();
+        t.split(0, 0, 40).unwrap();
+        assert_eq!(t.tracks[0].clips.len(), 2, "video half cut");
+        assert_eq!(
+            t.tracks[1].clips.len(),
+            2,
+            "audio half cut at the same frame"
+        );
+
+        let v_left = &t.tracks[0].clips[0];
+        let v_right = &t.tracks[0].clips[1];
+        let a_left = &t.tracks[1].clips[0];
+        let a_right = &t.tracks[1].clips[1];
+        assert_eq!((v_left.start_frame, v_left.duration), (0, 40));
+        assert_eq!((v_right.start_frame, v_right.duration), (40, 60));
+        assert_eq!((a_left.start_frame, a_left.duration), (0, 40));
+        assert_eq!((a_right.start_frame, a_right.duration), (40, 60));
+
+        assert_eq!(v_left.link_group.as_deref(), Some("g1"));
+        assert_eq!(a_left.link_group.as_deref(), Some("g1"));
+        assert_eq!(v_right.link_group.as_deref(), Some("g1·40"));
+        assert_eq!(
+            a_right.link_group.as_deref(),
+            Some("g1·40"),
+            "the two right halves are their own intact pair, not still in the left pair's group"
+        );
+        assert_eq!(t.link_group_members("g1"), vec![(0, 0), (1, 0)]);
+        assert_eq!(t.link_group_members("g1·40"), vec![(0, 1), (1, 1)]);
+    }
+
+    #[test]
+    fn split_rejects_whole_when_the_frame_is_not_inside_every_member() {
+        let mut t = linked_pair();
+        // Slip the audio half right so frame 40 is no longer inside it.
+        t.tracks[1].clips[0].start_frame = 60;
+        let err = t.split(0, 0, 40).unwrap_err();
+        assert_eq!(err, TimelineError::LinkDesync("g1".into()));
+        assert_eq!(
+            t.tracks[0].clips.len(),
+            1,
+            "rejected whole — nothing was cut"
+        );
+        assert_eq!(t.tracks[1].clips.len(), 1);
+    }
+
+    // --- remove --------------------------------------------------------------
+
+    #[test]
+    fn remove_deletes_every_member_of_the_link_group() {
+        let mut t = linked_pair();
+        // Keep another clip on each track so neither is pruned away, which
+        // would make "did both go?" ambiguous.
+        t.tracks[0].clips.push(c("keep_v", 500, 10));
+        t.tracks[1].clips.push(c("keep_a", 500, 10));
+        t.remove(0, 0).unwrap();
+        assert_eq!(t.tracks[0].clips.len(), 1);
+        assert_eq!(t.tracks[1].clips.len(), 1, "the audio half went too");
+        assert_eq!(t.tracks[0].clips[0].id, "keep_v");
+        assert_eq!(t.tracks[1].clips[0].id, "keep_a");
+    }
+
+    #[test]
+    fn remove_of_a_linked_pair_prunes_every_track_it_empties() {
+        let mut t = linked_pair(); // one clip on each of two tracks
+        t.remove(1, 0).unwrap(); // grab the audio half
+        assert!(
+            t.tracks.is_empty(),
+            "both tracks were emptied by the one delete, so both auto-decommission"
+        );
+    }
+
+    #[test]
+    fn remove_refuses_when_a_linked_half_is_on_a_locked_track() {
+        let mut t = linked_pair();
+        t.tracks[1].locked = true;
+        assert_eq!(t.remove(0, 0), Err(TimelineError::TrackLocked(1)));
+        assert_eq!(t.tracks[0].clips.len(), 1, "nothing deleted");
+        assert_eq!(t.tracks[1].clips.len(), 1);
+    }
+
+    // --- unlink --------------------------------------------------------------
+
+    #[test]
+    fn unlink_dissolves_the_complete_group_not_just_the_named_clip() {
+        let mut t = linked_pair();
+        t.unlink(0, 0).unwrap();
+        assert_eq!(t.tracks[0].clips[0].link_group, None);
+        assert_eq!(
+            t.tracks[1].clips[0].link_group, None,
+            "Palmier's own 'dissolves each member's complete link group' semantics"
+        );
+        assert!(t.link_group_members("g1").is_empty());
+    }
+
+    #[test]
+    fn unlink_then_edit_moves_only_the_clip_you_grabbed() {
+        let mut t = linked_pair();
+        t.unlink(0, 0).unwrap();
+        t.move_clip(0, 0, 0, 400, false).unwrap();
+        assert_eq!(start_of(&t, 0, "v"), Some(400));
+        assert_eq!(
+            start_of(&t, 1, "a"),
+            Some(0),
+            "the L-cut workflow: unlink, then slip one half independently"
+        );
+    }
+
+    #[test]
+    fn unlink_on_an_already_unlinked_clip_is_a_no_op() {
+        let mut t = Timeline::from_shots(&shots());
+        assert_eq!(t.unlink(0, 0), Ok(()));
+        assert_eq!(t.tracks[0].clips[0].link_group, None);
+    }
+
+    #[test]
+    fn unlink_rejects_out_of_range_and_a_locked_track() {
+        let mut t = linked_pair();
+        assert_eq!(t.unlink(9, 0), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(t.unlink(0, 9), Err(TimelineError::NoSuchClip(9, 0)));
+        t.tracks[0].locked = true;
+        assert_eq!(t.unlink(0, 0), Err(TimelineError::TrackLocked(0)));
     }
 }

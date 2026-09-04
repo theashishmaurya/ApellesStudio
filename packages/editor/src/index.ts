@@ -18,4 +18,13 @@ export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
 export type { Timeline, Track, Clip, EditOp, DraggedMedia } from './timeline';
-export { CHROMA_MEDIA_DRAG_MIME, clipFromDraggedMedia } from './timeline';
+export {
+  CHROMA_MEDIA_DRAG_MIME,
+  clipFromDraggedMedia,
+  // D-129 — A/V link groups (`docs/notes/av-linking.md`).
+  linkedClipsFromDraggedMedia,
+  linkGroupMembers,
+  linkedClipIds,
+  audioTrackWithRoom,
+  ensureAudioTrackWithRoom,
+} from './timeline';

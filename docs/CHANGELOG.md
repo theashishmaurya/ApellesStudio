@@ -73,6 +73,23 @@ One or two lines per session. Detail lives in the decision it references.
   time for the old whole-clip strip. **(4)** The waveform had no cache at all and re-decoded a
   clip's whole audio on every zoom step, on the main thread. Critical-path
   catalogue: `docs/notes/media-cache.md`.
+- **2026-09-04** — **Dropping a clip now creates a real, linked audio clip on
+  its own track (D-129).** The owner's ask ("in palmier and other anytime i
+  drop a clip it… created a linked track in audio"), which needed the exact
+  model change `docs/notes/av-linking.md` had flagged as a prerequisite and
+  deferred: a video clip's embedded audio is a separate `Clip` now, not just a
+  stream D-050 decoded off the video source. `Clip.link_group` (group-based —
+  and on a video clip it also means "don't play the embedded stream", which is
+  what stops the same audio summing with itself); one atomic `add_clip` places
+  both halves, with the audio track found-or-created through the existing
+  `add_track` mechanism; `MediaVideoInfo::has_audio` fills the signal gap
+  D-097 flagged, backfilled once for existing pool items. Move, trim, split
+  and delete propagate across a link group or reject whole (B-033's own
+  discipline); `unlink` dissolves the complete group. Reference-checked
+  against Premiere, Resolve and Palmier's `manage_clip_links` — including one
+  place the references overruled the scoping doc's own recommendation (trims
+  propagate). Pre-D-129 clips are unlinked and behave exactly as before, with
+  no retroactive migration, deliberately.
 - **2026-09-04** — **The filmstrip's real cost: one 105-second decode per
   clip, re-triggered on every zoom step (D-124, B-039).** Round 3 on
   D-119's filmstrip, run empirically after two rounds of reading missed

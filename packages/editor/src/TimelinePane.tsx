@@ -184,6 +184,11 @@ import {
   Lock,
   Scissors,
   Trash2,
+  // D-128 — the A/V-unlink action. Deliberately `Unlink`, not the `Unlink2`
+  // below: that one is already the track header's sync-lock toggle, and
+  // sync-lock and an A/V link are different relationships (see
+  // `avLinkedIds`), so they must not share an icon.
+  Unlink,
   Unlink2,
   Unlock,
   Volume2,
@@ -220,10 +225,11 @@ import {
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_SYNC_LOCKED,
   DEFAULT_TRACK_GAIN,
-  clipFromDraggedMedia,
   computeInsertion,
   endFrame,
   gapAt,
+  linkedClipIds,
+  linkedClipsFromDraggedMedia,
   resolveClipLanding,
   syncLinkedClipIds,
   syncLinkedClipIdsAtPosition,
@@ -719,6 +725,19 @@ export function TimelinePane() {
     [timeline, selection],
   );
 
+  // D-128 — the A/V-link highlight: the other half (or halves) of the
+  // selected clip's link group. Deliberately a SEPARATE set and a separate
+  // visual from `syncLinkedIds` above: sync-lock means "these tracks ripple
+  // together," an A/V link means "these clips ARE one shot" — two different
+  // relationships that must not read as the same thing on screen. This is
+  // also the only on-screen cue that a clip's edits will carry to another
+  // track, which is what makes a linked move/trim/delete legible instead of
+  // surprising.
+  const avLinkedIds = useMemo(
+    () => (timeline ? linkedClipIds(timeline, selection) : new Set<string>()),
+    [timeline, selection],
+  );
+
   // keep the editor's own cursor in step with the store playhead (step buttons,
   // the play loop, clicks in the preview transport)
   useEffect(() => {
@@ -962,20 +981,22 @@ export function TimelinePane() {
   };
 
   /** D-097 — what kind a track created at insertion boundary `index` should
-   *  be. `DraggedMedia`/`MediaItem` (`timeline.ts` / `@chroma/bridge`)
-   *  carry NO real audio-vs-video signal today — checked, not assumed
-   *  (`MediaItem`'s only probed-info field is `video?: MediaVideoInfo`,
-   *  there's no `MediaAudioInfo`/`mediaType`; `clipFromDraggedMedia` itself
-   *  can't build a clip at all without a `frameCount`, i.e. today's
-   *  Sources-panel drag flow doesn't support audio-only media landing on
-   *  the timeline in the first place) — so this can't derive the new
-   *  track's kind from the dragged item itself without a real backend model
-   *  change (out of scope here). The next-best real signal is drop
-   *  *context*: continue whatever kind cluster the insertion point is
-   *  adjacent to — the track directly above the boundary (or, at the very
-   *  top, the track directly below it) — rather than a hardcoded literal
-   *  (the actual pre-D-097 bug: every auto-created track was unconditionally
-   *  `'video'`, regardless of where the drop landed). */
+   *  be. Derived from drop *context*: continue whatever kind cluster the
+   *  insertion point is adjacent to — the track directly above the boundary
+   *  (or, at the very top, the track directly below it) — rather than a
+   *  hardcoded literal (the actual pre-D-097 bug: every auto-created track
+   *  was unconditionally `'video'`, regardless of where the drop landed).
+   *
+   *  D-097 originally flagged that `DraggedMedia`/`MediaItem` carried no
+   *  audio-vs-video signal at all, so the kind could not come from the
+   *  dragged item "without a real backend model change." **D-128 made that
+   *  change** — `MediaItem.video.hasAudio` (and `DraggedMedia.hasAudio`) is
+   *  real now. It is deliberately NOT used here, though: it answers "does
+   *  this source have sound," not "is this an audio-only item," and a drop
+   *  onto a video-track boundary still wants a video track even when the
+   *  source has audio (its audio half gets its own track via
+   *  `ensureAudioTrackWithRoom`, not this boundary). Drop context remains
+   *  the right signal for this specific question. */
   const inferNewTrackKind = (index: number): 'video' | 'audio' => {
     if (index > 0 && tracks[index - 1]) return tracks[index - 1].kind;
     if (tracks[index]) return tracks[index].kind;
@@ -1118,8 +1139,15 @@ export function TimelinePane() {
     } catch {
       return;
     }
-    const clip = clipFromDraggedMedia(media);
-    if (!clip) return; // unprobed / offline media has no known length — nothing to place
+    // D-128 — a dropped source with an audio stream produces TWO clips: the
+    // picture, and its own audio as a separate, linked clip (the owner's own
+    // ask, and both reference NLEs' default). `audio` is `null` for a silent
+    // source, or one whose audio status isn't known yet — that drop behaves
+    // exactly as it did before this feature.
+    const pair = linkedClipsFromDraggedMedia(media);
+    if (!pair) return; // unprobed / offline media has no known length — nothing to place
+    const { video: clip, audio } = pair;
+    const linkedAudio = audio ?? undefined;
 
     const rect = editAreaRef.current?.getBoundingClientRect();
     const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop : -1;
@@ -1143,7 +1171,7 @@ export function TimelinePane() {
         applyOp({ kind: 'move_track', from: newTrackIdx, to: boundary });
         setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, newTrackIdx, boundary) })));
       }
-      applyOp({ kind: 'add_clip', track: boundary, clip });
+      applyOp({ kind: 'add_clip', track: boundary, clip, linkedAudio });
       return;
     }
 
@@ -1159,9 +1187,16 @@ export function TimelinePane() {
         ? computeInsertion(trackData, xToFrame(e, rect), clip.duration, Math.round((INSERT_SNAP_PX / pxPerSec) * fps))
         : null;
     if (insertion) {
-      applyOp({ kind: 'add_clip', track, clip, startFrame: insertion.startFrame, ripple: insertion.ripple });
+      applyOp({
+        kind: 'add_clip',
+        track,
+        clip,
+        startFrame: insertion.startFrame,
+        ripple: insertion.ripple,
+        linkedAudio,
+      });
     } else {
-      applyOp({ kind: 'add_clip', track, clip });
+      applyOp({ kind: 'add_clip', track, clip, linkedAudio });
     }
   };
 
@@ -1202,6 +1237,13 @@ export function TimelinePane() {
       // it, the two states should never look the same) for every clip
       // `syncLinkedIds` says a ripple from the current selection would touch.
       const isSyncLinked = !isSel && syncLinkedIds.has(action.id);
+      // D-128 — the selected clip's own A/V-linked half. Takes precedence
+      // over the sync-lock ring when a clip is both (an A/V link is the
+      // stronger, more specific statement about that clip), and uses the
+      // accent token rather than the neutral `text-secondary` one, because a
+      // linked half is genuinely part of what the user has hold of — it will
+      // move, trim and delete with the selection.
+      const isAvLinked = !isSel && avLinkedIds.has(action.id);
       // Owner, 2026-09-04: "for locked show muted color on clip" — the same
       // `opacity-60` treatment the track-header row already gets when
       // `track.locked` (D-080/D-090-era), extended to the clip bodies
@@ -1217,7 +1259,12 @@ export function TimelinePane() {
             'relative h-full w-full overflow-hidden rounded ' +
             (isSel ? 'ring-2 ring-accent ' : '') +
             (isRippled ? 'ring-2 ring-accent animate-pulse ' : '') +
-            (isSyncLinked ? 'ring-2 ring-text-secondary ' : '') +
+            // Dashed, not a second solid ring: `ring-*` has no dashed style
+            // in Tailwind, so this uses the outline utilities (v4:
+            // width + style + colour), inset so it reads inside the clip
+            // body like the rings above rather than bleeding into the row.
+            (isAvLinked ? 'outline-2 outline-dashed outline-accent/70 -outline-offset-2 ' : '') +
+            (isSyncLinked && !isAvLinked ? 'ring-2 ring-text-secondary ' : '') +
             (isLockedTrack ? 'opacity-60 ' : '')
           }
           style={{
@@ -1275,6 +1322,24 @@ export function TimelinePane() {
               </div>
             </>
           )}
+          {/* D-128 — an audio-track clip gets a FULL-height waveform and no
+              filmstrip. Until this pass no audio track ever had a clip on it
+              (D-057 was mixing capability with no producer), so this branch
+              had nothing to render and didn't exist; now that dropping a clip
+              really creates one, a flat green fill would be the only thing
+              you'd see on the half that matters most to read. No `Filmstrip`
+              here on purpose: an audio clip has no picture worth showing, and
+              D-124's filmstrip decode is exactly the cost not to pay twice
+              per linked pair. */}
+          {clip && track?.kind === 'audio' && (
+            <Waveform
+              sourcePath={clip.source_path}
+              startSecs={clip.source_start / fps}
+              durationSecs={clip.duration / fps}
+              width={pxWidth}
+              height={ROW_HEIGHT}
+            />
+          )}
           {/* D-058/B-013: `pointer-events-none` is load-bearing, not
               decorative. This label's `z-10` (needed so it paints above the
               Waveform canvas) has no isolating stacking context between it
@@ -1308,7 +1373,7 @@ export function TimelinePane() {
         </ClipBody>
       );
     },
-    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds, filmstripScrollLeft, viewportWidth],
+    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds, avLinkedIds, filmstripScrollLeft, viewportWidth],
   );
 
   /** Multi-select, Phase 1 (D-107) — shift-click range-extends within the
@@ -1424,45 +1489,64 @@ export function TimelinePane() {
   // reading: split whatever's currently selected, if the playhead actually
   // falls inside it (the existing `atFrame` bounds check inside `applyOp`
   // already no-ops otherwise).
-  /** Groups `selection` by track — every per-clip generalized op below needs
-   *  this same grouping (splitting/removing multiple clips on the SAME
-   *  track must process the highest Vec index first, since `remove`'s
-   *  splice and `split`'s insert both shift every later index on that
-   *  track — see `doRemove`'s own comment for why this matters). */
-  const selectionByTrack = (): Map<number, string[]> => {
-    const m = new Map<number, string[]>();
-    for (const s of selection) m.set(s.track, [...(m.get(s.track) ?? []), s.id]);
-    return m;
-  };
-
   // Multi-select, Phase 1 (D-107) — "Split every selected clip at the
   // playhead" is a real, commonly-used batch operation in every reference
   // checked (`docs/notes/multi-select.md`), generalizing cleanly since each
   // clip's own split is independent of the others.
+  /** D-128 — resolve a clip id against the store's CURRENT timeline, not this
+   *  render's captured `tracks`. Batch ops below apply several `EditOp`s in
+   *  one synchronous pass, and every one of them can renumber clips (and now,
+   *  with A/V links, clips on tracks the op never named — `remove` deletes a
+   *  linked clip's whole group, `split` cuts every member, either can prune a
+   *  track). Re-reading between ops is what keeps the second op in a batch
+   *  from acting on a stale index; `null` simply means that clip is already
+   *  gone (it was some other selected clip's linked half), which is a normal
+   *  outcome here, not an error. This replaces the previous
+   *  captured-index-descending scheme, which was only ever correct for
+   *  same-track index shifts. */
+  const locateClip = (id: string): { track: number; clip: number } | null => {
+    const tl = useEditorTimelineStore.getState().timeline;
+    if (!tl) return null;
+    for (let ti = 0; ti < tl.tracks.length; ti++) {
+      const ci = tl.tracks[ti].clips.findIndex((c) => c.id === id);
+      if (ci >= 0) return { track: ti, clip: ci };
+    }
+    return null;
+  };
+
   const doSplit = () => {
-    for (const [track, ids] of selectionByTrack()) {
-      // Highest index first: `split` inserts the new right half immediately
-      // after the split clip's own index, shifting every later index on
-      // this track by one — processing descending means an earlier
-      // (lower-index) split in this same batch is never affected by a
-      // later one, and vice versa never needs it to be.
-      const indices = ids.map((id) => idxOf(track, id)).filter((i) => i >= 0).sort((a, b) => b - a);
-      for (const i of indices) applyOp({ kind: 'split', track, clip: i, atFrame: playhead });
+    for (const s of selection) {
+      const at = locateClip(s.id);
+      if (at) applyOp({ kind: 'split', track: at.track, clip: at.clip, atFrame: playhead });
     }
   };
 
   const doRemove = () => {
-    for (const [track, ids] of selectionByTrack()) {
-      // Same descending-index reasoning as `doSplit`: `remove`'s splice
-      // shifts every later same-track index down by one, so removing two
-      // selected clips on one track by their ORIGINAL indices in ascending
-      // order would remove the wrong clip the second time through — highest
-      // index first sidesteps that entirely.
-      const indices = ids.map((id) => idxOf(track, id)).filter((i) => i >= 0).sort((a, b) => b - a);
-      for (const i of indices) applyOp({ kind: 'remove', track, clip: i });
+    for (const s of selection) {
+      const at = locateClip(s.id);
+      if (at) applyOp({ kind: 'remove', track: at.track, clip: at.clip });
     }
     setSelection([]);
   };
+
+  /** D-128 — break the selected clip's A/V link so its halves can be edited
+   *  independently (the L-cut/J-cut workflow: unlink, slip one half). The
+   *  same explicit action both reference NLEs expose (Premiere `Clip >
+   *  Unlink`, Resolve "Unlink Clips"), and the only way back to D-050's
+   *  embedded-audio playback for a video clip. Dissolves the COMPLETE group,
+   *  so running it on either half is equivalent. */
+  const doUnlink = () => {
+    for (const s of selection) {
+      const at = locateClip(s.id);
+      if (at) applyOp({ kind: 'unlink', track: at.track, clip: at.clip });
+    }
+  };
+
+  /** Whether anything in the current selection is A/V-linked — gates the
+   *  Unlink button, which is meaningless (and a no-op) otherwise. */
+  const selectionIsLinked = selection.some(
+    (s) => !!timeline?.tracks[s.track]?.clips.find((c) => c.id === s.id)?.link_group,
+  );
 
   /** D-105 — the deliberate mirror image of `doRemove`: close a selected
    *  GAP, rippling everything after it earlier, rather than lifting a clip
@@ -1888,8 +1972,29 @@ export function TimelinePane() {
                 </Button>
               }
             />
-            <TooltipContent>Remove every selected clip</TooltipContent>
+            <TooltipContent>Remove every selected clip (with its linked audio)</TooltipContent>
           </Tooltip>
+          {/* D-128 — only shown when the selection is actually linked: an
+              Unlink button that's permanently present but almost always
+              inert would be noise, and its whole meaning is "this clip HAS a
+              linked half." Both reference NLEs put unlink on the clip's own
+              context menu; this toolbar is where every other per-clip action
+              in this pane already lives, so it goes here for consistency. */}
+          {selectionIsLinked && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button variant="ghost" size="sm" onClick={doUnlink} aria-label="Unlink audio and video">
+                    <Unlink />
+                    Unlink
+                  </Button>
+                }
+              />
+              <TooltipContent>
+                Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
+              </TooltipContent>
+            </Tooltip>
+          )}
 
           {/* D-105 — the mirror-image toolbar action for a selected GAP
               (empty track space, not a clip): closes it, rippling everything
@@ -2259,6 +2364,17 @@ export function TimelinePane() {
                   />
                 </div>
               </>
+            )}
+            {/* D-128 — same full-height waveform for an audio clip being
+                dragged, so the overlay looks like the clip it came from. */}
+            {dragOverlayTrack?.kind === 'audio' && (
+              <Waveform
+                sourcePath={dragOverlayClip.source_path}
+                startSecs={dragOverlayClip.source_start / fps}
+                durationSecs={dragOverlayClip.duration / fps}
+                width={dragOverlayWidth}
+                height={ROW_HEIGHT}
+              />
             )}
             <div className="absolute left-1 top-0.5 z-10 truncate text-[11px] font-medium text-button-text">
               {dragOverlayClip.name}
