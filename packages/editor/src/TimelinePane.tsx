@@ -201,6 +201,7 @@ import {
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { Waveform } from './Waveform';
+import { Filmstrip } from './Filmstrip';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
@@ -1192,13 +1193,33 @@ export function TimelinePane() {
           }}
         >
           {clip && track?.kind === 'video' && (
-            <Waveform
-              sourcePath={clip.source_path}
-              startSecs={clip.source_start / fps}
-              durationSecs={clip.duration / fps}
-              width={pxWidth}
-              height={ROW_HEIGHT}
-            />
+            <>
+              {/* D-119 — real filmstrip thumbnails, the clip's actual picture
+                  content tiled across its full width/height, replacing the
+                  flat colour fill as the visual background. Waveform (below)
+                  overlays a translucent amplitude strip anchored to the
+                  bottom edge on top of it — same layering the reference
+                  screenshot's own combined video+audio clips use — rather
+                  than splitting the clip into hard top/bottom zones, which
+                  at this project's compact `ROW_HEIGHT` (52px) would leave
+                  neither signal legible. */}
+              <Filmstrip
+                sourcePath={clip.source_path}
+                startSecs={clip.source_start / fps}
+                durationSecs={clip.duration / fps}
+                width={pxWidth}
+                height={ROW_HEIGHT}
+              />
+              <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
+                <Waveform
+                  sourcePath={clip.source_path}
+                  startSecs={clip.source_start / fps}
+                  durationSecs={clip.duration / fps}
+                  width={pxWidth}
+                  height={ROW_HEIGHT * 0.4}
+                />
+              </div>
+            </>
           )}
           {/* D-058/B-013: `pointer-events-none` is load-bearing, not
               decorative. This label's `z-10` (needed so it paints above the
@@ -1731,6 +1752,25 @@ export function TimelinePane() {
         ? (clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]?.name ?? activeDrag.clipId)
         : null;
 
+  // D-119 — owner, live: "when we drag use the proper preview instead of
+  // dotted line how other editors do it." The pill above stays as the
+  // `track`-reorder ghost (there's no "picture content" for a track header
+  // to preview), but a `clip` drag now gets the clip's real filmstrip +
+  // waveform in the overlay — the same visual `getActionRender` already
+  // builds for the resting clip, not a generic placeholder. Capped at
+  // `MAX_OVERLAY_PX` — this is a cursor-follow *preview*, not a literal
+  // render of the clip at full timeline zoom; an hour-long clip dragged at
+  // 100% would otherwise produce an unusable, off-screen-sized ghost.
+  const dragOverlayClip =
+    activeDrag?.type === 'clip'
+      ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]
+      : null;
+  const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
+  const MAX_OVERLAY_PX = 320;
+  const dragOverlayWidth = dragOverlayClip
+    ? Math.max(60, Math.min(MAX_OVERLAY_PX, (dragOverlayClip.duration / fps) * pxPerSec))
+    : 0;
+
   return (
     <DndContext
       sensors={dndSensors}
@@ -2145,10 +2185,46 @@ export function TimelinePane() {
       </ResizablePanelGroup>
       </div>
       <DragOverlay dropAnimation={null}>
-        {dragOverlayLabel && (
-          <div className="pointer-events-none rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-button-text shadow-lg">
-            {dragOverlayLabel}
+        {dragOverlayClip ? (
+          <div
+            className="pointer-events-none relative overflow-hidden rounded shadow-lg ring-2 ring-accent"
+            style={{
+              width: dragOverlayWidth,
+              height: ROW_HEIGHT,
+              background:
+                dragOverlayTrack?.kind === 'audio' ? 'rgba(120,170,110,0.55)' : 'rgba(90,120,180,0.55)',
+            }}
+          >
+            {dragOverlayTrack?.kind === 'video' && (
+              <>
+                <Filmstrip
+                  sourcePath={dragOverlayClip.source_path}
+                  startSecs={dragOverlayClip.source_start / fps}
+                  durationSecs={dragOverlayClip.duration / fps}
+                  width={dragOverlayWidth}
+                  height={ROW_HEIGHT}
+                />
+                <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
+                  <Waveform
+                    sourcePath={dragOverlayClip.source_path}
+                    startSecs={dragOverlayClip.source_start / fps}
+                    durationSecs={dragOverlayClip.duration / fps}
+                    width={dragOverlayWidth}
+                    height={ROW_HEIGHT * 0.4}
+                  />
+                </div>
+              </>
+            )}
+            <div className="absolute left-1 top-0.5 z-10 truncate text-[11px] font-medium text-button-text">
+              {dragOverlayClip.name}
+            </div>
           </div>
+        ) : (
+          dragOverlayLabel && (
+            <div className="pointer-events-none rounded-md bg-accent px-2 py-1 text-[11px] font-medium text-button-text shadow-lg">
+              {dragOverlayLabel}
+            </div>
+          )
         )}
       </DragOverlay>
     </DndContext>

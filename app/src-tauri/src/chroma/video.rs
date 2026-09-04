@@ -329,6 +329,112 @@ pub fn extract_thumb_strip(
         .collect())
 }
 
+/// Extract ~`count` evenly-spaced thumbnails within `[start_secs, start_secs +
+/// duration_secs)` of `path` (D-119 — the Edit-tab timeline's clip filmstrips).
+/// Same one-decode-pass `select`+`scale` MJPEG-pipe technique as
+/// [`extract_thumb_strip`], but scoped to a clip's real trimmed range instead
+/// of always spanning the whole source file — a timeline clip almost always
+/// represents a sub-range (`source_start`/`duration`) of its source, not the
+/// entire file, and thumbnails outside that range would be actively wrong
+/// (frames the clip never actually shows). Fast-seeks to `start_secs` via
+/// `-ss` before `-i` (same "adequate for scrub/preview, not frame-exact"
+/// tradeoff [`decode_frame`]'s doc already documents for this codebase), then
+/// runs the `select` filter over frame indices *relative to that seek point*.
+/// Returned `frame` values are absolute indices into the source's own frame
+/// count (`start_frame + local_index * step`), matching the convention every
+/// other frame-index API in this module already uses.
+/// Pure frame-index arithmetic behind [`extract_thumb_strip_range`], pulled
+/// out so it has a real correct/incorrect answer independent of any actual
+/// `ffmpeg` process — the same "pure logic separated and unit tested, I/O
+/// not" discipline this module's sibling extractors ([`extract_thumb_strip`],
+/// [`extract_thumb`]) never got real coverage for either: this file's own
+/// `CHROMA_TEST_VIDEO`-gated tests (see the `tests` module below) need a
+/// real file path supplied via env var at run time, not a checked-in
+/// fixture, and neither var is set in this environment — so this at least
+/// gets the one part of the range variant that *can* have a provable answer
+/// independent of that covered.
+#[derive(Debug, PartialEq)]
+struct RangeThumbPlan {
+    /// absolute frame index into the source where the requested range begins
+    start_frame: u64,
+    /// how many frames the requested range spans, at least 1
+    local_total: u64,
+    /// stride (in local frame units) between selected thumbnails, at least 1
+    step: u64,
+}
+
+fn plan_range_thumbs(start_secs: f64, duration_secs: f64, fps: f64, count: u32) -> RangeThumbPlan {
+    let fps = fps.max(0.001);
+    let start_secs = start_secs.max(0.0);
+    let start_frame = (start_secs * fps).round() as u64;
+    let local_total = ((duration_secs.max(0.0) * fps).round() as u64).max(1);
+    let step = (local_total / count.max(1) as u64).max(1);
+    RangeThumbPlan { start_frame, local_total, step }
+}
+
+pub fn extract_thumb_strip_range(
+    path: &Path,
+    info: &VideoInfo,
+    start_secs: f64,
+    duration_secs: f64,
+    count: u32,
+) -> Result<Vec<(u64, String)>> {
+    let fps = info.fps().max(0.001);
+    let RangeThumbPlan { start_frame, local_total, step } =
+        plan_range_thumbs(start_secs, duration_secs, fps, count);
+    let start_secs = start_secs.max(0.0);
+
+    // `-ss`/`-t` as INPUT options (before `-i`) bound how much of the source
+    // ffmpeg reads/decodes at all — critical for a short clip trimmed out of
+    // a long source file, where processing "the rest of the file" after the
+    // seek point would be wasted work. `-t` takes wall-clock duration, not a
+    // frame count, so pad it slightly (+2 frames worth) past `duration_secs`
+    // to guarantee `select`'s own step math always has a full `local_total`
+    // frames to choose from — an exact `-t duration_secs` can occasionally
+    // land a hair short after the approximate `-ss` seek and silently starve
+    // the last bucket.
+    let read_secs = duration_secs.max(0.0) + (2.0 / fps);
+    let out = Command::new(ffmpeg_bin())
+        .args(["-hide_banner", "-loglevel", "error", "-ss"])
+        .arg(format!("{start_secs:.6}"))
+        .arg("-t")
+        .arg(format!("{read_secs:.6}"))
+        .arg("-i")
+        .arg(path)
+        .args([
+            "-vf",
+            &format!("select=not(mod(n\\,{step})),scale=-2:150"),
+            "-fps_mode", "passthrough",
+            "-q:v", "5",
+            "-f", "image2pipe",
+            "-c:v", "mjpeg",
+            "-",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("running ffmpeg ranged thumb strip on {}", path.display()))?;
+
+    if !out.status.success() {
+        return Err(anyhow!(
+            "ffmpeg ranged thumb strip failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    let jpegs = split_mjpeg(&out.stdout);
+    let b64 = base64::engine::general_purpose::STANDARD;
+    Ok(jpegs
+        .into_iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let local_frame = (i as u64 * step).min(local_total.saturating_sub(1));
+            let frame = (start_frame + local_frame).min(info.frame_count.saturating_sub(1));
+            (frame, format!("data:image/jpeg;base64,{}", b64.encode(bytes)))
+        })
+        .collect())
+}
+
 /// A single thumbnail (data-URL JPEG) for `frame`, scaled to `height` px tall.
 /// Used by the multi-shot shot strip (D-033) — one small preview per shot.
 pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> Result<String> {
@@ -387,6 +493,46 @@ fn split_mjpeg(data: &[u8]) -> Vec<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_range_thumbs_typical_clip() {
+        // 10s clip at 30fps, want 20 thumbnails: 300 local frames / 20 = step 15.
+        let plan = plan_range_thumbs(5.0, 10.0, 30.0, 20);
+        assert_eq!(plan, RangeThumbPlan { start_frame: 150, local_total: 300, step: 15 });
+    }
+
+    #[test]
+    fn plan_range_thumbs_more_requested_than_frames_steps_at_least_one() {
+        // 1s clip at 30fps (30 frames), asking for 64 thumbnails - step floors
+        // at 1, never 0 (a step of 0 would be a `mod 0` div-by-zero in the
+        // ffmpeg filter expression this feeds).
+        let plan = plan_range_thumbs(0.0, 1.0, 30.0, 64);
+        assert_eq!(plan.local_total, 30);
+        assert_eq!(plan.step, 1);
+    }
+
+    #[test]
+    fn plan_range_thumbs_zero_duration_or_count_never_panics_or_divides_by_zero() {
+        let a = plan_range_thumbs(0.0, 0.0, 30.0, 10);
+        assert_eq!(a.local_total, 1); // clamped, not 0
+        let b = plan_range_thumbs(0.0, 5.0, 30.0, 0);
+        assert_eq!(b.step, b.local_total); // count clamped to 1 -> one bucket spanning everything
+    }
+
+    #[test]
+    fn plan_range_thumbs_negative_start_clamps_to_zero() {
+        let plan = plan_range_thumbs(-3.0, 2.0, 25.0, 5);
+        assert_eq!(plan.start_frame, 0);
+    }
+
+    #[test]
+    fn plan_range_thumbs_zero_fps_never_divides_by_zero() {
+        // guards the same class of bug `resampled_frame_count` in audio.rs
+        // tests for on its own rate-conversion math.
+        let plan = plan_range_thumbs(0.0, 5.0, 0.0, 10);
+        assert!(plan.local_total > 0);
+        assert!(plan.step >= 1);
+    }
 
     #[test]
     fn ext_check() {

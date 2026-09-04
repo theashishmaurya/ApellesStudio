@@ -32,7 +32,9 @@ numbers are actually calibrated).
   audio stream, synced-at-start-not-tightly-coupled to the video playhead).
   **Mature single-track timeline UI** (D-051) — scroll-wheel + toolbar zoom,
   edge-drag trim + snap-to-clip-edge/playhead, a Rust-computed waveform on the
-  clip, ripple-shift flash, an **adaptive-density real-timecode ruler**
+  clip **plus a real filmstrip of the clip's own picture content, shown in
+  the drag preview too** (D-119), ripple-shift flash, an **adaptive-density
+  real-timecode ruler**
   (D-058). Clip **position is a real, explicit `start_frame` the frontend
   edit model now actually maintains** (D-058, closing a gap D-054's backend
   model had opened) — drag-from-Sources and edge-trim were both silently

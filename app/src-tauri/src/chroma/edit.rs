@@ -99,6 +99,125 @@ pub(crate) fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
 }
 
 // --------------------------------------------------------------------------- //
+// clip filmstrip thumbnails (D-119) — the Edit-tab timeline's per-clip
+// preview, same "expensive to generate, cheap to serve from cache" shape as
+// PROBE_CACHE above and `chroma_audio_waveform`'s own module-level cache
+// (`chroma::audio`). A *separate* cache from `chroma_frame_thumbnails`/
+// `state::cached_thumbs` (Colorist's own single-"current shot" thumbnail
+// cache, D-033) rather than reusing it: this tab can have many different
+// clips across many tracks visible at once, each needing its own strip
+// simultaneously, whereas Colorist's cache is explicitly scoped to "whichever
+// one shot is currently loaded" and is busted wholesale on every shot switch
+// — a shape that would thrash constantly under the Edit tab's real usage
+// pattern (many clips, none of them "the current shot").
+// --------------------------------------------------------------------------- //
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipThumbDto {
+    pub frame: u64,
+    /// data:image/jpeg;base64,...
+    pub data_url: String,
+}
+
+const MAX_THUMB_CACHE: usize = 200;
+
+/// (source path, start-ms, duration-ms, requested frame count) — see
+/// [`ms_key`] for why the floats are rounded before keying.
+type ThumbCacheKey = (PathBuf, u64, u64, u32);
+/// (frame index, `data:image/jpeg;base64,...`) pairs — same shape
+/// [`video::extract_thumb_strip_range`] returns.
+type ThumbCacheValue = Vec<(u64, String)>;
+
+static THUMB_CACHE: Lazy<Mutex<HashMap<ThumbCacheKey, ThumbCacheValue>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Round a seconds value to whole milliseconds for use as a cache key —
+/// avoids two calls for the same real clip range missing each other over
+/// float noise (e.g. `1.2000000000000002` vs `1.2`) while staying far finer
+/// than anything a real edit could distinguish.
+fn ms_key(secs: f64) -> u64 {
+    (secs.max(0.0) * 1000.0).round() as u64
+}
+
+/// `count` evenly-spaced frame thumbnails within `[start_secs, start_secs +
+/// duration_secs)` of `source_path` — a timeline clip's real trimmed range,
+/// not the whole source file (D-119). Mirrors `chroma_audio_waveform`'s own
+/// parameter shape (`source_path`/`start_secs`/`duration_secs`, seconds not
+/// frames — no opinion on the project's fps) for the same reason: both are
+/// "give me a visual summary of this clip's real on-timeline range" requests,
+/// one for amplitude, one for picture content.
+#[tauri::command]
+pub async fn chroma_clip_thumbnails(
+    source_path: String,
+    start_secs: f64,
+    duration_secs: f64,
+    count: u32,
+) -> Result<Vec<ClipThumbDto>, String> {
+    if duration_secs <= 0.0 || count == 0 {
+        return Ok(Vec::new());
+    }
+    let count = count.clamp(1, 64);
+    let path = PathBuf::from(&source_path);
+    let key = (path.clone(), ms_key(start_secs), ms_key(duration_secs), count);
+
+    if let Some(hit) = THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return Ok(hit
+            .iter()
+            .map(|(frame, data_url)| ClipThumbDto {
+                frame: *frame,
+                data_url: data_url.clone(),
+            })
+            .collect());
+    }
+
+    let info = probe_cached(&path)?;
+    let thumbs = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, String)>, String> {
+        video::extract_thumb_strip_range(&path, &info, start_secs, duration_secs, count)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    {
+        let mut cache = THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() > MAX_THUMB_CACHE {
+            cache.clear();
+        }
+        cache.insert(key, thumbs.clone());
+    }
+
+    Ok(thumbs
+        .into_iter()
+        .map(|(frame, data_url)| ClipThumbDto { frame, data_url })
+        .collect())
+}
+
+#[cfg(test)]
+mod thumb_cache_tests {
+    use super::*;
+
+    #[test]
+    fn ms_key_rounds_float_noise_together() {
+        // the exact kind of float noise two calls for "the same real clip
+        // range" can produce (e.g. one derived from `frame / fps`, another
+        // from a slightly different arithmetic path) — both must hash to the
+        // same cache key or every re-render would miss.
+        assert_eq!(ms_key(1.2000000000000002), ms_key(1.2));
+    }
+
+    #[test]
+    fn ms_key_negative_clamps_to_zero() {
+        assert_eq!(ms_key(-0.5), 0);
+    }
+
+    #[test]
+    fn ms_key_distinguishes_real_differences() {
+        assert_ne!(ms_key(1.200), ms_key(1.201));
+    }
+}
+
+// --------------------------------------------------------------------------- //
 // timeline load / build / persist
 // --------------------------------------------------------------------------- //
 

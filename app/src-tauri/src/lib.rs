@@ -2155,6 +2155,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_add_track,
             chroma::edit::chroma_timeline_remove_track,
             chroma::edit::chroma_timeline_move_clip,
+            chroma::edit::chroma_clip_thumbnails,
             chroma::audio::chroma_audio_play,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_level,

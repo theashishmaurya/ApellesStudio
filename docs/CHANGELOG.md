@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Real filmstrip thumbnails on Edit-tab timeline clips,
+  in the drag preview too (D-119).** Video clips now show their actual
+  source content tiled across the clip (`Filmstrip.tsx` +
+  `chroma_clip_thumbnails` → `video::extract_thumb_strip_range`, one
+  `ffmpeg` decode pass scoped to the clip's real trimmed range, not the
+  whole source file), layered under a translucent waveform strip. The
+  `DragOverlay` ghost for a clip drag shows the same real content now
+  instead of a generic text pill.
 - **2026-09-04** — **Auto-create-a-track-on-drop, restored for dnd-kit clip
   moves (D-117, B-036).** D-100's rewrite moved clip repositioning onto
   `@dnd-kit/core` but never carried over "drop past the last track (or
