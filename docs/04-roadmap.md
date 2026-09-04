@@ -9,6 +9,40 @@ numbers are actually calibrated).
 
 ---
 
+## In flight right now (2026-09-04 afternoon) — live-testing punch list
+
+Owner asked to track this live so nothing found today gets lost — update as each lands
+(move it to a real `D-NNN`/`B-NNN` + strike it here) rather than letting it go stale.
+Two forks dispatched, both working in isolated git worktrees (`chroma-worktrees/`) so
+the owner's live dev server isn't disturbed while they work — merged back and the app
+restarted once each is done.
+
+- 🔄 **Filmstrip thumbnail generation is spawning unbounded concurrent `ffmpeg`
+  processes** — owner hit 11 simultaneous `ffmpeg` processes, system load spiked to
+  200+, machine became nearly unusable. Immediate mitigation already applied
+  (`pkill -9 ffmpeg`, load recovered) — real fix (a concurrency cap/queue) in
+  progress, `fork/timeline-polish`.
+- 🔄 **Filmstrip thumbnails don't render for every clip type** — owner screenshot:
+  one clip on the timeline shows a real filmstrip, an adjacent clip (different
+  source file) shows none at all — likely a codec/container the new
+  `extract_thumb_strip_range` ffmpeg invocation fails on silently. In progress,
+  same fork.
+- 🔄 **Remove the dotted-line drag indicator** — owner: now that the drag preview
+  shows a real thumbnail-filled ghost, the separate dotted outline is redundant
+  visual clutter ("we have 3 things: the previous place, the new thumbnail
+  preview, and the dotted line — let's remove the dot"). In progress, same fork.
+- 🔄 **Auto-decommission empty tracks** — owner: when a track becomes empty (its
+  last clip removed/moved away), it should be automatically removed and the
+  remaining tracks renumbered, rather than leaving orphaned empty rows around.
+  In progress, same fork (`fork/timeline-polish`).
+- 🔄 **Sources panel's open/close toggle is still on the right** — D-116 moved the
+  Sources panel itself to the left, but its chrome-bar toggle button stayed on
+  the right, now visually disconnected from the panel it controls. Owner: move
+  it to sit with the Sources panel, matching how D-118 put the Inspector's own
+  toggle with the Inspector. In progress, `fork/sources-toggle`.
+
+---
+
 ## Now — what's live, by tab
 
 - **Colorist** — the full pre-pivot grade pipeline: primary/curves/wheels/LUT, masks
