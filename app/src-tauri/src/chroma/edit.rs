@@ -584,8 +584,27 @@ fn blank_frame() -> String {
 ///
 /// Out-of-range / nothing visible → a 1×1 transparent PNG; a decode / probe
 /// failure → `Err`.
+///
+/// **Runs off the Tauri main thread** (D-125). A plain `#[tauri::command] fn`
+/// is `ExecutionContext::Blocking` — Tauri runs it on the main thread, so every
+/// millisecond this spends decoding is a millisecond the whole window's event
+/// loop and *every other* IPC command (notably `chroma_audio_play`, whose
+/// start latency is what keeps audio in step with the video clock — D-050)
+/// is stalled behind it. A cold pipe spawn is ~0.5 s even after D-125's other
+/// fixes, which is far too long to hold the main thread. Same `async fn` +
+/// `spawn_blocking` shape `chroma::commands`' and `chroma::session`'s decode
+/// commands already use.
 #[tauri::command]
-pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
+pub async fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge))
+        .await
+        .map_err(|e| format!("timeline frame task: {e}"))?
+}
+
+/// The real body of [`chroma_timeline_frame`], synchronous — split out so the
+/// command can hand it to `spawn_blocking` and so tests can call it directly
+/// without a tokio runtime.
+pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
     let timeline = resolve_timeline(false)?;
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
@@ -596,9 +615,16 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
         .filter(|(_, c, _)| !c.source_path.is_empty())
         .collect();
 
+    // Release the decode pipe of any track that is no longer a visible layer
+    // here (hidden, deleted, or just a gap under the playhead) before decoding
+    // — D-125: pipes are per track index now, and each one owns a live ffmpeg
+    // process, so the set has to track what's actually on screen.
+    let visible_tracks: Vec<usize> = layers.iter().map(|(i, _, _)| *i).collect();
+    decode_pipe::retain_track_slots(&visible_tracks);
+
     let img = match layers.as_slice() {
         [] => return Ok(blank_frame()),
-        [(_, clip, source_frame)] => {
+        [(track, clip, source_frame)] => {
             // Fast path, unchanged from pre-D-088: exactly one visible
             // layer needs no compositing at all.
             let path = PathBuf::from(&clip.source_path);
@@ -607,8 +633,14 @@ pub fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
             let scale = max_long_edge.and_then(|le| {
                 decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
             });
-            decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
-                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
+            decode_pipe::playback_frame_scaled(
+                decode_pipe::PipeSlot::Track(*track),
+                &path,
+                &info,
+                frame,
+                scale,
+            )
+            .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
         }
         _ => composite_video_frame(&layers, max_long_edge)?,
     };
@@ -710,14 +742,24 @@ fn composite_video_frame(
     }
 
     let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
-    for (_, clip, source_frame) in layers {
+    for (track, clip, source_frame) in layers {
         let path = PathBuf::from(&clip.source_path);
         let info = probe_cached(&path)?;
         let frame = (*source_frame).max(0) as u64;
         let scale = max_long_edge
             .and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
-        let img = decode_pipe::playback_frame_scaled(&path, &info, frame, scale)
-            .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
+        // One decode pipe per track (D-125/B-040) — sharing a single global
+        // pipe across layers made every layer after the first respawn ffmpeg
+        // (different path, or the same path stepping backwards), which is what
+        // reduced this whole path to ~0.85 fps.
+        let img = decode_pipe::playback_frame_scaled(
+            decode_pipe::PipeSlot::Track(*track),
+            &path,
+            &info,
+            frame,
+            scale,
+        )
+        .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
         decoded.push(Decoded {
             img: img.to_rgba8(),
             transform: resolve_clip_transform(clip, *source_frame),
@@ -907,5 +949,160 @@ mod composite_tests {
         composite_layer_onto(&mut canvas, &layer, &t);
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
+}
+
+/// Real-file preview-throughput regression coverage for D-125 / B-040 — kept
+/// out of the pure-logic `tests` module above because every one of these needs
+/// a real video file on disk and a real `ffmpeg`.
+#[cfg(test)]
+mod preview_throughput_tests {
+    use std::time::Instant;
+
+    use chroma_timeline::{Clip, Timeline, Track, TrackKind};
+
+    fn test_video() -> Option<String> {
+        std::env::var("CHROMA_TEST_VIDEO")
+            .ok()
+            .filter(|p| std::path::Path::new(p).exists())
+    }
+
+    /// A project shaped exactly like the one this bug was found on: several
+    /// **video** tracks all holding content under the same playhead, two of
+    /// them the same source file. That is what makes the preview take
+    /// `composite_video_frame`'s multi-layer path, which is where the
+    /// single-shared-decode-pipe respawn storm lived.
+    fn open_multi_track_project(video_path: &str, tracks_n: usize) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("MultiTrack.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let tracks: Vec<Track> = (0..tracks_n)
+            .map(|i| Track {
+                kind: TrackKind::Video,
+                clips: vec![Clip {
+                    id: format!("clip{i}"),
+                    name: format!("layer{i}"),
+                    source_path: video_path.to_string(),
+                    source_start: 0,
+                    duration: 100_000,
+                    source_len: 100_000,
+                    start_frame: 0,
+                    // Every layer must actually be composited — a fully
+                    // opaque top layer is still decoded by the current
+                    // resolver, but keeping them partly transparent makes
+                    // the intent explicit and matches a real stacked edit.
+                    opacity: if i == 0 { 1.0 } else { 0.5 },
+                    ..Default::default()
+                }],
+                gain: 1.0,
+                locked: false,
+                hidden: false,
+                sync_locked: true,
+            })
+            .collect();
+
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "MultiTrack".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: Default::default(),
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "MultiTrack".into(),
+                rate: None,
+                tracks,
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "MultiTrack".into(),
+        }));
+        tmp
+    }
+
+    /// The B-040 regression guard. Before D-125 every composited layer past
+    /// the first forced a full `ffmpeg` respawn + keyframe seek *per displayed
+    /// frame* on a timeline shaped like the owner's real three-video-track
+    /// project, which is what "play takes 2-3 s and then stutters" actually
+    /// was. Measured through this exact code path, before and after,
+    /// back-to-back under identical machine load: **618 ms/frame → 23-31
+    /// ms/frame** (≈1.6 fps → ~34 fps against a 24 fps timeline). On an idle
+    /// machine the same comparison was 660 ms → 17 ms. The "before" figure was
+    /// produced by temporarily pointing every layer back at one shared pipe
+    /// and re-running this test, not inferred.
+    ///
+    /// The budget is deliberately loose (200 ms/frame average, vs. ~618 ms
+    /// before and 17-31 ms after) so this stays a guard against the *class* of
+    /// bug — a per-frame process respawn — and never a flaky wall-clock
+    /// assertion on a busy machine.
+    #[test]
+    fn sequential_preview_frames_do_not_respawn_a_decoder_per_layer() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let _project = open_multi_track_project(&vid, 3);
+        super::decode_pipe::reset();
+
+        const FRAMES: u64 = 24;
+        const BUDGET_MS: u128 = 200;
+
+        // The first frame legitimately pays the pipe spawns + keyframe seeks;
+        // it is not part of the steady-state measurement.
+        super::timeline_frame(100, Some(960)).expect("warm frame");
+
+        let start = Instant::now();
+        for f in 101..101 + FRAMES {
+            super::timeline_frame(f, Some(960)).expect("frame");
+        }
+        let per_frame = start.elapsed().as_millis() / FRAMES as u128;
+        eprintln!(
+            "3-layer preview: {per_frame} ms/frame over {FRAMES} sequential frames \
+             (same path pre-D-125 measured 618-660 ms/frame)"
+        );
+        assert!(
+            per_frame < BUDGET_MS,
+            "{per_frame} ms/frame exceeds the {BUDGET_MS} ms budget — a decode pipe \
+             is very likely respawning per layer again (B-040)"
+        );
+        super::decode_pipe::reset();
+    }
+
+    /// A track that stops being a visible layer must give its `ffmpeg`
+    /// process back — the pool is per track index, so without this it would
+    /// grow one live decoder per track ever seen (D-125).
+    #[test]
+    fn a_track_that_leaves_the_visible_set_releases_its_pipe() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let _project = open_multi_track_project(&vid, 3);
+        super::decode_pipe::reset();
+
+        super::timeline_frame(100, Some(960)).expect("frame");
+        assert_eq!(
+            super::decode_pipe::open_pipe_count(),
+            3,
+            "one pipe per layer"
+        );
+
+        super::decode_pipe::retain_track_slots(&[0]);
+        assert_eq!(
+            super::decode_pipe::open_pipe_count(),
+            1,
+            "pipes for tracks no longer visible must be dropped"
+        );
+        super::decode_pipe::reset();
+        assert_eq!(super::decode_pipe::open_pipe_count(), 0);
     }
 }

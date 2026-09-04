@@ -200,7 +200,13 @@ mod tests {
         };
 
         // warm up the pipe + GPU (first frame pays spawn + shader compile + upload)
-        let warm = crate::chroma::decode_pipe::playback_frame_scaled(&vid, &info, start_frame, scale)
+        let warm = crate::chroma::decode_pipe::playback_frame_scaled(
+            crate::chroma::decode_pipe::PipeSlot::Current,
+            &vid,
+            &info,
+            start_frame,
+            scale,
+        )
             .expect("warm decode");
         let _ = render_once(&warm, 1, "playback_bench_warm");
 
@@ -213,7 +219,13 @@ mod tests {
 
             let d0 = Instant::now();
             let frame =
-                crate::chroma::decode_pipe::playback_frame_scaled(&vid, &info, f, scale)
+                crate::chroma::decode_pipe::playback_frame_scaled(
+                    crate::chroma::decode_pipe::PipeSlot::Current,
+                    &vid,
+                    &info,
+                    f,
+                    scale,
+                )
                     .expect("decode");
             t_decode += d0.elapsed();
 

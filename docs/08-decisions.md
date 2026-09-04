@@ -8938,3 +8938,165 @@ Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-125 — "Play lags 2-3 s, then the audio stutters": one shared decode pipe serving a multi-layer compositor, and an audio clock that started late and stayed late (B-040)
+
+**decided (2026-09-04) · built (2026-09-04)**
+
+- **Context.** Owner, live, two messages: *"play is not smooth or after clicking
+  it takes like 2-3s lag and no voice comes"*, corrected moments later to
+  *"voice comming but laging"*. The brief's leading hypothesis was resource
+  contention with D-121/D-124's filmstrip thumbnail generation, since the report
+  landed minutes after D-121 and right after reopening a multi-clip project.
+
+- **That hypothesis is wrong for *this* report, and the measurement says so.**
+  The regression test built for this pass (`sequential_preview_frames_do_not_
+  respawn_a_decoder_per_layer`) creates a fresh throwaway project and decodes
+  only preview frames — **no `Filmstrip` component, no `chroma_clip_thumbnails`,
+  no competing `ffmpeg`** — and still measured **618-660 ms per displayed
+  frame**.
+  The preview path is slow entirely on its own. D-124's 105-second filmstrip
+  decodes were real and were certainly compounding the misery on the owner's
+  machine, but they are a separate defect with a separate fix; removing them
+  would not have made Play responsive. Recorded explicitly so the contention
+  theory is not re-chased.
+
+- **Root cause 1 — the real one. `decode_pipe`'s single process-global pipe
+  cannot serve `composite_video_frame`'s N layers.** D-030 built one long-lived
+  `ffmpeg` process, correct when Colorist's single "current video" was the only
+  caller. D-088 then added the Edit tab's multi-layer compositor, which decodes
+  *every visible layer* for one displayed frame **through that same one pipe**.
+  A pipe restarts whenever the path changes *or* the target frame goes backwards
+  — and both happen on every layer after the first (a different source; or the
+  same source at the same frame, which is backwards relative to the pipe's
+  now-advanced `next_index`). The owner's real project has **three video tracks
+  all holding content at the playhead**, two of them the same 4K HEVC file, so
+  every single displayed frame paid **three full `ffmpeg` spawns plus three
+  keyframe seeks into a 2.3 GB file**.
+
+  **Fix:** a pool keyed by `PipeSlot` — `Current` for Colorist's one clip,
+  `Track(usize)` for each Edit-tab video track. Keyed by *track index*, not
+  source path, precisely because two tracks legitimately hold the same file at
+  different positions (the owner's project does). `retain_track_slots` is called
+  once per frame with the actually-visible track indices, so a track that goes
+  hidden, is deleted, or falls into a gap releases its `ffmpeg` process rather
+  than holding one open for the session — that bounds the pool at "one pipe per
+  visible layer" without an arbitrary cap.
+
+- **Root cause 2 — the audio half, and a real limit of D-050's own stated
+  design.** D-050 chose an open-loop sync model deliberately: video and audio
+  both start from the same playhead frame at the same instant and then free-run
+  against their own clocks, with no per-tick position polling. Its load-bearing
+  assumption was that the gap between "the frontend toggled Play" and "the first
+  sample reaches the DAC" is *"one IPC round-trip, single-digit ms."* **It is
+  not.** `run_session` started the `cpal` stream *before* opening the device's
+  sources, so the callback drained an empty ring and `pull_or_silence` emitted
+  silence for the whole warm-up; because the ring is a plain FIFO with no
+  timestamps, that head silence is never made up and the audio stays exactly
+  that far behind the picture forever. Measured against the owner's own file:
+  **157 ms warm, 431-635 ms cold.** Broadcast tolerance for audio lagging
+  picture is ~45 ms.
+
+  **Fix, inside D-050's architecture rather than replacing it:** `run_session`
+  now measures real elapsed time from `chroma_audio_play`'s entry, *discards
+  exactly that much audio* from the sources (decode runs orders of magnitude
+  faster than real time, so this is a few ms of work), prefills `PREFILL_SECS`
+  (150 ms) into the ring, and only *then* starts the device. This makes the
+  open-loop premise actually true instead of assumed, without building the
+  per-tick audio-position polling D-050 explicitly declined. Compensation is
+  capped at `MAX_SKEW_COMPENSATION_SECS` (2 s) so a pathological warm-up can
+  never silently skip audible content — beyond the cap it logs the residual
+  offset instead. The arithmetic is a pure, unit-tested function
+  (`skew_compensation`), not inline maths.
+
+  **Considered and rejected:** making audio the master clock and having the
+  video `rAF` loop poll and snap to it every tick. It is the more robust design
+  and D-050 already named it as the natural next step — but it is a
+  substantially larger change to the video side, and it is not what was broken.
+  What was broken is that the two clocks never started together in the first
+  place. Fix that first; the polling design remains the right answer if genuine
+  *drift over a long session* is ever reported, which is a different symptom.
+
+- **Root cause 3 — the heavy commands ran on Tauri's main thread.** A plain
+  `#[tauri::command] fn` (no `async`) is `ExecutionContext::Blocking`, which
+  Tauri runs **on the main thread** — confirmed by reading `tauri-macros-2.6.3`'s
+  `command/wrapper.rs`, not assumed from docs. So `chroma_timeline_frame` held
+  the window's entire event loop for the duration of a decode, and every other
+  IPC call queued behind it — including `chroma_audio_play`, whose start latency
+  *is* the A/V offset from root cause 2. `chroma_timeline_frame` is now an
+  `async fn` + `spawn_blocking` (the same shape `chroma::commands` and
+  `chroma::session`'s decode commands already use), with its body split out as
+  `edit::timeline_frame` so tests still call it directly with no runtime;
+  `chroma_audio_play`/`chroma_audio_stop` take `#[tauri::command(async)]`, which
+  is Tauri's own mechanism for a synchronous command that must not block the
+  main thread, and keeps them directly callable from the existing tests.
+
+- **Root cause 4 — scrub and play asked for different preview resolutions.**
+  D-031 dropped playback to a 640 long edge (from scrub's 960) because decode
+  was then the bottleneck. It no longer is, and a *differing* long edge changes
+  the `ffmpeg` scaler arguments, which forces **every** pipe to respawn and
+  keyframe-seek on **every** Play/Pause toggle — a measured 550-650 ms of dead
+  air per toggle. Measured with the fixes above in place: two 4K HEVC layers
+  sustain **110 fps at 960** vs 105 fps at 640, and three layers still sustain
+  **81 fps** — the split now buys nothing and costs a respawn, so there is one
+  `PREVIEW_LONG_EDGE`. Relatedly, the play loop seeded `lastRequested = -1` and
+  so re-requested the frame already on screen, which is a *backward* step for
+  that clip's pipe and forced yet another respawn at the exact moment playback
+  began; it now seeds with `startFrame`.
+
+- **Hardware decode in `decode_pipe`, extending D-121.** D-121 measured
+  `videotoolbox` at 38% CPU vs 393% for byte-identical output and applied it to
+  the thumbnail path only. The argument is stronger here — this path runs at
+  playback rate, and the CPU it frees is exactly what the real-time audio thread
+  needs to avoid ring-buffer underruns. Same policy as D-121: try hardware, fall
+  back to software on a real failure, log it, and remember the failure per source
+  (`NO_HWACCEL`) so the fallback is paid once rather than per respawn.
+  Byte-identity re-verified here for *this* path on both of the owner's real
+  sources (4K HEVC and the H.264 screen recording): `cmp` clean on a 3-frame
+  rawvideo dump, software vs. hardware.
+
+- **Verified — real measured numbers, same code path, same files.**
+  - **Preview throughput, through the real Rust command body against a timeline
+    shaped like the owner's real 3-video-track project:** before and after,
+    run **back-to-back under identical machine load**, **618 ms/frame (616 /
+    624 / 618) → 23-31 ms/frame (23 / 29 / 31)** — ≈1.6 fps → ~34 fps against a
+    24 fps timeline. On an idle machine the same comparison was **660 ms → 17
+    ms**. The "before" figure was produced by temporarily collapsing every slot
+    back onto one shared pipe and re-running the identical test, not inferred;
+    note it barely moves with machine load, because it is dominated by process
+    spawn and keyframe-seek latency rather than by CPU. At the raw `ffmpeg`
+    level the pre-fix cost measured ~1.2 s per composited frame in pure
+    software.
+  - **Audio start skew:** 157 ms (warm page cache) / 431-635 ms (cold) of
+    previously-uncorrected audio-behind-video offset, measured by instrumenting
+    the real `run_session` and running the existing end-to-end
+    `chroma_audio_play` → `chroma_audio_level` test against the owner's real
+    file. `rms`/`peak` stayed non-silent throughout (0.0015-0.0020 /
+    0.0105-0.0142), so the compensation is not skipping the audio it should be
+    playing.
+  - `cargo test -p RapidRAW chroma::` — **173 passed, 0 failed** (6 new tests:
+    3 for `skew_compensation`, 2 real-file preview-throughput/pipe-lifetime
+    tests, plus the pipe-release assertion). `cargo clippy -p RapidRAW
+    --all-targets` — **zero warnings in any line this change touched** (the
+    crate's remaining warnings are pre-existing and outside every hunk here,
+    confirmed by cross-referencing warning line numbers against `git diff -U0`).
+    `cargo fmt --check` — **no new diffs** (32 sites in the touched files vs. a
+    33-site pre-existing baseline; this pass removed one). `tsc` clean on
+    `packages/editor`; `app` at exactly its documented 64-error baseline with
+    none in `PreviewPane.tsx`. `packages/editor` vitest **166/166**.
+
+- **Honest gap.** **Not verified by clicking Play in the assembled app.** This
+  environment could not launch the Tauri window (and the main tree is the
+  owner's live dev server, which was off-limits). Everything above is the real
+  shipped code paths — the real Tauri command bodies, the real `decode_pipe`,
+  the real `cpal` output stream on this machine — against the owner's own real
+  media, but not the shipped window. What actually closes this is the owner
+  pressing Play on `New.chroma` and reporting whether the delay and the audio
+  lag are gone. A second, smaller gap: the audio skew compensation is verified
+  as "the pipeline starts at the right sample and stays non-silent", not by
+  anyone *listening* for lip-sync — a sandboxed agent cannot hear.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

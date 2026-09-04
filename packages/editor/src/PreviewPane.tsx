@@ -18,6 +18,15 @@
  * `chroma/audio.rs`'s module doc for why that's the deliberate sync model
  * rather than a tighter per-frame coupling. No audio during scrub (paused) —
  * only real Play produces sound, per D-049 scope.
+ *
+ * Playback-start cost (D-125): pressing Play used to cost several seconds of
+ * dead air. Three things here contributed, all fixed: play and scrub asked for
+ * *different* preview resolutions (which respawns every backend decode pipe),
+ * the play loop re-requested the frame already on screen (a backward seek,
+ * which respawns them again), and `chroma_timeline_frame` ran on Tauri's main
+ * thread so `chroma_audio_play` queued behind a full decode — arriving late,
+ * which the open-loop audio clock then carried as a permanent offset. The
+ * dominant cause was on the Rust side (`chroma/decode_pipe.rs`); see D-125.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -28,8 +37,20 @@ import { Player } from '@chroma/player';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 
-const SCRUB_LONG_EDGE = 960;
-const PLAY_LONG_EDGE = 640;
+/**
+ * One preview resolution for both scrub and play (D-125). D-031 originally
+ * dropped playback to a smaller long edge because decode was the bottleneck;
+ * with per-layer decode pipes and hardware decode it no longer is — measured
+ * against this project's real footage, two 4K HEVC layers sustain ~110 fps at
+ * 960 vs ~105 fps at 640, and three layers still sustain ~81 fps. Meanwhile a
+ * *different* long edge between scrub and play changes the ffmpeg scaler
+ * arguments, which forces every decode pipe to respawn and keyframe-seek on
+ * every single Play/Pause toggle — a measured 550-650 ms of dead air each time
+ * for two to three 4K HEVC layers, and a real part of the "clicking Play takes
+ * seconds" report this fixes. One value means toggling Play just continues the
+ * existing sequential decode.
+ */
+const PREVIEW_LONG_EDGE = 960;
 
 export function PreviewPane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -76,7 +97,7 @@ export function PreviewPane() {
   // scrub: refetch on playhead change while paused
   useEffect(() => {
     if (playing || !timeline) return;
-    fetchFrame(playhead, SCRUB_LONG_EDGE);
+    fetchFrame(playhead, PREVIEW_LONG_EDGE);
   }, [playhead, playing, timeline, fetchFrame]);
 
   // play: wall-clock rAF loop, frame-dropping to stay real-time
@@ -89,8 +110,19 @@ export function PreviewPane() {
 
     const startFrame = useEditorTimelineStore.getState().playhead;
     const startTime = performance.now();
-    let busy = false;
-    let lastRequested = -1;
+    // `startFrame` is already the frame on screen — the paused scrub effect
+    // fetched it. Seeding `lastRequested` with it (rather than -1) skips a
+    // redundant re-request of a frame we already have, which on the Rust side
+    // is a *backward* step for that clip's decode pipe and so would force a
+    // full ffmpeg respawn + keyframe seek at the exact moment playback starts
+    // (D-125).
+    let lastRequested = startFrame;
+    // A scrub fetch may still be in flight from just before Play was pressed.
+    // `chroma_timeline_frame` runs off the main thread now (D-125), so the two
+    // really can overlap — they share `inFlight` so they can't interleave
+    // requests into the same decode pipes, and any queued scrub frame is
+    // dropped rather than fired mid-playback.
+    pending.current = null;
     let stopped = false;
 
     const tick = async () => {
@@ -102,20 +134,34 @@ export function PreviewPane() {
         setPlaying(false);
         return;
       }
-      if (!busy && want !== lastRequested) {
-        busy = true;
+      if (!inFlight.current && want !== lastRequested) {
+        inFlight.current = true;
         lastRequested = want;
         setPlayhead(want);
         try {
           const src = await invoke<string>('chroma_timeline_frame', {
             pos: want,
-            maxLongEdge: PLAY_LONG_EDGE,
+            maxLongEdge: PREVIEW_LONG_EDGE,
           });
           setFrameSrc(src);
         } catch {
           /* keep going — a heavy clip can drop frames */
+        } finally {
+          inFlight.current = false;
+          // Drain exactly like `fetchFrame`'s own `finally` does. Pausing
+          // mid-fetch makes the scrub effect run while this request is still
+          // in flight, so it parks its frame in `pending` — without this it
+          // would never be fetched and the preview would sit on the last
+          // frame playback happened to render rather than the paused one.
+          // (`pending` can only be non-null once `playing` is already false:
+          // the scrub effect early-returns while playing, and play start
+          // clears it.)
+          const queued = pending.current;
+          if (queued !== null) {
+            pending.current = null;
+            fetchFrame(queued, PREVIEW_LONG_EDGE);
+          }
         }
-        busy = false;
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -125,7 +171,10 @@ export function PreviewPane() {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     };
-  }, [playing, timeline, duration, fps, lastFrame, setPlayhead, setPlaying]);
+    // `fetchFrame` is a `useCallback` with no deps, so it is referentially
+    // stable and never re-runs this effect — listed because the play loop now
+    // really does call it (to drain a scrub frame queued during a pause).
+  }, [playing, timeline, duration, fps, lastFrame, setPlayhead, setPlaying, fetchFrame]);
 
   // audio (D-049): start/stop in lockstep with the same `playing` transitions
   // that (re)baseline the video rAF loop above — both begin from the same

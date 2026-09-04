@@ -195,7 +195,14 @@ async fn decode_and_install(
     let info = shot.info.clone();
     let frame = shot.frame.min(info.frame_count.saturating_sub(1));
     let decoded = tokio::task::spawn_blocking(move || {
-        decode_pipe::playback_frame_scaled(&path, &info, frame, None).or_else(|e| {
+        decode_pipe::playback_frame_scaled(
+            decode_pipe::PipeSlot::Current,
+            &path,
+            &info,
+            frame,
+            None,
+        )
+        .or_else(|e| {
             log::warn!("[chroma::session] decode pipe fell back to single-frame decode: {e}");
             video::decode_frame(&path, video::FramePos::Index(frame), &info)
         })

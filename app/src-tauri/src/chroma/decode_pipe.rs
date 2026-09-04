@@ -1,18 +1,49 @@
 //! Persistent sequential-decode pipe for smooth scrub / playback (roadmap
-//! round-2 item 5, D-030).
+//! round-2 item 5, D-030; multi-pipe pool + hardware decode, D-125).
 //!
-//! What it is: one long-lived `ffmpeg -f rawvideo` process per loaded clip that
+//! What it is: one long-lived `ffmpeg -f rawvideo` process per *pipe slot* that
 //!   streams frames sequentially, instead of a fresh process + keyframe seek +
 //!   PNG round-trip per frame (`video::decode_frame`, D-015).
-//! What it does: `playback_frame(path, info, target)` returns frame `target` as
-//!   an 8-bit RGB `DynamicImage`. Cheap when `target` is the next frame or a
-//!   short forward hop; a keyframe-seek respawn otherwise (no worse than the
-//!   old per-frame path).
+//! What it does: `playback_frame_scaled(slot, path, info, target, scale)`
+//!   returns frame `target` as an 8-bit RGB `DynamicImage`. Cheap when `target`
+//!   is the next frame or a short forward hop *for that slot*; a keyframe-seek
+//!   respawn otherwise (no worse than the old per-frame path).
 //! What it does NOT do: audio, colour management, the GPU grade, caching decoded
 //!   frames. It is purely "give me frame N fast, in order".
-//! Fallback: any pipe error drops the pipe and returns `Err` — callers fall back
-//!   to `video::decode_frame`. The pipe is a fast path, never a new failure mode.
+//! Fallback: any pipe error drops that slot's pipe and returns `Err` — callers
+//!   fall back to `video::decode_frame`. The pipe is a fast path, never a new
+//!   failure mode.
+//!
+//! ## Why a pool of pipes and not one (D-125, B-040)
+//!
+//! D-030 kept exactly one process-global pipe, which was correct while the only
+//! caller was Colorist's single "currently loaded video". D-088's multi-layer
+//! Edit-tab compositor then started decoding **several** layers for one
+//! displayed frame through that same single pipe — and since a pipe restarts
+//! whenever the path changes *or* the target frame goes backwards, every layer
+//! after the first forced a full `ffmpeg` respawn + keyframe seek. On a real
+//! three-video-track project that is three 4K-HEVC process spawns **per
+//! displayed frame**. Measured two ways against the owner's own project:
+//! ~1.2 s per composited frame at the raw `ffmpeg` level in pure software, and
+//! **618-660 ms/frame through this module** once hardware decode (below) was
+//! already in place. Giving each layer its own slot restores the
+//! sequential-decode property the module was built for — the same measurement,
+//! same files, same code path, drops to **17-31 ms/frame** (a back-to-back
+//! before/after run under identical machine load measured 618 → 23-31).
+//!
+//! ## Hardware decode (D-125, extending D-121)
+//!
+//! D-121 measured Apple `videotoolbox` decode of the owner's real 4K HEVC
+//! footage at **38% CPU vs. 393%** for the identical, byte-identical output, and
+//! applied it to the filmstrip-thumbnail path only. The same argument applies
+//! here with more force — this path runs at playback rate, and the CPU it frees
+//! is exactly what the real-time audio thread (`chroma::audio`, D-050) needs to
+//! avoid ring-buffer underruns. Same policy as D-121: try hardware, fall back to
+//! software on failure (hardware decode does not cover every codec/pixel format)
+//! and remember the failure per path so the fallback is paid once, not per
+//! respawn.
 
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -32,6 +63,26 @@ fn ffmpeg_bin() -> String {
 /// with its keyframe seek — becomes the cheaper option. ~2 s at 24 fps.
 const MAX_FORWARD_SKIP: u64 = 48;
 
+/// Sources whose hardware decode attempt has already failed once — retried in
+/// software from then on rather than paying (and logging) the failure on every
+/// respawn. Mirrors D-121's "try hardware, fall back to software, say so"
+/// policy for the thumbnail path.
+static NO_HWACCEL: Lazy<Mutex<HashSet<PathBuf>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+fn hwaccel_allowed(path: &Path) -> bool {
+    !NO_HWACCEL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(path)
+}
+
+fn disable_hwaccel(path: &Path) {
+    NO_HWACCEL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(path.to_path_buf());
+}
+
 pub struct FramePipe {
     path: PathBuf,
     child: Child,
@@ -46,6 +97,9 @@ pub struct FramePipe {
     h: u32,
     /// `Some((w, h))` if ffmpeg is scaling the output; `None` = native size.
     scale: Option<(u32, u32)>,
+    /// Whether this process was spawned with `-hwaccel videotoolbox` (D-125) —
+    /// read on failure to decide whether a software retry is worth attempting.
+    hwaccel: bool,
 }
 
 /// Even-dimension downscale target for a `long_edge` cap. Returns `None` when the
@@ -83,12 +137,26 @@ impl FramePipe {
 
     /// As [`FramePipe::open`], but ffmpeg downscales every frame to `scale`
     /// (`Some((w, h))`) before it hits the pipe. Used by the playback path (D-031)
-    /// so a 4K frame is never CPU-downscaled per frame.
+    /// so a 4K frame is never CPU-downscaled per frame. Hardware decode is used
+    /// unless this source has already failed at it once (D-125).
     pub fn open_scaled(
         path: &Path,
         info: &VideoInfo,
         start: u64,
         scale: Option<(u32, u32)>,
+    ) -> Result<Self> {
+        Self::open_with_hwaccel(path, info, start, scale, hwaccel_allowed(path))
+    }
+
+    /// The real spawn. `hwaccel` is threaded explicitly so the software retry
+    /// after a hardware-decode failure ([`playback_frame_scaled`]) can force it
+    /// off without racing the [`NO_HWACCEL`] memo it just wrote.
+    fn open_with_hwaccel(
+        path: &Path,
+        info: &VideoInfo,
+        start: u64,
+        scale: Option<(u32, u32)>,
+        hwaccel: bool,
     ) -> Result<Self> {
         let fps = info.fps();
         if fps <= 0.0 || info.resolution.width == 0 || info.resolution.height == 0 {
@@ -98,7 +166,15 @@ impl FramePipe {
         let (out_w, out_h) = scale.unwrap_or((info.resolution.width, info.resolution.height));
 
         let mut cmd = Command::new(ffmpeg_bin());
-        cmd.args(["-hide_banner", "-loglevel", "error", "-ss"])
+        cmd.args(["-hide_banner", "-loglevel", "error"]);
+        if hwaccel {
+            // Decoded frames are downloaded back to system memory (no
+            // `-hwaccel_output_format`), so the `-vf scale` below and the
+            // rgb24 output stay exactly as they are in software — verified
+            // byte-identical on both this project's HEVC and H.264 sources.
+            cmd.args(["-hwaccel", "videotoolbox"]);
+        }
+        cmd.arg("-ss")
             .arg(format!("{seek:.6}"))
             .arg("-i")
             .arg(path)
@@ -139,6 +215,7 @@ impl FramePipe {
             w: out_w,
             h: out_h,
             scale,
+            hwaccel,
         })
     }
 
@@ -205,48 +282,123 @@ impl FramePipe {
 }
 
 // --------------------------------------------------------------------------- //
-// process-global playback pipe (there is only ever one clip loaded — mirrors
-// state.rs's THUMB_CACHE)
+// process-global pool of playback pipes, one per slot (D-125) — mirrors
+// state.rs's THUMB_CACHE module-global style. Was a single `Option<FramePipe>`
+// until D-088's multi-layer compositor started decoding several sources for one
+// displayed frame through it; see the module doc for the measured cost.
 // --------------------------------------------------------------------------- //
 
-static PIPE: Lazy<Mutex<Option<FramePipe>>> = Lazy::new(|| Mutex::new(None));
+/// Which independently-sequential decode stream a call wants. Two callers that
+/// interleave *different* sources or *different* positions must not share one,
+/// or each call restarts the other's `ffmpeg` process (B-040).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum PipeSlot {
+    /// The Colorist tab's single "currently loaded video" (`state::current_video`)
+    /// — one clip at a time by construction, so one slot is right for all of it.
+    Current,
+    /// The Edit tab's preview: one slot per timeline **video track index**, so
+    /// each composited layer keeps its own sequential decoder across frames.
+    /// Keyed by track index rather than source path because two tracks can
+    /// legitimately hold the same file at different positions — the real
+    /// project this was found on does exactly that.
+    Track(usize),
+}
 
-/// Decode `target` via the process-global playback pipe, creating / advancing /
-/// restarting it as needed. On any failure the pipe is dropped and the error
-/// returned; callers should fall back to [`super::video::decode_frame`].
-#[allow(dead_code)] // native-size convenience wrapper; scrub goes through
-                    // `playback_frame_scaled(.., None)`, kept for API symmetry
-pub fn playback_frame(path: &Path, info: &VideoInfo, target: u64) -> Result<DynamicImage> {
-    playback_frame_scaled(path, info, target, None)
+static PIPES: Lazy<Mutex<HashMap<PipeSlot, FramePipe>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Decode `target` via `slot`'s playback pipe, creating / advancing /
+/// restarting it as needed. On any failure the slot's pipe is dropped and the
+/// error returned; callers should fall back to [`super::video::decode_frame`].
+///
+/// Native-size convenience wrapper; scrub goes through
+/// `playback_frame_scaled(.., None)`, kept for API symmetry.
+#[allow(dead_code)]
+pub fn playback_frame(
+    slot: PipeSlot,
+    path: &Path,
+    info: &VideoInfo,
+    target: u64,
+) -> Result<DynamicImage> {
+    playback_frame_scaled(slot, path, info, target, None)
 }
 
 /// As [`playback_frame`], but ffmpeg downscales each frame to `scale` first
 /// (D-031). Switching `scale` (e.g. entering / leaving playback) costs one
 /// respawn, same as a seek jump.
+///
+/// A failure on a hardware-accelerated pipe is retried **once** in software
+/// before being reported (D-125) — hardware decode does not cover every
+/// codec/pixel format, and a source that can't use it should degrade to the
+/// pre-D-125 software behaviour rather than to no preview at all. The failure
+/// is logged and remembered per source ([`NO_HWACCEL`]) so later respawns of
+/// the same file go straight to software.
 pub fn playback_frame_scaled(
+    slot: PipeSlot,
     path: &Path,
     info: &VideoInfo,
     target: u64,
     scale: Option<(u32, u32)>,
 ) -> Result<DynamicImage> {
-    let mut guard = PIPE.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_none() {
-        *guard = Some(FramePipe::open_scaled(path, info, target, scale)?);
-    }
-    let pipe = guard.as_mut().unwrap();
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+
+    let pipe = match pool.entry(slot) {
+        std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+        std::collections::hash_map::Entry::Vacant(v) => {
+            v.insert(FramePipe::open_scaled(path, info, target, scale)?)
+        }
+    };
+
     match pipe.frame_scaled(path, info, target, scale) {
         Ok(img) => Ok(img),
         Err(e) => {
-            *guard = None; // poison → next call respawns clean
-            Err(e)
+            let was_hwaccel = pipe.hwaccel;
+            pool.remove(&slot); // poison → next call respawns clean
+            if !was_hwaccel {
+                return Err(e);
+            }
+            log::warn!(
+                "decode pipe: hardware decode failed for {} ({e}) — retrying in software",
+                path.display()
+            );
+            disable_hwaccel(path);
+            let mut sw = FramePipe::open_with_hwaccel(path, info, target, scale, false)?;
+            let img = sw.frame_scaled(path, info, target, scale)?;
+            pool.insert(slot, sw);
+            Ok(img)
         }
     }
 }
 
-/// Drop the playback pipe (frees the ffmpeg process + its fd). Called from
-/// `state::set_current_video` when the clip changes, and before an export.
+/// Drop every pipe whose slot is a [`PipeSlot::Track`] not in `keep` — the
+/// Edit-tab preview calls this once per frame with the track indices actually
+/// visible there, so a track that goes hidden, is deleted, or simply has a gap
+/// under the playhead releases its `ffmpeg` process instead of holding one open
+/// for the rest of the session. Bounds the pool at "one pipe per currently
+/// visible video layer" without needing an arbitrary cap.
+pub fn retain_track_slots(keep: &[usize]) {
+    PIPES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|slot, _| match slot {
+            PipeSlot::Current => true,
+            PipeSlot::Track(i) => keep.contains(i),
+        });
+}
+
+/// How many pipes — and therefore how many live `ffmpeg` processes — the pool
+/// currently holds. The observable the "one pipe per visible layer, released
+/// when a layer goes away" contract is actually tested against (D-125).
+/// Test-only — nothing in the running app needs to ask, and the house rule is
+/// no dead code shipped "just in case".
+#[cfg(test)]
+pub fn open_pipe_count() -> usize {
+    PIPES.lock().unwrap_or_else(|e| e.into_inner()).len()
+}
+
+/// Drop every playback pipe (frees the ffmpeg processes + their fds). Called
+/// from `state::set_current_video` when the clip changes, and before an export.
 pub fn reset() {
-    *PIPE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    PIPES.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 #[cfg(test)]

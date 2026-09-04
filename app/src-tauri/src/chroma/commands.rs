@@ -110,7 +110,14 @@ pub async fn seek_and_install(
     let scale = scale_long_edge
         .and_then(|le| decode_pipe::scale_target(cv.info.resolution.width, cv.info.resolution.height, le));
     let decoded = tokio::task::spawn_blocking(move || {
-        decode_pipe::playback_frame_scaled(&path, &info, clamped, scale).or_else(|e| {
+        decode_pipe::playback_frame_scaled(
+            decode_pipe::PipeSlot::Current,
+            &path,
+            &info,
+            clamped,
+            scale,
+        )
+        .or_else(|e| {
             log::warn!("[chroma::seek] decode pipe fell back to single-frame decode: {e}");
             video::decode_frame(&path, video::FramePos::Index(clamped), &info)
         })

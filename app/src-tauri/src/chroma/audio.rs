@@ -83,17 +83,47 @@
 //! [`chroma_audio_play`] is called at that exact same transition — and then
 //! run **open-loop** against real wall-clock time independently of each
 //! other: video paced by `performance.now()`, audio paced by the output
-//! device's DAC clock. This is accurate to within the one IPC round-trip's
-//! start latency (single-digit ms) plus whatever the two clocks drift from
-//! each other over the playback session (device-clock-vs-OS-wall-clock drift
-//! is on the order of tens of parts-per-million — imperceptible over a
-//! realistic preview session, not something this scrub/preview tool needs to
-//! correct for today). **Known, deliberate limitation:** no drift correction
-//! for a very long continuous play session, no re-sync on a mid-play seek
-//! (there isn't one — see below). If drift is ever reported in practice, the
-//! natural next step is exactly the audio-is-the-master-clock design
-//! sketched above; it was not spec'd out further because there was nothing
-//! to observe yet.
+//! device's DAC clock. Remaining error is the two clocks' mutual drift over a
+//! session (device-clock-vs-OS-wall-clock drift is on the order of tens of
+//! parts-per-million — imperceptible over a realistic preview session, not
+//! something this scrub/preview tool needs to correct for today).
+//! **Known, deliberate limitation:** no drift correction for a very long
+//! continuous play session, no re-sync on a mid-play seek (there isn't one —
+//! see below). If drift is ever reported in practice, the natural next step is
+//! exactly the audio-is-the-master-clock design sketched above.
+//!
+//! ### Start-up skew compensation (D-125 — a real reported failure, not theory)
+//!
+//! "Both sides start at the same moment" is the whole load-bearing assumption
+//! above, and D-050 estimated the gap at "one IPC round-trip, single-digit ms."
+//! That estimate was wrong in practice. The video clock re-baselines the
+//! instant the frontend toggles Play, but the audio pipeline still has to open
+//! the output device, probe each container and seek every source before it can
+//! produce a single sample — and D-050 started the `cpal` stream *before* all of
+//! that, so the callback drained an empty ring and [`pull_or_silence`] emitted
+//! silence for the entire warm-up. Because the ring is a plain FIFO with no
+//! timestamps, that head silence is never made up: audio ended up permanently
+//! behind the picture by however long the warm-up took, which the owner heard
+//! and reported as lagging audio.
+//!
+//! **Measured, not assumed:** against the owner's own `A001_08302215_C019.MOV`
+//! (4K HEVC + 48 kHz AAC), the warm-up is **157 ms** with the file already warm
+//! in the page cache and **431-635 ms** cold, across repeated runs on an idle
+//! machine. Broadcast tolerance for audio *lagging* picture is around 45 ms, so
+//! even the best case was audible and the typical case badly so. In the running
+//! app it was worse again, because `chroma_audio_play` was a main-thread
+//! command queued behind a preview decode that itself took hundreds of
+//! milliseconds (see D-125).
+//!
+//! [`run_session`] now measures the real elapsed time from the moment
+//! [`chroma_audio_play`] was called, discards exactly that much audio from the
+//! sources ([`skew_compensation`] / [`discard_samples`] — decode runs orders of
+//! magnitude faster than real time, so this is cheap), prefills
+//! [`PREFILL_SECS`] into the ring, and only *then* starts the device. That
+//! makes the open-loop model's premise actually true instead of assumed,
+//! without adding the per-tick position polling D-050 deliberately declined to
+//! build. Compensation is capped at [`MAX_SKEW_COMPENSATION_SECS`] so a
+//! pathological warm-up can never silently skip audible content.
 //!
 //! `chroma_audio_play(start_frame)` doubles as "seek and play" — there is no
 //! separate seek-while-playing command, because the video loop already
@@ -160,7 +190,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp_sample::FromSample;
@@ -236,6 +266,32 @@ pub(crate) fn resampled_frame_count(input_frames: usize, in_rate: u32, out_rate:
         return 0;
     }
     ((input_frames as u64 * out_rate as u64) / in_rate as u64) as usize
+}
+
+/// How many interleaved samples of start-up latency to skip past, and the
+/// seconds that corresponds to — the arithmetic behind [`run_session`]'s
+/// warm-up compensation (D-125). `skew_secs` is real elapsed time between the
+/// frontend asking for playback (the same instant the video clock re-baselines)
+/// and the audio pipeline being ready to feed the device; the result is how far
+/// into the sources to advance so the first sample that actually reaches the
+/// DAC is the one the picture is already showing.
+///
+/// Clamped at [`MAX_SKEW_COMPENSATION_SECS`] — past that, skipping would throw
+/// away audible content, so the caller leaves the remainder as real offset and
+/// logs it. A negative or non-finite `skew_secs` (not reachable from
+/// `Instant::elapsed`, but this is pure arithmetic with a real correct answer)
+/// compensates nothing. Pure — no I/O.
+pub(crate) fn skew_compensation(
+    skew_secs: f64,
+    out_rate: u32,
+    out_channels: usize,
+) -> (usize, f64) {
+    if !skew_secs.is_finite() || skew_secs <= 0.0 {
+        return (0, 0.0);
+    }
+    let capped = skew_secs.min(MAX_SKEW_COMPENSATION_SECS);
+    let samples = (capped * out_rate as f64) as usize * out_channels.max(1);
+    (samples, capped)
 }
 
 /// Reduce mono `samples` to `bucket_count` (min, max) peak pairs — the
@@ -524,7 +580,13 @@ fn stop_and_bump_generation() -> u64 {
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
 /// before it starts a new session.
-#[tauri::command]
+///
+/// `(async)` (D-125): this joins the audio thread, which can take up to one of
+/// its poll intervals — that must not happen on Tauri's main thread, where it
+/// would stall the window and every other in-flight command. `(async)` on a
+/// synchronous `fn` is Tauri's own "run this command off the main thread"
+/// mechanism, and keeps the function directly callable from tests.
+#[tauri::command(async)]
 pub fn chroma_audio_stop() {
     stop_and_bump_generation();
 }
@@ -552,8 +614,17 @@ struct AudioSourceSpec {
 /// clip at this position, or one with no audio stream, and no audio-track
 /// clip either) is **not** an error: it just means nothing plays, matching
 /// the video preview's own "blank frame past the end" behaviour.
-#[tauri::command]
+/// `(async)` (D-125): see [`chroma_audio_stop`] — same reason, and here it also
+/// means the command isn't itself queued behind a main-thread preview decode,
+/// which is precisely the latency the video clock does not wait for.
+#[tauri::command(async)]
 pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
+    // The instant the frontend asked for playback — the same moment the video
+    // rAF loop re-baselines its own `performance.now()` clock. Everything
+    // between here and the first sample reaching the DAC is skew the audio
+    // would otherwise carry for the whole session (D-125); `run_session`
+    // measures against this and compensates for it.
+    let requested_at = Instant::now();
     let my_gen = stop_and_bump_generation();
 
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
@@ -589,7 +660,7 @@ pub fn chroma_audio_play(start_frame: u64) -> Result<(), String> {
         .name("chroma-audio".into())
         .spawn(move || {
             let n = sources.len();
-            if let Err(e) = run_session(sources, my_gen) {
+            if let Err(e) = run_session(sources, my_gen, requested_at) {
                 log::warn!("chroma audio session ({n} source(s)): {e}");
             }
         })
@@ -933,6 +1004,56 @@ fn open_source(
     })
 }
 
+/// How much audio to have buffered before the output device is started
+/// (D-125). Enough that an ordinary scheduling hiccup on the decode thread
+/// can't underrun the `cpal` callback the instant playback begins; small
+/// enough that producing it is a couple of milliseconds of decode, which the
+/// warm-up compensation above then accounts for anyway.
+const PREFILL_SECS: f64 = 0.15;
+
+/// Ceiling on how much start-up latency [`run_session`] will silently skip
+/// past to keep audio aligned with the picture (D-125). Beyond this, skipping
+/// would throw away audible content, so the remainder is left as real offset
+/// and logged instead.
+const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
+
+/// Pull one `chunk_len` window from every source in lockstep and mix it —
+/// the single step both the prefill and the steady-state loop in
+/// [`run_session`] run, factored out so they cannot drift apart.
+fn mix_chunk(
+    decoded: &mut [DecodedSource],
+    gains: &[f32],
+    chunk_len: usize,
+    out_channels: usize,
+) -> Result<Vec<f32>, String> {
+    let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
+    for ds in decoded.iter_mut() {
+        bufs.push(ds.take(chunk_len, out_channels)?);
+    }
+    Ok(mix_sources(&bufs, gains, chunk_len))
+}
+
+/// Decode and throw away `n` interleaved samples from every source in
+/// lockstep — how [`run_session`] skips the audio that should already have
+/// played while the pipeline was warming up (D-125). Sources that are already
+/// exhausted simply pad silence, exactly as they do in the mix.
+fn discard_samples(
+    decoded: &mut [DecodedSource],
+    n: usize,
+    out_channels: usize,
+    chunk_len: usize,
+) -> Result<(), String> {
+    let mut left = n;
+    while left > 0 {
+        let want = left.min(chunk_len);
+        for ds in decoded.iter_mut() {
+            ds.take(want, out_channels)?;
+        }
+        left -= want;
+    }
+    Ok(())
+}
+
 /// Runs entirely on the dedicated thread [`chroma_audio_play`] spawned for
 /// it. Opens the default `cpal` output device once, opens every one of
 /// `sources` (D-057: the baseline video-embedded audio plus any overlapping
@@ -960,7 +1081,11 @@ fn open_source(
 /// in practice via its `Monitor: Send + Sync` supertrait bound, but pinning
 /// the whole design on that rather than needing it at all is simpler and
 /// more portable).
-fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String> {
+fn run_session(
+    sources: Vec<AudioSourceSpec>,
+    my_gen: u64,
+    requested_at: Instant,
+) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -977,6 +1102,11 @@ fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String>
     let ring: Arc<Mutex<VecDeque<f32>>> =
         Arc::new(Mutex::new(VecDeque::with_capacity(ring_cap * 2)));
 
+    // Built (which opens the device) but deliberately NOT started yet — see
+    // the warm-up compensation below. Starting it here, as D-050 originally
+    // did, means the callback drains an empty ring and `pull_or_silence`
+    // emits silence for the whole warm-up, which the ring's plain FIFO then
+    // carries as a permanent audio-behind-video offset.
     let stream = build_output_stream(
         &device,
         &stream_config,
@@ -984,7 +1114,6 @@ fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String>
         out_channels,
         ring.clone(),
     )?;
-    stream.play().map_err(|e| format!("stream.play: {e}"))?;
 
     let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
     let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
@@ -1007,6 +1136,7 @@ fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String>
     // case below rather than erroring, since the caller (`chroma_audio_play`)
     // already treats "nothing to play" as a non-error.
     if decoded.is_empty() {
+        stream.play().map_err(|e| format!("stream.play: {e}"))?;
         while is_current(my_gen) {
             thread::sleep(Duration::from_millis(50));
         }
@@ -1019,6 +1149,66 @@ fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String>
     let chunk_frames = 1024;
     let chunk_len = chunk_frames * out_channels.max(1);
 
+    // --- warm-up compensation + prefill (D-125) -------------------------- //
+    //
+    // D-050's open-loop sync model is only correct if audio and video really
+    // do begin from the same playhead frame at the same instant; it assumed
+    // the gap between them was "one IPC round-trip, single-digit ms." It is
+    // not: opening the output device, probing a large container and seeking
+    // every source is real work, and it all happens *after* the video's rAF
+    // loop has already re-baselined its wall clock. Whatever that took, the
+    // audio would otherwise be exactly that far behind the picture for the
+    // rest of the session — the design's own stated failure mode, just at a
+    // magnitude it did not anticipate.
+    //
+    // So: discard the samples that *should* already have played during the
+    // warm-up, then prefill a little, then start the device. Discarding is
+    // cheap — decode runs orders of magnitude faster than real time — and it
+    // is the only correction that keeps the two clocks aligned without
+    // introducing the per-tick position polling D-050 deliberately did not
+    // build.
+    let skew = requested_at.elapsed().as_secs_f64();
+    let (skew_samples, capped_skew) = skew_compensation(skew, out_rate, out_channels);
+    if skew > MAX_SKEW_COMPENSATION_SECS {
+        // Something pathological (an unresponsive device, a source that took
+        // seconds to seek). Compensating the whole way would skip audible
+        // content, so cap it and say so rather than silently jumping ahead.
+        log::warn!(
+            "chroma audio: {skew:.2}s of start-up latency exceeds the \
+             {MAX_SKEW_COMPENSATION_SECS:.1}s compensation cap — audio will start \
+             {:.2}s behind the picture",
+            skew - MAX_SKEW_COMPENSATION_SECS
+        );
+    }
+    if skew_samples > 0 {
+        discard_samples(&mut decoded, skew_samples, out_channels, chunk_len)?;
+    }
+
+    let prefill_len = (PREFILL_SECS * out_rate as f64) as usize * out_channels.max(1);
+    while ring.lock().unwrap_or_else(|e| e.into_inner()).len() < prefill_len
+        && !decoded.iter().all(DecodedSource::is_done)
+        && is_current(my_gen)
+    {
+        let mixed = mix_chunk(&mut decoded, &gains, chunk_len, out_channels)?;
+        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(mixed);
+    }
+
+    // A stop (or a superseding play) that landed during the warm-up means this
+    // session should never make a sound at all — starting the device now would
+    // emit a brief blip of the prefill before the loops below noticed and tore
+    // it down.
+    if !is_current(my_gen) {
+        return Ok(());
+    }
+
+    log::debug!(
+        "chroma audio: warm-up {:.0}ms (compensated {:.0}ms), prefilled {} samples, starting stream",
+        skew * 1000.0,
+        capped_skew * 1000.0,
+        prefill_len
+    );
+    stream.play().map_err(|e| format!("stream.play: {e}"))?;
+
     'mix: loop {
         if !is_current(my_gen) {
             break 'mix;
@@ -1027,11 +1217,7 @@ fn run_session(sources: Vec<AudioSourceSpec>, my_gen: u64) -> Result<(), String>
             break 'mix; // every source exhausted — fall through to the idle wait below
         }
 
-        let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
-        for ds in decoded.iter_mut() {
-            bufs.push(ds.take(chunk_len, out_channels)?);
-        }
-        let mixed = mix_sources(&bufs, &gains, chunk_len);
+        let mixed = mix_chunk(&mut decoded, &gains, chunk_len, out_channels)?;
 
         // Backpressure: block briefly while the ring buffer is comfortably
         // full rather than growing it unbounded — bail out early if a
@@ -1187,6 +1373,31 @@ mod tests {
         assert_eq!(resampled_frame_count(44_100, 44_100, 48_000), 48_000); // 44.1k -> 48k, 1s
         assert_eq!(resampled_frame_count(48_000, 48_000, 44_100), 44_100); // 48k -> 44.1k, 1s
         assert_eq!(resampled_frame_count(1_000, 0, 48_000), 0); // guard against div-by-zero
+    }
+
+    #[test]
+    fn skew_compensation_converts_seconds_to_interleaved_samples() {
+        // 100 ms of 48 kHz stereo = 4800 frames = 9600 interleaved samples.
+        assert_eq!(skew_compensation(0.1, 48_000, 2), (9_600, 0.1));
+        // mono halves it
+        assert_eq!(skew_compensation(0.1, 48_000, 1), (4_800, 0.1));
+    }
+
+    #[test]
+    fn skew_compensation_is_capped_so_it_never_skips_audible_content() {
+        let (samples, capped) = skew_compensation(10.0, 48_000, 2);
+        assert_eq!(capped, MAX_SKEW_COMPENSATION_SECS);
+        assert_eq!(
+            samples,
+            (MAX_SKEW_COMPENSATION_SECS * 48_000.0) as usize * 2
+        );
+    }
+
+    #[test]
+    fn skew_compensation_of_nothing_compensates_nothing() {
+        assert_eq!(skew_compensation(0.0, 48_000, 2), (0, 0.0));
+        assert_eq!(skew_compensation(-1.0, 48_000, 2), (0, 0.0));
+        assert_eq!(skew_compensation(f64::NAN, 48_000, 2), (0, 0.0));
     }
 
     #[test]

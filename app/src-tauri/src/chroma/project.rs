@@ -3602,9 +3602,12 @@ mod tests {
 
         // and the real preview command doesn't error and returns a real (not
         // blank) frame for the top-wins position, a blank one past the end.
-        let jpeg = super::super::edit::chroma_timeline_frame(0, None).unwrap();
+        // `edit::timeline_frame` is `chroma_timeline_frame`'s whole body —
+        // the command itself is now just a `spawn_blocking` wrapper (D-125),
+        // so calling it here needs no tokio runtime.
+        let jpeg = super::super::edit::timeline_frame(0, None).unwrap();
         assert!(jpeg.starts_with("data:image/jpeg;base64,"));
-        let blank = super::super::edit::chroma_timeline_frame(dur_b as u64, None).unwrap();
+        let blank = super::super::edit::timeline_frame(dur_b as u64, None).unwrap();
         assert!(
             blank.starts_with("data:image/png;base64,"),
             "blank frame past the end"

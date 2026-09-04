@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Play took 2-3 s and the audio lagged: one decode pipe
+  serving N compositor layers, and an audio clock that started late
+  (D-125, B-040).** The suspected cause — contention with the filmstrip
+  thumbnails — was measured and disproved: with no thumbnail work running
+  at all, a single composited preview frame still cost **618-660 ms**, because
+  `decode_pipe` kept one global `ffmpeg` process while D-088's compositor
+  decodes every visible layer through it, respawning per layer per frame.
+  A `PipeSlot`-keyed pool (one per video track, released when a layer goes
+  away) takes that to **23-31 ms/frame**, measured back-to-back under
+  identical load. Separately, `run_session` started
+  the `cpal` stream before opening its sources, so the ring's untimestamped
+  head silence left audio permanently **157-635 ms** behind the picture —
+  now measured and compensated before the device starts. Also: the heavy
+  preview/audio commands moved off Tauri's main thread, `-hwaccel` in the
+  decode pipe, and one preview resolution for scrub and play (the split was
+  respawning every pipe on each Play toggle). B-041 logged, not fixed: an
+  audio-only clip on a real `Audio` track still fails `chroma_audio_play`.
+
 - **2026-09-04** — **The filmstrip's real cost: one 105-second decode per
   clip, re-triggered on every zoom step (D-124, B-039).** Round 3 on
   D-119's filmstrip, run empirically after two rounds of reading missed
