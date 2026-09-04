@@ -671,6 +671,54 @@ export function linkedClipIds(tl: Timeline, selection: { track: number; id: stri
   return linked;
 }
 
+/** One clip's address for [`checkLink`]/the `link` op — `{ track, clip }`
+ *  index pair, same addressing every other per-clip op on this surface uses. */
+export interface LinkTarget {
+  track: number;
+  clip: number;
+}
+
+/** The result of [`checkLink`] — `ok: false` always carries a human-readable
+ *  `reason`, precisely so `TimelinePane`'s Link button can surface it rather
+ *  than just disabling silently (the owner's own ask: "surface a clear
+ *  reason when it's not available, don't just hide the button"). */
+export interface LinkCheck {
+  ok: boolean;
+  reason?: string;
+}
+
+/** D-138 — the shared precondition check behind `applyOp`'s `link` case AND
+ *  `TimelinePane`'s Link button, so the two can never disagree about when
+ *  linking is allowed: the button enables/disables and shows `reason` from
+ *  exactly the same logic that decides whether `applyOp` actually mutates
+ *  anything. Mirrors `chroma_timeline::Timeline::link`'s own validation
+ *  order (self-link → range → lock → already-linked → kind-mismatch) so the
+ *  first reason surfaced here is the first one the Rust op would reject on
+ *  too, if this were ever sent through `chroma_timeline_link_clips` instead
+ *  of `chroma_timeline_set`. */
+export function checkLink(tl: Timeline, a: LinkTarget, b: LinkTarget): LinkCheck {
+  if (a.track === b.track && a.clip === b.clip) {
+    return { ok: false, reason: 'Select two different clips' };
+  }
+  const trackA = tl.tracks[a.track];
+  const trackB = tl.tracks[b.track];
+  const clipA = trackA?.clips[a.clip];
+  const clipB = trackB?.clips[b.clip];
+  if (!trackA || !trackB || !clipA || !clipB) {
+    return { ok: false, reason: 'Clip not found' };
+  }
+  if (trackA.locked || trackB.locked) {
+    return { ok: false, reason: 'A track in the selection is locked' };
+  }
+  if (clipA.link_group || clipB.link_group) {
+    return { ok: false, reason: 'Already linked — unlink first' };
+  }
+  if (trackA.kind === trackB.kind) {
+    return { ok: false, reason: 'Select one video clip and one audio clip' };
+  }
+  return { ok: true };
+}
+
 /** Where `startFrame` ends up once a pending ripple is applied — mirrors
  *  `chroma-timeline::start_after_ripple`. Lets a linked move be accepted or
  *  rejected before anything is mutated. */
@@ -861,6 +909,19 @@ export type EditOp =
    *  an already-unlinked clip; refused if the clip's own track is locked.
    *  Mirrors `chroma_timeline::Timeline::unlink`. */
   | { kind: 'unlink'; track: number; clip: number }
+  /** D-138, `docs/notes/av-linking.md` "Deferred" list — link two
+   *  ALREADY-INDEPENDENT clips (one video-track, one audio-track) into a new
+   *  A/V link group. Mirrors `chroma_timeline::Timeline::link` field-for-
+   *  field, including its deliberately narrower scope vs. Palmier's own
+   *  group-merging `link`: both clips must currently be unlinked, and the
+   *  op is rejected whole (a no-op, same "reject rather than corrupt"
+   *  discipline every other link-aware op here uses) rather than partially
+   *  applied — see [`checkLink`], the shared precondition check `applyOp`
+   *  and the toolbar's Link button both call, so the button's disabled-
+   *  reason tooltip can never drift from what actually gets enforced.
+   *  Order-independent — `{trackA, clipA}`/`{trackB, clipB}` may name
+   *  either clip first, the resulting group id is the same either way. */
+  | { kind: 'link'; trackA: number; clipA: number; trackB: number; clipB: number }
   /** D-086/D-089 — reorder the track list itself (compositing z-order,
    *  D-086's own doc: "track index order is compositing z-order, not
    *  cosmetic"). Mirrors `chroma_timeline::Timeline::move_track(from, to)`
@@ -946,6 +1007,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.linkedAudio ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
     case 'unlink':
       return `Unlink ${clipLabel(before, op.track, op.clip)}`;
+    case 'link':
+      return `Link ${clipLabel(before, op.trackA, op.clipA)} + ${clipLabel(before, op.trackB, op.clipB)}`;
     case 'move': {
       const label = clipLabel(before, op.fromTrack, op.clip);
       return op.fromTrack === op.toTrack ? `Move ${label}` : `Move ${label} to another track`;
@@ -1053,6 +1116,28 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         if (c.link_group === group) c.link_group = null;
       }
     }
+    return next;
+  }
+
+  if (op.kind === 'link') {
+    // Mirrors `chroma_timeline::Timeline::link` — rejected whole (a no-op)
+    // rather than partially applied, same discipline every link-aware op
+    // here uses. `checkLink` is the single source of truth for why.
+    const a: LinkTarget = { track: op.trackA, clip: op.clipA };
+    const b: LinkTarget = { track: op.trackB, clip: op.clipB };
+    if (!checkLink(tl, a, b).ok) return tl;
+    const next = clone(tl);
+    const trackA = next.tracks[op.trackA];
+    const trackB = next.tracks[op.trackB];
+    const clipA = trackA.clips[op.clipA];
+    const clipB = trackB.clips[op.clipB];
+    // Video-then-audio regardless of argument order, so `link(x, y)` and
+    // `link(y, x)` produce the identical group id — mirrors the Rust op's
+    // own order-independence.
+    const [videoClip, audioClip] = trackA.kind === 'video' ? [clipA, clipB] : [clipB, clipA];
+    const group = `lg-${videoClip.id}-${audioClip.id}`;
+    clipA.link_group = group;
+    clipB.link_group = group;
     return next;
   }
 

@@ -661,20 +661,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - **Phase 3 — multi-clip cross-track move, richer batch Inspector
       editing — still real, still deliberately deferred.** Wait for Phases 1
       and 2's own real usage first.
-13. **Real A/V linking (link/unlink, L-cut/J-cut)** — today's model is
-    all-or-nothing (D-050 embedded / D-057 independent, no in-between).
-    **Real scoping doc now exists: `docs/notes/av-linking.md` (D-106,
-    2026-09-04)** — a group-based `link_group: Option<String>` on `Clip`
-    (matching `media_id`'s existing back-link pattern), `link`/`unlink` ops
-    mirroring Palmier's own `manage_clip_links` exactly, real references
-    checked (Premiere's two-layer link+toggle system, Palmier's own tool
-    description). Flags a real prerequisite gap: this phase's scope is
-    linking two already-independent clips, not "any video clip to its own
-    native audio" — D-050's embedded-audio model would need to change
-    first for the fuller vision, out of scope here. Recommends the simpler
-    permanent-link-only interaction model over Premiere's fuller toggle,
-    since nothing in Palmier's own surface confirms the toggle is needed.
-    **Scoped, not built.**
+13. ✅ **Real A/V linking (link/unlink, L-cut/J-cut)** — **stale duplicate
+    entry, corrected in place (D-138) rather than left wrong**: this
+    paragraph originally scoped the feature and ended "Scoped, not built,"
+    but was never updated when the work actually shipped in two later
+    passes and got its own, separately-numbered "13. ✅" entry further down
+    this same list (now updated by D-138 too) — a real doc-drift bug this
+    pass fixes rather than perpetuates. `docs/notes/av-linking.md` (D-106)
+    is the scoping doc referenced here; **both halves it scoped are now
+    built**: the auto-link-on-drop model (D-129) and the manual `link`/
+    `unlink` toggle (D-138) — see the fuller "13. ✅" entry below for what
+    actually shipped. The simpler permanent-link-only interaction model
+    (over Premiere's fuller toggle) this paragraph recommended was the
+    call D-129 made and D-138 re-confirmed, not reopened.
 14. ✅ **On-canvas clip transform — PIP drag/resize handles on the preview
     (D-136, 2026-09-04).**
     Owner: "the player is canvas — once I have another video I can select,
@@ -798,10 +797,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     same audio is never summed with itself. Pre-D-129 clips are unlinked
     and unchanged, with **no retroactive migration on purpose** (it would
     rewrite the owner's timeline layout unasked). Interaction model is
-    `av-linking.md`'s own recommended option (b). **Deferred and named**: a
-    manual `link`/relink op, Premiere's global Linked-Selection toggle +
-    Option/Alt override, a ripple-insert of a pair onto a non-sync-locked
-    audio track, an MCP/Tauri `unlink` command.
+    `av-linking.md`'s own recommended option (b), re-confirmed rather than
+    reopened by D-138 below.
+    **Manual link/unlink toggle also shipped (D-138, 2026-09-05).** The
+    owner's own follow-up ask, closing the two items D-129 named and dated:
+    `Timeline::link` — a new op, deliberately narrower than Palmier's own
+    group-merging `link` (requires both clips to currently be unlinked,
+    one video-track + one audio-track, order-independent, deterministic
+    `lg-{video_id}-{audio_id}` group id) — plus `Timeline::unlink` finally
+    exposed as real Tauri commands (`chroma_timeline_link_clips`/
+    `_unlink_clip`, `app/src-tauri/src/chroma/edit.rs`), and real toolbar
+    UI in `TimelinePane.tsx` (a `Link` button, shown for a two-clip
+    selection and disabled-with-reason when the pair isn't linkable; the
+    existing `Unlink` button unchanged). The already-shipped `avLinkedIds`
+    highlight needed no changes — it re-derives from `link_group` live.
+    **Deferred and named, still**: relink-as-its-own-concept (covered by
+    plain `link` on the now-independent pair, so never actually needed),
+    Palmier's fuller group-merge `link`, Premiere's global Linked-Selection
+    toggle + Option/Alt override (re-confirmed out of scope, not just
+    carried forward unexamined), a ripple-insert of a pair onto a
+    non-sync-locked audio track.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

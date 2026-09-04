@@ -196,6 +196,12 @@ import {
   Film,
   FoldHorizontal,
   GripVertical,
+  // D-138 — the A/V-link action's own icon. Deliberately `Link`, not `Link2`
+  // below: that one is already the track header's sync-lock-ON icon, and
+  // sync-lock and an A/V link are different relationships (see
+  // `avLinkedIds`), so — same reasoning as `Unlink`/`Unlink2` just below —
+  // they must not share an icon.
+  Link,
   Link2,
   Lock,
   Scissors,
@@ -241,6 +247,7 @@ import {
   CHROMA_MEDIA_DRAG_MIME,
   DEFAULT_SYNC_LOCKED,
   DEFAULT_TRACK_GAIN,
+  checkLink,
   computeInsertion,
   endFrame,
   gapAt,
@@ -253,6 +260,8 @@ import {
   videoTrackIndex,
   type Clip,
   type DraggedMedia,
+  type LinkCheck,
+  type LinkTarget,
   type Timeline,
   type Track,
 } from './timeline';
@@ -1781,6 +1790,37 @@ export function TimelinePane() {
     (s) => !!timeline?.tracks[s.track]?.clips.find((c) => c.id === s.id)?.link_group,
   );
 
+  /** D-138 — the Link button's own gate: exactly two clips selected, resolved
+   *  to real `{track, clip}` locations, run through `checkLink` (the SAME
+   *  precondition check `applyOp`'s `link` case uses, see that op's own
+   *  doc) — `null` when the selection isn't shaped like a link candidate at
+   *  all (not exactly two clips selected), so the button is hidden rather
+   *  than shown-and-always-refused for the common case of 0/1/3+ selected. */
+  const linkCheck = useMemo((): { a: LinkTarget; b: LinkTarget; result: LinkCheck } | null => {
+    if (!timeline || selection.length !== 2) return null;
+    const [sa, sb] = selection;
+    const ia = idxOf(sa.track, sa.id);
+    const ib = idxOf(sb.track, sb.id);
+    if (ia < 0 || ib < 0) return null;
+    const a: LinkTarget = { track: sa.track, clip: ia };
+    const b: LinkTarget = { track: sb.track, clip: ib };
+    return { a, b, result: checkLink(timeline, a, b) };
+  }, [timeline, selection]);
+
+  /** D-138 — link the two selected (already-independent) clips into a new
+   *  A/V group: Palmier's own `manage_clip_links` `link`, Premiere's `Clip >
+   *  Link`, and the manual counterpart to `doUnlink` above. Re-resolves via
+   *  `locateClip` (not the memoized `linkCheck` locations) for the same
+   *  stale-index reason every other batch-capable action here does, even
+   *  though this one is never actually batched. */
+  const doLink = () => {
+    if (!linkCheck?.result.ok) return;
+    const at = locateClip(selection[0].id);
+    const bt = locateClip(selection[1].id);
+    if (!at || !bt) return;
+    applyOp({ kind: 'link', trackA: at.track, clipA: at.clip, trackB: bt.track, clipB: bt.clip });
+  };
+
   /** D-105 — the deliberate mirror image of `doRemove`: close a selected
    *  GAP, rippling everything after it earlier, rather than lifting a clip
    *  and leaving the space behind. */
@@ -2225,6 +2265,39 @@ export function TimelinePane() {
               />
               <TooltipContent>
                 Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* D-138 — the manual counterpart to Unlink: shown only when the
+              selection is actually shaped like a link candidate (exactly two
+              clips, see `linkCheck`'s own doc) — same "don't show an action
+              that's almost always inert" reasoning as Unlink above. Unlike
+              Unlink, whether it's ENABLED can still say no (wrong track
+              kind, already linked, a locked track) — the button stays
+              visible but disabled in that case, with `linkCheck.result.
+              reason` in the tooltip, so the reason is surfaced rather than
+              the button just silently vanishing (the owner's own ask). */}
+          {linkCheck && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={doLink}
+                    disabled={!linkCheck.result.ok}
+                    aria-label="Link audio and video"
+                  >
+                    <Link />
+                    Link
+                  </Button>
+                }
+              />
+              <TooltipContent>
+                {linkCheck.result.ok
+                  ? 'Link these two clips so they move, trim, split and delete together'
+                  : linkCheck.result.reason}
               </TooltipContent>
             </Tooltip>
           )}

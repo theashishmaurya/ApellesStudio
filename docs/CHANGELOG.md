@@ -18,6 +18,20 @@ One or two lines per session. Detail lives in the decision it references.
   cross-track clip drag and track reorder all still work and never raise a
   band. That run caught a real bug before it shipped: Escape cancelled the band
   but its terminating click still wiped the pre-existing selection.
+- **2026-09-05** — **A manual A/V link/unlink toggle (D-138).** Closes the two
+  things D-129 named and deferred: `Timeline::link` (new — links two
+  already-independent clips, one video-track/one audio-track, into a group
+  indistinguishable from a drop-created one; deliberately narrower than
+  Palmier's own group-merging `link`) and `Timeline::unlink` finally exposed
+  as real Tauri commands (`chroma_timeline_link_clips`/`_unlink_clip`). Real
+  toolbar UI in `TimelinePane.tsx`: a `Link` button next to the existing
+  `Unlink`, shown for a two-clip selection and disabled with a reason
+  tooltip (`checkLink`, the one precondition check both the button and
+  `applyOp` use) when the pair isn't linkable — wrong track kind, already
+  linked, a locked track. The existing `avLinkedIds` link highlight needed
+  no changes, it already re-derives live from `link_group`. Interaction
+  model re-confirmed as `av-linking.md`'s option (b) — permanent link +
+  explicit unlink, no Premiere-style toggle — not reopened without cause.
 - **2026-09-04** — **`position_x`/`position_y` become normalised composition
   fractions, with a real migration, and the Edit tab gets real on-canvas
   drag/scale handles (D-136, B-043 closed).** Phase 0a's code, left undone by

@@ -1,14 +1,20 @@
-# Real A/V linking — scoped 2026-09-04, **built 2026-09-04 (D-129)**
+# Real A/V linking — scoped 2026-09-04, **built 2026-09-04 (D-129)**, manual
+# link/unlink toggle **built 2026-09-05 (D-138)**
 
 Roadmap item 13, priority #3 per `docs/notes/timeline-feature-audit.md` (D-105).
 
-**Status: Phase 1 (the `link_group` model) and the link-aware ops are built and
-shipped as D-129, together with the thing this doc originally listed as a
-blocking prerequisite** — turning D-050's embedded video audio into a real,
-separate, linkable `Clip`. The scoping below is kept, annotated, because the
-reference research behind it is still the justification for the shape that
-landed; where the implementation deliberately departs from the original
-recommendation, that's called out inline and in D-129.
+**Status: fully built.** Phase 1 (the `link_group` model), the link-aware ops,
+and the thing this doc originally listed as a blocking prerequisite — turning
+D-050's embedded video audio into a real, separate, linkable `Clip` — shipped
+as D-129. **The two things D-129 itself deferred and named — a manual `link`
+op and an MCP/Tauri `unlink` command — shipped as D-138**: `Timeline::link`
+(new, deliberately narrower than Palmier's own group-merging `link` — see
+D-138), `chroma_timeline_link_clips`/`chroma_timeline_unlink_clip` as real
+Tauri commands, and a `Link`/`Unlink` toolbar pair in `TimelinePane.tsx`. The
+scoping below is kept, annotated, because the reference research behind it is
+still the justification for the shape that landed; where the implementation
+deliberately departs from the original recommendation, that's called out
+inline and in D-129/D-138.
 
 ## The real gap, precisely (as it was before D-129)
 
@@ -178,22 +184,38 @@ references rather than invented: deleting one member deletes the whole group.
   by stable id now, which is correct for any op. Deliberate contract change,
   documented in the store and its tests.
 
-## Deferred, with reasons
+## Built (D-129), then closed out (D-138)
 
-- **A manual `link` op** (link two already-independent clips into a group,
-  Palmier's own `link` / Premiere's `Clip > Link`). The model is group-shaped
-  and ready for it; nothing in the owner's ask needed it, and `unlink` is the
-  half that a shipped feature genuinely can't do without. Roadmap item.
-- **Relink after unlink** — same thing, same reason.
+- ~~A manual `link` op~~ — **built, D-138.** `Timeline::link` links two
+  already-independent clips (one video-track, one audio-track) into a group
+  indistinguishable from a drop-created one, plus a `Link` toolbar action in
+  `TimelinePane.tsx`. Deliberately narrower than Palmier's own `link`, which
+  "merges the complete existing groups touched by clipIds" (a general
+  group-merge op) — D-138's `link` requires both clips to be unlinked first,
+  covering exactly what the owner's "manual A/V link toggle" ask needed
+  without building the fuller, unrequested merge shape. See D-138 for the
+  reasoning.
+- ~~Relink after unlink~~ — **also covered by D-138's plain `link`.** Once a
+  pair is unlinked, the two clips are just independent clips again — `link`
+  doesn't care that they used to share a group id, so a dedicated "restore
+  the old group id" relink was never actually needed. Still not built as its
+  own concept, and D-138's own view is that it shouldn't be — see that entry.
+- ~~An MCP/Tauri `unlink` command~~ — **built, D-138**, alongside `link`:
+  `chroma_timeline_unlink_clip`/`chroma_timeline_link_clips`
+  (`app/src-tauri/src/chroma/edit.rs`). Not the app UI's own edit path
+  (that stays `applyOp` + `chroma_timeline_set`, per D-129) — these are the
+  MCP/scripting surface this doc's own "one-liner when the MCP surface wants
+  it" already anticipated.
+
+## Still deferred, with reasons
+
 - **A ripple-insert of a linked pair onto a track whose audio side is NOT
   sync-locked.** It rejects rather than guessing at room that was never made.
   Turning sync-lock back on, or closing the gap manually, both work today.
 - **Premiere's global Linked-Selection toggle + per-gesture Option/Alt
   override.** Real UI surface Chroma has nowhere else; option (b) is a
-  strictly smaller increment and this doc's own recommendation. If the
-  unlink/relink dance turns out to be too slow in the owner's real editing,
-  the toggle is a clean follow-up on top of the `link_group` model, not a
-  redesign.
-- **An MCP/Tauri `unlink` command.** The frontend's `applyOp` +
-  `chroma_timeline_set` is the real edit path; the Rust `Timeline::unlink` is
-  built and tested, so exposing it is a one-liner when the MCP surface wants it.
+  strictly smaller increment and this doc's own recommendation —
+  **re-confirmed by D-138, not just carried forward unexamined**: no new
+  evidence surfaced that the unlink/relink dance is too slow in the owner's
+  real editing. If it does turn out to be, the toggle is a clean follow-up on
+  top of the `link_group` model, not a redesign.

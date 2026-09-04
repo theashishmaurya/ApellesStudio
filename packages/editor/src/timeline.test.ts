@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyOp,
   audioTrackWithRoom,
+  checkLink,
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
@@ -1515,6 +1516,94 @@ describe('unlink (D-129)', () => {
 
   it('labels itself in the history', () => {
     expect(labelForOp({ kind: 'unlink', track: 0, clip: 0 }, linkedPair())).toBe('Unlink "Shot"');
+  });
+});
+
+/** Same shape as `linkedPair()`, minus the `link_group` — two genuinely
+ *  independent clips, the starting point every `link` test starts from. */
+function unlinkedPair(): Timeline {
+  return {
+    id: 't',
+    name: 't',
+    tracks: [
+      { kind: 'video', clips: [clip('v', 'Shot')] },
+      { kind: 'audio', clips: [clip('a', 'Shot')] },
+    ],
+  };
+}
+
+describe('checkLink / link op (D-138)', () => {
+  it('checkLink accepts one video clip + one unlinked audio clip', () => {
+    const t = unlinkedPair();
+    expect(checkLink(t, { track: 0, clip: 0 }, { track: 1, clip: 0 })).toEqual({ ok: true });
+    // order-independent
+    expect(checkLink(t, { track: 1, clip: 0 }, { track: 0, clip: 0 })).toEqual({ ok: true });
+  });
+
+  it('checkLink rejects the same clip given twice, with a clear reason', () => {
+    const t = unlinkedPair();
+    expect(checkLink(t, { track: 0, clip: 0 }, { track: 0, clip: 0 }).ok).toBe(false);
+    expect(checkLink(t, { track: 0, clip: 0 }, { track: 0, clip: 0 }).reason).toMatch(/different clips/i);
+  });
+
+  it('checkLink rejects two clips of the same track kind', () => {
+    const t = unlinkedPair();
+    t.tracks[0].clips.push(clip('v2', 'Shot 2'));
+    const result = checkLink(t, { track: 0, clip: 0 }, { track: 0, clip: 1 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/one video clip and one audio clip/i);
+  });
+
+  it('checkLink rejects an already-linked clip', () => {
+    const t = linkedPair();
+    t.tracks[1].clips.push(clip('a2', 'Other'));
+    const result = checkLink(t, { track: 0, clip: 0 }, { track: 1, clip: 1 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/already linked/i);
+  });
+
+  it('checkLink rejects a locked track', () => {
+    const t = unlinkedPair();
+    t.tracks[1].locked = true;
+    const result = checkLink(t, { track: 0, clip: 0 }, { track: 1, clip: 0 });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/locked/i);
+  });
+
+  it('assigns a shared group id to both clips, order-independent', () => {
+    const videoFirst = applyOp(unlinkedPair(), { kind: 'link', trackA: 0, clipA: 0, trackB: 1, clipB: 0 });
+    const audioFirst = applyOp(unlinkedPair(), { kind: 'link', trackA: 1, clipA: 0, trackB: 0, clipB: 0 });
+    expect(videoFirst.tracks[0].clips[0].link_group).toBeTruthy();
+    expect(videoFirst.tracks[0].clips[0].link_group).toBe(videoFirst.tracks[1].clips[0].link_group);
+    expect(videoFirst.tracks[0].clips[0].link_group).toBe(audioFirst.tracks[0].clips[0].link_group);
+  });
+
+  it('the resulting group behaves exactly like a drop-created one — every op treats it identically', () => {
+    const linked = applyOp(unlinkedPair(), { kind: 'link', trackA: 0, clipA: 0, trackB: 1, clipB: 0 });
+    const moved = applyOp(linked, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 0, startFrame: 40 });
+    expect(startOf(moved, 0, 'v')).toBe(40);
+    expect(startOf(moved, 1, 'a')).toBe(40);
+  });
+
+  it('is a no-op (rejected whole) when checkLink fails, e.g. same clip or wrong kind', () => {
+    const t = unlinkedPair();
+    expect(applyOp(t, { kind: 'link', trackA: 0, clipA: 0, trackB: 0, clipB: 0 })).toBe(t);
+    const alreadyLinked = linkedPair();
+    alreadyLinked.tracks[1].clips.push(clip('a2', 'Other'));
+    expect(applyOp(alreadyLinked, { kind: 'link', trackA: 0, clipA: 0, trackB: 1, clipB: 1 })).toBe(alreadyLinked);
+  });
+
+  it('link then unlink round-trips to fully independent clips', () => {
+    const linked = applyOp(unlinkedPair(), { kind: 'link', trackA: 0, clipA: 0, trackB: 1, clipB: 0 });
+    const unlinked = applyOp(linked, { kind: 'unlink', track: 0, clip: 0 });
+    expect(unlinked.tracks[0].clips[0].link_group).toBeNull();
+    expect(unlinked.tracks[1].clips[0].link_group).toBeNull();
+  });
+
+  it('labels itself in the history', () => {
+    expect(labelForOp({ kind: 'link', trackA: 0, clipA: 0, trackB: 1, clipB: 0 }, unlinkedPair())).toBe(
+      'Link "Shot" + "Shot"',
+    );
   });
 });
 

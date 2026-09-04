@@ -584,6 +584,27 @@ pub enum TimelineError {
     /// both references' own "unlink, edit independently, relink" workflow.
     #[error("this edit cannot be applied identically to every clip in link group {0}")]
     LinkDesync(String),
+    /// D-138. `link`'s own two-clip identity check — linking a clip to
+    /// itself would set `link_group` on one `Clip` and immediately call
+    /// [`Timeline::link_group_members`] back with exactly one member, a
+    /// degenerate "group" no other op (`unlink`, `move_clip`, …) is written
+    /// to expect.
+    #[error("cannot link a clip to itself")]
+    LinkSameClip,
+    /// D-138. `link` requires BOTH clips to currently be unlinked
+    /// (`link_group: None`) — see `Timeline::link`'s own doc for why this
+    /// pass deliberately does not implement Palmier's fuller "merges the
+    /// complete existing groups touched by clipIds" behaviour. The `String`
+    /// names the clip id that was already linked.
+    #[error("clip {0} is already linked — unlink it first")]
+    AlreadyLinked(String),
+    /// D-138. `link` requires one video-track clip and one audio-track clip
+    /// — the only shape `Clip::link_group`'s own doc gives a meaning to (a
+    /// video clip's audio "externalized" to a linked clip). Linking two
+    /// clips of the same track kind would set the suppression flag with
+    /// nothing on the other side for it to mean.
+    #[error("a link needs one video clip and one audio clip, not two of the same kind")]
+    LinkKindMismatch,
 }
 
 /// Shift every clip on `track` starting at/after `threshold` by `delta`
@@ -1003,6 +1024,100 @@ impl Timeline {
             }
         }
         Ok(())
+    }
+
+    /// D-138, `docs/notes/av-linking.md`. Link two **already-independent**
+    /// clips — one on a video track, one on an audio track — into a new A/V
+    /// link group, indistinguishable afterwards from a group the drop path
+    /// (D-129's `add_clip` + `linkedClipsFromDraggedMedia`) would have
+    /// created: same field (`Clip::link_group`), same group-based shape, so
+    /// every existing link-aware op (`move_clip`/`trim_start`/`trim_end`/
+    /// `split`/`remove`/`unlink`) treats it identically without knowing or
+    /// caring how the group came to exist. Returns the new group id.
+    ///
+    /// **Deliberately narrower than Palmier's own `manage_clip_links` `link`**
+    /// ("merges the complete existing groups touched by clipIds," i.e. a
+    /// general union-of-groups op that can also re-link an already-linked
+    /// clip into a bigger group). D-129 named exactly this gap — "a manual
+    /// `link` op … deferred" — for linking two clips that were never linked
+    /// at all; nothing in the owner's ask for a "manual A/V link toggle"
+    /// needs group-merging, and building it now would be speculative
+    /// generality on a shape (N-way group merge) no caller exercises. Both
+    /// clips must currently be unlinked ([`TimelineError::AlreadyLinked`]
+    /// otherwise) — `unlink` first is the same "diverge, then re-associate"
+    /// workflow `unlink` itself already exists for, not a new one.
+    ///
+    /// **Requires one video-track clip and one audio-track clip**
+    /// ([`TimelineError::LinkKindMismatch`] otherwise) — order-independent
+    /// (`(track_a, clip_a)` and `(track_b, clip_b)` may be given either way
+    /// round). This is not Palmier's own validation (its tool description
+    /// only says "different media types," which this crate reads as track
+    /// kind, the only media-type signal a `Clip` carries) so much as what
+    /// `Clip::link_group`'s own meaning on a video clip — "this clip's audio
+    /// has been externalized to a linked clip" — requires to be a coherent
+    /// fact: linking two video clips (or two audio clips) together would set
+    /// that suppression flag with no linked audio clip on the other end of it
+    /// for a video half, or would link two audio clips together for no
+    /// operation here to give a real meaning to.
+    ///
+    /// Refused ([`TimelineError::TrackLocked`]) if either clip's own track is
+    /// locked, and ([`TimelineError::LinkSameClip`]) for the same `(track,
+    /// clip)` location given twice. **Not** gated by the same-position check
+    /// `unlink` skips for a group's OTHER members — both locations here are
+    /// directly named by the caller, unlike unlink's incidentally-swept-up
+    /// siblings, so both are checked, matching `move_clip`'s own "either
+    /// `from_track` or `to_track` locked" reasoning for a two-track op.
+    ///
+    /// The new group id is derived from both clips' own stable ids
+    /// (`format!("lg-{video_id}-{audio_id}")`) rather than a random or
+    /// wall-clock-derived one — this crate has no id-generation dependency
+    /// (see the module doc: callers set `Clip::id` themselves) and a value
+    /// derived purely from its own inputs keeps `link` a plain, deterministic
+    /// function like every other op here, trivially testable without a clock
+    /// or an injected RNG.
+    pub fn link(&mut self, a: (usize, usize), b: (usize, usize)) -> Result<String, TimelineError> {
+        if a == b {
+            return Err(TimelineError::LinkSameClip);
+        }
+        for (track, clip) in [a, b] {
+            let t = self
+                .tracks
+                .get(track)
+                .ok_or(TimelineError::NoSuchTrack(track))?;
+            if t.locked {
+                return Err(TimelineError::TrackLocked(track));
+            }
+            let c = t
+                .clips
+                .get(clip)
+                .ok_or(TimelineError::NoSuchClip(clip, track))?;
+            if c.link_group.is_some() {
+                return Err(TimelineError::AlreadyLinked(c.id.clone()));
+            }
+        }
+        let (a_track, a_clip) = a;
+        let (b_track, b_clip) = b;
+        let a_kind = self.tracks[a_track].kind;
+        let b_kind = self.tracks[b_track].kind;
+        if a_kind == b_kind {
+            return Err(TimelineError::LinkKindMismatch);
+        }
+        // Order the id components video-then-audio regardless of which of
+        // `a`/`b` the caller passed as which, so `link(x, y)` and `link(y,
+        // x)` produce the same group id — the op is genuinely
+        // order-independent, and a group id shouldn't silently depend on
+        // argument order.
+        let (video_track, video_clip, audio_track, audio_clip) = if a_kind == TrackKind::Video {
+            (a_track, a_clip, b_track, b_clip)
+        } else {
+            (b_track, b_clip, a_track, a_clip)
+        };
+        let video_id = self.tracks[video_track].clips[video_clip].id.clone();
+        let audio_id = self.tracks[audio_track].clips[audio_clip].id.clone();
+        let group = format!("lg-{video_id}-{audio_id}");
+        self.tracks[video_track].clips[video_clip].link_group = Some(group.clone());
+        self.tracks[audio_track].clips[audio_clip].link_group = Some(group.clone());
+        Ok(group)
     }
 
     /// Remove the track at `track`, **including every clip on it** — a track
@@ -3537,5 +3652,107 @@ mod tests {
         assert_eq!(t.unlink(0, 9), Err(TimelineError::NoSuchClip(9, 0)));
         t.tracks[0].locked = true;
         assert_eq!(t.unlink(0, 0), Err(TimelineError::TrackLocked(0)));
+    }
+
+    // -------------------------------------------------------------------- //
+    // Manual `link` (D-138, `docs/notes/av-linking.md` "Deferred" list)
+    // -------------------------------------------------------------------- //
+
+    /// A video track + an audio track holding two genuinely independent
+    /// clips — same shape [`linked_pair`] builds, minus the `link_group` —
+    /// the starting point every `link` test links from.
+    fn unlinked_pair() -> Timeline {
+        let mk = |kind, clips| Track {
+            kind,
+            clips,
+            gain: default_track_gain(),
+            locked: false,
+            hidden: false,
+            sync_locked: default_sync_locked(),
+        };
+        let v = c("v", 0, 100);
+        let mut a = c("a", 0, 100);
+        a.source_path = "/v.mov".into();
+        a.source_len = 100;
+        Timeline {
+            id: "t".into(),
+            name: "t".into(),
+            rate: None,
+            tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
+        }
+    }
+
+    #[test]
+    fn link_assigns_a_shared_group_indistinguishable_from_the_drop_paths_own() {
+        let mut t = unlinked_pair();
+        let group = t.link((0, 0), (1, 0)).unwrap();
+        assert_eq!(t.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(t.tracks[1].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(t.link_group_members(&group), vec![(0, 0), (1, 0)]);
+        // Every existing link-aware op treats it exactly like a drop-created
+        // group — no parallel mechanism, no special-casing by origin.
+        t.move_clip(0, 0, 0, 40, false).unwrap();
+        assert_eq!(start_of(&t, 0, "v"), Some(40));
+        assert_eq!(start_of(&t, 1, "a"), Some(40), "linked sibling followed the move in lockstep");
+    }
+
+    #[test]
+    fn link_is_order_independent_and_uses_stable_clip_ids() {
+        let mut t = unlinked_pair();
+        let group_video_first = t.link((0, 0), (1, 0)).unwrap();
+        t.unlink(0, 0).unwrap();
+        let group_audio_first = t.link((1, 0), (0, 0)).unwrap();
+        assert_eq!(
+            group_video_first, group_audio_first,
+            "the group id must not depend on argument order"
+        );
+        assert_eq!(group_video_first, "lg-v-a");
+    }
+
+    #[test]
+    fn link_rejects_two_clips_of_the_same_kind() {
+        let mut t = unlinked_pair();
+        t.tracks[0].clips.push(c("v2", 200, 50));
+        assert_eq!(t.link((0, 0), (0, 1)), Err(TimelineError::LinkKindMismatch));
+        assert_eq!(t.tracks[0].clips[0].link_group, None, "rejected — nothing mutated");
+    }
+
+    #[test]
+    fn link_rejects_the_same_clip_given_twice() {
+        let mut t = unlinked_pair();
+        assert_eq!(t.link((0, 0), (0, 0)), Err(TimelineError::LinkSameClip));
+    }
+
+    #[test]
+    fn link_rejects_a_clip_thats_already_linked() {
+        let mut t = unlinked_pair();
+        t.tracks[1].clips.push(c("a2", 0, 100));
+        t.link((0, 0), (1, 0)).unwrap();
+        let err = t.link((0, 0), (1, 1)).unwrap_err();
+        assert_eq!(err, TimelineError::AlreadyLinked("v".into()));
+        assert_eq!(
+            t.tracks[1].clips[1].link_group, None,
+            "rejected whole — the second clip was never touched"
+        );
+    }
+
+    #[test]
+    fn link_rejects_out_of_range_and_a_locked_track() {
+        let mut t = unlinked_pair();
+        assert_eq!(t.link((9, 0), (1, 0)), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(t.link((0, 9), (1, 0)), Err(TimelineError::NoSuchClip(9, 0)));
+        t.tracks[1].locked = true;
+        assert_eq!(t.link((0, 0), (1, 0)), Err(TimelineError::TrackLocked(1)));
+        assert_eq!(t.tracks[0].clips[0].link_group, None, "rejected — nothing mutated");
+    }
+
+    #[test]
+    fn link_then_unlink_round_trips_to_fully_independent_clips() {
+        let mut t = unlinked_pair();
+        let group = t.link((0, 0), (1, 0)).unwrap();
+        t.unlink(0, 0).unwrap();
+        assert_eq!(t.tracks[0].clips[0].link_group, None);
+        assert_eq!(t.tracks[1].clips[0].link_group, None);
+        assert!(t.link_group_members(&group).is_empty());
     }
 }

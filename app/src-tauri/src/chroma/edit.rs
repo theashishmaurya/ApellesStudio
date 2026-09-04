@@ -512,6 +512,66 @@ pub fn chroma_timeline_move_clip(
     project::save_manifest(&dir, &manifest)
 }
 
+// --------------------------------------------------------------------------- //
+// A/V link groups (D-129/D-138, `docs/notes/av-linking.md`) — exposing the
+// timeline crate's own `link`/`unlink` as real commands. D-129 deliberately
+// left this undone ("the frontend's `applyOp` + `chroma_timeline_set` is the
+// real edit path… exposing it is a one-liner when the MCP surface wants it")
+// — these two exist for that MCP/scripting surface, and as the real Tauri
+// command each is, NOT as the app UI's own edit path: `TimelinePane.tsx`'s
+// Link/Unlink toolbar actions go through `applyOp`'s mirrored `link`/`unlink`
+// TypeScript logic in `packages/editor/src/timeline.ts` and
+// `chroma_timeline_set`, the same as every other per-clip op on that surface
+// (`move`/`trim`/`split`/`remove`), so the whole-timeline undo/redo history
+// keeps working uniformly. Both commands below act on the active timeline
+// directly and persist immediately, matching `chroma_timeline_add_track` /
+// `_remove_track` / `_move_clip` above — real, scriptable surface a caller
+// that isn't the editor's own React tree can use without round-tripping a
+// whole `Timeline` through `chroma_timeline_set`.
+// --------------------------------------------------------------------------- //
+
+/// Dissolve the **complete** A/V link group the clip at `(track, clip)` on
+/// the active timeline belongs to, and persist. A no-op for an already
+/// unlinked clip; errors for an out-of-range index or a locked track — see
+/// `chroma_timeline::Timeline::unlink`'s own doc for the full semantics
+/// (Palmier's own `manage_clip_links` `unlink`, Premiere's `Clip > Unlink`,
+/// Resolve's "Unlink Clips").
+#[tauri::command]
+pub fn chroma_timeline_unlink_clip(track: usize, clip: usize) -> Result<(), String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    manifest.timelines[idx]
+        .unlink(track, clip)
+        .map_err(|e| e.to_string())?;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)
+}
+
+/// Link two **already-independent** clips on the active timeline — one on a
+/// video track, one on an audio track — into a new A/V link group, and
+/// persist. Returns the new group id. Errors if either clip is already
+/// linked, if the two clips are the same track kind (not one video + one
+/// audio), if either clip's own track is locked, or for an out-of-range
+/// track/clip index — see `chroma_timeline::Timeline::link`'s own doc for
+/// the full validation and why this is deliberately narrower than Palmier's
+/// own group-merging `link`.
+#[tauri::command]
+pub fn chroma_timeline_link_clips(
+    track_a: usize,
+    clip_a: usize,
+    track_b: usize,
+    clip_b: usize,
+) -> Result<String, String> {
+    let (dir, mut manifest) = load_and_ensure_timeline(false)?;
+    let idx = manifest.active_timeline;
+    let group = manifest.timelines[idx]
+        .link((track_a, clip_a), (track_b, clip_b))
+        .map_err(|e| e.to_string())?;
+    manifest.modified = now_rfc3339();
+    project::save_manifest(&dir, &manifest)?;
+    Ok(group)
+}
+
 /// A 1×1 transparent PNG data-URL — returned for a timeline position past the
 /// end (or before the start), so the preview `<img>` clears instead of erroring.
 fn blank_frame() -> String {

@@ -3952,6 +3952,93 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // --- A/V link groups: `chroma_timeline_link_clips`/`_unlink_clip` (D-138) --
+    //
+    // `chroma-timeline`'s own crate tests already cover `Timeline::link`'s
+    // validation exhaustively (kind mismatch, already-linked, locked track,
+    // same clip, out-of-range) and `Timeline::unlink`'s (D-129) — this test
+    // is deliberately NOT re-proving that logic. What only a command-level
+    // test can show: the command resolves against the **active** timeline
+    // (not a bare in-memory one), the result actually PERSISTS to
+    // `project.json` (a `chroma_timeline_get` after the call sees it, not
+    // just the return value), and a rejected call leaves the persisted file
+    // untouched — the same three things `track_commands_…` above proves for
+    // `add_track`/`move_clip`/`remove_track`.
+    #[test]
+    fn link_and_unlink_commands_persist_on_the_active_timeline() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("d138_link_commands");
+        let (dir, manifest) = new_project_in(
+            &root,
+            "link-cmds",
+            &[root.join("a.mov").to_string_lossy().to_string()],
+        )
+        .unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "link-cmds".into(),
+        }));
+
+        // Lazily builds the one-video-track timeline from the seed shot, then
+        // hand-adds a second, audio-track clip — `chroma_timeline_set` stores
+        // whatever is sent verbatim, the same "the frontend owns clip
+        // creation" contract `add_clip`'s own doc names (this crate has no
+        // clip-creation op of its own).
+        let mut tl = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(tl.tracks.len(), 1);
+        let video_id = tl.tracks[0].clips[0].id.clone();
+        tl.tracks.push(chroma_timeline::Track {
+            kind: TrackKind::Audio,
+            clips: vec![Clip {
+                id: "a1".into(),
+                name: "a1".into(),
+                source_path: "/a.wav".into(),
+                duration: 100,
+                source_len: 100,
+                start_frame: 0,
+                ..Default::default()
+            }],
+            gain: 1.0,
+            locked: false,
+            hidden: false,
+            sync_locked: true,
+        });
+        super::super::edit::chroma_timeline_set(tl).unwrap();
+
+        // link — persists a shared group on both real clips, resolved
+        // against whatever timeline is active, not a bare in-memory one.
+        let group = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap();
+        let after_link = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(after_link.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(after_link.tracks[1].clips[0].link_group.as_deref(), Some(group.as_str()));
+
+        // a rejected link (already linked) leaves the persisted file
+        // untouched — not merged, not partially applied.
+        let err = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap_err();
+        assert!(err.contains("already linked"), "unexpected error: {err}");
+        let unchanged = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(unchanged.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
+
+        // an out-of-range link errors and leaves the file untouched
+        assert!(super::super::edit::chroma_timeline_link_clips(9, 0, 1, 0).is_err());
+
+        // unlink — persists the dissolved group; restores D-050's embedded
+        // playback path for the video clip (nothing here exercises audio
+        // playback, just the `link_group` field `chroma_audio_play` reads).
+        super::super::edit::chroma_timeline_unlink_clip(0, 0).unwrap();
+        let after_unlink = super::super::edit::chroma_timeline_get().unwrap();
+        assert_eq!(after_unlink.tracks[0].clips[0].link_group, None);
+        assert_eq!(after_unlink.tracks[1].clips[0].link_group, None);
+        assert_eq!(after_unlink.tracks[0].clips[0].id, video_id, "identity preserved");
+
+        // unlink on an already-unlinked clip is a real no-op, not an error
+        assert_eq!(super::super::edit::chroma_timeline_unlink_clip(0, 0), Ok(()));
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // --- opaque top-wins video-track resolution (D-056, Phase B1) -----------
 
     /// End-to-end through the real Tauri command path (`resolve_video_position`
