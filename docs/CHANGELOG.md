@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **"No project open" (5th occurrence): fixed the screen that
+  was misreporting all five, not just the fifth cause (B-034/D-112).** The
+  common factor across B-004/B-025/B-031/B-032 was never any one of them — it
+  was `EditorTab` reporting *any* failed `chroma_timeline_get` as "no project
+  is open", while the shell above it showed the tab bar precisely because one
+  was. `projectOpen` is now pushed down from the app's own source of truth and
+  is the only thing that can produce that message; `load()` gained a monotonic
+  token (a stale failure can no longer clobber a fresh success), a timeout for
+  lost IPC responses, and a bounded retry ladder replacing D-085's 500ms
+  one-shot. Two real faults found underneath: `save_manifest` was a non-atomic
+  `fs::write` torn by the app's own per-frame `load_manifest` reader (**25%
+  torn reads measured**; now temp-file + rename, 0/2000 against the owner's
+  real project), and **D-108's `safeUnlisten` fix never worked** — it caught a
+  sync throw where Tauri actually rejects a promise. Occurrence #5's own
+  trigger was a concurrent agent HMR-reloading the owner's live app 3s after a
+  successful open: a process problem, not a code one.
+- **2026-09-04** — Restored the Rust test build on `main`: D-107/D-109's
+  `Track::sync_locked` and D-104's `move_clip(…, ripple)` never updated the
+  test initializers in `chroma/project.rs` / `chroma/audio.rs` (10 compile
+  errors — `cargo test` couldn't run at all).
 - **2026-09-04** — **"Hangs so much" audit (D-111): one redundant IPC round-trip
   cut, sync-lock gets real visual language.** Measured, not assumed —
   `applyOp` was already optimistic; the real hang was mostly this session's

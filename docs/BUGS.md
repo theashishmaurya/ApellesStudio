@@ -74,6 +74,131 @@ status: fixed (2026-09-03, D-058) · severity: high · area: `packages/editor/sr
 
 ## Fixed
 
+## B-034 — "No project open" on the Edit tab, for the FIFTH time — the pattern across all five is the real bug: a non-atomic `project.json` write torn by the app's own per-frame reader, on top of a UI that reported *any* failed timeline fetch as "no project is open"
+status: fixed (2026-09-04, D-112) · severity: high (a false, terminal-looking screen on the app's main entry point; the torn-write half is **not** dev-mode-only — it can corrupt a read in a production build too) · area: `app/src-tauri/src/chroma/project.rs` (`save_manifest`), `packages/editor/src/{timelineStore,EditorTab}.tsx`, `app/src/main.tsx`, `app/src/utils/tauriListeners.ts`
+
+### Read this entry as the closing note on B-004 / B-025 / B-031 / B-032, not as a sixth isolated defect
+
+Five times across two nights the owner opened a project and the Edit tab said **"No project
+open"**. Five investigations each found a *genuinely real, genuinely different* root cause,
+fixed it correctly, and reported it fixed — and the symptom came back:
+
+| | real cause found | correctly fixed? |
+|---|---|---|
+| **B-004** | `app/index.html` loaded `/src/main.jsx` instead of `/src/main.tsx`, double-executing the entry module on cold boot and corrupting Tauri's IPC bridge | yes — **re-verified still in place this pass**, `index.html` line 15 is `/src/main.tsx` |
+| **B-025** | no loading feedback during a real multi-second open → a second click hit `openProject`'s `busy` guard (D-085) | yes, for the double-click half |
+| **B-031** | `open_manifest` resolved the active clip's session index against a non-deduplicated path list, silently aborting the whole open **before `state::set_project` ever ran** (`373e725`) | yes, verified, still correct |
+| **B-032** | Vite HMR racing Tauri's async `listen()` teardown, throwing inside `_unlisten` | **no — see below. The fix did not hold.** |
+| **B-034** (this) | non-atomic `save_manifest` torn by the per-frame `load_manifest` reader | — |
+
+**The thing nobody logged for four rounds: none of those five faults could produce that
+sentence on their own.** Every one of them was some flavour of "a `chroma_timeline_get` call
+failed or never came back." It was `EditorTab.tsx` that turned that into a confident claim
+that no project was open, because `loaded && !timeline` was the only state it had — no way to
+distinguish *"nothing is open"* from *"something is open and its timeline fetch failed."* The
+shell directly above it was showing the tab bar at the same moment, which it only ever does
+**because a project is open**. The app was contradicting itself on one screen, and every
+investigation dutifully went hunting for a new way to break the fetch instead of asking why a
+broken fetch was allowed to say that. D-112 fixes the *reporting*, which is what makes this
+class of bug diagnosable at all, and fixes the two live faults found underneath it.
+
+### Fault 1 (new, real, production-affecting) — the manifest could be read while it was half-written
+
+- **cause:** `save_manifest` was a plain `std::fs::write`, which truncates `project.json` to
+  zero and then streams the new bytes. Meanwhile `load_manifest` runs on a genuinely hot
+  path — `chroma::edit::resolve_timeline` re-reads and re-parses `project.json` **from disk on
+  every single preview frame** (`chroma_timeline_frame`, i.e. once per frame while scrubbing or
+  playing) — while `chroma_timeline_set` rewrites it every 400ms throughout any drag or trim.
+  Scrub while an edit is saving and the reader lands inside the write window.
+- **what the user sees:** `chroma_timeline_get` returns
+  `parse …/project.json: EOF while parsing a value at line 1 column 0`, `load()` fails, and
+  (pre-fix) the Edit tab renders that as "No project open".
+- **measured, not theorised:** the new regression test
+  (`concurrent_saves_never_expose_a_torn_manifest`) run against the *old* `fs::write`
+  implementation produced **150 torn reads out of 600 — a 25% failure rate**, every one of them
+  that exact `EOF while parsing` error.
+- **fix:** write a uniquely-named temp file in the project dir, then `rename` it over
+  `project.json`. `rename(2)` is atomic, so a reader now always sees either the complete old
+  manifest or the complete new one. Verified against a copy of the owner's own real
+  `New.chroma`: **2000 concurrent reads under a continuous writer, 0 torn.**
+
+### Fault 2 (a real recurrence — B-032's fix never actually worked)
+
+- B-032 shipped `safeUnlisten()` wrapping the unlisten call in `try { f?.(); } catch {}`. The
+  owner's own dev log, on a freshly restarted instance **built with that fix in it**, shows the
+  identical `TypeError: undefined is not an object (evaluating 'listeners[eventId].handlerId')`
+  still arriving — as an **unhandled rejection**, with a stack pointing straight at that
+  `f?.()` line (`src/utils/tauriListeners.ts:22:12`), at 1:05:26pm on 2026-09-04.
+- **why it didn't hold:** Tauri's `listen()` resolves to `async () => _unlisten(event, eventId)`,
+  and `_unlisten` is itself `async`. An `async` function never throws synchronously — its first
+  statement blowing up produces a *rejected promise*, which a `try`/`catch` around the call
+  cannot see. The returned promise was dropped unhandled. A correct-looking guard, guarding the
+  wrong half of the failure.
+- **fix:** return the call's result into `safeUnlisten`'s own promise chain so the existing
+  `.catch` actually catches it.
+
+### What actually triggered occurrence #5 specifically — and it was not a code bug
+
+Reconstructed from `/tmp/chroma-tauri-dev.log` and `project.json`'s mtime, and worth recording
+because it wasted a whole investigation:
+
+- `13:02:48` — the owner's open **succeeded**. `open_manifest` wrote `project.json` (that write
+  happens immediately before `state::set_project`), so the backend was fully open.
+- `13:02:51` — three seconds later, **a different agent working in the same working tree saved
+  files**, and Vite HMR pushed `main.tsx`, `EditorTab.tsx`, `TimelinePane.tsx`, `PreviewPane.tsx`,
+  `TimelineSwitcher.tsx` and `SourcesPanel.tsx` into the owner's live session.
+- `13:02:55` — that intermediate code threw
+  (`TypeError: undefined is not an object (evaluating 'dest.clips')` in `timeline.ts`'s
+  `resolveClipLanding`, mid-drag), then `hmr invalidate /src/main.tsx` → **`page reload
+  src/main.tsx`**, and `You are calling ReactDOMClient.createRoot() on a container that has
+  already been passed to createRoot() before` — B-004's exact double-execution symptom, arriving
+  by a completely different route.
+- `13:03:18` — `[vite] Failed to reload EditorTab.tsx / TimelinePane.tsx / main.tsx …
+  TypeError: Importing a module script failed` — the module graph failed to reload at all.
+- `13:03:31` — a flood of `[TAURI] Couldn't find callback id …`, i.e. every `invoke` that was
+  in flight across the reload lost its callback and **its promise will never settle**.
+
+So occurrence #5's trigger was dev-server contamination, not a fifth pipeline bug. That does
+**not** make it noise: it is exactly the kind of transient the app must survive, and pre-fix it
+was terminal, because a `load()` whose invoke never settles left the tab pinned on a screen
+insisting no project was open, forever, with no automatic recovery.
+
+- **process note (please act on this one):** the owner cannot get a trustworthy live test while
+  other agents are editing `app/src` or `packages/*` against the same dev server. Either test
+  against a quiesced tree, or give live testing its own worktree/dev server. Four of these five
+  investigations were conducted against an app being rewritten underneath the tester.
+
+### Fix (D-112) — one signal, one state machine, three real guarantees
+
+- **`projectOpen` is now pushed into the store** from the composition root (`main.tsx` →
+  `setProjectOpen`), which reads the app's actual source of truth (`useSessionStore.projectPath`
+  — the same value the shell uses to decide to show the tabs at all). Layering is unchanged and
+  correct (app → tabs, D-039): `@chroma/editor` is *told*, it never reaches up to ask.
+- **`status: 'idle' | 'loading' | 'ready' | 'error'`** replaces `loaded: boolean`. `EditorTab`
+  renders "No project open" **only** when `!projectOpen`; a failed fetch with a project open
+  renders "Couldn't load the timeline" with the real backend error and a Retry.
+- **`load()` is token-guarded.** It is called from five independent places (tab mount, every OS
+  window `focus`, the composition-root bridge, the retry ladder, timeline create/switch) and
+  nothing ever ordered them — the *slower* call won by writing last, so a stale failure could
+  overwrite a fresh success. Only the newest token may write now.
+- **`load()` has a timeout** (`LOAD_TIMEOUT_MS`), so the "Couldn't find callback id" case above
+  fails honestly instead of hanging forever.
+- **Bounded retry ladder** (250/750/2000ms) on `setProjectOpen(true)`, superseding D-085's
+  unexplained 500ms one-shot; it gives up into a real error screen rather than looping silently.
+- Also fixed here, because it blocked verifying any of the above: **`cargo test` did not compile
+  on `main`** — D-107/D-109's `Track::sync_locked` field and D-104's `move_clip(…, ripple)`
+  parameter never updated the test initializers in `chroma/project.rs` and `chroma/audio.rs`
+  (10 errors). Landed as its own commit.
+- **verification:** 6 new store tests (`packages/editor/src/timelineStore.test.ts`) — each one
+  confirmed to *fail* against the old shape before being confirmed to pass against the new;
+  122/122 frontend tests green; 162/162 Rust tests green including the new torn-write regression,
+  which was likewise confirmed to fail (150/600 torn reads) against the old `fs::write`.
+- **residual risk, stated honestly:** the dev-mode HMR/page-reload race itself is not eliminated
+  and cannot be from inside the app — it is Vite reloading the page under a running IPC bridge.
+  What is now true is that it can no longer *strand* the Edit tab: a lost response times out, a
+  stale result cannot clobber a good one, the retry ladder recovers on its own, and if it truly
+  can't recover the screen says what actually went wrong instead of something false.
+
 ## B-033 — Cross-track sync-lock ripple (D-106/D-107) could corrupt a real project: repeated ripple operations kept re-splitting an already-split fragment, producing a chain of ever-smaller slivers and the same clip id duplicated on one track at wildly different positions
 status: fixed (2026-09-04, D-109) · severity: blocker (real, confirmed data corruption on the owner's actual saved `New.chroma` project — not a UX surprise, actual timeline structure damage) · area: `packages/editor/src/timeline.ts`, `crates/chroma-timeline/src/lib.rs`
 - **found:** owner, live, two reports in quick succession right after D-107 shipped. First: "i moved something in Video 1 and video 2 got shifted" (a same-track `move` triggering an unexpected cross-track shift — sync-lock working as designed, per D-107's own question-1 answer, but foreshadowing the real bug). Second, severe: "i delete this and all of them moves" — closing a gap (D-105's "Close Gap") on a multi-track project. Screenshots showed the total project duration *growing* after closing a gap (`00:26:12:11` → `01:01:08:00` → `00:52:30:18` across two operations) when closing a gap should only ever shrink it, and Video 1/2/3 all displaying the identical source clip stacked at the same position.
@@ -83,14 +208,15 @@ status: fixed (2026-09-04, D-109) · severity: blocker (real, confirmed data cor
 - **owner's real project data:** confirmed corrupted on disk, no clean automated recovery exists — the only backup found (`~/Movies/Chroma/_backups/project.json.pre-unify-20260903-131757`) predates an entire day of legitimate editing and restoring it would be a worse loss than the corruption itself; the in-app undo/redo stack almost certainly did not survive, since the dev app was restarted multiple times between the corrupting operations and this fix landing. The corruption pattern is irregular (not a uniform fragmentation chain for every affected clip — some duplicates sit at unrelated positions, not adjacent slivers), so an automated reconstruction script was judged too risky to attempt blind; **recommended path is manually rebuilding the affected clip positions on Video 1-4 through the (now-fixed) UI** — the underlying media files themselves are completely untouched, only the timeline's clip-position bookkeeping was corrupted.
 
 ## B-032 — Tauri listener cleanup could throw when Vite HMR reloaded mid-flight, corrupting the IPC bridge — a THIRD distinct root cause behind "No project open"
-status: fixed (2026-09-04, D-108) · severity: high (dev-mode-only — this specific failure mode cannot occur in a production build — but frequent enough this session to repeatedly masquerade as the project-open bug, across a night where two other genuinely different root causes for the same surface symptom were already found and fixed) · area: `app/src/App.tsx`, `app/src/hooks/useTauriListeners.ts`, `app/src/hooks/useChromaControl.ts`, `app/src/window/TitleBar.tsx`, `app/src/components/modals/{NegativeConversionModal,DenoiseModal}.tsx`
+status: **superseded — this fix did NOT hold; re-fixed in B-034/D-112** (2026-09-04, D-108) · severity: high (dev-mode-only — this specific failure mode cannot occur in a production build — but frequent enough this session to repeatedly masquerade as the project-open bug, across a night where two other genuinely different root causes for the same surface symptom were already found and fixed) · area: `app/src/App.tsx`, `app/src/hooks/useTauriListeners.ts`, `app/src/hooks/useChromaControl.ts`, `app/src/window/TitleBar.tsx`, `app/src/components/modals/{NegativeConversionModal,DenoiseModal}.tsx`
 - **found:** owner, live, hit "No project open" again on a freshly restarted app instance — the same surface symptom as **B-004** (historical: entry module double-execution corrupting Tauri IPC on every cold boot) and **B-031** (this session: an `open_manifest` index-space mismatch), but neither of those root causes was in play here — B-004's fix was verified still correctly in place, and B-031's fix (`373e725`) is separately confirmed correct. This is a genuinely third, distinct cause producing the identical symptom.
 - **cause:** every `listen()`/`onResized()` call in the app returns `Promise<UnlistenFn>`; the standard React-effect cleanup (`unlistenPromise.then((f) => f())`) races Vite's dev-mode HMR module-reload against that promise resolving. If HMR reloads the module graph — frequent this session, given many concurrent forks editing frontend/backend files against one shared running dev instance — while the promise is still pending, the resolved unlisten function can be invoked against a `window.__TAURI_INTERNALS__` bridge that no longer matches what registered it, throwing `TypeError: Cannot read properties of undefined (reading 'unregisterListener')` inside Tauri's own `_unlisten`. Tauri's own console warning names this exact scenario directly: `Couldn't find callback id N. This might happen when the app is reloaded while Rust is running an asynchronous operation`. Confirmed live: the error fired 2 minutes after a clean boot, well before any project-open attempt; a later idle-window test (150+ seconds, zero concurrent Rust/fork activity) showed zero recurrence, consistent with an HMR-timing trigger rather than a deterministic code defect.
 - **fix:** a new shared `safeUnlisten()` helper (`app/src/utils/tauriListeners.ts`) guarding both the promise rejecting and the resolved function itself throwing, replacing six independent, inconsistent hand-rolled cleanup patterns (one of which already had an ad-hoc `.catch()` that only covered half the failure mode). Doesn't eliminate the underlying dev-mode HMR/async-IPC race — makes it silent and harmless instead of an unhandled rejection that can leave the IPC bridge broken for the rest of the session. Full writeup, including the honest verification-gap disclosure (couldn't force-reproduce the race on demand): D-108 in `docs/08-decisions.md`.
+- **⚠️ that fix did not actually work — see B-034/D-112.** `try { f?.(); } catch {}` guards only a *synchronous* throw. Tauri's `listen()` resolves to `async () => _unlisten(…)`, and `_unlisten` is itself `async`, so the failure arrives as a **rejected promise** the `catch` cannot see, and the promise was then dropped unhandled. The owner's dev log on a freshly restarted instance built with this fix in it shows the identical error still firing, stack pointing at that exact line. B-034 re-fixed it by chaining the result into the helper's own `.catch`. The verification gap this entry honestly flagged ("couldn't force-reproduce the race on demand") is precisely where it slipped through.
 - **process note:** a clean dev-server restart right before testing (rather than trusting HMR through a burst of concurrent edits) avoids this failure class' trigger entirely — worth doing as standard practice whenever several forks have been editing frontend files concurrently, not just after a Rust change.
 
 ## B-031 — Opening a project silently aborted before the Edit tab ever saw it, whenever an earlier clip shared a source path with the active one — no error, no log, "No project open" forever
-status: fixed (2026-09-04) · severity: blocker (opening a project is the app's entry point — this recurred across the night, reported fixed twice before the real cause was found) · area: `app/src-tauri/src/chroma/project.rs` (`open_manifest`)
+status: fixed (2026-09-04) — **cause #3 of 5 for this symptom; read B-034/D-112 for the pattern across all five and why the screen kept lying about it** · severity: blocker (opening a project is the app's entry point — this recurred across the night, reported fixed twice before the real cause was found) · area: `app/src-tauri/src/chroma/project.rs` (`open_manifest`)
 - **found:** owner, live, repeatedly, across the night — same "No project open" / launcher-screen-doesn't-transition symptom kept recurring after two earlier passes (B-025/D-085's loading-spinner-and-retry fix, and this session's own initial project-open regression chase) each addressed a real but different contributing issue without landing the actual root cause. `app.log` showed the backend completing a normal-looking open (grade migration ran, warnings logged) with **zero errors anywhere** — the strongest clue the failure was silent, not crashing.
 - **cause:** `open_manifest` resolved the active clip's session index by finding its source path's position in `online_paths`, a `Vec` pushed once per *clip* in manifest order — but the real decode session (`state::Session`) deduplicates by path, so whenever an earlier clip in the manifest shared a source path with the active clip, the two index spaces diverged. `session_set_active` then correctly rejected the now-wrong index, and that rejection aborted the whole open **before `state::set_project` ever ran** — with the error swallowed rather than surfaced to the UI, so the launcher screen just... never transitioned, silently.
 - **fix:** resolve the active clip's index against the session's own deduplicated path list instead of the raw per-clip one. 161/161 Rust tests pass, `cargo clippy` clean.
@@ -139,7 +265,7 @@ status: fixed (2026-09-03, D-095) · severity: medium (each individually a real 
 - **fix:** (1) `computeInsertion` (`timeline.ts`) resolves a drop's frame to either an open gap (no ripple) or a real ripple-insert snapped to the nearest clip edge — the one place this model intentionally gains ripple behaviour, still explicit-position-only everywhere else (`remove`/`trim`/`split`/`move`); a live insertion-line/new-track-ghost-row preview during drag-over. (2) grew both drag handles' real hit target (`size-3`/`size-3.5` → padded ~20px) and added `-webkit-user-drag: element`; the underlying logic was already confirmed correct. (3) the "+ 🎞"/"+ 🎵" toolbar buttons are gone; dropping past the last row now calls `add_track` then `add_clip` on the new track, with a dashed ghost-row preview during drag-over. (4) a small custom drag image (name only, `setDragImage` on a briefly-attached offscreen pill) replaces the default. Full writeup: D-095 in `docs/08-decisions.md`.
 
 ## B-025 — Edit tab stuck on "No project open" after opening a project; opening had no loading feedback
-status: fixed (2026-09-03, D-085) · severity: high (blocks reaching the Edit tab at all after a fresh open) · area: `app/src/components/chroma/ProjectLauncher.tsx`, `app/src/main.tsx`
+status: fixed (2026-09-03, D-085) — **cause #2 of 5; its own "root mechanism not fully proven" admission and its 500ms one-shot retry are both superseded by B-034/D-112** · severity: high (blocks reaching the Edit tab at all after a fresh open) · area: `app/src/components/chroma/ProjectLauncher.tsx`, `app/src/main.tsx`
 - **found:** owner, live, two screenshots: clicking a project "gets stuck in the click, it does not open," and the Edit tab shows "No project open" persistently once it lands, even though `app.log` confirms the project genuinely opened (grade migration ran, Colorist's own preview rendered).
 - **cause:** two distinct gaps — (1) `handleOpen` had zero loading feedback during a real, sometimes multi-second open, inviting a second click that hit `openProject`'s own `busy` guard and surfaced a confusing "session busy" toast; (2) the existing B-007 fix (retry Edit's own `chroma_timeline_get` when a project opens) looked structurally correct on inspection but the owner's live report says it isn't landing reliably — root mechanism not fully proven, treated as a narrow timing race.
 - **fix:** a real `opening` loading state + spinner on the clicked project card, disabling every card while any open is in flight (closes the double-click race at the UI level); the Edit tab's own load effect now retries once, 500ms later, if it lands on an error state. Full writeup: D-085 in `docs/08-decisions.md`.

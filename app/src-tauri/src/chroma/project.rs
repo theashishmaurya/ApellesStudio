@@ -1180,13 +1180,52 @@ pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     Ok(manifest)
 }
 
-/// Pretty-print `manifest` to `<project_dir>/project.json` (creating the dir).
+/// Pretty-print `manifest` to `<project_dir>/project.json` (creating the dir),
+/// **atomically** — write a uniquely-named temp file in the same directory,
+/// then `rename` it over `project.json`.
+///
+/// B-034/D-112: this used to be a plain `std::fs::write`, which truncates the
+/// destination to zero and then streams the new bytes in — so for the whole
+/// duration of the write there is a real window where a concurrent reader sees
+/// an empty or half-written file. That is not a theoretical race here:
+/// [`load_manifest`] is called on a genuinely hot path — `chroma::edit`'s
+/// `resolve_timeline` re-reads and re-parses `project.json` from disk on
+/// **every single preview frame** (`chroma_timeline_frame`, so once per frame
+/// while scrubbing or playing back), while `chroma_timeline_set` writes it
+/// every 400ms (the Edit tab's debounced save) throughout a drag or trim. A
+/// torn read surfaces as `parse project.json: EOF while parsing…` out of
+/// `chroma_timeline_get`, which the Edit tab then rendered as "No project
+/// open" — one of the several distinct faults that all presented as that same
+/// screen (see B-034's cross-reference list in `docs/BUGS.md`).
+///
+/// `rename(2)` within a directory is atomic on every filesystem we target, so
+/// a reader now always observes either the complete previous manifest or the
+/// complete new one, never a partial file. The temp name carries the process
+/// id and a counter so two concurrent savers can't clobber each other's
+/// staging file.
 pub fn save_manifest(project_dir: &Path, manifest: &ProjectManifest) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
     std::fs::create_dir_all(project_dir)
         .map_err(|e| format!("create {}: {e}", project_dir.display()))?;
     let pretty = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
-    std::fs::write(project_dir.join("project.json"), format!("{pretty}\n"))
-        .map_err(|e| format!("write project.json: {e}"))
+
+    let final_path = project_dir.join("project.json");
+    let tmp_path = project_dir.join(format!(
+        ".project.json.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    std::fs::write(&tmp_path, format!("{pretty}\n"))
+        .map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
+    if let Err(e) = std::fs::rename(&tmp_path, &final_path) {
+        // Don't leave the staging file behind if the swap itself failed.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("replace project.json: {e}"));
+    }
+    Ok(())
 }
 
 /// Sanitise a user-typed project name into a directory-safe stem.
@@ -2211,6 +2250,77 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// B-034/D-112 — the real regression test for the torn-manifest race: one
+    /// thread saves the manifest in a tight loop while another `load_manifest`s
+    /// it in a tight loop, exactly the shape the live app produces (the Edit
+    /// tab's debounced `chroma_timeline_set` writing while
+    /// `chroma_timeline_frame` re-reads the manifest once per preview frame).
+    ///
+    /// Before the atomic-rename fix this failed reliably — the reader observed
+    /// an empty or half-written file and `load_manifest` came back
+    /// `Err("parse …: EOF while parsing…")`, which is precisely what the Edit
+    /// tab was rendering as "No project open". Every read must now succeed.
+    #[test]
+    fn concurrent_saves_never_expose_a_torn_manifest() {
+        let root = tmp("atomic_save");
+        let (dir, mut manifest) = new_project_in(
+            &root,
+            "Torn Read",
+            &["/a.mov".into(), "/b.mov".into(), "/c.mov".into()],
+        )
+        .unwrap();
+
+        // Pad the manifest out so a non-atomic write takes long enough for a
+        // reader to land inside it — a real project is this size and larger.
+        for i in 0..400 {
+            let seed = manifest.timelines[0].tracks[0].clips[0].clone();
+            manifest.timelines[0].tracks[0].clips.push(Clip {
+                id: format!("padding-clip-{i}"),
+                name: format!("padding clip number {i} with a reasonably long name"),
+                source_path: format!("/some/reasonably/long/media/path/clip_{i}.mov"),
+                ..seed
+            });
+        }
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_dir = dir.clone();
+        let writer_stop = stop.clone();
+        let writer = std::thread::spawn(move || {
+            while !writer_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                save_manifest(&writer_dir, &manifest).expect("save");
+            }
+        });
+
+        let mut reads = 0usize;
+        let mut failures = Vec::new();
+        for _ in 0..600 {
+            match load_manifest(&dir) {
+                Ok(_) => reads += 1,
+                Err(e) => failures.push(e),
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        writer.join().expect("writer thread");
+
+        assert_eq!(reads, 600, "some reads failed: {failures:?}");
+        assert!(
+            failures.is_empty(),
+            "load_manifest saw a torn write ({} of 600): {failures:?}",
+            failures.len()
+        );
+
+        // No staging files left lying around next to the real manifest.
+        let strays: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(strays.is_empty(), "temp files left behind: {strays:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

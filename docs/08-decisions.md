@@ -8515,3 +8515,87 @@ click-through by the time this pass finished, flagged rather than claimed.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-112 — "No project open" for the fifth time: stop patching the causes, fix the screen that misreports them (+ an atomic `project.json` write)
+
+**decided (2026-09-04)** — B-034. Supersedes D-085's retry heuristic; corrects D-108's fix.
+
+- **Context.** Across two nights, opening a project from the launcher landed the Edit tab on
+  **"No project open"** five separate times. Four investigations (B-004, B-025, B-031, B-032)
+  each found a real, genuinely *different* root cause, fixed it correctly, and reported it
+  fixed. The symptom kept returning. The owner, reasonably out of patience with point-fixes,
+  asked for the pattern rather than a fifth patch.
+
+- **The pattern, once you line them up.** Every one of those five faults reduces to the same
+  sentence: *a `chroma_timeline_get` call failed, or its response never arrived.* None of them
+  is "no project is open." It was `EditorTab.tsx` that turned any such failure into a confident
+  claim that no project was open — because `loaded && !timeline` was the entire state it had,
+  with no way to tell *"nothing is open"* apart from *"something is open and the fetch failed."*
+  Worse, the shell immediately above it was rendering the tab bar at the same moment, and it
+  only ever does that **because a project is open**. The app was contradicting itself on a
+  single screen, and each investigation went looking for a new way to break the fetch instead
+  of asking why a broken fetch was permitted to say that. Four fixes, four different real bugs,
+  one unexamined liar in the middle.
+
+  Compounding it: `load()` was called from five independent, unordered places (tab mount, every
+  OS window `focus`, the composition-root bridge, D-085's 500ms retry, timeline create/switch),
+  so the **slower** call won by writing last — a stale failure could overwrite a fresh success.
+  And a `load()` whose IPC response was lost (Tauri's own "Couldn't find callback id N…", all
+  over the owner's dev log) simply never settled, pinning the tab there permanently.
+
+- **Options considered.**
+  - **(a) Find fault #5 and patch it.** What the previous four rounds did. Would have been
+    genuinely wrong here: the actual trigger of occurrence #5 turned out not to be a pipeline
+    bug at all (a concurrent agent's file saves HMR-reloading the owner's live app three
+    seconds after a *successful* open — full timeline in B-034), so there was no fifth patch to
+    write, yet the tab still ended up stranded on a false screen.
+  - **(b) Make the Edit tab poll, or re-fetch more aggressively.** More attempts at the same
+    unreliable question. Doesn't fix the misreporting, and D-085 already showed a fixed-delay
+    retry only ever covers one failure at one delay.
+  - **(c) Have `@chroma/editor` read `useSessionStore` directly.** Would give it the truth, but
+    inverts D-039's dependency direction (a tab package reaching up into `app`). Rejected.
+  - **(d) — chosen. One signal, pushed down; an explicit state machine; ordering and timeout
+    guarantees.** `main.tsx` (the composition root, already the legitimate meeting point per
+    B-007) hands the store `projectOpen` — the same `useSessionStore.projectPath` the shell
+    uses to decide whether to show tabs at all — via `setProjectOpen`. The store gains
+    `status: 'idle' | 'loading' | 'ready' | 'error'`, strictly about the *fetch*. `EditorTab`
+    renders "No project open" **only** on `!projectOpen`; a failed fetch with a project open
+    renders "Couldn't load the timeline" with the real backend error. `load()` carries a
+    monotonic token (only the newest may write), has a timeout so a lost IPC response fails
+    honestly instead of hanging, and `setProjectOpen(true)` runs a short bounded retry ladder
+    (250/750/2000ms) that recovers automatically and gives up into a real error rather than a
+    lie. Layering unchanged: app → tabs, the tab is told, never asks.
+
+- **Two real faults found underneath, both fixed here.**
+  1. **`save_manifest` was not atomic** — a plain `std::fs::write`, which truncates
+     `project.json` and then streams it back. Meanwhile `load_manifest` runs on a genuinely hot
+     path: `chroma::edit::resolve_timeline` re-reads and re-parses that file **from disk on
+     every preview frame**, while `chroma_timeline_set` rewrites it every 400ms during any drag.
+     Measured against the old implementation: **150 torn reads out of 600 (25%)**, each one
+     `parse …/project.json: EOF while parsing a value` — which the Edit tab then rendered as
+     "No project open". Now a temp-file + `rename` swap; verified on a copy of the owner's real
+     `New.chroma` at **2000 concurrent reads, 0 torn**. Note this half is **not** dev-mode-only.
+  2. **D-108's `safeUnlisten` fix never actually worked.** `try { f?.(); } catch {}` catches
+     only a synchronous throw; Tauri's `listen()` resolves to `async () => _unlisten(…)` and
+     `_unlisten` is itself `async`, so the failure is a *rejected promise* the catch cannot see,
+     dropped unhandled. The owner's log on a fresh instance built *with* that fix shows the
+     identical error still firing, stack pointing at that exact line. Now chained into the
+     helper's own `.catch`.
+
+- **Also landed (separate commit), because it blocked all verification:** `cargo test` did not
+  compile on `main` — D-107/D-109's `Track::sync_locked` and D-104's `move_clip(…, ripple)`
+  never updated the test initializers in `chroma/project.rs` / `chroma/audio.rs` (10 errors).
+
+- **Verification.** Every new test was confirmed to **fail against the old code** before being
+  confirmed to pass against the new — the ordering tests fail with the token guard removed, the
+  torn-write test fails with `fs::write` restored. 122/122 frontend tests, 162/162 Rust tests,
+  `cargo fmt`/`clippy` clean on the touched files, `tsc` introduces zero new errors.
+
+- **Residual risk, stated plainly.** The dev-mode HMR/page-reload race is *not* eliminated and
+  cannot be from inside the app — it is Vite reloading the page under a live IPC bridge. What is
+  now true is that it can no longer strand the tab. Separately, and importantly: **four of these
+  five investigations were run against a dev server whose source files other agents were
+  actively rewriting.** Live testing needs a quiesced tree or its own worktree — see B-034's
+  process note.

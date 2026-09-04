@@ -7,8 +7,22 @@
  * cut, GPU compositing, grade-in-preview, OTIO export, MCP tools.
  *
  * A project must be open (via the Colorist tab's D-037 launcher) for the
- * timeline to have shots — `chroma_timeline_get` errors otherwise and we show
- * the empty state.
+ * timeline to have shots.
+ *
+ * B-034/D-112 — **this screen used to lie, and that is why the same bug kept
+ * "coming back."** It rendered "No project open" for *any* failed
+ * `chroma_timeline_get`, because the only state it had was `loaded && !
+ * timeline`. So four genuinely different underlying faults (B-004's IPC
+ * corruption on cold boot, B-025's double-click/refetch gap, B-031's silently
+ * aborted `open_manifest`, B-032's HMR-broken listener teardown) plus this
+ * one all produced the identical, confidently-wrong sentence — while the
+ * shell right above it was simultaneously showing the tab bar, which only
+ * appears *because a project is open*. Whether a project is open is now
+ * `projectOpen`, pushed down from the app's own source of truth, and it is
+ * the only thing that can produce that message; a fetch that fails while a
+ * project is genuinely open says so instead, with the real backend error and
+ * a Retry. Recovery from a transient failure is automatic (the store's retry
+ * ladder), so Retry is a last resort rather than the only way out.
  */
 
 import { useEffect } from 'react';
@@ -21,33 +35,52 @@ import { useEditorTimelineStore } from './timelineStore';
 
 export function EditorTab() {
   const load = useEditorTimelineStore((s) => s.load);
-  const loaded = useEditorTimelineStore((s) => s.loaded);
+  const projectOpen = useEditorTimelineStore((s) => s.projectOpen);
+  const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
 
+  // Re-check when the window regains focus — the project may have changed
+  // out from under us. Safe to fire freely now: `load()` is token-guarded, so
+  // a focus-triggered refetch that fails can no longer clobber good state.
   useEffect(() => {
-    load();
-  }, [load]);
-
-  // re-check when the window regains focus (a project may have been opened in
-  // the Colorist tab meanwhile)
-  useEffect(() => {
-    const onFocus = () => load();
+    const onFocus = () => {
+      if (useEditorTimelineStore.getState().projectOpen) void load();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [load]);
 
-  if (loaded && !timeline) {
+  if (!projectOpen) {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
         <h1 className="text-lg font-semibold text-text-primary">No project open</h1>
         <p className="text-sm text-text-secondary max-w-md">
           Open a project in the Colorist tab — its shots become the Edit timeline.
         </p>
-        {error && <p className="text-[11px] text-text-secondary/60 max-w-md">{error}</p>}
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
+        <h1 className="text-lg font-semibold text-text-primary">Couldn’t load the timeline</h1>
+        <p className="text-sm text-text-secondary max-w-md">
+          The project is open, but reading its timeline failed. Retrying didn’t help either.
+        </p>
+        {error && <p className="text-[11px] text-text-secondary/60 max-w-md break-words">{error}</p>}
         <Button className="mt-2" onClick={() => load()}>
           Retry
         </Button>
+      </div>
+    );
+  }
+
+  if (!timeline) {
+    return (
+      <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
+        <p className="text-sm text-text-secondary">Loading timeline…</p>
       </div>
     );
   }

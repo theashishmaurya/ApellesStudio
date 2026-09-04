@@ -20,15 +20,16 @@ installFrontendLogBridge();
  * for a loose-clip quick-open, `projectName` = 'Untitled'), which flips the
  * shell into the 3-tab layout. "‹ Projects" calls `closeProject()` to come back.
  *
- * B-007: the Edit tab's timeline store only re-fetches on its own mount + on
- * the OS window regaining focus (see `@chroma/editor`'s `EditorTab`) — neither
- * fires when a project is opened from the Colorist tab in the same window
- * (all 3 tabs stay mounted, D-039), so Edit was stuck on a stale "no project"
- * read until an unrelated focus event happened to fire. This is the one place
- * that legitimately spans both `app` (owns `useSessionStore`, the real
- * "project is open" signal) and `@chroma/editor` (owns the timeline fetch) —
- * main.tsx is the composition root, so it's the right place to bridge them,
- * not a cross-package import in either direction.
+ * B-007: every tab stays mounted from boot (D-039), including underneath the
+ * launcher, so the Edit tab's own mount never coincides with a project
+ * actually opening — it would otherwise sit on the stale "no project" read it
+ * took at startup until some unrelated window-focus event happened to fire.
+ * This is the one place that legitimately spans both `app` (owns
+ * `useSessionStore`, the real "project is open" signal) and `@chroma/editor`
+ * (owns the timeline fetch); main.tsx is the composition root, so it's the
+ * right place to bridge them, not a cross-package import in either direction.
+ * B-034/D-112 turned that bridge from "fire a fetch and hope" into handing the
+ * store the signal itself — see the effect's own comment below.
  */
 function Root() {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
@@ -48,26 +49,21 @@ function Root() {
     previousTab.current = activeTab;
   }, [activeTab]);
 
+  // B-034/D-112 — the single bridge between the app's real "a project is
+  // open" signal and the Edit tab. Supersedes D-085's version, which called
+  // `load()` here and then re-called it once, 500ms later, if the first
+  // attempt had landed on an error — a heuristic whose own comment admitted
+  // it never proved the race it was guarding, and which by construction could
+  // only ever paper over one failure at one fixed delay.
+  //
+  // `projectOpen` is now handed to the store as state, not used as a trigger
+  // to fire a fetch and hope. The store owns everything downstream of that:
+  // when to fetch, how many times to retry, what to show while it's trying,
+  // and — the part that actually mattered — the fact that a *failed fetch is
+  // not evidence that no project is open*. `setProjectOpen` is idempotent, so
+  // this effect re-running with an unchanged value costs nothing.
   useEffect(() => {
-    if (!projectOpen) return;
-    // D-085: retry once, short delay, if the load lands on an error state —
-    // a defensive guard against a transient race between "frontend has set
-    // `projectPath`" and "backend's project-ref state is fully settled for
-    // *every* command to read," not just the one `openProject` itself
-    // awaited. Owner, live, screenshot: opened a project (Colorist rendered
-    // it successfully — confirmed via `app.log`), Edit tab stuck on "No
-    // project open" regardless. A single unconditional `load()` here
-    // couldn't explain that if the backend state really was ready by the
-    // time this effect ran; a real but narrow timing race is the most
-    // defensible explanation given nothing else in this bridge looks wrong
-    // on inspection — this makes that race harmless without pretending to
-    // have proven its exact mechanism.
-    useEditorTimelineStore.getState().load();
-    const retry = window.setTimeout(() => {
-      const s = useEditorTimelineStore.getState();
-      if (s.loaded && !s.timeline) s.load();
-    }, 500);
-    return () => window.clearTimeout(retry);
+    useEditorTimelineStore.getState().setProjectOpen(projectOpen);
   }, [projectOpen]);
 
   // D-071: `chroma_timeline_set` (the Edit tab's own save path, fired on
