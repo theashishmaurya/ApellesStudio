@@ -160,6 +160,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -212,6 +213,7 @@ import {
   gapAt,
   resolveClipLanding,
   syncLinkedClipIds,
+  syncLinkedClipIdsAtPosition,
   timelineFps,
   videoTrackIndex,
   type Clip,
@@ -596,22 +598,29 @@ function ClipBody({
  *  including the clip underneath, which is exactly what "can't drag in
  *  the same track any more" was. Making this permanently inert removes
  *  the whole bug class regardless of why `activeDrag` got stuck, not just
- *  the one trigger that happened to be found. The `isOver`-driven
- *  highlight still only shows during a real clip drag (`active` still
- *  gates the CSS, just not interactivity) — visual-only, harmless if
- *  ever stuck now instead of a functional blocker. */
-function TrackDropZone({ track, top, height, active }: { track: number; top: number; height: number; active: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({
+ *  the one trigger that happened to be found.
+ *
+ *  D-113 — the full-row `isOver` wash is GONE. Owner, live: "when i drag
+ *  and drop it shows whole track as white make only the track length and
+ *  where it is actually going to go, placeholder kindda." This element's
+ *  full-width `useDroppable` hit target is still correct and necessary —
+ *  dnd-kit needs a real drop target spanning the whole row to resolve
+ *  which track the pointer is over at all — but the row is no longer
+ *  PAINTED at that full width; the real visual feedback is
+ *  `clipDragPreview`'s own precisely-sized/positioned placeholder overlay
+ *  (rendered separately, sized to the dragged clip's actual duration,
+ *  positioned at its actual resolved landing frame) plus the sync-linked
+ *  ghost previews alongside it. This component stays purely a (now
+ *  invisible) hit-testing target. */
+function TrackDropZone({ track, top, height }: { track: number; top: number; height: number }) {
+  const { setNodeRef } = useDroppable({
     id: `track-drop:${track}`,
     data: { type: 'track' as const, track },
   });
   return (
     <div
       ref={setNodeRef}
-      className={
-        'pointer-events-none absolute left-0 right-0 z-20 ' +
-        (active && isOver ? 'bg-accent/10 outline outline-accent/60 -outline-offset-1' : '')
-      }
+      className="pointer-events-none absolute left-0 right-0 z-20"
       style={{ top, height }}
     />
   );
@@ -780,6 +789,49 @@ export function TimelinePane() {
   const [activeDrag, setActiveDrag] = useState<
     { type: 'track'; index: number } | { type: 'clip'; track: number; clipId: string } | null
   >(null);
+  // D-113 — owner, live: "when i drag and drop it shows whole track as
+  // white make only the track length and where it is actually going to
+  // go, placeholder kindda." The full-row wash `TrackDropZone` used to
+  // paint is gone (see that component's own updated doc); this is the
+  // real, precisely-sized/positioned replacement — the SAME resolved
+  // landing (`resolveClipLanding`) `onDndDragEnd` would actually apply,
+  // computed live on every `onDragMove` tick instead of only at drop time.
+  // Cleared on drag end/cancel and whenever the active drag isn't a clip
+  // drag at all (or isn't currently over a real track).
+  const [clipDragPreview, setClipDragPreview] = useState<{
+    fromTrack: number;
+    toTrack: number;
+    clipId: string;
+    startFrame: number;
+    duration: number;
+    ripple: boolean;
+  } | null>(null);
+
+  // D-113 — owner, live: "if both are synced, then both should move
+  // together and hover together." A live drag only ripples OTHER
+  // sync-locked tracks when the resolved landing actually needs one
+  // (`ripple: true` — the same condition `applyOp`'s `move` case gates the
+  // real `propagateSyncLockRipple` call on); every affected clip is
+  // rendered as its own ghost, shifted by the dragged clip's own duration
+  // — the exact delta `shiftClipsAtOrAfter` would apply for real on drop —
+  // so what's previewed during the drag matches what actually happens
+  // when it's released, not an approximation of it.
+  const dragSyncGhosts = useMemo(() => {
+    if (!timeline || !clipDragPreview || !clipDragPreview.ripple) return [];
+    const linkedIds = syncLinkedClipIdsAtPosition(timeline, clipDragPreview.toTrack, clipDragPreview.startFrame);
+    if (linkedIds.size === 0) return [];
+    const ghosts: { id: string; track: number; shiftedStart: number; duration: number }[] = [];
+    tracks.forEach((t, ti) => {
+      if (ti === clipDragPreview.toTrack) return; // same-track shift already IS the placeholder's own landing
+      for (const c of t.clips) {
+        if (linkedIds.has(c.id)) {
+          ghosts.push({ id: c.id, track: ti, shiftedStart: c.start_frame + clipDragPreview.duration, duration: c.duration });
+        }
+      }
+    });
+    return ghosts;
+  }, [timeline, clipDragPreview, tracks]);
+
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   // D-100 — a safety net, not the primary mechanism: dnd-kit's own sensors
@@ -1459,7 +1511,56 @@ export function TimelinePane() {
     setActiveDrag(data);
   }, []);
 
-  const onDndDragCancel = useCallback(() => setActiveDrag(null), []);
+  const onDndDragCancel = useCallback(() => {
+    setActiveDrag(null);
+    setClipDragPreview((prev) => (prev === null ? prev : null));
+  }, []);
+
+  // D-113 — live landing preview, the drag-tick-sensitive twin of
+  // `onDndDragEnd`'s own landing computation below (same math, same
+  // `resolveClipLanding` call — kept in sync deliberately, not copy-pasted
+  // and left to drift: if `onDndDragEnd`'s computation ever changes, this
+  // one needs to change with it). Fires on every pointer-move tick during
+  // a drag, so the D-083 discipline that already governs every other
+  // per-tick handler in this file applies here just as strictly: the
+  // `setClipDragPreview` call is gated to only actually dispatch when the
+  // resolved landing genuinely changed, not on every pixel of movement.
+  const onDndDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      const data = event.active.data.current as
+        | { type: 'track'; index: number }
+        | { type: 'clip'; track: number; clipId: string }
+        | undefined;
+      const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
+      if (!data || data.type !== 'clip' || !overData || overData.type !== 'track') {
+        setClipDragPreview((prev) => (prev === null ? prev : null));
+        return;
+      }
+      const { track: fromTrack, clipId } = data;
+      const i = idxOf(fromTrack, clipId);
+      if (i < 0) return;
+      const clip = clipsOf(fromTrack)[i];
+      const toTrack = overData.track;
+      const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+      const intendedFrame = clip.start_frame + deltaFrames;
+      const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, intendedFrame, snapFrames);
+      setClipDragPreview((prev) => {
+        if (
+          prev &&
+          prev.fromTrack === fromTrack &&
+          prev.toTrack === toTrack &&
+          prev.clipId === clipId &&
+          prev.startFrame === startFrame &&
+          prev.ripple === ripple
+        ) {
+          return prev; // no real change — same discipline as onDragOver's setDragOver
+        }
+        return { fromTrack, toTrack, clipId, startFrame, duration: clip.duration, ripple };
+      });
+    },
+    [idxOf, clipsOf, pxPerSec, fps, tracks],
+  );
 
   const onDndDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -1468,6 +1569,7 @@ export function TimelinePane() {
         | { type: 'clip'; track: number; clipId: string }
         | undefined;
       setActiveDrag(null);
+      setClipDragPreview((prev) => (prev === null ? prev : null));
       if (!data) return;
 
       if (data.type === 'track') {
@@ -1619,7 +1721,13 @@ export function TimelinePane() {
         : null;
 
   return (
-    <DndContext sensors={dndSensors} onDragStart={onDndDragStart} onDragEnd={onDndDragEnd} onDragCancel={onDndDragCancel}>
+    <DndContext
+      sensors={dndSensors}
+      onDragStart={onDndDragStart}
+      onDragMove={onDndDragMove}
+      onDragEnd={onDndDragEnd}
+      onDragCancel={onDndDragCancel}
+    >
       <div
         className={
           'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
@@ -1953,6 +2061,63 @@ export function TimelinePane() {
                   />
                 );
               })()}
+            {/* D-113 — owner, live: "have track horizontal lines as well."
+                The library's own bundled CSS draws no row separators at all
+                (checked, not assumed) — real, missing, not just faint. One
+                thin line per track's bottom edge, `z-0` so every real
+                overlay/clip paints over it, `border-border-color` (the same
+                real token the track-header sidebar's own row dividers
+                already use, not a new literal). */}
+            {tracks.map((_, i) => (
+              <div
+                key={`row-line-${i}`}
+                className="pointer-events-none absolute left-0 right-0 z-0 border-b border-border-color/60"
+                style={{ top: RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop, height: ROW_HEIGHT }}
+              />
+            ))}
+            {/* D-113 — the precise cross-track/same-track clip-move
+                placeholder, replacing `TrackDropZone`'s old full-row wash
+                (see that component's own doc). Sized to the dragged clip's
+                REAL duration, positioned at the REAL resolved landing frame
+                — the same values `onDndDragEnd` would actually apply, not
+                an approximation of them. Same dashed-ghost visual language
+                `insertPreview`'s `'new_track'` case already established
+                (`border-dashed border-accent/70 bg-accent/10`), for
+                consistency with the one other "this is where it's going to
+                land" indicator this file already has. */}
+            {clipDragPreview && (
+              <div
+                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-accent/70 bg-accent/10"
+                style={{
+                  left: START_LEFT_PX + (clipDragPreview.startFrame / fps) * pxPerSec - scrollLeft,
+                  width: (clipDragPreview.duration / fps) * pxPerSec,
+                  top: RULER_AND_MARGIN_PX + clipDragPreview.toTrack * ROW_HEIGHT - scrollTop,
+                  height: ROW_HEIGHT,
+                }}
+              />
+            )}
+            {/* D-113 — owner, live: "if both are synced, then both should
+                move together and hover together." One ghost per
+                `dragSyncGhosts` entry, at that clip's OWN track, shifted by
+                the dragged clip's duration — a live preview of the real
+                ripple the drop would apply to every sync-linked track, not
+                just the one track being dragged onto. A slightly different
+                visual weight from the primary landing placeholder above
+                (`ring-text-secondary`-toned, matching D-111's own selection-
+                time sync-linked ring, not the primary accent) — related to
+                the drop, not the drop's own destination. */}
+            {dragSyncGhosts.map((g) => (
+              <div
+                key={`sync-ghost-${g.id}`}
+                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
+                style={{
+                  left: START_LEFT_PX + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
+                  width: (g.duration / fps) * pxPerSec,
+                  top: RULER_AND_MARGIN_PX + g.track * ROW_HEIGHT - scrollTop,
+                  height: ROW_HEIGHT,
+                }}
+              />
+            ))}
             {/* D-098 — one real `useDroppable` target per track, always
                 mounted (see `TrackDropZone`'s own doc for why — a real
                 mid-drag droppable-registration timing bug found live), only
@@ -1961,13 +2126,7 @@ export function TimelinePane() {
                 coordinate space every other overlay in this file already
                 uses. */}
             {tracks.map((_, i) => (
-              <TrackDropZone
-                key={i}
-                track={i}
-                top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop}
-                height={ROW_HEIGHT}
-                active={activeDrag?.type === 'clip'}
-              />
+              <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop} height={ROW_HEIGHT} />
             ))}
           </div>
         </ResizablePanel>

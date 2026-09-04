@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Cross-track drag preview is now honest (D-113).** Two
+  related follow-ups to D-111 on the same live-testing session: the
+  full-row drag-over wash is gone, replaced by a precisely-sized/
+  positioned placeholder matching the clip's real duration and real
+  resolved landing frame (reusing the same `resolveClipLanding` math the
+  actual drop applies); sync-linked clips on other tracks now render a
+  live shifted ghost during the drag itself, not just a static highlight
+  at selection time. Real horizontal row separator lines added too (the
+  library draws none itself).
 - **2026-09-04** — **"No project open" (5th occurrence): fixed the screen that
   was misreporting all five, not just the fifth cause (B-034/D-112).** The
   common factor across B-004/B-025/B-031/B-032 was never any one of them — it

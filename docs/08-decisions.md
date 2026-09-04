@@ -8599,3 +8599,83 @@ Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
   five investigations were run against a dev server whose source files other agents were
   actively rewriting.** Live testing needs a quiesced tree or its own worktree — see B-034's
   process note.
+
+---
+
+## D-113 — Cross-track drag preview: a real precise placeholder, real row lines, and sync-linked clips move together live
+
+**decided (2026-09-04)** — a direct follow-on to D-111's selection-time sync-lock
+highlight, same live-testing session.
+
+**Context.** Two related reports on the just-shipped cross-track clip-move drag,
+both about the drag *preview* lying about what would actually happen on drop:
+
+1. **Wrong-shaped highlight.** Owner: "when i drag and drop it shows whole track as
+   white make only the track length and where it is actually going to go,
+   placeholder kindda." `TrackDropZone` (D-098/D-100) painted its ENTIRE full-width
+   `useDroppable` hit target as a solid wash (`bg-accent/10 outline...`) whenever
+   `isOver` — a real hit target spanning the whole row is correct and necessary for
+   dnd-kit's own collision detection, but painting it at that same full width is
+   not what a "here's where this clip will land" indicator should look like. Also
+   requested in the same message: **"have track horizontal lines as well"** — the
+   timeline library's own bundled CSS was checked, not assumed, and draws zero row
+   separators; genuinely missing, not just faint.
+2. **Sync-linked clips don't move together in the live preview.** Owner: "if both
+   are synced, then both should move together and hover together." D-111 built
+   `syncLinkedClipIds` to highlight related clips at *selection* time, but the
+   live drag preview (before this pass) only ever showed the one clip physically
+   being dragged — a viewer had no way to see, before releasing, that a
+   sync-locked ripple was about to shift a clip on an entirely different track.
+
+**What shipped** (`packages/editor/src/timeline.ts`, `TimelinePane.tsx`,
+`timeline.test.ts`):
+
+- **`collectSyncLinkedClips`** — the shared core predicate `syncLinkedClipIds`
+  (D-111) already used, extracted so a SECOND caller can reuse it from an explicit
+  `(track, thresholdFrame)` pair rather than an existing clip's own `start_frame`.
+  Necessary because a clip mid-drag to a new track isn't a member of that track's
+  `clips` array yet — there's no real clip there to look up a position from.
+  **`syncLinkedClipIdsAtPosition(tl, track, thresholdFrame)`** is the new public
+  entry point built on it; confirmed via a real test that it agrees with
+  `syncLinkedClipIds` exactly when given the same position a real selected clip
+  would resolve to — one predicate, two callers, not two approximate definitions
+  of "related."
+- **`onDndDragMove`**, a new `@dnd-kit/core` handler (the live-tick twin of
+  `onDndDragEnd`'s own landing computation — same `resolveClipLanding` call,
+  deliberately kept in sync rather than copy-pasted and left to drift) resolving
+  the REAL landing track/frame on every pointer-move tick, gated (D-083 discipline
+  — this is drag-tick render-path code, the exact class of bug this file has
+  already spent six rounds stabilizing) to only actually `setState` when the
+  resolved landing genuinely changes, not on every pixel of movement.
+- **`TrackDropZone` no longer paints anything** — stays a purely invisible
+  `useDroppable` hit target (still full-width, still necessary for dnd-kit's
+  collision detection to work at all). The real visual feedback is now two new,
+  separately-rendered overlays: a precisely-sized/positioned dashed placeholder at
+  the clip's actual resolved duration/frame (reusing `insertPreview`'s own
+  established `border-dashed border-accent/70 bg-accent/10` ghost language for
+  visual consistency with the one other "here's where this will land" indicator
+  this file already has), and one ghost per `dragSyncGhosts` entry — every
+  sync-linked clip on another track, shown shifted by the dragged clip's own
+  duration (the exact delta a real drop would apply), styled with a distinct
+  `text-secondary`-toned ring (matching D-111's own selection-time sync-linked
+  ring, never the primary accent — related to the drop, not the drop's own
+  destination).
+- **Real horizontal row separators**, one thin `border-border-color/60` line per
+  track's bottom edge, `z-0` so every real clip/overlay paints over it — the same
+  real token the track-header sidebar's own row dividers already use, not a new
+  color literal.
+
+**Verification.** 5 new `syncLinkedClipIdsAtPosition` unit tests (bare-position
+linking, no-link-when-before, straddle-linking, exclusion of the edited/unsynced/
+locked tracks, and the direct agreement-with-`syncLinkedClipIds` check) — 136/136
+total in `packages/editor`, `tsc` clean on `packages/editor` and `app` (64-error
+`app` baseline unchanged). **Honestly flagged, not claimed closed**: the live dev
+app wasn't in a stable, fully-booted state for the whole of this pass (a concurrent
+fork owned its restart cycle) — this is strong static/logic verification (the
+exact same landing math `onDndDragEnd` already uses, now also driving the live
+preview; the sync-link predicate proven to agree with D-111's own tested one), not
+an interactive click-through of the actual drag gesture. The owner's own hands-on
+check is what closes the loop.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc

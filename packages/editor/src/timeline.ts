@@ -448,23 +448,42 @@ function findStraddlingSyncLockedTrack(tracks: Track[], editedTrack: number, thr
  *  (would BLOCK the ripple, B-033). Both read as "this clip is really tied
  *  to the selection via sync-lock" — the caller renders one shared secondary
  *  highlight for the whole set, distinct from the primary selection ring. */
+function collectSyncLinkedClips(tracks: Track[], editedTrack: number, threshold: number): Set<string> {
+  const linked = new Set<string>();
+  tracks.forEach((t, i) => {
+    if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return;
+    for (const c of t.clips) {
+      if (c.start_frame >= threshold || (c.start_frame < threshold && endFrame(c) > threshold)) {
+        linked.add(c.id);
+      }
+    }
+  });
+  return linked;
+}
+
 export function syncLinkedClipIds(tl: Timeline, selection: { track: number; id: string }[]): Set<string> {
   const linked = new Set<string>();
   for (const sel of selection) {
     const track = tl.tracks[sel.track];
     const clip = track?.clips.find((c) => c.id === sel.id);
     if (!clip) continue;
-    const threshold = clip.start_frame;
-    tl.tracks.forEach((t, i) => {
-      if (i === sel.track || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return;
-      for (const c of t.clips) {
-        if (c.start_frame >= threshold || (c.start_frame < threshold && endFrame(c) > threshold)) {
-          linked.add(c.id);
-        }
-      }
-    });
+    for (const id of collectSyncLinkedClips(tl.tracks, sel.track, clip.start_frame)) linked.add(id);
   }
   return linked;
+}
+
+/** Live drag-preview variant of `syncLinkedClipIds` — same shared predicate
+ *  (`collectSyncLinkedClips`), but from an explicit `(track, thresholdFrame)`
+ *  pair instead of an existing selected clip's own `start_frame`. Needed
+ *  because a clip mid-drag to a new track isn't a member of that track's
+ *  `clips` yet, so there's no real clip to look up — `TimelinePane.tsx`'s
+ *  `onDndDragMove` passes the live-resolved landing track/frame straight
+ *  through instead. D-113 (owner: "if both are synced, then both should
+ *  move together and hover together" — the drag-preview follow-up to
+ *  D-111's selection-time highlight; D-112 is a concurrent, unrelated
+ *  fork's own number — checked before claiming this one). */
+export function syncLinkedClipIdsAtPosition(tl: Timeline, track: number, thresholdFrame: number): Set<string> {
+  return collectSyncLinkedClips(tl.tracks, track, thresholdFrame);
 }
 
 /** Propagate a ripple already applied to `editedTrack` (index into

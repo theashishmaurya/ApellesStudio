@@ -15,6 +15,7 @@ import {
   nextAppendFrame,
   resolveClipLanding,
   syncLinkedClipIds,
+  syncLinkedClipIdsAtPosition,
   type Clip,
   type Timeline,
   type Track,
@@ -1029,5 +1030,51 @@ describe('syncLinkedClipIds — the visual "sync-linked to this selection" set (
   it('is a no-op-safe empty set when the selected clip id does not exist on its track', () => {
     const tl = twoTrack([clip('a', 'A')], [clip('x', 'X')]);
     expect(syncLinkedClipIds(tl, [{ track: 0, id: 'does-not-exist' }])).toEqual(new Set());
+  });
+});
+
+describe('syncLinkedClipIdsAtPosition — the live drag-preview variant (D-113)', () => {
+  // Same predicate as syncLinkedClipIds, but from an explicit (track,
+  // thresholdFrame) pair — the shape `TimelinePane.tsx`'s onDndDragMove
+  // needs, since a clip mid-drag to a new track isn't a member of that
+  // track's clips yet (there's no real clip to look up a start_frame from).
+
+  it('links a clip on another sync-locked track at/after the given threshold, from a bare position (no real clip needed)', () => {
+    const tl = twoTrack([], [clip('x', 'X', { start_frame: 50, duration: 20 }), clip('y', 'Y', { start_frame: 100, duration: 20 })]);
+    expect(syncLinkedClipIdsAtPosition(tl, 0, 40)).toEqual(new Set(['x', 'y']));
+  });
+
+  it('does not link a clip fully before the threshold', () => {
+    const tl = twoTrack([], [clip('x', 'X', { start_frame: 0, duration: 20 })]);
+    expect(syncLinkedClipIdsAtPosition(tl, 0, 100)).toEqual(new Set());
+  });
+
+  it('links a straddling clip too, same as the selection-based variant', () => {
+    const tl = twoTrack([], [clip('x', 'X', { start_frame: 50, duration: 100 })]);
+    expect(syncLinkedClipIdsAtPosition(tl, 0, 100)).toEqual(new Set(['x']));
+  });
+
+  it('excludes the edited track itself and any sync_locked: false / individually locked track', () => {
+    const tl: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('same', 'Same', { start_frame: 50, duration: 20 })] },
+        { kind: 'video', clips: [clip('x', 'X', { start_frame: 50, duration: 20 })], sync_locked: false },
+        { kind: 'video', clips: [clip('y', 'Y', { start_frame: 50, duration: 20 })], locked: true },
+        { kind: 'video', clips: [clip('z', 'Z', { start_frame: 50, duration: 20 })] },
+      ],
+    };
+    expect(syncLinkedClipIdsAtPosition(tl, 0, 0)).toEqual(new Set(['z']));
+  });
+
+  it('agrees with syncLinkedClipIds when given the same (track, threshold) a real selected clip would resolve to', () => {
+    const tl = twoTrack(
+      [clip('a', 'A', { start_frame: 30, duration: 40 })],
+      [clip('x', 'X', { start_frame: 50, duration: 20 })],
+    );
+    const viaSelection = syncLinkedClipIds(tl, [{ track: 0, id: 'a' }]);
+    const viaPosition = syncLinkedClipIdsAtPosition(tl, 0, 30);
+    expect(viaPosition).toEqual(viaSelection);
   });
 });
