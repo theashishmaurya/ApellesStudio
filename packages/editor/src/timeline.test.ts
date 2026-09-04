@@ -10,6 +10,7 @@ import {
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
+  findClip,
   gapAt,
   labelForOp,
   nextAppendFrame,
@@ -1076,5 +1077,30 @@ describe('syncLinkedClipIdsAtPosition — the live drag-preview variant (D-113)'
     const viaSelection = syncLinkedClipIds(tl, [{ track: 0, id: 'a' }]);
     const viaPosition = syncLinkedClipIdsAtPosition(tl, 0, 30);
     expect(viaPosition).toEqual(viaSelection);
+  });
+});
+
+// D-118 — `findClip` is the lookup `EditorInspectorPanel` (a real sibling of
+// `TimelinePane` now, not nested inside it) needs to resolve the store's
+// lifted `selection` back to an actual `Clip`, without duplicating the
+// `tracks[track]?.clips.findIndex(...)` logic in two files.
+describe('findClip (D-118)', () => {
+  it('finds a real clip by track + id, with its index', () => {
+    const tl = twoTrack([clip('a', 'A')], [clip('x', 'X'), clip('y', 'Y')]);
+    expect(findClip(tl, 1, 'y')).toEqual({ clip: expect.objectContaining({ id: 'y' }), index: 1 });
+  });
+
+  it('returns null for an id not on that track — a stale selection (removed clip), not a crash', () => {
+    const tl = twoTrack([clip('a', 'A')], [clip('x', 'X')]);
+    expect(findClip(tl, 1, 'gone')).toBeNull();
+  });
+
+  it('returns null for an out-of-range track index', () => {
+    const tl = twoTrack([clip('a', 'A')], []);
+    expect(findClip(tl, 5, 'a')).toBeNull();
+  });
+
+  it('returns null for a null timeline — the "nothing loaded yet" case', () => {
+    expect(findClip(null, 0, 'a')).toBeNull();
   });
 });

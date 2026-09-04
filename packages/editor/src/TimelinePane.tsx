@@ -199,9 +199,8 @@ import {
   TooltipTrigger,
 } from '@chroma/ui';
 
-import { useEditorTimelineStore } from './timelineStore';
+import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { Waveform } from './Waveform';
-import { ClipInspectorPanel } from './ClipInspectorPanel';
 import { niceTickIntervalSeconds, formatTimecode } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
@@ -221,12 +220,6 @@ import {
   type Timeline,
   type Track,
 } from './timeline';
-import {
-  clearClipKeyframes,
-  clipSourceFrame,
-  removeClipKeyframe,
-  upsertClipKeyframe,
-} from './clipKeyframes';
 
 const EFFECT_ID = 'clip';
 /** how many pixels a labeled ruler tick should target, at any zoom (D-058
@@ -356,11 +349,6 @@ function startFramesById(tl: Timeline | null): Map<string, number> {
     for (const c of track.clips) m.set(c.id, c.start_frame);
   }
   return m;
-}
-
-interface Selection {
-  track: number;
-  id: string;
 }
 
 /** D-098 — real `@dnd-kit/sortable` drag id for track `index`, and the
@@ -647,7 +635,8 @@ export function TimelinePane() {
    *  `[]` is "nothing selected" — the doc's own recommended replacement for
    *  `null`, since every consumer below already treats an empty selection
    *  and a null one identically. */
-  const [selection, setSelection] = useState<Selection[]>([]);
+  const selection = useEditorTimelineStore((s) => s.selection);
+  const setSelection = useEditorTimelineStore((s) => s.setSelection);
   const isInSelection = (sel: Selection[], track: number, id: string) =>
     sel.some((s) => s.track === track && s.id === id);
   const toggleInSelection = (sel: Selection[], track: number, id: string): Selection[] =>
@@ -669,7 +658,8 @@ export function TimelinePane() {
    *  sites (Inspector panel, "Move to" dropdown, Transform, drag handles) for
    *  a feature that only needs two new entry points and one new toolbar/
    *  keyboard action. */
-  const [selectedGap, setSelectedGap] = useState<{ track: number; frame: number } | null>(null);
+  const selectedGap = useEditorTimelineStore((s) => s.selectedGap);
+  const setSelectedGap = useEditorTimelineStore((s) => s.setSelectedGap);
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
@@ -1722,71 +1712,12 @@ export function TimelinePane() {
 
   const otherTracks = primary ? tracks.map((_, i) => i).filter((i) => i !== primary.track) : [];
 
-  // D-090 — clip-transform popover + keyframing, wired to `set_clip_
-  // transform`/`set_clip_keyframes` (D-089). `selectedClip` is `null` for a
-  // stale selection (removed clip/track) — the trigger button below is
-  // disabled in that case, same guard every other selection-gated toolbar
-  // action here already uses.
-  const selectedIdx = primary ? idxOf(primary.track, primary.id) : -1;
-  const selectedClip: Clip | null = primary && selectedIdx >= 0 ? clipsOf(primary.track)[selectedIdx] : null;
-  const selectedTrackLocked = primary ? !!tracks[primary.track]?.locked : false;
-  // Keyframes are interpolated against the clip's own SOURCE frame, not the
-  // absolute timeline position — see `clipKeyframes.ts`'s doc.
-  const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead) : 0;
-  const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
-  const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
-
-  const applyTransform = (
-    patch: Partial<{ opacity: number; position_x: number; position_y: number; scale: number; rotation: number }>,
-  ) => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    applyOp({
-      kind: 'set_clip_transform',
-      track: primary.track,
-      clip: selectedIdx,
-      opacity: patch.opacity ?? selectedClip.opacity ?? 1,
-      position_x: patch.position_x ?? selectedClip.position_x ?? 0,
-      position_y: patch.position_y ?? selectedClip.position_y ?? 0,
-      scale: patch.scale ?? selectedClip.scale ?? 1,
-      rotation: patch.rotation ?? selectedClip.rotation ?? 0,
-    });
-  };
-
-  const doUpsertKeyframe = () => {
-    if (!primary || !selectedClip || selectedIdx < 0) return;
-    applyOp({
-      kind: 'set_clip_keyframes',
-      track: primary.track,
-      clip: selectedIdx,
-      keyframes: upsertClipKeyframe(clipKeyframes, clipKfSourceFrame, {
-        opacity: selectedClip.opacity ?? 1,
-        position_x: selectedClip.position_x ?? 0,
-        position_y: selectedClip.position_y ?? 0,
-        scale: selectedClip.scale ?? 1,
-        rotation: selectedClip.rotation ?? 0,
-      }),
-    });
-  };
-
-  const doRemoveKeyframeHere = () => {
-    if (!primary || selectedIdx < 0) return;
-    applyOp({
-      kind: 'set_clip_keyframes',
-      track: primary.track,
-      clip: selectedIdx,
-      keyframes: removeClipKeyframe(clipKeyframes, clipKfSourceFrame) ?? [],
-    });
-  };
-
-  const doClearKeyframes = () => {
-    if (!primary || selectedIdx < 0) return;
-    applyOp({
-      kind: 'set_clip_keyframes',
-      track: primary.track,
-      clip: selectedIdx,
-      keyframes: clearClipKeyframes() ?? [],
-    });
-  };
+  // D-117 — the Inspector (selectedClip/applyTransform/keyframe ops) moved
+  // out to `EditorInspectorPanel.tsx`, a sibling of this component rendered
+  // full-height in `EditorTab.tsx` instead of a third pane nested in here —
+  // see that file's doc for the "why". `selection`/`selectedGap` stay
+  // sourced from `useEditorTimelineStore` (lifted in the same pass) so both
+  // components read the exact same selection without prop-drilling.
 
   // D-098 — `DragOverlay` content: a small floating pill following the
   // pointer for whichever drag is active, a real cursor-follow preview
@@ -1914,9 +1845,10 @@ export function TimelinePane() {
           )}
 
           {/* D-090's clip-transform popover was removed in D-102 — the
-              persistent `ClipInspectorPanel` in the resizable panel group
-              below replaces it, same fields/ops, better UX for iterating on
-              values, no reason to keep both. */}
+              persistent `ClipInspectorPanel` replaces it (D-117: now a
+              full-height sibling panel in `EditorTab.tsx`, not nested here),
+              same fields/ops, better UX for iterating on values, no reason
+              to keep both. */}
 
           <div className="ml-auto flex items-center gap-0.5">
             <Tooltip>
@@ -2209,34 +2141,6 @@ export function TimelinePane() {
               <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop} height={ROW_HEIGHT} />
             ))}
           </div>
-        </ResizablePanel>
-
-        <ResizableHandle />
-
-        {/* D-102 — the Inspector, NLE half (Phase 3 of
-            `docs/notes/global-inspector.md`), replacing D-090's popover.
-            Persistent, matching `@chroma/motion`'s `InspectorPanel.tsx`
-            (Phase 2) UX for the other "Global Inspector" half — a real
-            resizable pane, not a fixed width, per the standing CLAUDE.md
-            rule. `Selection` stays local to this file for this pass; a
-            tab-agnostic shared shell is Phase 4's job once both halves
-            exist. */}
-        <ResizablePanel
-          defaultSize={280}
-          minSize={220}
-          maxSize={420}
-          className="border-l border-border-color bg-surface"
-        >
-          <ClipInspectorPanel
-            clip={selectedClip}
-            trackLocked={selectedTrackLocked}
-            clipKeyframes={clipKeyframes}
-            keyedHere={keyedHere}
-            onTransformChange={applyTransform}
-            onUpsertKeyframe={doUpsertKeyframe}
-            onRemoveKeyframeHere={doRemoveKeyframeHere}
-            onClearKeyframes={doClearKeyframes}
-          />
         </ResizablePanel>
       </ResizablePanelGroup>
       </div>

@@ -168,3 +168,60 @@ describe('recovery (B-034 / D-112)', () => {
     expect(s.error).toContain('lost IPC response');
   });
 });
+
+// D-118 — `selection`/`selectedGap` moved here from `TimelinePane.tsx`'s own
+// local `useState` so `EditorInspectorPanel` (now a sibling component, not
+// nested inside `TimelinePane`) can read the same selection. These assert
+// the two real behaviors that used to be implicit in two co-located
+// `useState` calls and now have to hold across a store instead: mutual
+// exclusivity, and that `setSelection` still accepts a `useState`-style
+// updater (`TimelinePane`'s pre-existing call sites — shift-click range
+// extend, cmd-click toggle — all use the functional form).
+describe('selection (D-118)', () => {
+  beforeEach(() => {
+    useEditorTimelineStore.setState({ selection: [], selectedGap: null });
+  });
+
+  it('selecting a clip clears any selected gap', () => {
+    useEditorTimelineStore.setState({ selectedGap: { track: 0, frame: 40 } });
+    useEditorTimelineStore.getState().setSelection([{ track: 0, id: 'a' }]);
+    expect(useEditorTimelineStore.getState().selectedGap).toBeNull();
+  });
+
+  it('selecting a gap clears any clip selection', () => {
+    useEditorTimelineStore.setState({ selection: [{ track: 0, id: 'a' }] });
+    useEditorTimelineStore.getState().setSelectedGap({ track: 0, frame: 40 });
+    expect(useEditorTimelineStore.getState().selection).toEqual([]);
+  });
+
+  it('deselecting a gap (null) leaves the clip selection alone', () => {
+    useEditorTimelineStore.setState({ selection: [{ track: 0, id: 'a' }], selectedGap: null });
+    useEditorTimelineStore.getState().setSelectedGap(null);
+    expect(useEditorTimelineStore.getState().selection).toEqual([{ track: 0, id: 'a' }]);
+  });
+
+  it('setSelection accepts a useState-style updater reading the real in-store prev value', () => {
+    useEditorTimelineStore.getState().setSelection([{ track: 0, id: 'a' }]);
+    useEditorTimelineStore.getState().setSelection((prev) => [...prev, { track: 0, id: 'b' }]);
+    expect(useEditorTimelineStore.getState().selection).toEqual([
+      { track: 0, id: 'a' },
+      { track: 0, id: 'b' },
+    ]);
+  });
+
+  it('closing the project resets both selection and selectedGap', () => {
+    // `setProjectOpen` is idempotent (guards on `get().projectOpen === open`,
+    // see its own doc) — it has to genuinely transition open→closed to hit
+    // the reset branch, so mark it open first rather than relying on the
+    // outer `beforeEach`'s already-closed default.
+    useEditorTimelineStore.setState({
+      projectOpen: true,
+      selection: [{ track: 0, id: 'a' }],
+      selectedGap: { track: 1, frame: 10 },
+    });
+    useEditorTimelineStore.getState().setProjectOpen(false);
+    const s = useEditorTimelineStore.getState();
+    expect(s.selection).toEqual([]);
+    expect(s.selectedGap).toBeNull();
+  });
+});

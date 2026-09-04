@@ -43,7 +43,11 @@ numbers are actually calibrated).
   HTML5 drag before the page saw it) — the actual last piece, confirmed by
   the owner dragging a real clip in the real window. Edge-trim now has a
   real `ew-resize` cursor + hover affordance (D-061; the library never
-  styled this). No multi-track or transcript cut yet.
+  styled this). **The clip-properties Inspector is now a real full-height
+  side panel** (D-118 — was a third pane nested inside the timeline's own
+  split, capped at the timeline row's height; now a sibling of the
+  preview+timeline column, spanning the tab, with its own tab-local opener
+  button). No multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
@@ -62,9 +66,14 @@ numbers are actually calibrated).
   via a hover trash icon/right-click or multi-select "Select all"/"Delete (N)"
   — D-060/D-061), `@chroma/ui` (shadcn/Base UI, 18 components, themed). **Sources
   docks on the left as a real resizable panel** (was a fixed-width right column —
-  D-114), matching the media-bin-left convention Premiere/Resolve/Final Cut/
-  Palmier Pro all share; each tab's own properties/inspector panel already
-  anchors to its own right edge independently.
+  D-116, corrected here from an earlier mis-citation of D-114, which is
+  actually the unrelated manifest-cache decision), matching the media-bin-left
+  convention Premiere/Resolve/Final Cut/Palmier Pro all share; each tab's own
+  properties/inspector panel already anchors to its own right edge
+  independently — `Shell.tsx` stays deliberately tab-agnostic, so this is
+  the one genuinely shell-level panel (see D-118 for why the Edit tab's own
+  Inspector, by contrast, stayed a tab-local panel rather than also moving
+  to shell level).
 - **Monorepo** — de-submoduled (`app/` = vendored RapidRAW), Cargo + npm workspace
   (`crates/`, `packages/`), 3 stub crates real-but-thin. Full layer table:
   `docs/notes/architecture-lock.md`.

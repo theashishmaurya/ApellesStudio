@@ -6,24 +6,32 @@
  * transform (opacity/position/scale/rotation) and keyframes — the same
  * fields, the same ops (`set_clip_transform`/`set_clip_keyframes`), and the
  * same keyframe CRUD (`clipKeyframes.ts`, itself mirroring `RelightPanel.
- * tsx`'s pattern) the D-090 popover this replaces already used. This is a
- * pure presentation swap, not new editing logic: `TimelinePane.tsx` still
- * owns `selectedClip`/`applyTransform`/`doUpsertKeyframe`/etc. exactly as
- * D-089/D-090 built them — this component only renders them, as a
- * persistent side panel instead of a click-to-open `Popover`, matching
- * `@chroma/motion`'s `InspectorPanel.tsx` (D-099, Phase 2) UX for the
- * "Global Inspector" framing's other half.
+ * tsx`'s pattern) the D-090 popover this replaced already used. This
+ * component is pure presentation — it takes `clip`/`clipKeyframes`/the
+ * transform-and-keyframe callbacks as props and renders them, nothing else.
  *
- * D-090's popover is REMOVED as of this pass, not kept alongside this panel
- * — same field set, same ops, a persistent panel is strictly better UX for
- * exactly the kind of "nudge a value, watch the preview" iteration this
- * editor supports, and having both would mean two controls that can edit
- * the same clip out of sync with each other for no real benefit. `Selection`
- * itself stays local to `TimelinePane.tsx` for this pass (not lifted to a
- * shared store/prop-drilled up to `Shell.tsx`).
+ * D-118 — **who owns those props changed, this component's own contract
+ * didn't.** D-102/D-103 had `TimelinePane.tsx` compute `selectedClip`/
+ * `applyTransform`/the keyframe CRUD functions inline and render this panel
+ * as a third pane nested in its own `ResizablePanelGroup` (capped at the
+ * timeline's own height, not the tab's). The owner asked for this panel
+ * full-height instead ("like source control... instead of being in the
+ * timeline"), so `EditorInspectorPanel.tsx` is now the real owner of that
+ * derivation — `TimelinePane.tsx` no longer renders `ClipInspectorPanel` at
+ * all. `selection`/`selectedGap` moved from `TimelinePane`'s local
+ * `useState` into `useEditorTimelineStore` in the same pass (see that
+ * file's doc), specifically so both components can read the one shared
+ * selection without prop-drilling through a parent that doesn't otherwise
+ * need it. This file's own props/JSX are unchanged — only its caller moved.
  *
- * D-103 (Phase 4): the empty-state message and section-heading styling now
- * come from `@chroma/inspector` (a tiny shared package with no `@chroma/ui`
+ * D-090's popover is REMOVED, not kept alongside this panel — same field
+ * set, same ops, a persistent panel is strictly better UX for exactly the
+ * kind of "nudge a value, watch the preview" iteration this editor
+ * supports, and having both would mean two controls that can edit the same
+ * clip out of sync with each other for no real benefit.
+ *
+ * D-103 (Phase 4): the empty-state message and section-heading styling come
+ * from `@chroma/inspector` (a tiny shared package with no `@chroma/ui`
  * dependency — see its README), the same components `@chroma/motion`'s
  * `InspectorPanel.tsx` uses. The field layout (`row`/`numInput` below) stays
  * local and different from Motion's — this panel's side-by-side label/input
@@ -32,12 +40,11 @@
  * selects/colour-pickers too; forcing one shape onto the other would mean
  * rewriting a working, tested layout for no real benefit, exactly the
  * "don't force a deeper unification than is actually clean" call
- * `@chroma/inspector`'s README documents. `Selection` staying local (not
- * lifted to a shared, tab-agnostic store) is the other real Phase 4 call —
- * `Shell.tsx` already keeps every tab mounted and simply hides inactive
- * ones, so a per-tab-local Inspector already behaves exactly like a
- * cross-tab shared one from the user's side; there was no real gap lifting
- * state would have closed, so it wasn't built.
+ * `@chroma/inspector`'s README documents. Motion's `InspectorPanel.tsx` and
+ * Colorist's `ControlsPanel` remain each tab's own always-visible right
+ * panel — this pass only changed the Edit tab's own internal layout, not
+ * `Shell.tsx` or the other two tabs (D-118's own decision entry has the
+ * real reasoning for why this stayed tab-local, not a shell-level panel).
  */
 import { Diamond, X } from 'lucide-react';
 import { Button, Input } from '@chroma/ui';

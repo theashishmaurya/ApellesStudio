@@ -23,15 +23,38 @@
  * project is genuinely open says so instead, with the real backend error and
  * a Retry. Recovery from a transient failure is automatic (the store's retry
  * ladder), so Retry is a last resort rather than the only way out.
+ *
+ * D-118 — the Inspector (`EditorInspectorPanel`, wrapping `ClipInspector
+ * Panel`) is now a real sibling of the preview+timeline column, in its own
+ * full-height `ResizablePanel`, not a third pane nested inside
+ * `TimelinePane.tsx`'s own split (which was capped at the timeline row's
+ * height, `h-[46%]` below). Same architectural treatment `@chroma/shell`'s
+ * D-116 gave the Sources panel on the left — a real resizable column, not a
+ * fixed width, spanning the full tab. Toggled by a local button in this
+ * tab's own preview-area toolbar (not a `Shell.tsx` chrome-bar button like
+ * Sources' toggle): `Shell` is deliberately tab-agnostic (its own doc:
+ * "never on the colorist app or the editor/motion packages"), and unlike
+ * Sources — one real, shared media pool used identically by all three tabs
+ * — this Inspector is Edit-tab-specific content (Colorist has its own
+ * `ControlsPanel`, Motion its own `InspectorPanel`, neither toggleable
+ * today), so a shell-level toggle would need `Shell` to become aware of
+ * which tab is active just to know whether to show it — a real layering
+ * violation for what a tab-local button delivers just as well.
  */
 
-import { useEffect } from 'react';
-import { Button } from '@chroma/ui';
+import { useState, useEffect } from 'react';
+import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@chroma/ui';
+import { PanelRight } from 'lucide-react';
 
+import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
+
+const INSPECTOR_DEFAULT_WIDTH = 280;
+const INSPECTOR_MIN_WIDTH = 220;
+const INSPECTOR_MAX_WIDTH = 420;
 
 export function EditorTab() {
   const load = useEditorTimelineStore((s) => s.load);
@@ -39,6 +62,7 @@ export function EditorTab() {
   const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
 
   // Re-check when the window regains focus — the project may have changed
   // out from under us. Safe to fire freely now: `load()` is token-guarded, so
@@ -86,16 +110,51 @@ export function EditorTab() {
   }
 
   return (
-    <div className="h-full w-full flex flex-col min-h-0 bg-bg-primary">
-      <div className="flex-1 min-h-0 flex flex-col">
-        <PreviewPane />
-      </div>
-      <div className="h-[46%] min-h-[180px] shrink-0 border-t border-border-color flex flex-col min-h-0">
-        <TimelineSwitcher />
-        <div className="flex-1 min-h-0">
-          <TimelinePane />
+    <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
+      <ResizablePanel className="min-w-0 flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 flex flex-col relative">
+          <PreviewPane />
+          {/* D-118 — the Inspector's own opener: tab-local (see this file's
+              module doc for why it isn't a `Shell.tsx` chrome-bar button
+              like Sources'), placed at the preview's top-right so it reads
+              as "the same corner Sources' own toggle lives in," just scoped
+              to this tab. */}
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setInspectorOpen((v) => !v)}
+            title="Inspector"
+            aria-label="Inspector"
+            aria-pressed={inspectorOpen}
+            className={
+              'absolute top-2 right-2 h-6 w-6 p-0 z-10 ' +
+              (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
+            }
+          >
+            <PanelRight className="size-3.5" />
+          </Button>
         </div>
-      </div>
-    </div>
+        <div className="h-[46%] min-h-[180px] shrink-0 border-t border-border-color flex flex-col min-h-0">
+          <TimelineSwitcher />
+          <div className="flex-1 min-h-0">
+            <TimelinePane />
+          </div>
+        </div>
+      </ResizablePanel>
+
+      {inspectorOpen && (
+        <>
+          <ResizableHandle />
+          <ResizablePanel
+            defaultSize={INSPECTOR_DEFAULT_WIDTH}
+            minSize={INSPECTOR_MIN_WIDTH}
+            maxSize={INSPECTOR_MAX_WIDTH}
+            className="shrink-0 h-full border-l border-border-color bg-surface overflow-hidden"
+          >
+            <EditorInspectorPanel />
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
   );
 }

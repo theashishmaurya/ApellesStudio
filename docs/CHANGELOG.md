@@ -13,6 +13,7 @@ One or two lines per session. Detail lives in the decision it references.
   legacy Sources-panel path already uses, from the dragged clip's own
   live rect instead of a droppable — one shared boundary concept, not
   two to keep in sync.
+- **2026-09-04** — **Edit tab's Inspector is now a real full-height panel (D-118).** Extracted `ClipInspectorPanel` out of `TimelinePane.tsx`'s own internal split (where its height was capped at the timeline's 46%-tall row) into a new sibling, `EditorInspectorPanel.tsx`, rendered by `EditorTab.tsx` as a `ResizablePanel` spanning the tab's full height — the same treatment D-116 gave Sources, on the other side. `selection`/`selectedGap` moved from `TimelinePane`'s local state into `useEditorTimelineStore` so both components read one shared selection. Stayed tab-local (a button in the Edit tab's own corner), not a `Shell.tsx` chrome-bar addition — Colorist and Motion each already have their own always-visible right panel, and Sources' shell-level slot is specifically because it's one real shared resource across all three tabs, which the Inspector isn't.
 - **2026-09-04** — **Manifest read caching + a drop-target fix (D-114/D-115,
   B-035).** `chroma::edit::resolve_timeline` (the per-preview-frame hot path)
   no longer re-reads and re-parses `project.json` from disk when nothing has

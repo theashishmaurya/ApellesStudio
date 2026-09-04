@@ -201,5 +201,22 @@ selection both still populate and edit correctly, now sharing visually
 consistent section headings. `tsc` clean across `packages/inspector`/`motion`/
 `editor`/`app`; 18/18 + 91/91 tests unchanged (a pure presentational extraction).
 
+**Post-Phase-4 layout follow-up, D-118 (2026-09-04) — the NLE half's own panel
+moved from a nested pane to a full-height sibling, within `@chroma/editor`
+only.** Owner: "move the clip editor like source control full height instead
+of being in the timeline." Not a Phase 4 revision — this doesn't touch
+`@chroma/inspector`, the shared empty-state/heading pieces, or cross-tab
+selection sharing (still correctly *not* lifted, per this doc's own Phase 4
+finding above). It's a narrower, tab-internal move: `ClipInspectorPanel`
+(unchanged) is now rendered by a new `EditorInspectorPanel.tsx` sibling of
+`TimelinePane.tsx`, in `EditorTab.tsx`'s own top-level `ResizablePanel`
+spanning the Edit tab's real full height, instead of a third pane nested
+inside `TimelinePane`'s split (which was capped at the timeline row's 46%
+height — the real cause of "in the timeline"). `Selection`/`selectedGap`
+moved from `TimelinePane`'s local `useState` into `useEditorTimelineStore`
+— still within `@chroma/editor`, still per-tab, just no longer trapped
+inside one specific child component of that tab. See D-118's own decision
+entry for the real "stayed tab-local, not shell-level" call.
+
 **All 4 phases of the Global Inspector are now done.** This note stays as the
 historical scoping + phase record.

@@ -361,6 +361,17 @@ export function nextAppendFrame(tr: Track): number {
   return trackDuration(tr);
 }
 
+/** The clip with `id` on `track`, by id (not position) — the lookup both
+ *  `TimelinePane` (selection UI) and `EditorInspectorPanel` (now a sibling
+ *  component, not nested inside `TimelinePane`, per the "full height, not
+ *  squeezed into the timeline" panel move) need for the same selected clip,
+ *  kept here once rather than duplicated in both. */
+export function findClip(tl: Timeline | null, track: number, id: string): { clip: Clip; index: number } | null {
+  const clips = tl?.tracks[track]?.clips ?? [];
+  const index = clips.findIndex((c) => c.id === id);
+  return index >= 0 ? { clip: clips[index], index } : null;
+}
+
 /** The clip covering `frame` (by its real `start_frame`, D-054/D-058 — Vec
  *  order is bookkeeping only, never assumed to match position order) and
  *  the source frame inside it. Mirrors `chroma-timeline::Track::clip_at`. */

@@ -76,6 +76,27 @@ export interface TimelineSummary {
   active: boolean;
 }
 
+/** A selected clip, by track + id (D-107 multi-select — an array, not a
+ *  singular selection). Lifted here (was `TimelinePane`-local `useState`)
+ *  so `EditorInspectorPanel` — now a sibling of `TimelinePane`, not nested
+ *  inside it, per the owner's "full height, not squeezed into the timeline"
+ *  panel move — can read the same selection without prop-drilling through
+ *  components that don't otherwise need it. */
+export interface Selection {
+  track: number;
+  id: string;
+}
+
+/** A selected *gap* (D-105) — mutually exclusive with `Selection`, tracked
+ *  as its own field for the same reason it was kept a separate `useState`
+ *  in `TimelinePane` originally: a gap isn't a clip, folding it into
+ *  `Selection` would force every clip-selection consumer to handle a
+ *  clip-shaped-or-not union for no real benefit. */
+export interface SelectedGap {
+  track: number;
+  frame: number;
+}
+
 /** B-034/D-112 — the Edit tab's real load state, as an explicit machine.
  *  Previously this was inferred from a `loaded: boolean` + `timeline: null`
  *  pair, which cannot tell "no project is open" apart from "a project is open
@@ -99,6 +120,10 @@ interface EditorTimelineState {
   playing: boolean;
   /** every timeline in the open project, for the switcher (D-046 pass 3) */
   timelines: TimelineSummary[];
+  /** the current clip selection (D-107 multi-select) — see `Selection`'s doc */
+  selection: Selection[];
+  /** the current gap selection (D-105), mutually exclusive with `selection` */
+  selectedGap: SelectedGap | null;
 
   /** The one signal that starts and stops this store's work. Idempotent —
    *  the composition root's effect may re-run with an unchanged value. */
@@ -106,6 +131,14 @@ interface EditorTimelineState {
   load: () => Promise<void>;
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
+  /** Accepts a value or a `useState`-style updater — `TimelinePane.tsx`'s
+   *  own call sites (shift-click range extend, cmd-click toggle, etc., all
+   *  predating this store lift) use the functional form to read the
+   *  in-flight `prev` selection, so this stays a drop-in replacement for
+   *  the `useState` setter it used to be rather than forcing every call
+   *  site to be rewritten to close over the store's `get()` instead. */
+  setSelection: (selection: Selection[] | ((prev: Selection[]) => Selection[])) => void;
+  setSelectedGap: (gap: SelectedGap | null) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -175,6 +208,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   playhead: 0,
   playing: false,
   timelines: [],
+  selection: [],
+  selectedGap: null,
 
   setProjectOpen: (open) => {
     if (get().projectOpen === open) return;
@@ -191,6 +226,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
         playing: false,
         playhead: 0,
         timelines: [],
+        selection: [],
+        selectedGap: null,
       });
       return;
     }
@@ -247,6 +284,14 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   },
 
   setPlaying: (playing) => set({ playing }),
+
+  setSelection: (selection) =>
+    set((s) => ({
+      selection: typeof selection === 'function' ? selection(s.selection) : selection,
+      selectedGap: null,
+    })),
+
+  setSelectedGap: (gap) => set({ selectedGap: gap, selection: gap ? [] : get().selection }),
 
   applyOp: (op) => {
     const before = get().timeline;
