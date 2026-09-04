@@ -10146,3 +10146,51 @@ The new group id is `format!("lg-{video_id}-{audio_id}")` — derived from both 
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+
+---
+
+## D-139 — Research pass: audio/rhythm/pacing assistance (beats, cut-to-beat, footage-pacing analysis) — no feature designed
+
+**Context.** Owner's ask, in their own words: "we need to understand video, understand emotion,
+manage beats, sync transitions, etc — all those things sound engineers do." Nothing in `docs/`
+covers this — the adjacent roadmap item ("Visual understanding for the Editor tab," `04-roadmap.md`
+Later section) is scoped to *visual* footage understanding (Qwen3-VL search, B-roll tagging, shot
+classification, auto-reframe, highlight detection), not audio/rhythm/pacing. This is a **pure
+research pass**, run in an isolated worktree, explicitly *not* a technical scoping pass — a
+separate Opus pass scopes the actual feature from these findings.
+
+**What was done.** Real web research across five questions: (1) beat/onset detection libraries
+and their real accuracy/license/runtime characteristics, (2) what Premiere/CapCut/Descript
+actually do for cut-to-beat today, (3) how real (vs. research-grade) footage
+"emotion"/pacing-signal analysis is, (4) what an honestly-scoped v1 would look like, (5) the
+MCP-tool-shape angle for each real capability found. Full write-up:
+`docs/notes/pacing-audio-assistance-research.md`.
+
+**Headline findings.**
+- Beat detection is mature, solved MIR tech (librosa/essentia/madmom/aubio + newer transformer
+  trackers), runs fully offline, F-measure roughly 60–80% for classical DP trackers and 80–90%+
+  for modern neural ones on typical BGM genres — real and buildable today. Native-Rust options
+  exist but are far less mature than the Python side (aubio-rs is GPL-3.0; the pure-Rust crates
+  are small, single-maintainer, unbenchmarked) — the mature path runs through the `ai/` Python
+  sidecar, a new dependency *category* for it (audio DSP, currently zero audio deps there).
+  License gates found: aubio GPL-3.0, essentia's pretrained models CC-BY-NC-ND, madmom's
+  pretrained models CC-BY-NC-SA (code itself BSD) — same shape of gate as the Molmo 2 exclusion
+  already on the roadmap.
+- Real tools (Premiere's Essential Sound beat markers, CapCut's Auto Beat/Beat Sync, Descript's
+  transcript-cut suggestions) all reduce to "detect beats → mark them, or auto-trim to them" —
+  no creative/structural understanding anywhere in the current market.
+- Individual pacing *signals* are real and buildable today (shot-length/cut-frequency via
+  PySceneDetect-style detection, loudness/energy envelope, motion-intensity via optical flow) —
+  "emotional arc understanding," in the sense the ask implies, is not; nothing credible found.
+  One marketing-blog citation (95% beat-detection accuracy attributed to an unnamed "Berkeley
+  Audio Lab," an MIT Media Lab emotion claim) was checked and rejected as non-credible — no
+  authors, no paper, no verifiable methodology — flagged explicitly rather than silently dropped.
+- Honest gap: no hard wall-clock benchmark found for analyzing a 5-minute track with any of these
+  libraries — flagged as a real first task for whichever pass builds this, not fabricated.
+
+**Not decided here.** No feature scope, no phased plan, no tool schema — deliberately left to the
+next pass per the task's explicit boundary.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

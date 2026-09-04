@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Audio/rhythm/pacing-assistance research pass (D-139), no
+  feature built.** Owner asked about beat/emotion/pacing understanding —
+  "the things sound engineers do." Researched beat/onset detection
+  (librosa/essentia/madmom/aubio + newer transformer trackers — real, mature,
+  offline, license gates found on aubio/essentia/madmom), what Premiere/
+  CapCut/Descript's beat features actually do (mark or auto-trim, no
+  structural understanding), and how real footage-pacing/"emotion" analysis
+  is today (shot-length, loudness, motion-intensity are real; "emotional arc"
+  understanding is not, and a marketing-blog citation was checked and
+  rejected as non-credible). Write-up:
+  `docs/notes/pacing-audio-assistance-research.md`. A separate pass scopes
+  the actual feature from these findings.
 - **2026-09-05** — **Marquee-select on the Edit timeline (D-137, roadmap item
   12 Phase 2).** Click-drag on empty timeline canvas rubber-bands a selection;
   every clip the rect intersects is selected, shift/cmd/ctrl unions onto the
