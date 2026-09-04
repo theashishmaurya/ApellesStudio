@@ -50,8 +50,10 @@
  * itself, for the same app → shell dependency-direction reason), as a real
  * resizable column (`@chroma/ui`'s `ResizablePanelGroup`, matching this
  * project's standing "every resizable-by-nature panel must actually be
- * resizable" rule) to the **left** of the tab content, toggled by a
- * chrome-bar button. Collapsed by default so it never disrupts Colorist's
+ * resizable" rule) to the **left** of the tab content, toggled by a button
+ * anchored to the content area's own top-left corner (D-120 — moved off the
+ * chrome bar, which read as disconnected from the panel once it sat on the
+ * opposite side from its own opener). Collapsed by default so it never disrupts Colorist's
  * own left/right panel system or Editor's timeline pane — it's a sibling of
  * the tab content area, not layered over it, and its own opaque background
  * means it plays fine alongside the wgpu-transparent root (B-006). Left
@@ -230,24 +232,15 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
           </div>
         )}
 
-        {/* right: Sources toggle (project open only) + win/linux controls / mac spacer */}
+        {/* right: win/linux controls / mac spacer. The Sources toggle used to
+            live here too, but D-116 moved the panel itself to the left
+            without moving its opener — leaving it stranded on the opposite
+            side from the panel it controls (owner: "the opener should be
+            with the source pane"). It's now rendered below, in the same
+            top-left corner of the content area the panel actually occupies,
+            matching the spatial pattern D-118 established for the
+            Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-0.5">
-          {projectOpen && sourcesPanel && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setSourcesPanelOpen(!sourcesPanelOpen)}
-              title="Sources"
-              aria-label="Sources"
-              aria-pressed={sourcesPanelOpen}
-              className={
-                'h-6 w-6 p-0 ' +
-                (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
-              }
-            >
-              <PanelLeft className="size-3.5" />
-            </Button>
-          )}
           <WindowControls chrome={chrome} />
         </div>
       </div>
@@ -273,6 +266,34 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
         )}
 
         <ResizablePanel className="min-h-0 flex flex-col overflow-hidden relative">
+          {/* Sources' own opener (moved here, D-120): sits in the content
+              area's top-left corner — right where the Sources panel itself
+              lands when open, immediately to this button's left — instead
+              of the chrome bar's top-right, which read as disconnected from
+              the panel once D-116 moved Sources to the left. Absolutely
+              positioned so it's reachable whether the panel is open or
+              closed, same as the Inspector's own top-right opener
+              (`EditorTab.tsx`, D-118) — the two now form a matching pair in
+              opposite corners of the content area, not the "two openers"
+              the owner previously found both crowded into one corner. Stays
+              here in `Shell.tsx`, not duplicated per-tab, because Sources is
+              genuinely shell-level (all three tabs), unlike the Inspector. */}
+          {projectOpen && sourcesPanel && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setSourcesPanelOpen(!sourcesPanelOpen)}
+              title="Sources"
+              aria-label="Sources"
+              aria-pressed={sourcesPanelOpen}
+              className={
+                'absolute top-2 left-2 h-6 w-6 p-0 z-10 ' +
+                (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
+              }
+            >
+              <PanelLeft className="size-3.5" />
+            </Button>
+          )}
           {/* tab panels — always mounted (state + the Colorist MCP bridge persist);
               all hidden while the launcher is up. */}
           {tabs.map((tab) => {

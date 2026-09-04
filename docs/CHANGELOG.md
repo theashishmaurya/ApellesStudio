@@ -4,6 +4,11 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-04** — **Sources panel's opener moved to the corner it actually
+  opens into (D-120).** D-116 moved the panel to the left but left its
+  toggle stranded in the chrome bar's top-right — now a `top-2 left-2`
+  button over the tab content, mirroring the Inspector's own `top-2
+  right-2` toggle (D-118) instead of crowding the same corner as it.
 - **2026-09-04** — **Real filmstrip thumbnails on Edit-tab timeline clips,
   in the drag preview too (D-119).** Video clips now show their actual
   source content tiled across the clip (`Filmstrip.tsx` +

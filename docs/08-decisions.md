@@ -8841,3 +8841,20 @@ Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
+
+---
+
+## D-120 — Sources panel's opener moved off the chrome bar, to the corner it actually opens into
+
+**Context.** Owner, live, screenshot: "on the right top we have two openers, on[e] open[s] the source panel on left, move it like you moved for the inspector — the opener should be with the source pane."
+
+**Real cause, confirmed.** D-116 moved the Sources panel from the shell's right side to the left and correctly flipped its own icon (`PanelRight` → `PanelLeft`) — but never moved the *button* that opens it. It stayed in `Shell.tsx`'s chrome-bar, top-right, `ml-auto` before `WindowControls`, now visually stranded on the opposite side from the panel it actually controls. D-118, landed right after, got the equivalent right for the Inspector: when that panel moved, its toggle moved with it.
+
+**The "two openers," confirmed by inspection, not assumed.** Grepped every `PanelLeft`/`PanelRight` usage in the app: `Shell.tsx`'s stranded Sources toggle and `EditorTab.tsx`'s D-118 Inspector toggle (`absolute top-2 right-2` over the Edit tab's preview pane) both cluster in the same top-right corner — exactly the two the owner's screenshot shows. (A third usage, `app/src/components/panel/BottomBar.tsx`, is Colorist's own pre-existing, unrelated bottom-bar panel toggle — confirmed out of scope, not touched.)
+
+**Fix.** Removed the button from the chrome-bar's right-side group. Added it back inside the tab-content `ResizablePanel` (the one `sourcesPanel`'s sibling column sits to the left of), absolutely positioned at `top-2 left-2` — the mirror image of the Inspector's `top-2 right-2`, so the two now read as a matching pair anchored to the corners of the panels they actually control, instead of both crowding one corner. Stayed in `Shell.tsx`, not duplicated per-tab like the Inspector's: Sources is genuinely shell-level (identical across Edit/Motion/Colorist), so one owner for the toggle is correct, matching D-118's own reasoning for why the *Inspector* toggle should NOT live here.
+
+**Verification.** `tsc --noEmit` clean on `packages/shell` (no test harness exists there, pre-existing gap, not created this pass — same as D-116's own note). `packages/shell` has no vitest config, so no unit-test regression check was possible; this is a small, self-contained JSX relocation with no logic change to `sourcesPanelOpen`'s own handling, verified by reading rather than a test. **App-level `tsc` was not independently re-verified this pass** — attempted, but the `timeout` command used doesn't exist on this system, so the "0 errors" reading it silently produced was a shell error, not a real result; per D-118's own already-documented finding, this worktree's symlinked `node_modules` makes `app`-level `tsc` counts unreliable anyway (the real baseline, 64, is only trustworthy from a run against the actual `main` tree) — not re-attempted, flagged rather than reported a number I don't trust. **No interactive/visual verification** — same real, pre-existing, unrelated `@rolldown/plugin-babel`/symlink environment gap D-116 and D-118 both hit blocks `npm run dev` in this worktree. Checked for a corner collision with existing tab content (grepped Colorist's `App.tsx` and Motion's `MotionTab.tsx` for anything already claiming the top-left) — none found. The owner's own look at the rendered app is what actually closes the loop, same as the two decisions immediately before this one.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PbQj7ii1BfYW9BpWV9ujEc
