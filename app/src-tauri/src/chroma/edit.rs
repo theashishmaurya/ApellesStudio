@@ -71,17 +71,29 @@ use chroma_timeline::{Clip, Timeline, TrackKind};
 
 use super::state;
 use super::video::{self, VideoInfo};
-use super::{decode_pipe, project};
+use super::{decode_pipe, media_cache, project};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache (edit-tab local — the preview decodes many frames of a
-// handful of clip paths; a probe is a subprocess spawn we don't want per frame).
-// `pub(crate)` (D-051): also the has-audio lookup `chroma::audio`'s waveform
-// command reuses rather than probing a second time.
+// handful of clip paths; a probe is a subprocess spawn we don't want per
+// frame). `pub(crate)` (D-051): also the has-audio lookup `chroma::audio`'s
+// waveform command reuses rather than probing a second time.
+//
+// D-128 — now **persistent**. `video::probe` is two `ffprobe` subprocesses
+// (one for the video stream, one for the audio stream); measured on the
+// owner's own `A001_08302215_C019.MOV`, 0.62s + 0.13s. The in-memory half of
+// this cache made that once-per-session, which sounds fine until you notice
+// the session ends every time the app is quit — so opening the same project
+// tomorrow paid it again, per clip, on the critical path between clicking a
+// project card and seeing anything. `VideoInfo` is small, immutable for a
+// given source file, and already `Serialize`; persisting it is the cheapest
+// real win on that path.
 // --------------------------------------------------------------------------- //
 
 static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, VideoInfo>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+
+const NS_PROBE: &str = "probe";
 
 pub(crate) fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
     {
@@ -90,151 +102,30 @@ pub(crate) fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
             return Ok(info.clone());
         }
     }
+
+    // The disk cache is keyed on the source file's identity (path + mtime +
+    // size), so a re-encoded or replaced file never serves a stale probe —
+    // see `media_cache::source_key`.
+    let key = media_cache::source_key(path).ok();
+    if let Some(key) = key.as_deref()
+        && let Some(info) = media_cache::read_json::<VideoInfo>(NS_PROBE, key)
+    {
+        PROBE_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_path_buf(), info.clone());
+        return Ok(info);
+    }
+
     let info = video::probe(path).map_err(|e| format!("probe {}: {e}", path.display()))?;
+    if let Some(key) = key.as_deref() {
+        media_cache::write_json(NS_PROBE, key, &info);
+    }
     PROBE_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .insert(path.to_path_buf(), info.clone());
     Ok(info)
-}
-
-// --------------------------------------------------------------------------- //
-// clip filmstrip thumbnails (D-119) — the Edit-tab timeline's per-clip
-// preview, same "expensive to generate, cheap to serve from cache" shape as
-// PROBE_CACHE above and `chroma_audio_waveform`'s own module-level cache
-// (`chroma::audio`). A *separate* cache from `chroma_frame_thumbnails`/
-// `state::cached_thumbs` (Colorist's own single-"current shot" thumbnail
-// cache, D-033) rather than reusing it: this tab can have many different
-// clips across many tracks visible at once, each needing its own strip
-// simultaneously, whereas Colorist's cache is explicitly scoped to "whichever
-// one shot is currently loaded" and is busted wholesale on every shot switch
-// — a shape that would thrash constantly under the Edit tab's real usage
-// pattern (many clips, none of them "the current shot").
-// --------------------------------------------------------------------------- //
-
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ClipThumbDto {
-    pub frame: u64,
-    /// data:image/jpeg;base64,...
-    pub data_url: String,
-}
-
-const MAX_THUMB_CACHE: usize = 200;
-
-/// (source path, start-ms, duration-ms, requested frame count) — see
-/// [`ms_key`] for why the floats are rounded before keying.
-type ThumbCacheKey = (PathBuf, u64, u64, u32);
-/// (frame index, `data:image/jpeg;base64,...`) pairs — same shape
-/// [`video::extract_thumb_strip_range`] returns.
-type ThumbCacheValue = Vec<(u64, String)>;
-
-static THUMB_CACHE: Lazy<Mutex<HashMap<ThumbCacheKey, ThumbCacheValue>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Bounds how many `extract_thumb_strip_range` `ffmpeg` child processes may
-/// run at once. Found live, not theorized: the owner's real machine hit 11
-/// simultaneous `ffmpeg` processes opening a multi-clip project (every
-/// visible clip's `Filmstrip.tsx` requests its own strip independently, with
-/// nothing on either side throttling how many run at once), system load
-/// spiked past 200. Measured against the owner's own real 4K HEVC footage:
-/// a single strip decode is ~393% CPU for several seconds *even with*
-/// hardware decode disabled — a handful running concurrently is enough to
-/// starve the whole machine, not just this feature. 3 matches the number of
-/// performance-critical concurrent workloads this app can reasonably ask a
-/// desktop machine for at once alongside its own UI thread and any GPU work.
-static THUMB_SEMAPHORE: Lazy<tokio::sync::Semaphore> = Lazy::new(|| tokio::sync::Semaphore::new(3));
-
-/// Round a seconds value to whole milliseconds for use as a cache key —
-/// avoids two calls for the same real clip range missing each other over
-/// float noise (e.g. `1.2000000000000002` vs `1.2`) while staying far finer
-/// than anything a real edit could distinguish.
-fn ms_key(secs: f64) -> u64 {
-    (secs.max(0.0) * 1000.0).round() as u64
-}
-
-/// `count` evenly-spaced frame thumbnails within `[start_secs, start_secs +
-/// duration_secs)` of `source_path` — a timeline clip's real trimmed range,
-/// not the whole source file (D-119). Mirrors `chroma_audio_waveform`'s own
-/// parameter shape (`source_path`/`start_secs`/`duration_secs`, seconds not
-/// frames — no opinion on the project's fps) for the same reason: both are
-/// "give me a visual summary of this clip's real on-timeline range" requests,
-/// one for amplitude, one for picture content.
-#[tauri::command]
-pub async fn chroma_clip_thumbnails(
-    source_path: String,
-    start_secs: f64,
-    duration_secs: f64,
-    count: u32,
-) -> Result<Vec<ClipThumbDto>, String> {
-    if duration_secs <= 0.0 || count == 0 {
-        return Ok(Vec::new());
-    }
-    let count = count.clamp(1, 64);
-    let path = PathBuf::from(&source_path);
-    let key = (path.clone(), ms_key(start_secs), ms_key(duration_secs), count);
-
-    if let Some(hit) = THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-        return Ok(hit
-            .iter()
-            .map(|(frame, data_url)| ClipThumbDto {
-                frame: *frame,
-                data_url: data_url.clone(),
-            })
-            .collect());
-    }
-
-    let info = probe_cached(&path)?;
-    // Only the real decode waits on the semaphore — a cache hit above never
-    // reaches here, so a burst of requests for already-generated strips
-    // (e.g. re-rendering on scroll) is never needlessly queued behind it.
-    let _permit = THUMB_SEMAPHORE
-        .acquire()
-        .await
-        .map_err(|e| e.to_string())?;
-    let thumbs = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, String)>, String> {
-        video::extract_thumb_strip_range(&path, &info, start_secs, duration_secs, count)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    {
-        let mut cache = THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if cache.len() > MAX_THUMB_CACHE {
-            cache.clear();
-        }
-        cache.insert(key, thumbs.clone());
-    }
-
-    Ok(thumbs
-        .into_iter()
-        .map(|(frame, data_url)| ClipThumbDto { frame, data_url })
-        .collect())
-}
-
-#[cfg(test)]
-mod thumb_cache_tests {
-    use super::*;
-
-    #[test]
-    fn ms_key_rounds_float_noise_together() {
-        // the exact kind of float noise two calls for "the same real clip
-        // range" can produce (e.g. one derived from `frame / fps`, another
-        // from a slightly different arithmetic path) — both must hash to the
-        // same cache key or every re-render would miss.
-        assert_eq!(ms_key(1.2000000000000002), ms_key(1.2));
-    }
-
-    #[test]
-    fn ms_key_negative_clamps_to_zero() {
-        assert_eq!(ms_key(-0.5), 0);
-    }
-
-    #[test]
-    fn ms_key_distinguishes_real_differences() {
-        assert_ne!(ms_key(1.200), ms_key(1.201));
-    }
 }
 
 // --------------------------------------------------------------------------- //

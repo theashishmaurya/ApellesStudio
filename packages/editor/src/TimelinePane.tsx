@@ -119,6 +119,13 @@
  *   - **The waveform is custom** (`Waveform.tsx`, Rust-computed peaks) —
  *     the library renders only the plain `getActionRender` content per
  *     action, nothing audio-aware.
+ *   - **The filmstrip needs the scroll viewport, not just the clip** (D-128).
+ *     `Filmstrip.tsx` fetches picture tiles only for the source range a clip
+ *     is actually showing, at a density matching the current zoom, so this
+ *     pane passes each clip its visible sub-range in px. `scrollLeft` is
+ *     bucketed to `FILMSTRIP_SCROLL_BUCKET_PX` first — `getActionRender`
+ *     rebuilds every clip's DOM when its inputs change, and feeding it a raw
+ *     per-pixel scroll position would run that on every scroll frame.
  *   - **Ripple visual feedback is custom**: a small effect diffs each
  *     clip id's timeline start frame across every track's clips changes and
  *     briefly `animate-pulse`s whichever ids shifted — a trim/remove/move
@@ -233,8 +240,10 @@ const EFFECT_ID = 'clip';
  *  item 4 — `niceTickIntervalSeconds`'s target, see `ruler.ts`). */
 const TICK_TARGET_PX = 70;
 // Zoom bounds (px per second) now live in `ruler.ts` and are imported above
-// (D-124) — `Filmstrip.tsx` needs the same ceiling to size its fetch, and one
-// definition beats two that can drift. Owner, 2026-09-04: the floor was 16
+// (D-124/D-128) — `Filmstrip.tsx` derives its requested tile spacing from the
+// current zoom, and the backend's level-of-detail ladder is sized to bracket
+// exactly the range these bounds allow, so one definition beats two that can
+// drift (see `ruler.ts`'s own note). Owner, 2026-09-04: the floor was 16
 // (18%), too tight to see a whole multi-minute project at once; it is 1 so a
 // long timeline can actually be zoomed out to fit the visible width.
 const ZOOM_STEP = 1.2;
@@ -262,6 +271,16 @@ const RULER_AND_MARGIN_PX = 42;
  *  reduces to `/ pxPerSec` since `scaleWidth = tickSeconds * pxPerSec` —
  *  checked against its bundled source, not guessed). */
 const START_LEFT_PX = 20;
+/** D-128 — how coarsely the horizontal scroll position is bucketed before it
+ *  reaches the filmstrip. `getActionRender` below rebuilds every clip's DOM
+ *  when its inputs change, and this file's own module doc already flags that
+ *  as the expensive path; feeding it a raw per-pixel `scrollLeft` would run
+ *  it on every scroll frame. The filmstrip's request window is snapped
+ *  outward and overscanned by half a viewport anyway (`Filmstrip.tsx`), so a
+ *  bucket this size is always well inside what has already been fetched — it
+ *  costs nothing visually and turns "once per scrolled pixel" into "once per
+ *  200px scrolled." */
+const FILMSTRIP_SCROLL_BUCKET_PX = 200;
 /** D-095/D-096 — how close (in px, independent of zoom) a Sources-panel
  *  drop needs to land to an existing clip edge to snap to it for a ripple
  *  insert, and how close to the bottom of the last track row it needs to
@@ -672,6 +691,13 @@ export function TimelinePane() {
   // `react-virtualized`), `scrollTop` just never needed `scrollLeft` before
   // this pass since nothing read a horizontal drop position.
   const [scrollLeft, setScrollLeft] = useState(0);
+  // D-128 — the filmstrip fetches only the source range a clip is actually
+  // showing, so it needs the width of the scroll viewport, not just the
+  // clip's own width. `editAreaRef` is the library's scrollable edit area
+  // (the track-header column is a separate `ResizablePanel`), so its client
+  // width IS the viewport. Tracked with a `ResizeObserver` because a panel
+  // drag resizes it without any React state changing.
+  const [viewportWidth, setViewportWidth] = useState(0);
 
   const editorRef = useRef<TimelineState>(null);
   const editAreaRef = useRef<HTMLDivElement>(null);
@@ -684,6 +710,10 @@ export function TimelinePane() {
   // from the current selection would touch (shift or block), rendered as a
   // secondary highlight in `getActionRender` below. Recomputed only when the
   // selection or the timeline actually changes, not on every render.
+  // D-128 — see `FILMSTRIP_SCROLL_BUCKET_PX`.
+  const filmstripScrollLeft =
+    Math.round(scrollLeft / FILMSTRIP_SCROLL_BUCKET_PX) * FILMSTRIP_SCROLL_BUCKET_PX;
+
   const syncLinkedIds = useMemo(
     () => (timeline ? syncLinkedClipIds(timeline, selection) : new Set<string>()),
     [timeline, selection],
@@ -730,6 +760,16 @@ export function TimelinePane() {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // D-128 — keep `viewportWidth` honest across window and panel resizes.
+  useEffect(() => {
+    const el = editAreaRef.current;
+    if (!el) return;
+    setViewportWidth(el.clientWidth);
+    const ro = new ResizeObserver(() => setViewportWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   // Ripple visual feedback (D-051) — diff each clip id's timeline start frame
@@ -1205,12 +1245,24 @@ export function TimelinePane() {
                   than splitting the clip into hard top/bottom zones, which
                   at this project's compact `ROW_HEIGHT` (52px) would leave
                   neither signal legible. */}
+              {/* D-128 — the visible slice of this clip, in px from its own
+                  left edge. The filmstrip fetches only the source range that
+                  covers, at a tile density matching the current zoom, instead
+                  of a fixed 64-frame summary of the whole clip stretched to
+                  fit (D-124's own named limitation, and the smeared tiles the
+                  owner screenshotted against Palmier Pro's timeline). */}
               <Filmstrip
                 sourcePath={clip.source_path}
                 startSecs={clip.source_start / fps}
                 durationSecs={clip.duration / fps}
                 width={pxWidth}
                 height={ROW_HEIGHT}
+                visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
+                visibleEndPx={
+                  filmstripScrollLeft +
+                  viewportWidth -
+                  (START_LEFT_PX + action.start * pxPerSec)
+                }
               />
               <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
                 <Waveform
@@ -1256,7 +1308,7 @@ export function TimelinePane() {
         </ClipBody>
       );
     },
-    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds],
+    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds, filmstripScrollLeft, viewportWidth],
   );
 
   /** Multi-select, Phase 1 (D-107) — shift-click range-extends within the

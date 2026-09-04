@@ -41,6 +41,44 @@ pub async fn load_video_frame(
     Ok(install_frame(source_path, virtual_path, frame, info, img, state))
 }
 
+/// Register `source_path` in the session as a shot at `frame` **without
+/// decoding a single pixel** (D-128).
+///
+/// The cheap counterpart to [`load_video_frame`], for the callers that only
+/// ever needed the *session bookkeeping* — a path, its probe info, and a
+/// playhead — and never the decoded image.
+///
+/// `chroma::project::open_manifest` was the expensive case, and it was on the
+/// critical path between clicking a project card and seeing anything.
+/// Measured on the owner's own project (two clips of a 2.3 GB 4K HEVC
+/// source): [`load_video_frame`] decodes a full-resolution frame and encodes
+/// it to PNG, **~1.9s per clip**, and every iteration of that loop overwrote
+/// `AppState.original_image` with the next clip's pixels — so all of it but
+/// the last was thrown away, and even the last was immediately replaced by
+/// the `seek_and_install` that runs for the genuinely-active clip right after
+/// the loop. Every one of those decodes was pure waste. The probe behind this
+/// is itself disk-cached (`super::edit::probe_cached`, D-128), so a reopen of
+/// the same project costs neither the decode nor the `ffprobe`.
+///
+/// It also removes a real, if secondary, defect in the resync path
+/// (`chroma_project_resync_clips`), which documented itself as not disturbing
+/// the active shot while in fact clobbering `original_image` with a newly
+/// added clip's pixels on its way past.
+///
+/// A probe failure still means "offline", exactly as a decode failure did —
+/// the narrowing is that a file which probes but cannot decode is no longer
+/// caught here. It is still caught at the point it matters: the active clip
+/// goes through the real decode path immediately afterwards.
+pub fn register_video_shot(source_path: &Path, frame: u64) -> Result<(), String> {
+    let info = super::edit::probe_cached(source_path)?;
+    set_current_video(Some(CurrentVideo {
+        path: source_path.to_path_buf(),
+        info,
+        frame,
+    }));
+    Ok(())
+}
+
 /// Make an already-decoded video frame the loaded image + point `CurrentVideo` at
 /// it. The state-writing tail of [`load_video_frame`], split out so the transport
 /// (`chroma_seek`) can feed a frame it got from the fast [`super::decode_pipe`]

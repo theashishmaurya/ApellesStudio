@@ -5,6 +5,10 @@
 //! Ideal upstream footprint: `mod chroma;` in `lib.rs` + a couple of one-line hooks.
 //!
 //! - `video`    — ffmpeg-backed video probe + single-frame decode (D-015)
+//! - `media_cache` — persistent, source-keyed disk cache for derived media
+//!   artefacts: filmstrip tiles, probes, waveform peaks (D-128)
+//! - `filmstrip` — windowed, level-of-detail Edit-tab filmstrip tiles on top
+//!   of `media_cache` (D-128; supersedes D-119/D-121/D-124's whole-clip strip)
 //! - `audio`    — Edit-tab audio playback: symphonia decode → rubato resample
 //!   → dasp_sample format-convert → cpal device output (D-049)
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback (D-030)
@@ -33,10 +37,12 @@ pub mod decode_pipe;
 pub mod depth;
 pub mod edit;
 pub mod export;
+pub mod filmstrip;
 pub mod grade;
 pub mod keyframes;
 pub mod load;
 pub mod mask;
+pub mod media_cache;
 pub mod motion;
 pub mod playback;
 pub mod project;

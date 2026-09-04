@@ -30,7 +30,10 @@ use image::DynamicImage;
 /// — same `width`/`height` JSON keys as before this decision, zero wire
 /// change; call sites read `info.resolution.width`/`.height` (or
 /// `info.resolution` whole) instead of the old flat `info.width`/`.height`.
-#[derive(Debug, Clone, serde::Serialize)]
+/// `Deserialize` alongside `Serialize` (D-128): a probe is two `ffprobe`
+/// subprocesses, and `super::media_cache` persists the result across app
+/// restarts, so this type has to survive a JSON round trip.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VideoInfo {
     #[serde(flatten)]
     pub resolution: chroma_types::Resolution,
@@ -97,10 +100,10 @@ pub fn is_video_file<P: AsRef<Path>>(path: P) -> bool {
         .unwrap_or(false)
 }
 
-fn ffprobe_bin() -> String {
+pub(crate) fn ffprobe_bin() -> String {
     std::env::var("CHROMA_FFPROBE").unwrap_or_else(|_| "ffprobe".to_string())
 }
-fn ffmpeg_bin() -> String {
+pub(crate) fn ffmpeg_bin() -> String {
     std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
 }
 
@@ -336,86 +339,133 @@ pub fn extract_thumb_strip(
 /// is Colorist's *poster-frame* size (a much larger on-screen element), not
 /// this one's: owner, live — "for thumbnail you dont have to take all the
 /// frame in high quality right so do the optimization."
-const THUMB_STRIP_HEIGHT: u32 = 104;
+pub(crate) const THUMB_STRIP_HEIGHT: u32 = 104;
 
-/// Only sample keyframes when consecutive thumbnails are at least this many
-/// seconds apart (D-124). Real measured keyframe intervals on the owner's own
-/// two clips: 0.87s (`A001…MOV`, 4K HEVC — 592 keyframes over 517s) and 2.67s
-/// (`Screen Recording…mov`, H.264 — only **3** keyframes over 8s). So a
-/// keyframe-only decode is visually lossless when we want a frame less often
-/// than every 4s (each requested sample still lands on a distinct keyframe),
-/// and would visibly repeat frames if used for finer sampling than that —
-/// which is exactly why this is a threshold and not an unconditional flag.
-/// It is also self-limiting in the right direction: fine sampling only ever
-/// happens on a short range, where a full decode is cheap anyway.
-const KEYFRAME_SAMPLE_MIN_SECS: f64 = 4.0;
+/// Fallback keyframe interval, in seconds, when [`probe_keyframe_interval`]
+/// can't measure one (an unreadable file, an `ffprobe` that returns no
+/// keyframe packets in its sample window). D-124's own fixed
+/// `KEYFRAME_SAMPLE_MIN_SECS` constant, kept as the conservative default:
+/// real measured intervals on the owner's own two clips were 0.87s
+/// (`A001…MOV`, 4K HEVC) and 2.67s (`Screen Recording…mov`, only **3**
+/// keyframes over 8s), so 4s is above anything plausible and a
+/// keyframe-only decode gated on it can't visibly repeat frames.
+pub const DEFAULT_KEYFRAME_INTERVAL_SECS: f64 = 4.0;
 
-/// Pure sampling arithmetic behind [`extract_thumb_strip_range`], pulled out
-/// so it has a real correct/incorrect answer independent of any actual
-/// `ffmpeg` process — the same "pure logic separated and unit tested, I/O
-/// not" discipline this module's sibling extractors ([`extract_thumb_strip`],
-/// [`extract_thumb`]) never got real coverage for either: this file's own
-/// `CHROMA_TEST_VIDEO`-gated tests (see the `tests` module below) need a
-/// real file path supplied via env var at run time, not a checked-in
-/// fixture, and neither var is set in this environment — so this at least
-/// gets the one part of the range variant that *can* have a provable answer
-/// independent of that covered.
-#[derive(Debug, PartialEq)]
-struct RangeThumbPlan {
-    /// absolute frame index into the source where the requested range begins
-    start_frame: u64,
-    /// thumbnails actually emitted — `count`, but never more than the range
-    /// really holds (a 0.5s range cannot yield 64 distinct frames, and asking
-    /// `fps` for them would just duplicate one frame several times over)
-    count: u32,
-    /// seconds between consecutive thumbnails
-    step_secs: f64,
-    /// wall-clock seconds ffmpeg is allowed to read past `start_secs`
-    read_secs: f64,
-    /// whether this sampling density is coarse enough for `-skip_frame nokey`
-    keyframe_only: bool,
+/// How many seconds from the start of the file [`probe_keyframe_interval`]
+/// samples. Long enough for a stable reading (35 keyframes on the owner's
+/// A001 footage), short enough to be free.
+const KEYFRAME_PROBE_WINDOW_SECS: u32 = 30;
+
+/// The **largest** gap between consecutive keyframes in the first
+/// [`KEYFRAME_PROBE_WINDOW_SECS`] of `path`, in seconds.
+///
+/// D-128. This replaces D-124's fixed 4-second "is keyframe-only sampling
+/// safe?" threshold with the file's own real number, and it is the single
+/// biggest lever on filmstrip decode cost — measured on the owner's own
+/// `A001_08302215_C019.MOV` (4K HEVC, 0.875s keyframe interval), extracting
+/// a 64-tile chunk at a 1-second tile spacing costs **1.69s** with
+/// `-skip_frame nokey` and **~16s** without it, and D-124's fixed threshold
+/// forced the expensive path for every spacing under 4s.
+///
+/// Reads **packets**, not frames (`-show_entries packet=...`): nothing is
+/// decoded, so this is a metadata scan. Measured on that same 2.3 GB file:
+/// **0.23s**, versus 7.5s for the equivalent frame-level probe (which does
+/// decode). The max gap, not the mean, so a file with irregular keyframes
+/// (VFR screen recordings, which the owner has) is judged on its worst case.
+pub fn probe_keyframe_interval(path: &Path) -> Result<f64> {
+    let out = Command::new(ffprobe_bin())
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "packet=pts_time,flags",
+            "-read_intervals", &format!("%+{KEYFRAME_PROBE_WINDOW_SECS}"),
+            "-of", "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .with_context(|| format!("running ffprobe keyframe scan on {}", path.display()))?;
+
+    if !out.status.success() {
+        return Err(anyhow!(
+            "ffprobe keyframe scan failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(max_keyframe_gap(&text))
 }
 
-fn plan_range_thumbs(start_secs: f64, duration_secs: f64, fps: f64, count: u32) -> RangeThumbPlan {
-    let fps = fps.max(0.001);
-    let start_secs = start_secs.max(0.0);
-    let duration_secs = duration_secs.max(0.0);
-    let start_frame = (start_secs * fps).round() as u64;
-    let local_total = ((duration_secs * fps).round() as u64).max(1);
-    // Never ask for more thumbnails than the range holds frames.
-    let count = count.max(1).min(local_total.min(u32::MAX as u64) as u32);
-    let step_secs = duration_secs / count as f64;
-    // `-t` takes wall-clock duration, not a frame count, so pad it slightly
-    // (+2 frames worth) past `duration_secs` to guarantee the last sample
-    // always has a real frame to land on — an exact `-t duration_secs` can
-    // land a hair short after the approximate `-ss` seek and starve it.
-    let read_secs = duration_secs + (2.0 / fps);
-    RangeThumbPlan {
-        start_frame,
-        count,
-        step_secs,
-        read_secs,
-        keyframe_only: step_secs >= KEYFRAME_SAMPLE_MIN_SECS,
+/// The pure half of [`probe_keyframe_interval`] — parse `ffprobe`'s
+/// `pts_time,flags` CSV and return the largest gap between keyframe packets.
+/// Split out so the parsing has a real correct/incorrect answer in a unit
+/// test without an `ffprobe` process.
+fn max_keyframe_gap(csv: &str) -> f64 {
+    let mut times: Vec<f64> = Vec::new();
+    for line in csv.lines() {
+        let mut fields = line.split(',');
+        let Some(pts) = fields.next().and_then(|s| s.trim().parse::<f64>().ok()) else {
+            continue;
+        };
+        // `flags` is a field like `K__` / `K_C` for a keyframe, `___` otherwise.
+        if fields.any(|f| f.contains('K')) {
+            times.push(pts);
+        }
+    }
+    if times.len() < 2 {
+        return DEFAULT_KEYFRAME_INTERVAL_SECS;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let gap = times
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .fold(0.0f64, f64::max);
+    if gap > 0.0 {
+        gap
+    } else {
+        DEFAULT_KEYFRAME_INTERVAL_SECS
     }
 }
 
-pub fn extract_thumb_strip_range(
+/// Decode `tiles` evenly-spaced filmstrip thumbnails, `step_secs` apart,
+/// starting at `start_secs` of `path`, and return the **raw concatenated
+/// MJPEG bytes** exactly as `ffmpeg` produced them (D-128).
+///
+/// Raw bytes, not data-URLs: this is what [`super::filmstrip`] writes to and
+/// reads back from the persistent disk cache, and base64 would inflate every
+/// cached chunk by a third for no benefit — the encode is done at the edge,
+/// once per response, in `filmstrip.rs`.
+///
+/// The chunk is a **contiguous range of the source file**, indexed from the
+/// file's own t=0 rather than any clip's trim point. That is the whole point
+/// of the chunked shape: two clips trimmed differently out of one source, or
+/// the same clip at a different scroll position, land on the same chunks and
+/// share the same cache entries.
+///
+/// `keyframe_only` is the caller's decision (it holds the file's measured
+/// [`probe_keyframe_interval`]); this function just runs what it is told.
+pub fn extract_thumb_chunk(
     path: &Path,
     info: &VideoInfo,
     start_secs: f64,
-    duration_secs: f64,
-    count: u32,
-) -> Result<Vec<(u64, String)>> {
+    step_secs: f64,
+    tiles: u32,
+    keyframe_only: bool,
+) -> Result<Vec<u8>> {
     let fps = info.fps().max(0.001);
-    let plan = plan_range_thumbs(start_secs, duration_secs, fps, count);
-    let RangeThumbPlan { start_frame, count, step_secs, read_secs, keyframe_only } = plan;
+    let step_secs = step_secs.max(1e-6);
     let start_secs = start_secs.max(0.0);
+    let tiles = tiles.max(1);
+    // `-t` takes wall-clock duration, not a frame count, so pad it slightly
+    // (+2 frames worth) past the span so the last sample always has a real
+    // frame to land on — an exact `-t` can land a hair short after the
+    // approximate `-ss` seek and starve it (D-124).
+    let read_secs = tiles as f64 * step_secs + (2.0 / fps);
     let began = std::time::Instant::now();
 
     // `-ss`/`-t` as INPUT options (before `-i`) bound how much of the source
-    // ffmpeg reads/decodes at all — critical for a short clip trimmed out of
-    // a long source file, where processing "the rest of the file" after the
-    // seek point would be wasted work.
+    // ffmpeg reads/decodes at all — the entire reason a windowed filmstrip
+    // costs a fraction of a whole-clip one.
     let run = |hwaccel: bool| -> Result<std::process::Output> {
         let mut cmd = Command::new(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error"]);
@@ -426,12 +476,7 @@ pub fn extract_thumb_strip_range(
             cmd.args(["-hwaccel", "videotoolbox"]);
         }
         if keyframe_only {
-            // D-124, the single biggest real win in this pass: tell the
-            // decoder to throw away every non-keyframe *before* decoding it.
-            // Measured on the owner's own `A001…MOV` (517s of 4K HEVC, the
-            // whole-clip filmstrip): 105.5s -> 6.7s wall clock. The old code
-            // fully decoded all 12,414 frames and then had `select` discard
-            // ~99.5% of them — paying for every frame to use 64.
+            // Throw every non-keyframe away *before* decoding it (D-124).
             cmd.args(["-skip_frame", "nokey"]);
         }
         cmd.arg("-ss")
@@ -442,19 +487,14 @@ pub fn extract_thumb_strip_range(
             .arg(path)
             .args([
                 "-vf",
-                // `fps=` (a rate, in Hz) rather than D-119's
-                // `select=not(mod(n,step))` (a frame-index stride). Two real
-                // reasons, not a rewrite for its own sake: (1) it samples
-                // evenly in *time*, which is what a filmstrip means — the
-                // owner's screen recording is genuinely variable-frame-rate
-                // (`r_frame_rate` 60 vs `avg_frame_rate` 20.49), so an index
-                // stride puts its thumbnails at uneven real timestamps; and
-                // (2) it yields exactly `count` frames, where the stride form
-                // returned `count + 1` (measured: 65 for a requested 64).
-                // It is also what makes `-skip_frame nokey` above usable at
-                // all — keyframes arrive at irregular indices but correct
-                // timestamps, which is precisely what `fps=` keys off.
-                &format!("fps={:.9},scale=-2:{THUMB_STRIP_HEIGHT}", 1.0 / step_secs.max(1e-6)),
+                // `fps=` (a rate) rather than a frame-index stride: it samples
+                // evenly in *time*, which is what a filmstrip means (the
+                // owner's screen recording is genuinely VFR), it yields
+                // exactly the requested count, and it is what makes
+                // `-skip_frame nokey` usable at all — keyframes arrive at
+                // irregular indices but correct timestamps (D-124).
+                &format!("fps={:.9},scale=-2:{THUMB_STRIP_HEIGHT}", 1.0 / step_secs),
+                "-frames:v", &tiles.to_string(),
                 "-q:v", "6",
                 "-f", "image2pipe",
                 "-c:v", "mjpeg",
@@ -463,7 +503,7 @@ pub fn extract_thumb_strip_range(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         cmd.output()
-            .with_context(|| format!("running ffmpeg ranged thumb strip on {}", path.display()))
+            .with_context(|| format!("running ffmpeg thumb chunk on {}", path.display()))
     };
 
     let mut out = run(true)?;
@@ -483,42 +523,25 @@ pub fn extract_thumb_strip_range(
 
     if !out.status.success() {
         return Err(anyhow!(
-            "ffmpeg ranged thumb strip failed: {}",
+            "ffmpeg thumb chunk failed: {}",
             String::from_utf8_lossy(&out.stderr)
         ));
     }
 
-    let jpegs = split_mjpeg(&out.stdout);
-    // D-124 — a real decode leaves a trace, at `info` not `debug`. The whole
-    // reason this feature took three rounds to diagnose is that a slow (not
-    // failing) decode was indistinguishable from one that never ran: D-121
-    // logged only the hwaccel-failure path, so a strip that simply took 105
-    // seconds produced no evidence of any kind. A cache hit never reaches
-    // here, so this is one line per real extraction, not per render.
+    // D-124 — a real decode leaves a trace, at `info` not `debug`. A cache
+    // hit (memory or disk) never reaches here, so this is one line per real
+    // extraction, not per render.
     log::info!(
-        "chroma_clip_thumbnails: {} [{:.2}s +{:.2}s] -> {} frames in {:.2}s (keyframe_only={})",
+        "chroma_clip_thumbnails: {} [{:.2}s step {:.4}s x{}] -> {} bytes in {:.2}s (keyframe_only={})",
         path.display(),
         start_secs,
-        duration_secs,
-        jpegs.len(),
+        step_secs,
+        tiles,
+        out.stdout.len(),
         began.elapsed().as_secs_f64(),
         keyframe_only,
     );
-    let b64 = base64::engine::general_purpose::STANDARD;
-    Ok(jpegs
-        .into_iter()
-        .enumerate()
-        .map(|(i, bytes)| {
-            // Absolute source frame index, derived from the sample's real
-            // timestamp — `fps=` sampling has no frame *stride* to multiply,
-            // and under `-skip_frame nokey` the delivered frames' own indices
-            // are not evenly spaced anyway. Time is the honest common unit.
-            let local_frame = ((i as f64 * step_secs) * fps).round() as u64;
-            let frame = (start_frame + local_frame).min(info.frame_count.saturating_sub(1));
-            (frame, format!("data:image/jpeg;base64,{}", b64.encode(bytes)))
-        })
-        .take(count as usize)
-        .collect())
+    Ok(out.stdout)
 }
 
 /// A single thumbnail (data-URL JPEG) for `frame`, scaled to `height` px tall.
@@ -555,7 +578,7 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
 
 /// Split a concatenated MJPEG byte stream into individual JPEG frames on the
 /// `FF D8 FF` start-of-image marker.
-fn split_mjpeg(data: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn split_mjpeg(data: &[u8]) -> Vec<&[u8]> {
     let mut starts = Vec::new();
     let mut i = 0;
     while i + 2 < data.len() {
@@ -581,78 +604,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plan_range_thumbs_typical_clip() {
-        // 10s clip starting at 5s, 30fps, want 20 thumbnails: one every 0.5s.
-        let plan = plan_range_thumbs(5.0, 10.0, 30.0, 20);
-        assert_eq!(plan.start_frame, 150);
-        assert_eq!(plan.count, 20);
-        assert!((plan.step_secs - 0.5).abs() < 1e-9);
-        // 0.5s apart is far finer than any real keyframe interval, so a
-        // keyframe-only decode here would visibly repeat frames.
-        assert!(!plan.keyframe_only);
+    fn max_keyframe_gap_reads_ffprobes_real_csv_shape() {
+        // Verbatim shape of `ffprobe -show_entries packet=pts_time,flags
+        // -of csv=p=0` output, measured against the owner's own
+        // `A001_08302215_C019.MOV`: keyframes every 0.875s, non-keyframes in
+        // between, trailing comma from the two-field select.
+        let csv = "0.000000,K__\n0.041667,___\n0.875000,K__\n1.750000,K__\n1.791667,___\n";
+        assert!((max_keyframe_gap(csv) - 0.875).abs() < 1e-9);
     }
 
     #[test]
-    fn plan_range_thumbs_more_requested_than_frames_is_clamped_to_what_exists() {
-        // 1s clip at 30fps (30 frames), asking for 64 thumbnails - there are
-        // only 30 real frames, and asking `fps=` for 64 would just duplicate.
-        let plan = plan_range_thumbs(0.0, 1.0, 30.0, 64);
-        assert_eq!(plan.count, 30);
-        assert!(plan.step_secs > 0.0);
+    fn max_keyframe_gap_takes_the_worst_case_not_the_average() {
+        // A file whose keyframes are irregular (the owner's VFR screen
+        // recording is exactly this) must be judged on its widest gap, or a
+        // keyframe-only decode gated on the mean would repeat frames across
+        // the sparse stretch.
+        let csv = "0.0,K__\n0.5,K__\n1.0,K__\n5.0,K__\n";
+        assert!((max_keyframe_gap(csv) - 4.0).abs() < 1e-9);
     }
 
     #[test]
-    fn plan_range_thumbs_zero_duration_or_count_never_panics_or_divides_by_zero() {
-        let a = plan_range_thumbs(0.0, 0.0, 30.0, 10);
-        assert_eq!(a.count, 1); // clamped, not 0
-        assert!(a.read_secs > 0.0);
-        let b = plan_range_thumbs(0.0, 5.0, 30.0, 0);
-        assert_eq!(b.count, 1); // count clamped to 1 -> one sample
-        assert!(b.step_secs.is_finite());
+    fn max_keyframe_gap_falls_back_when_there_is_nothing_to_measure() {
+        assert_eq!(max_keyframe_gap(""), DEFAULT_KEYFRAME_INTERVAL_SECS);
+        // one keyframe is not a gap
+        assert_eq!(max_keyframe_gap("0.0,K__\n"), DEFAULT_KEYFRAME_INTERVAL_SECS);
+        // garbage lines are skipped, not parsed into a bogus time
+        assert_eq!(max_keyframe_gap("side_data\nN/A,K__\n"), DEFAULT_KEYFRAME_INTERVAL_SECS);
     }
 
     #[test]
-    fn plan_range_thumbs_negative_start_clamps_to_zero() {
-        let plan = plan_range_thumbs(-3.0, 2.0, 25.0, 5);
-        assert_eq!(plan.start_frame, 0);
-    }
-
-    #[test]
-    fn plan_range_thumbs_zero_fps_never_divides_by_zero() {
-        // guards the same class of bug `resampled_frame_count` in audio.rs
-        // tests for on its own rate-conversion math.
-        let plan = plan_range_thumbs(0.0, 5.0, 0.0, 10);
-        assert!(plan.count >= 1);
-        assert!(plan.step_secs.is_finite() && plan.step_secs >= 0.0);
-        assert!(plan.read_secs.is_finite());
-    }
-
-    /// D-124 — the real regression guard for the 105s-decode bug. Both clips
-    /// are the owner's own, verbatim from `~/Movies/Chroma/New.chroma`.
-    #[test]
-    fn plan_range_thumbs_picks_keyframe_mode_only_for_coarse_sampling() {
-        // `A001_08302215_C019.MOV`: 517.25s of 4K HEVC, 64 thumbnails wanted
-        // -> 8.08s apart, far coarser than its real 0.87s keyframe interval.
-        let long = plan_range_thumbs(0.0, 517.25, 24.005, 64);
-        assert_eq!(long.count, 64);
-        assert!(long.step_secs > KEYFRAME_SAMPLE_MIN_SECS);
-        assert!(long.keyframe_only, "the 105s-decode case must use keyframes");
-
-        // `Screen Recording 2026-08-10…mov`: 6.92s, 11 thumbnails wanted ->
-        // 0.63s apart. It only has THREE keyframes in total, so keyframe mode
-        // here would repeat frames - and a full decode of 7s costs 0.5s.
-        let short = plan_range_thumbs(0.0, 6.9167, 20.494, 11);
-        assert_eq!(short.count, 11);
-        assert!(!short.keyframe_only, "fine sampling must decode every frame");
-    }
-
-    #[test]
-    fn plan_range_thumbs_read_window_covers_the_last_sample() {
-        // The last sample sits at `(count - 1) * step_secs`; ffmpeg must be
-        // allowed to read past it or the strip comes back one frame short.
-        let plan = plan_range_thumbs(2.0, 10.0, 30.0, 8);
-        let last_sample = (plan.count as f64 - 1.0) * plan.step_secs;
-        assert!(plan.read_secs > last_sample);
+    fn max_keyframe_gap_ignores_non_keyframe_packets_entirely() {
+        // All non-keyframes: no keyframe times at all, so the fallback stands
+        // rather than a gap computed from the wrong packets.
+        let csv = "0.0,___\n1.0,___\n2.0,___\n";
+        assert_eq!(max_keyframe_gap(csv), DEFAULT_KEYFRAME_INTERVAL_SECS);
     }
 
     #[test]
@@ -721,19 +706,20 @@ mod tests {
         assert!(info.audio_channels > 0);
     }
 
-    /// D-124 — the real decode, not just the arithmetic around it. D-119 chose
-    /// not to add this because it had no way to run it; this pass did, against
-    /// the owner's own two clips, so it exists now. Still env-gated on
-    /// `CHROMA_TEST_VIDEO` in the same style as the two tests above, because
-    /// the file it needs is real footage kept outside the repo, not a fixture.
+    /// D-128 — the real decode behind the chunked filmstrip, not just the
+    /// arithmetic around it. Env-gated on `CHROMA_TEST_VIDEO` in the same
+    /// style as the probe/decode tests above, because the file it needs is
+    /// real footage kept outside the repo, not a fixture.
     ///
-    /// The two ranges below deliberately straddle `KEYFRAME_SAMPLE_MIN_SECS`,
-    /// so on a long enough source this exercises BOTH decode paths — the
-    /// keyframe-only one (the 105s -> 6.7s win) and the every-frame one — and
-    /// checks the thing that actually matters either way: that the frames come
-    /// back, come back distinct, and come back the number we asked for.
+    /// Exercises **both** decode paths against the same file: a coarse chunk
+    /// (keyframe-only, the cheap path that made windowing affordable) and a
+    /// fine one (every-frame). What matters either way is that the frames
+    /// come back, come back as the number asked for, and come back distinct —
+    /// a repeated frame is exactly what a too-aggressive `-skip_frame nokey`
+    /// would produce, and exactly the "stretched/smeared tiles" symptom this
+    /// decision set out to remove.
     #[test]
-    fn extract_thumb_strip_range_returns_real_distinct_frames() {
+    fn extract_thumb_chunk_returns_real_distinct_frames_on_both_decode_paths() {
         let Ok(p) = std::env::var("CHROMA_TEST_VIDEO") else {
             eprintln!("skip: set CHROMA_TEST_VIDEO to run");
             return;
@@ -743,32 +729,45 @@ mod tests {
         let dur = info.duration_secs;
         assert!(dur > 0.0, "{p} has no duration to sample");
 
-        // Coarse: the whole file, 64 frames. On a multi-minute source this is
-        // the keyframe-only path.
-        let coarse = extract_thumb_strip_range(path, &info, 0.0, dur, 64).expect("coarse strip");
-        let want = plan_range_thumbs(0.0, dur, info.fps(), 64).count as usize;
-        assert_eq!(coarse.len(), want, "asked for {want} frames, got {}", coarse.len());
-        assert!(
-            coarse.iter().all(|(_, u)| u.starts_with("data:image/jpeg;base64,") && u.len() > 64),
-            "every entry must be a real, non-empty JPEG data URL"
-        );
-        // Distinct pictures, not one frame repeated - the exact failure mode a
-        // too-aggressive `-skip_frame nokey` would produce.
-        let distinct: std::collections::HashSet<&String> = coarse.iter().map(|(_, u)| u).collect();
-        assert!(
-            distinct.len() * 4 >= coarse.len() * 3,
-            "expected mostly-distinct frames, got {} unique of {}",
-            distinct.len(),
-            coarse.len()
-        );
-        // Frame indices are absolute, ascending, and inside the source.
-        assert!(coarse.windows(2).all(|w| w[0].0 <= w[1].0), "frame indices ascend");
-        assert!(coarse.iter().all(|(f, _)| *f < info.frame_count.max(1)));
+        let kf = probe_keyframe_interval(path).expect("keyframe probe");
+        assert!(kf > 0.0 && kf.is_finite(), "keyframe interval must be a real number, got {kf}");
+        eprintln!("extract_thumb_chunk: {p} keyframe interval {kf:.3}s");
 
-        // Fine: a short sub-range, which is always the every-frame path.
-        let fine_dur = dur.min(4.0);
-        let fine = extract_thumb_strip_range(path, &info, 0.0, fine_dur, 8).expect("fine strip");
-        assert!(!fine.is_empty(), "a short sub-range must still yield frames");
-        assert!(fine.iter().all(|(_, u)| u.starts_with("data:image/jpeg;base64,")));
+        let distinct_ratio = |bytes: &[u8]| -> (usize, usize) {
+            let frames = split_mjpeg(bytes);
+            let uniq: std::collections::HashSet<&[u8]> = frames.iter().copied().collect();
+            (uniq.len(), frames.len())
+        };
+
+        // Coarse: a step comfortably past this file's own keyframe interval,
+        // so `keyframe_only` is both safe and what the real caller would pick.
+        let coarse_step = (kf * 2.0).max(1.0);
+        let coarse_tiles = ((dur / coarse_step).floor() as u32).clamp(2, 64);
+        let coarse = extract_thumb_chunk(path, &info, 0.0, coarse_step, coarse_tiles, true)
+            .expect("coarse chunk");
+        let (uniq, total) = distinct_ratio(&coarse);
+        assert_eq!(
+            total, coarse_tiles as usize,
+            "asked for {coarse_tiles} tiles, got {total}"
+        );
+        assert!(
+            uniq * 4 >= total * 3,
+            "expected mostly-distinct frames, got {uniq} unique of {total}"
+        );
+
+        // Fine: a short window at a sub-keyframe step, the every-frame path.
+        let fine_step = (kf / 4.0).max(0.05);
+        let fine_tiles = 8u32;
+        let fine = extract_thumb_chunk(path, &info, 0.0, fine_step, fine_tiles, false)
+            .expect("fine chunk");
+        let (funiq, ftotal) = distinct_ratio(&fine);
+        assert_eq!(ftotal, fine_tiles as usize, "fine chunk tile count");
+        assert!(funiq * 4 >= ftotal * 3, "fine chunk frames must differ too");
+
+        // Every emitted tile is a real JPEG (SOI marker), not a truncated one.
+        for f in split_mjpeg(&coarse).iter().chain(split_mjpeg(&fine).iter()) {
+            assert!(f.len() > 128, "a tile must be a real JPEG, got {} bytes", f.len());
+            assert_eq!(&f[..3], &[0xFF, 0xD8, 0xFF], "tile must start with a JPEG SOI marker");
+        }
     }
 }

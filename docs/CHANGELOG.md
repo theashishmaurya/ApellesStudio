@@ -54,6 +54,25 @@ One or two lines per session. Detail lives in the decision it references.
   built. Handles are planned, not built: the preview is a plain `<img>`,
   not a canvas, so they're a DOM overlay writing the same
   `set_clip_transform` op the numeric Inspector already writes.
+- **2026-09-04** — **Persistent, disk-backed media caching + windowed LOD
+  filmstrips + the full-resolution decode nobody ever saw (D-128,
+  B-044/B-045/B-046).** Owner, live: "we are doing actions which can be cached
+  again and again... most editors do it already" and "if you are loading 4k
+  that might be wrong." Both right, and two different defects. **(1)** Every
+  cache in the codebase was a process-local static, so every relaunch re-ran
+  every `ffprobe`, re-decoded every filmstrip and re-decoded every waveform —
+  now `chroma::media_cache`, a source-keyed (`blake3(path‖mtime‖size)`) disk
+  cache under `app_cache_dir()/chroma`, following RapidRAW's own thumbnail
+  cache and real NLE precedent (Premiere's `.cfa`/`.pek`, Resolve's
+  `CacheClip`). **(2)** Project-open decoded a full 3840×2160 frame per clip,
+  ~1.9s each, and discarded every one unseen. **(3)** The filmstrip is now
+  windowed level-of-detail extraction over the visible scroll range — the gap
+  D-124 named and deferred, and the shape persistence wanted anyway:
+  **727px/tile → ≤50px** at default zoom on the owner's 517s 4K clip, and a
+  16s window goes **5.41s cold → 0.007s warm-from-disk**, against 9.5s every
+  time for the old whole-clip strip. **(4)** The waveform had no cache at all and re-decoded a
+  clip's whole audio on every zoom step, on the main thread. Critical-path
+  catalogue: `docs/notes/media-cache.md`.
 - **2026-09-04** — **The filmstrip's real cost: one 105-second decode per
   clip, re-triggered on every zoom step (D-124, B-039).** Round 3 on
   D-119's filmstrip, run empirically after two rounds of reading missed

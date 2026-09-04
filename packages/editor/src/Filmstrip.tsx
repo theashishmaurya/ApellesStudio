@@ -1,51 +1,48 @@
 /**
- * @chroma/editor — real video filmstrip thumbnails for a timeline clip
- * (D-119), the picture-content sibling to `Waveform.tsx`'s amplitude one.
+ * @chroma/editor — real video filmstrip thumbnails for a timeline clip:
+ * **windowed over the visible scroll range**, at a level of detail that
+ * matches the current zoom (D-128). Supersedes D-119/D-121/D-124's
+ * fixed-64-frame whole-clip strip.
  *
- * Owner, live, with a screenshot of Palmier Pro's real timeline as the
- * reference: "add the proper thumbnail to the clips timeline also when
- * dragging" + "when we drag use the proper preview instead of dotted line
- * how other editors do it." Same architectural shape as `Waveform.tsx`
- * (D-051): frames are extracted once in Rust (`chroma_clip_thumbnails` →
- * `video::extract_thumb_strip_range`, one `ffmpeg` decode pass over exactly
- * the clip's real `[source_start, source_start + duration)` range, not the
- * whole source file), cached (both Rust-side, `edit.rs::THUMB_CACHE`, and
- * here in a module-level `Map` mirroring `Waveform.tsx`'s own — the same
- * "re-renders and other clips redrawing shouldn't refetch" reasoning), and
- * tiled here as plain `<img>` elements (no canvas needed — these are already
- * small JPEGs, not a signal to synthesize).
+ * Owner, live, with two screenshots side by side: our own timeline at high
+ * zoom, every tile visibly stretched and smeared, next to Palmier Pro's —
+ * clean, evenly spaced, correctly proportioned frames, more of them as you
+ * zoom in, never stretched. That is exactly the gap D-124 named as its own
+ * deferred limitation: it fetched a fixed 64-frame summary of the whole clip
+ * and re-tiled it, so a 517-second clip at 90 px/s (46,530 px wide, wanting
+ * ~930 tiles) had 64 pictures to fill them with and drew each one 727 px
+ * wide from a 185 px source. Zoom was free, but only because there was
+ * nothing left to fetch.
  *
- * **What is fetched no longer depends on how wide the clip is drawn (D-124).**
- * D-119 derived the requested frame `count` from the clip's on-screen pixel
- * width, bucketed to 50px so that *jitter* wouldn't refetch. That handled
- * jitter but not zoom: a real zoom step changes the width by 20% at a time,
- * which crosses bucket after bucket, and every crossing was a brand-new cache
- * key and therefore a brand-new `ffmpeg` decode. Measured live on the owner's
- * own project, one clip, one zoom sweep: `count` went 64 -> 41 -> 20 -> 10,
- * i.e. four separate full decodes of the same 517-second 4K source, each of
- * which took 105 seconds before this pass's backend fix. Worse, every one of
- * them blanked the strip first (`setThumbs(null)`) and left it blank until it
- * returned — which is exactly the "when we zoom and change that its also not
- * good" the owner reported, and, when several of those decodes saturated the
- * backend's 3-permit semaphore, why an unrelated short clip's strip could sit
- * pending forever with no error and no log line to show for it.
+ * **What changed.** The fetch is now a *window*: "tiles roughly `step` apart
+ * covering the source range this clip is actually showing on screen right
+ * now." Zooming in shrinks `step`, so you get more, finer tiles over a
+ * narrower range — never the same frames stretched. The backend
+ * (`chroma_clip_thumbnails` → `chroma::filmstrip`) quantises `step` to a
+ * power-of-two ladder and cuts the source into fixed chunks at that level,
+ * so:
  *
- * So the fetch is now keyed on the clip's own identity and source range only
- * — `count` is derived from its *duration* — and zoom is handled purely at
- * render time by sampling that fixed set down to however many tiles fit the
- * current width. This is what `Waveform.tsx` (D-051) has always actually
- * done, and what D-119 described itself as copying but did not: extract a
- * fixed-size summary once, then render it scaled. Zoom now costs zero
- * backend calls and never blanks.
+ * - a small scroll or a sub-step zoom nudge resolves to the same request and
+ *   costs nothing;
+ * - a chunk is shared between two clips cut from the same source file, and
+ *   between every zoom level that lands on the same rung;
+ * - and every chunk is written to a **persistent on-disk cache**, so the
+ *   second time you open the project — tomorrow, in a new process — it is
+ *   already there.
+ *
+ * Two properties D-124 got right are kept deliberately. Tiles already fetched
+ * stay on screen while a new window loads (the strip never blanks, which is
+ * half of what "when we zoom and change that its also not good" was about),
+ * and a failed fetch is evicted rather than cached, so one transient failure
+ * doesn't cost a clip its filmstrip until a page reload.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-
-import { MAX_PX_PER_SEC } from './ruler';
 
 interface ClipThumb {
   frame: number;
+  secs: number;
   dataUrl: string;
 }
 
@@ -53,81 +50,123 @@ const MAX_CACHE = 200;
 const thumbCache = new Map<string, Promise<ClipThumb[]>>();
 
 /** ~1 tile per this many px of on-screen clip width — matches the reference
- *  screenshot's real tiling density (Palmier: roughly every 40-60px). This is
- *  now purely a *render* density: it decides how many of the already-fetched
- *  frames to show, never how many to ask the backend for. */
+ *  screenshot's real tiling density (Palmier: roughly every 40-60px). Unlike
+ *  D-124, where this was purely a render-time density, it is now also what
+ *  sets the *requested* tile spacing: that is the whole point of windowing. */
 const PX_PER_FRAME = 50;
 
-/** Frames fetched per second of source duration, bounded below. Derived from
- *  the zoom ceiling rather than picked: at `MAX_PX_PER_SEC` one second of
- *  source is drawn `MAX_PX_PER_SEC` px wide, which at `PX_PER_FRAME` px per
- *  tile is this many tiles. Fetching at exactly that density means a clip
- *  short enough to stay under `MAX_FETCH_FRAMES` has a real distinct frame
- *  for every tile even at full zoom-in — never a handful of frames smeared
- *  across the clip, which is the other half of the owner's "when we zoom and
- *  change that its also not good." */
-const FRAMES_PER_SOURCE_SEC = MAX_PX_PER_SEC / PX_PER_FRAME;
-const MIN_FETCH_FRAMES = 8;
-/** Matches the backend's own `count.clamp(1, 64)` in `chroma_clip_thumbnails`. */
-const MAX_FETCH_FRAMES = 64;
+/** Mirrors `chroma::filmstrip::LEVEL_STEPS` exactly. Quantising client-side
+ *  as well as server-side is not redundant: it is what keeps the *cache key*
+ *  stable across a zoom nudge, so a 1.2x wheel step that lands on the same
+ *  rung produces no request at all rather than an IPC round trip the backend
+ *  would then answer from cache. */
+export const LEVEL_STEPS_SECONDS: readonly number[] = [
+  0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64,
+];
 
-/** How many frames to extract for a clip of this length — duration-derived,
- *  never width-derived, so zoom never changes it and so never refetches.
- *  Exported for the unit tests that pin exactly that property.
+/** The window is snapped outward to a multiple of this many tiles, so
+ *  scrolling by a few pixels reuses the previous request. Small enough that
+ *  the snap never asks for much more than the viewport, large enough that
+ *  ordinary scrolling is mostly free. */
+const WINDOW_QUANTUM_TILES = 16;
+
+/** Hard ceiling on tiles rendered for one clip, mirroring the backend's own
+ *  per-request cap. A window is viewport-sized, so this is never reached in
+ *  normal use — it exists so a degenerate layout (a clip measured at an
+ *  absurd width mid-transition) can't build a huge DOM. */
+const MAX_TILES = 512;
+
+/** Tile spacing, in source seconds, that a clip drawn `width` px wide wants
+ *  in order to put a real distinct picture roughly every `PX_PER_FRAME` px.
+ *  Pure and exported: this is the arithmetic the whole anti-stretch property
+ *  rests on, so it has a real correct/incorrect answer in a unit test. */
+export function desiredStepSecs(durationSecs: number, width: number): number {
+  if (!(durationSecs > 0) || !(width > 0)) return LEVEL_STEPS_SECONDS[0];
+  const pxPerSec = width / durationSecs;
+  return PX_PER_FRAME / pxPerSec;
+}
+
+/** Snap `stepSecs` down to the nearest rung of [`LEVEL_STEPS_SECONDS`] —
+ *  never *up*, because a coarser spacing than asked for is precisely what
+ *  stretches a tile. Clamped to the ladder at both ends. */
+export function quantizeStepSecs(stepSecs: number): number {
+  if (!(stepSecs > 0)) return LEVEL_STEPS_SECONDS[0];
+  let chosen = LEVEL_STEPS_SECONDS[0];
+  for (const step of LEVEL_STEPS_SECONDS) {
+    if (step <= stepSecs) chosen = step;
+  }
+  return chosen;
+}
+
+export interface RequestWindow {
+  startSecs: number;
+  durationSecs: number;
+  stepSecs: number;
+}
+
+/**
+ * The source range to fetch for a clip whose `[visibleStartPx, visibleEndPx)`
+ * is on screen, snapped outward so nearby scroll positions share a request.
  *
- *  Past `MAX_FETCH_FRAMES / FRAMES_PER_SOURCE_SEC` (~6.7s) of source this
- *  saturates and a long clip does get fewer frames than tiles at extreme
- *  zoom-in, re-tiling what it has. That is the deliberate trade and the same
- *  one `Waveform.tsx` makes: a bounded, cached summary beats a decode per
- *  zoom step, and 64 frames of a 517s clip is already one every 8 seconds —
- *  the frames genuinely differ far more than the tiles can show. */
-export function fetchFrameCount(durationSecs: number): number {
-  if (!(durationSecs > 0)) return MIN_FETCH_FRAMES;
-  const wanted = Math.ceil(durationSecs * FRAMES_PER_SOURCE_SEC);
-  return Math.max(MIN_FETCH_FRAMES, Math.min(MAX_FETCH_FRAMES, wanted));
+ * All times are in the **source file's** own base (the same base
+ * `chroma_clip_thumbnails` takes), because that is what makes a window
+ * shareable between two clips trimmed differently out of one file.
+ *
+ * Returns `null` when there is nothing to draw — no width, no duration, or a
+ * clip scrolled entirely off screen. That last case matters: it is what stops
+ * a 40-clip timeline from requesting 40 windows when two are visible.
+ */
+export function requestWindow(
+  sourceStartSecs: number,
+  durationSecs: number,
+  width: number,
+  visibleStartPx: number,
+  visibleEndPx: number,
+): RequestWindow | null {
+  if (!(durationSecs > 0) || !(width > 0)) return null;
+  const visLeft = Math.max(0, Math.min(width, visibleStartPx));
+  const visRight = Math.max(0, Math.min(width, visibleEndPx));
+  if (!(visRight > visLeft)) return null;
+
+  const stepSecs = quantizeStepSecs(desiredStepSecs(durationSecs, width));
+  const secsPerPx = durationSecs / width;
+  // Half a viewport of overscan on each side, so a scroll in either direction
+  // has tiles ready before it needs them.
+  const overscan = ((visRight - visLeft) * secsPerPx) / 2;
+  const rawStart = sourceStartSecs + visLeft * secsPerPx - overscan;
+  const rawEnd = sourceStartSecs + visRight * secsPerPx + overscan;
+
+  const quantum = stepSecs * WINDOW_QUANTUM_TILES;
+  const clipEnd = sourceStartSecs + durationSecs;
+  const start = Math.max(sourceStartSecs, Math.floor(rawStart / quantum) * quantum);
+  const end = Math.min(clipEnd, Math.ceil(rawEnd / quantum) * quantum);
+  if (!(end > start)) return null;
+  return { startSecs: start, durationSecs: end - start, stepSecs };
 }
 
-/** Pick `tileCount` evenly-spaced entries out of `thumbs` (the render-time
- *  half of the split above). Kept pure and exported so the sampling has a real
- *  correct/incorrect answer in a unit test, independently of React. */
-export function sampleThumbs<T>(thumbs: T[], tileCount: number): T[] {
-  if (thumbs.length === 0) return thumbs;
-  const n = Math.max(1, Math.min(thumbs.length, tileCount));
-  if (n >= thumbs.length) return thumbs;
-  if (n === 1) return [thumbs[0]];
-  const last = thumbs.length - 1;
-  return Array.from({ length: n }, (_, i) => thumbs[Math.round((i * last) / (n - 1))]);
+function cacheKey(sourcePath: string, w: RequestWindow): string {
+  return `${sourcePath}|${w.stepSecs}|${w.startSecs.toFixed(3)}|${w.durationSecs.toFixed(3)}`;
 }
 
-function cacheKey(sourcePath: string, startSecs: number, durationSecs: number, count: number): string {
-  return `${sourcePath}|${startSecs.toFixed(3)}|${durationSecs.toFixed(3)}|${count}`;
-}
-
-function getThumbs(sourcePath: string, startSecs: number, durationSecs: number, count: number): Promise<ClipThumb[]> {
-  const key = cacheKey(sourcePath, startSecs, durationSecs, count);
+function getThumbs(sourcePath: string, w: RequestWindow): Promise<ClipThumb[]> {
+  const key = cacheKey(sourcePath, w);
   let p = thumbCache.get(key);
   if (!p) {
     if (thumbCache.size > MAX_CACHE) thumbCache.clear();
-    p = invoke<{ frame: number; dataUrl: string }[]>('chroma_clip_thumbnails', {
+    p = invoke<{ frame: number; secs: number; dataUrl: string }[]>('chroma_clip_thumbnails', {
       sourcePath,
-      startSecs,
-      durationSecs,
-      count,
+      startSecs: w.startSecs,
+      durationSecs: w.durationSecs,
+      stepSecs: w.stepSecs,
     })
-      .then((rows) => rows.map((r) => ({ frame: r.frame, dataUrl: r.dataUrl })))
+      .then((rows) => rows.map((r) => ({ frame: r.frame, secs: r.secs, dataUrl: r.dataUrl })))
       .catch((err) => {
         // Real failure, not silently dropped — a clip with genuinely no
-        // filmstrip and zero trace of why (this exact silent-catch, found
-        // live: the owner's 4K HEVC clip showed no thumbnail with nothing
-        // in any log to explain it) is undiagnosable. A missing filmstrip
-        // stays a soft failure for the *UI* (the clip still renders, just
-        // without a strip) — this only makes it a loud one in devtools.
+        // filmstrip and zero trace of why is undiagnosable (D-124 found
+        // exactly that live). A missing filmstrip stays a soft failure for
+        // the UI; this only makes it a loud one in devtools.
         console.error('[Filmstrip] chroma_clip_thumbnails failed for', sourcePath, err);
-        // D-124 — evict, so a failure is not cached for the life of the page.
-        // The old code left the resolved-to-`[]` promise in the map forever:
-        // one transient failure (a busy machine, a file briefly unreadable)
-        // and that clip could never get a strip again short of a reload, with
-        // nothing after the first attempt to show for it.
+        // Evict, so a transient failure is not cached for the life of the page.
         thumbCache.delete(key);
         return [];
       });
@@ -142,63 +181,96 @@ export interface FilmstripProps {
   startSecs: number;
   /** clip's `duration` in seconds (frames / fps) */
   durationSecs: number;
-  /** on-screen pixel width to render at — drives only how many of the fetched
-   *  frames are tiled, never how many are requested (D-124) */
+  /** the clip's full on-screen width in px at the current zoom */
   width: number;
   height: number;
+  /** Visible sub-range of the clip, in px from its own left edge. Omitted
+   *  (the drag overlay, which has no scroll container of its own) means the
+   *  whole clip is treated as visible. */
+  visibleStartPx?: number;
+  visibleEndPx?: number;
 }
 
-export function Filmstrip({ sourcePath, startSecs, durationSecs, width, height }: FilmstripProps) {
+export function Filmstrip({
+  sourcePath,
+  startSecs,
+  durationSecs,
+  width,
+  height,
+  visibleStartPx,
+  visibleEndPx,
+}: FilmstripProps) {
   const [thumbs, setThumbs] = useState<ClipThumb[] | null>(null);
+  // Keeps the last good tiles on screen while a new window is in flight, so
+  // a zoom or scroll never blanks the strip (D-124's own hard-won property).
+  const lastGood = useRef<ClipThumb[] | null>(null);
 
-  const count = fetchFrameCount(durationSecs);
+  const window_ = useMemo(
+    () =>
+      requestWindow(
+        startSecs,
+        durationSecs,
+        width,
+        visibleStartPx ?? 0,
+        visibleEndPx ?? width,
+      ),
+    [startSecs, durationSecs, width, visibleStartPx, visibleEndPx],
+  );
+
+  // Depend on the *serialised* window, not the object — `requestWindow`
+  // returns a fresh object every render, and the whole point of snapping it
+  // is that an unchanged window must not re-fire this effect.
+  const windowKey = window_ ? cacheKey(sourcePath, window_) : '';
 
   useEffect(() => {
     let cancelled = false;
-    // NOT gated on `width` (D-124). It used to be — an early `return` on
-    // `width <= 0` while `width` was absent from the dependency array below,
-    // so a clip that first rendered at zero width never fetched at all once
-    // its real width arrived, unless the bucketed count happened to change
-    // too. Width now only affects the render, so it has no business here.
-    if (!sourcePath || durationSecs <= 0) {
-      setThumbs(null);
-      return;
-    }
-    setThumbs(null);
-    getThumbs(sourcePath, startSecs, durationSecs, count).then((t) => {
-      if (!cancelled) setThumbs(t);
+    if (!sourcePath || !window_) return;
+    getThumbs(sourcePath, window_).then((t) => {
+      if (cancelled) return;
+      if (t.length > 0) lastGood.current = t;
+      setThumbs(t);
     });
     return () => {
       cancelled = true;
     };
-  }, [sourcePath, startSecs, durationSecs, count]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourcePath, windowKey]);
 
-  // Render-time only: how many of the fetched frames to actually tile at the
-  // current zoom. Changing this re-tiles cached images — no backend call, no
-  // blank frame in between. Keeping each tile at ~`PX_PER_FRAME` wide is also
-  // what stops the tiles stretching: with a fixed tile count, `flex-1` gave
-  // every tile `width / n` px, so zooming in smeared each frame wider and
-  // wider across the clip.
-  const tiles = useMemo(
-    () => (thumbs ? sampleThumbs(thumbs, Math.round(width / PX_PER_FRAME)) : []),
-    [thumbs, width],
-  );
+  const pxPerSec = durationSecs > 0 ? width / durationSecs : 0;
+  const shown = thumbs && thumbs.length > 0 ? thumbs : lastGood.current;
+
+  const tiles = useMemo(() => {
+    if (!shown || pxPerSec <= 0) return [];
+    // Tile width from the real spacing of what came back, not from what was
+    // asked for: the backend may serve a finer level than requested, and a
+    // tile drawn wider than its own slice is exactly the smear this fixes.
+    const spacing = shown.length > 1 ? shown[1].secs - shown[0].secs : window_?.stepSecs ?? 0;
+    const tileWidth = Math.max(1, (spacing > 0 ? spacing : 1 / pxPerSec) * pxPerSec);
+    const out: { key: string; left: number; w: number; src: string }[] = [];
+    for (const t of shown) {
+      const left = (t.secs - startSecs) * pxPerSec;
+      if (left >= width || left + tileWidth <= 0) continue;
+      out.push({ key: `${t.frame}-${t.secs}`, left, w: tileWidth, src: t.dataUrl });
+      if (out.length >= MAX_TILES) break;
+    }
+    return out;
+  }, [shown, pxPerSec, startSecs, width, window_?.stepSecs]);
 
   if (tiles.length === 0 || width <= 0 || height <= 0) return null;
 
   return (
     <div
-      className="absolute inset-0 flex overflow-hidden"
+      className="absolute inset-0 overflow-hidden"
       style={{ width, height, pointerEvents: 'none' }}
     >
-      {tiles.map((t, i) => (
+      {tiles.map((t) => (
         <img
-          key={`${t.frame}-${i}`}
-          src={t.dataUrl}
+          key={t.key}
+          src={t.src}
           alt=""
           draggable={false}
-          className="h-full flex-1 min-w-0 object-cover"
-          style={{ opacity: 0.85 }}
+          className="absolute top-0 h-full object-cover"
+          style={{ left: t.left, width: t.w, opacity: 0.85 }}
         />
       ))}
     </div>

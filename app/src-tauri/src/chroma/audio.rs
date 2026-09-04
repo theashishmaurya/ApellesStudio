@@ -186,7 +186,7 @@
 //! Fork hygiene (D-003): all new code; `chroma/mod.rs` gains `pub mod audio;`,
 //! `lib.rs` three new `generate_handler!` lines.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -736,9 +736,146 @@ pub fn chroma_audio_level() -> (f32, f32) {
 /// non-positive `duration_secs`/`buckets`: the same "nothing to draw" shape
 /// `chroma_timeline_frame`'s blank-frame return uses, so a silent clip's
 /// waveform request doesn't have to be treated as failure in the frontend.
-#[tauri::command]
-pub fn chroma_audio_waveform(
-    source_path: String,
+/// Peak buckets cached per second of source (D-128). The waveform is drawn at
+/// roughly one bucket per 2 on-screen px, so at the UI's maximum zoom (480
+/// px/s, `ruler.ts`) a second of source is 240 px and wants ~120 buckets.
+/// This is that, rounded up — fine enough that re-bucketing down to any real
+/// request is visually identical to decoding for it, and coarse enough that a
+/// long clip's cached envelope stays small (a 517-second clip is 128k pairs,
+/// ~1 MB on disk).
+const CACHED_PEAKS_PER_SEC: f64 = 128.0;
+/// Ceiling on a cached envelope's bucket count, so a very long source can't
+/// produce an unbounded cache entry.
+const MAX_CACHED_PEAKS: usize = 1_000_000;
+
+const NS_WAVEFORM: &str = "waveform";
+
+/// One source range's amplitude envelope: `(min, max)` per bucket. `Arc` so a
+/// cache hit is a refcount bump rather than a clone of a long clip's envelope.
+type PeakEnvelope = Arc<Vec<(f32, f32)>>;
+
+/// In-process envelopes, in front of the disk cache — a scroll/zoom re-render
+/// asks for the same range many times a second and shouldn't touch the
+/// filesystem for it.
+static PEAKS_MEM: Lazy<Mutex<HashMap<String, PeakEnvelope>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+const MAX_PEAKS_MEM: usize = 200;
+
+fn peaks_cache_key(source_key: &str, start_secs: f64, duration_secs: f64) -> String {
+    // Whole milliseconds, so two calls for the same real clip range can't
+    // miss each other over float noise (`1.2000000000000002` vs `1.2`) —
+    // the same rounding D-119's own cache key used, for the same reason.
+    let ms = |s: f64| (s.max(0.0) * 1000.0).round() as u64;
+    format!(
+        "{source_key}-s{}-d{}-r{}",
+        ms(start_secs),
+        ms(duration_secs),
+        CACHED_PEAKS_PER_SEC as u32
+    )
+}
+
+/// The cached, fixed-resolution amplitude envelope for a source range:
+/// memory → disk → a real `symphonia` decode.
+///
+/// **Why the caller's `buckets` is deliberately not part of the key (D-128).**
+/// Before this, `chroma_audio_waveform` had no Rust-side cache at all and
+/// `Waveform.tsx` keyed its own on the bucket count, which it derives from the
+/// clip's *on-screen pixel width* — so every zoom step, every panel resize,
+/// every window resize was a brand-new key and therefore a brand-new full
+/// audio decode of the clip's whole range. That is precisely the defect D-124
+/// found and fixed on the filmstrip side ("what is fetched no longer depends
+/// on how wide the clip is drawn") and it was still live here. Caching one
+/// fixed-resolution envelope and re-bucketing it in memory makes zoom free
+/// for the waveform too.
+fn cached_peaks(path: &Path, start_secs: f64, duration_secs: f64) -> Result<PeakEnvelope, String> {
+    let source_key = super::media_cache::source_key(path).ok();
+    let key = source_key
+        .as_deref()
+        .map(|k| peaks_cache_key(k, start_secs, duration_secs));
+
+    if let Some(key) = key.as_deref()
+        && let Some(hit) = PEAKS_MEM.lock().unwrap_or_else(|e| e.into_inner()).get(key)
+    {
+        return Ok(Arc::clone(hit));
+    }
+    if let Some(key) = key.as_deref()
+        && let Some(peaks) = super::media_cache::read_json::<Vec<(f32, f32)>>(NS_WAVEFORM, key)
+    {
+        let peaks = Arc::new(peaks);
+        let mut mem = PEAKS_MEM.lock().unwrap_or_else(|e| e.into_inner());
+        if mem.len() > MAX_PEAKS_MEM {
+            mem.clear();
+        }
+        mem.insert(key.to_string(), Arc::clone(&peaks));
+        return Ok(peaks);
+    }
+
+    let began = std::time::Instant::now();
+    let samples = decode_mono_range(path, start_secs.max(0.0), duration_secs)?;
+    let cached_buckets = ((duration_secs.max(0.0) * CACHED_PEAKS_PER_SEC).ceil() as usize)
+        .clamp(1, MAX_CACHED_PEAKS);
+    let peaks = Arc::new(peaks_from_samples(&samples, cached_buckets));
+    // Same discipline D-124 established for the filmstrip: a real decode
+    // leaves a trace, a cache hit does not. The whole reason that feature
+    // took three rounds to diagnose was that a slow decode and an absent one
+    // looked identical from outside.
+    log::info!(
+        "chroma_audio_waveform: {} [{:.2}s +{:.2}s] -> {} peaks in {:.2}s",
+        path.display(),
+        start_secs,
+        duration_secs,
+        peaks.len(),
+        began.elapsed().as_secs_f64(),
+    );
+
+    if let Some(key) = key.as_deref() {
+        super::media_cache::write_json(NS_WAVEFORM, key, peaks.as_ref());
+        let mut mem = PEAKS_MEM.lock().unwrap_or_else(|e| e.into_inner());
+        if mem.len() > MAX_PEAKS_MEM {
+            mem.clear();
+        }
+        mem.insert(key.to_string(), Arc::clone(&peaks));
+    }
+    Ok(peaks)
+}
+
+/// Re-bucket an already-computed envelope down (or up) to `buckets` pairs,
+/// taking the min/max across each group so a peak is never averaged away.
+/// Pure — the half of the waveform path that a zoom change now costs.
+pub(crate) fn rebucket_peaks(peaks: &[(f32, f32)], buckets: usize) -> Vec<(f32, f32)> {
+    let n = peaks.len();
+    if n == 0 || buckets == 0 {
+        return Vec::new();
+    }
+    if buckets >= n {
+        return peaks.to_vec();
+    }
+    let mut out = Vec::with_capacity(buckets);
+    for b in 0..buckets {
+        let start = b * n / buckets;
+        let end = ((b + 1) * n / buckets).max(start + 1).min(n);
+        let (mut lo, mut hi) = peaks[start];
+        for &(l, h) in &peaks[start + 1..end] {
+            if l < lo {
+                lo = l;
+            }
+            if h > hi {
+                hi = h;
+            }
+        }
+        out.push((lo, hi));
+    }
+    out
+}
+
+/// The synchronous body of [`chroma_audio_waveform`] — everything except
+/// getting off the main thread. Split out (rather than making the tests
+/// `#[tokio::test]`) for the same reason `project.rs` gives for its own
+/// equivalent split: this module is otherwise entirely sync, and pulling a
+/// tokio test runtime into it to exercise one command is a bigger change than
+/// the thing being tested.
+pub(crate) fn waveform_peaks(
+    source_path: &str,
     start_secs: f64,
     duration_secs: f64,
     buckets: usize,
@@ -746,13 +883,32 @@ pub fn chroma_audio_waveform(
     if duration_secs <= 0.0 || buckets == 0 {
         return Ok(Vec::new());
     }
-    let path = PathBuf::from(&source_path);
+    let path = PathBuf::from(source_path);
     let info = super::edit::probe_cached(&path)?;
     if !info.has_audio {
         return Ok(Vec::new());
     }
-    let samples = decode_mono_range(&path, start_secs.max(0.0), duration_secs)?;
-    Ok(peaks_from_samples(&samples, buckets))
+    let peaks = cached_peaks(&path, start_secs, duration_secs)?;
+    Ok(rebucket_peaks(&peaks, buckets))
+}
+
+/// `async` + `spawn_blocking` (D-128). A non-`async` Tauri command runs on
+/// the app's **main thread**, and this one can do a multi-second `symphonia`
+/// decode — so every visible audio-bearing clip's waveform was decoding on
+/// the same thread that paints the window. Cheap to fix, and it is on the
+/// path between opening a project and the timeline appearing.
+#[tauri::command]
+pub async fn chroma_audio_waveform(
+    source_path: String,
+    start_secs: f64,
+    duration_secs: f64,
+    buckets: usize,
+) -> Result<Vec<(f32, f32)>, String> {
+    tokio::task::spawn_blocking(move || {
+        waveform_peaks(&source_path, start_secs, duration_secs, buckets)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Decode `path`'s default audio track from `start_secs` for `duration_secs`,
@@ -1997,8 +2153,7 @@ mod tests {
             return;
         };
 
-        let peaks = chroma_audio_waveform(video_path.clone(), 0.0, 2.0, 100)
-            .expect("chroma_audio_waveform");
+        let peaks = waveform_peaks(&video_path, 0.0, 2.0, 100).expect("waveform_peaks");
         assert_eq!(peaks.len(), 100, "requested bucket count must be honoured");
         assert!(
             peaks.iter().any(|(lo, hi)| *hi > *lo || *hi != 0.0),
@@ -2019,8 +2174,7 @@ mod tests {
             return;
         };
 
-        let peaks =
-            chroma_audio_waveform(video_path, 0.0, 2.0, 100).expect("chroma_audio_waveform");
+        let peaks = waveform_peaks(&video_path, 0.0, 2.0, 100).expect("waveform_peaks");
         assert_eq!(peaks, Vec::new());
     }
 
@@ -2029,11 +2183,11 @@ mod tests {
         // a nonexistent path proves this returns early on the duration_secs/
         // buckets guard rather than attempting to open/probe it.
         assert_eq!(
-            chroma_audio_waveform("/nonexistent/path.mp4".into(), 0.0, 0.0, 100).unwrap(),
+            waveform_peaks("/nonexistent/path.mp4", 0.0, 0.0, 100).unwrap(),
             Vec::new()
         );
         assert_eq!(
-            chroma_audio_waveform("/nonexistent/path.mp4".into(), 0.0, 2.0, 0).unwrap(),
+            waveform_peaks("/nonexistent/path.mp4", 0.0, 2.0, 0).unwrap(),
             Vec::new()
         );
     }

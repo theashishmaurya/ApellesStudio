@@ -9202,3 +9202,205 @@ Two details that matter more than they look: the crop identity test **mirrors `i
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+## D-128 — Persistent, disk-backed media caching; windowed LOD filmstrips; and the full-resolution decode nobody ever saw (B-044/B-045/B-046)
+
+**Context.** Owner, live, twice within a minute. First, with a screenshot of the bare
+"Welcome to Chroma" launcher mid-open: *"map out all the action happens — we are doing
+actions which can be cached again and again, i'm sure that's why it takes so long, most
+editors do it already."* Then, watching *Loading timeline…* sit there: *"we should not
+be getting this at all — if you are loading 4k that might be wrong."* Both instincts
+were right and they turned out to be **two different** real defects. A third surfaced
+while cataloguing the path, and the coordinator then folded in the gap D-124 had named
+and deferred. All four are one change because they are all one question: *what do we
+cache, and how is it keyed?*
+
+The full critical-path catalogue — every operation between clicking a project card and a
+scrubbable timeline, what it costs, and whether it was cached at all — is in
+**`docs/notes/media-cache.md`**. It is worth reading independently of this fix.
+
+### 1. Nothing survived a restart (B-045)
+
+Every cache in the codebase was a module-level `Lazy<Mutex<HashMap<..>>>` static:
+`edit::PROBE_CACHE`, `edit::THUMB_CACHE` (D-119/D-121/D-124), `state::THUMB_CACHE`
+(D-033), `project::MANIFEST_CACHE` (D-114). All process-local, all wiped on every
+launch. That is invisible inside a session — which is exactly why three consecutive
+rounds of filmstrip work (D-119, D-121, D-124) each measured and optimised the *decode*
+and none of them noticed it was being paid again on every relaunch. The owner found it
+by feel.
+
+RapidRAW's own still-image thumbnail cache, in this same repo, has been disk-backed all
+along (`file_management::resolve_thumbnail_cache_dir` → `app_cache_dir()/thumbnails`,
+keyed `blake3(path + mtime)`). The video side simply never got the equivalent.
+
+**`chroma::media_cache`** is that, generalised: a keyed byte store under
+`app_cache_dir()/chroma/<namespace>/<shard>/<key>`, bound once from `lib.rs`'s `setup`
+into a `OnceLock` — the same shape `exif_processing::initialize_cache_dir` already
+uses, so commands don't need an `AppHandle` they have no other use for. Atomic writes
+(temp + rename), so an entry is either absent or complete. Every failure — no root,
+unreadable, malformed — is a **miss**, never an error: persistence is an optimisation,
+the recompute path is always still there. 1 GB budget, pruned to 80% least-recently-read
+on a background thread at startup.
+
+**Key: `blake3(absolute path ‖ mtime_nanos ‖ length)`.** The one decision that decides
+whether a stale tile can ever be served, so: a content hash is strictly more correct
+(it catches an in-place edit preserving both mtime and length), but it costs a full read
+of the file *on every lookup* — the owner's own source is 2.3 GB, ~1-2s per lookup at
+blake3's real throughput, the same order as the decode being avoided. That spends the
+entire win to close a gap requiring someone to rewrite a video in place to exactly its
+old byte length without touching its mtime. mtime+size is what RapidRAW's own cache
+here already does, and what real NLE media caches do — researched, not assumed:
+Premiere's Media Cache Database keys its `.cfa`/`.pek` accelerator files off the source
+media with age/size-based cleanup rather than content-hashing gigabytes; Resolve's
+`CacheClip` behaves the same way. Recourse in the pathological case is the same one
+every NLE gives: delete the cache directory.
+
+Persisted now: filmstrip chunks, `VideoInfo` probes (0.75s of `ffprobe` per clip),
+waveform envelopes, and measured keyframe intervals. **Deliberately not persisted:**
+`MANIFEST_CACHE` (D-114) — it caches a document the app itself writes constantly; the
+read it avoids is a few ms of JSON parse, and persisting a mutable document across
+restarts buys nothing and risks staleness.
+
+### 2. The filmstrip's shape: LOD chunks, not per-clip strips (the coordinator's fold-in)
+
+D-124 closed with an honest deferral: *"a long clip zoomed past ~6px/s still stretches
+tiles (727px/tile at 90px/s)... the correct fix is windowed extraction over the visible
+scroll range (what Premiere/Resolve do). Named rather than half-attempted."* The owner
+then hit it and screenshotted it beside Palmier Pro's timeline — ours smeared, theirs
+clean, evenly spaced, densely repeated real frames.
+
+**Windowing and persistence want the same thing from the data shape**, which is why they
+land together rather than as two passes. A whole-clip strip is useless to a disk cache:
+it is keyed by the clip's *trim*, so two clips cut from one source share nothing, and
+any change of visible range regenerates all of it.
+
+- **Levels.** Tile spacing on a power-of-two ladder, `[0.0625 … 64]` seconds. Derived
+  rather than picked: a tile is drawn ~50px wide (`PX_PER_FRAME`) and zoom runs 1-480
+  px/s (`ruler.ts`), so real requested spacings span 0.104s-50s, which that ladder
+  brackets with a rung to spare. A request snaps **down** a rung, never up — rounding up
+  is precisely what stretches a tile.
+- **Chunks are indexed from the source file's own t=0**, never the clip's trim point.
+  That is what makes a chunk shared between two clips cut from one file (the owner's
+  project has exactly this — the same 4K source on two tracks), between scroll
+  positions, and between every zoom that lands on the same rung.
+- **Chunk width depends on the level, and only on the level.** Coarse levels (≥1s) get
+  64 tiles: keyframes are denser than that for essentially all real footage, so the
+  decode is keyframe-only and cheap per second read (measured: 64 tiles over 64s of the
+  owner's 4K HEVC, **1.7s**). Fine levels are sized to span a bounded ~8s of source,
+  because there cost tracks *seconds read*, not tile count — at 0.5s spacing a 64-tile
+  chunk spans 32s and costs **8.1s**, a 16-tile chunk spans 8s and costs **~2.5s**.
+  Never a function of the file's keyframe interval, because chunk boundaries must be
+  stable for a given (source, level) or a cached chunk index would mean a different
+  range on a later run. The 1s boundary is set by a **correctness** constraint, not a
+  speed one: clamping levels 1s/2s to small chunks makes a normal viewport at those
+  zooms need more chunks than the per-request budget allows, and a truncated window
+  leaves part of the visible clip with no tiles at all — pinned by a property test that
+  walks every zoom a real 1.2x wheel step reaches.
+- **The frontend** snaps its window outward to 16 tiles and overscans half a viewport, so
+  ordinary scrolling reuses the previous request; `TimelinePane.tsx` buckets `scrollLeft`
+  to 200px before it reaches the filmstrip, so the expensive per-clip render doesn't
+  rerun on every scrolled pixel.
+
+**The real cost lever was the keyframe gate.** D-124 used a fixed 4-second threshold for
+`-skip_frame nokey` — safe but far too conservative: the owner's own 4K HEVC has
+keyframes every **0.875s**, so every spacing under 4s was forced onto the every-frame
+path for nothing. `video::probe_keyframe_interval` now measures the file's real
+worst-case gap by reading **packets, not frames** (`ffprobe -show_entries
+packet=pts_time,flags`) — nothing is decoded, so it is a metadata scan: **0.23s** on the
+2.3 GB file, against 7.5s for the frame-level equivalent. Max gap not mean, so a file
+with irregular keyframes (the owner's VFR screen recording: three keyframes in eight
+seconds) is judged on its worst case. Cached to disk like everything else. Effect on the
+same 64 tiles at 1s spacing: **1.7s with the gate open, ~16s with it shut.**
+
+### 3. Full-resolution decode of every clip, all of it discarded (B-046)
+
+The owner's "if you are loading 4k that might be wrong" was right, and the answer was
+worse than the guess. `open_manifest`'s per-clip loop called `load::load_video_frame`,
+which probes, decodes a **full 3840×2160 frame**, PNG-encodes it, decodes the PNG back,
+and installs it into `AppState.original_image` — **~1.9s per clip**. But the loop only
+ever needed session bookkeeping (path, probe info, playhead). Every iteration overwrote
+the previous one's pixels, and the `seek_and_install` immediately after the loop
+overwrote the last one too. Not one of those decodes was ever displayed. It also
+re-probed via `video::probe` directly, missing the probe cache that already existed a
+module away.
+
+`load::register_video_shot` — probe (now disk-cached) and register, no decode. A probe
+failure still means "offline"; a file that probes but can't decode is still caught, by
+the real decode the active clip goes through immediately after. It also fixes a real
+secondary defect: the same call in `chroma_project_resync_clips` clobbered
+`AppState.original_image` with a newly-added clip's pixels, contradicting that
+function's own documented promise to leave the active shot undisturbed.
+
+### 4. The waveform, which had no cache at all (B-044)
+
+Found while cataloguing, not reported. `edit.rs`'s own comment asserted that
+`chroma_audio_waveform` had "its own module-level cache." It did not — it had none, and
+did a full `symphonia` decode of the clip's whole range per call. Worse,
+`Waveform.tsx` keyed its frontend cache on `buckets`, which it derives from the clip's
+**on-screen pixel width** — so every zoom step and every panel resize was a new key and
+a new full decode. That is the identical mechanism D-124 diagnosed and fixed on the
+filmstrip, still live in the sibling path D-124 was explicitly modelled on, undetected
+because nothing here logged anything.
+
+Fixed the same way the filmstrip was: one fixed-resolution envelope (128 buckets/second,
+derived from the max zoom the UI allows), cached in memory and on disk, keyed on the
+source range **only**, re-bucketed in memory for whatever width asks. And the command
+was `pub fn`, not `pub async fn` — a non-async Tauri command runs on the **main thread**,
+so that decode was blocking the thread that paints the window. Now `async` +
+`spawn_blocking`, with the sync body split out as `waveform_peaks` so the existing tests
+don't need a tokio runtime (the same reasoning `project.rs` already records for its own
+equivalent split). A `log::info!` per real decode, none on a hit.
+
+The fix is deliberately backend-only: `Waveform.tsx` still keys its own cache on
+`buckets`, so a width change still costs an IPC round trip — but that round trip is now
+a cache hit plus an in-memory re-bucket rather than a full audio decode, and it is off
+the main thread. Removing the redundant round trip as well would mean re-bucketing in
+the browser, a bigger change to a file this pass otherwise had no reason to touch.
+
+**What was considered and rejected: a `-hwaccel`-style proxy/optimized-media pass.**
+Premiere and Resolve both generate whole downscaled proxy *files* for editing. That is a
+real feature and a real answer to "don't work at 4K", but it is a much bigger one —
+transcode management, a UI to trigger and track it, a relink model — and it is not what
+was wrong here. What was wrong was decoding at full resolution for artefacts that are
+104px tall, and doing it repeatedly. Proxies stay a roadmap item, not a smuggled-in
+subsystem.
+
+**Verification.** Real numbers, this machine, the owner's own `A001_08302215_C019.MOV`
+(2.3 GB, 517s, 4K HEVC) and real project:
+
+| | before | after |
+|---|---|---|
+| project open, per clip | 2.6s (0.75s probe + 1.9s discarded 4K decode) | ~0 |
+| whole-clip 64-frame filmstrip | 9.5s | shape retired |
+| one chunk, 1s spacing, 64 tiles | — (8.1s for the 0.5s-spacing equivalent) | **1.7s** |
+| one chunk, 0.25s spacing, 32 tiles | — | **2.6s** |
+| a 16s window (32 tiles), cold → warm-from-disk | no disk cache existed | **5.41s → 0.007s** |
+| tile width at 90 px/s, 517s clip | **727 px** (one frame smeared) | **≤50 px**, real distinct frames |
+| tile width at 480 px/s, 517s clip | **3,879 px** | **≤50 px** |
+| keyframe-interval probe | n/a (fixed 4s guess) | 0.23s once, then disk |
+
+Test coverage: 16 new `packages/editor` vitest cases replacing D-124's (which pinned the
+*opposite* split — the one that capped the strip at 64 pictures), including the
+anti-stretch property asserted across **every zoom a real 1.2x wheel step reaches**, on
+both of the owner's clips; and the source-time sharing property two differently-trimmed
+clips depend on. Rust: pure unit tests for the LOD ladder, chunk alignment, cache-key
+distinctness and the keyframe-gap parser, plus two env-gated integration tests against
+the owner's real footage — one exercising both decode paths, one measuring **cold vs.
+warm-from-disk** by clearing the in-memory caches between runs, which is exactly what a
+relaunch does. That last one, run against `A001_08302215_C019.MOV`: a 16-second window
+of 32 tiles costs **5.41s** cold and **0.007s** warm, and returns byte-identical
+pictures both times. (Measured while this machine was at load average 56 — two other
+builds running — so the cold figure is if anything pessimistic.) The same run reports
+the file's measured keyframe interval as **0.875s**, confirming the packet-level probe
+against the number D-124 measured by hand.
+
+**Honest gaps.** (1) **No interactive confirmation in the assembled Tauri app** — the
+numbers above are the real Rust decode and the real component's arithmetic against the
+owner's real files, but not the shipped window; the owner's own look still closes it,
+and the specific things to look at are whether the filmstrip stays sharp when zoomed
+right in, and whether a second open of the same project is visibly faster than the
+first. (2) **The cache directory is not user-configurable** and there is no clear-cache
+UI — both Premiere and Resolve expose these, and on a machine whose system drive is
+nearly full it matters. Named, not built. (3) **`state::THUMB_CACHE`** (Colorist's
+poster frames, D-033) is still memory-only — a genuinely different artefact, scoped to
+one loaded shot and busted on every switch, and not on the reported slow path. It is the
+obvious next namespace.

@@ -1556,8 +1556,11 @@ async fn open_manifest(
 
         if online {
             let src = PathBuf::from(&source_path);
-            match load::load_video_frame(&src, &source_path, frame, state).await {
-                Ok(_) => online_paths.push(src),
+            // D-128 — probe-and-register, not decode. See
+            // `load::register_video_shot` for why this loop never needed the
+            // pixels it used to pay ~1.9s per 4K clip for.
+            match load::register_video_shot(&src, frame) {
+                Ok(()) => online_paths.push(src),
                 Err(e) => {
                     log::warn!("[chroma::project] clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
@@ -1712,10 +1715,13 @@ pub async fn chroma_project_resync_clips(
         if online {
             let src = PathBuf::from(&source_path);
             if !known_paths.contains(&src) {
-                // genuinely new — decode it in. Upserts into the session;
-                // does not disturb whichever shot is currently active
-                // unless this path happens to already be it (a re-add).
-                if let Err(e) = load::load_video_frame(&src, &source_path, frame, &state).await {
+                // genuinely new — probe it in (D-128: registration only,
+                // no decode). Upserts into the session; does not disturb
+                // whichever shot is currently active unless this path
+                // happens to already be it (a re-add) — which is now true of
+                // `AppState.original_image` too, where the old decoding
+                // version silently overwrote the active clip's pixels.
+                if let Err(e) = load::register_video_shot(&src, frame) {
                     log::warn!("[chroma::project] resync: clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
                         id: clip.id.clone(),

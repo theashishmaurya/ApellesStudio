@@ -17,11 +17,16 @@
 /**
  * Timeline zoom, in px per second of source. Lives here rather than in
  * `TimelinePane.tsx` (D-124) because it is no longer only the pane's own
- * business: `Filmstrip.tsx` sizes its one-and-only thumbnail fetch so the
- * frames it gets are enough to tile a clip at *maximum* zoom, and it can only
- * do that against the same ceiling the zoom control clamps to. Two copies of
- * that number drifting apart would quietly reintroduce the stretched-tile
- * defect this pass fixed, so there is exactly one.
+ * business — and after D-128 it is load-bearing for something else again.
+ * `Filmstrip.tsx` requests tiles at a spacing derived from the current zoom,
+ * and the backend's level-of-detail ladder
+ * (`chroma::filmstrip::LEVEL_STEPS`) is sized to bracket exactly the range
+ * these two bounds allow: a tile is drawn ~50px wide, so the real span of
+ * requested spacings is `50 / MAX_PX_PER_SEC` to `50 / MIN_PX_PER_SEC`
+ * seconds. Widen either bound past what that ladder covers and requests
+ * start clamping to its end rungs — which at the top end is the stretched-
+ * tile defect D-128 removed. Two copies of these numbers drifting apart
+ * would reintroduce it quietly, so there is exactly one.
  */
 export const MIN_PX_PER_SEC = 1;
 export const MAX_PX_PER_SEC = 480;

@@ -1787,7 +1787,13 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             if let Ok(cache_dir) = app_handle.path().app_cache_dir() {
-                crate::exif_processing::initialize_cache_dir(cache_dir);
+                crate::exif_processing::initialize_cache_dir(cache_dir.clone());
+                // Chroma (D-128): the persistent, source-keyed media cache —
+                // filmstrip tiles, `ffprobe` results, waveform peaks. Same
+                // `app_cache_dir()` root RapidRAW's own thumbnail/exif caches
+                // already use. Pruning walks the tree, so it runs off-thread.
+                chroma::media_cache::init(cache_dir);
+                std::thread::spawn(chroma::media_cache::prune_to_budget);
             }
 
             {
@@ -2155,7 +2161,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_add_track,
             chroma::edit::chroma_timeline_remove_track,
             chroma::edit::chroma_timeline_move_clip,
-            chroma::edit::chroma_clip_thumbnails,
+            chroma::filmstrip::chroma_clip_thumbnails,
             chroma::audio::chroma_audio_play,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_set_volume,

@@ -59,6 +59,21 @@ restarted once each is done.
   preview-resolution-dependent today, so a PIP overlay already moves *and*
   resizes when you press Play. That's Phase 0, and it needs the owner's call
   on units before any code.
+- ✅ **"It takes so long to open a project" + "if you are loading 4k that might
+  be wrong"** — done, D-128 (B-044/B-045/B-046). Both instincts were right and
+  they were two different defects. Every cache in the codebase was a
+  process-local static, so a relaunch re-ran every `ffprobe`, re-decoded every
+  filmstrip and re-decoded every waveform — now a persistent, source-keyed disk
+  cache (`chroma::media_cache`, `app_cache_dir()/chroma`). And project-open
+  really was decoding a full 4K frame per clip, ~1.9s each, then throwing every
+  one away unseen. Full critical-path catalogue in
+  `docs/notes/media-cache.md`.
+- ✅ **Filmstrip tiles look stretched/smeared at high zoom** (owner's screenshot
+  vs. Palmier Pro's timeline) — done, D-128. This is the gap D-124 named and
+  deferred: 64 frames can't fill 930 tiles. Now windowed level-of-detail
+  extraction over the visible scroll range, which is also the shape the
+  persistent cache wanted. **727px/tile → ≤50px** at the default zoom on the
+  owner's 517s clip.
 
 ---
 
@@ -658,6 +673,25 @@ discipline is the actual lever, not the worktree flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
+- **Proxy / optimized media** — whole downscaled transcodes of source clips for
+  editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
+  a generate step, progress tracking, and a relink model so the timeline plays
+  the proxy but exports the original. Explicitly considered and rejected as
+  part of D-128, which fixed the *actual* reported problem (decoding at full
+  resolution for artefacts that are 104px tall, repeatedly) without smuggling
+  in a whole subsystem. Worth doing on its own terms once playback is the
+  bottleneck rather than derived-artefact generation.
+- **Media-cache UX: a configurable location and a "clear cache" action** —
+  D-128's disk cache lives at a fixed `app_cache_dir()/chroma` with a 1 GB
+  self-pruning budget. Both Premiere and Resolve let you point the cache at a
+  scratch volume and clear it from the UI; on a machine whose system drive is
+  nearly full, that matters. Also the documented recourse for the one case
+  D-128's mtime+size cache key can't detect.
+- **Persist Colorist's poster-frame strip** (`state::THUMB_CACHE`, D-033) —
+  the last remaining memory-only derived-artefact cache after D-128. A
+  genuinely different artefact (a much larger poster image, scoped to one
+  loaded shot, busted wholesale on every shot switch), and it wasn't on the
+  reported slow path — but it is the obvious next `media_cache` namespace.
 - **Believable AI background replacement** — matte the tracked subject over a
   still/plate/generated BG + the integration stack (light wrap, grade match via
   `match_to_reference`, relight-to-BG via the depth-driven puck relight, defocus +
