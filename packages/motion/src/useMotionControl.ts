@@ -49,12 +49,58 @@
  * sees the manifest/commit from the render that just happened, never a
  * stale closure from whichever render was current when `listen()` was
  * first called.
+ *
+ * **Phase 2** (this pass, research doc §5's "Phase 2" table) adds the rest
+ * of the non-keyframe edit surface: `motion_set_layer_field`,
+ * `motion_set_layer_position`/`motion_set_layer_size`,
+ * `motion_move_layers_by_delta`, `motion_align_layers`/
+ * `motion_distribute_layers`, `motion_set_scene_field`, and
+ * `motion_set_camera_2d`/`motion_set_camera_3d`. Every one of these targets
+ * an EXISTING layer/scene/camera (Phase 1's `motion_add_layer` didn't need
+ * to, since it creates the thing being addressed) — the addressing wire
+ * shape is `{scene_index, target: {kind, index?, id?}}`, mirroring
+ * `LayerList.tsx`'s own `Selection` exactly (research doc §3's resolved
+ * decision — never "whatever the GUI currently has selected," since
+ * `manifestEdit.ts` has no such ambient state to read). `target.id`, when
+ * given, is preferred over `target.index` (`resolveOrError` below, wrapping
+ * `manifestEdit.ts`'s own D-158 `resolveSelection`) — an MCP client that
+ * reads a layer's `id` off `motion_get_manifest` gets the exact same
+ * reorder/insert/delete safety the GUI's own live selection gets, with
+ * `index` alone as the fallback for a hand-written manifest with no ids.
+ *
+ * `motion_set_camera_2d`/`motion_set_camera_3d` replace a scene's camera
+ * keyframe array WHOLESALE, not because that was assumed to be "good
+ * enough," but because it's the ONLY write function `manifestEdit.ts`
+ * exposes for a camera key's VALUE fields (`x`/`y`/`zoom`/`pos`/`look`/
+ * `ease`) — `moveCamera2dKeyAt`/`moveCamera3dKeyAt` exist too, but only
+ * retime a key's `at`, and are Phase 3 (keyframing) scope, not this pass's.
+ * A real, current limitation, documented rather than worked around with new
+ * logic this pass wasn't scoped to add.
  */
 import { useEffect, useRef } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { addLayer } from './manifestEdit';
+import {
+  addLayer,
+  alignSelections,
+  distributeSelections,
+  layerWorldPosition,
+  moveLayersByDelta,
+  resolveSelection,
+  resolveSelections,
+  selectedLayer,
+  setCamera2d,
+  setCamera3d,
+  setLayerField,
+  setLayerPosition,
+  setLayerSize,
+  setSceneField,
+  type AlignEdge,
+} from './manifestEdit';
 import { catalogEntries, type PrimitiveUse } from './catalog';
+import { fieldsForPrimitive, SCENE_FIELDS } from './propCatalog';
+import type { Selection } from './LayerList';
+import type { Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
 import type { useMotionManifest } from './useMotionManifest';
 
 type MotionManifestApi = ReturnType<typeof useMotionManifest>;
@@ -62,6 +108,97 @@ type MotionManifestApi = ReturnType<typeof useMotionManifest>;
 const MOTION_OP_PREFIX = 'motion_';
 
 const VALID_USES = new Set<string>(catalogEntries.map((e) => e.use));
+
+const ALIGN_EDGES = new Set<string>(['left', 'centerH', 'right', 'top', 'centerV', 'bottom']);
+const DISTRIBUTE_AXES = new Set<string>(['horizontal', 'vertical']);
+
+/**
+ * Phase 2 (`docs/notes/motion-mcp-surface-research.md` §5) addressing helper.
+ * The research doc's §3 already resolved the wire shape: mirror `Selection`
+ * exactly — `{scene_index, target: {kind, index?, id?}}` — never "whatever
+ * is currently selected in the GUI." This is that shape's parser, shared by
+ * every Phase 2 op that targets one thing.
+ *
+ * Deliberately does NOT call `resolveSelection` itself — that needs a live
+ * `manifest` to search against, which isn't available until an op's own
+ * `no-project`/`no-manifest` guards have already run. Callers resolve
+ * separately (see `resolveOrError` below), exactly mirroring the two-step
+ * "parse the wire shape, then resolve it against the live manifest" split
+ * `MotionTab.tsx` itself uses (`resolveSelections` on every commit).
+ */
+function parseSelectionArg(a: any): Selection | { error: string } {
+  const sceneIndexRaw = a?.scene_index ?? a?.sceneIndex;
+  const sceneIndex = Math.round(Number(sceneIndexRaw));
+  if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+
+  const target = a?.target;
+  if (!target || typeof target !== 'object') {
+    return {
+      error: 'target ({kind, index?, id?}) required — kind is one of: scene, camera, scene3d-camera, layer, scene3d-child',
+    };
+  }
+  const kind = target.kind;
+  if (kind === 'scene' || kind === 'camera' || kind === 'scene3d-camera') {
+    return { sceneIndex, target: { kind } };
+  }
+  if (kind === 'layer' || kind === 'scene3d-child') {
+    const hasId = typeof target.id === 'string' && target.id.length > 0;
+    const hasIndex = target.index !== undefined && target.index !== null;
+    if (!hasId && !hasIndex) {
+      return { error: 'target.index or target.id required for a layer/scene3d-child target' };
+    }
+    // `id`, when present, is what actually resolves the target (below) —
+    // `index` just needs to be SOME finite integer to satisfy `Selection`'s
+    // own shape when only an `id` was given (D-158's own `resolveSelection`
+    // ignores `index` entirely whenever `id` is set).
+    const index = hasIndex ? Math.round(Number(target.index)) : 0;
+    if (hasIndex && !Number.isFinite(index)) {
+      return { error: 'target.index must be an integer' };
+    }
+    return { sceneIndex, target: { kind, index, ...(hasId ? { id: String(target.id) } : {}) } };
+  }
+  return { error: `target.kind must be one of: scene, camera, scene3d-camera, layer, scene3d-child (got "${kind}")` };
+}
+
+/** `selections` (plural) wire shape for the multi-select ops — an array of
+ *  the same `{scene_index, target}` shape `parseSelectionArg` reads. */
+function parseSelectionsArg(a: any): Selection[] | { error: string } {
+  const list = a?.selections;
+  if (!Array.isArray(list) || list.length === 0) {
+    return { error: 'selections (non-empty array of {scene_index, target}) required' };
+  }
+  const out: Selection[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const parsed = parseSelectionArg(list[i]);
+    if ('error' in parsed) return { error: `selections[${i}]: ${parsed.error}` };
+    out.push(parsed);
+  }
+  return out;
+}
+
+/**
+ * Resolves a just-parsed `Selection` against the live manifest, preferring
+ * `target.id` over `target.index` — `manifestEdit.ts`'s own `resolveSelection`
+ * (D-158) already implements exactly this preference; this wrapper's only
+ * job is turning its `null` ("doesn't resolve to anything") into the same
+ * `{error}` shape every op in this file returns. Every Phase 2 op that reads
+ * `target.id`/`target.index` off the wire MUST route through this (not call
+ * `manifestEdit.ts`'s own `setLayerField`/`setLayerPosition`/etc. with the
+ * raw parsed selection directly) — those functions key off `target.index`
+ * alone and know nothing about `id`-preference; skipping this step would
+ * silently make `id`-addressed calls behave like `index`-addressed ones,
+ * defeating the whole D-158 reorder-safety point of accepting an `id` at
+ * all.
+ */
+function resolveOrError(manifest: any, selection: Selection): Selection | { error: string } {
+  const resolved = resolveSelection(manifest, selection);
+  if (!resolved) {
+    return {
+      error: `selection (scene ${selection.sceneIndex}, ${JSON.stringify(selection.target)}) does not resolve to anything in the current manifest`,
+    };
+  }
+  return resolved;
+}
 
 /**
  * `safeUnlisten` duplicated (not imported) from `app/src/utils/
@@ -159,6 +296,318 @@ export function useMotionControl(m: MotionManifestApi): void {
 
         cur.commit(next, `Add ${use} layer`);
         return { sceneIndex, selection, addedUse: use };
+      },
+
+      // ---- Phase 2: the rest of the edit surface (research doc §5) ------
+      // Every op below is a thin adapter over a REAL `manifestEdit.ts`
+      // function — same discipline as `motion_add_layer` above and D-020's
+      // own stated rule ("no grade/mask logic in this server or in
+      // control.rs"). Every mutating op shares one correctness signal for
+      // free: every `manifestEdit.ts` `set*`/`align*`/`distribute*`/`move*`
+      // function returns the SAME `Manifest` reference, unchanged, when its
+      // selection/args don't resolve to anything editable (each function's
+      // own "no-op" doc comment) — so `next === cur.manifest` after calling
+      // one is a reliable "nothing happened" signal, checked below instead
+      // of re-deriving each function's own resolution logic a second time.
+
+      // set (or delete, `value: null`) one top-level field on a layer or
+      // scene3d-child — `setLayerField`.
+      motion_set_layer_field: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+        if (resolved.target.kind !== 'layer' && resolved.target.kind !== 'scene3d-child') {
+          return { error: `set_layer_field targets a layer or scene3d-child, got target.kind="${resolved.target.kind}"` };
+        }
+
+        const key = a?.key;
+        if (typeof key !== 'string' || !key) return { error: 'key (string) required' };
+        if (!a || !('value' in a)) return { error: 'value is required (use JSON null to delete the field)' };
+        const value = a.value === null ? undefined : a.value;
+
+        // Soft validation against the same field list the Inspector renders
+        // (`propCatalog.ts`'s `fieldsForPrimitive`) — never blocks the
+        // write (a hand-authored manifest can carry fields the Inspector
+        // doesn't know about yet, e.g. a future primitive), just flags it.
+        let warning: string | undefined;
+        const found = selectedLayer(cur.manifest, resolved);
+        if (found) {
+          const fields = fieldsForPrimitive(found.use);
+          if (fields && !fields.some((f) => f.key === key)) {
+            warning = `"${key}" is not a known field for use="${found.use}" (see /motion-primitives) — set anyway`;
+          }
+        }
+
+        const next = setLayerField(cur.manifest, resolved, key, value);
+        if (next === cur.manifest) {
+          return { error: 'no change — selection did not resolve to an editable layer' };
+        }
+        cur.commit(next, `Set ${key}`);
+        return { selection: resolved, key, value: value ?? null, warning };
+      },
+
+      // move a layer/scene3d-child to a new WORLD-px position — `setLayerPosition`.
+      motion_set_layer_position: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+
+        const x = Number(a?.x);
+        const y = Number(a?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return { error: 'x and y (numbers) required' };
+
+        const next = setLayerPosition(cur.manifest, resolved, x, y);
+        if (next === cur.manifest) {
+          const use = selectedLayer(cur.manifest, resolved)?.use ?? 'unknown';
+          return { error: `selection has no draggable x/y position (use="${use}")` };
+        }
+        cur.commit(next, 'Set layer position');
+        return { selection: resolved, x, y };
+      },
+
+      // resize a layer/scene3d-child in WORLD px — `setLayerSize`.
+      motion_set_layer_size: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+
+        const w = Number(a?.w);
+        const h = Number(a?.h);
+        if (!Number.isFinite(w) || !Number.isFinite(h)) return { error: 'w and h (numbers) required' };
+
+        const next = setLayerSize(cur.manifest, resolved, w, h);
+        if (next === cur.manifest) {
+          const use = selectedLayer(cur.manifest, resolved)?.use ?? 'unknown';
+          return { error: `selection has no resizable field (use="${use}")` };
+        }
+        cur.commit(next, 'Set layer size');
+        return { selection: resolved, w, h };
+      },
+
+      // nudge a multi-selection by a shared (dx, dy) — `moveLayersByDelta`.
+      // Each entry's own "base" position is read fresh off the CURRENT
+      // manifest (`layerWorldPosition`), never off a stale drag-start
+      // snapshot — an MCP call has no live gesture to capture a base at
+      // drag-start the way `MotionCanvasOverlay.tsx`'s pointer-down does, so
+      // "current position" is the only honest base for a one-shot op.
+      motion_move_layers_by_delta: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsedList = parseSelectionsArg(a);
+        if ('error' in parsedList) return parsedList;
+        const dx = Number(a?.dx);
+        const dy = Number(a?.dy);
+        if (!Number.isFinite(dx) || !Number.isFinite(dy)) return { error: 'dx and dy (numbers) required' };
+
+        const resolved = resolveSelections(cur.manifest, parsedList);
+        const droppedCount = parsedList.length - resolved.length;
+
+        const moves: { selection: Selection; base: { x: number; y: number } }[] = [];
+        for (const selection of resolved) {
+          const base = layerWorldPosition(cur.manifest, selection);
+          if (base) moves.push({ selection, base });
+        }
+        if (moves.length === 0) {
+          return { error: 'no draggable layers in selection (none resolved to a world position)' };
+        }
+
+        const next = moveLayersByDelta(cur.manifest, moves, dx, dy);
+        if (next === cur.manifest) return { error: 'no change' };
+        cur.commit(next, 'Move layers');
+        return { movedCount: moves.length, droppedCount, dx, dy };
+      },
+
+      // align a 2+ multi-selection to a shared edge/center line — `alignSelections`.
+      motion_align_layers: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsedList = parseSelectionsArg(a);
+        if ('error' in parsedList) return parsedList;
+        const edge = a?.edge;
+        if (typeof edge !== 'string' || !ALIGN_EDGES.has(edge)) {
+          return { error: `edge must be one of: ${[...ALIGN_EDGES].join(', ')}` };
+        }
+
+        const resolved = resolveSelections(cur.manifest, parsedList);
+        const droppedCount = parsedList.length - resolved.length;
+        if (resolved.length < 2) {
+          return { error: 'align requires at least 2 resolvable selections with a draggable position' };
+        }
+
+        const next = alignSelections(cur.manifest, resolved, edge as AlignEdge);
+        if (next === cur.manifest) {
+          return { error: 'no change (fewer than 2 selections had a draggable position)' };
+        }
+        cur.commit(next, `Align ${edge}`);
+        return { alignedCount: resolved.length, droppedCount, edge };
+      },
+
+      // space a 3+ multi-selection with equal gaps along one axis — `distributeSelections`.
+      motion_distribute_layers: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsedList = parseSelectionsArg(a);
+        if ('error' in parsedList) return parsedList;
+        const axis = a?.axis;
+        if (typeof axis !== 'string' || !DISTRIBUTE_AXES.has(axis)) {
+          return { error: `axis must be one of: ${[...DISTRIBUTE_AXES].join(', ')}` };
+        }
+
+        const resolved = resolveSelections(cur.manifest, parsedList);
+        const droppedCount = parsedList.length - resolved.length;
+        if (resolved.length < 3) {
+          return { error: 'distribute requires at least 3 resolvable selections with a draggable position' };
+        }
+
+        const next = distributeSelections(cur.manifest, resolved, axis as 'horizontal' | 'vertical');
+        if (next === cur.manifest) {
+          return { error: 'no change (fewer than 3 selections had a draggable position)' };
+        }
+        cur.commit(next, `Distribute ${axis}`);
+        return { distributedCount: resolved.length, droppedCount, axis };
+      },
+
+      // set (or delete, `value: null`) one field on the scene itself — `setSceneField`.
+      motion_set_scene_field: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const sceneIndex = Math.round(Number(a?.scene_index ?? a?.sceneIndex));
+        if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+        if (!cur.manifest.scenes[sceneIndex]) {
+          return { error: `no scene at index ${sceneIndex} (0..${cur.manifest.scenes.length - 1})` };
+        }
+
+        const key = a?.key;
+        if (typeof key !== 'string' || !key) return { error: 'key (string) required' };
+        if (!a || !('value' in a)) return { error: 'value is required (use JSON null to delete the field)' };
+        const value = a.value === null ? undefined : a.value;
+
+        const warning = SCENE_FIELDS.some((f) => f.key === key)
+          ? undefined
+          : `"${key}" is not one of the known scene fields (${SCENE_FIELDS.map((f) => f.key).join(', ')}) — set anyway`;
+
+        const next = setSceneField(cur.manifest, sceneIndex, key, value);
+        if (next === cur.manifest) return { error: 'no change' };
+        cur.commit(next, `Set scene ${key}`);
+        return { sceneIndex, key, value: value ?? null, warning };
+      },
+
+      // replace a scene's 2D camera keyframe array WHOLESALE — `setCamera2d`.
+      // There is no granular "patch one camera key" write function in
+      // `manifestEdit.ts` today (only `moveCamera2dKeyAt`, which retimes a
+      // key's `at` and is Phase 3/keyframing scope, not this op) — an agent
+      // that wants to tweak one key's `zoom` has to read the array via
+      // `motion_get_manifest`, edit it client-side, and resend the whole
+      // thing. Documented as a real, current limitation (research doc §5's
+      // own framing), not worked around here with new logic.
+      motion_set_camera_2d: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const sceneIndex = Math.round(Number(a?.scene_index ?? a?.sceneIndex));
+        if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+        if (!cur.manifest.scenes[sceneIndex]) {
+          return { error: `no scene at index ${sceneIndex} (0..${cur.manifest.scenes.length - 1})` };
+        }
+
+        const keys = a?.keys;
+        if (!Array.isArray(keys)) {
+          return { error: 'keys (array of {at, x?, y?, zoom?, ease?}) required' };
+        }
+        for (const k of keys) {
+          if (!k || typeof k !== 'object' || typeof k.at !== 'number') {
+            return { error: 'every camera key needs a numeric "at"' };
+          }
+        }
+
+        const next = setCamera2d(cur.manifest, sceneIndex, keys as Cam2dKey[]);
+        if (next === cur.manifest) return { error: `no scene at index ${sceneIndex}` };
+        cur.commit(next, 'Set camera');
+        return { sceneIndex, keyCount: keys.length };
+      },
+
+      // replace a scene's 3D camera keyframe array WHOLESALE — `setCamera3d`.
+      // Same "no granular patch, only wholesale replace" limitation as
+      // `motion_set_camera_2d` above. Additionally, `scene3d.camera` is
+      // `.min(1)` in the zod schema (`schema.ts`) and `setCamera3d` itself
+      // is a no-op when the scene has no `scene3d` block at all yet — there
+      // is no `motion_*` op that creates one directly; the only way today is
+      // `motion_add_layer` with an `in3d` `use`, which creates `scene3d`
+      // (with a default camera) as a side effect (`manifestEdit.ts`'s own
+      // `addLayer`).
+      motion_set_camera_3d: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const sceneIndex = Math.round(Number(a?.scene_index ?? a?.sceneIndex));
+        if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+        const scene = cur.manifest.scenes[sceneIndex];
+        if (!scene) {
+          return { error: `no scene at index ${sceneIndex} (0..${cur.manifest.scenes.length - 1})` };
+        }
+        if (!scene.scene3d) {
+          return {
+            error: `scene ${sceneIndex} has no scene3d block yet — add a 3D layer first (motion_add_layer with an in3d use) to create one`,
+          };
+        }
+
+        const keys = a?.keys;
+        if (!Array.isArray(keys) || keys.length < 1) {
+          return { error: 'keys (non-empty array of {at, pos:[x,y,z], look?, ease?}) required — scene3d.camera needs at least one key' };
+        }
+        for (const k of keys) {
+          if (!k || typeof k !== 'object' || typeof k.at !== 'number' || !Array.isArray(k.pos) || k.pos.length !== 3) {
+            return { error: 'every 3D camera key needs a numeric "at" and a 3-number "pos" [x,y,z]' };
+          }
+        }
+
+        const next = setCamera3d(cur.manifest, sceneIndex, keys as Cam3dKey[]);
+        if (next === cur.manifest) return { error: 'no change' };
+        cur.commit(next, 'Set 3D camera');
+        return { sceneIndex, keyCount: keys.length };
       },
     };
 

@@ -14293,3 +14293,199 @@ bridge). All flagged as deferred, not forgotten, in the research doc.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-168 — Motion tab MCP surface, Phase 2 (the rest of the non-keyframe edit surface): `set_layer_field`/`set_layer_position`/`set_layer_size`, `move_layers_by_delta`, `align_layers`/`distribute_layers`, `set_scene_field`, `set_camera_2d`/`set_camera_3d` — all live-verified
+
+**decided + built (2026-09-06).** Full scoping is `docs/notes/motion-mcp-surface-research.md`
+§5's "Phase 2" table (read that first — every op below names the real `manifestEdit.ts`
+function it wraps). D-167 shipped Phase 1 (`motion_get_manifest`/`motion_add_layer`) and this
+entry's own architecture (the `useMotionControl.ts` hook, the `motion_*` namespace convention that
+avoids racing `useChromaControl.ts`'s Colorist listener for the one-shot response slot, the `mRef`
+live-ref bridge). This pass adds the rest of the non-keyframe edit surface — same file
+(`packages/motion/src/useMotionControl.ts`), same discipline: every op is a thin adapter over a
+REAL `manifestEdit.ts` function, no new manifest-mutation logic anywhere.
+
+**Ops shipped, each namespaced `motion_` + snake_case:** `motion_set_layer_field`,
+`motion_set_layer_position`, `motion_set_layer_size`, `motion_move_layers_by_delta`,
+`motion_align_layers`, `motion_distribute_layers`, `motion_set_scene_field`,
+`motion_set_camera_2d`, `motion_set_camera_3d`.
+
+**Addressing-scheme decision — resolved by the research doc, applied literally, not
+re-decided.** The research doc's §3 already worked out the wire shape by reading
+`manifestEdit.ts`'s real signatures: every mutating function there takes an explicit `Selection`
+(`LayerList.tsx`'s `{sceneIndex, target: {kind, index?, id?}}`), never "whatever the GUI has
+selected." This pass's ops accept that exact shape on the wire —
+`{scene_index, target: {kind, index?, id?}}` for a single target,
+`{selections: [...]}` for the multi-selection ops (`move_layers_by_delta`/`align_layers`/
+`distribute_layers`) — parsed by a shared `parseSelectionArg`/`parseSelectionsArg` pair in
+`useMotionControl.ts`.
+
+**A real design gap the research doc's §3 named but didn't fully close, found and fixed while
+building this:** `manifestEdit.ts`'s own functions (`selectedLayer`, `setLayerPosition`,
+`setLayerSize`, `setLayerField` via `cloneLayerRaw`) read `target.index` DIRECTLY — none of them
+call `resolveSelection` internally to prefer `target.id` when both are given. `MotionTab.tsx`
+itself only gets `id`-preference "for free" because it separately re-runs `resolveSelections`
+every time the STABLE manifest changes (its own D-158 effect), keeping its live `selections` state
+already corrected before any `set*` call ever sees it. An MCP call has no such standing state to
+correct — every call is a fresh, one-shot `{scene_index, target}` from the wire. So every Phase 2
+op that addresses an existing thing calls a new `resolveOrError` helper (wrapping
+`manifestEdit.ts`'s own `resolveSelection`) BEFORE handing the selection to any `set*`/`align*`/
+`distribute*`/`move*` function — skipping this step would silently degrade an `id`-addressed call
+to behave like an `index`-only one (correct only until something else reorders/inserts/deletes),
+defeating the entire point of D-158's reorder-safety for exactly the caller (an MCP agent, making
+calls seconds apart with no live selection state of its own) who needs it most. This is the one
+genuinely new (if small) piece of logic this pass added — not a new manifest MUTATION, just the
+missing "prefer id" resolution step an MCP caller needs that the GUI already got from a different
+mechanism (`MotionTab.tsx`'s own effect) the wire protocol has no equivalent of.
+
+**A second design question the research doc flagged as open — resolved by reading
+`manifestEdit.ts`, not guessed:** does a more granular camera-key-patch function exist beyond
+"replace the whole array," for `set_camera_2d`/`set_camera_3d`? No — confirmed by reading every
+exported function in the file (`moveCamera2dKeyAt`/`moveCamera3dKeyAt` exist but only retime a
+key's `at`; there is no `setCamera2dKeyField`-shaped function for `x`/`y`/`zoom`/`pos`/`look`/
+`ease`). So both ops wrap `setCamera2d`/`setCamera3d` exactly as the table says — "replace
+wholesale" — documented as a real, current limitation (an agent that wants to tweak one key's
+`zoom` reads the array via `motion_get_manifest`, edits client-side, resends the whole array), not
+worked around with new logic this pass wasn't scoped to add. `motion_set_camera_3d` also has a
+real, discovered dependency: `setCamera3d` no-ops when a scene has no `scene3d` block yet, and
+there is no `motion_*` op that creates one directly — only `motion_add_layer` with an `in3d` `use`
+does, as a side effect. The op's own error message says so explicitly rather than returning a bare
+"no change."
+
+**Reused, not reinvented: the "no-op means same manifest reference" signal.** Every
+`manifestEdit.ts` `set*`/`align*`/`distribute*`/`move*` function already returns the SAME
+`Manifest` object reference, unchanged, when its selection/args don't resolve to anything editable
+(each function's own "no-op" doc comment — a defensive floor already built for the GUI, e.g. a
+stale selection after a raw-JSON-textarea edit). Every mutating Phase 2 op checks `next ===
+cur.manifest` after calling its wrapped function as its one shared "did anything actually happen"
+signal, rather than re-deriving each function's own resolution/validation logic a second time —
+the same "don't duplicate logic that already exists" discipline this package's own `manifestEdit.ts`
+comments state repeatedly (CLAUDE.md's "if two places need it, extract it," applied here as "don't
+re-implement what's already inspectable via a return value").
+
+**Soft field-name validation, not enforcement.** `motion_set_layer_field`/`motion_set_scene_field`
+check the given `key` against `propCatalog.ts`'s `fieldsForPrimitive(use)`/`SCENE_FIELDS` and
+return a `warning` (never a blocking error) when it isn't recognized — a hand-authored manifest, or
+a future primitive this Inspector build doesn't know about yet, can legitimately carry fields
+outside that list, so this is informational only, matching `fieldsForPrimitive`'s own "must degrade
+gracefully, not throw" contract for an unrecognized `use`.
+
+**`value: null` means delete, matching the research doc's own Phase 2 table wording exactly** —
+`manifestEdit.ts`'s `setLayerField`/`setSceneField` delete on `value === undefined`, but JSON has
+no `undefined`; the wire protocol's explicit `null` is translated to `undefined` right where an
+op reads `a.value`, and a MISSING `value` key entirely (as opposed to an explicit `null`) is a
+validation error (`'value is required (use JSON null to delete the field)'`) rather than silently
+defaulting to a delete — an agent that forgets the field entirely should get an error, not an
+accidental deletion.
+
+**Live verification — done for real, against a real second running instance**, following D-167's
+own playbook exactly (same env-var-and-identifier double-override, same `lsof`/`ps eww`
+cross-checks, never trusting the port from the invocation alone):
+
+- Set `app/src-tauri/tauri.conf.json`'s `identifier` to
+  `io.github.CyberTimon.RapidRAW.dev-motion-mcp-phase2` and `build.devUrl`/`app/vite.config.mjs`'s
+  `server.port` to `1430` (checked `lsof -i :1430` first — free; `1420`/`1425` were the coordinator's
+  and a prior fork's own ports respectively, per this task's own instructions not to reuse them).
+  Launched `CHROMA_CONTROL_PORT=19792 npm run tauri dev` (checked `lsof -i :19792` first — free;
+  `19788` is the coordinator's own default-port instance, left untouched throughout).
+- **A real, pre-existing environment gap found and worked around, not caused by this pass's code:**
+  a fresh `npm run tauri dev` in this worktree failed at Vite config load —
+  `Could not resolve '@rolldown/plugin-babel'` — before any Motion MCP code ran at all.
+  `@rolldown/plugin-babel` is declared in `package.json` (D-091's react-compiler wiring) but is
+  genuinely ABSENT from `node_modules` in both this worktree and the main repo (`find
+  node_modules -iname '*plugin-babel*'` finds only the sibling `@rolldown/pluginutils`/
+  `binding-darwin-arm64` packages, not `plugin-babel` itself) — a pre-existing, repo-wide install
+  gap. The coordinator's own already-running instance never re-resolves it (started before this
+  mattered); a fresh process launch does. Not fixed via `npm install` per this task's explicit
+  instruction not to touch `node_modules` — the react-compiler babel plugin was commented out in
+  `app/vite.config.mjs` for this session's verification instance ONLY, then the file was fully
+  reverted (`git checkout --`) before any commit, alongside the port/identifier revert below. This
+  is a real, unfixed environment gap the next person building a fresh instance in ANY worktree
+  will hit too — worth a follow-up `npm install` pass on `main` at some point, not done here since
+  it's out of this task's own scope and explicitly forbidden by its instructions.
+- A separate, unrelated one-off flake: the FIRST build attempt (after the Vite fix) failed with
+  `failed to build archive... failed to map object file: memory map must have a non-zero length`
+  compiling `jxl-encoder`/`rawler` — a transient, this-worktree-local `target/` artifact corruption
+  (disk had 14GiB free, not a real space issue), not a real compile error and not caused by any
+  code change this pass made (zero Rust files touched). A second, identical launch attempt
+  compiled clean through all 831 crates. Recorded in case this recurs for a future pass — a retry,
+  not a `cargo clean`, was sufficient here.
+- Confirmed which instance was actually being talked to before trusting anything (the exact D-167
+  discipline, not skipped): `ps aux` showed the coordinator's `RapidRAW` (PID 98482, path under
+  `~/my_projects/chroma`) and this session's own (PID 22102, path under
+  `chroma-worktrees/motion-mcp-phase2`) as two distinct processes; `lsof -p 22102 -a -iTCP
+  -sTCP:LISTEN` showed `localhost:19792`; `ps eww 22102 | grep CHROMA_CONTROL_PORT` showed
+  `CHROMA_CONTROL_PORT=19792` — both agree, and the coordinator's own PID 98482 was separately
+  confirmed still on `19788`, untouched.
+- Created a fresh test project the same way D-167 did — no `motion_open_project` op exists yet —
+  via the pre-existing Colorist `new_project` op: `{"op":"new_project","args":{"name":
+  "motion-mcp-phase2-verify"}}` → created `~/Movies/Chroma/motion-mcp-phase2-verify.chroma`. The
+  real sample manifest that loaded (`hook`/`stack`/`space` scenes, `space` already carrying a
+  `scene3d` block with a camera + 2 `particleflow` children) was richer than D-167's own sample and
+  incidentally let `motion_set_camera_3d` be tested against a real pre-existing `scene3d` without
+  needing `motion_add_layer` first.
+- **Every op exercised with a real before/after `motion_get_manifest` diff** (full transcript kept
+  by the session, condensed here): added 3 layers via the already-verified `motion_add_layer`
+  (`text` id `1u47nlhr` idx 2, `matrix` id `abiqyvi1` idx 3, `text` id `4vy9nqxu` idx 4) to get real
+  `id`s to address by; `motion_set_layer_field` (id-addressed) changed layer `1u47nlhr`'s `text` to
+  `"Hello Phase 2"` (confirmed in the next `motion_get_manifest`); a made-up field name returned the
+  expected `warning` and still wrote the value, then `value: null` deleted it (confirmed gone);
+  `motion_set_layer_position` moved `1u47nlhr` to `(400, 900)`; `motion_set_layer_size` on the
+  `matrix` layer (`abiqyvi1`) with `w:900,h:600` landed `cell: 142.083…` — matches
+  `setLayerSize`'s own documented `(cellFromW + cellFromH) / 2` averaging exactly
+  (`cellFromW=(900+10)/6-10=141.67`, `cellFromH=(600+10)/4-10=142.5`, avg `142.083`); an
+  unresolvable `id` (`"does-not-exist"`) returned the expected `{error: ...}` instead of a silent
+  no-op; `motion_move_layers_by_delta` on `[1u47nlhr, 4vy9nqxu]` with `dx:50,dy:-30` moved both by
+  exactly that delta (confirmed `(450,870)` and `(230,270)`); `motion_align_layers` on the same pair
+  with `edge:'left'` moved both to `x:230` (the min of the two); `motion_distribute_layers` across 3
+  selections (including one pre-existing, id-less layer addressed by `index`) produced
+  `x: 180, 205, 230` — hand-verified against `distributeSelections`'s own gap formula using the
+  `text` primitive's default 800px width seed (the negative gap this produces, given 3 wide
+  default-width text boxes packed into an 850px span, is `distributeSelections`'s own honest,
+  documented behavior, not a bug); `motion_set_scene_field` set scene 0's `bg` to `#111111`
+  (confirmed) and a made-up scene field both warned and wrote, then `value: null` deleted it
+  (confirmed gone); `motion_set_camera_2d` replaced scene 0's camera with a real 2-key array
+  (confirmed verbatim in the next read); `motion_set_camera_3d` replaced scene 2's (`space`)
+  existing `scene3d.camera` with a new 2-key `pos`/`look` array (confirmed verbatim), while the
+  SAME op against scene 0 (no `scene3d` block) returned the documented error instead of a silent
+  no-op; `motion_set_layer_field` addressed a `{kind:'scene3d-child', index:0}` target in scene 2
+  and changed its `color` to `#00ff00` (confirmed in the final read) — proving the addressing shape
+  isn't layer-only, exactly as `manifestEdit.ts`'s own `Selection` type allows.
+- The throwaway `motion-mcp-phase2-verify.chroma` project was deleted from `~/Movies/Chroma/` after
+  verification.
+- `npx tsc --noEmit -p app` — exactly 64 `error TS` lines both before AND after the
+  `tauri.conf.json`/`vite.config.mjs` revert, unchanged from the documented baseline; zero errors
+  in `packages/motion/src/useMotionControl.ts` or any other file this pass touched.
+- `cargo check --workspace --all-targets` not re-run this pass — no Rust files were touched
+  (`control.rs` needs zero changes, confirmed again by inspection, same as D-167 found); the
+  `tauri.conf.json` edit was scratch-only and fully reverted before any commit. The one real Rust
+  build performed (`cargo run` for the live-verification instance, `app/src-tauri`) compiled clean
+  end to end (post-retry) with only the pre-existing `ai_processing.rs` dead-code warnings D-167
+  already recorded.
+- Both scratch config files (`app/src-tauri/tauri.conf.json`'s `identifier`/`build.devUrl`,
+  `app/vite.config.mjs`'s `server.port` and the temporarily-commented react-compiler babel plugin)
+  were reverted via `git checkout --` before this entry's own commit — confirmed via `git diff
+  --stat` showing zero changes to either file, only `packages/motion/src/useMotionControl.ts`
+  modified.
+- This session's own second instance (PID 22102 and its `vite`/`tauri dev` wrapper processes,
+  PIDs 22066/21852) was killed before finishing; the coordinator's own instance (PID 98482, port
+  `19788`) was left running, untouched, throughout.
+
+**Not built this pass (unchanged from the research doc's own phasing, still deferred, not
+forgotten):** Phase 3 (keyframing — `set_layer_transform_keys`/`add_layer_keyframe`/
+`move_layer_keyframe`) and Phase 4 (`select`/`seek`/`save_manifest`/`render`, the last of which
+needs the `playerRef`/`measureApiRef` live-ref bridge extension the research doc's §5 caveat
+already named as real, unstarted work). The Python `mcp/server.py` wrappers for every op shipped
+so far (Phase 1 + Phase 2) remain unbuilt too, per that file's own "thin boilerplate, not logic"
+scope and D-167's own explicit deferral.
+
+**Numbering.** Checked against the real tip of `main` in the main repo (`git -C
+~/my_projects/chroma log --oneline -5`) immediately before writing this entry: `ccfbcdd` (D-167's
+own addendum commit) at the tip, matching this worktree's own branch point exactly (this worktree
+branched from `main` at `ccfbcdd`) — **D-168** is free. No new `B-`number: no bug was found in
+existing code this pass (the `@rolldown/plugin-babel`/`jxl-encoder` build issues above are
+environment/tooling gaps outside this pass's own code changes, not bugs in Motion MCP or in
+`manifestEdit.ts`).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
