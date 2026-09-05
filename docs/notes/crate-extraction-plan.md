@@ -201,6 +201,29 @@ committing to a size estimate.
 
 ### 2.2 `chroma-media` — the largest real win, and it splits into three commits
 
+**Status: done (D-146, 2026-09-05).** All three commits below landed in order, as
+scoped. What the plan got right and what it did not:
+
+- **Right:** the 1,598-line core really was `tauri::`-free and fork-import-free;
+  `probe_cached` really was the hard ordering constraint; `filmstrip.rs` really did
+  move whole once it landed; `audio.rs` really did have to split at
+  `edit::resolve_video_position`.
+- **Missed one case of the same class it did name:** `decode_pipe::open_pipe_count`
+  is a second `#[cfg(test)]` item the app's tests reach (from `chroma/edit.rs`),
+  alongside the `media_cache::init_for_tests` this section calls out — and commit 3
+  added three more for the audio session state. All are behind one `test-support`
+  feature enabled from `app/src-tauri`'s `[dev-dependencies]` only, chosen over
+  `#[doc(hidden)] pub` because an unconditional `pub` ships them in release builds.
+- **Under-described the `audio.rs` split.** "The engine and waveform move; the
+  resolution stays app-side" is right but hides a real design question: the session
+  *claim* has to happen before the resolution, because `requested_at` is what D-125's
+  skew compensation measures against. So it is not one function that stays and one
+  that moves — `chroma_audio_play` became `begin_play(seq) -> Option<PlaySession>`
+  (crate) → resolution (app) → `start(session, sources)` (crate), with
+  `AudioSourceSpec` as the boundary type.
+- **B-056 and B-057 both fixed in the commits this section names**, each with a
+  regression test confirmed to fail against the pre-fix code. See D-146.
+
 This is where the value is: `video.rs` + `decode_pipe.rs` + `media_cache.rs` are **1,598
 lines with zero `tauri::` references and zero fork imports**. They are ready to move today.
 
@@ -400,7 +423,7 @@ The only shared files are `chroma/mod.rs` (a one-line-per-slice module list) and
 known locations; a merge conflict there is a three-second resolve, not a rebase. `lib.rs` is
 touched by **none** of them, because no command moves.
 
-### Wave 2 — one agent, sequential within itself
+### Wave 2 — one agent, sequential within itself — **done, D-146 (2026-09-05)**
 
 **D — `chroma-media`**, in the three commits of §2.2, in that order. This slice touches
 `edit.rs`, `filmstrip.rs`, `audio.rs`, `state.rs`, `project.rs`, `export.rs`, `playback.rs`,
@@ -409,7 +432,8 @@ touched by **none** of them, because no command moves.
 must not run alongside anything that touches `chroma/*`. It can run alongside Wave 1's slice
 C (`chroma-gpu`) if C is still in flight, since C's edits are confined to fork core.
 
-Fold **B-056** into commit 2.
+Fold **B-056** into commit 2. (Done — and **B-057** into commit 3, since that is the
+commit that touches `filmstrip.rs`.)
 
 ### Wave 3 — one agent
 
@@ -447,7 +471,9 @@ written by the pre-move build.
 
 ## 4. Flagged items found while reading (not bug entries)
 
-Logged as real `B-NNN` entries in `docs/BUGS.md`: **B-056**, **B-057**. The rest below are
+Logged as real `B-NNN` entries in `docs/BUGS.md`: **B-056**, **B-057** — both **fixed
+2026-09-05 in D-146**, inside the commits that were already rewriting the code they sat
+in, exactly as §2.2 proposed. The rest below are
 real observations that do not earn a bug entry, recorded here so they are not re-derived.
 
 **F-1 — `tracked_full_mask` / `tracked_depth_map` do a full `read_dir` + PNG decode per

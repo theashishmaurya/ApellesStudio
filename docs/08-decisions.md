@@ -10742,3 +10742,156 @@ among the three sibling Wave 1 forks).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-146 — `chroma-media` real extraction: the three ordered commits of plan §2.2, `probe_cached` lifted out of the Edit-tab bridge, `audio.rs` split at the timeline boundary, and B-056 + B-057 fixed on contact
+
+**decided + built (2026-09-05).** Executes D-141's plan §2.2 — the widest slice
+in the migration, and the only one that is sequential within itself. Three
+commits, in order, each depending on the last, in an isolated worktree
+(`fork/extract-chroma-media`) after the three Wave 1 forks (D-143/144/145) had
+landed.
+
+- **Commit 1 — the core, verbatim.** `video.rs` (773) + `decode_pipe.rs` (514)
+  + `media_cache.rs` (311) into `crates/chroma-media/`. The plan's "1,598
+  lines with zero `tauri::` references and zero fork imports" held exactly;
+  the only edits were `super::video` → `crate::video` and the two items below.
+  Zero call sites changed — `chroma/{video,media_cache,decode_pipe}.rs` are
+  `pub use chroma_media::…::*;` shims (plan §1), `lib.rs`'s
+  `generate_handler!` untouched, no command moved.
+
+- **The `#[cfg(test)]` problem, and why a feature rather than
+  `#[doc(hidden)] pub`.** `media_cache::init_for_tests` and (a second case the
+  plan did not name) `decode_pipe::open_pipe_count` were `#[cfg(test)]`, and
+  the tests needing them — `chroma/filmstrip.rs`, `chroma/edit.rs` — are now on
+  the other side of a crate boundary, where a `#[cfg(test)]` item is
+  unreachable. Both are `#[cfg(any(test, feature = "test-support"))]`, with
+  `app/src-tauri` enabling `test-support` from its **`[dev-dependencies]`**.
+  Chosen over an unconditional `pub` because: an unconditional `pub` ships both
+  functions in every release build, which the house "no dead code" rule
+  forbids; and it would put a cache-root override on the public API of a crate
+  whose production entry point is deliberately `init(app_cache_dir)`. Proved
+  rather than asserted — `cargo check -p RapidRAW --lib` (which builds no
+  dev-dependencies, so the feature is off) is clean. Commit 3 added three more
+  hooks of the same shape for the audio session state.
+
+- **Commit 2 — `probe_cached` had to leave `edit.rs` before anything else
+  could compile.** It is consumed by `filmstrip`, `audio`, `project` and
+  `load` — none of them the Edit tab — so leaving it there would have made
+  `chroma-media` depend on `app/src-tauri`, a cycle. Its new home is a module
+  of its own (`chroma_media::probe`) rather than a function inside `video`,
+  because it is the *composition* of `video::probe` with `media_cache`'s two
+  layers, which is a different thing from either.
+
+- **B-056 fixed in that same commit, as the bug entry itself proposed.** The
+  in-memory layer was insert-only and keyed on the path alone while the disk
+  layer one line beneath it was keyed on `blake3(path ‖ mtime ‖ len)`
+  specifically so a replaced file never serves a stale probe: two keys for the
+  same question, weaker one in front. `source_key` is now computed **first**
+  and stored beside the `VideoInfo`; a hit whose key no longer matches falls
+  through to disk and then to a real `ffprobe`. One case the entry did not
+  cover, decided deliberately: when `source_key` fails outright — the file
+  cannot be `stat`ed, i.e. media offline, a real supported state per
+  `project::media_item_is_online` — the remembered facts are served
+  *unvalidated* rather than becoming an error, since re-probing an unopenable
+  file fails anyway; and correspondingly a probe with no `source_key` is not
+  memoised at all, because an unkeyed entry is exactly the insert-only cache
+  the bug was.
+
+- **Commit 3 — `filmstrip.rs` whole, `audio.rs` split.** `filmstrip` moved
+  entire minus its command wrapper. `audio.rs` did **not** move whole, and
+  this is the substantive architectural call of the slice: its
+  symphonia→rubato→cpal engine, the D-130 session/`seq` ordering protocol, the
+  waveform envelope path and `AudioSourceSpec` are media; but
+  `chroma_audio_play` asks `edit::resolve_video_position` /
+  `edit::resolve_audio_track_positions` *which clips are under a playhead*,
+  which is timeline resolution — a layer above media, and `chroma-compositor`'s
+  job later (plan §2.8). A media crate reaching for those would be reaching up.
+
+  So the command became two crate functions with the app's resolution between
+  them: `begin_play(seq) -> Option<PlaySession>` stamps `requested_at` and
+  claims the transport; the app resolves its `Vec<AudioSourceSpec>`;
+  `start(session, sources)` spawns the engine thread. **That ordering is
+  load-bearing**, not incidental — `requested_at` is stamped before the
+  resolution so the resolution's own cost stays inside the skew `run_session`
+  measures and compensates for (D-125). `AudioSourceSpec` is the boundary
+  type, and it is the right one: "a file, a source second, an out-point, a
+  gain" is a media fact; "which clip is under frame 1234" is not.
+
+- **B-057 fixed while in `filmstrip.rs`.** `load_chunk`'s
+  `CHUNK_LOCKS.remove(&key)` sat after `let bytes = extract(..)?`, so a failed
+  extraction leaked its entry for the process lifetime — in the one map in that
+  module with no bound at all. Now a `ChunkLockGuard` whose `Drop` removes it,
+  declared *after* the tokio mutex guard so drop order removes the entry while
+  that lock is still held: byte-for-byte the old success ordering, which
+  B-057's own "checked and explicitly NOT a bug" note had already traced as
+  safe against a third caller arriving in that window.
+
+- **Both bug fixes have regression tests confirmed to fail before the fix**,
+  by temporarily restoring the old body in place and running them:
+  - B-056 — `a_source_file_replaced_in_place_is_re_probed_not_served_stale`
+    synthesises a real 320x240/1s clip with `ffmpeg`, probes it, overwrites the
+    same path with a real 640x480/2s clip, asserts 640x480 comes back. Pre-fix:
+    `left: 320, right: 640`. Paired with
+    `an_unchanged_file_is_still_served_from_memory` (the fix must not cost the
+    cache its purpose — warm is still >5x cheaper than cold) and
+    `an_offline_file_still_serves_its_remembered_facts`.
+  - B-057 — `a_failed_chunk_extraction_does_not_leak_its_chunk_lock` writes a
+    real file whose contents `ffmpeg` refuses (so it has a real `source_key`
+    and genuinely takes the lock path), calls `load_chunk`, asserts the call
+    failed and `CHUNK_LOCKS` is back to its prior size. Pre-fix: `left: 1,
+    right: 0`. Paired with a success-path test so the guard cannot regress what
+    already worked.
+
+- **Test split, on the same line as the code.** `video.rs`'s
+  `engine_treats_video_as_loadable_media` stayed behind exactly as the plan
+  said — it asserts `crate::formats::is_supported_image_file("clip.mov")`,
+  which is the fork's own routing hook, so it lives in the shim file as the
+  integration guard it actually is. In `audio.rs`, the pure helper, decode,
+  B-048 out-point, B-052 seek-fallback and D-057 mixing tests moved with the
+  engine; the transport *ordering* tests (which drive the real
+  `chroma_audio_play`/`chroma_audio_stop`) and every test that builds a
+  `.chroma` project through `project`/`state` stayed app-side.
+
+- **Verification.**
+  - `cargo check --workspace --all-targets` — clean. The only warnings are the
+    6 pre-existing `ai_processing.rs` dead-code warnings every entry tonight
+    has noted; none from this change.
+  - `cargo check -p RapidRAW --lib` — clean. This is the real proof the
+    `test-support` split works: no dev-dependencies, therefore no feature,
+    therefore a release build links none of the test hooks.
+  - `cargo test -p chroma-media` — **83 passed, 0 failed.**
+  - `cargo test -p RapidRAW --lib -- chroma::` — **164 passed, 0 failed, 1
+    ignored.** The known pre-existing flake
+    (`chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
+    under parallel test-threads) did not reproduce on this run.
+  - `cargo clippy -p chroma-media --all-targets` — clean. Two pre-existing
+    `clippy::cloned_ref_to_slice_refs` lints came across with the moved audio
+    tests and were fixed rather than carried.
+
+- **Honest gaps.** (1) **Not seen in the assembled app** — this sandbox cannot
+  launch the real Tauri window, the same disclosed constraint every entry since
+  D-125. So the plan's own §"per-slice definition of done" for this slice — "a
+  filmstrip + waveform + playback round-trip on a real clip" — is met at the
+  test level (the filmstrip cache tests, the waveform peak tests and the
+  `open_source`/`DecodedSource` decode tests all run real `ffmpeg`/`symphonia`
+  against real files) but **not** through the GUI, and the `cpal`
+  device-output half specifically is exercised only by the env-gated
+  `CHROMA_TEST_AUDIO_VIDEO` tests, which were skipped here. (2) The moved
+  files keep their original formatting; `cargo fmt --check` is not clean on
+  them, but it is not clean on `app/src-tauri` (88 diffs),
+  `chroma-timeline` (35) or `chroma-ai` (26) either, and reformatting during a
+  move would destroy the "verbatim" property that makes the diff reviewable.
+  (3) `waveform_peaks` widened from `pub(crate)` to `pub` — it is the
+  synchronous half of a public `async fn`, which is legitimate public API for a
+  headless caller, but it is a real (small) API widening rather than a pure
+  move. (4) Wave 4's shim sweep is still owed: `chroma/{video,media_cache,
+  decode_pipe}.rs` are re-export files that should be deleted once call sites
+  are retargeted at `chroma_media::…`.
+
+**Numbering.** Assigned D-146 against `main`'s real tip (`3edb9e5`, D-145) and
+re-verified free immediately before the docs commit.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

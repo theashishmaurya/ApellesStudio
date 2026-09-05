@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **`chroma-media` real extraction (D-146)** — the widest slice
+  of D-141's plan (§2.2), in its three required ordered commits. (1) `video.rs`
+  + `decode_pipe.rs` + `media_cache.rs` move verbatim; two `#[cfg(test)]` hooks
+  become a `test-support` feature enabled only from `[dev-dependencies]`, so a
+  release build links none of them. (2) `probe_cached` leaves `edit.rs` — it had
+  to, or `chroma-media` would depend on the app — and **B-056 is fixed on the
+  way**: the in-memory probe cache now revalidates the source file's
+  `blake3(path ‖ mtime ‖ len)` identity on every hit instead of being
+  insert-only and path-keyed, so a file replaced in place is re-probed rather
+  than serving stale facts for the rest of the session. (3) `filmstrip.rs`
+  moves whole and `audio.rs` **splits**: the symphonia→rubato→cpal engine, the
+  D-130 session protocol and the waveform path are media and moved; the
+  timeline resolution inside `chroma_audio_play` is not, and stayed app-side —
+  `begin_play` → *(app resolves)* → `start`, preserving the exact ordering the
+  D-125 skew compensation depends on. **B-057 fixed** in the same commit: a
+  `ChunkLockGuard` whose `Drop` releases the `CHUNK_LOCKS` entry on every path
+  out of `load_chunk`, not only the successful one. Both bug fixes carry
+  regression tests confirmed to fail against the pre-fix code.
+  `cargo check --workspace --all-targets` clean; `cargo test -p chroma-media`
+  83 passed; `cargo test -p RapidRAW --lib -- chroma::` 164 passed.
 - **2026-09-05** — **`chroma-grade-model` real extraction landed (D-143),** per
   D-141's plan §2.4. `save_grade`/`load_grade`/`migrate_v1`/`relativize`/
   `resolve`/`grade_name` + `SCHEMA`/`MATTE_KEYS`/`SaveResult` moved verbatim

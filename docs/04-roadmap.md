@@ -845,8 +845,16 @@ has no Tauri-free core and its op registry lives in the frontend. Real order:
    crate (headless device/queue/limits); `render_core::render()` stays
    app-side, it's `chroma-grade`'s. `GpuContext` really did split into two
    structs — see D-144 and `crates/README.md`.
-2. **wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
-   leave `edit.rs` first, or `chroma-media` would depend on the app)
+2. ~~**wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
+   leave `edit.rs` first, or `chroma-media` would depend on the app)~~ — **done,
+   D-146 (2026-09-05).** All three commits landed in order: (1) `video.rs` +
+   `decode_pipe.rs` + `media_cache.rs` verbatim, (2) `probe_cached` out of
+   `edit.rs` with **B-056** fixed on the way, (3) `filmstrip.rs` whole and
+   `audio.rs` **split** — its engine moved, its timeline resolution
+   (`edit::resolve_video_position` / `resolve_audio_track_positions`) stayed
+   app-side because that is a layer above media, with **B-057** fixed while in
+   `filmstrip.rs`. Both bug fixes carry regression tests confirmed to fail
+   pre-fix.
 3. **wave 3** — `chroma-project` (needs `chroma-media`; an edge
    `architecture-lock.md`'s table is missing)
 4. **wave 4** — delete the shims, fix the doc set
@@ -857,6 +865,20 @@ This is where isolated-worktree parallel subagents start making sense — the pl
 which slices are genuinely disjoint and which must be sequential (see the "worktrees"
 discussion, 2026-09-02: file-boundary discipline is the actual lever, not the worktree
 flag itself).
+
+- ~~**Wave 2 — `chroma-media`**~~ — **done, D-146 (2026-09-05).** The widest
+  slice in the plan and the only sequential-within-itself one. ~3,900 lines
+  now live in `crates/chroma-media/` across `video`, `decode_pipe`,
+  `media_cache`, `probe`, `filmstrip` and `audio`. The two real judgement
+  calls: `probe_cached` moved into a module of its own (it is the
+  *composition* of `video::probe` with `media_cache`, not part of either), and
+  `audio.rs` split rather than moved whole — `chroma_audio_play` became
+  `begin_play` → *(app resolves the timeline)* → `start`, preserving the exact
+  ordering the D-125 skew compensation depends on. Three `#[cfg(test)]` items
+  became a `test-support` feature enabled only from `[dev-dependencies]`, so a
+  release build links none of them. **Next:** wave 3 (`chroma-project`), then
+  wave 4's shim sweep — `chroma/{video,media_cache,decode_pipe}.rs` are
+  re-export files awaiting deletion.
 
 - ~~**Wave 1, slice A — `chroma-grade-model`**~~ — **done, D-143 (2026-09-05).**
   `save_grade`/`load_grade`/`migrate_v1`/`relativize`/`resolve`/`grade_name` +

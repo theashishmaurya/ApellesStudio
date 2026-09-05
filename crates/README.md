@@ -15,7 +15,7 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 |---|---|---|---|---|
 | L0 | `chroma-types` | **yes (stub)** | `Frame` / `Rational` / `Resolution` / `ColorSpace` / `TimeRange`, typed IDs, error enums — zero heavy deps | — |
 | L0 | `chroma-gpu` | **yes, partial (D-144)** | headless wgpu device/queue/limits (`init_gpu_context`, D-014, extracted). No display surface, no texture pool yet, no `render()` — those stay app-side / gated on `chroma-grade` | `wgpu`, `pollster`, `log` |
-| L1 | `chroma-media` | future | decode / probe / encode — VideoToolbox→texture, ffmpeg-CLI fallback (D-015), decode pipe (D-030), export encode pipe (D-022) | gpu, types |
+| L1 | `chroma-media` | **yes, real (D-146)** | `video` (ffmpeg-CLI probe + decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (D-128), `probe` (the two-layer probe cache, lifted out of `chroma/edit.rs`), `filmstrip` (D-128/D-134), `audio` (symphonia→rubato→cpal engine + waveforms, D-049/D-051/D-057). Export encode (D-022) is still in `chroma/export.rs`; VideoToolbox→texture is future | types (**no `gpu` edge yet** — nothing extracted so far needs one; the lock doc's table predicted one) |
 | L1 | `chroma-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021) | gpu, types, `app/` engine |
 | L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
 | L2 | `chroma-timeline` | **yes (stub)** | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, transcript→EDL. **Pure.** | types |
@@ -53,3 +53,24 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   `render_core.rs` keeps its old `init_gpu_context()` signature as a thin
   wrapper, so the 6 `render_core::` call sites in `chroma/export.rs`,
   `chroma/playback.rs`, `chroma/relight.rs` need zero changes.
+- **`chroma-media` (D-146, 2026-09-05):** the widest slice of the plan, in its
+  three required ordered commits. `video.rs` + `decode_pipe.rs` +
+  `media_cache.rs` moved verbatim; `probe_cached` was lifted out of
+  `chroma/edit.rs` into a `probe` module of its own (it is the *composition* of
+  `video::probe` with `media_cache`'s two layers, not part of either) — it had
+  to move first, or this crate would depend on `app/src-tauri`, a cycle;
+  `filmstrip.rs` moved whole minus its command wrapper. **`audio.rs` split
+  rather than moved**: its symphonia→rubato→cpal engine, the D-130 session
+  ordering protocol, the waveform path and `AudioSourceSpec` are media, but
+  `chroma_audio_play`'s *timeline resolution*
+  (`edit::resolve_video_position` / `resolve_audio_track_positions`) is a layer
+  above media and stayed in `app/src-tauri` — the command is now
+  `begin_play` → *(app resolves)* → `start`, which preserves the exact ordering
+  D-125's skew compensation depends on. **B-056** (the in-memory probe cache
+  never invalidated) and **B-057** (`CHUNK_LOCKS` leaked on a failed
+  extraction) were fixed inside the commits already rewriting that code, each
+  with a regression test confirmed to fail pre-fix. Correction to the table
+  above: this crate has **no `chroma-gpu` edge** — everything extracted so far
+  is CPU/subprocess work; the predicted edge becomes real only if
+  VideoToolbox→texture lands. See its own `README.md` for the `test-support`
+  feature and why it is a feature rather than a `#[doc(hidden)] pub`.
