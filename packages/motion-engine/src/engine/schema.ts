@@ -29,17 +29,73 @@ const timed = z.object({ at: z.number(), i: z.number() });
 /** `active`: a fixed index, or a step schedule [{at, i}] */
 const activeSchema = z.union([z.number(), z.array(timed)]);
 
+/** a bezier easing curve, `Easing.bezier(x1,y1,x2,y2)`'s own four control
+ *  points — the SAME shape `design.ease.*`'s presets already are. Shared by
+ *  `cam2dKey`, `cam3dKey`, and `transformKey` below (all three interpolate
+ *  through `motion-engine/src/lib/interpolateKeys.ts`'s one shared
+ *  `interpolateKeys`, D-159/B-059). */
+const easeCurve = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+/**
+ * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
+ * (`CameraKey.ease`, read at `k.ease ?? design.ease.inOut`) but this object
+ * was a plain `z.object`, and zod strips unknown keys by default, so an
+ * authored `ease` was silently dropped before `Video.tsx` (which already
+ * spreads the key through verbatim, `{ ...k, at: … }`) ever saw it — every
+ * camera move in every manifest was stuck on `design.ease.inOut` with no way
+ * to say otherwise. Declaring `ease` explicitly (rather than reaching for
+ * `.passthrough()`, which would also silently accept a typo'd field name —
+ * exactly what the strict object was buying in the first place) fixes it:
+ * the field is now real, typed, and round-trips through `manifestSchema`.
+ */
 const cam2dKey = z.object({
   at: z.number(),
   x: z.number().optional(),
   y: z.number().optional(),
   zoom: z.number().optional(),
+  ease: easeCurve.optional(),
 });
 
+/**
+ * Same gap as `cam2dKey` above, found while fixing B-059 (the bug's own
+ * write-up in `docs/BUGS.md` assumed this one was "harmless... since
+ * Scene3D has no ease concept" — reading `Scene3D.tsx`'s `CameraRig` this
+ * pass shows that's wrong: `CamKey.ease` exists there too and is read the
+ * identical way, `cb(b.ease ?? design.ease.inOut)`. `Video.tsx`'s `ThreeD`
+ * already spreads a 3D camera key through verbatim (`{ ...k, at: … }`, the
+ * same as the 2D case), so declaring `ease` here is the whole fix — no
+ * `Scene3D.tsx`/`Video.tsx` change needed on top.
+ */
 const cam3dKey = z.object({
   at: z.number(),
   pos: vec3,
   look: vec3.optional(),
+  ease: easeCurve.optional(),
+});
+
+/**
+ * D-159, Phase 4 of `docs/notes/motion-visual-builder-research.md` ("the
+ * animation model: per-layer keyframes") — one keyframe on the D-157 layer
+ * transform wrapper's `keys` array (below). `at` is in SECONDS, matching
+ * `cam2dKey`'s own convention exactly (`Video.tsx` converts via
+ * `Math.round(at * fps)` the same way it already does for the camera).
+ *
+ * Every numeric field here is a DELTA added on top of the STATIC
+ * `layerTransform` field of the same name, not a replacement for it — see
+ * `layerTransform`'s own updated doc comment below for the full reasoning
+ * and the "why additive, uniformly across all five fields" design call.
+ * Interpolated through the SAME shared `interpolateKeys` `Camera.tsx` uses
+ * (`motion-engine/src/lib/interpolateKeys.ts`) — "reuse the camera's own key
+ * mechanics, don't invent a second interpolator," per the research doc.
+ */
+const transformKey = z.object({
+  at: z.number(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  scale: z.number().optional(),
+  rot: z.number().optional(),
+  opacity: z.number().optional(),
+  ease: easeCurve.optional(),
 });
 
 /**
@@ -59,6 +115,37 @@ const cam3dKey = z.object({
  * layer to an explicit `clipWidth`×`clipHeight` box via `overflow: hidden`
  * on this SAME wrapper. Both absent (the common case) ⇒ no clipping at all,
  * today's full-bleed behaviour.
+ *
+ * `keys` (D-159, Phase 4 — "the animation model: per-layer keyframes") is
+ * the one authored spatial/opacity animation channel a LAYER can carry
+ * (the camera was previously the only one, §1a of the research doc).
+ * Optional, absent by default: `Video.tsx`'s `renderLayers` only calls the
+ * shared interpolator when `keys` is a non-empty array, so an existing
+ * manifest (no `keys` field at all) renders byte-identically to before this
+ * pass (verified by real `remotion still` renders, not just reasoning about
+ * the schema — see D-159's own decision entry).
+ *
+ * **Every `transformKey` field is a DELTA added on top of the STATIC field
+ * of the same name here, uniformly across all five — a real design call,
+ * not the only option, made and documented rather than left implicit.** The
+ * research doc's own framing only spells this out for `x`/`y` ("Keys drive
+ * the Phase 2 wrapper, as a delta on top of the static x/y, not a
+ * replacement for them"); extending the SAME additive convention to
+ * `scale`/`rot`/`opacity` (rather than, say, making `scale` a multiplicative
+ * delta, which would read more naturally for a scale factor in isolation)
+ * keeps one rule for all five fields instead of a special case per field,
+ * and — the load-bearing reason — makes "absent `keys`" and "a `keys` array
+ * whose one entry leaves every field unset" behave IDENTICALLY by
+ * construction: an unset delta field defaults to `0` (never `1`), so
+ * `appliedScale = staticScale (default 1) + keyDeltaScale (default 0) =
+ * staticScale` either way, with no per-field default table for callers to
+ * get wrong. The tradeoff accepted knowingly: authoring a scale ANIMATION
+ * means writing deltas off the static scale (`keys:[{at:0,scale:0},
+ * {at:1,scale:0.5}]` to grow from the static scale to static+0.5), not
+ * absolute scale factors at each key — a real per-field UI/authoring
+ * consideration, not a hidden footgun, and consistent with how the static
+ * `layerTransform` fields already relate to the primitive's own positioning
+ * (additive offsets on top of something else, never the whole story alone).
  */
 const layerTransform = z.object({
   x: z.number().optional(),
@@ -68,6 +155,7 @@ const layerTransform = z.object({
   opacity: z.number().optional(),
   clipWidth: z.number().optional(),
   clipHeight: z.number().optional(),
+  keys: z.array(transformKey).optional(),
 });
 
 /** one primitive placement. `use` picks the primitive; the rest are its props.
@@ -145,6 +233,8 @@ export type Manifest = z.infer<typeof manifestSchema>;
 export type Scene = z.infer<typeof scene>;
 export type Layer = z.infer<typeof layer>;
 export type LayerTransform = z.infer<typeof layerTransform>;
+export type TransformKey = z.infer<typeof transformKey>;
 export type Cam2dKey = z.infer<typeof cam2dKey>;
 export type Cam3dKey = z.infer<typeof cam3dKey>;
+export type EaseCurve = z.infer<typeof easeCurve>;
 export type Active = z.infer<typeof activeSchema>;

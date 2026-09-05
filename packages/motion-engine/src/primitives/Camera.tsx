@@ -9,14 +9,9 @@
  * Helpers `push` / `pan` / `pullBack` build common key sequences.
  */
 import React from "react";
-import {
-  AbsoluteFill,
-  useCurrentFrame,
-  useVideoConfig,
-  interpolate,
-  Easing,
-} from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { design } from "../design";
+import { interpolateKeys } from "../lib/interpolateKeys";
 
 export type CameraKey = {
   at: number; // frame
@@ -25,9 +20,6 @@ export type CameraKey = {
   zoom?: number; // scale factor. default 1
   ease?: readonly [number, number, number, number];
 };
-
-const cb = (c: readonly [number, number, number, number]) =>
-  Easing.bezier(c[0], c[1], c[2], c[3]);
 
 export const Camera: React.FC<{
   keys: CameraKey[];
@@ -40,42 +32,19 @@ export const Camera: React.FC<{
   const cx = width / 2;
   const cy = height / 2;
 
-  const resolve = (k: CameraKey) => ({
-    at: k.at,
-    x: k.x ?? cx,
-    y: k.y ?? cy,
-    zoom: k.zoom ?? 1,
-    ease: k.ease ?? design.ease.inOut,
-  });
-
-  const sorted = [...keys].sort((a, b) => a.at - b.at).map(resolve);
-  const first = sorted[0] ?? resolve({ at: 0 });
-
-  let a = first;
-  let b = first;
-  for (let i = 0; i < sorted.length; i++) {
-    if (sorted[i].at <= frame) {
-      a = sorted[i];
-      b = sorted[i + 1] ?? sorted[i];
-    }
-  }
-  if (frame <= first.at) {
-    a = first;
-    b = first;
-  }
-
-  const t =
-    a.at === b.at
-      ? 1
-      : interpolate(frame, [a.at, b.at], [0, 1], {
-          extrapolateLeft: "clamp",
-          extrapolateRight: "clamp",
-          easing: cb(b.ease),
-        });
-
-  const x = interpolate(t, [0, 1], [a.x, b.x]);
-  const y = interpolate(t, [0, 1], [a.y, b.y]);
-  const zoom = interpolate(t, [0, 1], [a.zoom, b.zoom]);
+  // D-159: sort/clamp/ease/interpolate is now `interpolateKeys` (`../lib/
+  // interpolateKeys.ts`), extracted verbatim from this component's own
+  // pre-D-159 inline logic so `Video.tsx`'s new per-layer transform keys can
+  // reuse the identical mechanics rather than a second copy of it — see that
+  // file's own doc comment and D-159's decision entry for the byte-for-byte
+  // verification that this refactor changed nothing about the camera itself.
+  const { x, y, zoom } = interpolateKeys(
+    keys,
+    frame,
+    ["x", "y", "zoom"] as const,
+    { x: cx, y: cy, zoom: 1 },
+    design.ease.inOut,
+  );
 
   const dx = drift
     ? design.ambientDriftPx * 2 * Math.sin((frame / design.fps) * 0.6)

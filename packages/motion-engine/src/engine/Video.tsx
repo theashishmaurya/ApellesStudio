@@ -7,6 +7,7 @@ import React from "react";
 import { AbsoluteFill, Series, useCurrentFrame } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Kalam";
 import { Camera } from "../primitives/Camera";
+import { interpolateKeys } from "../lib/interpolateKeys";
 
 loadFont();
 import { Scene3D } from "../primitives/Scene3D";
@@ -47,12 +48,49 @@ import type { Manifest, Scene as SceneT } from "./schema";
  * scope call, not an oversight. When `l.transform` is absent, `node` below is
  * the exact same JSX this function always produced — zero pixel/visual
  * change, verified with real byte-for-byte `remotion still` renders (D-157).
+ *
+ * `l.transform.keys` (D-159, Phase 4 — "the animation model: per-layer
+ * keyframes") layers a per-frame DELTA on top of the five static fields
+ * above, resolved through the SAME shared `interpolateKeys` (`../lib/
+ * interpolateKeys.ts`) `Camera.tsx` uses for the scene camera — "reuse the
+ * camera's own key mechanics, don't invent a second interpolator," per the
+ * research doc. Every key field defaults to `0` when a given key doesn't
+ * specify it (see `schema.ts`'s `layerTransform` doc comment for the full
+ * "why additive, uniformly across all five fields" reasoning), so an EMPTY
+ * or ABSENT `keys` array resolves to an all-zero delta and the applied
+ * values below (`tx`/`ty`/`tscale`/`trot`/`topacity`) equal the plain static
+ * fields exactly as before this pass — the `keys` branch is only taken when
+ * `keys` is a non-empty array, so a manifest that doesn't use this feature
+ * renders byte-identically (verified via real `remotion still` renders,
+ * D-159's own decision entry). `at` converts from the manifest's seconds via
+ * `Math.round(at * fps)`, matching the camera's own conversion one branch up
+ * in `TwoD` below.
  */
 const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, sceneIndex: number) =>
   (layers ?? []).map((l, i) => {
     const { component: C, adapt } = lookup(l.use);
     const props = adapt(l as unknown as Record<string, unknown>, fps, frame);
     const t = l.transform;
+    let tx = t?.x ?? 0;
+    let ty = t?.y ?? 0;
+    let tscale = t?.scale ?? 1;
+    let trot = t?.rot ?? 0;
+    let topacity = t?.opacity ?? 1;
+    if (t?.keys && t.keys.length > 0) {
+      const frameKeys = t.keys.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
+      const delta = interpolateKeys(
+        frameKeys,
+        frame,
+        ["x", "y", "scale", "rot", "opacity"] as const,
+        { x: 0, y: 0, scale: 0, rot: 0, opacity: 0 },
+        design.ease.inOut,
+      );
+      tx += delta.x;
+      ty += delta.y;
+      tscale += delta.scale;
+      trot += delta.rot;
+      topacity += delta.opacity;
+    }
     const node = t ? (
       <div
         style={
@@ -65,15 +103,15 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
                 height: t.clipHeight,
                 overflow: "hidden",
                 transformOrigin: "0 0",
-                transform: `translate(${t.x ?? 0}px, ${t.y ?? 0}px) rotate(${t.rot ?? 0}deg) scale(${t.scale ?? 1})`,
-                opacity: t.opacity ?? 1,
+                transform: `translate(${tx}px, ${ty}px) rotate(${trot}deg) scale(${tscale})`,
+                opacity: topacity,
               }
             : {
                 position: "absolute",
                 inset: 0,
                 transformOrigin: "0 0",
-                transform: `translate(${t.x ?? 0}px, ${t.y ?? 0}px) rotate(${t.rot ?? 0}deg) scale(${t.scale ?? 1})`,
-                opacity: t.opacity ?? 1,
+                transform: `translate(${tx}px, ${ty}px) rotate(${trot}deg) scale(${tscale})`,
+                opacity: topacity,
               }
         }
       >
