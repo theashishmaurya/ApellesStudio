@@ -8,10 +8,18 @@ import {
   keyframeLanes,
   laneKey,
   laneKeyMarkers,
+  laneKeyAtSeconds,
   selectionForLane,
   sceneBoundaryFrames,
   frameToPercent,
   percentToFrame,
+  sameKeySelectionEntry,
+  toggleKeySelectionEntry,
+  unionKeySelectionEntries,
+  keyMarkerContentRect,
+  keysInMarqueeRect,
+  KEY_MARKER_HIT_PX,
+  type KeySelectionEntry,
 } from './keyframeVisibility';
 
 // `sample`'s own real shape (`packages/motion-engine/src/engine/sample.ts`),
@@ -278,5 +286,149 @@ describe('percentToFrame (Phase 5b — the INVERSE of frameToPercent, for a drag
       const percent = frameToPercent(frame, 450);
       expect(percentToFrame(percent, 450)).toBe(frame);
     }
+  });
+});
+
+describe('laneKeyAtSeconds (Phase 5b — box-select + nudge, a nudge\'s own drag-start snapshot)', () => {
+  it("reads a 2D camera lane's own key at seconds, exactly (unrounded)", () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 0, kind: 'camera' }, 1)).toBe(0.4);
+  });
+
+  it("reads a 3D camera lane's own key at seconds", () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 2, kind: 'scene3d-camera' }, 0)).toBe(0);
+  });
+
+  it("reads a layer lane's own transform.keys entry at seconds", () => {
+    const m = withLayerKeys([{ at: 0, x: 0 }, { at: 2.5, x: 300 }]);
+    expect(laneKeyAtSeconds(m, { sceneIndex: 0, kind: 'layer', layerIndex: 0 }, 1)).toBe(2.5);
+  });
+
+  it('is null for a scene that no longer exists', () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 99, kind: 'camera' }, 0)).toBeNull();
+  });
+
+  it('is null for an out-of-range keyIndex', () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 0, kind: 'camera' }, 99)).toBeNull();
+  });
+
+  it('is null for a camera-less scene', () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 1, kind: 'camera' }, 0)).toBeNull();
+  });
+
+  it('is null for a scene3d-camera lane on a scene with no scene3d at all', () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 0, kind: 'scene3d-camera' }, 0)).toBeNull();
+  });
+});
+
+describe('sameKeySelectionEntry / toggleKeySelectionEntry / unionKeySelectionEntries (Phase 5b — the key-selection model)', () => {
+  const a: KeySelectionEntry = { lane: { sceneIndex: 0, kind: 'camera' }, keyIndex: 0 };
+  const b: KeySelectionEntry = { lane: { sceneIndex: 0, kind: 'camera' }, keyIndex: 1 };
+  const c: KeySelectionEntry = { lane: { sceneIndex: 0, kind: 'layer', layerIndex: 0 }, keyIndex: 0 };
+
+  it('sameKeySelectionEntry compares by lane identity + keyIndex, not object identity', () => {
+    expect(sameKeySelectionEntry(a, { lane: { sceneIndex: 0, kind: 'camera' }, keyIndex: 0 })).toBe(true);
+    expect(sameKeySelectionEntry(a, b)).toBe(false);
+  });
+
+  it('sameKeySelectionEntry distinguishes two DIFFERENT layers sharing the same keyIndex', () => {
+    // the exact scenario D-162's own `dragPreview` scoping had to account
+    // for: two different lanes can each have their own `keyIndex === 0`.
+    expect(sameKeySelectionEntry(a, c)).toBe(false);
+  });
+
+  it('toggleKeySelectionEntry adds an absent entry', () => {
+    expect(toggleKeySelectionEntry([a], b)).toEqual([a, b]);
+  });
+
+  it('toggleKeySelectionEntry removes an already-present entry', () => {
+    expect(toggleKeySelectionEntry([a, b], a)).toEqual([b]);
+  });
+
+  it('toggleKeySelectionEntry places no same-kind/same-scene restriction — unlike Selection[]', () => {
+    // a camera key and a layer key, or keys in two different scenes, are
+    // both fully valid together — see `manifestEdit.ts`'s `moveKeysByDelta`
+    // doc comment for why a shared time delta is coherent across any mix.
+    expect(toggleKeySelectionEntry([a], c)).toEqual([a, c]);
+  });
+
+  it('unionKeySelectionEntries merges hits onto base, skipping duplicates', () => {
+    expect(unionKeySelectionEntries([a], [a, b])).toEqual([a, b]);
+  });
+
+  it('unionKeySelectionEntries with no overlap concatenates', () => {
+    expect(unionKeySelectionEntries([a], [c])).toEqual([a, c]);
+  });
+});
+
+describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pure geometry)', () => {
+  const layout = { laneAreaTop: 20, laneHeight: 26, labelWidth: 148 };
+  const total = 450; // sample's own total frames (see the file's own header comment)
+
+  it("centers a marker's hit-box rect on its own row and frame position", () => {
+    const rect = keyMarkerContentRect(0, 0, total, 450, layout);
+    // row 0's vertical center: laneAreaTop + 0*laneHeight + laneHeight/2
+    expect(rect.top + rect.height / 2).toBeCloseTo(20 + 13, 10);
+    // frame 0 -> 0% of the track -> right at the label boundary
+    expect(rect.left + rect.width / 2).toBeCloseTo(layout.labelWidth, 10);
+    expect(rect.width).toBe(KEY_MARKER_HIT_PX);
+    expect(rect.height).toBe(KEY_MARKER_HIT_PX);
+  });
+
+  it('row 1 sits exactly one laneHeight below row 0', () => {
+    const row0 = keyMarkerContentRect(0, 0, total, 450, layout);
+    const row1 = keyMarkerContentRect(1, 0, total, 450, layout);
+    expect(row1.top - row0.top).toBeCloseTo(layout.laneHeight, 10);
+  });
+
+  it('keysInMarqueeRect finds a marker whose hit-box the rect fully contains', () => {
+    const lanes = keyframeLanes(sample); // [{sceneIndex:0,kind:'camera'}, {sceneIndex:2,kind:'scene3d-camera'}]
+    const trackW = 450; // 1px/frame, so frame 0's marker centers at x = labelWidth
+    const markerCenter = keyMarkerContentRect(0, 0, total, trackW, layout);
+    const rect = { left: markerCenter.left - 5, top: markerCenter.top - 5, width: 20, height: 20 };
+    const hits = keysInMarqueeRect(sample, lanes, rect, total, trackW, layout);
+    expect(hits).toContainEqual({ lane: { sceneIndex: 0, kind: 'camera' }, keyIndex: 0 });
+  });
+
+  it('keysInMarqueeRect never hits a marker the rect only grazes (zero overlap)', () => {
+    const lanes = keyframeLanes(sample);
+    const trackW = 450;
+    // a rect entirely to the LEFT of every marker on row 0 (frame 0's own
+    // marker sits at x = labelWidth; this rect ends well before it)
+    const rect = { left: 0, top: layout.laneAreaTop, width: layout.labelWidth - 20, height: layout.laneHeight };
+    const hits = keysInMarqueeRect(sample, lanes, rect, total, trackW, layout);
+    expect(hits).toEqual([]);
+  });
+
+  it('keysInMarqueeRect scopes hits to the CORRECT row — a rect over row 0 never catches row 1\'s marker', () => {
+    const lanes = keyframeLanes(sample); // row 0: scene0 camera; row 1: scene2 3D camera
+    const trackW = 450;
+    // scene 2's 3D camera key 0 is at absolute frame 300 (see laneKeyMarkers
+    // tests above) — put a WIDE rect at that x position but only over row 0's
+    // own vertical band.
+    const x = layout.labelWidth + (300 / total) * trackW;
+    const rect = { left: x - 10, top: layout.laneAreaTop, width: 20, height: layout.laneHeight };
+    const hits = keysInMarqueeRect(sample, lanes, rect, total, trackW, layout);
+    expect(hits).toEqual([]);
+  });
+
+  it('keysInMarqueeRect can select MULTIPLE keys across multiple rows in one rect', () => {
+    const lanes = keyframeLanes(sample);
+    const trackW = 450;
+    // a rect spanning the FULL track width and BOTH rows' vertical extent
+    // catches every key in the manifest (scene 0's 3 camera keys + scene
+    // 2's 2 3D-camera keys).
+    const rect = {
+      left: layout.labelWidth,
+      top: layout.laneAreaTop,
+      width: trackW,
+      height: layout.laneHeight * lanes.length,
+    };
+    const hits = keysInMarqueeRect(sample, lanes, rect, total, trackW, layout);
+    expect(hits).toHaveLength(5);
+  });
+
+  it('is empty for zero lanes', () => {
+    const rect = { left: 0, top: 0, width: 1000, height: 1000 };
+    expect(keysInMarqueeRect(sample, [], rect, total, 450, layout)).toEqual([]);
   });
 });

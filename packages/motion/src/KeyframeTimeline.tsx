@@ -103,9 +103,62 @@
  * scoped by `{laneKey(lane), keyIndex}` rather than `{kind, sceneIndex,
  * keyIndex}`, since two DIFFERENT layers in the same scene can each have
  * their own `keyIndex === 0` marker now that both get their own row.
+ *
+ * **Phase 5b part 3 — box-select + nudge multiple keys (this pass).** Two
+ * new gestures layered onto the three this file already had (marker click,
+ * marker drag/retime, track-background click-to-seek), disambiguated the
+ * SAME way — structural DOM-position checks, never priority/z-order guesses
+ * (D-137/D-158's own discipline, a further application in this file):
+ *
+ * - **Shift-click a marker** toggles it into/out of a NEW, separate
+ *   selection model for individual KEYS (`keyframeVisibility.ts`'s
+ *   `KeySelectionEntry` — `{lane, keyIndex}`, distinct from `Selection[]`,
+ *   which points at whole layers/cameras, never one key within one). Local
+ *   `useState` in this component — see `KeySelectionEntry`'s own module doc
+ *   comment in `keyframeVisibility.ts` for why it isn't lifted to
+ *   `MotionTab.tsx` and why it is NOT cleared on every manifest commit.
+ * - **A rubber-band drag over empty track space** (not a marker, not a lane
+ *   label) box-selects every key whose marker falls inside the rectangle —
+ *   `keyframeVisibility.ts`'s `keysInMarqueeRect`, which needs NO DOM
+ *   measurement of individual markers at all (unlike
+ *   `MotionCanvasOverlay.tsx`'s own 2D marquee, which genuinely must
+ *   measure the DOM since a layer's on-screen box depends on the live
+ *   camera transform): this timeline's row/column layout is already fully
+ *   known from pure numbers (`keyframeLanes`' row order, each marker's own
+ *   frame, `trackWidthPx`'s pixel width), so the intersection test is pure
+ *   and unit-tested, the same "canvasGeometry.ts's rectFromPoints/
+ *   rectsIntersect translate directly, reused verbatim" call the research
+ *   doc's own §4 asked to be checked rather than assumed. The ONE DOM
+ *   measurement this file still needs is the scrollable CONTENT div's own
+ *   `getBoundingClientRect()` (`contentRef`), read fresh on every
+ *   pointermove — translating a pointer's `clientX`/`clientY` into
+ *   "content-local" px this way automatically accounts for the current
+ *   scroll position (exactly like `MotionCanvasOverlay.tsx`'s own
+ *   `toContainerLocal`), without needing to query any individual marker.
+ *
+ * **Nudge — dragging ANY ONE selected key (when 2+ are selected) moves ALL
+ * of them by one shared `deltaSeconds`.** The direct analog of D-158's
+ * `moveLayersByDelta`, generalized in `manifestEdit.ts` as `moveKeysByDelta`
+ * (see that function's own doc comment for the cross-lane-spanning and
+ * independent-boundary-clamp decisions — both explicitly ALLOWED/chosen for
+ * consistency with `moveKeyAt`'s own established never-block philosophy).
+ * `deltaSeconds` itself is computed from raw pointer pixel movement via
+ * `timelineZoom.ts`'s new `pxDeltaToSeconds` — since `pxPerSecond` is the
+ * ONE shared axis every row already agrees on, a pixel distance IS a time
+ * distance regardless of which row the drag started in, so (unlike D-161's
+ * single-key drag, which resolves an ABSOLUTE new position and therefore
+ * does need to know which scene the pointer is currently over) this nudge
+ * needs no `frameFromClientX` call at all to compute its shared delta. A
+ * single selected key (or a marker not in any live multi-selection) is
+ * just the `moves.length === 1` case of the exact same code path — not a
+ * separately maintained one, the same unification D-158 already did for
+ * layers.
+ *
+ * **Escape cancels an in-flight nudge (and a marquee), same as every other
+ * drag in this tab.**
  */
 import { useEffect, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import type { PlayerRef } from '@remotion/player';
 import { totalFrames, sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
@@ -116,16 +169,30 @@ import {
   keyframeLanes,
   laneKey,
   laneKeyMarkers,
+  laneKeyAtSeconds,
   selectionForLane,
   sceneBoundaryFrames,
   frameToPercent,
   percentToFrame,
+  sameKeySelectionEntry,
+  toggleKeySelectionEntry,
+  unionKeySelectionEntries,
+  keysInMarqueeRect,
   type KeyframeLane,
   type KeyMarker,
+  type KeySelectionEntry,
 } from './keyframeVisibility';
-import { moveCamera2dKeyAt, moveCamera3dKeyAt, moveLayerTransformKeyAt } from './manifestEdit';
+import { moveKeysByDelta, type KeyMoveTarget } from './manifestEdit';
+import { rectFromPoints, type Point, type RectLike } from './canvasGeometry';
 import { rulerTicks } from './timelineRuler';
-import { MIN_PX_PER_SEC, MAX_PX_PER_SEC, DEFAULT_PX_PER_SEC, zoomStep, trackWidthPx } from './timelineZoom';
+import {
+  MIN_PX_PER_SEC,
+  MAX_PX_PER_SEC,
+  DEFAULT_PX_PER_SEC,
+  zoomStep,
+  trackWidthPx,
+  pxDeltaToSeconds,
+} from './timelineZoom';
 
 const LANE_LABEL_WIDTH = 148;
 const RULER_HEIGHT = 20;
@@ -135,21 +202,57 @@ const LANE_HEIGHT = 26;
  *  D-161's flat-strip drag both use — duplicated as a literal with a doc
  *  comment pointing at its own precedent (D-161's own reasoning: one
  *  duplicated numeric constant is cheaper than a new cross-file module for
- *  a single shared number). */
+ *  a single shared number). Reused again this pass for the NEW marquee's
+ *  own click-vs-drag threshold — the same bar, the same reasoning, a THIRD
+ *  gesture on this surface deciding it needs it. */
 const KEY_DRAG_MIN_PX = 4;
 
-/** In-flight key-drag state — a ref, not React state, for the identical
- *  reason `KeyframeStrip.tsx`'s own `KeyDragState` was (D-161): a
+/** In-flight key/nudge-drag state — a ref, not React state, for the
+ *  identical reason `KeyframeStrip.tsx`'s own `KeyDragState` was (D-161): a
  *  pointermove firing at display refresh rate has no business going through
- *  a re-render to read its own drag origin back. `lane`/`marker` are the
- *  ORIGINAL values captured at `pointerdown`, from the STABLE manifest —
- *  never re-read from a later, possibly-reordered render (see the module
- *  doc comment's "per-row drag" section). */
+ *  a re-render to read its own drag origin back.
+ *
+ *  **Generalized this pass from a single `{lane, marker}` pair to a `moves`
+ *  array** — the direct analog of D-158's own `DragState['moves']` for
+ *  layers: a single-key drag is just the `moves.length === 1` case of the
+ *  same shape, not a separately maintained code path. Every entry's
+ *  `baseAtSeconds` is captured ONCE here, from the STABLE manifest, at
+ *  `pointerdown` — never re-read mid-gesture (see `manifestEdit.ts`'s
+ *  `KeyMoveTarget` and `moveKeysAt`'s own doc comments for why re-reading a
+ *  key's CURRENT `at` mid-batch is the exact correctness trap this
+ *  discipline avoids). */
 interface KeyDragState {
   pointerId: number;
-  lane: KeyframeLane;
-  marker: KeyMarker;
+  moves: { lane: KeyframeLane; keyIndex: number; baseAtSeconds: number }[];
+  /** The EXACT marker the pointer went down on — used only for the
+   *  sub-threshold "plain click, never became a drag" fallback (seek to
+   *  its own already-known, already-rounded frame and select its own
+   *  lane) — never for the nudge math itself, which only ever reads
+   *  `moves`. Kept separate from `moves` rather than assuming
+   *  `moves[0]` is the clicked marker, since a multi-key nudge's `moves`
+   *  order is the live `keySelection`'s own order, not "clicked one
+   *  first." */
+  primaryLane: KeyframeLane;
+  primaryFrame: number;
   startClientX: number;
+}
+
+/** In-flight marquee state — mirrors `MotionCanvasOverlay.tsx`'s own
+ *  `DragState['marquee']` variant exactly: `additive`/`baseSelection` read
+ *  ONCE at `pointerdown` (D-137/D-158's "a modifier tapped mid-drag must not
+ *  change the meaning of a gesture already under way" rule), `start` in
+ *  CONTENT-LOCAL px (the scrollable content div's own coordinate space —
+ *  see the module doc comment's "box-select" section for why this needs
+ *  only ONE DOM measurement, not per-marker ones). `lane` is the row the
+ *  gesture started on — irrelevant to a REAL marquee (which scans every
+ *  row), needed only for the sub-threshold "plain click" fallback (the
+ *  EXISTING D-161/162 click-to-select-lane-and-seek behaviour). */
+interface MarqueeDragState {
+  pointerId: number;
+  additive: boolean;
+  baseSelection: KeySelectionEntry[];
+  start: Point;
+  lane: KeyframeLane;
 }
 
 function labelForLaneKind(kind: KeyframeLane['kind']): string {
@@ -216,14 +319,23 @@ export function KeyframeTimeline({
   const [frame, setFrame] = useState(() => playerRef.current?.getCurrentFrame() ?? 0);
   const [pxPerSecond, setPxPerSecond] = useState(DEFAULT_PX_PER_SEC);
   const dragRef = useRef<KeyDragState | null>(null);
-  // The one dragged marker's LIVE position while a drag is in flight —
-  // scoped by `{laneKeyStr, keyIndex}` rather than re-deriving the whole
-  // lane/marker list from a transient manifest — see the module doc
-  // comment's "per-row drag" section for why (D-161's own finding, now
-  // additionally keyed by lane since two layers can share a `keyIndex`).
-  const [dragPreview, setDragPreview] = useState<{ laneKeyStr: string; keyIndex: number; frame: number } | null>(
-    null,
-  );
+  const marqueeRef = useRef<MarqueeDragState | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // Every DRAGGED marker's LIVE position while a nudge is in flight — an
+  // ARRAY this pass (was a single nullable object pre-nudge, D-161/162):
+  // a multi-key nudge previews N markers at once, scoped by
+  // `{laneKeyStr, keyIndex}` per entry for the identical reason D-162 first
+  // introduced the lane-scoped key (two DIFFERENT layers can each have
+  // their own `keyIndex === 0` marker).
+  const [dragPreview, setDragPreview] = useState<{ laneKeyStr: string; keyIndex: number; frame: number }[]>([]);
+  // The NEW key-selection model (Phase 5b part 3) — see
+  // `keyframeVisibility.ts`'s `KeySelectionEntry` doc comment for why this
+  // lives here (local) rather than lifted to `MotionTab.tsx`, and why it is
+  // deliberately NOT cleared on every manifest commit.
+  const [keySelection, setKeySelection] = useState<KeySelectionEntry[]>([]);
+  // The drawn marquee band, in CONTENT-LOCAL px (see `MarqueeDragState`'s
+  // own doc comment) — `null` outside a marquee drag.
+  const [marqueeRect, setMarqueeRect] = useState<RectLike | null>(null);
 
   const draggable = Boolean(onTransientChange && onCommit);
 
@@ -239,14 +351,27 @@ export function KeyframeTimeline({
     return () => player.removeEventListener('frameupdate', onFrameUpdate);
   }, [playerRef]);
 
-  // Escape cancels an in-flight key-drag — D-161's own precedent, unchanged.
+  // Escape cancels an in-flight NUDGE (D-161's own precedent, generalized
+  // to N keys) OR an in-flight MARQUEE (D-158's own precedent for its 2D
+  // canvas marquee — "never touched `onTransientChange`, so clearing it
+  // here is a harmless no-op; only the drawn band actually matters" applies
+  // verbatim here too, since this marquee likewise never calls
+  // `onTransientChange`). No `releasePointerCapture` call, matching the
+  // EXISTING (pre-this-pass) behaviour above: the browser releases capture
+  // on its own once the button is actually let go, and a subsequent
+  // pointerup on a `null` ref is already a no-op.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (!dragRef.current) return;
-      dragRef.current = null;
-      setDragPreview(null);
-      onTransientChange?.(null);
+      if (dragRef.current) {
+        dragRef.current = null;
+        setDragPreview([]);
+        onTransientChange?.(null);
+      }
+      if (marqueeRef.current) {
+        marqueeRef.current = null;
+        setMarqueeRect(null);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -266,16 +391,20 @@ export function KeyframeTimeline({
   const boundaries = sceneBoundaryFrames(manifest);
   const trackW = trackWidthPx(total, manifest.fps, pxPerSecond);
   const ticks = rulerTicks(totalSeconds, manifest.fps, pxPerSecond);
+  const timelineLayout = { laneAreaTop: RULER_HEIGHT, laneHeight: LANE_HEIGHT, labelWidth: LANE_LABEL_WIDTH };
 
   const isSelected = (lane: KeyframeLane): boolean => {
     const sel = selectionForLane(manifest, lane);
     return !!sel && selections.some((s) => sameSelection(s, sel));
   };
 
-  const isDragPreview = (lane: KeyframeLane, m: KeyMarker) =>
-    !!dragPreview && dragPreview.laneKeyStr === laneKey(lane) && dragPreview.keyIndex === m.keyIndex;
+  const isKeySelected = (lane: KeyframeLane, m: KeyMarker): boolean =>
+    keySelection.some((e) => sameKeySelectionEntry(e, { lane, keyIndex: m.keyIndex }));
 
-  const displayFrame = (lane: KeyframeLane, m: KeyMarker) => (isDragPreview(lane, m) ? dragPreview!.frame : m.frame);
+  const displayFrame = (lane: KeyframeLane, m: KeyMarker) => {
+    const preview = dragPreview.find((p) => p.laneKeyStr === laneKey(lane) && p.keyIndex === m.keyIndex);
+    return preview ? preview.frame : m.frame;
+  };
 
   /** Pointer clientX -> absolute composition frame, via ONE row's own
    *  measured track width — every row's track is the SAME width
@@ -289,28 +418,53 @@ export function KeyframeTimeline({
     return percentToFrame(fraction * 100, total);
   };
 
-  /** The manifest a key-drag WOULD produce if released/previewed at
-   *  `absFrame` right now — always recomputed from the STABLE `manifest`
-   *  captured in this render plus `drag`'s own drag-start snapshot, never
-   *  from a previous call's own output (D-161's own discipline,
-   *  unchanged). */
-  const nextManifestForDrag = (drag: KeyDragState, absFrame: number): Manifest | null => {
-    const atSeconds = (absFrame - sceneStartFrame(manifest, drag.lane.sceneIndex)) / manifest.fps;
-    if (drag.lane.kind === 'camera') {
-      return moveCamera2dKeyAt(manifest, drag.lane.sceneIndex, drag.marker.keyIndex, atSeconds);
-    }
-    if (drag.lane.kind === 'scene3d-camera') {
-      return moveCamera3dKeyAt(manifest, drag.lane.sceneIndex, drag.marker.keyIndex, atSeconds);
-    }
-    if (drag.lane.kind === 'layer' && drag.lane.layerIndex !== undefined) {
-      return moveLayerTransformKeyAt(
-        manifest,
-        { sceneIndex: drag.lane.sceneIndex, target: { kind: 'layer', index: drag.lane.layerIndex } },
-        drag.marker.keyIndex,
-        atSeconds,
-      );
-    }
-    return null;
+  /** A pointer's screen position -> CONTENT-LOCAL px (the scrollable
+   *  content div's own coordinate space) — the marquee's own single DOM
+   *  measurement, refreshed on every call so it stays correct even if the
+   *  user scrolls mid-drag (the div's own `getBoundingClientRect()` already
+   *  reflects the CURRENT scroll offset, the same mechanism
+   *  `MotionCanvasOverlay.tsx`'s own `toContainerLocal` relies on). `null`
+   *  only if the content div isn't mounted (can't happen while a marquee is
+   *  in flight — the div is what the pointerdown that started it fired on
+   *  — defended anyway). */
+  const contentLocalPoint = (clientX: number, clientY: number): Point | null => {
+    const el = contentRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  /** The manifest a nudge WOULD produce if released/previewed at the
+   *  current pointer position — always recomputed from the STABLE
+   *  `manifest` captured in this render plus `drag`'s own drag-start
+   *  snapshot (`moves`' captured `baseAtSeconds`), never from a previous
+   *  call's own output (D-161's own discipline, unchanged; now routed
+   *  through `moveKeysByDelta` for N keys at once instead of one wrapper
+   *  per kind). */
+  const nextManifestForDrag = (drag: KeyDragState, deltaSeconds: number): Manifest => {
+    const targets: KeyMoveTarget[] = drag.moves.map((mv) => ({
+      sceneIndex: mv.lane.sceneIndex,
+      kind: mv.lane.kind,
+      layerIndex: mv.lane.layerIndex,
+      keyIndex: mv.keyIndex,
+      baseAtSeconds: mv.baseAtSeconds,
+    }));
+    return moveKeysByDelta(manifest, targets, deltaSeconds);
+  };
+
+  /** The frame a `move` entry's OWN marker should show mid-drag, for the
+   *  `dragPreview` overlay — mirrors `moveKeysAt`'s own clamp exactly
+   *  (`[0, scene.dur]`) without going through the write path itself, so
+   *  computing N preview positions never risks the "re-derive markers from
+   *  a live-reordering transient manifest" identity trap the module doc
+   *  comment's "per-row drag" section already describes for the single-key
+   *  case (still true here, unchanged in mechanism — just applied to more
+   *  than one marker at once). */
+  const previewFrameFor = (mv: KeyDragState['moves'][number], deltaSeconds: number): number => {
+    const scene = manifest.scenes[mv.lane.sceneIndex];
+    const dur = scene?.dur ?? 0;
+    const clampedAt = Math.min(dur, Math.max(0, mv.baseAtSeconds + deltaSeconds));
+    return sceneStartFrame(manifest, mv.lane.sceneIndex) + Math.round(clampedAt * manifest.fps);
   };
 
   const selectAndMaybeSeek = (lane: KeyframeLane, seekFrame?: number) => {
@@ -319,27 +473,64 @@ export function KeyframeTimeline({
     if (seekFrame !== undefined) playerRef.current?.seekTo(seekFrame);
   };
 
-  const handleTrackClick = (e: ReactMouseEvent<HTMLDivElement>, lane: KeyframeLane) => {
-    const f = frameFromClientX(e.clientX, e.currentTarget);
-    selectAndMaybeSeek(lane, f ?? undefined);
-  };
+  // ---- marker gestures: shift-click (key-selection toggle), plain click
+  // (seek + select lane, unchanged from D-161/162), drag/nudge ----
 
   const handleMarkerPointerDown = (e: ReactPointerEvent<HTMLButtonElement>, lane: KeyframeLane, marker: KeyMarker) => {
-    if (!draggable) return;
+    const entry: KeySelectionEntry = { lane, keyIndex: marker.keyIndex };
+
+    if (e.shiftKey) {
+      // Shift-click toggles KEY-selection membership and NEVER starts a
+      // drag of its own — D-158's own exact convention for shift-click on
+      // a layer, reused verbatim rather than inventing a second modifier
+      // rule in this same file. Selection-only: works regardless of
+      // `draggable`, the same "selection is free, retiming needs write
+      // capability" split the marquee below also follows.
+      setKeySelection((cur) => toggleKeySelectionEntry(cur, entry));
+      return;
+    }
+
+    if (!draggable) return; // read-only timeline: the plain onClick below still seeks
+
+    // D-158's own "click inside an existing multi-selection keeps the WHOLE
+    // group selected and drags all of it" convention, generalized to keys:
+    // clicking a marker already part of a live 2+ key-selection nudges the
+    // whole group; clicking anything else replaces the key-selection with
+    // just this one marker and drags it alone.
+    const alreadyInGroup = keySelection.length > 1 && keySelection.some((s) => sameKeySelectionEntry(s, entry));
+    const activeSelection = alreadyInGroup ? keySelection : [entry];
+    if (!alreadyInGroup) setKeySelection([entry]);
+
+    const moves = activeSelection.reduce<KeyDragState['moves']>((acc, s) => {
+      const baseAtSeconds = laneKeyAtSeconds(manifest, s.lane, s.keyIndex);
+      if (baseAtSeconds !== null) acc.push({ lane: s.lane, keyIndex: s.keyIndex, baseAtSeconds });
+      return acc;
+    }, []);
+    if (moves.length === 0) return; // every selected key turned out stale — nothing to drag
+
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { pointerId: e.pointerId, lane, marker, startClientX: e.clientX };
+    dragRef.current = {
+      pointerId: e.pointerId,
+      moves,
+      primaryLane: lane,
+      primaryFrame: marker.frame,
+      startClientX: e.clientX,
+    };
   };
 
   const handleMarkerPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
     if (Math.abs(e.clientX - drag.startClientX) < KEY_DRAG_MIN_PX) return; // not a real drag yet
-    const trackEl = e.currentTarget.closest<HTMLElement>('[data-lane-track]');
-    const absFrame = frameFromClientX(e.clientX, trackEl);
-    if (absFrame === null) return;
-    setDragPreview({ laneKeyStr: laneKey(drag.lane), keyIndex: drag.marker.keyIndex, frame: absFrame });
-    const next = nextManifestForDrag(drag, absFrame);
-    if (next) onTransientChange?.(next);
+    const deltaSeconds = pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps);
+    setDragPreview(
+      drag.moves.map((mv) => ({
+        laneKeyStr: laneKey(mv.lane),
+        keyIndex: mv.keyIndex,
+        frame: previewFrameFor(mv, deltaSeconds),
+      })),
+    );
+    onTransientChange?.(nextManifestForDrag(drag, deltaSeconds));
   };
 
   const handleMarkerPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -347,21 +538,26 @@ export function KeyframeTimeline({
     if (!drag || drag.pointerId !== e.pointerId) return;
     dragRef.current = null;
     e.currentTarget.releasePointerCapture(e.pointerId);
-    setDragPreview(null);
+    setDragPreview([]);
     const moved = Math.abs(e.clientX - drag.startClientX) >= KEY_DRAG_MIN_PX;
     if (!moved) {
-      // A plain click on a marker — jump to its own (un-retimed) frame, and
-      // select its own lane (the layer/camera it belongs to), the same
-      // "clicking anything in this row makes it the active selection"
-      // behaviour the row's own background/label clicks already have.
-      selectAndMaybeSeek(drag.lane, drag.marker.frame);
+      // A plain click (no real drag) on a marker — jump to its own
+      // (un-retimed, already-rounded) frame, and select its own lane (the
+      // layer/camera it belongs to), the same "clicking anything in this
+      // row makes it the active selection" behaviour the row's own
+      // background/label clicks already have. The key-selection itself is
+      // untouched here — it was already set correctly at `pointerdown`
+      // above (either collapsed to just this marker, or left as the live
+      // group it was already part of), so a tap that never became a drag
+      // has nothing further to do.
+      selectAndMaybeSeek(drag.primaryLane, drag.primaryFrame);
       return;
     }
-    const absFrame = frameFromClientX(e.clientX, e.currentTarget.closest<HTMLElement>('[data-lane-track]'));
+    const deltaSeconds = pxDeltaToSeconds(e.clientX - drag.startClientX, pxPerSecond, manifest.fps);
     onTransientChange?.(null);
-    if (absFrame === null) return;
-    const next = nextManifestForDrag(drag, absFrame);
-    if (next) onCommit?.(next, labelForLaneKind(drag.lane.kind));
+    const next = nextManifestForDrag(drag, deltaSeconds);
+    const label = drag.moves.length > 1 ? 'Move keyframes' : labelForLaneKind(drag.moves[0].lane.kind);
+    onCommit?.(next, label);
   };
 
   const markerHandlers = (lane: KeyframeLane, m: KeyMarker) => ({
@@ -369,6 +565,66 @@ export function KeyframeTimeline({
     onPointerMove: handleMarkerPointerMove,
     onPointerUp: handleMarkerPointerUp,
   });
+
+  // ---- track-background gestures: plain click (seek + select lane,
+  // unchanged from D-161/162) vs. a real marquee drag (box-select) ----
+
+  const handleTrackPointerDown = (e: ReactPointerEvent<HTMLDivElement>, lane: KeyframeLane) => {
+    // Structural check (D-137/D-158's discipline, a further application):
+    // did this pointerdown actually originate on a MARKER (which bubbles up
+    // to this same track div)? If so, that marker's own `onPointerDown`
+    // already owns the gesture — bail rather than also starting a marquee.
+    if ((e.target as Element).closest('[data-key-marker]')) return;
+    if (e.button !== 0) return;
+    const start = contentLocalPoint(e.clientX, e.clientY);
+    if (!start) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    marqueeRef.current = {
+      pointerId: e.pointerId,
+      additive: e.shiftKey || e.metaKey || e.ctrlKey,
+      baseSelection: keySelection,
+      start,
+      lane,
+    };
+  };
+
+  const handleTrackPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const mq = marqueeRef.current;
+    if (!mq || mq.pointerId !== e.pointerId) return;
+    const current = contentLocalPoint(e.clientX, e.clientY);
+    if (!current) return;
+    setMarqueeRect(rectFromPoints(mq.start, current));
+  };
+
+  const handleTrackPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const mq = marqueeRef.current;
+    if (!mq || mq.pointerId !== e.pointerId) return;
+    marqueeRef.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    setMarqueeRect(null);
+    const end = contentLocalPoint(e.clientX, e.clientY) ?? mq.start;
+    const distance = Math.hypot(end.x - mq.start.x, end.y - mq.start.y);
+
+    if (distance < KEY_DRAG_MIN_PX) {
+      // A plain click (never became a real drag). No modifier: the
+      // ordinary click-to-select-lane-and-seek behaviour (unchanged from
+      // D-161/162), PLUS "click away" clears the key-selection — D-158's
+      // own rule for its 2D canvas marquee, reused here. A modifier-held
+      // sub-threshold press arms NOTHING (D-137/D-158's own rule for a
+      // press that never became a real gesture): no seek, no selection
+      // change either way.
+      if (!mq.additive) {
+        setKeySelection([]);
+        const f = frameFromClientX(e.clientX, e.currentTarget);
+        selectAndMaybeSeek(mq.lane, f ?? undefined);
+      }
+      return;
+    }
+
+    const rect = rectFromPoints(mq.start, end);
+    const hits = keysInMarqueeRect(manifest, lanes, rect, total, trackW, timelineLayout);
+    setKeySelection(mq.additive ? unionKeySelectionEntries(mq.baseSelection, hits) : hits);
+  };
 
   return (
     <div className="h-full w-full flex flex-col min-h-0 border-t border-border-color bg-bg-secondary">
@@ -403,7 +659,7 @@ export function KeyframeTimeline({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="flex flex-col" style={{ width: LANE_LABEL_WIDTH + trackW }}>
+          <div ref={contentRef} className="relative flex flex-col" style={{ width: LANE_LABEL_WIDTH + trackW }}>
             {/* the shared ruler — sticky top, its own corner cell sticky on
                 both axes (the standard "frozen row + frozen column" trick). */}
             <div
@@ -472,8 +728,10 @@ export function KeyframeTimeline({
                     data-lane-track
                     className={['relative shrink-0 cursor-pointer', selected ? 'bg-accent/10' : ''].join(' ')}
                     style={{ width: trackW }}
-                    title="Click to seek and select — diamonds are keyframes"
-                    onClick={(e) => handleTrackClick(e, lane)}
+                    title="Click to seek and select — drag a rectangle to box-select keys"
+                    onPointerDown={(e) => handleTrackPointerDown(e, lane)}
+                    onPointerMove={handleTrackPointerMove}
+                    onPointerUp={handleTrackPointerUp}
                   >
                     {/* the lane's own scene span — everywhere else on this
                         row's track is time this layer/camera doesn't exist
@@ -493,24 +751,39 @@ export function KeyframeTimeline({
                         style={{ left: `${frameToPercent(f, total)}%` }}
                       />
                     ))}
-                    {markers.map((m) => (
-                      <button
-                        key={`k-${m.keyIndex}`}
-                        type="button"
-                        className={[
-                          'absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border',
-                          lane.kind === 'layer' ? 'border-accent bg-accent' : 'border-text-secondary bg-bg-primary',
-                          draggable ? 'cursor-ew-resize' : 'cursor-pointer',
-                        ].join(' ')}
-                        style={{ left: `${frameToPercent(displayFrame(lane, m), total)}%` }}
-                        title={`Key @ frame ${displayFrame(lane, m)}${draggable ? ' — drag to retime' : ''}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!draggable) selectAndMaybeSeek(lane, m.frame);
-                        }}
-                        {...(draggable ? markerHandlers(lane, m) : {})}
-                      />
-                    ))}
+                    {markers.map((m) => {
+                      const keySelected = isKeySelected(lane, m);
+                      return (
+                        <button
+                          key={`k-${m.keyIndex}`}
+                          type="button"
+                          data-key-marker
+                          className={[
+                            'absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border',
+                            keySelected
+                              ? 'border-accent bg-button-text ring-2 ring-accent'
+                              : lane.kind === 'layer'
+                                ? 'border-accent bg-accent'
+                                : 'border-text-secondary bg-bg-primary',
+                            draggable ? 'cursor-ew-resize' : 'cursor-pointer',
+                          ].join(' ')}
+                          style={{ left: `${frameToPercent(displayFrame(lane, m), total)}%` }}
+                          title={`Key @ frame ${displayFrame(lane, m)}${draggable ? ' — drag to retime, shift-click to box-select' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Shift-click is handled entirely by
+                            // `handleMarkerPointerDown` above (toggles
+                            // key-selection, never seeks/selects the lane)
+                            // — this native `click` (which still fires
+                            // afterward, since neither handler calls
+                            // `preventDefault`) must not ALSO perform the
+                            // ordinary click behaviour on top of it.
+                            if (!draggable && !e.shiftKey) selectAndMaybeSeek(lane, m.frame);
+                          }}
+                          {...markerHandlers(lane, m)}
+                        />
+                      );
+                    })}
                     <div
                       className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent"
                       style={{ left: `${frameToPercent(frame, total)}%` }}
@@ -519,6 +792,23 @@ export function KeyframeTimeline({
                 </div>
               );
             })}
+
+            {/* the marquee band itself, while a box-select drag is in
+                flight — content-local px, drawn as a child of the SAME
+                content div the marquee's own coordinates are measured
+                against (D-158's `MotionCanvasOverlay.tsx` equivalent draws
+                its band container-local for the identical reason). */}
+            {marqueeRect && (
+              <div
+                className="pointer-events-none absolute z-[15] border border-accent bg-accent/10"
+                style={{
+                  left: marqueeRect.left,
+                  top: marqueeRect.top,
+                  width: marqueeRect.width,
+                  height: marqueeRect.height,
+                }}
+              />
+            )}
           </div>
         </div>
       )}

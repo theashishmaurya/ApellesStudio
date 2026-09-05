@@ -411,6 +411,96 @@ sceneIndex, keyIndex}`, since two DIFFERENT layers in the same scene can now eac
 
 Full writeup, verification, and honest gaps: `docs/08-decisions.md`'s **D-162** entry.
 
-**Still not built: the other two pieces** — box-select + nudge multiple keys, and a curve/easing
-editor. Recommended order unchanged from §4's own original call: box-select next, then the curve
-editor last.
+**Still not built at the time this section was written: the other two pieces** — box-select +
+nudge multiple keys, and a curve/easing editor. Recommended order unchanged from §4's own original
+call: box-select next, then the curve editor last. **Box-select + nudge is now built — see §9
+below.**
+
+---
+
+## 9. Phase 5b, part 3 — "box-select + nudge multiple keys" — built (D-163, 2026-09-05)
+
+The third of §4's own four named pieces, built directly on top of Phase 5b part 2 (D-162's
+per-row `KeyframeTimeline.tsx`), in §4/§7/§8's own recommended order. This is the piece §4 itself
+flagged as the real work not being the rectangle-intersection technique ("cheap... already proven
+portable once at D-158") but the SELECTION MODEL — a `{trackId, keyIndex}[]`-shaped selection
+distinct from `Selection[]`, plus a nudge-many-keys-by-one-shared-delta write path analogous to
+D-158's `moveLayersByDelta` but for `at` values instead of `x`/`y` — and it is built accordingly,
+spending most of its own design effort on exactly those two questions rather than the geometry.
+
+**The selection model.** `keyframeVisibility.ts`'s new `KeySelectionEntry` (`{lane: KeyframeLane,
+keyIndex: number}`) is §4's own suggested shape with `trackId` becoming D-162's OWN lane-identity
+type, `KeyframeLane`, reused rather than a second lane-id scheme (this section's own explicit
+instruction, followed literally). Kept LOCAL to `KeyframeTimeline.tsx`, not lifted to
+`MotionTab.tsx` — the test `Selection[]` itself has to pass for tab-level state (something OUTSIDE
+the owning component needs to read it) isn't met yet: no Inspector view edits N keys' VALUE fields
+in lockstep the way `Selection[]`'s own multi-layer view does, so there is nothing today to
+coordinate with outside this one component. Unlike `Selection[]`, a key-selection carries NO
+same-kind/same-scene restriction — see the "cross-lane spanning" decision below for why that
+restriction's own REASON (world-space coherence, one-scene-mounted-at-a-time) doesn't transfer to
+a shared time delta. Deliberately NOT cleared on every manifest commit either — a real, disclosed
+trade: an ordinary nudge that never crosses a non-selected neighbor leaves every selected
+`keyIndex` correct after the commit, so clearing on every commit would discard a valid selection
+far more often than it protects against the one real edge case (a crossing nudge CAN leave a stale
+entry) — handled the same way every other stale reference in this package already is: value
+equality, never a dereference, so a stale entry just silently stops mattering rather than acting on
+the wrong key.
+
+**Box-select: the marquee, resolved WITHOUT touching the DOM for the intersection test itself.**
+This section's own open question — "check whether you need actual DOM measurement via
+`getBoundingClientRect`... or whether the pure lane/frame model already gives you enough" — is
+answered in favor of the pure-math path, and it is the one place this piece's design differs most
+from D-158's own canvas marquee: that one genuinely NEEDS the DOM (a layer's on-screen box depends
+on the live composed camera transform, nothing in this package re-derives that independently). A
+keyframe marker has no such dependency — its position is pure arithmetic over the manifest
+(`frameToPercent`) and the current zoom, and D-162's own "no virtualization needed" design means
+every lane/marker that exists in the manifest also exists in the DOM whenever it exists at all.
+`keyframeVisibility.ts`'s new `keyMarkerContentRect`/`keysInMarqueeRect` compute the intersection
+test as pure, fully-tested functions — reusing `canvasGeometry.ts`'s `rectFromPoints`/
+`rectsIntersect` DIRECTLY (confirmed to translate as-is, per this section's own instruction to
+check rather than assume), against a rect built from four pure numbers (row index, frame, total
+frames, track width) rather than a measured DOM element. The ONE DOM measurement still needed —
+the scrollable content div's own `getBoundingClientRect()`, to translate a pointer position into
+the same "content-local" coordinate space — is read fresh on every pointermove, the same mechanism
+`MotionCanvasOverlay.tsx`'s own `toContainerLocal` already uses for a fixed (non-scrolling)
+container, applied here to a scrolling one.
+
+**Shift-click and the marquee's own modifier rules mirror D-158's exactly** — read once at
+`pointerdown`, additive (union, not toggle) when held, a modifier-held sub-threshold press arms
+nothing, a plain sub-threshold press clears the key-selection ("click away to deselect") while
+still performing the EXISTING D-161/162 click-to-select-lane-and-seek behaviour. Gesture
+disambiguation between a marker's own drag/select and a new marquee is a THIRD real application of
+D-137/D-158's "structural DOM-position check, not an ad-hoc priority check" discipline in this
+file: `handleTrackPointerDown` checks whether the pointerdown's target descends from a NEW
+`[data-key-marker]` attribute before arming a marquee.
+
+**Nudge: `manifestEdit.ts`'s new `moveKeysAt`/`moveKeysByDelta`, the direct keyframe analog of
+`moveLayersByDelta`.** Dragging any ONE key that's part of a live 2+ key-selection nudges the
+WHOLE group by one shared `deltaSeconds` (computed from raw pointer PIXEL movement via
+`timelineZoom.ts`'s new `pxDeltaToSeconds` — since `pxPerSecond` is the one shared axis every row
+already agrees on, a pixel distance directly measures time with no per-lane frame lookup needed at
+all); dragging a key NOT in the current selection replaces it and drags that one key alone — the
+same "click inside an existing group moves it; click anything else replaces the selection"
+convention D-158 already established. **A real correctness trap was found while designing the
+write primitive, not predicted in advance:** N sequential calls to `moveKeyAt` for keys sharing ONE
+array is unsafe, because `moveKeyAt` re-sorts its own output on every call (D-161's own Decision
+1) — an earlier call's reorder can silently shift what a LATER call's captured `keyIndex` actually
+points at. `moveKeysAt` avoids this by computing every new `at` from each key's own REMEMBERED
+base in one pass over the ORIGINAL array, sorting once — covered by a dedicated test proving the
+trap doesn't happen, not just implemented and hoped for.
+
+**The two real design questions this section itself left open, now decided:** a key-selection MAY
+span multiple lanes and/or scenes (unlike `Selection[]` — a shared time delta means the same thing
+everywhere, with no "world space" concept the way `x`/`y` has one, and reading/writing a key's `at`
+needs no live DOM the way a canvas gesture does); and boundary clamping is INDEPENDENT per key —
+each clamps to its own scene's `[0, dur]`, so a nudge can become non-uniform at a boundary rather
+than the whole gesture being blocked, for consistency with `moveKeyAt`'s own already-established
+never-block philosophy rather than inventing a stricter rule just for the multi-key case.
+
+Escape cancels an in-flight nudge (generalized from D-161's single-key cancel) and an in-flight
+marquee, matching every other drag gesture in this tab.
+
+Full writeup, verification, and honest gaps: `docs/08-decisions.md`'s **D-163** entry.
+
+**Still not built: the curve/easing editor** — Phase 5b's own final piece, explicitly not
+attempted here, independent of the rest per §4's own original recommended order.

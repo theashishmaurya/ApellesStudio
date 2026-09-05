@@ -11,6 +11,7 @@ import {
   clampPxPerSecond,
   zoomStep,
   trackWidthPx,
+  pxDeltaToSeconds,
 } from './timelineZoom';
 
 describe('clampPxPerSecond', () => {
@@ -72,5 +73,44 @@ describe('trackWidthPx', () => {
     expect(trackWidthPx(300, 0, 70)).toBe(0);
     expect(trackWidthPx(300, 30, 0)).toBe(0);
     expect(trackWidthPx(-10, 30, 70)).toBe(0);
+  });
+});
+
+// Phase 5b — box-select + nudge multiple keys: `pxDeltaToSeconds` is the
+// nudge gesture's own "how far in TIME did the pointer move" arithmetic —
+// see `KeyframeTimeline.tsx`'s module doc comment for why a shared
+// `pxPerSecond` axis lets this be pure pixel math with no per-lane frame
+// lookup at all.
+describe('pxDeltaToSeconds', () => {
+  it('converts a pixel distance to seconds at the given zoom', () => {
+    // 70px at 70px/sec = 1 second exactly.
+    expect(pxDeltaToSeconds(70, 70, 30)).toBe(1);
+  });
+
+  it('rounds to the nearest whole FRAME, not an arbitrary sub-frame float', () => {
+    // 35px at 70px/sec = 0.5s = 15 frames at 30fps — exact, no rounding needed.
+    expect(pxDeltaToSeconds(35, 70, 30)).toBe(0.5);
+    // a tiny nudge under half a frame's worth of pixels rounds DOWN to 0.
+    expect(pxDeltaToSeconds(1, 70, 30)).toBe(0);
+  });
+
+  it('a negative pixel delta produces a negative seconds delta', () => {
+    expect(pxDeltaToSeconds(-70, 70, 30)).toBe(-1);
+  });
+
+  it('a zero pixel delta is exactly zero seconds', () => {
+    expect(pxDeltaToSeconds(0, 70, 30)).toBe(0);
+  });
+
+  it('is 0 for a non-positive pxPerSecond or fps, never NaN/Infinity', () => {
+    expect(pxDeltaToSeconds(100, 0, 30)).toBe(0);
+    expect(pxDeltaToSeconds(100, -70, 30)).toBe(0);
+    expect(pxDeltaToSeconds(100, 70, 0)).toBe(0);
+  });
+
+  it('scales inversely with zoom — the same pixel distance means less time at a higher pxPerSecond', () => {
+    const atLowZoom = pxDeltaToSeconds(100, 50, 30);
+    const atHighZoom = pxDeltaToSeconds(100, 200, 30);
+    expect(atHighZoom).toBeLessThan(atLowZoom);
   });
 });

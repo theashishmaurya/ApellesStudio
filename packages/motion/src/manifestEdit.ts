@@ -670,6 +670,158 @@ export function moveCamera3dKeyAt(
   return setCamera3d(manifest, sceneIndex, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
 }
 
+/** A single key's location, structurally identical to `keyframeVisibility.
+ *  ts`'s `KeyframeLane` (+ its own `keyIndex`) but NOT imported from there —
+ *  `keyframeVisibility.ts` already imports `layerTransformKeys` FROM this
+ *  file, so importing `KeyframeLane` back would create a cycle. TypeScript's
+ *  structural typing means a real `KeyframeLane` value (plus `keyIndex`)
+ *  satisfies this shape without either file needing to know about the
+ *  other's own type declaration. */
+export interface KeyMoveTarget {
+  sceneIndex: number;
+  kind: 'camera' | 'scene3d-camera' | 'layer';
+  /** Only meaningful for `kind: 'layer'` — the index into `scene.layers[]`. */
+  layerIndex?: number;
+  /** The key's own index into ITS array, captured once at drag-start from
+   *  the STABLE manifest — never re-derived mid-gesture (same discipline
+   *  `moveKeyAt`'s own doc comment already states for the single-key case). */
+  keyIndex: number;
+  /** The key's own `at` (seconds), ALSO captured once at drag-start — the
+   *  base this function adds `deltaSeconds` to. Carried per-target (not
+   *  re-read from `manifest` inside this function) so a caller's drag
+   *  preview and the eventual commit always agree on the same arithmetic,
+   *  the same "recompute from a stable base + delta, never from a
+   *  previous call's own transient result" rule every other drag
+   *  primitive in this file follows. */
+  baseAtSeconds: number;
+}
+
+/**
+ * D-158's `moveLayersByDelta`, for keyframes — the shared-delta multi-key
+ * nudge the research doc's §4 named as real, remaining work: "a
+ * nudge-many-keys-by-one-shared-delta write path analogous to
+ * `moveLayersByDelta`, but for `at` values instead of `x`/`y`." Composes N
+ * pure single-array writes into ONE resulting `Manifest` — the same "one
+ * atomic manifest change, one undo step, not N separate commits" shape
+ * `moveLayersByDelta`/`setFieldOnSelections` already established, so a
+ * caller (`KeyframeTimeline.tsx`) calls `onCommit` exactly once with
+ * whatever this returns, regardless of how many keys moved or which arrays
+ * they came from.
+ *
+ * **Cross-lane / cross-scene spanning: explicitly ALLOWED, unlike
+ * `Selection[]`'s own same-kind/same-scene constraint (D-158).** That
+ * constraint exists for LAYER selections because a canvas gesture only ever
+ * has ONE scene's layers mounted in the DOM at a time (§1e of the research
+ * doc) and a mixed scene/camera selection has no coherent world-space
+ * meaning. Neither restriction applies to a shared TIME delta: reading or
+ * writing a key's `at` needs no live DOM (§1 of the research doc — the same
+ * fact that already lets `keyframeLanes`/`laneKeyMarkers` show every scene's
+ * keys at once), and a delta in seconds means the identical thing to a
+ * camera key, a layer key, a key in scene 0, or a key in scene 3 — there is
+ * no "world space" for time the way there is for `x`/`y`. So a multi-key
+ * selection spanning several lanes and/or several scenes is fully supported
+ * and nudges all of them together by the same `deltaSeconds`.
+ *
+ * **Boundary clamping: EACH key clamps independently to its OWN scene's
+ * `[0, dur]` — the nudge is never blocked as a whole, and can become
+ * effectively non-uniform at the boundary.** Decided by consistency with
+ * `moveKeyAt`'s own already-established philosophy (never block, only
+ * clamp) rather than inventing a second, stricter rule just for the
+ * multi-key case: if a nudge would push one selected key to a boundary
+ * while another has room to spare, the first key stops at its own scene's
+ * edge and the rest move the full `deltaSeconds` — the same "a member with
+ * a problem is silently skipped/limited, it doesn't block the group"
+ * precedent `moveLayersByDelta`'s own doc comment already sets for a
+ * non-draggable layer swept into a marquee. The rejected alternative —
+ * block the WHOLE nudge the instant ANY key would clip — was ruled out
+ * because it would make a single-key drag and a multi-key nudge disagree
+ * about what "hit the edge" means for no real benefit: a single-key drag
+ * has NEVER blocked (it clamps), and a nudge is explicitly meant to
+ * generalize that gesture, not add a new, stricter mode on top of it.
+ */
+export function moveKeysByDelta(manifest: Manifest, targets: KeyMoveTarget[], deltaSeconds: number): Manifest {
+  // Group by the array a target actually shares with others — so keys
+  // living in the SAME array move together through ONE `moveKeysAt` call
+  // (one sort), never through N separate calls whose `keyIndex` values
+  // could drift out from under each other (`moveKeysAt`'s own doc comment
+  // has the full correctness-trap reasoning).
+  const groups = new Map<string, KeyMoveTarget[]>();
+  for (const t of targets) {
+    const groupKey = `${t.sceneIndex}:${t.kind}:${t.layerIndex ?? ''}`;
+    const existing = groups.get(groupKey);
+    if (existing) existing.push(t);
+    else groups.set(groupKey, [t]);
+  }
+
+  let next = manifest;
+  for (const group of groups.values()) {
+    const { sceneIndex, kind, layerIndex } = group[0];
+    const scene = selectedScene(next, sceneIndex);
+    if (!scene) continue; // a stale target whose scene no longer exists — silently skipped
+
+    if (kind === 'camera') {
+      const keys = selectedCamera2d(next, sceneIndex);
+      if (!keys) continue;
+      next = setCamera2d(next, sceneIndex, moveKeysAt(keys, group, deltaSeconds, scene.dur));
+    } else if (kind === 'scene3d-camera') {
+      const keys = selectedCamera3d(next, sceneIndex);
+      if (!keys) continue;
+      next = setCamera3d(next, sceneIndex, moveKeysAt(keys, group, deltaSeconds, scene.dur));
+    } else if (kind === 'layer' && layerIndex !== undefined) {
+      const selection: Selection = { sceneIndex, target: { kind: 'layer', index: layerIndex } };
+      const keys = layerTransformKeys(next, selection);
+      next = setLayerTransformKeys(next, selection, moveKeysAt(keys, group, deltaSeconds, scene.dur));
+    }
+  }
+  return next;
+}
+
+/**
+ * The multi-key analog of `moveKeyAt` above, and `moveKeysByDelta`'s own
+ * per-array step — needed as its OWN primitive rather than N sequential
+ * calls to `moveKeyAt`, for a real correctness trap found while designing
+ * this rather than assumed away: `moveKeyAt` re-sorts its OWN output on
+ * every call (Decision 1, above), so if TWO selected keys live in the SAME
+ * array (e.g. two keys on the same layer's own `transform.keys`), calling
+ * `moveKeyAt` once per key — each reading the array fresh off an
+ * already-partially-moved manifest — lets the FIRST call's reorder shift
+ * the SECOND call's captured `keyIndex` out from under it, silently
+ * retiming the wrong key. Concretely: keys at `[{at:1},{at:2},{at:3}]`,
+ * indices 0 and 2 both selected, dragged by `+5`. Moving index 0 first
+ * re-sorts to `[{at:2},{at:3},{at:6}]` — index 2 in THAT array is now the
+ * key that was originally at index 0 (already moved), not the original
+ * `{at:3}` key the second call meant to move.
+ *
+ * This primitive avoids the trap entirely: every new `at` is computed from
+ * each move's own REMEMBERED `baseAtSeconds` (captured once at drag-start,
+ * `KeyMoveTarget`'s own doc comment — never from `keys`' CURRENT `at`,
+ * which is exactly the value a sequential approach would have already
+ * disturbed), applied in one pass over the ORIGINAL array, then sorted
+ * ONCE — the same "recompute from a stable base + delta" discipline
+ * `moveLayersByDelta`'s own `base: {x,y}` already established for layers.
+ * A `keys[i]` with no corresponding `move.keyIndex === i` is left
+ * untouched, so a `moves` list naming keys in OTHER, unrelated arrays
+ * simply has nothing to do here (`moveKeysByDelta` never calls this with
+ * such a mismatched pair, but the floor costs nothing).
+ */
+export function moveKeysAt<T extends { at: number }>(
+  keys: T[],
+  moves: { keyIndex: number; baseAtSeconds: number }[],
+  deltaSeconds: number,
+  sceneDurSeconds: number,
+): T[] {
+  const baseByIndex = new Map(moves.map((m) => [m.keyIndex, m.baseAtSeconds]));
+  const next = keys.map((k, i) => {
+    const base = baseByIndex.get(i);
+    if (base === undefined) return k;
+    const clamped = Math.min(sceneDurSeconds, Math.max(0, base + deltaSeconds));
+    return { ...k, at: clamped };
+  });
+  // Same stable-sort tie-break `moveKeyAt` already documents.
+  next.sort((a, b) => a.at - b.at);
+  return next;
+}
+
 /** The interpolated `x`/`y` DELTA `transform.keys` produces at `frame`
  *  (frames; `fps` converts from the manifest's stored seconds) — reuses the
  *  SAME shared `interpolateKeys` `motion-engine`'s `Camera.tsx`/`Video.tsx`

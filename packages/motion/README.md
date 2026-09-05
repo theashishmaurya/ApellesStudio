@@ -62,25 +62,31 @@ per-row lane timeline).
   no opinion about a keyframe timeline at all (moved out to
   `KeyframeTimeline.tsx`, now a `MotionTab.tsx`-level sibling panel — see the
   Layout section above and that file's own doc comment for why).
-- `KeyframeTimeline.tsx` — Phase 5b part 2 of `docs/notes/
-  motion-keyframe-timeline-research.md` ("per-row lanes," D-162): a real
-  per-row keyframe timeline, replacing D-160/D-161's single-strip
-  `KeyframeStrip.tsx`. One row per keyed 2D camera, keyed layer, or keyed 3D
-  camera (`keyframeVisibility.ts`'s `keyframeLanes` — rows appear/disappear
-  as keys are added/removed, `LayerList`'s own row order), a shared
-  horizontal time ruler (`timelineRuler.ts`'s reimplemented "nice numbers"
-  tick algorithm) with independent zoom (`timelineZoom.ts`, new bounds —
-  not the Edit tab's own D-134 system), a combined vertical+horizontal
-  scroll region (sticky row labels + a sticky ruler, the standard
-  "frozen row/column" technique, no virtualization library needed at these
-  row counts), per-row click-to-select (reuses `MotionTab.tsx`'s own
-  `onSelect` — no parallel selection mechanism), and D-161's drag-a-key
-  gesture generalized to work per-row (any keyed layer's keys can now be
-  dragged without first selecting that layer in `LayerList` — a real
-  capability improvement over the flat strip, not just a reshuffling). See
-  the file's own module doc comment for the full layout decision (why this
-  moved out of `MotionPreview.tsx`) and the gesture-disambiguation/
-  drag-identity reasoning inherited from D-161.
+- `KeyframeTimeline.tsx` — Phase 5b of `docs/notes/
+  motion-keyframe-timeline-research.md`: a real per-row keyframe timeline.
+  As of D-162 ("per-row lanes"), one row per keyed 2D camera, keyed layer, or
+  keyed 3D camera (`keyframeVisibility.ts`'s `keyframeLanes` — rows
+  appear/disappear as keys are added/removed, `LayerList`'s own row order), a
+  shared horizontal time ruler (`timelineRuler.ts`'s reimplemented "nice
+  numbers" tick algorithm) with independent zoom (`timelineZoom.ts`, new
+  bounds — not the Edit tab's own D-134 system), a combined
+  vertical+horizontal scroll region (sticky row labels + a sticky ruler, the
+  standard "frozen row/column" technique, no virtualization library needed
+  at these row counts), per-row click-to-select (reuses `MotionTab.tsx`'s
+  own `onSelect` — no parallel selection mechanism), and D-161's drag-a-key
+  gesture generalized to work per-row. As of D-163 ("box-select + nudge
+  multiple keys"), also: a NEW `KeySelectionEntry` model
+  (`keyframeVisibility.ts`, `{lane, keyIndex}`, local to this component,
+  distinct from `Selection[]`) — shift-click a marker to toggle it in/out,
+  or drag a rubber-band over empty track space to box-select every marker
+  the rectangle catches (`keysInMarqueeRect`, pure geometry, no per-marker
+  DOM measurement); dragging any ONE selected key when 2+ are selected
+  nudges the whole group by one shared `deltaSeconds`
+  (`manifestEdit.ts`'s `moveKeysByDelta`, the keyframe analog of D-158's
+  `moveLayersByDelta`). See the file's own module doc comment for the full
+  layout decision (why this moved out of `MotionPreview.tsx`) and the
+  gesture-disambiguation/drag-identity reasoning inherited from D-161/162,
+  plus this pass's own box-select/nudge design calls.
 - `LayerList.tsx` — the scene → camera → layers → scene3d-children tree, and
   the `Selection`/`Selection[]` model everything else here binds to (D-081;
   `Selection[]` + `toggleSelection`/`sameSelection`/`resolveSelections`-
@@ -121,7 +127,15 @@ per-row lane timeline).
   `moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt` (D-161,
   Phase 5b part 1 — the write primitive that moves a key's `at`: one generic
   core over the three key-array shapes, reorders past a neighbor rather than
-  clamping, boundary-clamps to `[0, scene.dur]`).
+  clamping, boundary-clamps to `[0, scene.dur]`), and `moveKeysAt`/
+  `moveKeysByDelta`/`KeyMoveTarget` (D-163, Phase 5b part 3 — the multi-key
+  generalization: `moveKeysAt` moves N keys sharing ONE array by a shared
+  delta from each one's own remembered base in a single pass, avoiding a
+  real correctness trap N sequential `moveKeyAt` calls would hit;
+  `moveKeysByDelta` groups a `KeyMoveTarget[]` by which array each key
+  shares and threads the results into ONE `Manifest`, the keyframe analog of
+  `moveLayersByDelta` — cross-lane/cross-scene spanning allowed, each key
+  clamps to its own scene's duration independently).
 - `keyframeVisibility.ts` — pure functions for `LayerList.tsx`'s key-count
   badges (`layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`, D-160)
   and `KeyframeTimeline.tsx`'s row layout + marker positions. D-162 retired
@@ -136,8 +150,17 @@ per-row lane timeline).
   pointer-position↔frame conversions, unchanged) and `sceneBoundaryFrames`
   (D-160) carry over as-is — zoom doesn't affect them since they're
   percent-of-track-width, and every lane's track renders at the same
-  zoomed width (`timelineZoom.ts`'s `trackWidthPx`). No manifest mutation,
-  no DOM.
+  zoomed width (`timelineZoom.ts`'s `trackWidthPx`). D-163 (Phase 5b part
+  3 — box-select + nudge) adds: `laneKeyAtSeconds` (a key's exact,
+  unrounded `at`, a nudge's own drag-start snapshot), the `KeySelectionEntry`
+  model (`{lane, keyIndex}`) with `sameKeySelectionEntry`/
+  `toggleKeySelectionEntry`/`unionKeySelectionEntries`, and the marquee's own
+  pure geometry — `keyMarkerContentRect`/`keysInMarqueeRect`, which reuse
+  `canvasGeometry.ts`'s `rectsIntersect` directly and need NO per-marker DOM
+  measurement at all (D-162's per-row layout is already fully known from
+  pure numbers). No manifest mutation, no DOM (this file stays framework-
+  agnostic; `KeyframeTimeline.tsx` owns the one DOM measurement the marquee
+  needs — the scrollable content div's own rect).
 - `timelineRuler.ts` — D-162: a REIMPLEMENTATION (not an import — `@chroma/
   motion` cannot depend on `@chroma/editor`) of `packages/editor/src/
   ruler.ts`'s "nice numbers" tick-density algorithm
@@ -177,16 +200,25 @@ engine side.
 
 `npm test --workspace @chroma/motion` (vitest, `node` environment — the
 testable logic here is deliberately kept out of the components, per the
-`canvasGeometry.ts`/`layerMeasure.ts` split above). 292 tests across
+`canvasGeometry.ts`/`layerMeasure.ts` split above). 334 tests across
 `canvasGeometry.test.ts`, `manifestEdit.test.ts` (D-161 adds `moveKeyAt`/
-`moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`),
-`catalog.test.ts`, `motionProjectStore.test.ts`, `interpolateKeys.test.ts`,
-`schema.test.ts`, `keyframeVisibility.test.ts` (D-160/D-161/D-162 — the
-per-row `keyframeLanes`/`laneKey`/`laneKeyMarkers`/`selectionForLane` tests
-replaced the old flat-strip ones), and, new at D-162, `timelineRuler.test.ts`
-(the reimplemented tick algorithm — mirrors `ruler.test.ts`'s own coverage,
-plus `rulerTicks` itself) and `timelineZoom.test.ts` (the new zoom
-mechanism's bounds/stepping/pixel-width math).
+`moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`; D-163
+adds `moveKeysAt`/`moveKeysByDelta`, including a dedicated test proving the
+sequential-call correctness trap doesn't happen and one proving each key
+clamps to its own scene independently), `catalog.test.ts`,
+`motionProjectStore.test.ts`, `interpolateKeys.test.ts`, `schema.test.ts`,
+`keyframeVisibility.test.ts` (D-160/D-161/D-162 — the per-row `keyframeLanes`/
+`laneKey`/`laneKeyMarkers`/`selectionForLane` tests replaced the old
+flat-strip ones; D-163 adds `laneKeyAtSeconds`, the `KeySelectionEntry`
+model's toggle/union helpers, and `keyMarkerContentRect`/`keysInMarqueeRect`),
+`timelineRuler.test.ts` (D-162, the reimplemented tick algorithm — mirrors
+`ruler.test.ts`'s own coverage, plus `rulerTicks` itself), and
+`timelineZoom.test.ts` (the zoom mechanism's bounds/stepping/pixel-width
+math; D-163 adds `pxDeltaToSeconds`, the nudge gesture's own pixel→time
+conversion). `KeyframeTimeline.tsx`'s marquee/nudge pointer wiring is
+DOM/pointer-event plumbing and deliberately untested, the same split every
+canvas/timeline gesture in this package already follows — the pure geometry
+and write logic it calls is what carries the coverage.
 
 ## Status
 
@@ -208,19 +240,25 @@ became a real **per-row lane timeline**: one row per keyed 2D camera,
 layer, or 3D camera (`LayerList`'s own row order), a shared ruler with
 independent zoom, per-row click-to-select, and D-161's drag gesture
 generalized so any keyed layer's keys can be dragged without first
-selecting that layer.
+selecting that layer. As of D-163 (Phase 5b part 3, same day), the timeline
+also has **box-select + nudge multiple keys**: a new per-key selection
+model (`KeySelectionEntry`, distinct from `Selection[]`), shift-click to
+extend it, a rubber-band drag over empty track space to box-select, and
+dragging any one selected key when 2+ are selected nudges the whole group
+by a shared time delta — cross-lane/cross-scene selections allowed, each
+key clamping to its own scene's duration independently at a boundary.
 
 **Known gaps**, most audited in full with citations in
 `docs/notes/motion-tab-audit.md` (pre-D-155) and queued as roadmap item 16 —
-re-checked against what D-155–D-162 actually closed rather than assumed
-stale: Phase 5b's other two pieces still unbuilt (`docs/notes/
-motion-keyframe-timeline-research.md` — box-select + nudge multiple keys, a
-curve/easing editor; D-162 only closed "per-row lanes"), no drag-and-drop
+re-checked against what D-155–D-163 actually closed rather than assumed
+stale: Phase 5b's last piece still unbuilt (`docs/notes/
+motion-keyframe-timeline-research.md` — a curve/easing editor; D-163 closed
+"box-select + nudge multiple keys"), no drag-and-drop
 from outside the app, no delete/duplicate of a layer from the GUI, no
 multi-manifest per project (D-046), no snapping GUIDES while dragging
 (D-158's own explicit scope-down), no group RESIZE for a multi-selection
 (single-selection only), and **no MCP tools at all** — Motion is the one
 tab an agent cannot drive. The Catalog (D-151) closed the largest
 GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
-gap; D-160/D-161/D-162 are three of four steps toward a real keyframe
-timeline — box-select and the curve editor remain.
+gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
+timeline — the curve/easing editor remains, Phase 5b's own final piece.

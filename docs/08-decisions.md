@@ -13513,3 +13513,251 @@ numbers — **D-162** is free, and no `B-NNN` is used or fixed by this pass.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-163 — Motion keyframe timeline, Phase 5b (part 3): box-select + nudge multiple keys
+
+**decided + built (2026-09-05).** The third of Phase 5b's own four named pieces (`docs/notes/
+motion-keyframe-timeline-research.md` §4: "drag a key along time; per-row lanes; box-select +
+nudge; a curve/easing editor" — §4/§7/§8's own recommended order, box-select third). Built
+directly on D-162's per-row `KeyframeTimeline.tsx`, following the task's own explicit framing of
+this piece: "the rectangle-intersection technique is cheap (already proven portable once at
+D-158); the SELECTION MODEL is the real work."
+
+### 1 — Required reading, done before writing anything
+
+Re-read in full: the research doc's §4 (the four-piece scoping) and §8 (the D-162 addendum —
+confirming the timeline is per-row lanes now, not the flat strip §4 was originally scoped
+against); D-158's own decision entry in full (`Selection[]`, marquee-select, `moveLayersByDelta`
+— the direct precedent for all three pieces of this pass); D-160/D-161/D-162 in full.
+`packages/motion/src/KeyframeTimeline.tsx` (D-162's per-row lane UI, the file this pass modifies)
+and `packages/motion/src/MotionCanvasOverlay.tsx` (D-158's exact marquee/shift-click/modifier
+rules) read in full, not summarized from memory. `canvasGeometry.ts`'s `rectFromPoints`/
+`rectsIntersect` read directly — both operate on a caller-supplied `RectLike`/`Point` in whatever
+coordinate space the caller hands them ("neither one cares," that file's own module doc comment),
+which turns out to be the load-bearing fact this whole piece's geometry design rests on (§3
+below).
+
+### 2 — The selection model: `keyframeVisibility.ts`'s `KeySelectionEntry`, kept local to `KeyframeTimeline.tsx`
+
+`KeySelectionEntry` (`{lane: KeyframeLane, keyIndex: number}`) is the research doc's own suggested
+`{trackId, keyIndex}[]` shape, with `trackId` becoming `lane: KeyframeLane` — D-162's OWN
+lane-identity type, reused rather than inventing a second lane-id scheme (the task's own explicit
+instruction). `sameKeySelectionEntry`/`toggleKeySelectionEntry`/`unionKeySelectionEntries` are the
+direct analogs of `LayerList.tsx`'s `sameSelection`/`toggleSelection` and `MotionCanvasOverlay.
+tsx`'s own additive-marquee merge — with ONE real difference, decided and documented rather than
+copied blind: **no same-kind/same-scene restriction.** `Selection[]`'s restriction exists because a
+canvas gesture only ever has ONE scene's layers mounted in the DOM (§1e of the research doc) and a
+mixed scene/camera selection has no coherent world-space meaning; neither reason applies to a
+shared TIME delta (§4 below), so a key-selection can freely span multiple lanes and/or scenes.
+
+**Where this state lives — local to `KeyframeTimeline.tsx`, NOT lifted to `MotionTab.tsx` (the
+task's own open question, answered explicitly).** The test `Selection[]` itself has to pass for
+living at the tab level: something OUTSIDE `MotionCanvasOverlay.tsx` reads it (`LayerList.tsx`'s
+row highlighting, `InspectorPanel.tsx`'s field editors). A key-selection has no such second
+consumer today — no Inspector view edits N keys' VALUE fields in lockstep — so there is nothing
+to coordinate with outside this one component. Full reasoning, including the rejected alternative
+(lift it preemptively "in case" a future multi-key value editor needs it), is in
+`KeySelectionEntry`'s own module doc comment in `keyframeVisibility.ts`.
+
+**Persistence across a manifest change — NOT cleared automatically, a real design call made
+explicitly rather than defaulted to the "safer-looking" choice.** Considered clearing
+`keySelection` on every `manifest` reference change (which happens on every commit, including this
+component's own nudge commits) to sidestep the one real edge case this model has (below) —
+rejected as needlessly disruptive: an ordinary nudge that never crosses a non-selected neighbor
+leaves every selected key's `keyIndex` unchanged after the commit (a uniform shift preserves
+relative order among untouched entries), so clearing on every commit would discard a perfectly
+valid selection far more often than it protects against a stale one. The disclosed edge case this
+accepts: a nudge that DOES cross a non-selected neighbor can leave a `{lane, keyIndex}` entry
+pointing at a DIFFERENT physical key after the commit (the same class of drift D-161's own
+`dragPreview` "catch-up" gap already accepted for a single key, now also possible for a
+selection) — handled the same way every other stale-reference case in this package already is:
+`sameKeySelectionEntry` is pure value equality, never a dereference, so a stale entry just
+silently stops highlighting/dragging anything real rather than crashing or acting on the wrong
+key. Named as a real, disclosed gap below, not fixed this pass (a synthetic per-key id, the same
+follow-up D-161 already named for its own analogous gap, is the real fix).
+
+### 3 — Box-select: `keyframeVisibility.ts`'s `keysInMarqueeRect`, deliberately NO per-marker DOM measurement
+
+The task's own open question — "check whether you need actual DOM measurement... or whether the
+pure lane/frame model already gives you enough to compute intersection without touching the DOM at
+all" — resolved in favor of the pure-math path, and this is the one place this pass's design
+differs most from D-158's own canvas marquee, for a reason specific to this surface: D-158's
+marquee genuinely NEEDS the DOM (a layer's on-screen box depends on the live, composed camera
+transform — nothing in `@chroma/motion` re-derives that independently, per `canvasGeometry.ts`'s
+own module doc comment). A keyframe marker has no such dependency: its position is pure arithmetic
+over the manifest (`frameToPercent`) and the current `pxPerSecond` zoom, and D-162's own
+"no virtualization needed" design means every lane/marker that exists in the manifest also exists
+in the DOM whenever it exists at all — there is no "is this row currently scrolled off and
+unmounted" question a virtualized list would raise. So `keyMarkerContentRect(rowIndex, frame,
+totalFrames, trackWidthPx, layout)` computes each marker's own hit-box rect from those same four
+pure numbers (`rowIndex` is the marker's own position in `keyframeLanes`' returned array — the
+EXACT order `KeyframeTimeline.tsx` renders rows in), and `keysInMarqueeRect` reuses
+`canvasGeometry.ts`'s `rectsIntersect` DIRECTLY against it — confirmed to translate as-is: the
+predicate tests "does an axis-aligned rect overlap another," and it genuinely does not care
+whether the rects are client-viewport px (D-158's space) or "content-local" px (this pass's
+space, defined below). This makes the intersection logic itself pure and fully unit-tested, unlike
+D-158's own marquee-hit computation (real DOM measurement, untested per this package's established
+split).
+
+**The ONE DOM measurement this piece still needs: the scrollable CONTENT div's own
+`getBoundingClientRect()`, not per-marker ones.** A pointer's `clientX`/`clientY` has to become
+"content-local" px (0,0 at the content div's own top-left, in the SAME coordinate space
+`keyMarkerContentRect` computes marker positions in) to build the marquee rectangle at all —
+`contentLocalPoint`, read fresh on every pointermove, the same mechanism `MotionCanvasOverlay.
+tsx`'s own `toContainerLocal` already uses for its canvas marquee band, applied here to a
+SCROLLABLE container instead of a fixed one (the content div's own `getBoundingClientRect()`
+already reflects the current scroll offset, so no separate scroll-position bookkeeping is needed).
+
+**Gesture disambiguation — a THIRD real application of D-137/D-158's discipline in this file** (a
+marker `<button>`'s own drag/select, a lane's click-to-seek, now a marquee): `handleTrackPointerDown`
+checks, structurally, whether the pointerdown's `e.target` is a descendant of `[data-key-marker]`
+(a NEW attribute this pass adds to every marker button) — if so, that marker's own `onPointerDown`
+already owns the gesture, bail. Not a `stopPropagation()` call on the marker (which would also
+work, but this file's own established convention — and D-137/D-158's own explicit "structural
+DOM-position disambiguation, not an ad-hoc priority check" — favors checking WHAT WAS HIT over
+suppressing bubbling).
+
+### 4 — Shift-click to extend: mirrors D-158's exact convention, a further reuse not a reinvention
+
+Read at `pointerdown`, never mid-drag (D-137/D-158's "a modifier tapped mid-drag must not change
+the meaning of a gesture already under way"); toggles, never starts a drag of its own — the same
+`toggleSelection`-for-layers rule, reused verbatim for keys via `toggleKeySelectionEntry`.
+Selection (shift-click AND the marquee) works regardless of `draggable` — "selection is free,
+retiming needs write capability," matching D-160's own "still useful with nothing wired" floor for
+this timeline as a whole. A modifier-held SUB-THRESHOLD marquee press (never became a real drag)
+arms NOTHING — no seek, no selection change either way — the identical rule D-137/D-158 already
+established for their own marquees, re-applied here rather than re-derived. A plain (no modifier)
+sub-threshold press on empty track space keeps the EXISTING D-161/162 click-to-select-lane-and-seek
+behaviour AND clears the key-selection ("click away to deselect," D-158's own rule for its canvas
+marquee).
+
+### 5 — Nudge: `manifestEdit.ts`'s `moveKeysAt` + `moveKeysByDelta`, the direct analog of `moveLayersByDelta`
+
+Dragging any ONE key that's part of a live 2+ key-selection nudges the WHOLE group by one shared
+`deltaSeconds` — dragging a key NOT in the current selection replaces the selection with just that
+one key and drags it alone, the identical "click inside an existing multi-selection moves the
+group; click anything else replaces it" convention D-158 already established for layers.
+`deltaSeconds` is computed from raw pointer PIXEL movement via `timelineZoom.ts`'s new
+`pxDeltaToSeconds(pxDelta, pxPerSecond, fps)` — since `pxPerSecond` is the ONE shared axis every
+row already agrees on (D-162), a pixel distance directly measures time regardless of which row the
+drag started in, so (unlike D-161's own single-key drag, which resolves an ABSOLUTE new position
+and therefore does need to know which scene the pointer is over) this nudge needs no
+`frameFromClientX` lookup at all. Frame-aligned via `Math.round(rawSeconds * fps) / fps`, matching
+`percentToFrame`'s own frame-boundary precision.
+
+**A real correctness trap, found while designing the write primitive, not assumed away: two
+selected keys in the SAME array cannot be moved via N sequential calls to `moveKeyAt`.** `moveKeyAt`
+re-sorts its own output on EVERY call (D-161's own Decision 1); calling it once per selected key,
+each reading the array fresh off an already-partially-moved manifest, lets the FIRST call's reorder
+silently shift what the SECOND call's `keyIndex` actually points at. Concretely: keys at
+`[{at:1},{at:2},{at:3}]`, indices 0 and 2 selected, dragged `+5` — moving index 0 first re-sorts to
+`[{at:2},{at:3},{at:6}]`, so "index 2" in THAT array is now the ALREADY-MOVED key, not the original
+`{at:3}` key. **`moveKeysAt<T extends {at:number}>(keys, moves, deltaSeconds, sceneDurSeconds)`**
+avoids this by computing every new `at` from each move's own REMEMBERED `baseAtSeconds` (captured
+once at drag-start, `manifestEdit.ts`'s new `KeyMoveTarget`) in ONE pass over the ORIGINAL array,
+then sorting once — never re-reading a key's CURRENT value mid-batch. Covered by a dedicated test
+proving the trap doesn't happen (`avoids the sequential-call correctness trap for two selected keys
+in the SAME array`), not just implemented and hoped for, per this package's own "getting this wrong
+is silent" standard for exactly this class of edge case.
+
+**`moveKeysByDelta(manifest, targets, deltaSeconds)`** — the actual `moveLayersByDelta` analog —
+groups `targets` by the array they share (`sceneIndex:kind:layerIndex`), calls `moveKeysAt` ONCE
+per group (so same-array keys go through the safe batched path above), and threads each group's
+result sequentially through ONE final `Manifest` (safe across DIFFERENT arrays, since each targets
+a disjoint part of the manifest — the identical "compose N pure single-target writes into one
+object" shape `moveLayersByDelta` itself uses). ONE `onCommit` call per gesture regardless of how
+many keys moved or which lanes/scenes they came from — the same single-undo-entry guarantee
+`moveLayersByDelta` already established for layers.
+
+**The two real design questions the task named explicitly, decided and documented:**
+
+- **Can a multi-key selection span MULTIPLE lanes/scenes? Yes, unambiguously allowed** — unlike
+  `Selection[]`'s same-kind/same-scene constraint (§2 above), a shared time delta means the
+  identical thing to a camera key, a layer key, a key in scene 0, or a key in scene 3; there is no
+  "world space" for time the way there is for `x`/`y`, and reading/writing a key's `at` needs no
+  live DOM (the same fact that already lets `keyframeLanes`/`laneKeyMarkers` show every scene's
+  keys at once, D-160). Tested explicitly (`spans MULTIPLE lanes...`, `spans MULTIPLE scenes...`).
+- **Boundary clamping: EACH key clamps independently to its OWN scene's `[0, dur]` — the nudge is
+  NEVER blocked as a whole, and can become non-uniform at the boundary.** Decided by consistency
+  with `moveKeyAt`'s own ALREADY-established philosophy (never block, only clamp) rather than
+  inventing a stricter rule just for the multi-key case: a single-key drag has never blocked, and a
+  nudge is explicitly meant to generalize that gesture, not add a new, surprising mode on top of it
+  the instant a second key is involved. The rejected alternative — block the WHOLE nudge if ANY key
+  would clip — was ruled out for exactly that reason: it would make single- and multi-key drags
+  disagree about what "hit the edge" means, for no real correctness benefit. Tested explicitly
+  (`clamps EACH key independently — a nudge can become non-uniform at a boundary`, at both the
+  `moveKeysAt` and `moveKeysByDelta` levels).
+
+### 6 — Escape cancels a nudge in progress (and a marquee)
+
+Extends the EXISTING D-161/162 Escape handler (which already canceled a single-key drag) to the
+generalized multi-key `dragRef` (clearing the now-ARRAY `dragPreview`) and to an in-flight
+`marqueeRef` — the marquee case is a harmless no-op for `onTransientChange` (a marquee never calls
+it, exactly like D-158's own canvas marquee), so only the drawn band and the ref need clearing. No
+`releasePointerCapture` call on Escape, matching the EXISTING (unchanged) behaviour this file
+already had before this pass: the browser releases capture on its own once the pointer is actually
+lifted, and a subsequent pointerup on a now-`null` ref is already a no-op.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — untouched this pass (no schema/engine change);
+  the same 2 pre-existing `document`-typing errors in `Scene3D.tsx` as on `main`, confirmed
+  unchanged.
+- `npm test --workspace @chroma/motion` — **334/334** (was 292 at D-162; **+42** new: 15 in
+  `manifestEdit.test.ts` (7 `moveKeysAt` — including the sequential-call correctness-trap test and
+  the independent-boundary-clamp test — and 8 `moveKeysByDelta` — cross-lane, cross-scene,
+  same-array grouping, a stale target silently skipped, no-mutation, one-manifest-for-N-moves), 21
+  in `keyframeVisibility.test.ts` (7 `laneKeyAtSeconds`, 7 `sameKeySelectionEntry`/
+  `toggleKeySelectionEntry`/`unionKeySelectionEntries`, 7 `keyMarkerContentRect`/
+  `keysInMarqueeRect` — including a dedicated "never hits a marker the rect only grazes" test
+  matching `rectsIntersect`'s own documented edge-graze-doesn't-count semantics, and a dedicated
+  "scopes hits to the correct ROW" test), 6 `pxDeltaToSeconds` in `timelineZoom.test.ts` — every
+  new pure function gets real tests, per this package's own established convention;
+  `KeyframeTimeline.tsx`'s new marquee/nudge pointer wiring is DOM/pointer-event plumbing,
+  deliberately untested, the same split D-156/157/158/159/160/161/162 already set (the PURE
+  geometry/selection/write logic it calls is exactly what carries the test coverage instead, per
+  the task's own explicit instruction on this point).
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- No `remotion still` render comparison — this pass touches neither `motion-engine`'s schema nor
+  its render path, so there is nothing whose pixel output could have changed; confirmed by `git
+  status` showing only `@chroma/motion` files touched (`KeyframeTimeline.tsx`, `keyframeVisibility.
+  ts`/`.test.ts`, `manifestEdit.ts`/`.test.ts`, `timelineZoom.ts`/`.test.ts` modified — no new
+  files this pass, unlike D-160/161/162, since every new piece slots into an existing module).
+- No Rust/`app/src-tauri` touched — frontend-only, per the task's own instruction; confirmed by
+  `git status`.
+
+**Honest gaps.** (1) **Not seen in the assembled Tauri app** — this sandbox cannot launch it, the
+same disclosed constraint every entry since D-125 carries; the marquee's pointer-capture wiring,
+the sticky-row layout interacting with an absolutely-positioned marquee band, and the visual
+"selected key" ring style are reasoned from documented CSS/`PointerEvent` semantics, not exercised
+against a real pointer in a real window. (2) **Key-selection identity can drift across a nudge that
+crosses a NON-selected neighbor** — §2's own disclosed gap: the selected `keyIndex` entries stay
+correct through a uniform shift that doesn't cross anything, but a crossing nudge can leave an
+entry pointing at a different physical key after commit. Real, cheap follow-up if it matters: a
+synthetic per-key id threaded through `moveKeysAt`'s own reorder (the same fix D-161 already named
+for its own single-key analog of this gap, never built either). (3) **Per-row overlapping markers
+at the exact same frame (D-160's own honest gap 5, still unaddressed) now also means a marquee or a
+shift-click can only ever hit whichever one is on top for a plain click** — the MARQUEE itself is
+unaffected (a rect intersects a marker's hit-box regardless of z-order, so a box-select still
+selects BOTH overlapping keys correctly) — this is specifically a single-click/shift-click
+limitation, unchanged from the pre-existing overlap gap. (4) **No visual distinction between "this
+marker is selected" and "this marker is the one currently being dragged/previewed"** during an
+in-flight multi-key nudge — every selected marker shows the same ring style whether or not it's the
+exact one under the pointer; judged unnecessary complexity for a first slice (the PLAYER's live
+retime preview already shows the real effect). (5) **The curve/easing editor** — Phase 5b's final
+piece, explicitly out of scope for this pass, independent and next per §4/§7/§8's own recommended
+order.
+
+**Numbering.** Drafted as **D-163**, checked against the REAL current tip of `main` in the main
+repo (`/Users/ashishmaurya/my_projects/chroma`, not this worktree) both before starting this pass
+and immediately before writing this entry: `git log --oneline -5` shows `0e0278e` (`D-162 Phase
+5b part 2: per-row keyframe lanes`) still at the tip, unchanged across the whole pass, and
+`grep -oE 'D-[0-9]+' docs/08-decisions.md | sort -t- -k2 -n -u | tail` / `grep -oE 'B-[0-9]+'
+docs/BUGS.md | sort -t- -k2 -n -u | tail` both still show **D-162 / B-061** as the highest
+numbers — **D-163** is free, and no `B-NNN` is used or fixed by this pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

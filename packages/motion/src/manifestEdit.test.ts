@@ -26,6 +26,8 @@ import {
   moveLayerTransformKeyAt,
   moveCamera2dKeyAt,
   moveCamera3dKeyAt,
+  moveKeysAt,
+  moveKeysByDelta,
   parseJsonField,
   resolveSelection,
   resolveSelections,
@@ -662,6 +664,191 @@ describe('moveCamera3dKeyAt (Phase 5b)', () => {
 
   it('is a no-op for a scene with no scene3d at all', () => {
     expect(moveCamera3dKeyAt(sample, 0, 0, 1)).toBe(sample); // scene 0 "hook" has no scene3d
+  });
+});
+
+describe('moveKeysAt (Phase 5b — box-select + nudge, the multi-key generic core)', () => {
+  it('moves every named key from its own remembered base, leaving untouched keys alone', () => {
+    const keys = [{ at: 1 }, { at: 2 }, { at: 3 }];
+    const next = moveKeysAt(
+      keys,
+      [
+        { keyIndex: 0, baseAtSeconds: 1 },
+        { keyIndex: 2, baseAtSeconds: 3 },
+      ],
+      5,
+      100,
+    );
+    // the UNSELECTED middle key never moves; the two selected keys both
+    // shift by the same +5 from their OWN base, then the whole array
+    // re-sorts once
+    expect(next).toEqual([{ at: 2 }, { at: 6 }, { at: 8 }]);
+  });
+
+  it('avoids the sequential-call correctness trap for two selected keys in the SAME array', () => {
+    // if this were implemented as two sequential `moveKeyAt` calls, moving
+    // index 0 first would re-sort the array and shift what "index 2" means
+    // by the time the second call ran — `moveKeysAt` must not have that bug.
+    const keys = [{ at: 1, tag: 'a' }, { at: 2, tag: 'b' }, { at: 3, tag: 'c' }];
+    const next = moveKeysAt(
+      keys,
+      [
+        { keyIndex: 0, baseAtSeconds: 1 },
+        { keyIndex: 2, baseAtSeconds: 3 },
+      ],
+      5,
+      100,
+    );
+    expect(next).toEqual([
+      { at: 2, tag: 'b' },
+      { at: 6, tag: 'a' },
+      { at: 8, tag: 'c' },
+    ]);
+  });
+
+  it('clamps EACH key independently — a nudge can become non-uniform at a boundary', () => {
+    const keys = [{ at: 1 }, { at: 9 }];
+    const next = moveKeysAt(
+      keys,
+      [
+        { keyIndex: 0, baseAtSeconds: 1 },
+        { keyIndex: 1, baseAtSeconds: 9 },
+      ],
+      5,
+      10, // scene dur
+    );
+    // key 0 (1 -> 6) has room and moves the full +5; key 1 (9 -> 14) clips
+    // to the scene's own end (10) — the SAME shared delta, two different
+    // outcomes, exactly the documented decision.
+    expect(next).toEqual([{ at: 6 }, { at: 10 }]);
+  });
+
+  it('clamps to 0 on a negative delta, same as the single-key core', () => {
+    const keys = [{ at: 1 }, { at: 2 }];
+    const next = moveKeysAt(keys, [{ keyIndex: 0, baseAtSeconds: 1 }], -5, 10);
+    expect(next).toEqual([{ at: 0 }, { at: 2 }]);
+  });
+
+  it('an empty moves list touches nothing', () => {
+    const keys = [{ at: 1 }, { at: 2 }];
+    expect(moveKeysAt(keys, [], 5, 10)).toEqual(keys);
+  });
+
+  it('preserves every OTHER field on every moved key, only `at` changes', () => {
+    const keys = [{ at: 0, x: 10, y: 20 }, { at: 1, x: 30, y: 40 }];
+    const next = moveKeysAt(
+      keys,
+      [
+        { keyIndex: 0, baseAtSeconds: 0 },
+        { keyIndex: 1, baseAtSeconds: 1 },
+      ],
+      2,
+      10,
+    );
+    expect(next).toEqual([{ at: 2, x: 10, y: 20 }, { at: 3, x: 30, y: 40 }]);
+  });
+
+  it('a move naming an index outside the array is silently ignored', () => {
+    const keys = [{ at: 1 }];
+    expect(moveKeysAt(keys, [{ keyIndex: 5, baseAtSeconds: 1 }], 5, 10)).toEqual([{ at: 1 }]);
+  });
+});
+
+describe('moveKeysByDelta (Phase 5b — box-select + nudge, the multi-lane write path)', () => {
+  it('nudges a real camera key (scene 0 "hook", dur 4) by a shared delta', () => {
+    const next = moveKeysByDelta(sample, [{ sceneIndex: 0, kind: 'camera', keyIndex: 1, baseAtSeconds: 0.4 }], 0.2);
+    const moved = selectedCamera2d(next, 0)?.find((k) => k.zoom === 1 && k.at > 0.5);
+    expect(moved?.at).toBeCloseTo(0.6, 10);
+  });
+
+  it('spans MULTIPLE lanes in one call — a camera key AND a layer key, nudged together', () => {
+    const withLayerKeys = structuredClone(sample);
+    (withLayerKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }],
+    };
+    const next = moveKeysByDelta(
+      withLayerKeys,
+      [
+        { sceneIndex: 0, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 0, kind: 'layer', layerIndex: 0, keyIndex: 0, baseAtSeconds: 0 },
+      ],
+      1,
+    );
+    expect(selectedCamera2d(next, 0)).toContainEqual({ at: 1, zoom: 1 });
+    const layerSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    expect(layerTransformKeys(next, layerSel)).toEqual([{ at: 1, x: 0 }]);
+  });
+
+  it('spans MULTIPLE scenes, clamping each key to its OWN scene duration independently', () => {
+    // scene 0 "hook" dur 4, scene 2 "space" dur 5 — the SAME +10 delta pushes
+    // both past their own end, but each clamps to a DIFFERENT absolute value.
+    const next = moveKeysByDelta(
+      sample,
+      [
+        { sceneIndex: 0, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 2, kind: 'scene3d-camera', keyIndex: 0, baseAtSeconds: 0 },
+      ],
+      10,
+    );
+    expect(selectedCamera2d(next, 0)).toContainEqual({ at: 4, zoom: 1 });
+    expect(selectedCamera3d(next, 2)?.[0].at).toBe(5);
+  });
+
+  it('moves TWO keys in the SAME layer array together, safely (the grouping path)', () => {
+    const withLayerKeys = structuredClone(sample);
+    (withLayerKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }, { at: 1, x: 50 }, { at: 2, x: 100 }],
+    };
+    const next = moveKeysByDelta(
+      withLayerKeys,
+      [
+        { sceneIndex: 0, kind: 'layer', layerIndex: 0, keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 0, kind: 'layer', layerIndex: 0, keyIndex: 2, baseAtSeconds: 2 },
+      ],
+      1.5,
+    );
+    const layerSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    // the untouched middle key (x:50) never moves; the two selected keys
+    // both land 1.5s later than their own base and the array re-sorts once
+    expect(layerTransformKeys(next, layerSel)).toEqual([
+      { at: 1, x: 50 },
+      { at: 1.5, x: 0 },
+      { at: 3.5, x: 100 },
+    ]);
+  });
+
+  it('silently skips a target whose scene no longer exists', () => {
+    const next = moveKeysByDelta(
+      sample,
+      [
+        { sceneIndex: 99, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 0, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 },
+      ],
+      1,
+    );
+    expect(selectedCamera2d(next, 0)).toContainEqual({ at: 1, zoom: 1 });
+  });
+
+  it('an empty targets array is a true no-op — same manifest reference back', () => {
+    expect(moveKeysByDelta(sample, [], 5)).toBe(sample);
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    moveKeysByDelta(sample, [{ sceneIndex: 0, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 }], 1);
+    expect(selectedCamera2d(sample, 0)).toContainEqual({ at: 0, zoom: 1 });
+  });
+
+  it('produces ONE resulting manifest for N moves across N different lanes', () => {
+    const next = moveKeysByDelta(
+      sample,
+      [
+        { sceneIndex: 0, kind: 'camera', keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 2, kind: 'scene3d-camera', keyIndex: 0, baseAtSeconds: 0 },
+      ],
+      1,
+    );
+    expect(selectedCamera2d(next, 0)).toContainEqual({ at: 1, zoom: 1 });
+    expect(selectedCamera3d(next, 2)?.[0].at).toBe(1);
   });
 });
 

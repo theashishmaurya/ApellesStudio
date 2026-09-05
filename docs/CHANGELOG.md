@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 3): box-select + nudge multiple keys
+  (D-163), on top of Phase 5b part 2 (D-162).** A new `KeySelectionEntry` model
+  (`keyframeVisibility.ts` — `{lane, keyIndex}`, local to `KeyframeTimeline.tsx`, no
+  same-kind/same-scene restriction, not cleared on every commit) for selecting individual keys,
+  distinct from `Selection[]`. A rubber-band drag over empty track space box-selects via
+  `keysInMarqueeRect` — pure geometry, no per-marker DOM measurement (only the scrollable content
+  div's own rect is read), reusing `canvasGeometry.ts`'s `rectFromPoints`/`rectsIntersect`
+  verbatim. Shift-click toggles, mirroring D-158's exact convention. Nudge generalizes D-158's
+  `moveLayersByDelta`: `manifestEdit.ts`'s new `moveKeysAt`/`moveKeysByDelta` avoid a real
+  correctness trap (N sequential `moveKeyAt` calls on keys sharing one array can retime the wrong
+  key once an earlier reorder shifts a later `keyIndex` — fixed by computing every new `at` from
+  each key's own remembered base in one pass, then sorting once). Decided: a key-selection may
+  span multiple lanes/scenes; each key clamps to its own scene's `[0,dur]` independently (a nudge
+  can go non-uniform at a boundary rather than blocking). `tsc` clean, `app`/`motion-engine`
+  baselines unchanged, `@chroma/motion` 334/334 (was 292, +42: 15 in `manifestEdit.test.ts`, 21 in
+  `keyframeVisibility.test.ts`, 6 `pxDeltaToSeconds` in `timelineZoom.test.ts`).
 - **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 2): per-row lanes (D-162), on top
   of Phase 5b part 1 (D-161).** Retires D-160/D-161's flat single-strip `KeyframeStrip.tsx` for a
   real per-row `KeyframeTimeline.tsx`: one row per keyed 2D camera/layer/3D camera

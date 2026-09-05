@@ -1100,11 +1100,32 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   mirroring the Edit tab's own `PreviewPane`/`TimelinePane` stack — a flat 24px strip could live
   squeezed under the player, but N independently-scrollable rows need real, resizable estate of
   their own.
-  **Remaining: Phase 5b's other two pieces — box-select + nudge multiple keys, a curve/easing
-  editor — still real, unbuilt work**, comparable in cost to the Edit tab's own timeline, and must
-  not be attached quietly to anything else. Snapping/alignment GUIDES (visual guide-lines while
-  dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see that decision's
-  own entry for the smallest next step.
+  **Phase 5b, part 3 (box-select + nudge multiple keys) BUILT — D-163, 2026-09-05.** A NEW
+  selection model for individual keys, `keyframeVisibility.ts`'s `KeySelectionEntry`
+  (`{lane: KeyframeLane, keyIndex}`, the research doc's own suggested shape, `trackId` becoming
+  D-162's own `KeyframeLane`) — kept local to `KeyframeTimeline.tsx` (nothing outside it needs to
+  read a key-selection today, unlike `Selection[]`), no same-kind/same-scene restriction (a shared
+  time delta means the same thing everywhere, unlike world-space `x`/`y`), and deliberately NOT
+  cleared on every manifest commit (a disclosed, accepted edge case: a nudge that crosses a
+  non-selected neighbor can leave a stale entry, handled by pure value-equality never
+  dereferencing). A rubber-band drag over empty track space box-selects via `keysInMarqueeRect` —
+  deliberately PURE geometry with no per-marker DOM measurement at all (D-162's per-row layout is
+  already fully known from pure numbers; only ONE DOM read, the scrollable content div's own
+  rect, is needed to place the marquee), reusing `canvasGeometry.ts`'s `rectFromPoints`/
+  `rectsIntersect` verbatim. Shift-click toggles a key into the selection, mirroring D-158's exact
+  modifier convention. Nudging generalizes D-158's `moveLayersByDelta` to keyframes:
+  `manifestEdit.ts`'s new `moveKeysAt`/`moveKeysByDelta` avoid a real correctness trap found while
+  designing them (N sequential `moveKeyAt` calls on keys sharing ONE array can silently retime the
+  wrong key once an earlier call's reorder shifts what a later `keyIndex` points at — fixed by
+  computing every new `at` from each key's own remembered base in one pass, then sorting once). Two
+  real design questions decided: a key-selection MAY span multiple lanes/scenes (unlike
+  `Selection[]`), and each key clamps to its OWN scene's `[0,dur]` independently — a nudge can
+  become non-uniform at a boundary rather than blocking the whole gesture, for consistency with
+  `moveKeyAt`'s own established never-block philosophy.
+  **Remaining: Phase 5b's last piece — a curve/easing editor — still real, unbuilt work**,
+  independent of the rest per the research doc's own recommended order. Snapping/alignment GUIDES
+  (visual guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort
+  spike — see that decision's own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

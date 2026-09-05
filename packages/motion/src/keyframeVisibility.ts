@@ -28,6 +28,7 @@ import type { Manifest, Layer, Scene } from '@chroma/motion-engine/src/engine/sc
 import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
 import { layerTransformKeys } from './manifestEdit';
+import { rectsIntersect, type RectLike } from './canvasGeometry';
 
 /** A layer is `.passthrough()` (`schema.ts`) — `transform` isn't statically
  *  typed on the inferred `Layer` type, so this reads through the same
@@ -204,6 +205,33 @@ export function selectionForLane(manifest: Manifest, lane: KeyframeLane): Select
   return null;
 }
 
+/**
+ * Phase 5b, "box-select + nudge multiple keys" — the EXACT, unrounded `at`
+ * (seconds) a lane's own key at `keyIndex` currently holds. Distinct from
+ * `KeyMarker.frame` (already rounded to a whole frame via
+ * `keySecondsToAbsoluteFrame`, for DISPLAY): a nudge gesture needs to
+ * capture each selected key's true starting value once at drag-start
+ * (`KeyframeTimeline.tsx`'s own drag state, `manifestEdit.ts`'s
+ * `KeyMoveTarget.baseAtSeconds`) so a shared delta is added to the REAL
+ * value, not a frame-rounded approximation of it — the same "getting this
+ * wrong is silent" concern `frameToPercent`/`percentToFrame` already carry,
+ * here for the opposite direction (reading a value out, not converting a
+ * position). `null` for a lane/keyIndex combination that doesn't resolve
+ * (out-of-range scene/layer/keyIndex) — the same defensive floor every
+ * other read function in this file already holds.
+ */
+export function laneKeyAtSeconds(manifest: Manifest, lane: KeyframeLane, keyIndex: number): number | null {
+  const scene = manifest.scenes[lane.sceneIndex];
+  if (!scene) return null;
+  if (lane.kind === 'camera') return scene.camera?.[keyIndex]?.at ?? null;
+  if (lane.kind === 'scene3d-camera') return scene.scene3d?.camera[keyIndex]?.at ?? null;
+  if (lane.kind === 'layer' && lane.layerIndex !== undefined) {
+    const selection: Selection = { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex } };
+    return layerTransformKeys(manifest, selection)[keyIndex]?.at ?? null;
+  }
+  return null;
+}
+
 /** Absolute frames where one scene ends and the next begins — every scene
  *  start EXCEPT the first (frame 0 is the composition's own start, not a
  *  boundary worth drawing a tick for). Mirrors exactly the same back-to-back
@@ -270,4 +298,192 @@ export function percentToFrame(percent: number, totalFrames: number): number {
   if (!(totalFrames > 0)) return 0;
   const frame = Math.round((percent / 100) * totalFrames);
   return Math.min(totalFrames, Math.max(0, frame));
+}
+
+/**
+ * Phase 5b, "box-select + nudge multiple keys" (`docs/notes/
+ * motion-keyframe-timeline-research.md` §4) — the SELECTION MODEL for
+ * individual keys, kept deliberately distinct from `LayerList.tsx`'s
+ * `Selection[]` (which points at whole LAYERS/cameras/scenes, never at one
+ * key within one — the research doc's own §4 names this explicitly: "a
+ * `{trackId, keyIndex}[]`-shaped selection distinct from `Selection[]`").
+ * `trackId` becomes `lane: KeyframeLane` here — `KeyframeLane` (D-162) is
+ * ALREADY this package's own lane-identity type (`sceneIndex` + `kind` +
+ * `layerIndex`), so this reuses it rather than inventing a second lane-id
+ * scheme the research doc explicitly warned against duplicating.
+ *
+ * **Where this state lives: local to `KeyframeTimeline.tsx`, not lifted to
+ * `MotionTab.tsx`.** Decided by the same test `Selection[]` itself passes
+ * for living in `MotionTab.tsx`: something OUTSIDE that component needs to
+ * read it (`LayerList.tsx`'s row highlighting, `InspectorPanel.tsx`'s
+ * field editors, `MotionCanvasOverlay.tsx`'s outline/drag). A key selection
+ * has no such second consumer today — no Inspector view edits N keys'
+ * VALUE fields in lockstep the way `Selection[]`'s multi-layer view does
+ * (`manifestEdit.ts`'s `setFieldOnSelections`), so there is nothing to
+ * coordinate with outside this one component. If a future feature (a
+ * multi-key value editor, say) ever needs to read it from outside, that is
+ * the point to lift it — not before, per this package's own "don't add
+ * plumbing for a consumer that doesn't exist yet" practice.
+ *
+ * **Persistence across a manifest change: NOT cleared automatically.**
+ * Considered clearing `keySelection` on every `manifest` reference change
+ * (the STABLE prop, which changes on every commit including this
+ * component's own nudge commits) — rejected as needlessly disruptive for
+ * the common case. A nudge that doesn't cross a non-selected neighbor
+ * leaves every selected key's `keyIndex` unchanged after the commit (a
+ * uniform shift preserves relative array order among untouched entries),
+ * so clearing on every commit would throw away a perfectly valid selection
+ * far more often than it protects against a stale one. The rejected
+ * alternative's failure mode (see `KeyframeTimeline.tsx`'s own module doc
+ * comment for the full disclosure) is instead handled the way this
+ * package already handles every other "the manifest changed under a live
+ * reference" case: value-equality lookups (`sameKeySelectionEntry`) never
+ * dereference a stale entry, so a `{lane, keyIndex}` that no longer names a
+ * real key just silently stops highlighting/dragging anything — the same
+ * "selectable but not draggable, never a crash" floor `layerWorldPosition`
+ * already established for `Selection[]`.
+ */
+export interface KeySelectionEntry {
+  lane: KeyframeLane;
+  keyIndex: number;
+}
+
+/** Value equality for two `KeySelectionEntry` — used for membership tests
+ *  (toggle, "is this marker part of the drag group") rather than object
+ *  identity, since a `KeyframeLane`/`KeySelectionEntry` is freshly
+ *  constructed on every render. */
+export function sameKeySelectionEntry(a: KeySelectionEntry, b: KeySelectionEntry): boolean {
+  return laneKey(a.lane) === laneKey(b.lane) && a.keyIndex === b.keyIndex;
+}
+
+/**
+ * Shift-click membership toggle for key selection — the direct analog of
+ * `LayerList.tsx`'s `toggleSelection`, mirroring D-158's own exact
+ * modifier convention (read once at `pointerdown`, additive not
+ * toggle-during-drag — `KeyframeTimeline.tsx`'s own pointer wiring reads
+ * this at the moment a marker is clicked, never mid-drag). Unlike
+ * `toggleSelection`, there is no same-kind/same-scene restriction here —
+ * see `manifestEdit.ts`'s `moveKeysByDelta` doc comment for why a shared
+ * time delta is coherent across ANY mix of lanes/scenes, so nothing about
+ * this toggle needs to reject a cross-lane addition the way `toggleSelection`
+ * rejects a cross-scene layer.
+ */
+export function toggleKeySelectionEntry(current: KeySelectionEntry[], entry: KeySelectionEntry): KeySelectionEntry[] {
+  const idx = current.findIndex((e) => sameKeySelectionEntry(e, entry));
+  if (idx !== -1) return current.filter((_, i) => i !== idx);
+  return [...current, entry];
+}
+
+/** Union `hits` onto `base`, skipping anything already present — the
+ *  additive-marquee merge `KeyframeTimeline.tsx` uses when a marquee drag
+ *  started with shift/cmd/ctrl held (D-158's own "additive marquee unions,
+ *  it does not toggle" rule, reused verbatim rather than reinventing a
+ *  second merge convention). */
+export function unionKeySelectionEntries(base: KeySelectionEntry[], hits: KeySelectionEntry[]): KeySelectionEntry[] {
+  const merged = [...base];
+  for (const h of hits) if (!merged.some((e) => sameKeySelectionEntry(e, h))) merged.push(h);
+  return merged;
+}
+
+/** How wide/tall (px) a key marker's own hit box is for marquee-intersection
+ *  purposes — matches the ~8px diamond `KeyframeTimeline.tsx` actually draws
+ *  plus a little slop, the same "give a small target a real hit box, not
+ *  just its drawn pixel footprint" reasoning `MotionCanvasOverlay.tsx`'s own
+ *  `HANDLE_HIT_SLOP` already applies to a resize handle. */
+export const KEY_MARKER_HIT_PX = 10;
+
+/** Where a marquee (box-select) system needs to place layout constants for
+ *  `keyMarkerContentRect`/`keysInMarqueeRect` below — the vertical offset
+ *  before the first lane row starts (`KeyframeTimeline.tsx`'s own ruler
+ *  height), each lane row's own height, and the label column's own width
+ *  (rows start AFTER it, in the track area). Passed explicitly rather than
+ *  imported as constants from `KeyframeTimeline.tsx` — that file is the
+ *  DOM-touching half of this pair (this file stays framework/DOM-agnostic,
+ *  same split as `canvasGeometry.ts`/`MotionCanvasOverlay.tsx`), so its own
+ *  layout numbers are its own to own; this file just needs to be told them. */
+export interface TimelineLayout {
+  laneAreaTop: number;
+  laneHeight: number;
+  labelWidth: number;
+}
+
+/**
+ * A key marker's own hit-testing rect, in the SAME "content-local" pixel
+ * coordinate space `KeyframeTimeline.tsx`'s marquee band is drawn in (the
+ * scrollable content div's own coordinate system — `left: 0` is the content
+ * div's own left edge, unaffected by scroll position, since a marquee's
+ * start/current points are captured the same way via `getBoundingClientRect`
+ * on that SAME div, per that file's own module doc comment). `rowIndex` is
+ * the marker's row's own position in `keyframeLanes`' returned array — the
+ * exact order `KeyframeTimeline.tsx` renders rows in, so row `i` really is
+ * at vertical slot `i` with no separate lookup needed. A marker's own
+ * center is the SAME `frameToPercent`-derived pixel position the component
+ * already draws the diamond at (`left: N% of trackWidthPx`, offset past the
+ * label column) — this function does not re-derive a second, potentially
+ * divergent formula for where a marker actually sits.
+ */
+export function keyMarkerContentRect(
+  rowIndex: number,
+  frame: number,
+  totalFrames: number,
+  trackWidthPx: number,
+  layout: TimelineLayout,
+): RectLike {
+  const centerX = layout.labelWidth + (frameToPercent(frame, totalFrames) / 100) * trackWidthPx;
+  const centerY = layout.laneAreaTop + rowIndex * layout.laneHeight + layout.laneHeight / 2;
+  const half = KEY_MARKER_HIT_PX / 2;
+  return { left: centerX - half, top: centerY - half, width: KEY_MARKER_HIT_PX, height: KEY_MARKER_HIT_PX };
+}
+
+/**
+ * Every key whose marker falls inside `marqueeRect` (content-local px,
+ * same space as `keyMarkerContentRect` above) — `KeyframeTimeline.tsx`'s
+ * own marquee-release computation. Reuses `canvasGeometry.ts`'s
+ * `rectsIntersect` DIRECTLY (D-158's own marquee-hit predicate, the
+ * research doc's own §4 pointed at as "already proven portable once") —
+ * confirmed to translate as-is: both call sites test "does an axis-aligned
+ * screen/content rect overlap another axis-aligned rect," the coordinate
+ * SPACE differs (client px there, content-local px here) but the predicate
+ * itself doesn't care which space it's given, exactly as `canvasGeometry.
+ * ts`'s own module doc comment already states ("neither one cares" which
+ * space it's handed).
+ *
+ * **Deliberately NO DOM measurement inside this function** — a real,
+ * considered choice over the alternative (query every rendered marker's
+ * own `getBoundingClientRect()`, the way `MotionCanvasOverlay.tsx`'s own
+ * marquee does for canvas layers). `KeyframeTimeline.tsx`'s per-row layout
+ * is ALREADY fully known from pure numbers (`keyframeLanes`' own row
+ * order, `laneKeyMarkers`' own frame, `trackWidthPx`'s own pixel width) —
+ * D-162's "no virtualization needed" design means every lane/marker
+ * genuinely exists in the DOM whenever it exists in the manifest, so there
+ * is no "is this row actually rendered right now" question the way a
+ * scrolled-off-screen virtualized row would raise. Computing the hit test
+ * from the manifest directly (this function) rather than the DOM keeps it
+ * pure and unit-testable — this package's own "getting this wrong is
+ * silent" standard applied to a NEW class of arithmetic (screen rect →
+ * which keys), matching `frameToPercent`/`percentToFrame`'s own precedent
+ * rather than leaving it as untested DOM-measurement plumbing the way
+ * `MotionCanvasOverlay.tsx`'s marquee necessarily is (that one genuinely
+ * needs the DOM: a layer's on-screen box depends on the live camera
+ * transform, which nothing in this package re-derives independently of the
+ * DOM — see `canvasGeometry.ts`'s own module doc comment. A keyframe
+ * marker's position has no such dependency; it's pure arithmetic over the
+ * manifest and the current zoom).
+ */
+export function keysInMarqueeRect(
+  manifest: Manifest,
+  lanes: KeyframeLane[],
+  marqueeRect: RectLike,
+  totalFrames: number,
+  trackWidthPx: number,
+  layout: TimelineLayout,
+): KeySelectionEntry[] {
+  const hits: KeySelectionEntry[] = [];
+  lanes.forEach((lane, rowIndex) => {
+    for (const marker of laneKeyMarkers(manifest, lane)) {
+      const markerRect = keyMarkerContentRect(rowIndex, marker.frame, totalFrames, trackWidthPx, layout);
+      if (rectsIntersect(marqueeRect, markerRect)) hits.push({ lane, keyIndex: marker.keyIndex });
+    }
+  });
+  return hits;
 }

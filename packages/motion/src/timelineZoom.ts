@@ -70,3 +70,31 @@ export function trackWidthPx(totalFrames: number, fps: number, pxPerSecond: numb
   if (!(totalFrames > 0) || !(fps > 0) || !(pxPerSecond > 0)) return 0;
   return (totalFrames / fps) * pxPerSecond;
 }
+
+/**
+ * Phase 5b, "box-select + nudge multiple keys" — a screen-pixel drag
+ * distance -> a frame-aligned TIME delta (seconds). Because `pxPerSecond`
+ * is the ONE shared axis every lane and the ruler already agree on (this
+ * module's own doc comment), a pixel distance moved directly measures time
+ * regardless of which row the pointer started in — `KeyframeTimeline.tsx`'s
+ * nudge gesture needs no per-lane frame lookup (`frameFromClientX`) at all
+ * to compute its shared `deltaSeconds`, unlike D-161's single-key drag
+ * (which resolves an ABSOLUTE new position, not a delta, and so does need
+ * to know which scene the pointer landed over).
+ *
+ * Frame-aligned via `fps`: rounds the raw seconds delta to the nearest
+ * whole-frame equivalent, so every nudged key's `at` shifts by an INTEGER
+ * number of frames from its own exact starting value — the same
+ * frame-boundary precision `percentToFrame` already guarantees for the
+ * single-key drag, rather than an arbitrary sub-frame float that would
+ * make a nudge's result depend on exactly which pixel the drag ended on
+ * in a way the rest of this timeline doesn't otherwise expose. `fps <= 0`
+ * or `pxPerSecond <= 0` (both schema-/zoom-impossible today, defended
+ * anyway per this file's own "don't divide by a value that's merely
+ * unlikely" discipline) returns `0` rather than `NaN`/`Infinity`.
+ */
+export function pxDeltaToSeconds(pxDelta: number, pxPerSecond: number, fps: number): number {
+  if (!(pxPerSecond > 0) || !(fps > 0)) return 0;
+  const rawSeconds = pxDelta / pxPerSecond;
+  return Math.round(rawSeconds * fps) / fps;
+}
