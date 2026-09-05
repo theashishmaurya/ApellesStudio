@@ -9,6 +9,13 @@
  *   highlight — only the cells in `highlight[]` animate, on their own schedule
  *
  * Cell borders are hand-drawn (roughjs) and memoised — only fills change per frame.
+ *
+ * `data-motion-box` (D-155, §3b of `docs/notes/motion-visual-builder-
+ * research.md`) marks the outer `<svg>` below — unlike `Graph`'s or
+ * `Emphasis`'s `inset:0` canvas-spanning `<svg>`s, this one is already sized
+ * to the grid's real footprint (`width={w} height={h}`, computed from
+ * `rows`/`cols`/`cell`/`gap`) rather than the whole composition, so it needs
+ * no per-cell union — it already IS the tight box.
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -104,6 +111,7 @@ export const Matrix: React.FC<{
 
   return (
     <svg
+      data-motion-box
       style={{ position: "absolute", left: ox, top: oy, overflow: "visible" }}
       width={w}
       height={h}

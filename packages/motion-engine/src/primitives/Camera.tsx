@@ -86,7 +86,15 @@ export const Camera: React.FC<{
 
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
+      {/* `data-motion-world` (D-155, `docs/notes/motion-visual-builder-research.md`
+       *  §3a/§4 Phase 0a) — the ONE stable DOM hook a screen↔world coordinate
+       *  map needs: `getBoundingClientRect()` here already composes the
+       *  player's own fit-scale, this transform's zoom/translate, AND the
+       *  drift below, with no need for `@chroma/motion` to re-read `keys`,
+       *  re-sort them, or re-run this easing. A pure attribute add — zero
+       *  pixel/visual change. See the engine README's "DOM contract" section. */}
       <AbsoluteFill
+        data-motion-world
         style={{
           transformOrigin: "0 0",
           transform: `translate(${cx - x * zoom + dx}px, ${cy - y * zoom + dy}px) scale(${zoom})`,

@@ -9,6 +9,13 @@
  *
  * ring/scribble need an explicit `box` (world px). pulse/glow wrap `children`
  * and don't need one.
+ *
+ * `data-motion-box` (D-155, §3b of `docs/notes/motion-visual-builder-
+ * research.md`) marks the `<path>` for ring/scribble — the whole `<svg>` is
+ * `inset:0` (the full canvas, not a usable selection rect), but the path
+ * itself IS the drawn shape's tight bounding box. pulse/glow have no `box`
+ * concept at all and carry no hook — a caller finding none falls back to the
+ * layer wrapper's own first child (§3b's documented "whole canvas" case).
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -81,7 +88,7 @@ export const Emphasis: React.FC<{
         width="100%"
         height="100%"
       >
-        <path d={d} fill="none" stroke={color} strokeWidth={5} strokeLinecap="round" opacity={fade} />
+        <path data-motion-box d={d} fill="none" stroke={color} strokeWidth={5} strokeLinecap="round" opacity={fade} />
       </svg>
     );
   }
@@ -101,6 +108,7 @@ export const Emphasis: React.FC<{
       height="100%"
     >
       <path
+        data-motion-box
         d={d}
         fill="none"
         stroke={color}

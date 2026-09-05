@@ -7,6 +7,11 @@
  *
  *   <Layers items={[{label:"tools"},{label:"system"},{label:"context"},{label:"your question"}]}
  *           active={2} callout="re-sent on every call" start={10} />
+ *
+ * `data-motion-box` (D-155, §3b of `docs/notes/motion-visual-builder-
+ * research.md`) marks each card `<div>` — the outer stack container has no
+ * size of its own (`left:cx/top:cy` with only absolutely-positioned
+ * children), so the union of the cards is the only real bounding box.
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -68,6 +73,7 @@ export const Layers: React.FC<{
           return (
             <div
               key={i}
+              data-motion-box
               style={{
                 position: "absolute",
                 width: cardW,

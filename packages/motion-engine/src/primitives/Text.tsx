@@ -80,13 +80,16 @@ export const Text: React.FC<{
     whiteSpace: "pre-wrap",
   };
 
+  // `data-motion-box` (D-155, §3b of the visual-builder research doc): the
+  // outermost `div` below IS the tight, real-text-metrics box `x`/`y` place —
+  // Text is the one primitive whose generic wrapper already needs no help.
   if (preset === "type") {
     const chars = children.length;
     const shown = Math.round(inAt(frame, start, start + Math.max(dur, chars)) * chars);
     const done = shown >= chars;
     const blink = caret && (!done || Math.floor((frame / fps) * 2) % 2 === 0);
     return (
-      <div style={wrap}>
+      <div style={wrap} data-motion-box>
         <span style={base}>
           {children.slice(0, shown)}
           {blink && (
@@ -99,7 +102,7 @@ export const Text: React.FC<{
 
   if (preset === "mask-up") {
     return (
-      <div style={{ ...wrap, overflow: "hidden" }}>
+      <div style={{ ...wrap, overflow: "hidden" }} data-motion-box>
         <div
           style={{
             ...base,
@@ -114,7 +117,7 @@ export const Text: React.FC<{
 
   if (preset === "stroke-on") {
     return (
-      <div style={wrap}>
+      <div style={wrap} data-motion-box>
         <span
           style={{
             ...base,
@@ -131,7 +134,7 @@ export const Text: React.FC<{
 
   // fade-up
   return (
-    <div style={wrap}>
+    <div style={wrap} data-motion-box>
       <div
         style={{
           ...base,
