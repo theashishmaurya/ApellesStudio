@@ -191,6 +191,8 @@ import { CSS as DndCSS } from '@dnd-kit/utilities';
 import {
   AudioLines,
   ArrowRightLeft,
+  // D-149 — the track-header ducking control's icon: "push this track down."
+  ChevronsDown,
   Eye,
   EyeOff,
   Film,
@@ -224,9 +226,18 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -245,6 +256,8 @@ import {
 } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
+  DEFAULT_DUCK_ATTACK_MS,
+  DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_SYNC_LOCKED,
   DEFAULT_TRACK_GAIN,
   checkLink,
@@ -425,6 +438,154 @@ function trackDragId(index: number): string {
   return `track:${index}`;
 }
 
+/** D-149 — the track-header ducking control: which track ducks this one, and
+ *  the three real DSP numbers behind it.
+ *
+ *  **A track-header control, not a clip Inspector one**, because ducking is a
+ *  relationship between two tracks rather than a property of a clip — the same
+ *  reason the field lives on `chroma_timeline::Track` and not on `Clip`. It
+ *  sits behind a popover rather than inline because the header row is already
+ *  dense (grip, kind, name, lock, sync-lock, hide/mute, remove) and four
+ *  controls would not fit at `ROW_HEIGHT`; the trigger button lights up when
+ *  ducking is actually on, so the state is legible without opening it.
+ *
+ *  **Offered on audio tracks only**, matching this header's existing, deliberate
+ *  per-kind split (mute is audio-only, hide is video-only). The engine and the
+ *  `set_track_duck` MCP tool will duck ANY track — a video track's embedded
+ *  audio included — but post-D-129 a video clip's sound lives on its own linked
+ *  audio track, so putting the control on every video header would be clutter
+ *  in the case where it does nothing. Documented rather than silent: an agent
+ *  can still reach the rarer case.
+ *
+ *  Defined at module scope for the same remount-safety reason
+ *  `SortableTrackHeader` is (see its doc). */
+function TrackDuckControl({
+  index,
+  duckFrom,
+  duckDb,
+  attackMs,
+  releaseMs,
+  trackLabels,
+  onChange,
+}: {
+  index: number;
+  duckFrom: number | null;
+  duckDb: number;
+  attackMs: number;
+  releaseMs: number;
+  /** every track's display label, indexed by track — the options this track can
+   *  be ducked from (itself excluded: a track ducking on its own clips would
+   *  attenuate exactly the audio triggering it, and Rust ignores it anyway). */
+  trackLabels: string[];
+  onChange: (patch: {
+    duckFrom?: number | null;
+    duckDb?: number;
+    attackMs?: number;
+    releaseMs?: number;
+  }) => void;
+}) {
+  const active = duckFrom != null && duckDb !== 0;
+  const num = 'h-6 w-16 px-1 text-[10px]';
+  const row = 'flex items-center justify-between gap-2';
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className={active ? 'text-accent' : undefined}
+            aria-label={active ? 'Ducking settings (on)' : 'Ducking settings'}
+            title={
+              active
+                ? `Ducked ${duckDb} dB by ${trackLabels[duckFrom] ?? `track ${duckFrom + 1}`}`
+                : 'Ducking — lower this track while another one plays'
+            }
+          >
+            <ChevronsDown className="size-3" />
+          </Button>
+        }
+      />
+      <PopoverContent className="w-64 p-3 text-xs">
+        <div className="flex flex-col gap-2">
+          <label className={row}>
+            <span className="text-text-secondary">Duck from</span>
+            <Select
+              value={duckFrom == null ? DUCK_OFF : String(duckFrom)}
+              onValueChange={(v) => onChange({ duckFrom: v === DUCK_OFF ? null : Number(v) })}
+            >
+              <SelectTrigger className="h-6 w-32 text-[11px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DUCK_OFF}>Off</SelectItem>
+                {trackLabels.map((label, i) =>
+                  i === index ? null : (
+                    <SelectItem key={i} value={String(i)}>
+                      {label}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Amount (dB)</span>
+            {/* Negative — a duck is a reduction. Not clamped: a positive value
+                boosts, which is unusual but well-defined, the same latitude
+                `gain > 1` already has. */}
+            <Input
+              type="number"
+              step={1}
+              max={0}
+              className={num}
+              value={duckDb}
+              onChange={(e) => onChange({ duckDb: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Attack (ms)</span>
+            <Input
+              type="number"
+              step={5}
+              min={0}
+              className={num}
+              value={attackMs}
+              onChange={(e) => onChange({ attackMs: Number(e.target.value) })}
+            />
+          </label>
+          <label className={row}>
+            <span className="text-text-secondary">Release (ms)</span>
+            <Input
+              type="number"
+              step={10}
+              min={0}
+              className={num}
+              value={releaseMs}
+              onChange={(e) => onChange({ releaseMs: Number(e.target.value) })}
+            />
+          </label>
+          {/* Not decoration: these are the two numbers that ARE the feel of a
+              ducker, and a user who reads them as an abstract "strength" will
+              set them wrong. Stating what they actually mean is the same
+              discipline the Fade section's own note follows. */}
+          <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+            Lowers this track while the chosen track has a clip playing. Attack is how fast it
+            drops (short, so the duck beats the first word); release is how fast it comes back
+            (long, so the bed doesn&apos;t pump between words).
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The `<Select>` value standing for "no ducking". A sentinel string, because
+ *  Base UI's `Select` uses `""` for "nothing selected" and `null` is not a
+ *  value it round-trips — the same reason `ClipInspectorPanel` uses a
+ *  `CUSTOM_CURVE` sentinel rather than an empty option. */
+const DUCK_OFF = 'off';
+
 /** D-098 — a track header row, now a real `@dnd-kit/sortable` item
  *  (replacing D-094's native HTML5 `draggable` + hand-rolled
  *  `draggedTrack`/`dragOverTrack` state and per-row `onDragOver`/`onDrop`).
@@ -447,10 +608,13 @@ function SortableTrackHeader({
   hidden,
   syncLocked,
   label,
+  duck,
+  trackLabels,
   onToggleLock,
   onToggleHidden,
   onToggleMute,
   onToggleSyncLocked,
+  onDuckChange,
   onRemove,
 }: {
   index: number;
@@ -461,10 +625,20 @@ function SortableTrackHeader({
   hidden: boolean;
   syncLocked: boolean;
   label: string;
+  /** D-149 — this track's ducking settings, already defaulted by the caller. */
+  duck: { from: number | null; db: number; attackMs: number; releaseMs: number };
+  /** D-149 — every track's label, for the "duck from" picker. */
+  trackLabels: string[];
   onToggleLock: () => void;
   onToggleHidden: () => void;
   onToggleMute: () => void;
   onToggleSyncLocked: () => void;
+  onDuckChange: (patch: {
+    duckFrom?: number | null;
+    duckDb?: number;
+    attackMs?: number;
+    releaseMs?: number;
+  }) => void;
   onRemove: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -554,6 +728,20 @@ function SortableTrackHeader({
           >
             {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
           </Button>
+        )}
+        {/* D-149 — ducking, right beside mute: both are this track's mix
+            settings, as against lock/sync-lock/hide which are editing and
+            compositing concerns. Audio tracks only — see `TrackDuckControl`. */}
+        {!isVideo && (
+          <TrackDuckControl
+            index={index}
+            duckFrom={duck.from}
+            duckDb={duck.db}
+            attackMs={duck.attackMs}
+            releaseMs={duck.releaseMs}
+            trackLabels={trackLabels}
+            onChange={onDuckChange}
+          />
         )}
         <Button
           variant="ghost"
@@ -1881,6 +2069,27 @@ export function TimelinePane() {
     applyOp({ kind: 'set_track_gain', track, gain: muted ? DEFAULT_TRACK_GAIN : 0 });
   };
 
+  /** D-149 — patch one track's ducking. Reads the track's CURRENT values for
+   *  whatever the patch doesn't name, so changing the attack alone doesn't
+   *  reset the amount — `set_track_duck` writes all four fields at once (like
+   *  `set_clip_fade` does for its four), so a partial write has to be
+   *  completed here rather than in the op. */
+  const changeDuck = (
+    track: number,
+    patch: { duckFrom?: number | null; duckDb?: number; attackMs?: number; releaseMs?: number },
+  ) => {
+    const t = tracks[track];
+    if (!t) return;
+    applyOp({
+      kind: 'set_track_duck',
+      track,
+      duckFrom: patch.duckFrom !== undefined ? patch.duckFrom : (t.duck_from ?? null),
+      duckDb: patch.duckDb ?? t.duck_db ?? 0,
+      duckAttackMs: patch.attackMs ?? t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
+      duckReleaseMs: patch.releaseMs ?? t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
+    });
+  };
+
   // D-090 — Phase 4 of the P0 full-NLE effort: lock/hide/rearrange, wired to
   // the D-086/D-089 ops. Not gated by the track's own current lock state
   // (mirrors `applyOp`'s own `set_track_locked`/`set_track_hidden`/
@@ -2432,10 +2641,21 @@ export function TimelinePane() {
                     hidden={hidden}
                     syncLocked={syncLocked}
                     label={labels[i]}
+                    duck={{
+                      // Defaulted here, once, so the control never has to read
+                      // an absent field as falsy — `0 ms` attack/release is a
+                      // real (instant, clicky) setting, not "unset".
+                      from: track.duck_from ?? null,
+                      db: track.duck_db ?? 0,
+                      attackMs: track.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
+                      releaseMs: track.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
+                    }}
+                    trackLabels={labels}
                     onToggleLock={() => toggleLock(i)}
                     onToggleHidden={() => toggleHidden(i)}
                     onToggleMute={() => toggleMute(i)}
                     onToggleSyncLocked={() => toggleSyncLocked(i)}
+                    onDuckChange={(patch) => changeDuck(i, patch)}
                     onRemove={() => doRemoveTrack(i)}
                   />
                 );

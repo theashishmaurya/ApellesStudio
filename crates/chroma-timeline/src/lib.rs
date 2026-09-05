@@ -113,6 +113,14 @@ pub struct Timeline {
 }
 
 /// One track: a typed, ordered lane of clips.
+///
+/// [`Default`] is **manual** (see below the struct), for the same reason
+/// `Clip`'s is: several fields' meaningful default is not their type's zero
+/// value (`gain` is `1.0`, `sync_locked` is `true`), and a `#[derive(Default)]`
+/// would hand out a silently-muted, sync-unlocked track. It mirrors the
+/// `#[serde(default = …)]` functions field for field, so a `Track` built in
+/// code and one deserialized from a project with none of those keys are the
+/// same track.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub kind: TrackKind,
@@ -178,6 +186,70 @@ pub struct Track {
     /// call despite that).
     #[serde(default = "default_sync_locked")]
     pub sync_locked: bool,
+    /// **Ducking (D-149): which OTHER track's clips duck this one.** `None`
+    /// (the default, and every pre-D-149 project) is no ducking at all — this
+    /// track mixes exactly as it did before the field existed.
+    ///
+    /// On the *track*, not the clip, because ducking is a relationship between
+    /// two tracks ("lower the music while the dialogue plays"), not a property
+    /// of one clip — the same reasoning that put `gain` here rather than on
+    /// `Clip`. The index names the **trigger** track: wherever that track has a
+    /// clip, this track is ducked by [`Self::duck_db`].
+    ///
+    /// This crate never reads it (no media/rendering here — see the module
+    /// doc); `chroma_media::audio`'s `DuckEnvelope` is the consumer, built
+    /// app-side from [`Self::duck_spans_from`] on the trigger track.
+    ///
+    /// A self-reference (`duck_from == this track's own index`) and an
+    /// out-of-range index are both *ignored* at the point of use rather than
+    /// rejected here, the same posture `Clip`'s fade fields take for a nonsense
+    /// value — `chroma_timeline_set` stores whatever it is handed, so the
+    /// consumer has to degrade safely regardless.
+    #[serde(default)]
+    pub duck_from: Option<usize>,
+    /// **How much to duck, in dB** (D-149) — a signed offset applied while the
+    /// trigger track is sounding. `-12.0` is "12 dB down", the usual
+    /// dialogue-over-music amount; `0.0` (the default) is unity, i.e. no
+    /// change even with a `duck_from` set.
+    ///
+    /// **dB here, linear in [`Self::gain`], deliberately.** `gain` is a mix
+    /// *level* a slider sets and the mixer multiplies by directly — linear is
+    /// the natural storage. A duck *amount* is the one audio number editors
+    /// genuinely think and speak in decibels ("duck the bed 12 dB"), and it is
+    /// set by typing a number rather than dragging a fader, so storing the
+    /// number the user actually said avoids a round-trip through a unit nobody
+    /// names. The conversion (`10^(db/20)`) happens once, at the point of use in
+    /// `chroma_media::audio`, exactly where the linear/dB boundary belongs.
+    ///
+    /// A bare `#[serde(default)]` is genuinely correct here, unlike `gain`'s
+    /// `default = "default_track_gain"`: `f32::default() == 0.0` and **0 dB is
+    /// unity**, so a pre-D-149 project loads with no duck rather than a silent
+    /// one. Not clamped — a positive value boosts, which is unusual but
+    /// well-defined, the same latitude `gain > 1.0` already has.
+    #[serde(default)]
+    pub duck_db: f32,
+    /// **One-pole attack time constant, milliseconds** (D-149) — how fast the
+    /// duck engages once the trigger track's clip starts. Default 10 ms: the
+    /// duck is already down by the time the first syllable is audible.
+    ///
+    /// A real DSP time constant, not a "strength" dial: it is the τ in
+    /// `y(t) = target + (y₀ - target)·e^(-t/τ)`, i.e. the time to cover 63.2%
+    /// of the distance to the new level. Attack and release are the whole feel
+    /// of a ducker, which is why they are two real numbers here (and in the MCP
+    /// surface) rather than one abstract knob.
+    ///
+    /// Named-default, not bare `#[serde(default)]`, for `gain`'s exact reason:
+    /// `f32::default() == 0.0` is instantaneous, which is a step function, and
+    /// a step on a gain envelope is an audible click at every clip boundary.
+    #[serde(default = "default_duck_attack_ms")]
+    pub duck_attack_ms: f32,
+    /// **One-pole release time constant, milliseconds** (D-149) — how fast the
+    /// gain comes back once the trigger track's clip ends. Default 300 ms,
+    /// deliberately far slower than the attack: a fast release pumps the music
+    /// up between words. See [`Self::duck_attack_ms`] for the τ definition and
+    /// why this is a named default.
+    #[serde(default = "default_duck_release_ms")]
+    pub duck_release_ms: f32,
 }
 
 fn default_track_gain() -> f32 {
@@ -186,6 +258,40 @@ fn default_track_gain() -> f32 {
 
 fn default_sync_locked() -> bool {
     true
+}
+
+/// D-149 — see [`Track::duck_attack_ms`]. Fast, so the duck is down before the
+/// first word lands.
+pub const DEFAULT_DUCK_ATTACK_MS: f32 = 10.0;
+/// D-149 — see [`Track::duck_release_ms`]. Slow, so the bed does not pump
+/// between words.
+pub const DEFAULT_DUCK_RELEASE_MS: f32 = 300.0;
+
+fn default_duck_attack_ms() -> f32 {
+    DEFAULT_DUCK_ATTACK_MS
+}
+
+fn default_duck_release_ms() -> f32 {
+    DEFAULT_DUCK_RELEASE_MS
+}
+
+impl Default for Track {
+    /// Mirrors the `#[serde(default = …)]` functions above exactly — see the
+    /// struct's own doc for why this is manual rather than derived.
+    fn default() -> Self {
+        Self {
+            kind: TrackKind::default(),
+            clips: Vec::new(),
+            gain: default_track_gain(),
+            locked: false,
+            hidden: false,
+            sync_locked: default_sync_locked(),
+            duck_from: None,
+            duck_db: 0.0,
+            duck_attack_ms: default_duck_attack_ms(),
+            duck_release_ms: default_duck_release_ms(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -856,10 +962,7 @@ impl Timeline {
             tracks: vec![Track {
                 kind: TrackKind::Video,
                 clips,
-                gain: default_track_gain(),
-                locked: false,
-                hidden: false,
-                sync_locked: default_sync_locked(),
+                ..Default::default()
             }],
         }
     }
@@ -999,11 +1102,7 @@ impl Timeline {
     pub fn add_track(&mut self, kind: TrackKind) -> usize {
         self.tracks.push(Track {
             kind,
-            clips: Vec::new(),
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
+            ..Default::default()
         });
         self.tracks.len() - 1
     }
@@ -1796,6 +1895,48 @@ impl Track {
             .map(|c| (c, c.source_start + (timeline_frame - c.start_frame)))
     }
 
+    /// D-149 — the `[start, end)` timeline-frame spans this track's clips
+    /// cover from `from_frame` onward, **sorted and merged**, each clipped so
+    /// it starts no earlier than `from_frame`.
+    ///
+    /// This is the ducking trigger signal in its model form: "when does this
+    /// track have something on it." [`Self::clip_at`] answers that for one
+    /// frame; a duck envelope needs the whole layout ahead of the playhead in
+    /// one query, because it is computed up front at play time (see
+    /// `docs/notes/audio-fade-duck-crossfade-plan.md` §4b) rather than sampled
+    /// frame by frame during the session.
+    ///
+    /// **Merging abutting spans is the load-bearing part, not tidiness.** Two
+    /// dialogue clips butted end to start are one continuous stretch of speech;
+    /// leaving them as two spans would put a zero-length hole between them, and
+    /// a ducker reading that hole starts releasing and re-attacking at every
+    /// cut — an audible pump exactly where an editor most expects the duck to
+    /// hold. D-104 forbids overlap, so merging is only ever about abutment, but
+    /// the `>=` below handles a stored overlap safely too rather than assuming
+    /// the invariant.
+    ///
+    /// Clips are walked in **value** order, not `Vec` order (D-054: `Vec` order
+    /// is bookkeeping only) — same discipline [`Self::clip_at`] and
+    /// [`Self::gap_at`] already follow. Zero-or-negative-length clips are
+    /// skipped: they cover no frame, so they trigger nothing.
+    pub fn clip_spans_from(&self, from_frame: i64) -> Vec<(i64, i64)> {
+        let mut spans: Vec<(i64, i64)> = self
+            .clips
+            .iter()
+            .map(|c| (c.start_frame.max(from_frame), c.end_frame()))
+            .filter(|(s, e)| e > s)
+            .collect();
+        spans.sort_unstable();
+        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(spans.len());
+        for (s, e) in spans {
+            match merged.last_mut() {
+                Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                _ => merged.push((s, e)),
+            }
+        }
+        merged
+    }
+
     /// D-105 — the exclusive `[gap_start, gap_end)` bounds of the **real,
     /// closeable** gap containing `timeline_frame`, or `None` if there isn't
     /// one. Two ways there isn't one: `timeline_frame` is inside a clip (use
@@ -1999,10 +2140,6 @@ mod tests {
         let mut t = Timeline::default();
         t.tracks.push(Track {
             kind: TrackKind::Video,
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
             clips: vec![
                 Clip {
                     id: "a".into(),
@@ -2024,6 +2161,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         });
         let tr = &t.tracks[0];
         assert_eq!(tr.clip_at(49).map(|(c, _)| c.name.as_str()), Some("A"));
@@ -2036,6 +2174,120 @@ mod tests {
             150,
             "duration is the furthest clip end, gap included"
         );
+    }
+
+    // --- D-149: the ducking trigger signal, in its model form -------------- //
+
+    /// A track holding clips at the given `(start, len)` positions —
+    /// deliberately pushed in **reverse** `Vec` order, since D-054 makes `Vec`
+    /// order bookkeeping only and `clip_spans_from` has to be correct
+    /// regardless of it.
+    fn track_with_clips(spans: &[(i64, i64)]) -> Track {
+        Track {
+            kind: TrackKind::Audio,
+            clips: spans
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(i, &(start, len))| Clip {
+                    id: format!("c{i}"),
+                    name: format!("C{i}"),
+                    source_path: "/c.wav".into(),
+                    duration: len,
+                    source_len: len,
+                    start_frame: start,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn clip_spans_from_returns_sorted_spans_regardless_of_vec_order() {
+        let tr = track_with_clips(&[(0, 50), (100, 50), (200, 25)]);
+        assert_eq!(
+            tr.clip_spans_from(0),
+            vec![(0, 50), (100, 150), (200, 225)],
+            "sorted by position, not by Vec order"
+        );
+    }
+
+    /// **Abutting clips merge into one span**, which is what stops a ducker
+    /// releasing and re-attacking at every cut inside a continuous take. Clips
+    /// with a real gap between them stay separate, because that gap is real
+    /// silence and the bed genuinely should come back up.
+    #[test]
+    fn clip_spans_from_merges_abutting_clips_but_not_gapped_ones() {
+        let abutting = track_with_clips(&[(0, 50), (50, 50), (100, 50)]);
+        assert_eq!(
+            abutting.clip_spans_from(0),
+            vec![(0, 150)],
+            "three back-to-back clips are one continuous stretch of sound"
+        );
+        let gapped = track_with_clips(&[(0, 50), (60, 50)]);
+        assert_eq!(gapped.clip_spans_from(0), vec![(0, 50), (60, 110)]);
+    }
+
+    #[test]
+    fn clip_spans_from_clips_to_the_playhead_and_drops_what_is_behind_it() {
+        let tr = track_with_clips(&[(0, 50), (100, 50)]);
+        // Mid-clip: the span reaching back before the playhead is truncated,
+        // which is what tells the envelope "already triggered when Play was
+        // pressed" rather than "triggers at frame 25".
+        assert_eq!(tr.clip_spans_from(25), vec![(25, 50), (100, 150)]);
+        // Entirely past the first clip: it contributes nothing.
+        assert_eq!(tr.clip_spans_from(60), vec![(100, 150)]);
+        // Past everything.
+        assert_eq!(tr.clip_spans_from(500), Vec::new());
+    }
+
+    #[test]
+    fn clip_spans_from_ignores_zero_length_clips_and_an_empty_track() {
+        assert_eq!(track_with_clips(&[]).clip_spans_from(0), Vec::new());
+        assert_eq!(
+            track_with_clips(&[(0, 0), (10, 20)]).clip_spans_from(0),
+            vec![(10, 30)],
+            "a clip covering no frame triggers nothing"
+        );
+    }
+
+    /// **The migration property, at the model.** A track deserialized from a
+    /// project written before D-149 has no ducking at all — and the fields that
+    /// were already there are untouched, including D-106's own non-zero
+    /// migration default.
+    #[test]
+    fn a_pre_d148_track_deserializes_with_no_ducking() {
+        let json = r#"{"kind":"audio","clips":[],"gain":0.5,"locked":false,"hidden":false}"#;
+        let tr: Track = serde_json::from_str(json).expect("pre-D-149 track");
+        assert_eq!(tr.duck_from, None, "absent means no ducking at all");
+        assert_eq!(
+            tr.duck_db, 0.0,
+            "0 dB is unity — a bare serde default is genuinely right here"
+        );
+        assert_eq!(tr.duck_attack_ms, DEFAULT_DUCK_ATTACK_MS);
+        assert_eq!(tr.duck_release_ms, DEFAULT_DUCK_RELEASE_MS);
+        assert_eq!(tr.gain, 0.5, "the fields that were there are untouched");
+        assert!(tr.sync_locked, "and D-106's migration default still holds");
+    }
+
+    /// `Track::default()` and a `Track` deserialized with none of the optional
+    /// keys must agree field for field — the manual `Default` exists to mirror
+    /// the serde defaults, so a drift between them is exactly the bug it is
+    /// there to prevent.
+    #[test]
+    fn track_default_matches_the_serde_defaults() {
+        let from_json: Track =
+            serde_json::from_str(r#"{"kind":"video","clips":[]}"#).expect("bare track");
+        let built = Track::default();
+        assert_eq!(from_json.gain, built.gain);
+        assert_eq!(from_json.locked, built.locked);
+        assert_eq!(from_json.hidden, built.hidden);
+        assert_eq!(from_json.sync_locked, built.sync_locked);
+        assert_eq!(from_json.duck_from, built.duck_from);
+        assert_eq!(from_json.duck_db, built.duck_db);
+        assert_eq!(from_json.duck_attack_ms, built.duck_attack_ms);
+        assert_eq!(from_json.duck_release_ms, built.duck_release_ms);
     }
 
     #[test]
@@ -2160,10 +2412,6 @@ mod tests {
         let mut t2 = Timeline::default();
         t2.tracks.push(Track {
             kind: TrackKind::Video,
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
             clips: vec![
                 Clip {
                     id: "x".into(),
@@ -2186,6 +2434,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         });
         t2.trim_end(0, 0, 999).unwrap();
         assert_eq!(
@@ -3116,10 +3365,7 @@ mod tests {
         let mk = |clips: Vec<Clip>| Track {
             kind: TrackKind::Video,
             clips,
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
+            ..Default::default()
         };
         Timeline {
             id: "t".into(),
@@ -3263,10 +3509,7 @@ mod tests {
         let mk = |kind, clips| Track {
             kind,
             clips,
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
+            ..Default::default()
         };
         let mut v = c("v", 0, 100);
         v.link_group = Some("g1".into());
@@ -3760,10 +4003,7 @@ mod tests {
         let mk = |kind, clips| Track {
             kind,
             clips,
-            gain: default_track_gain(),
-            locked: false,
-            hidden: false,
-            sync_locked: default_sync_locked(),
+            ..Default::default()
         };
         let v = c("v", 0, 100);
         let mut a = c("a", 0, 100);

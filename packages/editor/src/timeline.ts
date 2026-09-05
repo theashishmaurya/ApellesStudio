@@ -235,9 +235,41 @@ export interface Track {
    *  `true` (NOT the bare-optional "falsy" reading) wherever a `Track` is
    *  constructed or migrated — see `DEFAULT_SYNC_LOCKED`. */
   sync_locked?: boolean;
+  /** Ducking (D-149) — mirrors `chroma_timeline::Track::duck_from`: the index
+   *  of the track whose clips duck THIS one ("lower the music while the
+   *  dialogue plays"). `null`/absent — the default and every pre-D-149 project
+   *  — is no ducking at all. A relationship between two tracks, which is why it
+   *  lives here rather than on a `Clip`.
+   *
+   *  `null` as well as `undefined` because Rust's `Option<usize>` serialises an
+   *  explicit `null` once the field has ever been written and then cleared;
+   *  every read here must treat the two the same. */
+  duck_from?: number | null;
+  /** D-149 — how much to duck, in **dB** (`-12` = 12 dB down). `0` (the
+   *  default) is unity. Deliberately dB where `gain` above is linear: a fader
+   *  level is naturally linear, a duck amount is the one audio number editors
+   *  state in decibels. Rust converts once, at the point of use in
+   *  `chroma_media::audio`. */
+  duck_db?: number;
+  /** D-149 — the one-pole attack/release time constants in milliseconds: the
+   *  τ in `y(t) = target + (y₀ − target)·e^(−t/τ)`, i.e. the time to cover
+   *  63.2% of the distance to the new level. Two real DSP numbers, not one
+   *  "strength" dial — a fast attack puts the duck down before the first word,
+   *  a slow release stops the bed pumping between them. See
+   *  `DEFAULT_DUCK_ATTACK_MS`/`DEFAULT_DUCK_RELEASE_MS` for why these are
+   *  defaulted to non-zero values rather than read as falsy-absent. */
+  duck_attack_ms?: number;
+  duck_release_ms?: number;
 }
 
 export const DEFAULT_TRACK_GAIN = 1.0;
+/** Mirrors Rust's `chroma_timeline::DEFAULT_DUCK_ATTACK_MS` — fast, so the duck
+ *  is already down when the first word lands. A bare falsy-absent read would
+ *  give `0 ms`, which is a step function and therefore a click. */
+export const DEFAULT_DUCK_ATTACK_MS = 10;
+/** Mirrors Rust's `chroma_timeline::DEFAULT_DUCK_RELEASE_MS` — slow, so the bed
+ *  does not pump between words. Same non-falsy-default reasoning as the attack. */
+export const DEFAULT_DUCK_RELEASE_MS = 300;
 /** Mirrors Rust's `default_sync_locked()` — see `Track.sync_locked`'s own
  *  doc for why this is `true`, not a bare falsy default. */
 export const DEFAULT_SYNC_LOCKED = true;
@@ -970,6 +1002,32 @@ export type EditOp =
    *  `chroma_timeline::Track::sync_locked`. Always succeeds — same
    *  track-list-level reasoning as `set_track_locked`/`set_track_hidden`. */
   | { kind: 'set_track_sync_locked'; track: number; syncLocked: boolean }
+  /** D-149 — set a track's ducking: which track triggers it (`duckFrom`, or
+   *  `null` to turn ducking off) and the three real DSP numbers. Mirrors
+   *  `chroma_timeline::Track`'s `duck_from`/`duck_db`/`duck_attack_ms`/
+   *  `duck_release_ms`.
+   *
+   *  Its **own** op, not folded into `set_track_gain`, for the same reason
+   *  D-147 kept `set_clip_fade` out of `set_clip_transform`: gain is a fader a
+   *  mute toggle writes on every click, ducking is a routing relationship set
+   *  once, and folding them would make every mute restate four ducking values
+   *  it did not intend to touch.
+   *
+   *  Always succeeds for an in-range track — a track-level property like
+   *  `set_track_gain`/`set_track_locked`, not gated by the track's own lock
+   *  (which protects its clips, not its mix settings). A self-reference or an
+   *  out-of-range `duckFrom` is stored as given and ignored at the point of
+   *  use, matching Rust's `resolve_track_duck`: `chroma_timeline_set` stores
+   *  whatever it is handed, so the consumer degrades safely regardless and this
+   *  op does not need to be the only guard. */
+  | {
+      kind: 'set_track_duck';
+      track: number;
+      duckFrom: number | null;
+      duckDb: number;
+      duckAttackMs: number;
+      duckReleaseMs: number;
+    }
   /** D-129 — dissolve the COMPLETE A/V link group the clip at `(track, clip)`
    *  belongs to (not just remove that one clip from it): Palmier Pro's own
    *  documented `manage_clip_links` unlink semantics, and what Premiere's
@@ -1122,6 +1180,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.hidden ? `Hide track ${op.track + 1}` : `Show track ${op.track + 1}`;
     case 'set_track_sync_locked':
       return op.syncLocked ? `Sync-lock track ${op.track + 1}` : `Unsync track ${op.track + 1}`;
+    case 'set_track_duck':
+      return op.duckFrom == null
+        ? `Stop ducking track ${op.track + 1}`
+        : `Duck track ${op.track + 1} from track ${op.duckFrom + 1}`;
     case 'move_track':
       return `Reorder track ${op.from + 1}`;
     case 'set_clip_fade':
@@ -1282,6 +1344,32 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (op.track < 0 || op.track >= tl.tracks.length) return tl;
     const next = clone(tl);
     next.tracks[op.track].sync_locked = op.syncLocked;
+    return next;
+  }
+  if (op.kind === 'set_track_duck') {
+    if (op.track < 0 || op.track >= tl.tracks.length) return tl;
+    const next = clone(tl);
+    const t = next.tracks[op.track];
+    t.duck_from = op.duckFrom;
+    // Normalised here, on the way in, so a cleared numeric `<input>` (which
+    // reads as `NaN`) can never reach `project.json` — the same reason the crop
+    // insets and the fade frame counts are cleaned up here rather than left
+    // entirely to the backend. Rust still degrades a nonsense value to "no
+    // duck" at the point of use, because `chroma_timeline_set` stores whatever
+    // it is given and an MCP write reaching the store by another route has to
+    // be survivable too; the UI's own writes should be well-formed at rest.
+    //
+    // The time constants are floored at 0 (an "instant" attack is a legitimate
+    // thing to ask for — Rust's `MIN_DUCK_TAU_SECS` makes it well-defined) and
+    // `duck_db` is NOT clamped: a positive value boosts, which is unusual but
+    // meaningful, the same latitude `gain > 1` already has.
+    t.duck_db = Number.isFinite(op.duckDb) ? op.duckDb : 0;
+    t.duck_attack_ms = Number.isFinite(op.duckAttackMs)
+      ? Math.max(0, op.duckAttackMs)
+      : DEFAULT_DUCK_ATTACK_MS;
+    t.duck_release_ms = Number.isFinite(op.duckReleaseMs)
+      ? Math.max(0, op.duckReleaseMs)
+      : DEFAULT_DUCK_RELEASE_MS;
     return next;
   }
   if (op.kind === 'move_track') {

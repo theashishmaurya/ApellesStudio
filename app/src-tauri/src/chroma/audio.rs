@@ -33,7 +33,7 @@
 
 use std::path::PathBuf;
 
-use chroma_media::audio::{AudioSourceSpec, FadeEnvelope};
+use chroma_media::audio::{AudioSourceSpec, DuckEnvelope, FadeEnvelope};
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
@@ -131,7 +131,9 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
 
-    if let Some((clip, source_frame, info)) = super::edit::resolve_video_position(start_frame)? {
+    if let Some((track_index, clip, source_frame, info)) =
+        super::edit::resolve_video_position(start_frame)?
+    {
         if clip.link_group.is_some() {
             // D-129 — this video clip's audio has been externalized into a
             // linked audio clip (see `chroma_timeline::Clip::link_group`), so
@@ -169,6 +171,12 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 // this is the "…and its sound" half of that, the compositor's
                 // `resolve_clip_transform` being the picture half.
                 fade: fade_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
+                // D-149 — a video track's embedded audio is a mixed source like
+                // any other, so it ducks like any other. Rare in practice (the
+                // thing you duck is a music bed, which lives on an audio track,
+                // and D-129 externalises new clips' audio anyway) but excluding
+                // it would be an asymmetry with no reason behind it.
+                duck: duck_for_track(track_index, start_frame, &info)?,
             });
         } else {
             log::debug!(
@@ -178,7 +186,8 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         }
     }
 
-    for (clip, info, gain) in super::edit::resolve_audio_track_positions(start_frame)? {
+    for (track_index, clip, info, gain) in super::edit::resolve_audio_track_positions(start_frame)?
+    {
         // Where in the clip the playhead is, and how much of it is still
         // ahead — the same two derivations the embedded-audio baseline above
         // makes, now made once here for an audio-track clip too rather than
@@ -194,6 +203,9 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // D-147 — an audio clip's fade is a gain fade, the direct
             // counterpart of the opacity fade a video clip's picture gets.
             fade: fade_for_clip(&clip, &info, elapsed_frames),
+            // D-149 — the everyday ducking case: a music bed on this track,
+            // ducked by whatever is on the dialogue track it points at.
+            duck: duck_for_track(track_index, start_frame, &info)?,
         });
     }
 
@@ -237,6 +249,63 @@ fn fade_for_clip(
         in_curve: clip.fade_in_curve,
         out_curve: clip.fade_out_curve,
     })
+}
+
+/// Build the ducking envelope for the source on track `track_index`, or `None`
+/// if that track isn't ducked — the common path, and the one that keeps the mix
+/// byte-identical to pre-D-149 (see [`DuckEnvelope`], whose `None` case makes
+/// the mixer skip its per-sample pass entirely rather than multiply by a 1.0 it
+/// computed).
+///
+/// **This is the timeline→media half of D-149, which is why it is app-side.**
+/// [`DuckEnvelope`] is seconds, like [`FadeEnvelope`] and
+/// [`AudioSourceSpec`]'s `start_secs`/`duration_secs` beside it. "Which frames
+/// does the dialogue track have clips on" is not: answering it needs a
+/// `chroma_timeline::Timeline`, and a media crate reaching for one would be
+/// reaching *up* a layer (D-039/D-146 — the same rule that kept
+/// [`chroma_audio_play`]'s body here at all). So the app resolves the trigger
+/// track's layout and converts frames → session-relative seconds; the crate
+/// owns the smoother and the dB conversion.
+///
+/// **Which fps does the conversion.** `info` is the *ducked* clip's own probed
+/// [`super::video::VideoInfo`] — the same one that produced this source's
+/// `start_secs`/`duration_secs` a few lines up, so the trigger spans land in
+/// exactly the seconds base the envelope is evaluated in. That inherits the
+/// model's existing "a clip's source fps is the timeline's fps" assumption
+/// (B-048/D-130, and [`fade_for_clip`] below) rather than introducing a second
+/// one — and it is the assumption to revisit first if a real mixed-fps timeline
+/// ever makes a duck land early or late.
+///
+/// Spans are made **session-relative** by subtracting the playhead: a trigger
+/// clip already under the playhead comes back with a negative start, which
+/// [`DuckEnvelope::new`] clips to `0.0` and reads as "already ducked when Play
+/// was pressed."
+fn duck_for_track(
+    track_index: usize,
+    start_frame: u64,
+    info: &super::video::VideoInfo,
+) -> Result<Option<DuckEnvelope>, String> {
+    let Some((duck_db, attack_ms, release_ms, spans)) =
+        super::edit::resolve_track_duck(track_index, start_frame)?
+    else {
+        return Ok(None);
+    };
+    let secs = |frames: i64| info.frame_to_secs(frames.max(0) as u64);
+    let spans_secs: Vec<(f64, f64)> = spans
+        .iter()
+        .map(|&(s, e)| {
+            (
+                secs(s) - secs(start_frame as i64),
+                secs(e) - secs(start_frame as i64),
+            )
+        })
+        .collect();
+    Ok(DuckEnvelope::new(
+        &spans_secs,
+        duck_db,
+        attack_ms,
+        release_ms,
+    ))
 }
 
 #[cfg(test)]
@@ -370,6 +439,215 @@ mod tests {
             (env.gain_at(0.0) - 0.48).abs() < 1e-6,
             "got {}",
             env.gain_at(0.0)
+        );
+    }
+
+    // --- D-149: track ducking → the mixer's envelope ---------------------- //
+    //
+    // The timeline→media half is what lives here: resolving `duck_from` to a
+    // real trigger track, its clip layout to session-relative seconds, and the
+    // whole thing to `None` when it can't apply. The smoother's own arithmetic
+    // (the one-pole closed form, attack-vs-release, fade×duck composition) is
+    // `chroma-media`'s and is tested in that crate's `audio::tests`.
+
+    /// A three-track project on disk and made active: V0 (a video clip), A1 (a
+    /// music bed, the track that gets ducked, configured by `duck`) and A2 (the
+    /// dialogue/trigger track, holding `trigger_spans` in timeline frames).
+    /// `duck` is `(duck_from, duck_db, attack_ms, release_ms)`.
+    ///
+    /// The returned `TempDir` must be kept alive for the project directory to
+    /// stay on disk; the caller is responsible for `state::set_project(None)`.
+    fn open_duck_test_project(
+        duck: Option<(usize, f32, f32, f32)>,
+        trigger_spans: &[(i64, i64)],
+    ) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("DuckTest.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let clip = |id: &str, path: &str, start: i64, len: i64| chroma_timeline::Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: path.to_string(),
+            source_start: 0,
+            duration: len,
+            source_len: len,
+            start_frame: start,
+            ..Default::default()
+        };
+        let mut bed = chroma_timeline::Track {
+            kind: chroma_timeline::TrackKind::Audio,
+            clips: vec![clip("bed", "/bed.m4a", 0, 250)],
+            ..Default::default()
+        };
+        if let Some((from, db, attack, release)) = duck {
+            bed.duck_from = Some(from);
+            bed.duck_db = db;
+            bed.duck_attack_ms = attack;
+            bed.duck_release_ms = release;
+        }
+        let timeline = chroma_timeline::Timeline {
+            id: "tl1".into(),
+            name: "DuckTest".into(),
+            rate: None,
+            tracks: vec![
+                chroma_timeline::Track {
+                    kind: chroma_timeline::TrackKind::Video,
+                    clips: vec![clip("vid", "/vid.mov", 0, 250)],
+                    ..Default::default()
+                },
+                bed,
+                chroma_timeline::Track {
+                    kind: chroma_timeline::TrackKind::Audio,
+                    clips: trigger_spans
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &(s, e))| clip(&format!("vo{i}"), "/vo.m4a", s, e - s))
+                        .collect(),
+                    ..Default::default()
+                },
+            ],
+        };
+        let manifest = super::super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "DuckTest".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: Default::default(),
+            timelines: vec![timeline],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::super::state::set_project(Some(super::super::state::ProjectRef {
+            path: project_dir,
+            name: "DuckTest".into(),
+        }));
+        tmp
+    }
+
+    /// **The backward-compatibility case for the mixer, D-149's half.** A track
+    /// with no `duck_from` — every track in every pre-D-149 project — gets NO
+    /// envelope at all, not one that happens to return 1.0, so `mix_chunk`
+    /// skips the per-sample pass and the mix runs exactly the arithmetic it ran
+    /// before this feature existed.
+    #[test]
+    fn a_track_with_no_duck_configured_gets_no_envelope_at_all() {
+        let _guard = session_test_guard();
+        let _project = open_duck_test_project(None, &[(50, 75)]);
+        let got = duck_for_track(1, 0, &info_25fps()).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(got.is_none(), "no duck_from must mean no envelope");
+    }
+
+    /// **A real duck, end to end from the timeline.** A 25 fps trigger clip at
+    /// frames [50, 75) is seconds [2, 3) of the session, so the bed is unity
+    /// before it, at the full −12 dB reduction inside it, and recovered after.
+    #[test]
+    fn a_configured_duck_reduces_gain_exactly_under_the_trigger_clip() {
+        let _guard = session_test_guard();
+        // attack/release deliberately fast (10 ms) so "settled" is unambiguous
+        // at the sample points below; the smoothing itself is tested for real
+        // in `chroma-media`.
+        let _project = open_duck_test_project(Some((2, -12.0, 10.0, 10.0)), &[(50, 75)]);
+        let env = duck_for_track(1, 0, &info_25fps())
+            .expect("resolves")
+            .expect("a real duck");
+        super::super::state::set_project(None);
+
+        assert!((env.gain_at(0.0) - 1.0).abs() < 1e-6, "unity before the VO");
+        assert!(
+            (env.gain_at(1.9) - 1.0).abs() < 1e-6,
+            "still unity just before"
+        );
+        assert!(
+            (env.gain_at(2.9) - 0.251_189).abs() < 1e-4,
+            "−12 dB under the VO, got {}",
+            env.gain_at(2.9)
+        );
+        assert!(
+            (env.gain_at(4.0) - 1.0).abs() < 1e-4,
+            "recovered after it, got {}",
+            env.gain_at(4.0)
+        );
+    }
+
+    /// Frames convert to seconds at the clip's own fps, and a mid-clip Play
+    /// makes the spans session-relative: starting at frame 50 (2 s in) puts the
+    /// trigger's own start at session second 0, i.e. already ducked.
+    #[test]
+    fn duck_spans_are_session_relative_so_a_mid_trigger_play_starts_ducked() {
+        let _guard = session_test_guard();
+        let _project = open_duck_test_project(Some((2, -12.0, 10.0, 300.0)), &[(50, 75)]);
+        let env = duck_for_track(1, 50, &info_25fps())
+            .expect("resolves")
+            .expect("a real duck");
+        super::super::state::set_project(None);
+        assert!(
+            (env.gain_at(0.0) - 0.251_189).abs() < 1e-5,
+            "Play pressed mid-VO starts fully ducked, not ramping in: {}",
+            env.gain_at(0.0)
+        );
+    }
+
+    /// Every way a duck can be configured-but-inert resolves to `None` rather
+    /// than to an envelope. The self-reference is the one worth having a test
+    /// for: it is reachable just by removing a track above the pair, and a
+    /// track ducking on its own clips would attenuate exactly the audio it is
+    /// triggered by.
+    #[test]
+    fn an_unresolvable_or_self_referencing_duck_is_none() {
+        let _guard = session_test_guard();
+        let info = info_25fps();
+
+        let _p1 = open_duck_test_project(Some((1, -12.0, 10.0, 300.0)), &[(50, 75)]);
+        let self_ref = duck_for_track(1, 0, &info).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(self_ref.is_none(), "a track cannot duck from itself");
+
+        let _p2 = open_duck_test_project(Some((99, -12.0, 10.0, 300.0)), &[(50, 75)]);
+        let missing = duck_for_track(1, 0, &info).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(missing.is_none(), "a duck_from naming no real track");
+
+        let _p3 = open_duck_test_project(Some((2, 0.0, 10.0, 300.0)), &[(50, 75)]);
+        let unity = duck_for_track(1, 0, &info).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(unity.is_none(), "0 dB changes nothing");
+
+        let _p4 = open_duck_test_project(Some((2, -12.0, 10.0, 300.0)), &[]);
+        let silent = duck_for_track(1, 0, &info).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(silent.is_none(), "an empty trigger track never triggers");
+
+        let _p5 = open_duck_test_project(Some((2, -12.0, 10.0, 300.0)), &[(50, 75)]);
+        let past = duck_for_track(1, 200, &info).expect("resolves");
+        super::super::state::set_project(None);
+        assert!(past.is_none(), "every trigger clip is behind the playhead");
+    }
+
+    /// Two abutting trigger clips reach the envelope as ONE span — the merge is
+    /// `Track::clip_spans_from`'s, and this is the check that it survives the
+    /// frames→seconds conversion rather than being undone by it. Without it the
+    /// duck would release and re-attack at the seam between two dialogue takes.
+    #[test]
+    fn abutting_trigger_clips_hold_the_duck_across_the_cut() {
+        let _guard = session_test_guard();
+        let _project =
+            open_duck_test_project(Some((2, -12.0, 10.0, 300.0)), &[(50, 75), (75, 100)]);
+        let env = duck_for_track(1, 0, &info_25fps())
+            .expect("resolves")
+            .expect("a real duck");
+        super::super::state::set_project(None);
+        // The seam is frame 75 = session second 3.0.
+        assert!(
+            (env.presence_at(3.0) - 1.0).abs() < 1e-6,
+            "the duck must hold across the cut, got presence {}",
+            env.presence_at(3.0)
         );
     }
 
@@ -532,10 +810,7 @@ mod tests {
         let mut tracks = vec![chroma_timeline::Track {
             kind: chroma_timeline::TrackKind::Video,
             clips: vec![clip],
-            gain: 1.0,
-            locked: false,
-            hidden: false,
-            sync_locked: true,
+            ..Default::default()
         }];
         if let Some((audio_path, gain)) = audio_track {
             tracks.push(chroma_timeline::Track {
@@ -553,9 +828,7 @@ mod tests {
                     ..Default::default()
                 }],
                 gain,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
+                ..Default::default()
             });
         }
         let timeline = chroma_timeline::Timeline {

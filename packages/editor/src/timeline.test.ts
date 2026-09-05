@@ -669,6 +669,77 @@ describe('add_track / remove_track / set_track_gain (D-080)', () => {
   });
 });
 
+describe('set_track_duck (D-149)', () => {
+  const duckOp = {
+    kind: 'set_track_duck' as const,
+    track: 0,
+    duckFrom: 1,
+    duckDb: -12,
+    duckAttackMs: 10,
+    duckReleaseMs: 300,
+  };
+
+  it('writes all four ducking fields', () => {
+    const after = applyOp(tl(backToBack()), duckOp);
+    expect(after.tracks[0].duck_from).toBe(1);
+    expect(after.tracks[0].duck_db).toBe(-12);
+    expect(after.tracks[0].duck_attack_ms).toBe(10);
+    expect(after.tracks[0].duck_release_ms).toBe(300);
+  });
+
+  it('duckFrom: null turns ducking off without disturbing the numbers', () => {
+    const on = applyOp(tl(backToBack()), duckOp);
+    const off = applyOp(on, { ...duckOp, duckFrom: null });
+    expect(off.tracks[0].duck_from).toBeNull();
+    expect(off.tracks[0].duck_db).toBe(-12);
+    expect(off.tracks[0].duck_attack_ms).toBe(10);
+  });
+
+  it('normalises NaN (a cleared numeric input) rather than storing it', () => {
+    const after = applyOp(tl(backToBack()), {
+      ...duckOp,
+      duckDb: Number.NaN,
+      duckAttackMs: Number.NaN,
+      duckReleaseMs: Number.NaN,
+    });
+    expect(after.tracks[0].duck_db).toBe(0);
+    expect(after.tracks[0].duck_attack_ms).toBe(10);
+    expect(after.tracks[0].duck_release_ms).toBe(300);
+  });
+
+  it('floors the time constants at 0 but does NOT clamp the dB (a boost is legal)', () => {
+    const after = applyOp(tl(backToBack()), {
+      ...duckOp,
+      duckDb: 3,
+      duckAttackMs: -50,
+      duckReleaseMs: -1,
+    });
+    expect(after.tracks[0].duck_db).toBe(3);
+    expect(after.tracks[0].duck_attack_ms).toBe(0);
+    expect(after.tracks[0].duck_release_ms).toBe(0);
+  });
+
+  it('is a no-op for an out-of-range index', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { ...duckOp, track: 9 })).toBe(before);
+  });
+
+  it('is NOT gated by the track lock — a mix setting, not a clip edit', () => {
+    const locked = applyOp(tl(backToBack()), {
+      kind: 'set_track_locked',
+      track: 0,
+      locked: true,
+    });
+    expect(applyOp(locked, duckOp).tracks[0].duck_from).toBe(1);
+  });
+
+  it('labels the op for the undo stack', () => {
+    const before = tl(backToBack());
+    expect(labelForOp(duckOp, before)).toBe('Duck track 1 from track 2');
+    expect(labelForOp({ ...duckOp, duckFrom: null }, before)).toBe('Stop ducking track 1');
+  });
+});
+
 describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () => {
   it('set_track_locked sets the locked field directly', () => {
     const before = tl(backToBack());

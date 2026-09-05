@@ -11314,6 +11314,239 @@ matters is the *direction* of the edge, not the purity of every L2 crate.
 **Numbering.** Assigned D-148 against `main`'s real tip (`e15b2da`) and
 re-verified free immediately before committing — `fork/ducking` was running
 concurrently in another worktree.
+## D-149 — Ducking: time-varying gain on the seam D-147 left for it, a real one-pole smoother evaluated in closed form, and a track-header control
+
+**decided + built (2026-09-05).** The Phase 2 of
+`docs/notes/audio-fade-duck-crossfade-plan.md` — §4 of that doc scoped ducking
+and ended "Not built tonight," which this pass makes false and corrects in
+place. D-147's own entry named this as "the one thing this pass owed a feature
+it did not build"; this is that debt being collected, and the whole point of
+the entry is that **nothing in the mixer had to be reshaped to take it.**
+
+### The primitive really was reusable
+
+`Track::gain` (D-057) is a static `f32` resolved once at `chroma_audio_play` and
+never re-read, so ducking cannot ride it — the same wall fades hit. D-147
+answered that by shaping `FadeEnvelope` as *"give me a gain multiplier at
+output-sample-frame position N"*, applied per sample-frame **before**
+`mix_sources`. `DuckEnvelope` is that same interface with a different function
+behind it: same `gain_at(session_secs) -> f32`, same seconds unit, same
+app-side/crate-side split, and `mix_sources` is **still** untouched, so every
+D-057 headroom guarantee and its byte-identical single-source passthrough stand.
+
+The one change to the shared path: the two envelopes are applied in **one**
+per-sample-frame pass (`apply_envelopes`) and **multiply**, rather than being
+two passes over the buffer. Multiplication is the only composition under which
+neither silently overrides the other — the same argument `resolve_clip_transform`
+already makes for a fade against keyframed opacity, and what a real mixer does
+with two gain stages in series. `FadeEnvelope::apply` was folded into that
+function rather than kept beside it; no dead second path.
+
+### Trigger detection: the model, not the signal
+
+*Does the nominated track have a clip covering this frame?* Exact,
+deterministic, free, no decode and no analysis, and it is what an editor means
+when they point at a track and say "duck under this." New model query
+`Track::clip_spans_from(from_frame)` returns the `[start, end)` spans from the
+playhead on. Real RMS sidechain detection stays Phase 2 (plan §4b) and should
+reuse the `waveform` peaks `media_cache` already holds rather than decoding
+again — D-140 §6b reached the same conclusion independently for `inspect_pacing`.
+
+**Abutting spans are merged, and that is load-bearing rather than tidiness.**
+Not anticipated by the scoping pass, and it is the difference between a ducker
+that works on real footage and one that does not: two dialogue clips butted end
+to start are one continuous stretch of speech, and read as two spans they leave
+a zero-length hole that makes the smoother release and re-attack **at every
+cut** — an audible pump exactly where an editor most expects the duck to hold.
+Clips with a *real* gap stay separate, because that gap is real silence.
+
+### The smoother is a closed form, not a per-sample recursion
+
+Attack/release smoothing is not optional: a raw presence signal is a step
+function, and a step on a gain envelope is a click at every clip boundary. The
+standard answer is a one-pole, `y += a·(x − y)`.
+
+**The change from the plan.** That coefficient, `a = 1 − e^(−1/(τ·fs))`, is a
+function of the output sample rate. Because the presence input is *piecewise
+constant* with finitely many transitions, the recursion has an exact closed form
+on each piece — `y(t) = target + (entry − target)·e^(−(t − t₀)/τ)` — so the
+envelope is precomputed as a short list of segments (each carrying the value the
+previous one ended on, which is what makes it continuous across every boundary)
+and evaluated by binary search plus one `exp`. Two things a recursion cannot
+give: the envelope is **bit-identical at 44.1 kHz and 48 kHz**, which is this
+project's determinism invariant rather than a nicety; and `gain_at` is a **pure
+function**, evaluable out of order and unaffected by where a chunk boundary
+falls. Options considered and rejected: stepping the recursion at the device
+rate (rate-dependent, stateful, order-dependent); precomputing a sampled gain
+table (needs a session length nothing here knows, and is an approximation of a
+thing that has an exact answer).
+
+**"One-pole" is a checked claim, not a description.** A unit test runs the
+discrete recursion sample by sample at 48 kHz against the closed form and
+asserts they agree to 1e-9. Another pins τ as the 63.2% time, which is what the
+`attack_ms`/`release_ms` fields actually mean.
+
+Two smaller calls: `MIN_DUCK_TAU_SECS = 1e-6` floors τ, because a user can type
+`0 ms` and `exp(-0/0)` is `NaN` — 1 µs is far faster than one output
+sample-frame (≈21 µs at 48 kHz), i.e. genuinely instantaneous in the only terms
+the mixer can express, without a special case. And the smoothed presence
+interpolates between unity and the ducked level **linearly**, not in dB: the
+envelope multiplies a linear buffer, and a second nonlinearity between the
+smoother and the samples would make the time constants no longer describe the
+gain anyone hears.
+
+### Where it lives, and the dB call
+
+`chroma_timeline::Track` gains `duck_from: Option<usize>`, `duck_db`,
+`duck_attack_ms`, `duck_release_ms` — a track-level pair because ducking is a
+relationship between tracks, not a clip property, the same reasoning that put
+`gain` there rather than on `Clip`. The crate never reads them.
+
+**Migration.** `duck_db` takes a **bare** `#[serde(default)]` and that is
+genuinely correct rather than lazy, unlike `gain`'s `default = "…"`:
+`f32::default() == 0.0` and **0 dB is unity**, so a pre-D-149 project loads
+un-ducked with no sentinel and no backfill — exactly `Clip::fade_in_frames`'s
+own argument. The two time constants *do* need named defaults
+(`DEFAULT_DUCK_ATTACK_MS = 10`, `DEFAULT_DUCK_RELEASE_MS = 300`), for `gain`'s
+exact reason: `0.0` there is instantaneous, i.e. the step the smoother exists to
+remove. `Track` also gained a **manual** `Default` mirroring the serde defaults
+field for field (a derived one would hand out a silently-muted, sync-unlocked
+track), which is `Clip`'s own precedent and removed four fields of churn from
+every construction site; a test asserts the two agree so they cannot drift.
+
+**dB here, linear everywhere else — checked, not assumed.** `grep` confirmed
+there was no decibel anywhere in the audio path before this: `Track::gain` and
+`MASTER_VOLUME_BITS` are both linear multipliers. `duck_db` is dB anyway,
+because a duck *amount* is the one audio number editors actually state in
+decibels ("duck the bed 12 dB") and it is typed rather than dragged, so storing
+the number the user said avoids a round-trip through a unit nobody names. The
+conversion is one function, `db_to_linear`, at the point of use in the mixer —
+the same "store what the UI speaks, convert at the consumer" split
+`crop_pixel_rect` uses for normalised insets. Not clamped: a positive value
+boosts, the same latitude `gain > 1.0` already has.
+
+**A guard the scoping pass did not name:** a track pointing `duck_from` at
+**itself**. Reachable just by removing a track above the pair and shifting the
+indices, and it would attenuate exactly the audio triggering it. Ignored at the
+point of use and *rejected outright* by the MCP tool, so an agent is told rather
+than left with a stored setting that silently does nothing.
+
+### The layer split, following D-146/D-147's line exactly
+
+- **`chroma-media`** owns `DuckEnvelope`, the smoother and `db_to_linear` — the
+  envelope is *seconds*, a media fact of the same kind as `AudioSourceSpec`'s
+  `start_secs`/`duration_secs`.
+- **`app/src-tauri`'s `chroma::audio::duck_for_track`** owns turning a trigger
+  *track* into session-relative *seconds*, because that needs a `Timeline` and a
+  media crate reaching for one would be reaching up a layer. Frames→seconds goes
+  through the **ducked** clip's own probed `VideoInfo` — the same one that
+  produced that source's `start_secs`, so the spans land in exactly the seconds
+  base the envelope is evaluated in. That inherits the model's existing "a
+  clip's source fps is the timeline's fps" assumption (B-048/D-130,
+  `fade_for_clip`) rather than introducing a second one.
+- **`chroma-timeline`** owns `clip_spans_from` and nothing else.
+
+**Two resolvers now hand back the track index they already computed.**
+`resolve_audio_track_positions` returns `(usize, Clip, VideoInfo, f32)` and
+`resolve_video_position` returns `(usize, Clip, u64, VideoInfo)`. Both already
+*had* the index and threw it away; re-deriving "which track won" at the call
+site would be a second copy of the top-wins walk that could drift. Same call
+D-147 made for `resolve_audio_track_positions`, for the same reason.
+
+A video track's embedded audio ducks like any other source — rare post-D-129
+(a clip's sound lives on its own linked audio track) but excluding it would be
+an asymmetry with no reason behind it.
+
+### UI + MCP
+
+- **A track-header popover, not a clip Inspector field** (the plan is explicit,
+  and it follows from the field living on `Track`): duck-from picker, amount in
+  dB, attack and release in ms. Behind a popover because the header row is
+  already dense at `ROW_HEIGHT`; the trigger button lights up when ducking is
+  actually on, so the state is legible without opening it. **Audio tracks only**,
+  matching this header's existing deliberate per-kind split (mute is audio-only,
+  hide is video-only) — the engine and MCP will duck any track, so the rarer
+  video case is still reachable, just not cluttering every video header.
+- **`set_track_duck(track, duck_from, duck_db, attack_ms, release_ms)`** — the
+  third Edit-tab MCP tool, on the `applyOp`/undo-stack path `set_clip_fade`
+  established (D-140 §6c), so an agent's duck is undoable. Its own op, not
+  folded into `set_track_gain`, for D-147's exact reason: gain is a fader a mute
+  toggle writes on every click, ducking is a routing relationship set once, and
+  folding them would make every mute restate four ducking values it did not
+  intend to touch. The tool text states the two properties an agent would
+  otherwise guess at — that the trigger is the **clip layout, not the loudness**
+  (a pause mid-sentence does not let the bed back up), and that ducking is a
+  track relationship with no per-clip form — and returns what was actually
+  *stored*, since `applyOp` normalises.
+
+### Verification
+
+`cargo check --workspace --all-targets` clean. `cargo test -p chroma-timeline` —
+**128 passed** (6 new). `cargo test -p chroma-media` — **98 passed** (12 new).
+`cargo test -p RapidRAW --lib -- chroma::` — **178 passed, 0 failed** (5 new;
+the known-flaky `relight::tests::keyframed_light_without_a_loaded_video_falls_
+back_to_raw_fields` did not fire this run). `npm test --workspace @chroma/editor`
+— **294 passed, 8/8 files** (7 new), including the D-142 real-DOM
+`TimelinePane` harness, which now renders the new track-header control.
+`npx tsc --noEmit -p packages/editor` clean; `tsc -p app` has **143 errors
+before and after** this change (all pre-existing vendored-fork i18n/`any`
+errors), i.e. zero new.
+
+The tests that matter most, named because a regression would hide behind them:
+the **closed form against the discrete recursion** (that "one-pole" is the real
+filter and not a shape that resembles it); **attack demonstrably faster than
+release** through a real envelope rather than by configuration; a **full session
+with a trigger track** producing unity before the clip, exactly −12 dB under it
+and recovery after; and the **backward-compat gate at both ends** — a track with
+no `duck_from` gets `None`, not a unity envelope, so `mix_chunk` never touches
+its buffer, plus every configured-but-inert shape (0 dB, empty trigger track,
+every span behind the playhead, self-reference, dangling index) resolving to
+`None` too. A model-level test pins that a pre-D-149 `project.json` track
+deserializes un-ducked with `gain`/`sync_locked` untouched.
+
+### Honest gaps
+
+1. **Not seen or heard in the assembled app.** This sandbox cannot launch the
+   Tauri window — the same disclosed constraint every entry since D-125 carries,
+   and the same one D-147 recorded for fades. Specifically unverified by ear:
+   that the duck *sounds* smooth. The closed-form per-sample-frame envelope and
+   the continuity test (no adjacent-sample gain jump above 1e-3 across both
+   transitions at 48 kHz) are the reasoned and measured defence against zipper
+   noise and clicks, not a recording of their absence.
+2. **The 10 ms / 300 ms defaults are standard practice, not measurement**
+   against the owner's own content — carried forward verbatim as an honest gap
+   from the scoping pass, because nothing in this pass changed it.
+3. **The trigger is the clip layout, not the signal.** A pause mid-sentence does
+   not let the bed back up; only a real gap between clips does. That is Phase 2
+   (RMS sidechain, reusing the cached `waveform` peaks) and is deliberate, but
+   it is the most likely way the feature reads as "not quite right" on a
+   single-clip VO track — so it is said out loud in the MCP tool text and the
+   track-header UI rather than left to be discovered.
+4. **The mid-session re-resolve gap is untouched, and will look like this
+   feature failing.** Roadmap item 1's known limitation — a source's set is
+   fixed at `chroma_audio_play`, so a multi-clip timeline goes quiet after the
+   first clip until the next Play/seek — is unchanged here. A duck is correct
+   when playback *starts* in the ducked clip and is not heard at all when
+   playback runs into it from a previous clip. **Pre-existing, not introduced by
+   this pass**, and the same gap D-147 flagged for fades.
+5. **`duck_for_track`'s frames→seconds inherits the single-fps assumption.** It
+   converts the *trigger* track's frames through the *ducked* clip's probed fps.
+   Identical under the model's existing "a clip's source fps is the timeline's
+   fps" assumption, which every other conversion here already makes; it is the
+   first thing to revisit if a real mixed-fps timeline ever makes a duck land
+   early or late.
+6. **No duck visualisation on the timeline.** A user cannot see the envelope,
+   only hear it. A gain curve drawn over the ducked track's waveform is the
+   obvious next UI investment; the envelope is a pure function of time, so
+   nothing about the model blocks it.
+
+**Numbering.** Assigned D-149 after checking `main` **and** the concurrent
+`fork/extract-chroma-project` worktree at the end of this pass: main has landed
+through D-147, and that fork's `chroma-project` extraction has already claimed
+D-148 on its own branch. Taking the next free number rather than colliding is
+the same move D-147 made when D-146 landed underneath it. No code conflict
+between the two — that fork moves the manifest and timeline lifecycle out of
+`edit.rs`, this one adds two resolvers and four model fields.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

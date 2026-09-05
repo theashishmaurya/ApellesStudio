@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { safeUnlisten } from '../utils/tauriListeners';
 
-// D-147 — the Edit tab's own store + fade curve helpers. `app` already depends
+// D-147/D-149 — the Edit tab's own store + fade curve and ducking helpers. `app` already depends
 // on `@chroma/editor` (see `main.tsx`), and `useChromaControl()` is mounted
 // app-level in `App.tsx`, so an Edit-tab op is reachable from here without new
 // plumbing. Going through `applyOp` (not the Rust commands) is D-140 §6c.
@@ -13,6 +13,8 @@ import {
   timelineDuration,
   FADE_PRESETS,
   DEFAULT_FADE_CURVE,
+  DEFAULT_DUCK_ATTACK_MS,
+  DEFAULT_DUCK_RELEASE_MS,
   fadePresetName,
   type FadeCurve,
 } from '@chroma/editor';
@@ -342,6 +344,13 @@ export function useChromaControl() {
             gain: t.gain ?? 1,
             locked: !!t.locked,
             hidden: !!t.hidden,
+            // D-149 — reported so an agent can read a track's ducking back and
+            // write it again unchanged, the same round-trip property the fade
+            // curves have. `duckFrom: null` is "not ducked."
+            duckFrom: t.duck_from ?? null,
+            duckDb: t.duck_db ?? 0,
+            duckAttackMs: t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
+            duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
             clips: t.clips.map((c, ci) => ({
               // `index` is what every mutating op addresses a clip by
               // (`set_clip_fade`, `chroma_timeline_move_clip`); `id` is the
@@ -439,6 +448,74 @@ export function useChromaControl() {
           fadeInCurveName: fadePresetName(after?.fade_in_curve),
           fadeOutCurveName: fadePresetName(after?.fade_out_curve),
           note: 'a fade on a video clip fades its picture AND its embedded audio together',
+        };
+      },
+
+      // ---- Edit tab: track ducking (D-149) --------------------------------
+      // The second mutating Edit-tab tool, on the same `applyOp`/undo-stack
+      // path `set_clip_fade` established (D-140 §6c). Real DSP numbers, not a
+      // "strength" dial: the attack and release time constants ARE the feel of
+      // a ducker, and an agent asked to "duck the music under the VO" should be
+      // able to state them.
+      set_track_duck: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return { error: 'no timeline — open a project first' };
+        const track = Math.round(Number(a?.track));
+        const tr = tl.tracks[track];
+        if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+
+        // `duck_from` arrives as a track index, or null/"off" to turn ducking
+        // off. Both failure modes are reported rather than silently accepted:
+        // a duck pointing at a track that does not exist, or at itself, is
+        // ignored by the mixer, so storing one without saying so would look
+        // like the tool worked and the feature didn't.
+        let duckFrom: number | null;
+        const raw = a?.duck_from;
+        if (raw == null || raw === 'off' || raw === false) {
+          duckFrom = null;
+        } else {
+          duckFrom = Math.round(Number(raw));
+          if (!Number.isFinite(duckFrom) || duckFrom < 0 || duckFrom >= tl.tracks.length) {
+            return { error: `duck_from ${raw} is not a track (0..${tl.tracks.length - 1}), or null to turn ducking off` };
+          }
+          if (duckFrom === track) {
+            return { error: `a track cannot duck from itself (track ${track})` };
+          }
+        }
+
+        const num = (v: unknown, fallback: number) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : fallback;
+        };
+
+        // Through `applyOp`, not the Rust `chroma_timeline_*` commands — same
+        // reason `set_clip_fade` does (D-140 §6c): `applyOp` pushes onto the
+        // shared `@chroma/history` stack, so an agent's duck is undoable.
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_track_duck',
+          track,
+          duckFrom,
+          duckDb: num(a?.duck_db, tr.duck_db ?? 0),
+          duckAttackMs: num(a?.attack_ms, tr.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS),
+          duckReleaseMs: num(a?.release_ms, tr.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS),
+        });
+
+        // Read back from the store rather than echoing the request: `applyOp`
+        // normalises (see the op in `timeline.ts`), and a caller that asked for
+        // a -50 ms attack should be told it got 0.
+        const after = useEditorTimelineStore.getState().timeline?.tracks[track];
+        return {
+          ok: true,
+          track,
+          kind: after?.kind ?? tr.kind,
+          duckFrom: after?.duck_from ?? null,
+          duckDb: after?.duck_db ?? 0,
+          attackMs: after?.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
+          releaseMs: after?.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
+          note:
+            (after?.duck_from ?? null) == null
+              ? 'ducking is off for this track'
+              : 'the duck follows the trigger track\'s CLIP layout, not its loudness — a pause mid-sentence does not let the bed back up',
         };
       },
 

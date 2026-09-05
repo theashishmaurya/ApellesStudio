@@ -1,4 +1,4 @@
-# Practical sound control — fades, crossfade, ducking (scoping + Phase 1 build, 2026-09-05)
+# Practical sound control — fades, crossfade, ducking (scoping + Phase 1 & 2 builds, 2026-09-05)
 
 **Where this came from.** The owner asked for "sound engineer"-style control over audio in
 Chroma, and clarified the ask himself: *not* AI emotional understanding — D-139's research pass
@@ -8,9 +8,13 @@ bezier curve support.*
 
 So this document does two things, and keeps them clearly apart. §1–§4 are a scoping pass over the
 whole "practical sound control" surface: fades, crossfade, ducking, and the MCP shape for each.
-§5–§8 are the design that was actually **built** in this same pass (D-147) — Phase 1, fades with
-real cubic-bezier curves. Everything else here is scoped and deliberately not built, with the
-reason named each time.
+§5–§8 are the design that was actually **built** in the same pass (D-147) — Phase 1, fades with
+real cubic-bezier curves.
+
+**§4's ducking was then built in a follow-up pass, D-149**, on exactly the primitive §4a said it
+would reuse; that section is updated in place below with what actually landed and where the design
+changed on contact. Crossfade (§3) remains scoped and deliberately not built, with the reason
+named.
 
 Same split, and the same rigour bar, as `docs/notes/pacing-audio-assistance-plan.md` (D-140).
 
@@ -191,7 +195,16 @@ the bezier model already answers it would be wrong.
 
 ---
 
-## 4. Ducking — buildable, and it reuses Phase 1's primitive
+## 4. Ducking — **BUILT (D-149)**, and it did reuse Phase 1's primitive
+
+> **Status: built, 2026-09-05, D-149.** This section was written as a scoping pass and its
+> final line said "Not built tonight." That is no longer true and the section is corrected in
+> place rather than left to rot. Everything §4a and §4b predicted held on contact — the primitive
+> was reused unchanged, the field shape is exactly the one named, and trigger detection stayed a
+> model query. **Two things §4b did not anticipate, both recorded in §4c below:** the smoother is
+> evaluated in *closed form* rather than as a per-sample recursion (which makes it sample-rate
+> independent, a property a recursion cannot have), and the trigger spans have to be **merged**
+> across abutting clips or the duck pumps at every cut in a continuous take.
 
 ### 4a. It cannot ride `Track::gain`, and the reason is the same one fades hit
 
@@ -236,9 +249,65 @@ envelope is a deterministic function of the timeline over the session's range, s
 computed up front at play time exactly like the fade envelopes are, and needs no mid-session
 re-resolution.
 
-**Not built tonight.** It is a real, separate feature with its own model fields, its own UI
-(a track-header control, not a clip Inspector one) and its own `D-NNN`. What Phase 1 owed it was
-a primitive it can stand on without a rewrite, and that is what it got.
+### 4c. What actually landed (D-149), and the two places the design moved
+
+**The primitive was reused, not re-invented.** `DuckEnvelope` sits beside `FadeEnvelope` in
+`crates/chroma-media/src/audio.rs` with the same `gain_at(session_secs) -> f32` shape, and the two
+are applied in **one** per-sample-frame pass (`apply_envelopes`) that multiplies them together,
+rather than two passes over the buffer. Multiplication is the only composition under which neither
+silently overrides the other — the same argument `resolve_clip_transform` already makes for a fade
+against keyframed opacity. `mix_sources` is still completely untouched, so every D-057 headroom
+guarantee stands.
+
+**The fields landed exactly as §4b named them**, on `chroma_timeline::Track`: `duck_from:
+Option<usize>`, `duck_db`, `duck_attack_ms`, `duck_release_ms`. One migration detail worth
+recording because it differs from `gain`'s: `duck_db` takes a **bare** `#[serde(default)]`, and
+that is genuinely correct rather than lazy — `f32::default() == 0.0` and **0 dB is unity**. The two
+time constants do need named defaults (10 ms / 300 ms), for `gain`'s exact reason: `0.0` there is
+instantaneous, which is a step, which is the click the smoother exists to prevent.
+
+**dB, where every other level in this codebase is linear.** Checked rather than assumed: there was
+no dB anywhere in the audio path before this — `Track::gain` and `MASTER_VOLUME_BITS` are both
+linear multipliers. `duck_db` is dB anyway, because a duck *amount* is the one audio number editors
+state in decibels ("duck the bed 12 dB") and it is typed rather than dragged. The conversion is one
+function, `db_to_linear`, at the point of use in the mixer — the same "store what the UI speaks,
+convert at the consumer" split `crop_pixel_rect` uses for normalised insets.
+
+**Change 1 — the smoother is a closed form, not a per-sample recursion.** §4b said "a one-pole
+smoother with separate attack and release coefficients," and a coefficient (`a = 1 − e^(−1/(τ·fs))`)
+is a function of the output sample rate. Because the presence input is *piecewise constant* with
+finitely many transitions, the recursion has an exact closed form on each piece —
+`y(t) = target + (entry − target)·e^(−(t − t₀)/τ)` — so the envelope is precomputed as a short list
+of segments (each carrying the value the previous one ended on, which is what makes it continuous)
+and evaluated by binary search plus one `exp`. Two things that buys, neither available to a
+recursion: the envelope is **identical at 44.1 kHz and 48 kHz**, which is the determinism invariant
+this project holds itself to; and `gain_at` is a **pure function**, evaluable out of order and
+unaffected by where a chunk boundary falls. A unit test runs the discrete recursion sample by sample
+against the closed form to pin that they are the same filter, so "one-pole" is a checked claim
+rather than a description.
+
+**Change 2 — abutting trigger clips must merge.** Not anticipated, and it is the difference between
+a ducker that works on real footage and one that does not. Two dialogue clips butted end to start
+are one continuous stretch of speech; read as two spans they leave a zero-length hole, and the
+smoother starts releasing and re-attacking at every cut — an audible pump exactly where an editor
+most expects the duck to hold. `Track::clip_spans_from` therefore returns **sorted and merged**
+spans, and that merge is load-bearing rather than tidiness. Clips with a *real* gap between them
+stay separate, because that gap is real silence and the bed genuinely should come back up.
+
+**One guard §4b did not name:** a track pointing `duck_from` at **itself**. Reachable just by
+removing a track above the pair and shifting the indices, and it would attenuate exactly the audio
+that triggers it. Ignored at the point of use (`resolve_track_duck`) and rejected outright by the
+MCP tool, so an agent is told rather than left with a stored setting that silently does nothing.
+
+**Where the layer split fell**, following D-146/D-147's own line exactly: `chroma-media` owns the
+smoother, the dB conversion and the envelope; `app/src-tauri`'s `chroma::audio::duck_for_track`
+owns turning a trigger *track* into session-relative *seconds*, because that needs a `Timeline` and
+a media crate reaching for one would be reaching up a layer. `chroma-timeline` owns
+`clip_spans_from` and nothing else — it never reads the ducking fields, same boundary `gain` keeps.
+
+**Still Phase 2, still not built:** real RMS sidechain detection. The trigger is the clip layout,
+not the loudness, so a pause mid-sentence does *not* let the bed back up. That is stated in the MCP
+tool text and the track-header UI rather than left for a user to discover.
 
 ---
 
@@ -464,8 +533,12 @@ the first time that answer is actually exercised rather than written down.
    environment has no way to exercise.
 4. **Crossfade is genuinely blocked** on a model change (§3), and the constant-power dip (§3c) is
    a real design question the bezier model does not answer on its own.
-5. **Ducking is scoped, not built** (§4), and its attack/release numbers are drawn from standard
-   practice, not from measurement against the owner's own content.
+5. **Ducking is built (D-149, §4c)** — this line originally read "scoped, not built." What remains
+   honest from it: the 10 ms / 300 ms defaults are drawn from standard practice, **not** from
+   measurement against the owner's own content, and the duck has not been *heard* (same sandbox
+   constraint as gap 2). Its trigger is also still the clip layout rather than the signal, so a
+   pause mid-sentence does not let the bed back up — Phase 2, and said out loud in the tool text
+   and the UI rather than left to be discovered.
 6. **The mid-session re-resolve gap is untouched.** Roadmap item 1's known limitation — a
    multi-clip timeline goes quiet after the first clip until the next Play/seek — is unchanged by
    this pass. A fade on clip 2 is correct when playback starts inside clip 2 and is not heard at

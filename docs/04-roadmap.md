@@ -964,11 +964,20 @@ flag itself).
     that D-104 reversed for a UX reason — which needs the owner's call. Same-track
     overlap is much bigger: it changes what `Track::clip_at`'s `.find()` means
     everywhere in the app.
-  - **Ducking (music under dialogue) — scoped, not built.** Plan doc §4. It cannot
-    ride D-057's static `Track::gain`; it needs time-varying gain, which is exactly
-    what D-147's fade envelope already is — so it reuses that seam rather than
-    adding a second one. That is why the envelope was built as "a gain multiplier
-    at position N" instead of the two-line special case a fade alone needed.
+  - ~~**Ducking (music under dialogue)**~~ — **done, D-149 (2026-09-05).** Plan
+    doc §4, built on exactly the seam D-147 left for it: it cannot ride D-057's
+    static `Track::gain`, it needs time-varying gain, and the fade envelope
+    already *was* time-varying gain. `Track` gains `duck_from`/`duck_db`/
+    `duck_attack_ms`/`duck_release_ms`; the trigger is a pure timeline-model
+    query (`Track::clip_spans_from` — does the nominated track have a clip
+    here), smoothed by a real one-pole with separate attack/release time
+    constants, evaluated in closed form so it is sample-rate independent, and
+    multiplied into the same per-sample-frame pass the fade already runs in.
+    Track-header popover + a `set_track_duck` MCP tool with the real numbers.
+    **Phase 2 still open:** RMS sidechain detection, so a pause mid-sentence
+    lets the bed back up — should reuse the `waveform` peaks `media_cache`
+    already holds rather than decoding again (plan §4b, and D-140 §6b reached
+    the same conclusion for `inspect_pacing`).
 
 - **Steps 3–7 — scoped, not started (D-141, 2026-09-05).**
   `docs/notes/crate-extraction-plan.md` is the map: per-crate real contents with

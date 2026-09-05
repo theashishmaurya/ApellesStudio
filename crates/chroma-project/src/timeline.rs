@@ -232,10 +232,6 @@ mod tests {
             rate: None,
             tracks: vec![Track {
                 kind: TrackKind::Video,
-                gain: 1.0,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
                 clips: vec![Clip {
                     id: "c1".into(),
                     name: "c".into(),
@@ -244,6 +240,7 @@ mod tests {
                     source_len: 10,
                     ..Default::default()
                 }],
+                ..Default::default()
             }],
         });
         manifest.active_timeline = 0;

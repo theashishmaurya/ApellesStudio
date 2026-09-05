@@ -3036,10 +3036,6 @@ mod tests {
             rate: None,
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
-                gain: 1.0,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -3050,6 +3046,7 @@ mod tests {
                     start_frame: 0,
                     ..Default::default()
                 }],
+                ..Default::default()
             }],
         });
 
@@ -3142,11 +3139,8 @@ mod tests {
             rate: None,
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
-                gain: 1.0,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
                 clips: vec![clip("clip-a"), clip("clip-b")],
+                ..Default::default()
             }],
         });
 
@@ -3188,10 +3182,6 @@ mod tests {
             rate: None,
             tracks: vec![chroma_timeline::Track {
                 kind: TrackKind::Video,
-                gain: 1.0,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
                 clips: vec![Clip {
                     id: "clip-xyz".into(),
                     media_id: Some("m1".into()),
@@ -3202,6 +3192,7 @@ mod tests {
                     start_frame: 0,
                     ..Default::default()
                 }],
+                ..Default::default()
             }],
         });
 
@@ -3345,19 +3336,13 @@ mod tests {
                 // track 0 (higher priority) fully covers track 1's clip
                 chroma_timeline::Track {
                     kind: TrackKind::Video,
-                    gain: 1.0,
-                    locked: false,
-                    hidden: false,
-                    sync_locked: true,
                     clips: vec![top.clone()],
+                    ..Default::default()
                 },
                 chroma_timeline::Track {
                     kind: TrackKind::Video,
-                    gain: 1.0,
-                    locked: false,
-                    hidden: false,
-                    sync_locked: true,
                     clips: vec![bottom.clone()],
+                    ..Default::default()
                 },
             ],
         });

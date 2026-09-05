@@ -35,6 +35,12 @@ export {
   fadePresetName,
   // D-147 — `get_timeline` reports the timeline's own duration.
   timelineDuration,
+  // D-149 — the ducking migration defaults, exported for the MCP bridge:
+  // `get_timeline` reports a track's attack/release and `set_track_duck`
+  // fills them in when the caller omits one. Non-zero, so an absent field
+  // must never be read as falsy (0 ms is a step function, i.e. a click).
+  DEFAULT_DUCK_ATTACK_MS,
+  DEFAULT_DUCK_RELEASE_MS,
   CHROMA_MEDIA_DRAG_MIME,
   clipFromDraggedMedia,
   // D-129 — A/V link groups (`docs/notes/av-linking.md`).

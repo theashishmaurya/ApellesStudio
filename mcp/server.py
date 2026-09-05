@@ -298,7 +298,7 @@ def seek(frame: int) -> list:
 
 
 # --------------------------------------------------------------------------- #
-# Edit tab — timeline read + clip fades (D-147)
+# Edit tab — timeline read + clip fades (D-147) + track ducking (D-149)
 #
 # The first Edit-tab tools on this surface; everything above is Colorist.
 # `get_timeline` exists because `set_clip_fade(track, clip, ...)` is unusable
@@ -311,14 +311,16 @@ def get_timeline() -> str:
     indices the mutating Edit-tab tools address clips by.
 
     Returns {id, name, durationFrames, tracks: [{index, kind: "video"|"audio",
-    gain, locked, hidden, clips: [{index, id, name, sourcePath, startFrame,
-    duration, sourceStart, sourceLen, linkGroup, fadeInFrames, fadeOutFrames,
-    fadeInCurve, fadeOutCurve, fadeInCurveName, fadeOutCurveName}]}]}.
+    gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
+    clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
+    sourceLen, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
+    fadeOutCurve, fadeInCurveName, fadeOutCurveName}]}]}.
 
     All positions and durations are in FRAMES, not seconds — the unit every
-    Edit-tab number is in. `index` is what set_clip_fade addresses; `id` is the
-    stable identity that survives a reorder, for re-finding a clip after an
-    edit. Read-only, cheap, no side effects."""
+    Edit-tab number is in. `index` is what set_clip_fade and set_track_duck
+    address; `id` is the stable identity that survives a reorder, for re-finding
+    a clip after an edit. `duckFrom` is null on a track that is not ducked.
+    Read-only, cheap, no side effects."""
     import json
 
     return json.dumps(_op("get_timeline"), indent=2, default=str)
@@ -380,6 +382,66 @@ def set_clip_fade(
     if fade_out_curve is not None:
         args["fade_out_curve"] = fade_out_curve
     return json.dumps(_op("set_clip_fade", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def set_track_duck(
+    track: int,
+    duck_from: int | None = None,
+    duck_db: float | None = None,
+    attack_ms: float | None = None,
+    release_ms: float | None = None,
+) -> str:
+    """Duck one track under another: lower `track` whenever the track named by
+    `duck_from` has a clip playing. The music-under-dialogue move. `track` and
+    `duck_from` are the 0-based track indices from get_timeline.
+
+    `duck_from=None` turns ducking OFF for this track. A track cannot duck from
+    itself, and an index that is not a real track is rejected rather than stored
+    — both would be silently ignored by the mixer, which would look like the
+    tool worked and the feature didn't.
+
+    THE THREE NUMBERS, which are real DSP parameters and not a "strength" dial:
+
+    - `duck_db` -- how far down, in DECIBELS, while the trigger track sounds.
+      -12 is the usual dialogue-over-music amount; -6 is gentle, -18 is heavy.
+      0 dB is unity, i.e. no duck at all. (Note this is dB while `gain` on the
+      same track is a LINEAR multiplier -- a fader level is naturally linear, a
+      duck amount is the number editors actually state in dB.)
+    - `attack_ms` -- how fast the duck engages, as a one-pole TIME CONSTANT:
+      the time to cover 63.2% of the way down. Default 10 ms. Short, so the
+      duck is already down before the first syllable is audible; long enough
+      and the first word rides over the bed.
+    - `release_ms` -- how fast the gain comes back, same definition. Default
+      300 ms. Deliberately much slower than the attack: a fast release makes
+      the bed pump audibly between words. 300-500 ms is the usual range.
+
+    Two properties worth setting this with rather than guessing at:
+
+    1. The trigger is the trigger track's CLIP LAYOUT, not its loudness. A pause
+       mid-sentence does NOT let the bed back up -- only a real gap between
+       clips does, and two clips butted end to start read as one continuous
+       stretch. If you want the bed rising in every breath, cut the dialogue
+       track into the phrases you want.
+    2. Ducking is a TRACK relationship, so it applies to every clip on the
+       track, for the whole timeline -- there is no per-clip duck.
+
+    Undoable: this goes through the same store action and the same undo stack
+    the GUI's own track header writes to, so a human can Cmd+Z it.
+
+    Returns what was actually STORED (the values are normalised on the way in --
+    a negative time constant becomes 0), so read the response rather than
+    assuming the request landed verbatim."""
+    import json
+
+    args: dict = {"track": track, "duck_from": duck_from}
+    if duck_db is not None:
+        args["duck_db"] = duck_db
+    if attack_ms is not None:
+        args["attack_ms"] = attack_ms
+    if release_ms is not None:
+        args["release_ms"] = release_ms
+    return json.dumps(_op("set_track_duck", **args), indent=2, default=str)
 
 
 # --------------------------------------------------------------------------- #

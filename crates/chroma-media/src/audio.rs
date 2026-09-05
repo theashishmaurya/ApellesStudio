@@ -854,6 +854,19 @@ pub struct AudioSourceSpec {
     /// clip's fade *frames* are not. The caller converts, in `app/src-tauri`'s
     /// `chroma::audio::fade_for_clip`.
     pub fade: Option<FadeEnvelope>,
+    /// D-149 — this source's track-level ducking envelope, or `None` when its
+    /// track has no `duck_from` set (every track in every pre-D-149 project).
+    /// `None` is not "an envelope that returns 1.0": with both this and
+    /// [`Self::fade`] absent, [`mix_chunk`] skips the per-sample pass entirely,
+    /// so the un-ducked, un-faded mix runs exactly the arithmetic it always
+    /// did.
+    ///
+    /// Seconds, and already resolved against the trigger track's clip layout,
+    /// for the same reason `fade` is: which frames another track has clips on
+    /// is a timeline fact, and the crate that mixes audio deliberately cannot
+    /// see a timeline. The caller converts, in `app/src-tauri`'s
+    /// `chroma::audio::duck_for_track`.
+    pub duck: Option<DuckEnvelope>,
 }
 
 /// One clip's fade envelope, in **seconds** (D-147).
@@ -913,16 +926,308 @@ impl FadeEnvelope {
             &self.out_curve,
         ) as f32
     }
+}
 
-    /// Apply this envelope to one interleaved chunk in place. `session_frame`
-    /// is how many output sample-frames the session has already produced —
-    /// including any [`discard_samples`] skipped for D-125's skew
+/// Convert a decibel offset to the linear multiplier the mixer actually uses.
+/// `0 dB` is exactly `1.0` (checked, not merely approximated: `powf(0.0)` is
+/// exactly 1.0), `-6 dB` ≈ 0.501, `-∞` would be silence.
+///
+/// **This is the one place the dB/linear boundary is crossed.**
+/// `chroma_timeline::Track::gain` is linear because it is a fader; `Track::
+/// duck_db` is decibels because a duck *amount* is the number editors state in
+/// dB. Storing each in the unit its own UI speaks, and converting once here at
+/// the point of use, is the same discipline `crop_pixel_rect` follows for
+/// normalised insets → pixels. Pure — no I/O.
+pub(crate) fn db_to_linear(db: f64) -> f64 {
+    if !db.is_finite() {
+        return 1.0;
+    }
+    10f64.powf(db / 20.0)
+}
+
+/// Floor on a one-pole time constant, in seconds (D-149). A user-supplied
+/// `0 ms` attack is a legitimate "as fast as you can" request, but `exp(-0/0)`
+/// is `NaN`; flooring τ here keeps [`DuckEnvelope`]'s closed form free of a
+/// special case while being far faster than one output sample-frame
+/// (1 µs vs. ≈21 µs at 48 kHz), i.e. genuinely instantaneous in the only terms
+/// the mixer can express.
+const MIN_DUCK_TAU_SECS: f64 = 1e-6;
+
+/// One piecewise segment of the smoothed presence signal (D-149): from `t0`
+/// seconds onward it decays exponentially from `entry` toward `target`.
+#[derive(Debug, Clone, Copy)]
+struct DuckSegment {
+    /// Session second this segment begins at. Segments are sorted and the
+    /// first is always `0.0`.
+    t0: f64,
+    /// Where the smoother is heading: `1.0` while the trigger track sounds,
+    /// `0.0` while it does not.
+    target: f64,
+    /// The smoothed value at `t0` — the previous segment's value carried
+    /// forward, which is what makes the envelope continuous across every
+    /// boundary (and therefore click-free).
+    entry: f64,
+    /// The time constant governing this segment: attack while `target == 1.0`
+    /// (the duck engaging), release while it is `0.0` (the gain returning).
+    tau: f64,
+}
+
+/// One ducked source's track-level ducking envelope (D-149).
+///
+/// **The same interface `FadeEnvelope` established, with a different function
+/// behind it** — "give me a gain multiplier at position N," evaluated per
+/// output sample-frame and multiplied into the source's own buffer before
+/// [`mix_sources`] sees it. That was the one thing D-147 owed this feature, and
+/// this is it being collected rather than a parallel mechanism being invented
+/// (`docs/notes/audio-fade-duck-crossfade-plan.md` §4a).
+///
+/// ## Trigger detection: the model, not the signal
+///
+/// The trigger is a pure timeline-model query — *does the nominated track have
+/// a clip covering this frame?* — resolved app-side into the session-relative
+/// second spans this type is constructed from. Exact, deterministic, free, no
+/// decode and no analysis, and it is what an editor means when they point at a
+/// track and say "duck under this." Real RMS sidechain detection (so a pause
+/// mid-sentence lets the bed back up) is a Phase 2 refinement that should reuse
+/// the `waveform` peaks `media_cache` already holds; it is deliberately not
+/// this.
+///
+/// ## The smoother: a one-pole, in closed form
+///
+/// A raw presence signal is a step function, and a step on a gain envelope is
+/// an audible click at every clip boundary. The standard fix is a one-pole
+/// smoother with separate attack and release time constants — fast attack so
+/// the duck is down before the first word, slow release so the bed does not
+/// pump between words.
+///
+/// The discrete one-pole is `y += a·(x − y)` with `a = 1 − e^(−1/(τ·fs))`.
+/// Because the presence input here is **piecewise constant** with finitely many
+/// transitions, that recursion has an exact closed form on each piece:
+///
+/// ```text
+/// y(t) = target + (entry − target) · e^(−(t − t₀)/τ)
+/// ```
+///
+/// so the whole envelope is precomputed as a short list of [`DuckSegment`]s
+/// (one per transition, each carrying the value the previous segment ended on)
+/// and evaluated by binary search plus one `exp`. Two reasons that is better
+/// than running the recursion per sample:
+///
+/// 1. **It is sample-rate independent.** A recursion stepped at the device's
+///    rate gives subtly different numbers at 44.1 kHz and 48 kHz; the closed
+///    form gives the same envelope on every device, which is the determinism
+///    invariant this project holds itself to. ([`tests::the_closed_form_is_the_
+///    one_pole_recursion`] pins the two against each other so the claim is
+///    checked rather than asserted.)
+/// 2. **It is stateless**, so `gain_at` is a pure function of `(self, t)` —
+///    evaluable out of order, testable without a session, and unaffected by
+///    where a chunk boundary happens to fall.
+///
+/// **Starting mid-trigger is handled by construction**: the first segment's
+/// `entry` equals its own `target`, i.e. the smoother begins in the steady
+/// state for whatever is happening at the playhead. Pressing Play in the middle
+/// of a line of dialogue starts fully ducked rather than ramping in — the same
+/// property `FadeEnvelope::offset_secs` gives a mid-clip fade.
+///
+/// `pub` with a private field set, unlike [`FadeEnvelope`]: the segment list is
+/// *derived*, not authored, and letting a caller write one directly would let
+/// the `entry` chain go inconsistent with the taus. [`Self::new`] is the only
+/// way to build one, and it takes exactly the numbers a caller has.
+#[derive(Debug, Clone)]
+pub struct DuckEnvelope {
+    segments: Vec<DuckSegment>,
+    /// The linear gain to reach while fully ducked — `db_to_linear(duck_db)`.
+    ducked_gain: f64,
+}
+
+impl DuckEnvelope {
+    /// Build the envelope for one ducked source, or `None` when it provably
+    /// cannot change anything — no trigger spans in this session's range, or a
+    /// `0 dB` duck. `None` matters: it is what keeps a track with ducking
+    /// configured-but-inert on the same byte-identical mix path as one with no
+    /// ducking at all (see [`AudioSourceSpec::duck`]).
+    ///
+    /// `trigger_spans` are `[start, end)` **session-relative seconds** on the
+    /// trigger track, sorted and non-overlapping (which is what
+    /// `chroma_timeline::Track::clip_spans_from` returns, merged, before the
+    /// caller converts frames to seconds). A span reaching back before the
+    /// playhead is clipped to `0.0`, which is how "Play pressed mid-dialogue"
+    /// arrives here.
+    ///
+    /// `duck_db` is the signed dB offset while triggered; `attack_ms` /
+    /// `release_ms` are the one-pole time constants (63.2% times — see the type
+    /// doc), floored at [`MIN_DUCK_TAU_SECS`] so `0` means "instant" rather
+    /// than `NaN`. Non-finite input degrades to the unset behaviour rather than
+    /// poisoning the mix, matching `chroma_types::fade_gain`'s own posture.
+    pub fn new(
+        trigger_spans: &[(f64, f64)],
+        duck_db: f32,
+        attack_ms: f32,
+        release_ms: f32,
+    ) -> Option<Self> {
+        let duck_db = if duck_db.is_finite() {
+            duck_db as f64
+        } else {
+            0.0
+        };
+        if duck_db == 0.0 {
+            return None; // unity — nothing to apply
+        }
+        let tau = |ms: f32| {
+            let s = if ms.is_finite() {
+                ms as f64 / 1000.0
+            } else {
+                0.0
+            };
+            s.max(MIN_DUCK_TAU_SECS)
+        };
+        let attack_tau = tau(attack_ms);
+        let release_tau = tau(release_ms);
+
+        // Presence transitions, in order. Spans are already sorted, merged and
+        // non-overlapping, so pushing (start → 1) then (end → 0) per span
+        // yields a strictly alternating, time-ordered target signal.
+        let mut points: Vec<(f64, f64)> = Vec::with_capacity(trigger_spans.len() * 2 + 1);
+        for &(s, e) in trigger_spans {
+            if !s.is_finite() || !e.is_finite() || e <= 0.0 || e <= s {
+                continue; // entirely behind the playhead, or empty
+            }
+            points.push((s.max(0.0), 1.0));
+            points.push((e, 0.0));
+        }
+        if points.is_empty() {
+            return None; // the trigger track never sounds in this session
+        }
+        // A session that starts *outside* a trigger clip opens un-ducked; one
+        // that starts inside it already has a (0.0, 1.0) point from the clip
+        // above, so there is nothing to prepend.
+        if points[0].0 > 0.0 {
+            points.insert(0, (0.0, 0.0));
+        }
+
+        // Chain the segments: each one enters at whatever value the previous
+        // one had reached, which is what makes the envelope continuous.
+        let mut segments: Vec<DuckSegment> = Vec::with_capacity(points.len());
+        // The first segment starts in its own steady state — see the type doc.
+        let mut entry = points[0].1;
+        for (i, &(t0, target)) in points.iter().enumerate() {
+            let seg_tau = if target >= 0.5 {
+                attack_tau
+            } else {
+                release_tau
+            };
+            segments.push(DuckSegment {
+                t0,
+                target,
+                entry,
+                tau: seg_tau,
+            });
+            if let Some(&(next_t, _)) = points.get(i + 1) {
+                entry = decay(entry, target, (next_t - t0).max(0.0), seg_tau);
+            }
+        }
+
+        Some(Self {
+            segments,
+            ducked_gain: db_to_linear(duck_db),
+        })
+    }
+
+    /// The smoothed presence (`0.0` = the trigger is silent and settled,
+    /// `1.0` = fully ducked) at `session_secs`. Split out from
+    /// [`Self::gain_at`] so the smoother's own behaviour — attack faster than
+    /// release, continuity across boundaries — is testable without the dB
+    /// conversion in the way.
+    pub fn presence_at(&self, session_secs: f64) -> f64 {
+        // `partition_point` over a list whose `t0`s are non-decreasing by
+        // construction: the index of the last segment starting at or before
+        // `session_secs`, saturating at 0 for a position before the session.
+        let idx = self
+            .segments
+            .partition_point(|s| s.t0 <= session_secs)
+            .saturating_sub(1);
+        let seg = &self.segments[idx];
+        decay(
+            seg.entry,
+            seg.target,
+            (session_secs - seg.t0).max(0.0),
+            seg.tau,
+        )
+    }
+
+    /// The gain multiplier `session_secs` into this playback session — a
+    /// straight interpolation between unity and the ducked level by the
+    /// smoothed presence, so a half-engaged duck is half the *linear*
+    /// reduction. (Interpolating in dB instead would be defensible and is
+    /// deliberately not done: the envelope multiplies a linear buffer, and a
+    /// second nonlinearity between the smoother and the samples would make the
+    /// attack/release time constants no longer describe the gain the user
+    /// hears.)
+    pub fn gain_at(&self, session_secs: f64) -> f32 {
+        let p = self.presence_at(session_secs);
+        (1.0 + p * (self.ducked_gain - 1.0)) as f32
+    }
+}
+
+/// One-pole decay: where a smoother sitting at `from` and heading for `target`
+/// has got to after `elapsed` seconds with time constant `tau`. The closed form
+/// of `y += a·(x − y)` — see [`DuckEnvelope`]'s doc. Pure — no I/O.
+fn decay(from: f64, target: f64, elapsed: f64, tau: f64) -> f64 {
+    target + (from - target) * (-elapsed / tau).exp()
+}
+
+/// Apply a source's gain envelopes to one interleaved chunk in place —
+/// **one pass, both envelopes** (D-147's fade and D-149's duck), for ONE source.
+///
+/// One struct rather than two index-parallel `Option` slices threaded through
+/// [`mix_chunk`]: they are always built, indexed and applied together, and
+/// index-alignment with `decoded`/`gains` is a real invariant that a comment was
+/// the only thing enforcing before D-149 added the second one. Making it
+/// structural is cheaper than restating it — and it keeps `mix_chunk` inside
+/// clippy's argument-count limit without a suppression.
+///
+/// `Default` (both `None`) is the case every clip in every pre-D-147 project is
+/// in, and [`Self::apply`] returns immediately for it.
+#[derive(Debug, Clone, Default)]
+struct SourceEnvelopes {
+    fade: Option<FadeEnvelope>,
+    duck: Option<DuckEnvelope>,
+}
+
+impl SourceEnvelopes {
+    /// Apply both envelopes to one interleaved chunk in place.
+    ///
+    /// `session_frame` is how many output sample-frames the session has already
+    /// produced, including any [`discard_samples`] skipped for D-125's skew
     /// compensation, since those represent real timeline time that has passed.
+    ///
+    /// **They multiply, and they share the loop.** Both are gain multipliers
+    /// over the same per-sample-frame position, so composing them is a product,
+    /// not two passes over the buffer — and multiplication is the only
+    /// composition under which neither silently overrides the other (the same
+    /// argument `resolve_clip_transform` makes for a fade against keyframed
+    /// opacity). A clip fading out on a track that is being ducked ends up at
+    /// the product of both, which is what an editor expects and what a real
+    /// mixer does with two gain stages in series.
+    ///
+    /// **Both absent is an early return, not a loop of `× 1.0`** — that is what
+    /// keeps a project with neither feature configured on exactly the arithmetic
+    /// it ran before either existed.
     fn apply(&self, buf: &mut [f32], out_channels: usize, session_frame: u64, out_rate: u32) {
+        if self.fade.is_none() && self.duck.is_none() {
+            return;
+        }
         let ch = out_channels.max(1);
         let rate = out_rate.max(1) as f64;
         for (f, frame) in buf.chunks_mut(ch).enumerate() {
-            let g = self.gain_at((session_frame as f64 + f as f64) / rate);
+            let t = (session_frame as f64 + f as f64) / rate;
+            let mut g = 1.0f32;
+            if let Some(env) = &self.fade {
+                g *= env.gain_at(t);
+            }
+            if let Some(env) = &self.duck {
+                g *= env.gain_at(t);
+            }
             for s in frame.iter_mut() {
                 *s *= g;
             }
@@ -1705,31 +2010,33 @@ const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 /// the single step both the prefill and the steady-state loop in
 /// [`run_session`] run, factored out so they cannot drift apart.
 ///
-/// **D-147 — each source's fade envelope is applied to its own buffer BEFORE
-/// [`mix_sources`] sees it**, so `mix_sources` itself is completely untouched:
-/// every one of D-057's headroom guarantees, and its byte-identical
+/// **D-147/D-149 — each source's gain envelopes are applied to its own buffer
+/// BEFORE [`mix_sources`] sees it**, so `mix_sources` itself is completely
+/// untouched: every one of D-057's headroom guarantees, and its byte-identical
 /// single-source unity-gain passthrough, stand exactly as they were. A source
-/// with no fade (`fades[i].is_none()` — every clip in every pre-D-147 project)
-/// skips the per-sample pass entirely, so the un-faded mix runs the same
-/// arithmetic it always did.
+/// with neither a fade nor a duck (every clip in every pre-D-147 project)
+/// skips the per-sample pass entirely, so that mix runs the same arithmetic it
+/// always did — see [`SourceEnvelopes::apply`], where the two compose.
 ///
 /// `pos_frames` is how many output sample-frames the session has already
-/// produced, which is where the envelope is evaluated from.
+/// produced, which is where the envelopes are evaluated from.
 fn mix_chunk(
     decoded: &mut [DecodedSource],
     gains: &[f32],
-    fades: &[Option<FadeEnvelope>],
+    envelopes: &[SourceEnvelopes],
     chunk_len: usize,
     out_channels: usize,
     pos_frames: u64,
     out_rate: u32,
 ) -> Result<Vec<f32>, String> {
     let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
+    let none = SourceEnvelopes::default();
     for (i, ds) in decoded.iter_mut().enumerate() {
         let mut buf = ds.take(chunk_len, out_channels)?;
-        if let Some(env) = fades.get(i).and_then(Option::as_ref) {
-            env.apply(&mut buf, out_channels, pos_frames, out_rate);
-        }
+        envelopes
+            .get(i)
+            .unwrap_or(&none)
+            .apply(&mut buf, out_channels, pos_frames, out_rate);
         bufs.push(buf);
     }
     Ok(mix_sources(&bufs, gains, chunk_len))
@@ -1819,7 +2126,7 @@ fn run_session(
 
     let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
     let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
-    let mut fades: Vec<Option<FadeEnvelope>> = Vec::with_capacity(sources.len());
+    let mut envelopes: Vec<SourceEnvelopes> = Vec::with_capacity(sources.len());
     for (i, spec) in sources.iter().enumerate() {
         match open_source(
             &spec.path,
@@ -1831,11 +2138,14 @@ fn run_session(
             Ok(ds) => {
                 decoded.push(ds);
                 gains.push(spec.gain);
-                // D-147 — index-parallel with `decoded`/`gains`, which is why
-                // it is pushed in the same arm: a source that failed to open
-                // must not leave its envelope behind to be applied to the
+                // D-147/D-149 — index-parallel with `decoded`/`gains`, which is
+                // why it is pushed in the same arm: a source that failed to
+                // open must not leave its envelopes behind to be applied to the
                 // next source's buffer.
-                fades.push(spec.fade.clone());
+                envelopes.push(SourceEnvelopes {
+                    fade: spec.fade.clone(),
+                    duck: spec.duck.clone(),
+                });
             }
             Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
             Err(e) => log::warn!(
@@ -1918,7 +2228,7 @@ fn run_session(
         let mixed = mix_chunk(
             &mut decoded,
             &gains,
-            &fades,
+            &envelopes,
             chunk_len,
             out_channels,
             pos_frames,
@@ -1955,7 +2265,7 @@ fn run_session(
         let mixed = mix_chunk(
             &mut decoded,
             &gains,
-            &fades,
+            &envelopes,
             chunk_len,
             out_channels,
             pos_frames,
@@ -2158,7 +2468,7 @@ mod tests {
     // there.
 
     /// A 1-second clip that is entirely a linear fade-in, at whatever rate the
-    /// test hands [`FadeEnvelope::apply`] — small enough that every expected
+    /// test hands [`SourceEnvelopes::apply`] — small enough that every expected
     /// value is hand-checkable.
     fn whole_clip_fade_in() -> FadeEnvelope {
         FadeEnvelope {
@@ -2171,14 +2481,18 @@ mod tests {
         }
     }
 
-    /// `apply` scales every channel of a sample-frame by the same gain, and
-    /// really does ramp *within* one chunk — the per-sample-frame resolution
-    /// that keeps a fade from stepping audibly.
+    /// `SourceEnvelopes::apply` scales every channel of a sample-frame by the
+    /// same gain, and really does ramp *within* one chunk — the per-sample-frame
+    /// resolution that keeps a fade from stepping audibly.
     #[test]
     fn apply_ramps_within_a_chunk_and_scales_channels_together() {
         let env = whole_clip_fade_in();
         let mut buf = vec![1.0f32; 8 * 2]; // 8 sample-frames, stereo
-        env.apply(&mut buf, 2, 0, 8);
+        SourceEnvelopes {
+            fade: Some(env),
+            duck: None,
+        }
+        .apply(&mut buf, 2, 0, 8);
         for f in 0..8 {
             let expected = f as f32 / 8.0;
             assert!(
@@ -2201,7 +2515,12 @@ mod tests {
     fn apply_continues_the_ramp_across_chunks() {
         let env = whole_clip_fade_in();
         let mut second = vec![1.0f32; 4];
-        env.apply(&mut second, 1, 4, 8); // sample-frames 4..8 of 8
+        // sample-frames 4..8 of 8
+        SourceEnvelopes {
+            fade: Some(env),
+            duck: None,
+        }
+        .apply(&mut second, 1, 4, 8);
         for (i, v) in second.iter().enumerate() {
             let expected = (4 + i) as f32 / 8.0;
             assert!((v - expected).abs() < 1e-6, "sample {i}: {v}");
@@ -2209,19 +2528,274 @@ mod tests {
     }
 
     /// **The backward-compatibility case, at the mixer.** A source with no
-    /// envelope is byte-identical through [`mix_chunk`]'s fade step to what it
-    /// was before D-147 — the `None` arm does not touch the buffer at all,
-    /// which is why `None` and "an envelope that returns 1.0" are not the same
-    /// thing here.
+    /// envelope of EITHER kind is byte-identical through [`mix_chunk`]'s
+    /// envelope step to what it was before D-147/D-149 — the both-`None` case
+    /// returns without touching the buffer at all, which is why `None` and "an
+    /// envelope that returns 1.0" are not the same thing here.
     #[test]
     fn a_source_with_no_envelope_is_left_exactly_alone() {
-        let fades: [Option<FadeEnvelope>; 1] = [None];
         let original = vec![0.3f32, -0.7, 0.9, -0.1];
         let mut buf = original.clone();
-        if let Some(env) = fades.first().and_then(Option::as_ref) {
-            env.apply(&mut buf, 2, 0, 48_000);
-        }
+        SourceEnvelopes::default().apply(&mut buf, 2, 0, 48_000);
         assert_eq!(buf, original, "no envelope must mean no arithmetic at all");
+    }
+
+    // --- D-149: ducking ---------------------------------------------------- //
+    //
+    // The smoother and the dB conversion are what live here. Turning a trigger
+    // TRACK's clip layout into the session-relative second spans `new` takes is
+    // `app/src-tauri`'s `chroma::audio::duck_for_track` — this crate cannot see
+    // a `Timeline` — and is tested there.
+
+    /// One 1-second trigger span starting 1 s into the session, with a −12 dB
+    /// duck and easily-hand-checkable time constants.
+    fn one_span_duck() -> DuckEnvelope {
+        DuckEnvelope::new(&[(1.0, 2.0)], -12.0, 100.0, 400.0).expect("a real duck")
+    }
+
+    #[test]
+    fn db_to_linear_matches_the_standard_amplitude_ratios() {
+        assert_eq!(db_to_linear(0.0), 1.0, "0 dB must be EXACTLY unity");
+        assert!((db_to_linear(-6.0) - 0.501_187).abs() < 1e-6);
+        assert!((db_to_linear(-12.0) - 0.251_189).abs() < 1e-6);
+        assert!((db_to_linear(-20.0) - 0.1).abs() < 1e-12);
+        assert!(
+            (db_to_linear(6.0) - 1.995_262).abs() < 1e-6,
+            "a boost is allowed"
+        );
+        assert_eq!(db_to_linear(f64::NAN), 1.0, "nonsense degrades to unity");
+    }
+
+    /// **The one-pole is real, and this is the proof.** The closed form
+    /// [`DuckEnvelope`] evaluates is the exact solution of the discrete
+    /// recursion `y += a·(x − y)` with `a = 1 − e^(−1/(τ·fs))`; running that
+    /// recursion sample by sample must land on the same numbers. This is what
+    /// makes "a one-pole smoother with attack/release time constants" a checked
+    /// claim rather than a description, and it is why the envelope can be
+    /// sample-rate independent without being a different filter.
+    #[test]
+    fn the_closed_form_is_the_one_pole_recursion() {
+        let tau = 0.05f64;
+        let fs = 48_000.0f64;
+        let a = 1.0 - (-1.0 / (tau * fs)).exp();
+        let mut y = 0.0f64; // starting from silence, heading for full duck
+        for n in 1..=(fs as usize / 10) {
+            y += a * (1.0 - y);
+            let t = n as f64 / fs;
+            let closed = decay(0.0, 1.0, t, tau);
+            assert!(
+                (y - closed).abs() < 1e-9,
+                "sample {n}: recursion {y} vs closed form {closed}"
+            );
+        }
+    }
+
+    /// τ is the 63.2% time by definition — one time constant covers `1 − 1/e`
+    /// of the distance to the target, which is the number the `attack_ms` /
+    /// `release_ms` fields actually mean.
+    #[test]
+    fn one_time_constant_covers_63_percent_of_the_distance() {
+        let reached = decay(0.0, 1.0, 0.1, 0.1);
+        assert!((reached - (1.0 - std::f64::consts::E.recip())).abs() < 1e-12);
+        assert!((reached - 0.632_120).abs() < 1e-6);
+    }
+
+    /// **Attack is faster than release, and the envelope proves it rather than
+    /// just being configured that way.** The same elapsed time after the
+    /// trigger starts covers far more of the distance than after it stops.
+    #[test]
+    fn attack_engages_faster_than_release_recovers() {
+        let env = one_span_duck(); // attack 100 ms, release 400 ms
+        // 100 ms after the trigger starts: one attack τ in, 63.2% ducked.
+        let engaging = env.presence_at(1.1);
+        // 100 ms after it stops: a quarter of a release τ, ~22% recovered.
+        // (The exact figure is 1 − 0.9999546·e^(−0.25), not 1 − e^(−0.25): the
+        // attack had one full second, i.e. ten τ, and ten τ is 0.99995 of the
+        // way down, not all of it. An exponential never actually arrives, and
+        // the envelope is not quietly rounded to pretend otherwise.)
+        let recovering = 1.0 - env.presence_at(2.1);
+        assert!(
+            (engaging - 0.632_120).abs() < 1e-5,
+            "attack after one τ: {engaging}"
+        );
+        assert!(
+            (recovering - 0.221_235).abs() < 1e-5,
+            "release after a quarter τ: {recovering}"
+        );
+        assert!(
+            engaging > recovering * 2.0,
+            "the whole point of two time constants: {engaging} vs {recovering}"
+        );
+    }
+
+    /// The envelope is **continuous** — no step at any boundary, which is the
+    /// entire reason the smoother exists. Checked as "no adjacent pair of
+    /// output sample-frames jumps more than a hair," swept across both
+    /// transitions at a real output rate.
+    #[test]
+    fn the_envelope_never_steps_at_a_clip_boundary() {
+        let env = one_span_duck();
+        let fs = 48_000.0;
+        let mut prev = env.gain_at(0.0);
+        let mut worst = 0.0f32;
+        for n in 1..(3.0 * fs) as usize {
+            let g = env.gain_at(n as f64 / fs);
+            worst = worst.max((g - prev).abs());
+            prev = g;
+        }
+        // One sample of the fastest ramp here (τ = 100 ms over a 0.749 range)
+        // moves ~1.6e-4; a raw step would be the whole 0.749.
+        assert!(worst < 1e-3, "biggest single-sample gain jump: {worst}");
+    }
+
+    /// Unity outside the duck, and the full dB reduction once the smoother has
+    /// settled well inside a long trigger span.
+    #[test]
+    fn gain_settles_at_unity_outside_and_the_full_reduction_inside() {
+        let env = DuckEnvelope::new(&[(1.0, 5.0)], -12.0, 10.0, 300.0).expect("a real duck");
+        assert!(
+            (env.gain_at(0.0) - 1.0).abs() < 1e-6,
+            "un-ducked before the trigger"
+        );
+        // 3.9 s into the span is 390 attack τ — settled to the floor.
+        assert!(
+            (env.gain_at(4.9) - 0.251_189).abs() < 1e-5,
+            "−12 dB = 0.2512 linear, got {}",
+            env.gain_at(4.9)
+        );
+        // 3 s past the end is 10 release τ — back to unity.
+        assert!((env.gain_at(8.0) - 1.0).abs() < 1e-4, "recovered");
+    }
+
+    /// **Starting inside a trigger clip starts already ducked**, not ramping in
+    /// from unity — the duck's counterpart of `FadeEnvelope::offset_secs`. A
+    /// span reaching back before the playhead arrives here with a negative
+    /// start.
+    #[test]
+    fn a_session_beginning_mid_trigger_starts_fully_ducked() {
+        let env = DuckEnvelope::new(&[(-3.0, 2.0)], -12.0, 10.0, 300.0).expect("a real duck");
+        assert_eq!(env.presence_at(0.0), 1.0);
+        assert!((env.gain_at(0.0) - 0.251_189).abs() < 1e-5);
+    }
+
+    /// Two abutting trigger clips are ONE stretch of speech: the duck holds
+    /// across the seam instead of releasing and re-attacking. The merging that
+    /// makes this true is `Track::clip_spans_from`'s, but the envelope has to
+    /// honour it, so this pins the behaviour from `new`'s input onward.
+    #[test]
+    fn abutting_trigger_spans_hold_the_duck_across_the_seam() {
+        let merged = DuckEnvelope::new(&[(0.0, 4.0)], -12.0, 10.0, 300.0).expect("duck");
+        // The seam at 2.0 s: fully settled, no recovery bump at all.
+        assert!((merged.presence_at(2.0) - 1.0).abs() < 1e-6);
+        // For contrast: an unmerged pair with even a 100 ms hole visibly lets go.
+        let split = DuckEnvelope::new(&[(0.0, 2.0), (2.1, 4.0)], -12.0, 10.0, 300.0).expect("duck");
+        assert!(
+            split.presence_at(2.1) < 0.75,
+            "a real gap must release: {}",
+            split.presence_at(2.1)
+        );
+    }
+
+    /// **The backward-compatibility gate.** Every "configured but inert" shape
+    /// returns `None`, not an envelope that happens to compute 1.0 — which is
+    /// what keeps those sources on `mix_chunk`'s untouched-buffer path.
+    #[test]
+    fn an_inert_duck_is_none_rather_than_a_unity_envelope() {
+        assert!(
+            DuckEnvelope::new(&[(0.0, 1.0)], 0.0, 10.0, 300.0).is_none(),
+            "0 dB"
+        );
+        assert!(
+            DuckEnvelope::new(&[], -12.0, 10.0, 300.0).is_none(),
+            "no trigger clips"
+        );
+        assert!(
+            DuckEnvelope::new(&[(-5.0, -1.0)], -12.0, 10.0, 300.0).is_none(),
+            "every trigger span is behind the playhead"
+        );
+        assert!(
+            DuckEnvelope::new(&[(1.0, 1.0)], -12.0, 10.0, 300.0).is_none(),
+            "an empty span triggers nothing"
+        );
+        assert!(
+            DuckEnvelope::new(&[(0.0, 1.0)], f32::NAN, 10.0, 300.0).is_none(),
+            "a nonsense dB degrades to no duck, not to a NaN gain"
+        );
+    }
+
+    /// A `0 ms` time constant is "instant", not `NaN` — the floor
+    /// [`MIN_DUCK_TAU_SECS`] exists for exactly this, since a user can type it.
+    #[test]
+    fn a_zero_millisecond_time_constant_is_instant_not_nan() {
+        let env = DuckEnvelope::new(&[(1.0, 2.0)], -12.0, 0.0, 0.0).expect("duck");
+        for t in [0.0, 0.999, 1.0, 1.5, 2.0, 2.001, 3.0] {
+            assert!(env.gain_at(t).is_finite(), "gain at {t} must be finite");
+        }
+        assert!(
+            (env.gain_at(1.001) - 0.251_189).abs() < 1e-5,
+            "down immediately"
+        );
+        assert!((env.gain_at(2.001) - 1.0).abs() < 1e-5, "back immediately");
+    }
+
+    /// **Fades and ducks compose by multiplication, in one pass.** A clip at
+    /// half its fade AND fully ducked comes out at the product; neither
+    /// envelope silently overrides the other.
+    #[test]
+    fn a_fade_and_a_duck_multiply_together() {
+        let fade = whole_clip_fade_in(); // linear over 1 s, so gain == t
+        let duck = DuckEnvelope::new(&[(-1.0, 10.0)], -6.0, 1.0, 1.0).expect("duck");
+        // Settled from the first sample (the span already covers the playhead).
+        let ducked = duck.gain_at(0.5) as f64;
+        let mut buf = vec![1.0f32; 8]; // 8 mono sample-frames at 8 Hz = 1 s
+        SourceEnvelopes {
+            fade: Some(fade),
+            duck: Some(duck.clone()),
+        }
+        .apply(&mut buf, 1, 0, 8);
+        let expected = 0.5 * ducked; // the fade at t = 0.5 is 0.5
+        assert!(
+            (buf[4] as f64 - expected).abs() < 1e-6,
+            "frame 4: {} vs {expected}",
+            buf[4]
+        );
+        // and the duck alone, on an un-faded source, is just the duck
+        let mut plain = vec![1.0f32; 8];
+        SourceEnvelopes {
+            fade: None,
+            duck: Some(duck.clone()),
+        }
+        .apply(&mut plain, 1, 0, 8);
+        assert!((plain[4] as f64 - ducked).abs() < 1e-6);
+    }
+
+    /// A duck ramps *within* a chunk and continues across chunk boundaries, the
+    /// same per-sample-frame property the fade has — `session_frame` is the only
+    /// thing that positions it, which is what makes `run_session` advancing
+    /// `pos_frames` through `discard_samples` keep a duck aligned across
+    /// D-125's skew compensation.
+    #[test]
+    fn a_duck_ramps_within_and_across_chunks() {
+        // The trigger starts 0.5 s in, i.e. four sample-frames into the first
+        // chunk at the 8 Hz rate below — so the duck engages mid-chunk rather
+        // than being already settled at the session's first sample.
+        let duck = DuckEnvelope::new(&[(0.5, 10.0)], -12.0, 500.0, 500.0).expect("duck");
+        let mut first = vec![1.0f32; 8];
+        let envs = SourceEnvelopes {
+            fade: None,
+            duck: Some(duck),
+        };
+        envs.apply(&mut first, 1, 0, 8);
+        let mut second = vec![1.0f32; 8];
+        envs.apply(&mut second, 1, 8, 8);
+        assert!(first[0] > first[7], "engaging within the chunk");
+        assert!(
+            second[0] < first[7],
+            "the second chunk continues rather than restarting: {} then {}",
+            first[7],
+            second[0]
+        );
+        assert!(second[7] < second[0]);
     }
 
     #[test]

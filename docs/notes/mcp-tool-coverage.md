@@ -44,16 +44,17 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Gap: Edit tab / multi-track NLE — 2 tools (was a real zero until D-147, 2026-09-05)
+## Gap: Edit tab / multi-track NLE — 3 tools (was a real zero until D-147, 2026-09-05)
 
 > **The zero is broken, but only just.** D-147 (clip fades) shipped the first two
-> Edit-tab tools, and they are the two its own feature needed — not a sweep of the
-> list below:
+> Edit-tab tools and D-149 (ducking) added a third; each is the tool its own
+> feature needed — not a sweep of the list below:
 >
 > | Tool | What it does |
 > |---|---|
-> | `get_timeline` | Read-only. Every track and clip on the active timeline, with the `index` the mutating tools address a clip by and the `id` that survives a reorder. Exactly the "without which no tool can name a clip" prerequisite the callout below already predicted. |
+> | `get_timeline` | Read-only. Every track and clip on the active timeline, with the `index` the mutating tools address a clip by and the `id` that survives a reorder. Exactly the "without which no tool can name a clip" prerequisite the callout below already predicted. Reports each track's ducking too, since D-149. |
 > | `set_clip_fade` | Sets a clip's fade in/out durations (in frames) and cubic-bezier curve shapes. |
+> | `set_track_duck` | D-149. Ducks one track under another: which track triggers, the amount in dB, and the one-pole attack/release time constants in ms — the real DSP numbers, not a "strength" dial. |
 >
 > Both go through `useEditorTimelineStore.applyOp`, so this is also the first time
 > the "which path does a tool call" answer below is actually *exercised* rather

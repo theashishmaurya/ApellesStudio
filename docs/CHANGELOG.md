@@ -23,6 +23,27 @@ One or two lines per session. Detail lives in the decision it references.
   `cargo check --workspace --all-targets` clean; `cargo test -p chroma-project`
   52 passed / 1 ignored; `cargo test -p RapidRAW --lib -- chroma::` 126 passed.
   **Next: wave 4** — delete the shims, retarget call sites, fix `03-architecture.md`.
+- **2026-09-05** — **Ducking: music under dialogue (D-149)** — the plan doc's §4,
+  built on exactly the seam D-147 left it. `Track` gains `duck_from`/`duck_db`/
+  `duck_attack_ms`/`duck_release_ms`; the trigger is a pure timeline query (does
+  the nominated track have a clip here — `Track::clip_spans_from`, which
+  **merges abutting clips** so the duck holds across a cut instead of pumping at
+  every one), smoothed by a real one-pole with separate attack/release time
+  constants. The smoother is evaluated in **closed form** rather than as a
+  per-sample recursion, which makes the envelope identical at 44.1 and 48 kHz
+  and `gain_at` a pure function — a unit test runs the discrete recursion
+  against it to pin that they are the same filter. It composes with D-147's fade
+  by multiplication in one per-sample-frame pass, so `mix_sources` is still
+  untouched. Track-header popover (audio tracks only) + `set_track_duck`, the
+  third Edit-tab MCP tool, with the real DSP numbers rather than a "strength"
+  dial. A track with no `duck_from` gets no envelope at all, so every existing
+  project mixes byte-identically. `cargo check --workspace --all-targets` clean;
+  chroma-timeline 128, chroma-media 98, `RapidRAW --lib chroma::` 178/178,
+  `@chroma/editor` 294; `tsc -p packages/editor` clean, zero new `tsc -p app`
+  errors. Not heard in the real app (no Tauri window in this sandbox), and the
+  trigger is still the clip layout rather than the signal — RMS sidechain is
+  Phase 2, said out loud in the tool text and the UI.
+
 - **2026-09-05** — **`chroma-media` real extraction (D-146)** — the widest slice
   of D-141's plan (§2.2), in its three required ordered commits. (1) `video.rs`
   + `decode_pipe.rs` + `media_cache.rs` move verbatim; two `#[cfg(test)]` hooks

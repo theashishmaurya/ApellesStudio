@@ -1405,10 +1405,7 @@ mod tests {
                 start_frame: 0,
                 ..Default::default()
             }],
-            gain: 1.0,
-            locked: false,
-            hidden: false,
-            sync_locked: true,
+            ..Default::default()
         });
         super::super::edit::chroma_timeline_set(tl).unwrap();
 
@@ -1509,14 +1506,14 @@ mod tests {
         assert_eq!(tl2.tracks[1].clips.len(), 1, "B landed on track 1");
 
         // both tracks have content at frame 0 — track 0 (higher priority) wins.
-        let (clip, _, _) = super::super::edit::resolve_video_position(0)
+        let (_, clip, _, _) = super::super::edit::resolve_video_position(0)
             .unwrap()
             .expect("frame 0 has content on track 0");
         assert_eq!(clip.name, tl.tracks[0].clips[0].name, "top track wins");
 
         // top-gap fallthrough: past A's end (dur_a), still inside B's range
         // (dur_b > dur_a) — track 0 has nothing there, track 1 shows through.
-        let (clip, source_frame, _) = super::super::edit::resolve_video_position(dur_a as u64)
+        let (_, clip, source_frame, _) = super::super::edit::resolve_video_position(dur_a as u64)
             .unwrap()
             .expect("track 1 shows through track 0's gap");
         assert_eq!(clip.name, tl.tracks[0].clips[1].name, "bottom track B");

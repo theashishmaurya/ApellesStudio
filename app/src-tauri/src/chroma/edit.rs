@@ -209,20 +209,35 @@ fn composition_size(
 /// empty/offline — the same "just show/play nothing" case both callers
 /// already handle, not an error. Still errors if the timeline has no video
 /// track at all (distinct from "every video track has a gap here").
-pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, VideoInfo)>, String> {
+///
+/// **D-149 — the winning track's own index comes back as the first element.**
+/// `resolve_video_clip_at` has always computed it and this function threw it
+/// away; the audio path now needs it to look up that track's ducking
+/// configuration, and re-deriving "which video track won" at the call site
+/// would mean a second copy of the top-wins walk that could drift from this
+/// one. Same call as D-147 made for `resolve_audio_track_positions` below: hand
+/// back what was already resolved rather than resolve it twice.
+pub(crate) fn resolve_video_position(
+    pos: u64,
+) -> Result<Option<(usize, Clip, u64, VideoInfo)>, String> {
     let timeline = resolve_timeline(false)?;
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
     }
 
-    let Some((_track_idx, clip, source_frame)) = timeline.resolve_video_clip_at(pos as i64) else {
+    let Some((track_idx, clip, source_frame)) = timeline.resolve_video_clip_at(pos as i64) else {
         return Ok(None);
     };
     if clip.source_path.is_empty() {
         return Ok(None);
     }
     let info = probe_cached(Path::new(&clip.source_path))?;
-    Ok(Some((clip.clone(), source_frame.max(0) as u64, info)))
+    Ok(Some((
+        track_idx,
+        clip.clone(),
+        source_frame.max(0) as u64,
+        info,
+    )))
 }
 
 /// Resolve every genuine `TrackKind::Audio` clip on the active timeline that
@@ -251,15 +266,24 @@ pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, Vide
 /// `chroma::audio` streams each source until it runs out, so it has to be told
 /// where the clip actually ends or it keeps playing the rest of the file
 /// underneath whatever the timeline cut to next.
+///
+/// **D-149 — the track's own index comes back too**, as the first element. The
+/// mixer needs it to look up that track's ducking configuration, and the index
+/// is the only thing that identifies a track (there is no track id); deriving
+/// it again at the call site would mean re-walking the same filtered list and
+/// getting it subtly wrong the first time an empty audio track sits between
+/// two populated ones. It is the *timeline* index, not the position within the
+/// filtered audio-only subset — the same index `Track::duck_from` stores.
 pub(crate) fn resolve_audio_track_positions(
     pos: u64,
-) -> Result<Vec<(Clip, VideoInfo, f32)>, String> {
+) -> Result<Vec<(usize, Clip, VideoInfo, f32)>, String> {
     let timeline = resolve_timeline(false)?;
     let mut out = Vec::new();
-    for track in timeline
+    for (track_index, track) in timeline
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Audio)
+        .enumerate()
+        .filter(|(_, t)| t.kind == TrackKind::Audio)
     {
         let Some((clip, _source_frame)) = track.clip_at(pos as i64) else {
             continue;
@@ -271,9 +295,52 @@ pub(crate) fn resolve_audio_track_positions(
         if !info.has_audio {
             continue;
         }
-        out.push((clip.clone(), info, track.gain));
+        out.push((track_index, clip.clone(), info, track.gain));
     }
     Ok(out)
+}
+
+/// D-149 — one track's ducking configuration resolved against the active
+/// timeline at `pos`: the dB/attack/release numbers off `track_index`'s own
+/// `chroma_timeline::Track`, plus the **trigger** track's clip layout from
+/// `pos` onward, in timeline frames.
+///
+/// `Ok(None)` — no ducking for this track — for every ordinary reason, none of
+/// them an error: no `duck_from` set (the default and every pre-D-149 project),
+/// a `duck_from` that no longer names a real track (a track was removed after
+/// the duck was configured), or a track pointed at **itself**. That last one is
+/// worth rejecting explicitly rather than letting it through: a track ducking
+/// on its own clips would attenuate exactly the audio it is triggered by, which
+/// is not a thing anyone means and is trivially reachable by removing a track
+/// above the pair and shifting the indices.
+///
+/// This is the timeline half of D-149 and is why it lives here rather than in
+/// `chroma-media`: "which frames does track N have clips on" is timeline
+/// resolution, and a media crate reaching for it would be reaching *up* a layer
+/// (D-039/D-146 — the same rule that kept `chroma_audio_play`'s body app-side).
+pub(crate) fn resolve_track_duck(
+    track_index: usize,
+    pos: u64,
+) -> Result<Option<(f32, f32, f32, Vec<(i64, i64)>)>, String> {
+    let timeline = resolve_timeline(false)?;
+    let Some(track) = timeline.tracks.get(track_index) else {
+        return Ok(None);
+    };
+    let Some(from) = track.duck_from else {
+        return Ok(None);
+    };
+    if from == track_index {
+        return Ok(None);
+    }
+    let Some(trigger) = timeline.tracks.get(from) else {
+        return Ok(None);
+    };
+    Ok(Some((
+        track.duck_db,
+        track.duck_attack_ms,
+        track.duck_release_ms,
+        trigger.clip_spans_from(pos as i64),
+    )))
 }
 
 // --------------------------------------------------------------------------- //
@@ -1621,10 +1688,7 @@ mod preview_throughput_tests {
                     opacity: if i == 0 { 1.0 } else { 0.5 },
                     ..Default::default()
                 }],
-                gain: 1.0,
-                locked: false,
-                hidden: false,
-                sync_locked: true,
+                ..Default::default()
             })
             .collect();
 
