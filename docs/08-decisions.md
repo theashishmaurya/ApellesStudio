@@ -12934,3 +12934,173 @@ confirming **D-159** and referencing **B-059** are both free of any concurrent c
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-160 — Motion keyframe timeline, Phase 5a: key visibility — `LayerList` key-count badges + a read-only keyframe strip under the player
+
+**decided + built (2026-09-05).** The owner's original ask (quoted in full at the top of both
+`docs/notes/motion-visual-builder-research.md` and the new `docs/notes/
+motion-keyframe-timeline-research.md`): *"we should have a timeline as well for everything, an
+animation timeline w[h]ich [shows] when [it] start[s], when [it] ends etc."* D-155 through D-159
+built the whole prerequisite stack this needs (DOM hooks, select/drag/resize/snap, the layer
+transform wrapper, multi-select, and — the direct prerequisite here — per-layer transform
+keyframes) but left the research doc's own Phase 5 ("a real keyframe timeline… a major feature…
+there is no small version of it") entirely unbuilt. This entry is a NEW scoping pass
+(`docs/notes/motion-keyframe-timeline-research.md`) re-verifying that Phase 5 section against the
+real current code, plus building its own "Phase 5a" — the earlier doc's own named "deliberately
+cheaper intermediate," taken as a real first slice rather than a lesser fallback, per the task's
+own explicit instruction to take it seriously.
+
+### 1 — The scoping pass itself, and its independent reuse-vs-rebuild verdict
+
+Re-read, in full, before writing anything: `motion-visual-builder-research.md`'s own Phase 5
+section, D-155 through D-159's decision entries, D-134 and D-137, `docs/notes/
+dnd-kit-migration.md`, and the Edit tab's own timeline code directly — `packages/editor/src/
+TimelinePane.tsx` (2,948 lines), `timeline.ts` (1,740 lines), `timelineStore.ts` (408 lines), and
+`ruler.ts` (85 lines, in full).
+
+**The verdict, confirmed independently rather than trusted from the earlier doc's own prose:**
+nothing in the Edit tab's timeline stack (`@xzdarcy/react-timeline-editor`'s `TimelineRow`/
+`TimelineAction` clip-lane model, `@dnd-kit/sortable`'s track reorder, `@dnd-kit/core`'s
+cross-track move) transfers as CODE — its core unit is a `start`/`end` SPAN with trim handles,
+the opposite shape of a keyframe (a durationless POINT on a continuous axis). Two things transfer
+as TECHNIQUE only, confirmed against the actual package boundary rather than assumed importable:
+`ruler.ts`'s "nice numbers" tick-interval algorithm (zero DOM, zero React — but `@chroma/motion`
+architecturally cannot depend on `@chroma/editor`, confirmed by reading both `package.json`s and
+`@chroma/inspector`'s own stated house rule, "neither tab package depends on the other" — so a
+future real timeline copies the ~15-line algorithm rather than importing the file) and D-137's
+DOM-position gesture-separation discipline (already reused twice inside `@chroma/motion` itself,
+per D-158's own four-gesture `MotionCanvasOverlay.tsx`). `canvasGeometry.ts`'s own
+`rectFromPoints`/`rectsIntersect` (D-158) is cited as live evidence that re-deriving a small,
+genuinely portable technique locally — rather than reaching across the tab boundary — is already
+this package's own established practice, not a new proposal. Full writeup, including the
+per-piece evidence table, is in the new doc's §2.
+
+**A real, disclosed finding that changed how Phase 5a was built, not just how it was described:**
+the earlier doc's own wording — "the player's own scrubber gains key markers" — turns out not to
+be buildable as literally worded. Checked directly this pass: `@remotion/player`'s bundled
+`PlayerControls.js` has no extension point (no distinguishing class/attribute, no
+`renderScrubber`-style prop; `<Player controls>` is a single boolean toggle for the whole built-in
+bar). Building it literally would mean forking Remotion's controls or replacing them outright —
+real, but most of a full timeline's own transport chrome, exactly the scope this phase is trying
+not to build yet. **Resolution:** a small, separate strip alongside the untouched player, reusing
+the SAME `frameupdate` event and `PlayerRef.seekTo` `MotionCanvasOverlay.tsx` already uses for a
+different purpose. New doc §3 has the full reasoning.
+
+### 2 — What was built
+
+**`packages/motion/src/keyframeVisibility.ts` (new)** — pure, read-only functions, no manifest
+mutation of any kind: `layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount` (the `LayerList`
+badges); `cameraKeyMarkers` (every 2D + 3D camera key across the WHOLE manifest — not just the
+scene under the playhead, since reading a key's `at` needs no live DOM, unlike measuring where a
+layer is actually drawn, a real capability this feature has that no canvas drag gesture ever
+could); `selectedLayerKeyMarkers` (the current selection's own `transform.keys`, scoped to
+EXACTLY one `{kind:'layer'}` selection — reusing `TransformKeysSection`'s own D-159 §5 precedent
+that a per-layer keyframe list has no coherent lockstep meaning across a multi-selection, rather
+than re-deriving that call); `sceneBoundaryFrames`; `frameToPercent` (the strip's own pixel-free
+`left: N%` positioning math, kept as a real tested function rather than an inline one-liner —
+"getting this wrong is silent" is `canvasGeometry.ts`'s own standard, applied here to arithmetic
+that looks trivial but determines where every marker actually lands). Every frame conversion goes
+through `build.ts`'s existing `sceneStartFrame` — no second copy of "where does a scene start"
+arithmetic.
+
+**`LayerList.tsx`** — every row that can carry keys (2D camera, 3D camera, a layer with
+`transform.keys`) now shows a small trailing count badge when that count is `> 0`. `scene3d.
+children` rows get none — `transform.keys` only exists on 2D layers (D-157), the same
+`isLayer2d` distinction `InspectorPanel.tsx` already draws.
+
+**`packages/motion/src/KeyframeStrip.tsx` (new)** — the DOM component: a fixed-height bar under
+the player, spanning the WHOLE composition, showing scene-boundary ticks, a diamond marker per
+camera key (any scene), a differently-styled diamond per the selected layer's own keys (only for
+a single `{kind:'layer'}` selection, same scoping as above), and a live playhead line
+(`frameupdate`-driven). Click anywhere to seek/scrub to that point; click a marker to jump exactly
+to its frame. **No manifest mutation anywhere in this component** — every interaction is a
+`PlayerRef.seekTo(frame)` call, so D-155's transient-preview/commit/undo discipline does not apply
+here, the same reason `LayerList`'s own existing row-click-to-seek has never needed it either.
+DOM/pointer wiring, deliberately untested per this package's established split
+(`MotionCanvasOverlay.tsx`'s own precedent: the pure math it calls carries the tests).
+
+**`MotionPreview.tsx`** — restructured to a `flex flex-col` layout: the player + canvas overlay
+keep their existing relative-positioned container in a `flex-1 min-h-0` wrapper, `<KeyframeStrip>`
+sits fixed-height beneath it, ALWAYS mounted (not gated behind the existing `onSelect`/
+`onSelectionChange`/`onTransientChange`/`onCommit` interaction-props check that gates
+`MotionCanvasOverlay`) — since it performs no manifest mutation, it's useful even for a
+hypothetical caller with no on-canvas editing wired up at all. Reads the STABLE `manifest`, never
+`transientManifest`/`shown` — a key's `at` never changes mid-drag today (only its `x`/`y` values
+do, per D-159 §4's own auto-keyframe scope), so there is nothing this strip would show
+differently during a drag.
+
+### 3 — What's explicitly deferred (Phase 5b, scoped but not attempted)
+
+Named honestly rather than left vague, per the new doc's §4: dragging a key along time (needs a
+genuinely NEW write primitive — moving a key's `at`, which nothing in `manifestEdit.ts` does
+today, confirmed by grep); a real per-row lane layout (one row per layer/camera with independent
+scroll — the actual bulk of what makes `TimelinePane.tsx` 2,948 lines, Phase 5a's single flat
+strip has exactly one "track"); box-select + nudge multiple keys (needs a `{trackId,keyIndex}[]`-
+shaped selection distinct from `Selection[]`, plus a multi-key-nudge write path analogous to
+D-158's `moveLayersByDelta` but for `at`); and a curve/easing editor (every key already has an
+optional `ease` 4-tuple, editable today only as raw JSON — a real, separable UI component, callable
+out as its OWN possible sub-slice rather than assumed to wait for the rest of 5b). Recommended
+order if picked up: drag-a-key first (smallest, most direct payoff, most of its chrome already
+exists from 5a), then per-row lanes, then box-select, then the curve editor last.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — untouched this pass (no schema/engine change);
+  the same 2 pre-existing `document`-typing errors in `Scene3D.tsx` as on `main`, confirmed
+  unchanged.
+- `npm test --workspace @chroma/motion` — **224/224** (was 199 at D-159; **+25** new, all in
+  `keyframeVisibility.test.ts`: `layerKeyCount` (3), `cameraKeyCount`/`scene3dCameraKeyCount` (4),
+  `cameraKeyMarkers` (3, including a hand-worked frame table against `sample`'s own real scene
+  durations/camera keys and an explicit determinism check), `selectedLayerKeyMarkers` (7,
+  covering 0/2+/non-layer/scene3d-child/no-keys/real-keys/wrong-scene-offset cases),
+  `sceneBoundaryFrames` (2), `frameToPercent` (6, including the non-positive-total defensive
+  floor) — every new pure function gets real tests, per this package's own established
+  convention; `KeyframeStrip.tsx`'s DOM/pointer wiring is deliberately untested, the same split
+  D-156/157/158/159 already set for `MotionCanvasOverlay.tsx`.
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- No `remotion still` render comparison — this pass touches neither `motion-engine`'s schema nor
+  its render path (`Video.tsx`/`Camera.tsx`/`interpolateKeys.ts` all untouched), so there is
+  nothing whose pixel output could have changed; confirmed by `git status` showing only
+  `@chroma/motion` files touched (`LayerList.tsx`, `MotionPreview.tsx` modified;
+  `keyframeVisibility.ts`/`.test.ts`, `KeyframeStrip.tsx` new).
+- No Rust/`app/src-tauri` touched — frontend-only, per the task's own instruction; confirmed by
+  `git status`.
+
+**Honest gaps.** (1) **Not seen in the assembled Tauri app** — this sandbox cannot launch it, the
+same disclosed constraint every entry since D-125 carries; the strip's click-to-seek and marker
+positioning are reasoned from `PlayerRef`'s own documented `seekTo`/`getCurrentFrame` API and the
+verified `frameupdate` event payload shape (`node_modules/@remotion/player/dist/cjs/
+event-emitter.d.ts`, read directly), not exercised against a real pointer in a real window.
+(2) **`MotionPreview.tsx`'s new `flex flex-col` layout was not visually verified** — the player
+container's existing `h-full`/`relative` sizing assumptions were re-read and appear compatible
+with losing a fixed 24px strip to a sibling row, but the actual on-screen proportions (does the
+player visibly shrink in an annoying way at a small pane size) are exactly the kind of thing this
+sandbox's inability to launch the app cannot confirm. (3) **The strip's markers read the STABLE
+manifest only, never `transientManifest`** — during a live auto-keyframe drag (D-159 §4) that
+creates a BRAND NEW key at the current frame, the strip will not show that new marker until the
+drag commits. A real, small, disclosed gap: fixing it would mean threading `transientManifest`
+into `KeyframeStrip` and re-deriving markers from it during a drag, deferred because it only
+affects the exact instant of an in-progress gesture, not the steady-state "see what keys exist"
+use case this phase targets. (4) **No visual indication of WHICH kind of camera key a marker is**
+beyond its hover tooltip (2D vs. 3D camera markers render identically) — a real, minor, disclosed
+simplification; distinguishing them further (a different marker shape per kind, say) was judged
+not worth the added visual complexity for a first slice with only ever one active camera type per
+scene in practice. (5) **Two camera keys, or a camera key and a layer key, at the exact same frame
+render as fully overlapping markers** with no stacking/offset — indistinguishable until you hover
+one, since z-order picks whichever renders last. A real, cheap follow-up (a small deterministic
+per-kind vertical offset) not built this pass to keep the strip's own layout math (currently:
+every marker centered on the same horizontal line) as simple as possible for a first slice.
+
+**Numbering.** Drafted as **D-160**, re-confirmed against the REAL current tip of `main` in the
+main repo (`/Users/ashishmaurya/my_projects/chroma`, not this worktree) both before starting this
+pass and immediately before writing this entry: `git log --oneline -5` shows `cb33663` (`D-159
+Phase 4 part 3: …`) still at the tip, unchanged across the whole pass, and `grep -oE 'D-[0-9]+'
+docs/08-decisions.md | sort -t- -k2 -n -u | tail` / the equivalent for `docs/BUGS.md`'s `B-[0-9]+`
+both show **D-159 / B-061** as the highest numbers in the main repo — **D-160** is free, and no
+`B-NNN` is used or fixed by this pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

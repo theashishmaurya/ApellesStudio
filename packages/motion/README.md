@@ -48,19 +48,33 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   — nothing outside this tab needs it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
-  `totalFrames`/schema defaults (`build.ts`), not reimplemented here.
+  `totalFrames`/schema defaults (`build.ts`), not reimplemented here. A
+  `flex flex-col` column since D-160: the player + canvas overlay on top,
+  `<KeyframeStrip>` fixed-height beneath, always mounted.
+- `KeyframeStrip.tsx` — Phase 5a of `docs/notes/motion-keyframe-timeline-
+  research.md` (D-160): a small read-only bar under the player showing
+  scene-boundary ticks, every camera key (2D + 3D, whole composition) and the
+  currently-selected single layer's own `transform.keys`, plus a live
+  playhead — click anywhere or a marker to seek. Pure navigation (no
+  manifest mutation), so none of D-155's undo/commit plumbing applies. A
+  separate strip alongside the untouched `<Player>`, not a modification of
+  its own scrub bar — see the file's own doc comment for why (Remotion's
+  bundled controls have no extension point, checked directly).
 - `LayerList.tsx` — the scene → camera → layers → scene3d-children tree, and
   the `Selection`/`Selection[]` model everything else here binds to (D-081;
   `Selection[]` + `toggleSelection`/`sameSelection`/`resolveSelections`-
   adjacent helpers D-158, Phase 3 — see this file's own module doc comment
-  for the same-kind/same-scene multi-select constraint).
+  for the same-kind/same-scene multi-select constraint). Since D-160, every
+  row that can carry keyframes shows a small trailing key-count badge.
 - `InspectorPanel.tsx` — the property form for whatever is selected: typed
   controls per `propCatalog.ts`, a live-validated JSON fallback for nested
-  content props, and an add/remove camera-keyframe list (D-099). Shares its
-  empty state + section headings with the Edit tab via `@chroma/inspector`
-  (D-103). For a 2+ multi-selection (D-158), renders `MultiLayerInspector`
-  instead — align/distribute + lockstep Transform/field editing; see its own
-  module doc comment for the full design reasoning.
+  content props, and an add/remove keyframe list (`KeyframeList`, D-099,
+  generalized D-159 to also drive the per-layer `TransformKeysSection`
+  alongside the original camera-only call sites). Shares its empty state +
+  section headings with the Edit tab via `@chroma/inspector` (D-103). For a
+  2+ multi-selection (D-158), renders `MultiLayerInspector` instead —
+  align/distribute + lockstep Transform/field editing; see its own module
+  doc comment for the full design reasoning.
 - `propCatalog.ts` — *what fields the Inspector shows* for each `use`,
   transcribed from each primitive's own prop type + `registry.ts`'s adapter.
 - `CatalogPanel.tsx` — *what primitives exist and how to add one* (D-151):
@@ -78,8 +92,18 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   `id` on what it creates). Also: `resolveSelection`/`resolveSelections`
   (id-preferred, index-fallback selection resolution), `moveLayersByDelta`/
   `setFieldOnSelections`/`setTransformFieldOnSelections` (multi-target
-  writes composed into one `Manifest`), and `alignSelections`/
-  `distributeSelections` (D-158, Phase 3).
+  writes composed into one `Manifest`), `alignSelections`/
+  `distributeSelections` (D-158, Phase 3), and `layerTransformKeys`/
+  `setLayerTransformKeys`/`layerTransformKeyDelta`/`layerDragBase`/
+  `upsertLayerTransformKeyXY`/`moveLayersByDeltaAutoKey` (D-159, Phase 4 —
+  per-layer keyframes + auto-keyframe-on-drag).
+- `keyframeVisibility.ts` — Phase 5a of `docs/notes/
+  motion-keyframe-timeline-research.md` (D-160): pure, read-only functions
+  for `LayerList.tsx`'s key-count badges and `KeyframeStrip.tsx`'s marker
+  positions — `layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`,
+  `cameraKeyMarkers`/`selectedLayerKeyMarkers` (absolute-frame conversion via
+  the engine's own `sceneStartFrame`, never a second copy of that math), and
+  `frameToPercent`. No manifest mutation, no DOM.
 - `ManifestEditor.tsx` — the JSON `<textarea>` + inline parse/save/render
   error surfacing. Still the only way to delete a layer or add a scene.
 - `manifestIO.ts` — thin wrappers around the three `chroma_motion_*` Tauri
@@ -108,29 +132,40 @@ engine side.
 
 `npm test --workspace @chroma/motion` (vitest, `node` environment — the
 testable logic here is deliberately kept out of the components, per the
-`canvasGeometry.ts`/`layerMeasure.ts` split above). 159 tests across
-`canvasGeometry.test.ts`, `manifestEdit.test.ts`, `catalog.test.ts`, and
-`motionProjectStore.test.ts` (2026-09-05, D-158).
+`canvasGeometry.ts`/`layerMeasure.ts` split above). 224 tests across
+`canvasGeometry.test.ts`, `manifestEdit.test.ts`, `catalog.test.ts`,
+`motionProjectStore.test.ts`, `interpolateKeys.test.ts`, `schema.test.ts`,
+and `keyframeVisibility.test.ts` (2026-09-05, D-160).
 
 ## Status
 
 Real preview + layer list + Inspector + Catalog + editor + save + render, one
-manifest per project — plus, as of D-155–D-158 (2026-09-05,
-`docs/notes/motion-visual-builder-research.md`'s Phases 0–3), a real visual
+manifest per project — plus, as of D-155–D-159 (2026-09-05,
+`docs/notes/motion-visual-builder-research.md`'s Phases 0–4), a real visual
 builder: click-select and drag a layer or a multi-selection on the canvas
 (world-space, camera-move-safe), resize handles, "snap to layer," a generic
 per-layer transform (scale/rotate/opacity/clip), marquee-select +
-shift-click, align/distribute actions, and undo (`@chroma/history`) for
-every Inspector edit and canvas gesture.
+shift-click, align/distribute actions, undo (`@chroma/history`) for every
+Inspector edit and canvas gesture, and per-layer keyframes on the transform
+wrapper (`layer.transform.keys`, additive deltas, the same shared
+`interpolateKeys` the camera uses, auto-keyframed on a move-drag once a
+layer's position is already keyed). Plus, as of D-160 (2026-09-05,
+`docs/notes/motion-keyframe-timeline-research.md`'s Phase 5a), real
+**key visibility**: a per-row key-count badge in `LayerList`, and a
+read-only keyframe strip under the player showing every camera key and the
+selected layer's own keys with a live playhead and click-to-seek.
 
 **Known gaps**, most audited in full with citations in
 `docs/notes/motion-tab-audit.md` (pre-D-155) and queued as roadmap item 16 —
-re-checked against what D-155–D-158 actually closed rather than assumed
-stale: no scene/layer TIMELINE UI and no per-layer KEYFRAMES (Phase 4/5 of
-the research doc — the manifest's only animated spatial channel is still the
-camera), no drag-and-drop from outside the app, no delete/duplicate of a
-layer from the GUI, no multi-manifest per project (D-046), no snapping GUIDES
-while dragging (D-158's own explicit scope-down), no group RESIZE for a
-multi-selection (single-selection only), and **no MCP tools at all** — Motion
-is the one tab an agent cannot drive. The Catalog (D-151) closed the largest
-GUI-creation gap; D-155–D-158 closed the largest on-canvas-manipulation gap.
+re-checked against what D-155–D-160 actually closed rather than assumed
+stale: no real KEYFRAME TIMELINE UI (Phase 5b of `docs/notes/
+motion-keyframe-timeline-research.md` — drag a key along time, per-row
+lanes, box-select + nudge multiple keys, a curve/easing editor; D-160's own
+strip is read-only navigation, not that), no drag-and-drop from outside the
+app, no delete/duplicate of a layer from the GUI, no multi-manifest per
+project (D-046), no snapping GUIDES while dragging (D-158's own explicit
+scope-down), no group RESIZE for a multi-selection (single-selection only),
+and **no MCP tools at all** — Motion is the one tab an agent cannot drive.
+The Catalog (D-151) closed the largest GUI-creation gap; D-155–D-159 closed
+the largest on-canvas-manipulation gap; D-160 is the first step toward
+actually SEEING the animation, not the whole of it.

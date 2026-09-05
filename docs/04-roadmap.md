@@ -1062,10 +1062,21 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   the schema — also found and fixed on `cam3dKey`, the same gap that bug's own text wrongly called
   harmless), and auto-keyframe-on-drag (per-property, move-drag only — Phase 4, D-159). Part C's
   `</>` raw-JSON collapse shipped separately as D-153.
-  **Remaining: Phase 5 — a real keyframe timeline, a MAJOR feature** comparable in cost to the Edit
-  tab's own timeline, and must not be attached quietly to anything else. Snapping/alignment GUIDES
-  (visual guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort
-  spike — see that decision's own entry for the smallest next step.
+  **Phase 5 scoped further and its first slice (5a) BUILT — D-160, `docs/notes/
+  motion-keyframe-timeline-research.md` (2026-09-05).** That doc independently re-verifies "the
+  Edit tab's timeline stack isn't reusable, but the cost is comparable" against the real code
+  (confirmed piece by piece: nothing transfers as code, `ruler.ts`'s tick algorithm and D-137's
+  gesture-separation discipline transfer as technique only, per the standing `@chroma/motion`/
+  `@chroma/editor` package-boundary rule). **Phase 5a (built): `LayerList` key-count badges +
+  a read-only `KeyframeStrip` under the player** (camera + selected-layer key markers across the
+  whole composition, live playhead, click/marker-click-to-seek — pure navigation, no manifest
+  mutation). One disclosed deviation: "the player's own scrubber gains markers" wasn't buildable
+  as literally worded (Remotion's bundled controls have no extension point) — a separate strip
+  alongside the untouched player instead. **Remaining: Phase 5b — drag a key along time, per-row
+  lanes, box-select + nudge multiple keys, a curve/easing editor — still a MAJOR feature**,
+  comparable in cost to the Edit tab's own timeline, and must not be attached quietly to anything
+  else. Snapping/alignment GUIDES (visual guide-lines while dragging) were explicitly scoped out
+  of D-158 pending a UI-effort spike — see that decision's own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion keyframe timeline, Phase 5a: key visibility (D-160), scoping +
+  first slice on top of Phase 0-4 (D-155-159).** New scoping doc,
+  `docs/notes/motion-keyframe-timeline-research.md`, re-verifies the visual-builder research
+  doc's own Phase 5 ("a real keyframe timeline… a major feature") against the real code: nothing
+  in the Edit tab's timeline stack (`@xzdarcy/react-timeline-editor`'s clip-lane model,
+  `@dnd-kit/sortable`) transfers as code (spans vs. durationless points); `ruler.ts`'s tick
+  algorithm and D-137's gesture-separation discipline transfer as TECHNIQUE only, never an
+  import, per the standing `@chroma/motion`/`@chroma/editor` package-boundary rule. Phases the
+  rest as 5a (built here) and 5b (drag-a-key, per-row lanes, box-select, a curve editor — still
+  a major feature, not attempted). Built this pass: `keyframeVisibility.ts` (pure,
+  `layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`/`cameraKeyMarkers`/
+  `selectedLayerKeyMarkers`/`sceneBoundaryFrames`/`frameToPercent`, 25 new tests);
+  `LayerList.tsx` per-row key-count badges; a new read-only `KeyframeStrip.tsx` under the
+  player (camera + selected-layer key markers across the WHOLE composition, live playhead,
+  click/marker-click-to-seek — no manifest mutation, so no undo/commit plumbing needed). One
+  real, disclosed deviation: "the player's own scrubber gains markers" isn't buildable as
+  literally worded (Remotion's bundled controls have no extension point, checked directly) — a
+  separate strip alongside the untouched player gets the same intent instead. `tsc` clean both
+  packages (`app`'s 64-error baseline unchanged, `motion-engine` untouched), `@chroma/motion`
+  224/224 (was 199).
 - **2026-09-05** — **Motion visual builder, Phase 4: per-layer keyframes (D-159), on top of
   Phase 0/1/2/3 (D-155/D-156/D-157/D-158).** `schema.ts`'s `layer.transform` (D-157) gains an
   optional `keys: TransformKey[]` (`{at, x?, y?, scale?, rot?, opacity?, ease?}`, seconds, additive
