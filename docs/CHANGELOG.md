@@ -21,6 +21,14 @@ One or two lines per session. Detail lives in the decision it references.
   `display` surface wrapper). `render()` and the grade path stay app-side, gated on the
   later `chroma-grade` effort. `cargo check --workspace` clean; the 6 known call sites
   (`export.rs`/`playback.rs`/`relight.rs`/`gpu_processing.rs`) are unchanged.
+- **2026-09-05** — **`chroma-ai` real extraction (D-145).** `sidecar.rs` moves almost
+  whole (704 lines — lifecycle supervision, health checks, content hashing, sidecar
+  I/O), dropping `spawn_and_supervise`'s confirmed-unused `AppHandle` param on the way.
+  `depth.rs`/`mask.rs` split cleanly at the crate boundary: `tracked_depth_map`/
+  `tracked_full_mask` stay app-side (they read `chroma::state::current_video()`) but
+  as thin wrappers over new crate functions that take the frame as a plain argument —
+  `mask_generation.rs`'s call sites need zero changes. `chroma_subject_mask`'s real
+  fork-type dependencies stay put, exactly as scoped. `cargo check --workspace` clean.
 - **2026-09-05** — **Pacing & audio assistance scoped (D-140), no feature code.**
   Turned D-139's research into a buildable plan:
   `docs/notes/pacing-audio-assistance-plan.md`. Beat detection runs in the `ai/`

@@ -22,7 +22,7 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 | L2 | `chroma-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, schema migration, matte/track/depth-ref externalization. **Pure** (model vs renderer). | — |
 | L2 | `chroma-project` | future | the `.chroma` project (D-037) + settings (D-038) | types, grade-model, timeline |
 | L2 | `chroma-motion` | **yes** (D-046) | manifest → Remotion bridge: shells out to `npx remotion render` in `packages/motion-engine` rather than reimplementing it | types |
-| L3 | `chroma-ai` | future | sidecar client (SAM / ViTMatte / YOLO / depth / whisper) + lifecycle (D-028) | types |
+| L3 | `chroma-ai` | **yes** (D-145) | sidecar client: lifecycle (spawn/health/hash, D-028/D-101), `/segment`+`/track`+`/refine_track` (D-016/D-018/D-019), `/depth_track` (D-036) wire plumbing | (none — no chroma-types dependency yet; whisper is not wired in this pass) |
 | L3 | `chroma-agent` | future | control server (D-020) + MCP op registry + scope exposure | project, grade-model, timeline, types |
 | L4 | `chroma-app` (`app/src-tauri`) | **yes** — the vendored fork, still named `RapidRAW` in its `Cargo.toml` | the Tauri binary — `#[tauri::command]` surface per tab, `RunEvent` hooks, sidecar spawn | all of the above |
 

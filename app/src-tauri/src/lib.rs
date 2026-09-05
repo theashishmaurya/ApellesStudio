@@ -1922,8 +1922,10 @@ pub fn run() {
             {
                 // Chroma: start + supervise the `ai/` sidecar (D-028). Killed on exit
                 // via `chroma::sidecar::shutdown()` in the `.run(...)` handler below.
-                let sidecar_handle = app_handle.clone();
-                std::thread::spawn(move || chroma::sidecar::spawn_and_supervise(sidecar_handle));
+                // chroma-ai extraction (D-142): `spawn_and_supervise` never used its
+                // `AppHandle` parameter — dropped when the function moved into the
+                // `chroma-ai` crate, so no handle needs cloning for it here anymore.
+                std::thread::spawn(chroma::sidecar::spawn_and_supervise);
             }
 
             let window_cfg = app.config().app.windows.first().unwrap().clone();

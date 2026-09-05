@@ -836,12 +836,15 @@ extraction leaves a `pub use` shim in the same commit so `lib.rs`'s handler list
 never contended, and **`chroma-agent` is rescoped out of this wave** — `control.rs`
 has no Tauri-free core and its op registry lives in the frontend. Real order:
 
-1. **wave 1, parallel** — ~~`chroma-grade-model`~~ (**done, D-143, 2026-09-05**),
-   `chroma-ai`, ~~`chroma-gpu`~~ **done, partial, D-144 (2026-09-05)** —
-   `render_core::init_gpu_context()` moved to the new crate (headless
-   device/queue/limits); `render_core::render()` stays app-side, it's
-   `chroma-grade`'s. `GpuContext` really did split into two structs — see
-   D-144 and `crates/README.md`.
+1. **wave 1, parallel — all three landed, 2026-09-05.**
+   ~~`chroma-grade-model`~~ **done, D-143** — `save_grade`/`load_grade` +
+   the schema migration gate move verbatim. ~~`chroma-ai`~~ **done, D-145** —
+   `sidecar.rs` moves almost whole; `depth.rs`/`mask.rs` split cleanly at
+   the crate boundary with zero call-site changes. ~~`chroma-gpu`~~ **done,
+   partial, D-144** — `render_core::init_gpu_context()` moved to the new
+   crate (headless device/queue/limits); `render_core::render()` stays
+   app-side, it's `chroma-grade`'s. `GpuContext` really did split into two
+   structs — see D-144 and `crates/README.md`.
 2. **wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
    leave `edit.rs` first, or `chroma-media` would depend on the app)
 3. **wave 3** — `chroma-project` (needs `chroma-media`; an edge

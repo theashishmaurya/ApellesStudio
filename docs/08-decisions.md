@@ -10675,3 +10675,70 @@ Cargo.toml,src/lib.rs}`, `app/src-tauri/src/render_core.rs`,
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-145 — `chroma-ai` real extraction: `sidecar.rs` moves almost whole, `depth.rs`/`mask.rs` split cleanly at the crate boundary with zero call-site changes
+
+**decided + built (2026-09-05).** Executes D-141's plan §2.5, in an isolated
+worktree (`fork/extract-chroma-ai`) alongside two sibling forks extracting
+disjoint slices of the same plan.
+
+- **`sidecar.rs` (704 lines) moved almost whole**, as the plan predicted:
+  lifecycle supervision, health checks, content hashing, `resolve()`,
+  `pipe_lines`, `monitor_external` all move into `crates/chroma-ai/src/sidecar.rs`
+  verbatim. The one real code change: `spawn_and_supervise`'s `_app:
+  tauri::AppHandle` parameter — confirmed unused by the scoping pass (the
+  underscore was real) — is dropped. The app-side `sidecar.rs` is now a
+  `pub use chroma_ai::sidecar::{shutdown, spawn_and_supervise, SidecarStatus};`
+  shim plus the one `#[tauri::command] chroma_ai_status` wrapper.
+
+- **`depth.rs`/`mask.rs` split exactly as scoped, and cleaner than expected:
+  zero call-site changes anywhere.** `tracked_depth_map`/`tracked_full_mask`
+  both read a fork-side global (`chroma::state::current_video()?.frame`) that
+  the crate can't see, so both stay in `app/src-tauri` — but as thin
+  wrappers, not as the split-signature functions the plan described pushing
+  onto callers. Each wrapper reads the frame from `state`, then calls a new
+  crate function that takes the frame as a plain argument
+  (`chroma_ai::depth::depth_map_at(dir, frame)` /
+  `chroma_ai::mask::mask_at(dir, frame)`). The public signature
+  `&serde_json::Value -> Option<GrayImage>` that `mask_generation.rs` calls
+  is completely unchanged — the "strictly better signature" the plan called
+  out lives at the crate boundary, not at the caller's. `grep` for
+  `mask_generation` shows zero changes to that file.
+
+- **What moved from `depth.rs`/`mask.rs`:** the real HTTP client plumbing —
+  `/depth_track`, `/depth_track/<id>`, `/segment`, `/track`, `/track/<id>`,
+  `/refine_track`, `/health` request+response shapes — plus
+  `nearest_frame_png` (already pure and unit-tested per the plan) and the
+  shared `sidecar_base_url`/`unreachable_hint` helpers.
+
+- **What did not move:** `chroma_subject_mask`'s dependency on
+  `crate::get_cached_full_warped_image(&state, …)` and
+  `crate::ai_processing::AiSubjectMaskParameters` — both real fork types,
+  exactly the two the plan named as un-portable. The construction of those
+  types, and the frame-grabbing that feeds them, stays in
+  `app/src-tauri/src/chroma/mask.rs`.
+
+- **Net size:** `crates/chroma-ai/src/` = `sidecar.rs` (704 lines, near
+  verbatim) + `depth.rs` + `mask.rs` + `lib.rs` — close to the plan's ~900
+  line estimate.
+
+- **Verification.** `cargo check --workspace --all-targets` — clean (the 6
+  pre-existing `ai_processing.rs` dead-code warnings every entry tonight has
+  noted, none new). This is the real proof `mask_generation.rs`'s call sites
+  compile completely unchanged against the new split.
+
+- **Honest gaps.** (1) **Not exercised against a live sidecar process or a
+  real Tauri window** — this sandbox cannot launch either; the HTTP client
+  plumbing is proved by type-checking against the same request/response
+  shapes the original file used, not by a live round trip. (2) **Not seen in
+  the assembled app** — the same disclosed constraint every entry since
+  D-125.
+
+**Numbering.** Assigned D-145 directly against `main`'s real tip at merge
+time (D-143 `chroma-grade-model` and D-144 `chroma-gpu` both landed first
+among the three sibling Wave 1 forks).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -21,6 +21,7 @@ chroma-motion = { path = "../../crates/chroma-motion" }
 chroma-grade-model = { path = "../../crates/chroma-grade-model" }
 chroma-types = { path = "../../crates/chroma-types" }
 chroma-gpu = { path = "../../crates/chroma-gpu" }
+chroma-ai = { path = "../../crates/chroma-ai" }
 # Chroma editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,
 # no FFI; the audio stack named in D-039/architecture-lock.md.

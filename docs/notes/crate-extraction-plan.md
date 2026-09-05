@@ -290,6 +290,13 @@ is the only remaining stub crate that is a *pure* fill-in.
 
 ### 2.5 `chroma-ai` — the cleanest non-trivial slice, but not the whole of `mask.rs`/`depth.rs`
 
+**Status: done (D-145, 2026-09-05).** Landed as scoped: `sidecar.rs` moved almost whole
+(704 lines, `spawn_and_supervise`'s confirmed-unused `AppHandle` param dropped);
+`tracked_depth_map`/`tracked_full_mask` stay app-side as thin wrappers reading
+`chroma::state::current_video()`, delegating to new crate functions that take the
+frame as a plain argument — `mask_generation.rs` needed zero changes, cleaner than
+this section anticipated (it described a signature change reaching the caller).
+
 **`sidecar.rs` (704 lines) is 99% Tauri-free.** Its only two couplings are
 `#[tauri::command] chroma_ai_status` (L141, 2 lines) and — worth calling out —
 `spawn_and_supervise(_app: tauri::AppHandle)` at L325, whose `AppHandle` parameter is

@@ -10,6 +10,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "bytemuck",
+ "chroma-ai",
  "chroma-gpu",
  "chroma-grade-model",
  "chroma-motion",
@@ -951,6 +952,18 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chroma-ai"
+version = "0.0.0"
+dependencies = [
+ "image",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]
