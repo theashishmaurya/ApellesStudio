@@ -13761,3 +13761,261 @@ numbers — **D-163** is free, and no `B-NNN` is used or fixed by this pass.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-164 — Motion keyframe timeline, Phase 5b (part 4): a real bezier curve/easing editor — Phase 5b's last piece, closing out the whole Motion visual-builder/keyframe-timeline initiative
+
+**decided + built (2026-09-05).** The fourth and final of Phase 5b's own four named pieces
+(`docs/notes/motion-keyframe-timeline-research.md` §4: "drag a key along time; per-row lanes;
+box-select + nudge; a curve/easing editor" — §4's own recommended order, curve editor last,
+"genuinely independent, lowest coupling to the rest"). Built directly on top of D-159's schema
+(`ease: readonly [x1,y1,x2,y2]` on `cam2dKey`/`cam3dKey`/`transformKey`) and its shared
+`interpolateKeys` consumer — **not** on D-161/D-162/D-163's timeline-strip machinery at all, per
+§4's own framing of this piece as "a genuinely separate, self-contained UI component (closer to a
+color-picker than to the timeline strip itself)." That framing held up under this pass's own
+verification, not just as an assumption carried over from the scoping doc.
+
+### 1 — Required reading, done before writing anything
+
+Re-read in full: `docs/notes/motion-keyframe-timeline-research.md` (all of §1–§9, including the
+D-161/162/163 addenda at §7/§8/§9, to see the timeline's CURRENT shape rather than the doc's
+original Phase-5a-only description) and D-159's own decision entry (where `ease` was added and
+`interpolateKeys` extracted). Read `packages/motion-engine/src/lib/interpolateKeys.ts` in full —
+confirms `Easing.bezier(c[0],c[1],c[2],c[3])` is the one and only consumer of a key's `ease`, and
+that `c` is passed straight through with no reinterpretation. Read `packages/motion-engine/src/
+design.ts` in full — `design.ease` exports exactly three named presets (`out`, `inOut`,
+`anticipate`; no `in`, no `linear`), and `interpolateKeys.ts`'s own callers (`Camera.tsx`'s x/y/zoom
+call and `Video.tsx`'s per-layer-transform-key call, per D-159's write-up) both pass
+`design.ease.inOut` as `fallbackEase` — the literal curve a manifest already renders with when
+`ease` is absent, load-bearing for this pass's own "what does 'not set' mean" design call (§3
+below). Read `InspectorPanel.tsx` and `propCatalog.ts` in full for the established `FieldKind`
+pattern (`'vec'`, D-154, is the closest precedent — a fixed-length tuple that earns its own
+non-JSON control) and for `FieldControl`'s `kind === 'color'` case specifically, per the task's own
+pointer to it as "closer to a color-picker" — confirmed it renders INLINE, no popover, and that a
+native `<input type="color">`'s continuous drag already reaches `onCommit` (hence `MotionTab.tsx`'s
+`onChange={m.commit}`) on every tick, not just on release/blur.
+
+### 2 — Confirming the 4-tuple's real meaning against `remotion`'s own source, not assumed
+
+The task's own instruction was explicit: don't assume `Easing.bezier`'s parameter meaning, check
+it. Read `node_modules/remotion/dist/cjs/easing.d.ts` (`static bezier(x1,y1,x2,y2): (t:number) =>
+number`) and `node_modules/remotion/dist/cjs/bezier.js` (the actual implementation, a lift from
+React Native's own `Animated` library) in full. Confirmed: `p1=(x1,y1)`/`p2=(x2,y2)` are the two
+INTERIOR control points of a standard cubic bezier running from a fixed `(0,0)` to a fixed `(1,1)`
+— exactly the CSS `cubic-bezier()` timing-function convention, as assumed in the task brief, now
+verified rather than taken on faith.
+
+**A real, load-bearing constraint found while confirming that, not predicted in advance:**
+`bezier.js`'s own `bezier()` function THROWS (`'bezier x values must be in [0, 1] range'`) unless
+`0 <= mX1,mX2 <= 1`. This is not cosmetic — it means the widget's drag math MUST clamp an `x`
+handle to `[0,1]` unconditionally, or a drag could produce a value that crashes the render the
+moment that key is reached. `y1`/`y2` carry no such constraint at all (`design.ease.anticipate`
+already ships with `y1:-0.55`/`y2:1.55`). This asymmetry (`x` hard-bounded, `y` free) shaped both
+the pure math (`easeCurve.ts`'s `pixelToCurve` clamps `x` to `[0,1]` and `y` only to the widget's
+own disclosed visual viewport, `EASE_Y_MIN`/`EASE_Y_MAX = -0.75/1.75`, chosen to give
+`anticipate`'s own extremes room to be grabbed, not flush against an edge) and turned up a real,
+pre-existing, unrelated gap — filed as **B-062** (§6 below), not fixed under this D-number.
+
+**A second real finding, also not predicted in advance: the curve needs no numerical bezier
+evaluation to draw.** `bezier.js`'s own `calcBezier(t, a1, a2)` evaluates the SAME parametric cubic
+bezier `(bezierX(t), bezierY(t))` for `t` in `[0,1]` that an SVG `<path d="M0,0 C x1,y1 x2,y2
+1,1">` already draws natively. So `easeCurve.ts`'s `curvePath` is a coordinate transform and a
+string template, not an approximation of `Easing.bezier`'s own curve — it renders the exact same
+mathematical curve, confirmed by tracing both implementations rather than assumed from "SVG bezier
+curves look similar to CSS easing curves."
+
+### 3 — The "unset" design call: `design.ease.inOut`, not linear, and why
+
+The task left this as the pass's own call. **Decision: an absent `ease` shows/starts from
+`design.ease.inOut`, in a visually muted/dashed style, with an explicit "Not set — defaults to Ease
+In Out" caption** — not a blank widget, not an indistinguishable-from-authored curve, and not
+`[0,0,1,1]` (linear). **Reasoning, not arbitrary:** `interpolateKeys.ts`'s own `fallbackEase`
+parameter is set to `design.ease.inOut` at BOTH of its real call sites (confirmed by tracing, not
+by trusting D-159's write-up alone) — so "defaults to Ease In Out" is a factual statement about
+what the manifest ALREADY renders when `ease` is omitted, not a widget-only guess that could
+mislead an author into thinking a key is linear when it is not. This mirrors `FieldControl`'s own
+established convention (its module doc comment: "the input shows empty/unchecked, not a guessed
+default, so it's clear the value is 'unset' vs. 'set to the same thing'") as closely as a curve
+widget (which cannot show literal blankness the way a text input can) is able to: the curve IS
+shown, because it must be to be usable, but visually marked (muted color, dashed stroke, a caption)
+as "this is what you get, not what you set." Dragging a muted handle, or clicking a preset, is what
+actually WRITES `ease` for the first time — a "Clear" button (shown only once a value IS set)
+commits `undefined`, mirroring `JsonFieldControl`'s own empty-textarea-clears-the-field behaviour
+for this exact field prior to this pass.
+
+**The rejected alternative, named explicitly:** defaulting the widget's unset display to linear
+`[0,0,1,1]` (the "mathematically simplest" curve) was considered and rejected — it would show an
+author a DIFFERENT curve than the one their key actually renders with, the opposite of this
+Inspector's own "no guessed defaults" floor.
+
+### 4 — Presets: sourced from `design.ease.*`, not invented
+
+`design.ease` exports exactly three presets — `out` (`[0.22,1,0.36,1]`), `inOut`
+(`[0.65,0,0.35,1]`), `anticipate` (`[0.68,-0.55,0.27,1.55]`) — checked directly against
+`design.ts`, not assumed from the task brief's own suggested list. The task's own instruction
+("linear, ease-in, ease-out, ease-in-out, and whatever `design.ease.*` already defines") is
+satisfied literally: `EASE_PRESETS` (`easeCurve.ts`) is `Linear` (`[0,0,1,1]`, a genuinely new
+value — no engine token exists for it) and `Ease In` (`[0.42,0,1,1]`, the standard CSS curve —
+`design.ease` has no plain `in`, so this is also new) plus `design.ease.out`/`inOut`/`anticipate`
+referenced BY VALUE (the actual exported constants, not retyped literals) so the preset list can
+never silently drift from the engine's own tokens if `design.ts` changes later — the identical
+"reuse the engine's own source of truth, don't duplicate it" discipline `manifestEdit.ts`'s own
+`design.ease.inOut` reference (D-159, the `layerTransformKeyDelta` fallback) already established.
+
+### 5 — What was actually built
+
+- **`packages/motion/src/easeCurve.ts`** (new, pure, no DOM — the same `vitest` `node`-environment
+  split every other pure-math module in this package uses, `canvasGeometry.ts`'s own precedent):
+  `EaseCurve` (a LOCAL `readonly [number,number,number,number]` type, deliberately not the
+  MUTABLE `EaseCurve` `schema.ts` already exports — a mutable value is happily assignable to a
+  `readonly`-typed parameter, the reverse is not, and `design.ease.*`'s own `as const` presets are
+  themselves `readonly` — matching `interpolateKeys.ts`'s own `fallbackEase: readonly [...]`
+  parameter shape rather than fighting it); `EASE_Y_MIN`/`EASE_Y_MAX` (the widget's own disclosed
+  visual viewport, §2 above); `curveToPixel`/`pixelToCurve` (the real pointer↔value conversion —
+  the "getting this wrong is silent" class of function this package's own convention requires a
+  test floor for); `clampEaseCurve` (defends the widget's DISPLAY against a corrupt/foreign value
+  with an out-of-range `x`, without ever writing a clamped value back on its own); `resolveEaseCurve`
+  (validates a raw manifest `unknown` is a genuine finite-number 4-tuple, `null` otherwise — the
+  same trust boundary every `FieldControl` value crosses); `curvePath` (the SVG path string, §2's
+  "no numerical evaluation needed" finding); `EASE_PRESETS`/`DEFAULT_EASE` (§3/§4 above).
+- **`packages/motion/src/easeCurve.test.ts`** (new, 28 tests): `clamp`; `curveToPixel`/
+  `pixelToCurve` — exact inverse round-trip for both an in-range and an undershoot (`y<0`) point,
+  corner-maps for `(0,0)`/`(1,1)`, clamping in all four directions (`x` below/above, `y` above/
+  below), a dedicated "`x` NEVER leaves `[0,1]` regardless of pointer position" sweep (the exact
+  property `Easing.bezier` would otherwise throw on), and the `size:{w:0,h:0}`
+  not-yet-measured-widget degrade case; `clampEaseCurve` (untouched-if-valid, clamps `x`, clamps
+  `y` independently, doesn't touch `design.ease.anticipate`'s own valid overshoot); `resolveEaseCurve`
+  (valid tuple, `undefined`, non-array, wrong length, non-number element, `NaN`/`Infinity`);
+  `curvePath` (exact expected path string for a known curve+size, and "different curve → different
+  path" as a real-function-of-its-input sanity check); `EASE_PRESETS`/`DEFAULT_EASE` (`Linear`/
+  `Ease In` values, and — the drift-proofing check — `Ease Out`/`Ease In Out`/`Anticipate`/
+  `DEFAULT_EASE` are the SAME REFERENCE as `design.ease.*`, via `toBe`, not merely equal values).
+- **`packages/motion/src/EaseCurveEditor.tsx`** (new, DOM/pointer-event component, deliberately
+  UNTESTED per this package's own established split — `MotionCanvasOverlay.tsx`'s own precedent):
+  `EaseFieldControl` (the field control `InspectorPanel.tsx` dispatches to for `kind:'ease'`) +
+  internal `CurveCanvas` (the unit-square + curve-path SVG) + `Handle` (one draggable control-point
+  circle with its own dashed tangent line to its curve endpoint — the standard bezier-editor visual
+  convention). Each handle captures the pointer on its own `<circle>`
+  (`setPointerCapture`/`onPointerMove`), measures the CONTAINING `<svg>`'s own
+  `getBoundingClientRect()` fresh on every move (the same "measure fresh, don't cache" convention
+  `canvasGeometry.ts`'s `screenToWorld` already uses), and calls `onCommit` LIVE on every
+  pointermove — matching, not inventing, `color`/`number`'s own established live-commit convention
+  (§1 above) rather than adding a new transient-preview/commit split this simple field control has
+  no plumbing for (`InspectorPanel`'s `onChange` goes straight to `m.commit`, no
+  `onTransientChange` prop exists at this layer). No remount-mid-drag risk analogous to D-161's own
+  finding: unlike a reorderable keyframe-marker list, the two handles are FIXED slots (`p1`/`p2`),
+  never reordered or added/removed mid-gesture, so there is nothing here for React to remount out
+  from under an in-flight drag.
+- **`propCatalog.ts`**: new `FieldKind` value `'ease'`; `CAM2D_KEY_FIELDS`/`CAM3D_KEY_FIELDS`/
+  `LAYER_TRANSFORM_KEY_FIELDS`'s own `ease` entries changed from `kind:'json'` to `kind:'ease'` —
+  the ONLY change to those three field lists; every other field in each (`at`/`x`/`y`/`zoom`/
+  `pos`/`look`/`scale`/`rot`/`opacity`) is untouched.
+- **`InspectorPanel.tsx`**: `FieldControl`'s dispatch gains one new branch,
+  `kind === 'ease' → <EaseFieldControl .../>`, alongside the existing `'vec'`/`'json'`/`'color'`
+  branches — no other change to this file's read/write logic; `KeyframeList`'s own generic
+  add/remove/edit-row shape (D-159 §5, generalized from D-099's `CameraKeyList`) is unchanged and
+  still owns the row itself, just renders a different control for this one field inside it.
+- **No `manifestEdit.ts`/`schema.ts` change** — confirmed unnecessary and NOT made, per the task's
+  own explicit instruction: `ease` already round-trips through `KeyframeList`'s existing generic
+  per-field `onCommit` → `setLayerTransformKeys`/`setCamera2d`/`setCamera3d` (all pre-existing,
+  D-159/D-159/D-099) exactly as `x`/`y`/`zoom`/etc. already do; this pass only changes what CONTROL
+  renders for one field, never how it's read or written.
+
+### 6 — B-062, filed not fixed
+
+Confirming `Easing.bezier`'s real constraint (§2) surfaced a genuine, pre-existing gap: `schema.ts`'s
+`easeCurve` validates SHAPE (four numbers) but not the semantic constraint the one real consumer
+(`remotion`'s own `bezier()`) enforces at its own call boundary (`x1`/`x2` must be in `[0,1]`) — a
+hand-edited manifest (via the Inspector's own `</>` raw-text toggle, or any external tool) with an
+out-of-range `ease` validates fine and only crashes the render once playback reaches that key's own
+frame. **Filed as B-062 (`docs/BUGS.md`), status `open`, with a proposed fix (a `.refine()` on
+`easeCurve`)** — deliberately NOT applied here: this pass's own task brief was explicit that a
+schema change would be a scope signal worth flagging, not just doing, and the new widget itself
+cannot produce this value by construction (`pixelToCurve` clamps `x` unconditionally) — so this is
+a real, disclosed, narrower gap (the manifest-text editor and external tools remain unguarded, not
+the new Inspector control) rather than something this pass introduced or made worse.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — the same 2 pre-existing `document`-typing errors
+  in `Scene3D.tsx` as on `main` before this pass (this package was not touched at all this pass,
+  per the task's own instruction) — zero new errors.
+- `npm test --workspace @chroma/motion` — **362/362** (was 334 at D-163; **+28**, all new in
+  `easeCurve.test.ts`, §5 above — no existing test touched or broken).
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- No `remotion still`/render-level verification: this pass touches zero `motion-engine` files (no
+  schema/engine change, confirmed by `git status` showing only `packages/motion/src/*` + docs
+  changed) — the render path this feature edits (`ease`) is entirely pre-existing and already
+  covered by D-159's own byte-for-byte render verification; a NEW render comparison would prove
+  nothing this pass could have broken.
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it, the same
+disclosed constraint every entry since D-125 carries; the drag/pointer-capture wiring in
+`EaseCurveEditor.tsx` is reasoned from the same verified DOM/pointer-event semantics
+`MotionCanvasOverlay.tsx`'s own move-drag and `KeyframeTimeline.tsx`'s own key-drag already rely on
+(`setPointerCapture`, `getBoundingClientRect()`), not separately re-verified against a real window.
+(2) **B-062** (§6) — a real, pre-existing schema gap, found and disclosed, not fixed, per this
+pass's own explicit scope. (3) **No live interpolated-value preview** (the task's own explicitly
+OPTIONAL §5 polish — "a small animated dot or line moving per the curve... do NOT let this turn
+into a large scope expansion") — not built. Judged genuinely optional and out of proportion to this
+pass's own core deliverable: the curve widget already shows EXACTLY what an author needs to know
+(the shape of the easing function itself, `t → eased-t`), and a live playback-synced preview would
+need this component to know which KEY's own time-span it's inside (a `TransformKey`/`Cam2dKey`
+context this generic `FieldControl`-level widget doesn't have today — `KeyframeList` renders it
+per-row with no notion of "the player's current position relative to THIS row's own `at`") — real,
+separately-scoped plumbing, not a small addition. (4) The widget's own visual y-range
+(`EASE_Y_MIN`/`EASE_Y_MAX = -0.75/1.75`) is a disclosed, deliberate limit, not a schema bound — an
+author needing a MORE extreme overshoot than that can still hand-edit the manifest JSON directly
+(unaffected by anything in this pass); this is a UI ergonomics choice, not a capability regression
+from the prior raw-JSON control, which had no limit at all (and, per B-062, also no LOWER bound of
+correctness either).
+
+### Closing note — Phase 5b, and the whole Motion visual-builder/keyframe-timeline initiative
+
+This closes Phase 5b's own four-piece scope (drag-a-key D-161, per-row lanes D-162, box-select +
+nudge D-163, curve/easing editor D-164) and, with it, the initiative that began with the owner's
+own live ask, quoted at the top of `docs/notes/motion-visual-builder-research.md`: a visual
+builder with drag/resize/multi-select/align, real keyframe animation, and "a timeline as well for
+everything... when it starts, when it ends." **What's real, end to end, as of this entry:**
+click-select/drag/resize/snap-to-layer/multi-select/marquee/align-distribute on the canvas
+(D-155–158); per-layer keyframes with auto-keyframe-on-drag, additive deltas, and a shared
+`interpolateKeys` used by both the camera and every layer (D-159, also fixing B-059/B-060's cousin
+gap); a real per-row keyframe timeline — lanes, a shared zoomable ruler, drag-a-key, box-select,
+multi-key nudge (D-160–163); and now a real bezier-curve-with-draggable-handles editor for the one
+field that was still raw JSON (this entry). **What remains genuinely open, disclosed rather than
+implied-done:**
+
+- **The sandbox constraint every entry since D-125 has carried** — nothing in this whole
+  initiative has been driven in the real, assembled Tauri app; every verification is `tsc`/`vitest`
+  + render-level (`remotion still`) checks plus careful tracing of already-verified DOM/pointer
+  semantics. This is the single largest asterisk on the whole initiative, named once here rather
+  than re-stated as a surprise in some future entry.
+- **B-061** (camera keyframe `at` mislabeled "(frame)," stores seconds) — still open, still
+  deliberately untouched across every one of D-159 through this entry, each pass declining to
+  smuggle in a one-word fix under an unrelated D-number.
+- **B-062** (this entry) — the `ease` x-range schema gap, open.
+- **D-159's own disclosed gaps, unchanged:** the screen↔world map's non-identity-`scale`/`rot`
+  approximation (D-157), and `layerTransformKeyDelta`/`layerDragBase` only ever resolving `x`/`y`
+  auto-keyframe (no on-canvas rotate/scale/opacity handle exists to auto-keyframe those fields,
+  though the schema/render/Inspector all fully support authoring them by hand).
+- **D-158's own disclosed gap:** no snapping/alignment GUIDES (visual guide-lines while dragging) —
+  scoped out pending a UI-effort spike, still pending.
+- **This entry's own optional polish, not built:** a live interpolated-value preview on the curve
+  widget (§ Honest gaps (3) above) — real, separately-scoped future work, not a silent omission.
+
+**Not a victory-lap claim of "done":** a real, working, tested v1 of every piece the owner asked
+for, with its actual remaining gaps named in one place rather than scattered across nine decision
+entries for someone to reassemble later.
+
+**Numbering.** Re-verified against the REAL current tip of `main` in the main repo
+(`/Users/ashishmaurya/my_projects/chroma`, not this worktree) both before starting this pass and
+immediately before writing this entry: `git log --oneline -5` shows `d33c9f2` (`D-163 Phase 5b part
+3: box-select + nudge multiple keys`) still at the tip, unchanged across the whole pass, and
+`grep -oE 'D-[0-9]+' docs/08-decisions.md | sort -t- -k2 -n -u | tail` / `grep -oE 'B-[0-9]+'
+docs/BUGS.md | sort -t- -k2 -n -u | tail` both still show **D-163 / B-061** as the highest numbers
+in the main repo — **D-164** and **B-062** are both free of any concurrent collision.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

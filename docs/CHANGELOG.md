@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 4): a real bezier curve/easing
+  editor (D-164) — closes Phase 5b and the whole Motion visual-builder/keyframe-timeline
+  initiative (D-150 through D-164).** New `easeCurve.ts` (pure: `curveToPixel`/`pixelToCurve` —
+  the real pointer↔value conversion, `x` unconditionally clamped to `[0,1]` since `remotion`'s own
+  `Easing.bezier`/`bezier()` THROWS outside that range, confirmed against its real source this
+  pass; `curvePath` needs no numerical bezier evaluation at all, an SVG `C` command already draws
+  the identical parametric curve; `resolveEaseCurve`/`clampEaseCurve`; `EASE_PRESETS`/
+  `DEFAULT_EASE` sourced BY REFERENCE from `design.ease.*`, plus `Linear`/`Ease In` which that
+  module doesn't define) and `EaseCurveEditor.tsx` (`EaseFieldControl`: two draggable
+  control-point handles with dashed tangent lines, live-commits per pointermove matching
+  `color`/`number`'s own established convention, no popover — inline like `color`). New
+  `propCatalog.ts` `FieldKind: 'ease'` replaces `kind:'json'` for `CAM2D_KEY_FIELDS`/
+  `CAM3D_KEY_FIELDS`/`LAYER_TRANSFORM_KEY_FIELDS`'s own `ease` entries — the only change to those
+  three field lists. Unset `ease` shows `design.ease.inOut` muted/dashed with a "Not set — defaults
+  to Ease In Out" caption — the literal fallback `interpolateKeys.ts` already renders with, not a
+  guess. Found and filed (not fixed, per this pass's own scope) **B-062**: `schema.ts`'s
+  `easeCurve` never validated `Easing.bezier`'s own hard `x∈[0,1]` requirement, so a hand-edited
+  out-of-range value validates fine and only crashes at render time. No `manifestEdit.ts`/
+  `schema.ts` change — `ease` was already fully plumbed, this is a new INPUT WIDGET only. `tsc`
+  clean, `app`/`motion-engine` baselines unchanged, `@chroma/motion` 362/362 (was 334, +28, all
+  new in `easeCurve.test.ts`).
 - **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 3): box-select + nudge multiple keys
   (D-163), on top of Phase 5b part 2 (D-162).** A new `KeySelectionEntry` model
   (`keyframeVisibility.ts` — `{lane, keyIndex}`, local to `KeyframeTimeline.tsx`, no

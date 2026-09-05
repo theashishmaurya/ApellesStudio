@@ -503,4 +503,65 @@ marquee, matching every other drag gesture in this tab.
 Full writeup, verification, and honest gaps: `docs/08-decisions.md`'s **D-163** entry.
 
 **Still not built: the curve/easing editor** — Phase 5b's own final piece, explicitly not
-attempted here, independent of the rest per §4's own original recommended order.
+attempted here, independent of the rest per §4's own original recommended order. **Now built —
+see §10 below.**
+
+---
+
+## 10. Phase 5b, part 4 — "a curve/easing editor" — built (D-164, 2026-09-05). Phase 5b, and this whole initiative, closed.
+
+The fourth and final of §4's own four named pieces, built LAST per §4's own recommended order
+("the curve editor last... genuinely independent, lowest coupling to the rest") and, unlike parts
+1–3, built directly on top of D-159's schema/`interpolateKeys` rather than on D-161/162/163's
+timeline-strip machinery — confirming §4's own original framing of this piece as "a genuinely
+separate, self-contained UI component (closer to a color-picker than to the timeline strip
+itself)" was correct, not merely a convenient assumption.
+
+**The 4-tuple's real meaning, confirmed against `remotion`'s own bundled source, not assumed.**
+`Easing.bezier(x1,y1,x2,y2)` (`easing.d.ts`) wraps a `bezier(mX1,mY1,mX2,mY2)` helper
+(`bezier.js`, a lift from React Native's `Animated`) whose `p1=(x1,y1)`/`p2=(x2,y2)` are the two
+interior control points of a cubic bezier from `(0,0)` to `(1,1)` — the standard CSS
+`cubic-bezier()` convention. **A real, load-bearing constraint found while confirming that:**
+`bezier()` THROWS unless `0 <= mX1,mX2 <= 1` — so the new widget's drag math clamps `x` to
+`[0,1]` unconditionally (`easeCurve.ts`'s `pixelToCurve`); `y` carries no such constraint
+(`design.ease.anticipate` already overshoots to `y1:-0.55`/`y2:1.55`), so the widget's own visual
+viewport is deliberately taller than the unit square. **A second finding:** the curve needs no
+numerical bezier evaluation to draw — an SVG `<path d="M0,0 C x1,y1 x2,y2 1,1">` already draws the
+identical parametric curve `bezier.js`'s own `calcBezier` evaluates internally, so `curvePath` is
+a coordinate transform, not an approximation.
+
+**The "unset" design call:** an absent `ease` shows `design.ease.inOut` — the literal curve
+`interpolateKeys.ts`'s own `fallbackEase` argument already resolves to at both its real call sites
+— muted/dashed, with a "Not set — defaults to Ease In Out" caption, matching `FieldControl`'s own
+"unset, not a guessed default" convention as closely as a curve widget (which cannot show literal
+blankness) can. Linear `[0,0,1,1]` was considered and rejected as the unset display: it would show
+a DIFFERENT curve than what the key actually renders with.
+
+**Presets sourced from `design.ease.*` by reference, plus two standard curves that module doesn't
+define** (`Linear`, `Ease In`) — `Ease Out`/`Ease In Out`/`Anticipate` are the actual exported
+constants, not retyped literals, so the list can't silently drift from the engine's own tokens.
+
+**Wiring:** `propCatalog.ts` gains `FieldKind: 'ease'`, replacing `kind:'json'` for
+`CAM2D_KEY_FIELDS`/`CAM3D_KEY_FIELDS`/`LAYER_TRANSFORM_KEY_FIELDS`'s own `ease` entries — the only
+change to those three lists. `InspectorPanel.tsx`'s `FieldControl` gains one new dispatch branch.
+No `manifestEdit.ts`/`schema.ts` change — `ease` was already fully plumbed through `KeyframeList`'s
+existing generic per-field commit path (D-159 §5); this phase is a new INPUT WIDGET only, exactly
+as scoped.
+
+**A real, disclosed, pre-existing gap found and filed, not fixed:** `schema.ts`'s `easeCurve`
+validates shape (four numbers) but never encoded `Easing.bezier`'s own semantic `x∈[0,1]`
+constraint — filed as **B-062** (`docs/BUGS.md`), open, with a proposed `.refine()` fix. Not
+applied under this D-number per the task's own explicit scope ("if you find yourself needing a
+manifest/schema change, stop and reconsider") — the new widget itself cannot produce this value by
+construction, but the manifest-text editor and external tools still can.
+
+Full writeup, verification, and the closing status of the WHOLE initiative (D-150 through D-164):
+`docs/08-decisions.md`'s **D-164** entry.
+
+**This closes Phase 5b (drag-a-key D-161, per-row lanes D-162, box-select+nudge D-163, curve
+editor D-164) and, with it, the Motion visual-builder/keyframe-timeline initiative this doc and
+`motion-visual-builder-research.md` together scoped and built, start to finish.** Real,
+disclosed gaps remain (the sandbox-can't-launch-Tauri constraint every entry since D-125 carries;
+B-061 and B-062, both open; D-157's screen↔world approximation; no on-canvas rotate/scale/opacity
+handle; no snap/align drag-guides; no live interpolated-value preview on the curve widget) — see
+D-164's own closing note for the full list in one place.

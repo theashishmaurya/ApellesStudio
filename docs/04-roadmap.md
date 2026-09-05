@@ -1122,10 +1122,31 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   `Selection[]`), and each key clamps to its OWN scene's `[0,dur]` independently — a nudge can
   become non-uniform at a boundary rather than blocking the whole gesture, for consistency with
   `moveKeyAt`'s own established never-block philosophy.
-  **Remaining: Phase 5b's last piece — a curve/easing editor — still real, unbuilt work**,
-  independent of the rest per the research doc's own recommended order. Snapping/alignment GUIDES
-  (visual guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort
-  spike — see that decision's own entry for the smallest next step.
+  **Phase 5b, part 4 (a real bezier curve/easing editor) BUILT — D-164, 2026-09-05. This closes
+  Phase 5b and the whole Motion visual-builder/keyframe-timeline initiative (D-150 through
+  D-164).** A genuinely separate, self-contained widget (per the research doc's own framing,
+  "closer to a color-picker than to the timeline strip") — built on D-159's schema and
+  `interpolateKeys`, not on D-161/162/163's timeline machinery at all. New `easeCurve.ts` (pure
+  math: `curveToPixel`/`pixelToCurve`, `x` unconditionally clamped to `[0,1]` because `remotion`'s
+  own `Easing.bezier`/`bezier()` throws outside that range — confirmed against its real bundled
+  source, not assumed; `curvePath` needs no numerical bezier evaluation, an SVG `C` command already
+  draws the identical parametric curve; presets sourced BY REFERENCE from `design.ease.*` plus
+  `Linear`/`Ease In`, which that module doesn't define) and `EaseCurveEditor.tsx` (two draggable
+  control-point handles, live-commits per pointermove — matching `color`/`number`'s own established
+  live-commit convention, not inventing a new one). `propCatalog.ts` gains `FieldKind: 'ease'`,
+  replacing `kind:'json'` for the three existing `ease` field entries — the ONLY change to those
+  lists; no `manifestEdit.ts`/`schema.ts` change needed, `ease` was already fully plumbed. Unset
+  `ease` shows `design.ease.inOut` (the literal fallback the engine already renders with) muted,
+  not a blank widget or a misleading guess. Found and filed (not fixed, per this pass's own scope)
+  **B-062**: the schema never validated `Easing.bezier`'s own hard `x∈[0,1]` constraint, so a
+  hand-edited out-of-range `ease` validates fine and only crashes at render time — the new widget
+  itself cannot produce this value by construction, but the manifest-text editor and external tools
+  still can. **Closing status of the whole initiative, disclosed:** every entry since D-125's own
+  sandbox-can't-launch-Tauri constraint still applies to all of it; B-061 (camera `at` mislabeled
+  "frame," stores seconds) and B-062 remain open; D-157's screen↔world scale/rot approximation and
+  D-159's rotate/scale/opacity-have-no-canvas-handle gap are unchanged; snapping/alignment guides
+  (D-158) remain unbuilt pending a UI-effort spike; a live interpolated-value preview on the curve
+  widget was judged genuinely optional (per the task's own framing) and not built.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

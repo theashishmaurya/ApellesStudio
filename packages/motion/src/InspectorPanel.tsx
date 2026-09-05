@@ -15,7 +15,12 @@
  * textarea rather than a bespoke per-shape editor — the scoping doc's own
  * "lighter-touch editor for these" call, made explicit here (see
  * `propCatalog.ts`'s `kind: 'json'`). Everything else gets a real typed
- * control.
+ * control — including, since Phase 5b part 4, a key's `ease` field
+ * (`kind: 'ease'`, `EaseCurveEditor.tsx`'s `EaseFieldControl`): a real
+ * bezier-curve-with-draggable-handles widget, not the raw JSON tuple every
+ * other fixed-shape-tuple field still uses (see that module's own doc
+ * comment for why `ease` specifically earned a bespoke widget where
+ * `pos`/`look`/etc. didn't).
  *
  * A selection whose `use` isn't in `propCatalog.ts` (a manifest field this
  * Inspector build doesn't recognize — future primitive, hand-edited
@@ -90,6 +95,7 @@
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
+import { EaseFieldControl } from './EaseCurveEditor';
 import { layerLabel, type Selection } from './LayerList';
 import {
   selectedScene,
@@ -212,6 +218,10 @@ function FieldControl({
 
   if (spec.kind === 'vec') {
     return <VecFieldControl spec={spec} value={value} onCommit={onCommit} />;
+  }
+
+  if (spec.kind === 'ease') {
+    return <EaseFieldControl spec={spec} value={value} onCommit={onCommit} />;
   }
 
   if (spec.kind === 'number') {

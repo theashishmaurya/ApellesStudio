@@ -29,9 +29,20 @@
  * these ARE simple transform/layout knobs, just multi-number ones, and the
  * owner asked for exactly this directly: "we should be able to have all
  * this as x: y: h: w: separate."
+ *
+ * `'ease'` (Phase 5b part 4, `docs/notes/motion-keyframe-timeline-
+ * research.md` §4/§9) is a THIRD tuple case, distinct from both `'json'`
+ * and `'vec'`: a key's `ease` field IS a fixed-length 4-number tuple, but
+ * unlike `'vec'` its four numbers are not independent labeled scalars — two
+ * of them are a 2D point (`p1=(x1,y1)`), the other two are a second 2D
+ * point (`p2=(x2,y2)`), together describing ONE cubic bezier curve. A
+ * `'vec'`-style "X/Y1/Y2/X2" row of four plain number inputs would show the
+ * numbers without showing the CURVE they describe — the whole reason this
+ * field earns a bespoke widget (`EaseCurveEditor.tsx`'s `EaseFieldControl`)
+ * instead of reusing `VecFieldControl`.
  */
 
-export type FieldKind = 'number' | 'string' | 'boolean' | 'color' | 'select' | 'json' | 'vec';
+export type FieldKind = 'number' | 'string' | 'boolean' | 'color' | 'select' | 'json' | 'vec' | 'ease';
 
 export interface FieldSpec {
   /** the exact manifest JSON key this field reads/writes */
@@ -183,25 +194,27 @@ export const SCENE_FIELDS: FieldSpec[] = [
  *  phase's own scope, which is B-059 specifically) — left as-is deliberately
  *  rather than smuggling in an unrelated one-word fix under a different
  *  D-number. `ease` (D-159/B-059 — the field is now real and typed in
- *  `schema.ts`, no longer silently stripped by the zod schema) is new: a raw
- *  `[x1,y1,x2,y2]` JSON tuple, the same lighter-touch editor `pos`/`look`
- *  below already use for a fixed-shape-but-not-a-simple-scalar field, rather
- *  than a bespoke 4-handle bezier-curve widget — completing B-059's own
- *  proposed fix ("expose it as a real control in the Inspector's existing
- *  camera keyframe editor"). */
+ *  `schema.ts`, no longer silently stripped by the zod schema) got a real
+ *  bezier-curve-with-draggable-handles widget at Phase 5b part 4
+ *  (`kind: 'ease'`, `EaseCurveEditor.tsx`'s `EaseFieldControl`) — the raw
+ *  `[x1,y1,x2,y2]` JSON textarea `pos`/`look` below still use WAS `ease`'s
+ *  own original, deliberately lighter-touch B-059 fix, now superseded for
+ *  `ease` specifically per that phase's own scope (see
+ *  `easeCurve.ts`'s module doc comment for the full "why a real widget, not
+ *  the JSON fallback" reasoning). */
 export const CAM2D_KEY_FIELDS: FieldSpec[] = [
   { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
   { key: 'x', label: 'X', kind: 'number', group: 'layout' },
   { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
   { key: 'zoom', label: 'Zoom', kind: 'number', group: 'layout' },
-  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
+  { key: 'ease', label: 'Ease', kind: 'ease', group: 'timing' },
 ];
 
 export const CAM3D_KEY_FIELDS: FieldSpec[] = [
   { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
   { key: 'pos', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
   { key: 'look', label: 'Look at [x,y,z]', kind: 'json', group: 'layout' },
-  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
+  { key: 'ease', label: 'Ease', kind: 'ease', group: 'timing' },
 ];
 
 /** Which manifest field(s) a canvas DRAG writes for a primitive's `use:`
@@ -300,7 +313,10 @@ export const LAYER_TRANSFORM_FIELDS: FieldSpec[] = [
  *  `LAYER_TRANSFORM_FIELDS` field of the same name (see `schema.ts`'s
  *  `layerTransform` doc comment for the full "why additive, uniformly
  *  across all five fields" reasoning) — labelled "delta" so that relation
- *  is visible in the Inspector, not just in a code comment. */
+ *  is visible in the Inspector, not just in a code comment. `ease` renders
+ *  through the real bezier-curve widget (`kind: 'ease'`, Phase 5b part 4 —
+ *  see `CAM2D_KEY_FIELDS`'s own updated doc comment above for why), not the
+ *  raw JSON tuple this field used from D-159 through Phase 5b part 3. */
 export const LAYER_TRANSFORM_KEY_FIELDS: FieldSpec[] = [
   { key: 'at', label: 'At (s)', kind: 'number', group: 'timing' },
   { key: 'x', label: 'X delta', kind: 'number', group: 'layout' },
@@ -308,5 +324,5 @@ export const LAYER_TRANSFORM_KEY_FIELDS: FieldSpec[] = [
   { key: 'scale', label: 'Scale delta', kind: 'number', group: 'layout' },
   { key: 'rot', label: 'Rotation delta (deg)', kind: 'number', group: 'layout' },
   { key: 'opacity', label: 'Opacity delta', kind: 'number', group: 'fill' },
-  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
+  { key: 'ease', label: 'Ease', kind: 'ease', group: 'timing' },
 ];
