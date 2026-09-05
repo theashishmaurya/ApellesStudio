@@ -78,7 +78,9 @@ Two more things fell out of writing this table:
 
 ## 2. What is persisted, where, and how it is keyed
 
-`app/src-tauri/src/chroma/media_cache.rs`.
+`crates/chroma-media/src/media_cache.rs` (moved verbatim out of
+`app/src-tauri/src/chroma/media_cache.rs` by D-146's `chroma-media` extraction —
+a thin re-export shim remains at the old path).
 
 **Location.** `app_cache_dir()/chroma/<namespace>/<first 2 hex chars>/<key>`. Not a new
 convention — `app_cache_dir()` is where RapidRAW's own still-image thumbnail cache
@@ -129,7 +131,8 @@ optimisation; the recompute path is always still there.
 
 ## 3. The filmstrip's data shape: LOD chunks, not per-clip strips
 
-`app/src-tauri/src/chroma/filmstrip.rs` + `packages/editor/src/Filmstrip.tsx`.
+`crates/chroma-media/src/filmstrip.rs` (moved whole by D-146; shim remains at
+`app/src-tauri/src/chroma/filmstrip.rs`) + `packages/editor/src/Filmstrip.tsx`.
 
 D-124 fetched a fixed 64-frame summary of the whole clip and re-tiled it at render
 time. Zoom became free — but only because there was nothing left to fetch: a
