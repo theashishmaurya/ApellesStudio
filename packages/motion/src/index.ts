@@ -13,3 +13,7 @@
  */
 
 export { MotionTab } from './MotionTab';
+// B-058/D-150 — the readiness signal the composition root pushes in (the same
+// shape `@chroma/editor` exports its timeline store for): app → tabs, never the
+// other way round (D-039).
+export { useMotionProjectStore } from './motionProjectStore';

@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **The Motion tab's false "No project open" (B-058 / D-150).**
+  Owner-reported live; not the D-148 regression the timing suggested —
+  `state::set_project` was running fine. The tab mounts at boot like every tab,
+  read its manifest right there with no project open, and stored that honest
+  backend error as a *fact about the app*; its only escape was a window `focus`
+  event, which the in-window launcher never produces. Same structural fault
+  B-034/D-112 removed from the Edit tab, and it gets the same fix: a real
+  readiness store with one input pushed in from the composition root, no backend
+  call at all while the app says no project is open, and a failed read that says
+  so instead of lying. 9 new tests (2 confirmed red against the old behaviour);
+  `tsc`/`cargo check` state unchanged. Also filed: `closeProject` leaves the Rust
+  `ProjectRef` stale — an adjacent hole this pass deliberately did not fix.
 - **2026-09-05** — **`chroma-project` real extraction (D-148) — Wave 1–3 of the
   crate migration is done.** `chroma/project.rs` L1–1638 (the manifest, every
   schema migration, the media pool + bins, the D-070 unified clip identity and

@@ -11556,3 +11556,93 @@ between the two — that fork moves the manifest and timeline lifecycle out of
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-150 — The Motion tab's readiness becomes a real state machine with one input, the same shape B-034/D-112 gave the Edit tab — and for the same reason
+
+**Context.** Owner-reported live (B-058): a project open, breadcrumb showing, Edit and
+Colorist both working against it — the Motion tab says "No project open." The timing
+pointed straight at D-148 (the `chroma-project` extraction, landed hours earlier), and it
+is not that: `state::set_project` still runs at `project.rs` L199 on every open path, and
+D-148's diff touches it only in test code. The real cause is older than tonight and is a
+*shape*, not a slip: `@chroma/motion` inferred "no project is open" from a failed IPC read.
+
+That is the exact fault `docs/BUGS.md` B-034 / this doc's D-112 removed from
+`@chroma/editor`, after it had produced the same confidently-wrong sentence five separate
+times from five unrelated causes (B-004, B-025, B-031, B-032, B-034). Motion was written
+after Edit's first fix and before Edit's real one, so it inherited the old shape and none
+of the lesson: `MotionTab` mounts at boot like every tab (`Shell.tsx` hides, never
+unmounts), read the manifest right there with no project open, got the honest backend
+error `"no project open — open one in the Colorist tab"`, and stored that as a fact about
+the application. Its only escape was a window `focus` listener — and opening a project
+from the in-window launcher produces no blur/focus at all, so for the real path it never
+fired.
+
+**Options.**
+1. *Re-run `load()` when the tab becomes visible.* Small, and it would have made the
+   symptom go away. It is also the blind retry the previous four Edit-tab "fixes" were:
+   the tab would still be inferring app state from an error string, so the next unrelated
+   backend failure would render the same false screen again.
+2. *Have `@chroma/motion` read `useSessionStore` directly.* Straight D-039 layer violation
+   (app → tabs is one-way), and it is exactly what the composition-root bridge exists to
+   avoid.
+3. *Push the signal in, and make a failed read say what it is* — the D-112 shape, applied
+   to this tab. **Chosen.**
+
+**Decision.** A new `packages/motion/src/motionProjectStore.ts` owns readiness:
+`projectOpen` (pushed in from `app/src/main.tsx`, the app's own source of truth) and
+`status` (`idle`/`loading`/`ready`/`error`, which says only what the *read* is doing).
+`load()` returns immediately while `projectOpen` is false — with no call there is no error
+to misread — and a read that fails while a project genuinely is open produces a real error
+screen with the real backend text. `MotionTab` renders "No project open" off `projectOpen`
+alone, so that sentence has exactly one cause again. Manifest *editing* state (text, parse,
+dirty, save, render) stays component-local in `useMotionManifest`, which seeds itself from
+the store's last successful read.
+
+**Three details that are decisions, not mechanics.**
+
+1. **The signal is `!!projectPath`, not the shell's `projectOpen`.** The shell's flag is
+   also true for an in-memory "Untitled" loose-clip session. Motion's manifest is a sidecar
+   *inside* the project directory (`<project>.chroma/motion/manifest.json`, D-046), so with
+   no directory on disk there is genuinely nowhere to read or write, and "No project open"
+   is then the truth. The empty state is reworded to name that case ("open one — or save
+   this Untitled session as a project"), and its Retry button is gone: there was never
+   anything for it to retry.
+2. **The editor is seeded per *read generation*, not per value.** `loaded` carries a
+   monotonic `generation`; the hook seeds its text only when that number changes, so a
+   re-render or a second identical read cannot silently discard what the owner has typed.
+   For the same reason the window-`focus` recheck now fires only when the last read
+   *failed* — a refetch-on-every-focus like `@chroma/editor`'s would throw away unsaved
+   manifest edits, a hazard the old code avoided only by accident.
+3. **No retry ladder, no IPC timeout** — deliberately, though `@chroma/editor`'s store has
+   both. Those were built for faults actually observed on that path (B-004's IPC corruption
+   on cold boot). This path has shown none, and B-058 is precisely a lesson about machinery
+   added to defend a diagnosis nobody had. The monotonic load token *is* kept: `load()` is
+   now callable from the bridge, the focus recheck and Retry, so ordering between them is a
+   real concern rather than a hypothetical one.
+
+**Evidence.** `packages/motion/src/motionProjectStore.test.ts` — 9 tests, node env, `invoke`
+mocked, modelled directly on `timelineStore.test.ts`. Two of them encode the live fault and
+were confirmed red against the pre-fix behaviour (the old string-matching inference and the
+unguarded mount read temporarily restored inside the new store): `never runs at all while
+the app says no project is open` and `even the backend's own "no project open" text does not
+flip the signal`. Full run: 27 passed in `packages/motion` (18 pre-existing + 9 new);
+`tsc --noEmit` clean for `packages/motion` and `packages/editor`; `app`'s own typecheck
+holds at its pre-existing 64 errors (unchanged, all in inherited RapidRAW files);
+`cargo check --workspace --all-targets` clean (no Rust changed this pass).
+
+**Honest gap.** Not verified by driving the real Tauri window: this pass ran in a sandboxed
+worktree that cannot launch the app, and must not touch the owner's live dev server. The
+confidence therefore rests on (a) the mount-order trace being unambiguous — `Shell.tsx`
+mounts all tabs from boot, the launcher's open path fires no window `focus` — and (b) the
+state machine being unit-tested at the same boundary the Edit tab's equivalent is. The one
+thing a real window would add is confirmation that no *fourth* path re-mounts `MotionTab`
+and masks the effect; that would only ever have hidden the bug, never caused it. Same
+limitation, stated the same way, as D-125 and D-130.
+
+**Numbering.** D-150 / B-058, taken after checking `main` (landed through D-149 / B-057) and
+all three sibling worktrees (`motion-audit-catalog`, `motion-visual-builder-research`,
+`motion-no-project-fix`), none of which had committed a higher number at the time of this
+commit.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

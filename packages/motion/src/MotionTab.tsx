@@ -40,16 +40,19 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   const playerRef = useRef<PlayerRef>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
 
+  // B-058 — this screen is now driven by the app's own "a project is open"
+  // signal (`motionProjectStore.projectOpen`) and nothing else, so it can no
+  // longer appear while a project genuinely is open. There is deliberately no
+  // Retry here any more: there was never anything for it to retry: the fix is
+  // to open (or save) a project, which flips the signal on its own.
   if (m.loadState === 'no-project') {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
         <h1 className="text-lg font-semibold text-text-primary">No project open</h1>
         <p className="text-sm text-text-secondary max-w-md">
-          Open a project in the Colorist tab to edit and render a motion manifest.
+          A motion manifest is saved inside a project. Open one — or save this Untitled session as a
+          project — in the Colorist tab to edit and render one.
         </p>
-        <Button className="mt-2" onClick={() => m.reload()}>
-          Retry
-        </Button>
       </div>
     );
   }
@@ -58,6 +61,9 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     return (
       <div className="h-full w-full flex flex-col items-center justify-center gap-2 bg-bg-primary text-center px-6">
         <h1 className="text-lg font-semibold text-text-primary">Couldn't load the manifest</h1>
+        <p className="text-sm text-text-secondary max-w-md">
+          The project is open, but reading its motion manifest failed.
+        </p>
         {m.loadError && <p className="text-[11px] text-text-secondary/60 max-w-md">{m.loadError}</p>}
         <Button className="mt-2" onClick={() => m.reload()}>
           Retry

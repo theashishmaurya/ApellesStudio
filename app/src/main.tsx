@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab } from '@chroma/shell';
 import { EditorTab, useEditorTimelineStore } from '@chroma/editor';
-import { MotionTab } from '@chroma/motion';
+import { MotionTab, useMotionProjectStore } from '@chroma/motion';
 import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
@@ -65,6 +65,24 @@ function Root() {
   useEffect(() => {
     useEditorTimelineStore.getState().setProjectOpen(projectOpen);
   }, [projectOpen]);
+
+  // B-058/D-150 — the same bridge for the Motion tab, which never had one: it
+  // mounts at boot like every other tab (see this file's B-007 note), read its
+  // manifest once right there with no project open, and — because it *inferred*
+  // "no project" from that failure — sat on that answer for the rest of the
+  // session. Its only escape was a window `focus` event, which opening a
+  // project from the in-window launcher never produces.
+  //
+  // The signal is deliberately narrower than `projectOpen` above: Motion's
+  // manifest is a sidecar inside the project directory
+  // (`<project>.chroma/motion/manifest.json`), so an in-memory "Untitled"
+  // loose-clip session — `projectName` set, `projectPath` null — genuinely has
+  // nowhere to read or write, and the tab should say so rather than fail a call
+  // it was never able to make.
+  const motionProjectOpen = useSessionStore((s) => !!s.projectPath);
+  useEffect(() => {
+    useMotionProjectStore.getState().setProjectOpen(motionProjectOpen);
+  }, [motionProjectOpen]);
 
   // D-071: `chroma_timeline_set` (the Edit tab's own save path, fired on
   // every drag/trim/split) never runs `open_manifest`, so nothing else

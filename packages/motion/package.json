@@ -15,7 +15,8 @@
     "@remotion/player": "4.0.519",
     "@tauri-apps/api": "^2.11.1",
     "react": "^19.2.8",
-    "react-resizable-panels": "4.12.3"
+    "react-resizable-panels": "4.12.3",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "vitest": "^3.2.4"

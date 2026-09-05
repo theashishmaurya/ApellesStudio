@@ -13,7 +13,14 @@ import { invoke } from '@tauri-apps/api/core';
 /** The exact message `motion.rs::current_project_dir` rejects with. */
 const NO_PROJECT_MESSAGE = 'no project open — open one in the Colorist tab';
 
-/** Thrown by every call below when no `.chroma` project is currently open. */
+/** Thrown by every call below when no `.chroma` project is currently open.
+ *
+ *  B-058: this is a *label on a backend error*, not evidence about the app's
+ *  state, and nothing may treat it as the latter any more. `motionProjectStore`
+ *  never calls at all while the app says no project is open, so seeing this
+ *  from a `load()` means a real frontend/backend desync and is reported as the
+ *  error it is. It still gives `save`/`render` a readable message for the same
+ *  desync (or for a project closed mid-edit). */
 export class NoProjectOpenError extends Error {
   constructor() {
     super(NO_PROJECT_MESSAGE);

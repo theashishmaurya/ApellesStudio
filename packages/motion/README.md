@@ -12,10 +12,18 @@ through the `chroma_motion_*` Tauri commands
 - `MotionTab.tsx` — the tab: gates on a project being open (same contract
   `@chroma/editor`'s `EditorTab` uses — manifest persistence is
   project-scoped), then lays out `MotionPreview` + `ManifestEditor`.
-- `useMotionManifest.ts` — all the state: loads the saved manifest (or the
-  engine's sample for a fresh project), live-parses every edit (debounced)
-  against `@chroma/motion-engine`'s `manifestSchema`, drives save/render.
-  Local component state, not a store — nothing outside this tab needs it.
+- `motionProjectStore.ts` — **readiness** (B-058/D-150): `projectOpen`, pushed in
+  from the composition root (`app/src/main.tsx`), plus where the manifest read
+  stands (`idle`/`loading`/`ready`/`error`). A store, not tab-local state,
+  because the signal comes from outside this package and the tab is mounted from
+  boot. Nothing here infers "no project is open" from a failed read — that
+  inference *was* B-058, and is what B-034/D-112 removed from the Edit tab before
+  it.
+- `useMotionManifest.ts` — the *editing* state: seeds the editor from whatever
+  `motionProjectStore` last read (or the engine's sample, for a project with no
+  saved manifest yet), live-parses every edit (debounced) against
+  `@chroma/motion-engine`'s `manifestSchema`, drives save/render. Component-local
+  — nothing outside this tab needs it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
   `totalFrames`/schema defaults (`build.ts`), not reimplemented here.
