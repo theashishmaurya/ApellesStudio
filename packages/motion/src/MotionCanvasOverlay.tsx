@@ -1,11 +1,13 @@
 /**
  * @chroma/motion — on-canvas select + drag (D-156, Phase 1) + resize (D-157,
- * Phase 2) of `docs/notes/motion-visual-builder-research.md`. The owner's
- * original ask: "i would like to drag and drop multiple elements and set
- * position or change them size crop animation and all those things" — Phase
- * 1 shipped select+move; this pass adds resize handles for the primitives
- * that have a real rectangle (multi-select, rotate, keyframes and `scene3d`
- * manipulation all stay deferred — see the research doc §4).
+ * Phase 2) + multi-select/marquee/group-move (D-158, Phase 3) of
+ * `docs/notes/motion-visual-builder-research.md`. The owner's original ask:
+ * "i would like to drag and drop multiple elements and set position or
+ * change them size crop animation and all those things" — Phase 1 shipped
+ * select+move, Phase 2 added resize, this pass adds the "multiple elements"
+ * half: marquee-select, shift-click-to-extend, and a shared-delta group move
+ * (rotate, keyframes and `scene3d` manipulation all stay deferred — see the
+ * research doc §4).
  *
  * **Why this does NOT mirror `TransformOverlay.tsx`'s pointer-event wiring,
  * only its "DOM sibling of the preview" shape.** The Edit tab's overlay
@@ -26,45 +28,76 @@
  * handles it draws once something resizable is selected (D-157), which are
  * individually `pointer-events: auto` (the same "invisible except real
  * grab targets" shape `TransformOverlay.tsx`'s own corner handles use) — and
- * the actual click/drag/resize listeners are native `addEventListener`s on
- * `containerRef` (an ANCESTOR of both the `<Player>` and this overlay,
- * `MotionPreview.tsx`), which receive every pointer event via normal DOM
- * bubbling regardless of what got hit, without ever being the hit-test
- * target themselves — Remotion's own controls keep working untouched. A
- * resize handle's pointerdown ALSO bubbles to this same container listener
- * (native bubbling reaches an ancestor's directly-attached listener before
- * React's own synthetic dispatch on the handle would even run one attached
- * there instead — this is why the handle is checked via
- * `[data-motion-resize-handle]` at the TOP of `onPointerDown`, not via a
- * separate React `onPointerDown` prop on the handle element).
+ * the actual click/drag/resize/marquee listeners are native
+ * `addEventListener`s on `containerRef` (an ANCESTOR of both the `<Player>`
+ * and this overlay, `MotionPreview.tsx`), which receive every pointer event
+ * via normal DOM bubbling regardless of what got hit, without ever being the
+ * hit-test target themselves — Remotion's own controls keep working
+ * untouched. A resize handle's pointerdown ALSO bubbles to this same
+ * container listener (native bubbling reaches an ancestor's
+ * directly-attached listener before React's own synthetic dispatch on the
+ * handle would even run one attached there instead — this is why the handle
+ * is checked via `[data-motion-resize-handle]` at the TOP of `onPointerDown`,
+ * not via a separate React `onPointerDown` prop on the handle element).
+ *
+ * **D-158's fourth gesture, and D-137's discipline applied explicitly.**
+ * Four pointer gestures now share this ONE surface: resize-handle-drag,
+ * click-to-select/move-drag, shift-click-toggle, and marquee-select. Per
+ * `docs/08-decisions.md`'s D-137 ("Marquee-select... made mutually exclusive
+ * with the dnd-kit clip drag by DOM position rather than by precedence") —
+ * the SAME discipline this file already used for resize-vs-move in D-157 —
+ * `onPointerDown` below determines which gesture starts by checking WHAT WAS
+ * STRUCTURALLY HIT, in order, never by an ad-hoc "if nothing else matched,
+ * assume X" fallback chain that could silently swallow the wrong case:
+ *   1. `[data-motion-resize-handle]` → resize (unchanged from D-157, single-
+ *      selection only — group resize is not in this phase's scope).
+ *   2. `[data-motion-layer]` (via `elementsFromPoint`+`closest`, D-156) →
+ *      click-to-select, shift-toggle, or the start of a move/group-move.
+ *   3. Otherwise: is the pointerdown target a descendant of
+ *      `[data-motion-world]` (the camera's own transformed container, or a
+ *      camera-less scene's root — D-155 §3a)? If NOT, it's Remotion's own
+ *      chrome (the control bar, letterboxing) — a SIBLING subtree of the
+ *      composition in `@remotion/player`'s own DOM (`PlayerUI.js`, read
+ *      directly: `VideoComponent` and `Controls` are rendered as siblings
+ *      under one wrapping div), so nothing here is or should be hit-testing
+ *      it — do nothing, exactly as before this phase. If it IS inside the
+ *      world container, this is truly empty canvas SPACE INSIDE THE
+ *      COMPOSITION → marquee. This is a DOM-containment fact, not a class-
+ *      name guess (D-137's own class-list approach doesn't transfer here —
+ *      Remotion's controls carry no distinguishing class or attribute at
+ *      all, verified by reading `PlayerControls.js` — containment against
+ *      `[data-motion-world]` is the structural fact this engine already
+ *      guarantees instead).
  *
  * **Coordinate math is 0d, not reinvented here.** A drag writes the
- * layer's WORLD `x`/`y` (`manifestEdit.ts`'s `setLayerPosition`); a resize
- * writes its WORLD `w`/`h` (`setLayerSize`) — both converted from a
- * screen-space pointer delta via `canvasGeometry.ts`'s
- * `measureWorldMap`/`worldDelta` — "measure the live DOM, don't re-derive
- * the camera" (research doc §3a). The world map is re-measured at
- * drag-start and is NOT re-measured mid-drag: a drag is a bounded, sub-
- * second human gesture, and `manifest.width` never changes during one — the
- * one thing that WOULD invalidate a stale map (the camera itself moving
- * under the drag) doesn't happen either, since `manifest` here is the
- * STABLE, already-committed manifest, not the transient one this same
- * drag is writing into `<Player inputProps>` (0b) — the layer moves, the
- * camera doesn't, so the map measured once at pointerdown stays correct
- * for the whole gesture.
+ * layer's WORLD `x`/`y` (`manifestEdit.ts`'s `setLayerPosition`/
+ * `moveLayersByDelta`); a resize writes its WORLD `w`/`h` (`setLayerSize`)
+ * — both converted from a screen-space pointer delta via
+ * `canvasGeometry.ts`'s `measureWorldMap`/`worldDelta` — "measure the live
+ * DOM, don't re-derive the camera" (research doc §3a). The world map is
+ * re-measured at drag-start and is NOT re-measured mid-drag: a drag is a
+ * bounded, sub-second human gesture, and `manifest.width` never changes
+ * during one — the one thing that WOULD invalidate a stale map (the camera
+ * itself moving under the drag) doesn't happen either, since `manifest`
+ * here is the STABLE, already-committed manifest, not the transient one
+ * this same drag is writing into `<Player inputProps>` (0b) — the layer(s)
+ * move, the camera doesn't, so the map measured once at pointerdown stays
+ * correct for the whole gesture.
  *
- * **A known, documented gap (D-157):** if a layer ALSO carries the Phase 2
- * layer-transform wrapper (`schema.ts`'s `layerTransform` — `scale`/`rot`
- * set to something other than identity), this overlay's screen↔world map is
- * still measured off `[data-motion-world]` alone (the CAMERA's own
- * transform, per D-155 §3a) and does NOT additionally account for that
- * layer's own transform sitting between the camera and the primitive — a
- * drag or resize on such a layer will be slightly off. Fixing this would
- * mean measuring a PER-LAYER world map instead of one shared map per drag,
- * a real generalization out of scope for this pass (the transform wrapper
- * is brand new this same pass — nothing existing hits this today) — left
- * for whichever future phase actually needs to drag/resize a transformed
- * layer (see `docs/08-decisions.md`'s D-157 entry for the fuller writeup).
+ * **Multi-select is `Selection[]`, constrained to same-kind (`layer`),
+ * same-scene, per `LayerList.tsx`'s own module doc comment** — see that
+ * file for the full reasoning. `toggleSelection`/`sameSelection` (also
+ * there) enforce it; this file never needs to re-check the constraint
+ * itself, only to build candidate `Selection`s that already respect it.
+ *
+ * **A known, documented gap (D-157, still true here):** if a layer ALSO
+ * carries the Phase 2 layer-transform wrapper (`schema.ts`'s
+ * `layerTransform` — `scale`/`rot` set to something other than identity),
+ * this overlay's screen↔world map is still measured off `[data-motion-
+ * world]` alone (the CAMERA's own transform) and does NOT additionally
+ * account for that layer's own transform sitting between the camera and the
+ * primitive — a drag, resize, OR group-move on such a layer will be
+ * slightly off. Unchanged scope call from D-157; see its own decision entry.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
@@ -72,31 +105,61 @@ import type { PlayerRef } from '@remotion/player';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
-import { selectedLayer, layerWorldPosition, setLayerPosition, layerWorldSize, setLayerSize } from './manifestEdit';
-import { measureWorldMap, worldDelta, unionRects, toContainerLocal, axisLock, type RectLike } from './canvasGeometry';
+import { sameSelection, toggleSelection } from './LayerList';
+import {
+  selectedLayer,
+  layerWorldPosition,
+  setLayerPosition,
+  moveLayersByDelta,
+  layerWorldSize,
+  setLayerSize,
+} from './manifestEdit';
+import {
+  measureWorldMap,
+  worldDelta,
+  unionRects,
+  toContainerLocal,
+  axisLock,
+  rectFromPoints,
+  rectsIntersect,
+  type RectLike,
+  type Point,
+} from './canvasGeometry';
 import { measureLayerScreenBox, findWorldElement } from './layerMeasure';
 import { sizeFields } from './propCatalog';
 
 /** Which edge/corner a resize handle drives — `'e'`/`'s'` change one axis
  *  independently, `'se'` changes both together. Which of the three a given
  *  selection actually gets is `handlesForUse` below, keyed off
- *  `propCatalog.ts`'s `sizeFields`. */
+ *  `propCatalog.ts`'s `sizeFields`. Resize stays single-selection only
+ *  (D-158 doesn't scope a group-resize shape — see the module doc comment). */
 type HandleId = 'e' | 's' | 'se';
+
+/** D-158 — a marquee starts additive (unions onto the existing selection)
+ *  when shift/cmd/ctrl is held at the moment the drag BEGINS, mirroring
+ *  D-137's own "additive marquee unions, it does not toggle" rule for the
+ *  timeline's marquee, reused here for consistency rather than inventing a
+ *  second modifier convention in the same codebase. */
+const MARQUEE_MIN_DRAG_PX = 4; // same physical-distance bar D-137 set
 
 /** In-flight gesture state — local, uncommitted (0b). `null` when no drag is
  *  active. Kept in a ref, not state: a pointermove firing at display refresh
  *  rate has no business going through a re-render to read its own drag
- *  origin back. A discriminated union on `kind` — `'move'` (D-156) and
- *  `'resize'` (D-157) share the same pointerdown/move/up plumbing below but
- *  carry different starting snapshots (`startWorld` vs. `startSize`). */
+ *  origin back. A discriminated union on `kind` — `'move'` (D-156, now
+ *  carrying N moves instead of one — D-158), `'resize'` (D-157), and
+ *  `'marquee'` (D-158, new) share the same pointerdown/move/up plumbing
+ *  below but carry different starting snapshots. */
 type DragState =
   | {
       kind: 'move';
       pointerId: number;
-      selection: Selection;
+      /** D-158: one entry per selected layer that resolves a draggable
+       *  position at drag-start (`layerWorldPosition`) — a single-selection
+       *  move is just the `moves.length === 1` case of this same shape, not
+       *  a separately maintained code path. */
+      moves: { selection: Selection; base: { x: number; y: number } }[];
       map: ReturnType<typeof measureWorldMap>;
-      start: { x: number; y: number };
-      startWorld: { x: number; y: number };
+      start: Point;
     }
   | {
       kind: 'resize';
@@ -104,8 +167,19 @@ type DragState =
       pointerId: number;
       selection: Selection;
       map: ReturnType<typeof measureWorldMap>;
-      start: { x: number; y: number };
+      start: Point;
       startSize: { w: number; h: number | null };
+    }
+  | {
+      kind: 'marquee';
+      pointerId: number;
+      /** shift/cmd/ctrl held at `pointerdown` — read once, matching D-137's
+       *  own "a modifier tapped mid-drag must not change the meaning of a
+       *  gesture already under way" rule. */
+      additive: boolean;
+      /** the selection to union onto if `additive`; ignored otherwise. */
+      baseSelections: Selection[];
+      start: Point;
     };
 
 /** Which resize handles a selection's primitive gets, per `sizeFields`'
@@ -133,12 +207,21 @@ const HANDLE_CURSOR: Record<HandleId, string> = {
   se: 'nwse-resize',
 };
 
+/** Reads the `id` (D-158) a manifest's layer at `sceneIndex.index` carries,
+ *  if any — used whenever this overlay builds a `Selection` from a raw
+ *  `data-motion-layer` attribute (click, marquee), so a canvas-made
+ *  selection is just as identity-stable as one made any other way. */
+function layerIdAt(manifest: Manifest | null, sceneIndex: number, index: number): string | undefined {
+  return manifest?.scenes[sceneIndex]?.layers?.[index]?.id;
+}
+
 export function MotionCanvasOverlay({
   containerRef,
   playerRef,
   manifest,
-  selection,
+  selections,
   onSelect,
+  onSelectionChange,
   onTransientChange,
   onCommit,
 }: {
@@ -150,37 +233,72 @@ export function MotionCanvasOverlay({
   /** the STABLE, already-committed manifest — NEVER the Phase 0b transient
    *  override — see the module doc comment's "why not re-measure mid-drag." */
   manifest: Manifest | null;
-  selection: Selection | null;
+  /** D-158: the whole live selection — see `LayerList.tsx`'s own doc
+   *  comment for the same-kind/same-scene constraint this array upholds. */
+  selections: Selection[];
+  /** replace the WHOLE selection with just `s` (and seek the player to its
+   *  scene) — a plain click on a layer not already part of a multi-selection,
+   *  or a `LayerList` row click. */
   onSelect: (s: Selection) => void;
+  /** D-158: set the WHOLE selection array directly, no seek — shift-toggle,
+   *  a completed marquee, or clearing the selection on an empty sub-threshold
+   *  click. Always the currently-visible scene's layers (per §1e, only one
+   *  scene is ever mounted), so there is nothing to seek to. */
+  onSelectionChange: (s: Selection[]) => void;
   /** 0b: set during a drag (feeds `<Player inputProps>` live), `null` to clear it. */
   onTransientChange: (next: Manifest | null) => void;
   /** 0c: one commit on pointer-up, through `useMotionManifest`'s undo-wired `commit`. */
   onCommit: (next: Manifest, label: string) => void;
 }) {
   const dragRef = useRef<DragState | null>(null);
+  // D-157: the single-selection outline + resize handles (unchanged pixel/
+  // logic path from before D-158 — a single `{kind:'layer'}` selection still
+  // renders exactly as it always did).
   const [box, setBox] = useState<RectLike | null>(null);
+  // D-158: plain outlines (no handles) for a 2+ multi-selection.
+  const [multiBoxes, setMultiBoxes] = useState<RectLike[]>([]);
+  // D-158: the marquee band while a marquee drag is in flight, container-local.
+  const [marqueeRect, setMarqueeRect] = useState<RectLike | null>(null);
 
-  // The drawn selection outline — the union of the selected layer's
+  // The drawn selection outline(s) — the union of each selected layer's
   // `[data-motion-box]` descendants (research doc §3b), via the shared
   // `layerMeasure.ts` helper (also used by the "snap to layer" action in
-  // `MotionTab.tsx`/`InspectorPanel.tsx`, D-157).
-  const recomputeBox = useCallback(() => {
+  // `MotionTab.tsx`/`InspectorPanel.tsx`, D-157). Single selection keeps the
+  // exact D-156/D-157 code path (handles included); 2+ selections (always
+  // all `{kind:'layer'}`, per `LayerList.tsx`'s own constraint) get one
+  // outline each, no handles (D-158 doesn't scope group resize).
+  const recomputeBoxes = useCallback(() => {
     const container = containerRef.current;
-    if (!container || !selection || selection.target.kind !== 'layer') {
+    if (!container) {
       setBox(null);
+      setMultiBoxes([]);
       return;
     }
-    const union = measureLayerScreenBox(container, selection.sceneIndex, selection.target.index);
-    if (!union) {
-      setBox(null);
+    const first = selections.length === 1 ? selections[0] : null;
+    if (first && first.target.kind === 'layer') {
+      const union = measureLayerScreenBox(container, first.sceneIndex, first.target.index);
+      setBox(union ? toContainerLocal(union, container.getBoundingClientRect()) : null);
+      setMultiBoxes([]);
       return;
     }
-    setBox(toContainerLocal(union, container.getBoundingClientRect()));
-  }, [containerRef, selection]);
+    setBox(null);
+    if (selections.length < 2) {
+      setMultiBoxes([]);
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const boxes: RectLike[] = [];
+    for (const sel of selections) {
+      if (sel.target.kind !== 'layer') continue;
+      const union = measureLayerScreenBox(container, sel.sceneIndex, sel.target.index);
+      if (union) boxes.push(toContainerLocal(union, containerRect));
+    }
+    setMultiBoxes(boxes);
+  }, [containerRef, selections]);
 
   useEffect(() => {
-    recomputeBox();
-  }, [recomputeBox]);
+    recomputeBoxes();
+  }, [recomputeBoxes]);
 
   // Re-measure whenever the picture might have moved — a camera animating
   // under the current selection (`frameupdate`) or the player's own
@@ -189,20 +307,22 @@ export function MotionCanvasOverlay({
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-    player.addEventListener('frameupdate', recomputeBox);
-    player.addEventListener('scalechange', recomputeBox);
+    player.addEventListener('frameupdate', recomputeBoxes);
+    player.addEventListener('scalechange', recomputeBoxes);
     return () => {
-      player.removeEventListener('frameupdate', recomputeBox);
-      player.removeEventListener('scalechange', recomputeBox);
+      player.removeEventListener('frameupdate', recomputeBoxes);
+      player.removeEventListener('scalechange', recomputeBoxes);
     };
-  }, [playerRef, recomputeBox]);
+  }, [playerRef, recomputeBoxes]);
 
-  // Escape cancels an in-flight drag OR resize (research doc §4 Phase 1) —
-  // reverts to the pre-drag state, no commit. A single always-mounted
-  // listener reading `dragRef` on demand, rather than one added/removed per
-  // drag: simpler, and there is nothing to clean up between drags either
-  // way. Generic across both `DragState` kinds — cancelling never needs to
-  // know which one was in flight.
+  // Escape cancels an in-flight drag, resize, OR marquee (D-158 extends the
+  // existing D-156/D-157 cancel path to the third gesture) — reverts to the
+  // pre-drag state, no commit. A single always-mounted listener reading
+  // `dragRef` on demand, rather than one added/removed per drag: simpler,
+  // and there is nothing to clean up between drags either way. A marquee
+  // never touched `onTransientChange` in the first place (selection isn't a
+  // manifest edit), so clearing it here is a harmless no-op for that case —
+  // only clearing the drawn band actually matters.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -211,13 +331,15 @@ export function MotionCanvasOverlay({
       dragRef.current = null;
       containerRef.current?.releasePointerCapture(drag.pointerId);
       onTransientChange(null);
+      setMarqueeRect(null);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [containerRef, onTransientChange]);
 
-  // Click-to-select + drag + resize — native listeners on `containerRef`,
-  // not this component's own JSX (see the module doc comment for why).
+  // Click-to-select + drag + resize + marquee — native listeners on
+  // `containerRef`, not this component's own JSX (see the module doc
+  // comment for why).
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -233,15 +355,14 @@ export function MotionCanvasOverlay({
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
 
-      // A resize handle (D-157) — checked FIRST, since it's rendered by
+      // 1. A resize handle (D-157) — checked FIRST, since it's rendered by
       // this same overlay on top of the canvas and must never fall through
-      // to the click-to-select/move logic below. See the module doc
-      // comment for why this is a native-listener check rather than a
-      // React `onPointerDown` on the handle element itself.
+      // to the click-to-select/move logic below. Single-selection only.
       const handleAttr = (e.target as Element | null)
         ?.closest?.('[data-motion-resize-handle]')
         ?.getAttribute('data-motion-resize-handle') as HandleId | null | undefined;
-      if (handleAttr && selection && manifest) {
+      if (handleAttr && selections.length === 1 && selections[0].target.kind === 'layer' && manifest) {
+        const selection = selections[0];
         const startSize = layerWorldSize(manifest, selection);
         const worldEl = findWorldElement(container);
         if (!startSize || !worldEl) return;
@@ -259,45 +380,81 @@ export function MotionCanvasOverlay({
         return;
       }
 
+      // 2. A layer hit (D-156, extended for D-158's shift-toggle + group move).
       const layerEl = findLayer(e.clientX, e.clientY);
-      // No layer under the pointer — empty canvas, or (just as likely) one
-      // of Remotion's own controls. Do nothing: no preventDefault, no
-      // pointer capture, so whatever's really there handles the click.
-      if (!layerEl) return;
-      const attr = layerEl.getAttribute('data-motion-layer');
-      if (!attr) return;
-      const [sceneIndexStr, indexStr] = attr.split('.');
-      const sel: Selection = {
-        sceneIndex: Number(sceneIndexStr),
-        target: { kind: 'layer', index: Number(indexStr) },
-      };
-      onSelect(sel);
+      if (layerEl) {
+        const attr = layerEl.getAttribute('data-motion-layer');
+        if (!attr) return;
+        const [sceneIndexStr, indexStr] = attr.split('.');
+        const sceneIndex = Number(sceneIndexStr);
+        const index = Number(indexStr);
+        const sel: Selection = {
+          sceneIndex,
+          target: { kind: 'layer', index, id: layerIdAt(manifest, sceneIndex, index) },
+        };
 
-      if (!manifest) return; // selected, but nothing to compute a drag against yet
-      const startWorld = layerWorldPosition(manifest, sel);
-      if (!startWorld) return; // selectable but not draggable (e.g. `graph`)
-      const worldEl = findWorldElement(container);
-      if (!worldEl) return;
+        if (e.shiftKey) {
+          // Shift-click toggles membership and never starts a drag of its
+          // own gesture (research doc §4 Phase 3: "shift-click to extend") —
+          // a deliberate, documented design call: the user is building a
+          // selection, not also relocating it in the same motion. Dragging
+          // the resulting group is a SEPARATE, subsequent click-and-drag.
+          onSelectionChange(toggleSelection(selections, sel));
+          return;
+        }
+
+        // Clicking a layer that's ALREADY part of a live multi-selection
+        // (without shift) keeps the WHOLE group selected and drags all of
+        // it — the standard "click inside an existing multi-selection moves
+        // the group" convention (Figma/Illustrator/Premiere all do this).
+        // Clicking anything else replaces the selection with just that one
+        // layer, exactly as Phase 1 always did.
+        const alreadyInGroup = selections.length > 1 && selections.some((s) => sameSelection(s, sel));
+        const activeSelections = alreadyInGroup ? selections : [sel];
+        if (!alreadyInGroup) onSelect(sel);
+
+        if (!manifest) return; // selected, but nothing to compute a drag against yet
+        const worldEl = findWorldElement(container);
+        if (!worldEl) return;
+        const moves = activeSelections.reduce<{ selection: Selection; base: { x: number; y: number } }[]>(
+          (acc, s) => {
+            const base = layerWorldPosition(manifest, s);
+            if (base) acc.push({ selection: s, base });
+            return acc;
+          },
+          [],
+        );
+        if (moves.length === 0) return; // nothing draggable in the group (e.g. a lone `graph`)
+
+        e.preventDefault();
+        container.setPointerCapture(e.pointerId);
+        dragRef.current = {
+          kind: 'move',
+          pointerId: e.pointerId,
+          moves,
+          map: measureWorldMap(worldEl.getBoundingClientRect(), manifest.width),
+          start: { x: e.clientX, y: e.clientY },
+        };
+        return;
+      }
+
+      // 3. Not a handle, not a layer — is it truly empty canvas SPACE
+      // INSIDE the composition, or is it Remotion's own chrome (the control
+      // bar, letterboxing)? Structural containment, not a class-name guess
+      // (D-137's discipline — see the module doc comment for why a class
+      // list doesn't transfer to this component).
+      const insideWorld = (e.target as Element | null)?.closest?.('[data-motion-world]');
+      if (!insideWorld) return; // Remotion's own controls — untouched, as before D-158
 
       e.preventDefault();
       container.setPointerCapture(e.pointerId);
       dragRef.current = {
-        kind: 'move',
+        kind: 'marquee',
         pointerId: e.pointerId,
-        selection: sel,
-        map: measureWorldMap(worldEl.getBoundingClientRect(), manifest.width),
+        additive: e.shiftKey || e.metaKey || e.ctrlKey,
+        baseSelections: selections,
         start: { x: e.clientX, y: e.clientY },
-        startWorld,
       };
-    };
-
-    const nextPosition = (
-      drag: Extract<DragState, { kind: 'move' }>,
-      e: PointerEvent,
-    ) => {
-      let delta = worldDelta(drag.map, { x: e.clientX - drag.start.x, y: e.clientY - drag.start.y });
-      if (e.shiftKey) delta = axisLock(delta);
-      return { x: drag.startWorld.x + delta.x, y: drag.startWorld.y + delta.y };
     };
 
     // A resize handle's own axis mask: `'e'` only ever changes width, `'s'`
@@ -315,12 +472,29 @@ export function MotionCanvasOverlay({
       return { w: drag.startSize.w + dw, h: (drag.startSize.h ?? drag.startSize.w) + dh };
     };
 
+    // D-158: the shared world-space delta EVERY selected layer in a 'move'
+    // gesture moves by — a single-selection move is `applyMoveDelta` with a
+    // `moves` array of length 1, not a separately maintained code path.
+    const moveDelta = (drag: Extract<DragState, { kind: 'move' }>, e: PointerEvent) => {
+      let delta = worldDelta(drag.map, { x: e.clientX - drag.start.x, y: e.clientY - drag.start.y });
+      if (e.shiftKey) delta = axisLock(delta);
+      return delta;
+    };
+
     const onPointerMove = (e: PointerEvent) => {
       const drag = dragRef.current;
-      if (!drag || drag.pointerId !== e.pointerId || !manifest) return;
+      if (!drag || drag.pointerId !== e.pointerId) return;
+
+      if (drag.kind === 'marquee') {
+        const rect = rectFromPoints(drag.start, { x: e.clientX, y: e.clientY });
+        setMarqueeRect(toContainerLocal(rect, container.getBoundingClientRect()));
+        return;
+      }
+
+      if (!manifest) return;
       if (drag.kind === 'move') {
-        const p = nextPosition(drag, e);
-        onTransientChange(setLayerPosition(manifest, drag.selection, p.x, p.y));
+        const d = moveDelta(drag, e);
+        onTransientChange(moveLayersByDelta(manifest, drag.moves, d.x, d.y));
       } else {
         const s = nextSize(drag, e);
         onTransientChange(setLayerSize(manifest, drag.selection, s.w, s.h));
@@ -332,11 +506,49 @@ export function MotionCanvasOverlay({
       if (!drag || drag.pointerId !== e.pointerId) return;
       dragRef.current = null;
       container.releasePointerCapture(e.pointerId);
+
+      if (drag.kind === 'marquee') {
+        setMarqueeRect(null);
+        const distance = Math.hypot(e.clientX - drag.start.x, e.clientY - drag.start.y);
+        if (distance < MARQUEE_MIN_DRAG_PX) {
+          // A plain click on empty canvas (never a drag at all) clears the
+          // selection — standard "click away to deselect." A modifier-held
+          // sub-threshold press arms nothing, matching D-137's own rule for
+          // its timeline marquee: a press that never became a real gesture
+          // shouldn't silently clear whatever the user already had selected
+          // via some other means.
+          if (!drag.additive) onSelectionChange([]);
+          return;
+        }
+        const marqueeScreenRect = rectFromPoints(drag.start, { x: e.clientX, y: e.clientY });
+        const hits: Selection[] = [];
+        container.querySelectorAll('[data-motion-layer]').forEach((el) => {
+          const attr = el.getAttribute('data-motion-layer');
+          if (!attr) return;
+          const [sceneIndexStr, indexStr] = attr.split('.');
+          const sceneIndex = Number(sceneIndexStr);
+          const index = Number(indexStr);
+          const layerBox = measureLayerScreenBox(container, sceneIndex, index);
+          if (layerBox && rectsIntersect(marqueeScreenRect, layerBox)) {
+            hits.push({ sceneIndex, target: { kind: 'layer', index, id: layerIdAt(manifest, sceneIndex, index) } });
+          }
+        });
+        if (drag.additive) {
+          const merged = [...drag.baseSelections];
+          for (const h of hits) if (!merged.some((s) => sameSelection(s, h))) merged.push(h);
+          onSelectionChange(merged);
+        } else {
+          onSelectionChange(hits);
+        }
+        return;
+      }
+
       onTransientChange(null);
       if (!manifest) return;
       if (drag.kind === 'move') {
-        const p = nextPosition(drag, e);
-        onCommit(setLayerPosition(manifest, drag.selection, p.x, p.y), 'Move layer');
+        const d = moveDelta(drag, e);
+        const label = drag.moves.length > 1 ? 'Move layers' : 'Move layer';
+        onCommit(moveLayersByDelta(manifest, drag.moves, d.x, d.y), label);
       } else {
         const s = nextSize(drag, e);
         onCommit(setLayerSize(manifest, drag.selection, s.w, s.h), 'Resize layer');
@@ -351,11 +563,11 @@ export function MotionCanvasOverlay({
       container.removeEventListener('pointermove', onPointerMove);
       container.removeEventListener('pointerup', onPointerUp);
     };
-  }, [containerRef, manifest, selection, onSelect, onTransientChange, onCommit]);
+  }, [containerRef, manifest, selections, onSelect, onSelectionChange, onTransientChange, onCommit]);
 
   const selectedUse =
-    manifest && selection && selection.target.kind === 'layer'
-      ? selectedLayer(manifest, selection)?.use
+    manifest && selections.length === 1 && selections[0].target.kind === 'layer'
+      ? selectedLayer(manifest, selections[0])?.use
       : undefined;
   const handles = box ? handlesForUse(selectedUse) : [];
 
@@ -397,6 +609,29 @@ export function MotionCanvasOverlay({
             );
           })}
         </div>
+      )}
+      {/* D-158: a 2+ multi-selection draws one plain (handle-less) outline
+          per selected layer, dashed to read as visually distinct from the
+          single-selection solid box + handles above. */}
+      {multiBoxes.map((b, i) => (
+        <div
+          key={i}
+          className="absolute border-2 border-dashed border-accent"
+          style={{ left: b.left, top: b.top, width: b.width, height: b.height, boxSizing: 'border-box' }}
+        />
+      ))}
+      {/* D-158: the marquee band itself, while a marquee drag is in flight. */}
+      {marqueeRect && (
+        <div
+          className="absolute border border-accent bg-accent/10"
+          style={{
+            left: marqueeRect.left,
+            top: marqueeRect.top,
+            width: marqueeRect.width,
+            height: marqueeRect.height,
+            boxSizing: 'border-box',
+          }}
+        />
       )}
     </div>
   );

@@ -34,6 +34,14 @@
  * component needing to know anything about snapping itself. Uses the same
  * `layerMeasure.ts` helpers `MotionCanvasOverlay.tsx`'s own selection
  * outline already shares — one measurement technique, three consumers.
+ *
+ * D-158 (Phase 3): `selection`/`onSelect` become `selections`/`onSelect` +
+ * `onSelectionChange` — see `MotionCanvasOverlay.tsx`'s own doc comment for
+ * the full reasoning on the two callbacks' different roles (replace-and-seek
+ * vs. array-level, no seek). All five interaction props (`onSelect`,
+ * `onSelectionChange`, `onTransientChange`, `onCommit`) are required
+ * together, same as before — omit all four to use this component with no
+ * on-canvas interaction at all.
  */
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
@@ -64,8 +72,9 @@ export function MotionPreview({
   transientManifest = null,
   playerRef,
   measureApiRef,
-  selection = null,
+  selections = [],
   onSelect,
+  onSelectionChange,
   onTransientChange,
   onCommit,
 }: {
@@ -78,10 +87,12 @@ export function MotionPreview({
    *  a caller with no snap-style need (e.g. a future standalone preview
    *  embed) just omits it. */
   measureApiRef?: RefObject<MotionCanvasMeasureApi | null>;
-  selection?: Selection | null;
-  /** Required together (D-156): omit all four to use this component with no
-   *  on-canvas interaction at all (the overlay isn't rendered). */
+  /** D-158 — the whole live selection (was `Selection | null`). */
+  selections?: Selection[];
+  /** Required together (D-156/D-158): omit all four to use this component
+   *  with no on-canvas interaction at all (the overlay isn't rendered). */
   onSelect?: (s: Selection) => void;
+  onSelectionChange?: (s: Selection[]) => void;
   onTransientChange?: (next: Manifest | null) => void;
   onCommit?: (next: Manifest, label: string) => void;
 }) {
@@ -136,13 +147,14 @@ export function MotionPreview({
           loop
           style={{ width: '100%', height: '100%' }}
         />
-        {onSelect && onTransientChange && onCommit && (
+        {onSelect && onSelectionChange && onTransientChange && onCommit && (
           <MotionCanvasOverlay
             containerRef={containerRef}
             playerRef={effectivePlayerRef}
             manifest={manifest}
-            selection={selection}
+            selections={selections}
             onSelect={onSelect}
+            onSelectionChange={onSelectionChange}
             onTransientChange={onTransientChange}
             onCommit={onCommit}
           />
