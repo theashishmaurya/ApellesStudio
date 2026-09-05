@@ -56,77 +56,35 @@
 //!   footprint is `pub mod edit;` in `chroma/mod.rs` + the `generate_handler!`
 //!   lines in `lib.rs`. Divergence logged in `docs/09-engine-notes.md`.
 
-use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use base64::Engine as _;
 use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
-use once_cell::sync::Lazy;
 use serde::Serialize;
 
 use chroma_timeline::{Clip, Timeline, TrackKind};
 
 use super::state;
-use super::video::{self, VideoInfo};
-use super::{decode_pipe, media_cache, project};
+use super::video::VideoInfo;
+use super::{decode_pipe, project};
 
 // --------------------------------------------------------------------------- //
-// per-clip probe cache (edit-tab local — the preview decodes many frames of a
-// handful of clip paths; a probe is a subprocess spawn we don't want per
-// frame). `pub(crate)` (D-051): also the has-audio lookup `chroma::audio`'s
-// waveform command reuses rather than probing a second time.
+// per-clip probe cache — moved out of this file into `chroma-media` (D-146,
+// `docs/notes/crate-extraction-plan.md` §2.2). It was never an Edit-tab
+// concern: its consumers are `filmstrip`, `audio`, `project` and `load`, and
+// leaving it here would have made `chroma-media` depend on `app/src-tauri`, a
+// cycle. B-056 (the in-memory layer never invalidated, so a source file
+// replaced in place served a stale `VideoInfo` for the rest of the session)
+// was fixed in the same move — see `chroma_media::probe`'s module doc.
 //
-// D-128 — now **persistent**. `video::probe` is two `ffprobe` subprocesses
-// (one for the video stream, one for the audio stream); measured on the
-// owner's own `A001_08302215_C019.MOV`, 0.62s + 0.13s. The in-memory half of
-// this cache made that once-per-session, which sounds fine until you notice
-// the session ends every time the app is quit — so opening the same project
-// tomorrow paid it again, per clip, on the critical path between clicking a
-// project card and seeing anything. `VideoInfo` is small, immutable for a
-// given source file, and already `Serialize`; persisting it is the cheapest
-// real win on that path.
+// Re-exported at the old path so the ~15 `probe_cached(..)` call sites in this
+// file, and `super::edit::probe_cached` in `audio.rs`/`filmstrip.rs`/
+// `load.rs`/`project.rs`, did not change.
 // --------------------------------------------------------------------------- //
 
-static PROBE_CACHE: Lazy<Mutex<HashMap<PathBuf, VideoInfo>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-const NS_PROBE: &str = "probe";
-
-pub(crate) fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
-    {
-        let cache = PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(info) = cache.get(path) {
-            return Ok(info.clone());
-        }
-    }
-
-    // The disk cache is keyed on the source file's identity (path + mtime +
-    // size), so a re-encoded or replaced file never serves a stale probe —
-    // see `media_cache::source_key`.
-    let key = media_cache::source_key(path).ok();
-    if let Some(key) = key.as_deref()
-        && let Some(info) = media_cache::read_json::<VideoInfo>(NS_PROBE, key)
-    {
-        PROBE_CACHE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(path.to_path_buf(), info.clone());
-        return Ok(info);
-    }
-
-    let info = video::probe(path).map_err(|e| format!("probe {}: {e}", path.display()))?;
-    if let Some(key) = key.as_deref() {
-        media_cache::write_json(NS_PROBE, key, &info);
-    }
-    PROBE_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(path.to_path_buf(), info.clone());
-    Ok(info)
-}
+pub(crate) use chroma_media::probe::probe_cached;
 
 // --------------------------------------------------------------------------- //
 // timeline load / build / persist

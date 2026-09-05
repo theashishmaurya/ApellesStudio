@@ -13,6 +13,9 @@
 //!   one slot per playback stream (D-030, D-125).
 //! - [`media_cache`] — the persistent, source-keyed disk cache for derived
 //!   artefacts: probes, filmstrip chunks, waveform peaks (D-128).
+//! - [`probe`] — the two-layer (memory → disk) probe cache in front of
+//!   [`video::probe`], lifted out of the Edit-tab bridge where it had been
+//!   living by accident (D-146, B-056).
 //!
 //! **What it does NOT do:**
 //! - **No `#[tauri::command]`.** That is a hard `tauri-macros` constraint, not
@@ -31,4 +34,5 @@
 
 pub mod decode_pipe;
 pub mod media_cache;
+pub mod probe;
 pub mod video;
