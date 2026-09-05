@@ -261,6 +261,50 @@ resolution, which sits *above* media. So `audio.rs` splits: the engine and wavef
 
 ### 2.3 `chroma-project` — after media, never before
 
+**Status: done (D-148, 2026-09-05).** Landed as scoped, in one commit, after
+D-146. What the plan got right and what it did not:
+
+- **Right, and precisely so:** the L1–1678 / L1679–2488 seam is real (the exact
+  line was 1638 by the time this ran); all 20 commands really do take
+  `tauri::State<'_, AppState>`; the `chroma-media` edge is real
+  (`video::probe`, `video::extract_thumb`, `probe::probe_cached`) and
+  `architecture-lock.md`'s table really was missing it — **corrected on
+  landing**, along with a `chroma-grade-model` edge the table *claimed* and the
+  real code has never had (the D-070 migration renames grade files, it never
+  parses one).
+- **The `ensure_timeline`/`resolve_timeline` call is the one this section got
+  most right, and it needed one refinement on contact.** They are project
+  concerns and they moved. But `load_and_ensure_timeline`/`resolve_timeline`
+  did not move *as written*: they read `chroma::state::current_project()`, the
+  app-side process global this section itself says stays behind. So the crate's
+  versions take the project directory as a parameter and `chroma::edit` keeps
+  three-line wrappers that supply `current_project_dir()?` — the same
+  "the crate takes the fact, the app looks it up" shape D-145 gave
+  `tracked_depth_map`. `ensure_timeline` already took its `dir`, so at the old
+  path it is a literal `pub(crate) use`, not a wrapper. All ~20 `edit.rs` call
+  sites and all 4 `project.rs` ones are unchanged.
+- **The test-weight warning was correct and was the bulk of the work.** 59
+  tests split 48 (model → the crate) / 11 (the command surface + `chroma::state`
+  → stay). The classification was done by grepping each test item for
+  `super::super::edit::chroma_*`, `chroma_project_*`/`chroma_media_*`,
+  `state::`, `tauri::` and `AppState` rather than by reading section headers.
+  Two moved tests needed a real edit rather than a copy:
+  `migration_against_the_real_owner_project` (retargeted at
+  `crate::timeline::ensure_timeline`) and
+  `open_manifest_flags_a_dangling_shot_offline_without_erroring`, which despite
+  its name never calls `open_manifest` — it took a `PROJECT_STATE_LOCK` guard
+  for process state it does not touch, and the guard is dropped with a comment
+  saying so. The timeline lifecycle also gained **5 new unit tests**; it had
+  none of its own in `edit.rs`.
+- **Evidence the move is verbatim:** `cargo clippy` reports the *same 13
+  warnings* on the moved code before and after, in the same order, at
+  correspondingly shifted line numbers (7 `collapsible_if`, 1 `sort_by_key`, 5
+  `clone`-to-slice, all pre-existing on `main`). The 14th, at old
+  `project.rs:1926`, is in the command half and correctly stayed app-side.
+- **One thing left undone deliberately:** `make_test_clip` (a `testsrc` ffmpeg
+  fixture) is now duplicated between the crate's tests and the app's — see F-5
+  below.
+
 **Real content:** `project.rs` L1–1678 (the manifest model, migrations, media items, folders,
 thumbnails, `load_manifest`/`save_manifest`, `migrate_shot_grades_to_clips`,
 `list_projects_in`, `new_project_in`, `infer_settings_from_clip`). L1679–2488 (`open_manifest`
@@ -435,11 +479,16 @@ C (`chroma-gpu`) if C is still in flight, since C's edits are confined to fork c
 Fold **B-056** into commit 2. (Done — and **B-057** into commit 3, since that is the
 commit that touches `filmstrip.rs`.)
 
-### Wave 3 — one agent
+### Wave 3 — one agent — **done, D-148 (2026-09-05)**
 
-**E — `chroma-project`** (§2.3), after D. Touches `project.rs`, `edit.rs`, `state.rs`,
-`load.rs`, `audio.rs`, `export.rs`, `motion.rs`. Overlaps D on five files, so it is strictly
-after, never beside.
+**E — `chroma-project`** (§2.3), after D. Predicted to touch `project.rs`, `edit.rs`,
+`state.rs`, `load.rs`, `audio.rs`, `export.rs`, `motion.rs`; it actually touched only
+**`project.rs`, `edit.rs` and `app/src-tauri/Cargo.toml`** — the shim rule (§1) meant
+`state.rs`, `load.rs`, `audio.rs`, `export.rs` and `motion.rs` reach the model through
+`chroma::project`'s glob re-export and needed no edit at all. That is the shim rule
+paying off exactly as §1 predicted, on the widest-overlap slice in the plan.
+
+**Waves 1–3 are complete. The sequential part of the migration is finished.**
 
 ### Wave 4 — sweep
 
@@ -505,6 +554,16 @@ known-architecture ceiling rather than a defect, and because the fix (per-slot l
 `rayon`/`spawn_blocking` over the layer loop) belongs to `chroma-compositor`'s design (§2.8),
 not to a patch on `edit.rs`. It should be an explicit requirement when that crate is scoped.
 
+**F-5 — four copies of the same `testsrc` ffmpeg test fixture.** After D-148 the
+`make_test_clip`-shaped "synthesise a small probe-able clip, `None` if ffmpeg is absent"
+helper exists in `crates/chroma-project`'s tests, `app/src-tauri/src/chroma/project.rs`'s
+tests, `chroma/export.rs`'s tests and `chroma_media::probe`'s tests. Three of those
+predate this slice, so this is pre-existing practice rather than something D-148
+introduced — but the split made it a fourth, and the natural home is one
+`chroma-media` test-support fixture that everything else calls. Deliberately not done
+inside an extraction commit (it would widen a just-landed crate's `test-support`
+surface for a test-only convenience); the wave-4 sweep is the moment.
+
 **F-4 — `chroma-types` pickups still outstanding after D-053.** `VideoInfo.fps_num`/`fps_den`
 remain bare `u32` siblings; `TimeRange` and `Frame` do not exist. `video.rs` moving into
 `chroma-media` (§2.2) is the natural moment to make `VideoInfo.fps` a real `Rational` — the
@@ -518,9 +577,14 @@ do not sleepwalk into a wire change on `project.json`.
 
 ## 5. Corrections owed to other docs when these land
 
-- `docs/notes/architecture-lock.md` §"Layer 2" — `chroma-project` also depends on
+- ~~`docs/notes/architecture-lock.md` §"Layer 2" — `chroma-project` also depends on
   `chroma-media` (§2.3). Its migration-strategy step 4 (`chroma-agent`, `chroma-ai`) should
-  be split: `chroma-ai` is real and early, `chroma-agent` is rescoped (§2.6).
+  be split: `chroma-ai` is real and early, `chroma-agent` is rescoped (§2.6).~~ —
+  **both done, D-148.** Plus two the list did not anticipate: the same table
+  claimed a `chroma-grade-model` edge `chroma-project` has never had, and its
+  step 3 said `chroma-project` absorbs `grade.rs` + `state.rs` — `grade.rs`'s
+  model went to `chroma-grade-model` (D-143) and `state.rs` does not move at
+  all. Both corrected in place.
 - `crates/README.md` — the status table still says `chroma-timeline` and
   `chroma-grade-model` are stubs. `chroma-timeline` is not (3,758 lines, in production);
   `chroma-grade-model` is.

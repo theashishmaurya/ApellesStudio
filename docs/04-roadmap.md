@@ -855,9 +855,19 @@ has no Tauri-free core and its op registry lives in the frontend. Real order:
    app-side because that is a layer above media, with **B-057** fixed while in
    `filmstrip.rs`. Both bug fixes carry regression tests confirmed to fail
    pre-fix.
-3. **wave 3** — `chroma-project` (needs `chroma-media`; an edge
-   `architecture-lock.md`'s table is missing)
-4. **wave 4** — delete the shims, fix the doc set
+3. ~~**wave 3** — `chroma-project` (needs `chroma-media`; an edge
+   `architecture-lock.md`'s table is missing)~~ — **done, D-148 (2026-09-05).**
+   The missing edge is now in the lock doc's table, along with a
+   `chroma-grade-model` edge the table claimed and the real code never had.
+   **Waves 1–3 are complete: the sequential part of the migration is finished.**
+4. **wave 4 — next, and the only remaining migration step before the gated ones**
+   — delete the shims (`chroma/{video,media_cache,decode_pipe}.rs` are pure
+   re-export files; `chroma/project.rs`'s `pub use chroma_project::*;` and
+   `chroma/edit.rs`'s `pub(crate) use chroma_project::timeline::ensure_timeline;`
+   are the same thing inside a live file), retarget every call site at
+   `chroma_media::` / `chroma_project::`, and fix the doc set —
+   `docs/03-architecture.md` has been stale since Phase 0 and the crate graph is
+   only now the real one. Mechanical, one commit, no behaviour.
 5. **later, gated** — `chroma-grade` wraps `app/`, `chroma-app` goes thin, then
    **`chroma-compositor`** (the real multi-track engine) + `@chroma/editor` greenfield
 
@@ -879,6 +889,22 @@ flag itself).
   release build links none of them. **Next:** wave 3 (`chroma-project`), then
   wave 4's shim sweep — `chroma/{video,media_cache,decode_pipe}.rs` are
   re-export files awaiting deletion.
+
+- ~~**Wave 3 — `chroma-project`**~~ — **done, D-148 (2026-09-05); closes the
+  Wave 1–3 sequence.** `chroma/project.rs` L1–1638 (the manifest, every schema
+  migration, the media pool + bins, the D-070 unified clip identity and
+  grade-file migration, `list_projects_in`/`new_project_in`) moved verbatim
+  into `crates/chroma-project/`; `open_manifest` + the 20 commands stayed,
+  because all 20 take `tauri::State<'_, AppState>`. The one piece of real
+  relocation rather than a straight move: `ensure_timeline` /
+  `load_and_ensure_timeline` / `resolve_timeline` /
+  `resolve_timeline_and_settings` / `build_from_shots` left `chroma/edit.rs`
+  for the new crate — project concerns wearing an Edit-tab name, as the plan
+  called it — with the *process global* they read (`chroma::state`'s "which
+  project is open") staying app-side as a parameter the wrapper supplies. The
+  59-test suite split by what it exercises: 48 model tests moved, 11
+  command-surface / process-state tests stayed, and the timeline lifecycle
+  gained 5 unit tests it never had in `edit.rs`.
 
 - ~~**Wave 1, slice A — `chroma-grade-model`**~~ — **done, D-143 (2026-09-05).**
   `save_grade`/`load_grade`/`migrate_v1`/`relativize`/`resolve`/`grade_name` +

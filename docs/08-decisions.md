@@ -11147,3 +11147,173 @@ tested at both ends: a clip with no fade gets `None`, not a 1.0 envelope, so
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-148 — `chroma-project` real extraction: the manifest model moves verbatim, and the timeline lifecycle finally leaves the Edit-tab bridge it was never part of
+
+**decided + built (2026-09-05).** Wave 3 of D-141's plan (§2.3), the last of the
+sequential slices, run in an isolated worktree (`fork/extract-chroma-project`)
+after D-146 (`chroma-media`) had landed on `main`. **This closes the Wave 1–3
+sequence** — `chroma-grade-model` (D-143), `chroma-gpu` (D-144), `chroma-ai`
+(D-145), `chroma-media` (D-146) and now `chroma-project` are all real crates.
+Only wave 4 (delete the shims, fix the doc set) remains before the gated
+`chroma-grade` / `chroma-compositor` work.
+
+### What moved
+
+`app/src-tauri/src/chroma/project.rs` L1–1638 → `crates/chroma-project/src/manifest.rs`,
+**verbatim**: `ProjectManifest`/`ProjectSettings`/`MediaItem`/`ProjectShot`,
+`load_manifest` + the D-114 mtime-validated `load_manifest_cached`, the atomic
+`save_manifest` (B-034/D-112), every schema migration (`migrate_legacy_timeline`,
+`migrate_legacy_shots`, the D-136 normalised-geometry pass and its restamp gate),
+the media pool + bins (D-044/D-045/D-059) with thumbnail generation/caching,
+`migrate_shot_grades_to_clips` and the D-070 unified-clip-identity resolution
+(`resolve_active_clip_index`, `top_wins_clip_index`, `shot_matches_clip`),
+`list_projects_in`, `new_project_in`, `infer_settings_from_clip`.
+
+**What stayed, and why it had to.** `open_manifest` + the 20
+`#[tauri::command]`s, per the "commands do not move" rule (D-141 §1). This slice
+is the strongest case for that rule in the repo: *all 20* take
+`tauri::State<'_, AppState>`, and `AppState` lives in `app/src-tauri/src/app_state.rs`
+and owns RapidRAW's GPU context and caches. A crate hosting them would depend on
+the app crate — a cycle, not an inconvenience. `open_manifest` is the one
+function that genuinely binds the model to the app's session globals
+(`chroma::state`, `chroma::load`), so it belongs on that side of the line too.
+
+### The one real relocation, not a move: `ensure_timeline` / `resolve_timeline`
+
+Everything above is a verbatim move behind a shim. This is not.
+`build_from_shots`, `ensure_timeline`, `load_and_ensure_timeline`,
+`resolve_timeline` and `resolve_timeline_and_settings` lived in
+`chroma/edit.rs` (L108–197) since D-041, and D-141's scoping pass called them
+what they are: project concerns wearing an Edit-tab name. The evidence is the
+call graph, not taste — `build_from_shots` reads `manifest.shots` and calls
+`project::resolve_shot` + `project::save_manifest` and nothing Edit-tab at all,
+and four of `ensure_timeline`'s callers are `chroma::project`'s own
+`open_manifest` / `chroma_project_resync_clips` / `chroma_project_add_shot_paths`
+/ `chroma_project_remove_clip`. They are now `chroma_project::timeline`.
+
+**Options considered for the process global they read.**
+`load_and_ensure_timeline` and both `resolve_*` functions called
+`current_project_dir()` → `chroma::state::current_project()`, and `state.rs`
+stays in `app/src-tauri` (a process-global `mask_generation.rs` reads directly —
+plan §2.2 is explicit that it does not move).
+
+1. *Move `state.rs` too.* Rejected: it is genuinely app-layer, and it would drag
+   `CurrentVideo`/`Session` and a fork call site into an L2 crate.
+2. *Leave the three `resolve_*` functions in `edit.rs` and move only
+   `ensure_timeline`.* Rejected: it splits one lifecycle across two homes and
+   leaves `load_and_ensure_timeline` — pure manifest I/O — behind for no reason
+   beyond one line of it.
+3. **Chosen: the crate takes the project directory as a parameter; the app looks
+   it up.** `resolve_timeline(dir, persist)`. `chroma::edit` keeps three-line
+   wrappers at the *original* names and signatures that supply
+   `current_project_dir()?`, so all ~20 of its call sites are untouched. This is
+   the same shape D-145 gave `tracked_depth_map` (crate takes the frame, app
+   reads it from `state`), and it is a strictly better signature — "resolve the
+   active timeline of *this* project" is testable; "of whichever project happens
+   to be open" was not, which is why these functions had **zero** unit tests in
+   `edit.rs`. They have 5 now.
+
+`ensure_timeline` already took its `dir`, so at the old path it is a literal
+`pub(crate) use chroma_project::timeline::ensure_timeline;` — the same
+`probe_cached` shim shape D-146 used one file over — and `project.rs`'s four
+`super::edit::ensure_timeline(..)` calls did not change either.
+
+### The test split — the bulk of the work, as the plan warned
+
+`project.rs` was 5,012 lines of which 2,523 were tests. **59 tests split 48 / 11**,
+by what they exercise rather than by where they sat. Each test item was classified
+by grepping it for `super::super::edit::chroma_*`, `chroma_project_*` /
+`chroma_media_*`, `state::`, `tauri::` and `AppState`, not by reading section
+headers.
+
+- **48 → `chroma-project`:** manifest round-trips, the B-034 torn-read race, the
+  D-114 cache's measured speedup, every schema-migration test, media-pool and
+  folder logic, the `has_audio` backfill, the whole D-070 grade-file migration
+  and clip-resolution set, and the `#[ignore]`d one-off against the owner's real
+  `~/Movies/Chroma/New.chroma`.
+- **11 stay in `app/src-tauri`:** the ones that drive the command surface
+  end-to-end (`chroma_media_import`/`_move`/`_remove`/`_create_folder`,
+  `chroma_project_save`, and the five `super::super::edit::chroma_timeline_*`
+  integration tests) plus `project_ref_set_and_clear`, which is about
+  `chroma::state`. A crate cannot reach a `#[tauri::command]`, and these tests
+  are *right* where they are — they test the command surface, which is what
+  `app/src-tauri` is.
+
+Two moved tests needed a real edit, both recorded rather than quietly done:
+`migration_against_the_real_owner_project` retargets
+`super::super::edit::ensure_timeline` → `crate::timeline::ensure_timeline`; and
+`open_manifest_flags_a_dangling_shot_offline_without_erroring`, which despite its
+name never calls `open_manifest` (it exercises `load_manifest` + `resolve_shot`),
+loses the `PROJECT_STATE_LOCK` guard it was taking for process state it does not
+touch, with a comment saying why.
+
+### Docs corrected on contact
+
+`architecture-lock.md`'s Layer-2 table listed `chroma-project`'s deps as
+`types, grade-model, timeline`. Both halves of that were wrong against the real
+code, and both are fixed:
+
+- **Missing: `chroma-project → chroma-media`.** The model probes and thumbnails
+  the media it references (`video::probe`, `video::extract_thumb`,
+  `probe::probe_cached`). L2 → L1 is legal in the locked graph; the table just
+  did not say so. Same class of correction D-146 made for its own missing edge.
+- **Claimed but absent: `chroma-grade-model`.** The D-070 migration *renames*
+  grade files by path; it never parses one. Same class of correction D-143 made.
+
+Also corrected: the lock doc's migration-strategy step 3 said `chroma-project`
+absorbs `grade.rs` + `state.rs` — `grade.rs`'s model went to
+`chroma-grade-model` (D-143) and `state.rs` does not move at all; and its step 4
+now records `chroma-ai` as done and `chroma-agent` as rescoped out (§2.6). A note
+was added under the Layer-2 heading: "NO gpu/media deps" holds for
+`chroma-timeline`/`chroma-grade-model`/`chroma-motion` but not for
+`chroma-project` and never could have — a project references media files, and
+"how long is this clip, is it offline" is a media question. The rule that
+matters is the *direction* of the edge, not the purity of every L2 crate.
+
+### Verification
+
+- `cargo check --workspace --all-targets` — clean; the only warnings are the 6
+  pre-existing `ai_processing.rs` dead-code ones D-146 also recorded.
+- `cargo test -p chroma-project` — **52 passed, 0 failed, 1 ignored** (the 48
+  moved minus the machine-specific `#[ignore]`, plus 5 new `timeline` tests).
+- `cargo test -p RapidRAW --lib -- chroma::` — **126 passed, 0 failed**,
+  including all 11 project tests that stayed and every
+  `chroma::edit::tests::chroma_timeline_*` integration test, which is the real
+  proof the lifecycle relocation did not change Edit-tab behaviour. The known
+  flaky `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
+  passed on this run.
+- **Evidence the move is verbatim, beyond "it compiles":** `cargo clippy` emits
+  the *same 13 warnings* on the moved code before and after the move, in the
+  same order, at correspondingly shifted line numbers (7 `collapsible_if`, 1
+  `sort_by_key`, 5 `clone`-to-slice — all pre-existing on `main`, all left
+  as-is because this is a move, not a rewrite). The 14th warning, at old
+  `project.rs:1926`, is in the command half and correctly did not follow.
+- `rustfmt --check` clean on the new hand-written files (`lib.rs`, `timeline.rs`)
+  and on the moved `manifest.rs`. **`cargo fmt` was deliberately not run
+  repo-wide:** it rewrites 13 files this slice never touched (`main` carries
+  pre-existing fmt drift across the fork, `crates/chroma-media` included), and
+  an extraction commit is not the place to smuggle that in.
+- **Not verified:** the live app. The Tauri window cannot be launched in this
+  sandboxed environment, so "open a project, see its shot strip and timeline"
+  is covered by the 11 command-surface tests and the `chroma_timeline_*`
+  integration tests, not by a real UI session.
+
+### Gaps left open, deliberately
+
+- `make_test_clip` (a `testsrc` ffmpeg fixture) is now duplicated between the
+  crate's tests and the app's. Three copies of this helper already existed on
+  `main`; the natural fix is one `chroma-media` test-support fixture, and it is
+  logged as **F-5** in the extraction plan rather than done inside an
+  extraction commit.
+- The shims (`pub use chroma_project::*;` in `chroma/project.rs`, the
+  `pub(crate) use` in `chroma/edit.rs`) are wave-4's to delete, per §1.
+
+**Numbering.** Assigned D-148 against `main`'s real tip (`e15b2da`) and
+re-verified free immediately before committing — `fork/ducking` was running
+concurrently in another worktree.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **`chroma-project` real extraction (D-148) — Wave 1–3 of the
+  crate migration is done.** `chroma/project.rs` L1–1638 (the manifest, every
+  schema migration, the media pool + bins, the D-070 unified clip identity and
+  grade-file migration) moves verbatim into `crates/chroma-project/`;
+  `open_manifest` + the 20 commands stay in `app/src-tauri`, because all 20 take
+  `tauri::State<'_, AppState>`. The one piece of real relocation: the timeline
+  lifecycle (`ensure_timeline`, `load_and_ensure_timeline`, `resolve_timeline`,
+  `resolve_timeline_and_settings`, `build_from_shots`) leaves `chroma/edit.rs`
+  for the new crate — project concerns wearing an Edit-tab name — with the
+  process global they read (`chroma::state`'s "which project is open") staying
+  app-side as a parameter `chroma::edit`'s three-line wrappers supply, so every
+  call site is unchanged and the functions are unit-testable for the first time
+  (5 new tests). The 59-test suite splits 48 (model → crate) / 11 (command
+  surface + process state → stay). `architecture-lock.md`'s dependency table
+  corrected twice on contact: **`chroma-project → chroma-media` is real** and was
+  missing; the `chroma-grade-model` edge it claimed does not exist.
+  `cargo check --workspace --all-targets` clean; `cargo test -p chroma-project`
+  52 passed / 1 ignored; `cargo test -p RapidRAW --lib -- chroma::` 126 passed.
+  **Next: wave 4** — delete the shims, retarget call sites, fix `03-architecture.md`.
 - **2026-09-05** — **`chroma-media` real extraction (D-146)** — the widest slice
   of D-141's plan (§2.2), in its three required ordered commits. (1) `video.rs`
   + `decode_pipe.rs` + `media_cache.rs` move verbatim; two `#[cfg(test)]` hooks

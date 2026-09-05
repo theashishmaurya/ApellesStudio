@@ -100,99 +100,54 @@ fn current_project_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "no project open — open one in the Colorist tab".to_string())
 }
 
-/// Build a single-video-track timeline from a manifest's shots, resolving
-/// each shot's source path/name via its `media_id` (D-046 — see
-/// `project::resolve_shot`) and probing that path for its frame count (0 when
-/// offline / not probe-able / dangling). Assigns a fresh id (D-045) —
-/// `chroma-timeline` itself never generates one.
-fn build_from_shots(manifest: &project::ProjectManifest) -> Timeline {
-    let tuples: Vec<(String, String, String, i64)> = manifest
-        .shots
-        .iter()
-        .map(|shot| {
-            let (source_path, name) = project::resolve_shot(manifest, shot);
-            let frames = probe_cached(Path::new(&source_path))
-                .map(|i| i.frame_count as i64)
-                .unwrap_or(0);
-            (shot.id.clone(), source_path, name, frames)
-        })
-        .collect();
-    let mut tl = Timeline::from_shots(&tuples);
-    tl.id = uuid::Uuid::new_v4().to_string();
-    tl.name = manifest.name.clone();
-    tl
-}
+// --------------------------------------------------------------------------- //
+// timeline lifecycle — moved out of this file into `chroma-project` (D-148,
+// `docs/notes/crate-extraction-plan.md` §2.3). `build_from_shots`,
+// `ensure_timeline`, `load_and_ensure_timeline`, `resolve_timeline` and
+// `resolve_timeline_and_settings` were never Edit-tab concerns: they read
+// `manifest.shots`, call `project::resolve_shot` / `project::save_manifest`,
+// and their non-Edit callers are `chroma::project`'s own `open_manifest`,
+// `chroma_project_resync_clips`, `chroma_project_add_shot_paths` and
+// `chroma_project_remove_clip`.
+//
+// What genuinely stays here is the *process global* — which project is
+// currently open — because that is `chroma::state`, app-layer by design. So
+// the crate's functions take the project directory as an argument and these
+// wrappers supply it: the same "the crate takes the fact, the app looks it
+// up" shape D-145 gave `tracked_depth_map`. Every call site below is
+// unchanged.
+// --------------------------------------------------------------------------- //
 
-/// Ensure `manifest.timelines` is non-empty (lazily building one from shots —
-/// the same D-041 fallback `chroma_timeline_get` always had — if it's empty)
-/// and that `active_timeline` points at a valid entry. `persist` controls
-/// whether a freshly-built timeline is written back to `project.json` (get
-/// does this; the per-frame decode does not, matching the old behaviour).
-///
-/// `pub(crate)` (unify-clip-model doc): `chroma::project::open_manifest` also
-/// calls this, before sourcing the Colorist shot strip from the active
-/// timeline's clips — a project opened for the first time since ever (no
-/// `timelines` key at all) must still get one built from its legacy `shots`,
-/// exactly as `chroma_timeline_get` always lazily did, or the strip would
-/// show nothing until the user happened to visit the Edit tab first.
-pub(crate) fn ensure_timeline(
-    dir: &Path,
-    mut manifest: project::ProjectManifest,
-    persist: bool,
-) -> Result<project::ProjectManifest, String> {
-    if manifest.timelines.is_empty() {
-        let tl = build_from_shots(&manifest);
-        manifest.timelines.push(tl);
-        manifest.active_timeline = 0;
-        if persist {
-            manifest.modified = now_rfc3339();
-            project::save_manifest(dir, &manifest)?;
-        }
-    } else if manifest.active_timeline >= manifest.timelines.len() {
-        manifest.active_timeline = 0;
-    }
-    Ok(manifest)
-}
+/// A pure pass-through, not a wrapper — the crate function already took the
+/// project directory explicitly. `chroma::project` calls it at this path too;
+/// see `chroma_project::timeline`'s module doc for why it is not an Edit-tab
+/// concern despite having lived here since D-041.
+pub(crate) use chroma_project::timeline::ensure_timeline;
 
-/// Load the open project's manifest with `timelines` guaranteed non-empty and
-/// `active_timeline` valid.
+/// Load the **open** project's manifest with `timelines` guaranteed non-empty
+/// and `active_timeline` valid. Returns the directory alongside it because
+/// most callers here go on to `project::save_manifest(&dir, ..)`.
 fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectManifest), String> {
     let dir = current_project_dir()?;
-    // D-114 — the read-only path (this is `resolve_timeline`'s hot call,
-    // once per preview frame) uses the mtime-validated cache instead of a
-    // full re-read + re-parse every time; `persist: true` callers (which may
-    // go on to write) keep the plain, always-fresh-from-disk read.
-    let manifest = if persist {
-        project::load_manifest(&dir)?
-    } else {
-        project::load_manifest_cached(&dir)?
-    };
-    let manifest = ensure_timeline(&dir, manifest, persist)?;
+    let manifest = chroma_project::timeline::load_and_ensure_timeline(&dir, persist)?;
     Ok((dir, manifest))
 }
 
-/// The open project's **active** timeline (D-045) — its persisted one, or a
+/// The **open** project's active timeline (D-045) — its persisted one, or a
 /// fresh build from its shots the first time. `pub(crate)` (D-056): also how
 /// `chroma::audio`'s mixer enumerates every genuine `TrackKind::Audio` track
 /// on the active timeline (`resolve_audio_track_positions`, below).
 pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
-    let (timeline, _settings) = resolve_timeline_and_settings(persist)?;
-    Ok(timeline)
+    chroma_project::timeline::resolve_timeline(&current_project_dir()?, persist)
 }
 
 /// [`resolve_timeline`] plus the project's output spec (D-038) — the pair
 /// [`timeline_frame`] needs, since D-136 made the compositor's canvas the
-/// **composition** rather than the top layer's decoded size. One load, not two:
-/// `load_and_ensure_timeline` is the per-preview-frame hot path (D-114 caches
-/// it, but a second call would still clone a whole manifest).
+/// **composition** rather than the top layer's decoded size.
 pub(crate) fn resolve_timeline_and_settings(
     persist: bool,
 ) -> Result<(Timeline, project::ProjectSettings), String> {
-    let (_dir, manifest) = load_and_ensure_timeline(persist)?;
-    Ok((
-        manifest.timelines[manifest.active_timeline].clone(),
-        manifest.settings.clone(),
-    ))
+    chroma_project::timeline::resolve_timeline_and_settings(&current_project_dir()?, persist)
 }
 
 /// The **composition space** every clip's geometry is measured against

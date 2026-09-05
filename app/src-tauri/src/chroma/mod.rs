@@ -24,8 +24,13 @@
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
 //! - `session`  — multi-shot session: add / list / switch / remove shots (D-033)
-//! - `project`  — the saved `<name>.chroma` project: list / open / new / save (D-037)
-//! - `edit`     — the Edit-tab bridge: `chroma-timeline` model ⇄ frontend + a lightweight decode→jpeg preview (D-041)
+//! - `project`  — the saved `<name>.chroma` project: list / open / new / save
+//!   (D-037); since D-148 just `open_manifest` + the 20 commands (all of which
+//!   take `tauri::State<AppState>`) — the model is `chroma-project`
+//! - `edit`     — the Edit-tab bridge: `chroma-timeline` model ⇄ frontend + a
+//!   lightweight decode→jpeg preview (D-041). Since D-148 the project's
+//!   *timeline lifecycle* (`ensure_timeline`/`resolve_timeline`) is
+//!   `chroma_project::timeline`, wrapped here to supply the open project's dir
 //! - `playback` — fused decode+install+grade command for real-time playback (D-031)
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)

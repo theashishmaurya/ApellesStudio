@@ -18,9 +18,9 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 | L1 | `chroma-media` | **yes, real (D-146)** | `video` (ffmpeg-CLI probe + decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (D-128), `probe` (the two-layer probe cache, lifted out of `chroma/edit.rs`), `filmstrip` (D-128/D-134), `audio` (symphonia→rubato→cpal engine + waveforms, D-049/D-051/D-057). Export encode (D-022) is still in `chroma/export.rs`; VideoToolbox→texture is future | types (**no `gpu` edge yet** — nothing extracted so far needs one; the lock doc's table predicted one) |
 | L1 | `chroma-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021) | gpu, types, `app/` engine |
 | L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
-| L2 | `chroma-timeline` | **yes (stub)** | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, transcript→EDL. **Pure.** | types |
+| L2 | `chroma-timeline` | **yes, real** (D-041/045/046/082/136/137/138) | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, transcript→EDL. **Pure.** | types |
 | L2 | `chroma-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, schema migration, matte/track/depth-ref externalization. **Pure** (model vs renderer). | — |
-| L2 | `chroma-project` | future | the `.chroma` project (D-037) + settings (D-038) | types, grade-model, timeline |
+| L2 | `chroma-project` | **yes, real (D-148)** | the `.chroma` project (D-037) + settings (D-038): the `project.json` manifest and every schema migration, the media pool + bins (D-044/D-045/D-059), the D-070 unified clip identity + grade-file migration, `list_projects_in`/`new_project_in`, and the project's timeline lifecycle (lifted out of `chroma/edit.rs`). The 20 commands + `open_manifest` stay app-side — all 20 take `tauri::State<'_, AppState>` | types, timeline, **media** (**not** grade-model — the table's earlier guess; the D-070 migration renames grade files, never parses one) |
 | L2 | `chroma-motion` | **yes** (D-046) | manifest → Remotion bridge: shells out to `npx remotion render` in `packages/motion-engine` rather than reimplementing it | types |
 | L3 | `chroma-ai` | **yes** (D-145) | sidecar client: lifecycle (spawn/health/hash, D-028/D-101), `/segment`+`/track`+`/refine_track` (D-016/D-018/D-019), `/depth_track` (D-036) wire plumbing | (none — no chroma-types dependency yet; whisper is not wired in this pass) |
 | L3 | `chroma-agent` | future | control server (D-020) + MCP op registry + scope exposure | project, grade-model, timeline, types |
@@ -74,3 +74,22 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   is CPU/subprocess work; the predicted edge becomes real only if
   VideoToolbox→texture lands. See its own `README.md` for the `test-support`
   feature and why it is a feature rather than a `#[doc(hidden)] pub`.
+- **`chroma-project` (D-148, 2026-09-05) — closes the Wave 1–3 sequence.**
+  `chroma/project.rs` L1–1638 moved verbatim into `crates/chroma-project/`
+  (`manifest`), and the timeline lifecycle — `ensure_timeline`,
+  `load_and_ensure_timeline`, `resolve_timeline`,
+  `resolve_timeline_and_settings`, `build_from_shots` — moved out of
+  `chroma/edit.rs` into the new crate's `timeline` module, because that is
+  what it always was: it reads `manifest.shots`, calls
+  `project::resolve_shot`/`save_manifest`, and four of its callers are
+  `chroma::project`'s own commands. The *process global* those functions read
+  (`chroma::state`'s "which project is open") stayed app-side and is now a
+  parameter the app supplies, so `chroma::edit` keeps three-line wrappers at
+  the original signatures and its ~20 call sites are unchanged.
+  `open_manifest` + the 20 `#[tauri::command]`s stayed — every one takes
+  `tauri::State<'_, AppState>`. Two corrections to the table above, made on
+  contact: **`chroma-project → chroma-media` is real** (probe + thumbnail) and
+  was missing from `architecture-lock.md`; the **`chroma-grade-model` edge is
+  not** and never was. Test split: 48 model tests moved, 11 command-surface /
+  process-state tests stayed in `app/src-tauri`, 5 new tests were written for
+  the timeline lifecycle (which had none in `edit.rs`).
