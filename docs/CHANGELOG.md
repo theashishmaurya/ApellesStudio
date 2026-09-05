@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Motion tab MCP surface, Phase 2: the rest of the non-keyframe edit surface
+  (D-168).** Nine new `motion_*` ops in `useMotionControl.ts`: `set_layer_field`,
+  `set_layer_position`/`size`, `move_layers_by_delta`, `align_layers`/`distribute_layers`,
+  `set_scene_field`, `set_camera_2d`/`3d` — all thin adapters over real `manifestEdit.ts`
+  functions, live-verified against a real second running instance. Found and fixed a real gap
+  along the way: `manifestEdit.ts`'s functions never prefer a selection's stable `id` over its
+  `index` themselves (the GUI only gets that "for free" via `MotionTab.tsx`'s own D-158 effect) —
+  a one-shot MCP call has no such standing state, so a new `resolveOrError` helper resolves `id`
+  before every mutating op, or an `id`-addressed call would have silently degraded to index-only
+  addressing. `tsc -p app` unchanged at 64.
+
 - **2026-09-06** — **Motion tab MCP surface, Phase 1: live-verified (D-167).** New
   `packages/motion/src/useMotionControl.ts`, mounted from `MotionTab.tsx`, answers `motion_*` ops
   over the existing D-020 HTTP↔Tauri-event bridge — zero `control.rs`/Rust changes.
