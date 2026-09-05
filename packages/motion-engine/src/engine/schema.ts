@@ -85,6 +85,21 @@ const layer = z
       "labelbox",
       "layerstack",
     ]),
+    /**
+     * D-158, Phase 3 of `docs/notes/motion-visual-builder-research.md`
+     * ("stable layer identity" — §1g's own finding: "identity is
+     * positional... it breaks the moment the builder can reorder, insert, or
+     * delete layers with a selection live"). Purely additive and optional:
+     * `@chroma/motion`'s `addLayer` (D-151) generates one for every layer it
+     * creates from here on; a hand-written or pre-existing manifest simply
+     * has no `id`, and every consumer (`@chroma/motion`'s
+     * `resolveSelection`) falls back to the array index exactly as before
+     * this field existed. Not used by the renderer at all — `Video.tsx`
+     * never reads it — so its presence or absence has zero effect on a
+     * rendered frame (verified byte-for-byte via `remotion still`, D-158's
+     * own decision entry).
+     */
+    id: z.string().optional(),
     at: z.number().optional(),
     dur: z.number().optional(),
     active: activeSchema.optional(),
