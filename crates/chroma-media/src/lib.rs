@@ -16,6 +16,12 @@
 //! - [`probe`] — the two-layer (memory → disk) probe cache in front of
 //!   [`video::probe`], lifted out of the Edit-tab bridge where it had been
 //!   living by accident (D-146, B-056).
+//! - [`filmstrip`] — windowed, level-of-detail, disk-cached filmstrip tiles
+//!   over [`media_cache`] (D-128, D-134).
+//! - [`audio`] — the Edit-tab audio engine (symphonia → rubato → dasp_sample
+//!   → cpal, D-049/D-050/D-057) and the waveform-envelope path (D-051/D-128).
+//!   Its *timeline resolution* — which clip is under a playhead — stayed in
+//!   `app/src-tauri` on purpose; see that module's doc.
 //!
 //! **What it does NOT do:**
 //! - **No `#[tauri::command]`.** That is a hard `tauri-macros` constraint, not
@@ -32,7 +38,9 @@
 //!   and a gain; it never resolves one.
 //! - **No GPU, no grade, no `AppState`.**
 
+pub mod audio;
 pub mod decode_pipe;
+pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;
 pub mod video;

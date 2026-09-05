@@ -346,7 +346,7 @@ pub fn extract_thumb_strip(
 /// is Colorist's *poster-frame* size (a much larger on-screen element), not
 /// this one's: owner, live — "for thumbnail you dont have to take all the
 /// frame in high quality right so do the optimization."
-pub const THUMB_STRIP_HEIGHT: u32 = 104;
+pub(crate) const THUMB_STRIP_HEIGHT: u32 = 104;
 
 /// Fallback keyframe interval, in seconds, when [`probe_keyframe_interval`]
 /// can't measure one (an unreadable file, an `ffprobe` that returns no
@@ -585,7 +585,7 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
 
 /// Split a concatenated MJPEG byte stream into individual JPEG frames on the
 /// `FF D8 FF` start-of-image marker.
-pub fn split_mjpeg(data: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn split_mjpeg(data: &[u8]) -> Vec<&[u8]> {
     let mut starts = Vec::new();
     let mut i = 0;
     while i + 2 < data.len() {

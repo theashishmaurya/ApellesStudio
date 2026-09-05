@@ -28,3 +28,20 @@ base64 = "0.23"
 blake3 = "1.8.7"
 walkdir = "2.5.0"
 filetime = "0.2"
+futures = "0.3.34"
+# `filmstrip`'s per-chunk async locks + extraction semaphore, and its
+# `spawn_blocking` around the real `ffmpeg` pass.
+tokio = { version = "1", features = ["rt", "sync"] }
+# The Edit-tab audio engine (D-049): decode (symphonia) → resample (rubato) →
+# format-convert (dasp_sample) → device output (cpal). Pure Rust, no FFI; the
+# audio stack named in D-039 / architecture-lock.md. Versions pinned to match
+# what `app/src-tauri` had before D-146 moved this code — a move, not an
+# upgrade.
+symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff"] }
+cpal = "0.18.2"
+rubato = "0.15"
+dasp_sample = "0.11.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
+tempfile = "3.27.0"

@@ -10,9 +10,14 @@
 //!   artefacts: filmstrip tiles, probes, waveform peaks (D-128); a re-export
 //!   shim since D-146 — the real code is `chroma-media`
 //! - `filmstrip` — windowed, level-of-detail Edit-tab filmstrip tiles on top
-//!   of `media_cache` (D-128; supersedes D-119/D-121/D-124's whole-clip strip)
+//!   of `media_cache` (D-128; supersedes D-119/D-121/D-124's whole-clip strip);
+//!   since D-146 just the `chroma_clip_thumbnails` command — the real code is
+//!   `chroma-media`
 //! - `audio`    — Edit-tab audio playback: symphonia decode → rubato resample
-//!   → dasp_sample format-convert → cpal device output (D-049)
+//!   → dasp_sample format-convert → cpal device output (D-049); since D-146
+//!   just the 5 commands **plus** the timeline resolution that turns a
+//!   playhead frame into audio sources, which is deliberately *not* media —
+//!   the engine is `chroma-media`
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback
 //!   (D-030); a re-export shim since D-146 — the real code is `chroma-media`
 //! - `state`    — Chroma's own process state (the multi-shot session, D-033)
