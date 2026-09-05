@@ -14489,3 +14489,210 @@ environment/tooling gaps outside this pass's own code changes, not bugs in Motio
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-169 — Motion tab MCP surface, Phase 3 (layer keyframing): `set_layer_transform_keys`, `add_layer_keyframe`, `move_layer_keyframe` — all live-verified, plus a real B-062 ease-validation guard at the MCP boundary
+
+**decided + built (2026-09-06).** Full scoping is `docs/notes/motion-mcp-surface-research.md`
+§5's "Phase 3" table (read that first — every op below names the real `manifestEdit.ts` function
+it wraps). D-167/D-168 shipped Phases 1–2 and this entry's own architecture (`useMotionControl.ts`,
+the `motion_*` namespace convention, the `mRef` live-ref bridge, the `{scene_index, target}`
+addressing shape, `resolveOrError`'s `id`-preference). This pass adds the LAYER-keyframing surface
+— same file, same discipline: every mutating op is a thin adapter over a REAL `manifestEdit.ts`
+function, `resolveOrError` reused verbatim (not reinvented) for addressing.
+
+**Ops shipped:** `motion_set_layer_transform_keys` (replace a layer/scene3d-child's
+`transform.keys` array wholesale — `setLayerTransformKeys`), `motion_add_layer_keyframe` (upsert
+one key at a given time — `upsertLayerTransformKeyXY`), `motion_move_layer_keyframe` (retime one
+existing key — `moveLayerTransformKeyAt`).
+
+**`add_layer_keyframe`'s args shape, resolved by reading `upsertLayerTransformKeyXY`'s real
+signature, not guessed.** The wrapped function takes `x`/`y` EXPLICITLY — it does not derive them
+from anything — so an MCP call needs a source for them. The Phase 3 table's own wording ("from the
+layer's current on-screen position") points at `layerDragBase` (`manifestEdit.ts`) as that source:
+given a selection, a frame (`Math.round(at * fps)`, `fps` off `manifest.fps`), it returns the
+layer's CURRENTLY INTERPOLATED position — the exact "current on-screen position" phrase, and the
+same read `MotionCanvasOverlay.tsx`'s own drag-start does before adding a pointer delta. Decided
+args: `{scene_index, target, at, x?, y?}` — `at` (seconds) required; `x`/`y` OPTIONAL. When both
+are given, they're used verbatim (an agent that already knows where it wants the key skips the
+derive-then-resend round trip entirely — useful for "place a keyframe here," not just "hold the
+layer where it already is"). When either is omitted, it's filled from `layerDragBase`'s own
+current-position read — the literal "lock the layer where it visually already is at this time"
+gesture, i.e. an add-a-hold-point op with no other change. A selection with no draggable position
+AND a missing `x`/`y` is a real `{error}` (nothing to derive from), never a silent `{x:0,y:0}`.
+Live-verified both branches (see below): explicit `x:400,y:900` at `t=0.5` on a freshly-added
+unkeyed layer wrote exactly that; a later no-`x`/`y` call at `t=0` on the NOW-keyed layer correctly
+returned the already-keyed value `(400,900)` (the single existing key's own value, since
+`interpolateKeys` holds constant outside its one key's own `at`) rather than the layer's static
+`(180,300)` — proving the "keyed vs. static" branch inside `layerDragBase` was actually exercised,
+not just the trivial static-position path.
+
+**A small, deliberate addition beyond `upsertLayerTransformKeyXY`'s own signature: an optional
+`ease` on `add_layer_keyframe`.** The wrapped function has no `ease` parameter — it only ever
+touches `x`/`y` — so a literal wrap can't author an eased keyframe in one call; the only path
+would be `add_layer_keyframe` then a full `set_layer_transform_keys` resend just to attach one
+key's easing. Rejected as needless ceremony for something this small: after the upsert, if `ease`
+was given, this op finds the SAME key in the resulting array (by the identical
+`Math.round(at*fps)` frame match `upsertLayerTransformKeyXY` itself uses to decide overwrite-vs-
+append) and sets its `ease`, folded into the SAME manifest before the one `commit()` call — one
+undo step, the same "compose pure writes, commit once" discipline `moveLayersByDeltaAutoKey`
+already uses for its own two-field write. This is genuinely new (if small) logic, the same class
+of addition D-168's own `resolveOrError` was — not a new manifest-mutation PRIMITIVE (no new
+schema field, no new interpolation rule), just the missing glue an MCP call needs that a two-call
+round trip would otherwise force. Live-verified: an `add_layer_keyframe` call with
+`ease:[0.42,0,1,1]` landed that exact `ease` on the new key in the same `motion_get_manifest`
+read-back.
+
+**Ease validation — B-062's exact gap (`docs/BUGS.md`, still open), closed at the MCP boundary,
+not in `schema.ts`.** `schema.ts`'s `ease` is a bare 4-tuple with no runtime check at all, and
+`Easing.bezier` (`interpolateKeys.ts`) throws unless `x1`,`x2` ∈ `[0,1]` — an out-of-range
+hand-authored `ease` renders fine until the frame carrying it is reached, then crashes. Rather
+than accept a raw tuple blind here (which would let an MCP agent author exactly that crash), a new
+`validateEaseArg` helper in `useMotionControl.ts` reuses `easeCurve.ts`'s own REAL exports —
+`resolveEaseCurve` (shape check: a genuine 4-length array of finite numbers, a real `{error}`
+otherwise, never silently dropped) then `clampEaseCurve` (the SAME clamp the Inspector's own
+bezier-curve widget already applies before a drag ever reaches the manifest) — surfacing a
+`warning` (never a blocking error) when clamping actually changed a value. Applied everywhere an
+`ease` value can arrive on the wire: `add_layer_keyframe`'s own `ease` arg, and each key inside
+`set_layer_transform_keys`'s `keys` array. `schema.ts` itself is untouched — this is a guard at
+the boundary an MCP client writes through, not a fix to the still-open bug (which would need a
+schema-level `.refine()`, out of this pass's scope per the task's own instruction not to touch
+`schema.ts`). Live-verified: an out-of-range `ease:[1.5,-2,-0.3,3]` came back clamped to
+`[1,-0.75,0,1.75]` with an explicit warning string naming both the original and clamped values (on
+both `add_layer_keyframe` and `set_layer_transform_keys`); a malformed `ease:[1,2,3]` (wrong
+length) returned a real `{error}` with NO manifest write at all (confirmed by a following
+`motion_get_manifest` showing no new key).
+
+**Bonus op considered, deliberately NOT built: multi-key nudge (`moveKeysByDelta`, D-163).** A
+real, existing capability — the shared-delta analogue of `moveLayersByDelta`, for keys instead of
+layers — that the Phase 3 table itself does not list. Read `moveKeysByDelta`'s own doc comment in
+full before deciding: its `KeyMoveTarget.baseAtSeconds` is captured ONCE at a live drag's START
+and carried through the gesture specifically to avoid a same-array reorder trap (`moveKeysAt`'s
+own doc comment walks through exactly how two keys in one array can shift under each other via
+naive sequential `moveKeyAt` calls). An MCP call has no live drag session to capture that base
+from — each call is already a fresh, one-shot round trip, the same constraint that motivated
+`resolveOrError` in Phase 2. The wire shape a faithful `motion_move_keys_by_delta` would need (a
+list mixing camera/scene3d-camera/layer key targets, each carrying its own remembered
+`baseAtSeconds`, resolved the same "group by shared array, one `moveKeysAt` call per group" way
+`moveKeysByDelta` itself does) is real, new wire-protocol design the Phase 3 table never asked
+for — not a thin wrap of an existing shape the way every other op in this file is. The common need
+this would serve — retime several keys the same amount — is already reachable via
+`move_layer_keyframe` called once per key (no atomicity loss that matters: every op in this file
+is already its own commit/undo step, so N calls just means N undo steps instead of one, not a
+correctness gap). Decision: **left out of Phase 3 as a deliberate scope boundary**, not silently
+dropped — flagged here for a future phase if an agent workflow actually wants it enough to justify
+designing that wire shape.
+
+**Target-kind restriction, matching Phase 2's own precedent.** All three ops reject a resolved
+`target.kind` other than `layer`/`scene3d-child` with a descriptive error (`set_layer_transform_keys
+targets a layer or scene3d-child, got target.kind="..."`, etc.) rather than letting
+`cloneLayerRaw`'s own silent no-op floor produce a generic "no change" — the same choice
+`motion_set_layer_field` already made in Phase 2, applied here for the same reason (a `scene`/
+`camera`/`scene3d-camera` target has no `transform.keys` concept at all, so a bare "no change" here
+would be actively misleading about why).
+
+**Live verification — done for real, against a real second running instance**, following D-167/
+D-168's own playbook exactly (distinct `CHROMA_CONTROL_PORT` AND distinct `tauri.conf.json`
+`identifier`, `lsof`/`ps eww` cross-checks before trusting any `curl` result, never assumed from
+the launch invocation alone):
+
+- Checked every candidate port/identifier was actually free before using it:
+  `lsof -i :19788/:19789/:19790/:19791/:19792/:19793` — only `19788` (the coordinator's own
+  instance, PID 98482) was held; `19793` was free, used for `CHROMA_CONTROL_PORT`. `lsof -i
+  :1420/:1425/:1430/:1435` — only `1420` was held (the coordinator's own Vite dev server); `1435`
+  was free, used for both `tauri.conf.json`'s `build.devUrl` and `app/vite.config.mjs`'s
+  `server.port`. `identifier` set to
+  `io.github.CyberTimon.RapidRAW.dev-motion-mcp-phase3` (D-167's addendum: the port fix alone is
+  not sufficient for a second dev instance — Tauri's single-instance plugin keys its OS lock off
+  the identifier, not the port).
+- Hit the SAME pre-existing, repo-wide `@rolldown/plugin-babel` install gap D-168 already
+  documented (declared in `package.json`, genuinely absent from `node_modules`, breaks a fresh
+  `npm run tauri dev` before any Motion MCP code runs) — worked around the identical way: commented
+  out the plugin's import/usage in `app/vite.config.mjs` for this verification instance ONLY, with
+  an inline comment crediting D-168's own precedent, then reverted via `git checkout --` before any
+  commit. Not fixed via `npm install` per this task's explicit instruction not to touch
+  `node_modules`.
+- Launched `CHROMA_CONTROL_PORT=19793 npm run tauri dev` from `app/`, backgrounded, polled the log
+  file for `Finished`/rust `error[` rather than a fixed sleep (`cargo` took 2m15s across 831
+  crates, clean — only the same pre-existing `ai_processing.rs` dead-code warnings D-167/D-168
+  already recorded).
+- Confirmed which instance was actually being talked to before trusting anything: `ps aux` showed
+  the coordinator's `RapidRAW` (PID 98482, path under `~/my_projects/chroma`) and this session's own
+  (PID 44608, path under `chroma-worktrees/motion-mcp-phase3`) as two distinct processes;
+  `lsof -p 44608 -a -iTCP -sTCP:LISTEN` showed `localhost:19793`; `ps eww 44608 | grep
+  CHROMA_CONTROL_PORT` showed `CHROMA_CONTROL_PORT=19793` — both agree; the coordinator's own PID
+  98482 was separately re-confirmed still on `19788`, untouched throughout.
+- Created a fresh test project the same way D-167/D-168 did — no `motion_open_project` op exists
+  yet — via the pre-existing Colorist `new_project` op:
+  `{"op":"new_project","args":{"name":"motion-mcp-phase3-verify"}}` → created
+  `~/Movies/Chroma/motion-mcp-phase3-verify.chroma`. Added a fresh `text` layer via the
+  already-verified `motion_add_layer` (`{"scene_index":0,"use":"text"}` → id `ludq327o`, index 2)
+  to get a real, unkeyed layer with a known static position (`x:180,y:300`) to exercise every
+  branch against.
+- **Every op exercised with a real before/after `motion_get_manifest` diff** (condensed here; full
+  transcript kept in this session): `motion_add_layer_keyframe` with explicit `x:400,y:900` at
+  `t=0.5` on the fresh unkeyed layer wrote `transform.keys:[{at:0.5,x:400,y:900}]` (confirmed via
+  `motion_get_manifest` before showing no `transform` at all, after showing exactly that one key);
+  a follow-up call with NO `x`/`y` at `t=0` (now that the layer IS keyed) returned
+  `derivedFrom:"current-position"`, `x:400,y:900` — the interpolated value of the one existing key,
+  not the layer's static `(180,300)` — appended as a second key with an `ease:[0.42,0,1,1]` also
+  supplied and confirmed landed on that same new key; an out-of-range `ease:[1.5,-2,-0.3,3]` on a
+  third `add_layer_keyframe` call came back `{ease:[1,-0.75,0,1.75], warning:"ease [1.5,-2,-0.3,3]
+  was out of range — clamped to [1,-0.75,0,1.75]"}`, confirmed clamped in the manifest; a malformed
+  `ease:[1,2,3]` returned `{error:"ease must be a 4-number array..."}` with no manifest change.
+  `motion_set_layer_transform_keys` replacing the (by-then 4-key) array with a fresh 2-key array
+  (one plain, one with `scale:1.2` and an out-of-range `ease:[2,2,2,2]`) confirmed the OLD keys
+  gone and exactly the new 2 present, the ease clamped to `[1,1.75,1,1.75]` with a `warnings[0]`
+  naming which key. `motion_move_layer_keyframe` moving key index 0 (`at:0`) to `at:1.5` confirmed
+  the array re-sorted (`[{at:1.5,...},{at:2,...}]`); a boundary case moving key index 1 to `new_at:
+  99` against scene 0's `dur:4` came back `{at:4, warning:"99s was outside the scene's [0, 4]
+  range — clamped to 4s"}`, confirmed clamped in the manifest; an out-of-range `key_index:9`
+  returned `{error:"no key at index 9 (layer has 2 key(s))"}` rather than a silent no-op.
+  `scene3d-child` addressing (scene 2 "space", child index 0, a `particleflow`) was also exercised
+  via `add_layer_keyframe` with explicit `x:1,y:2` — confirmed the SAME `transform.keys` write
+  landed on a 3D child, not just a 2D layer, matching `cloneLayerRaw`'s own generic support for
+  both kinds. An unresolvable `target.id:"does-not-exist"` on `move_layer_keyframe` returned the
+  expected `resolveOrError` `{error}` (`"...does not resolve to anything in the current
+  manifest"`) rather than a silent no-op.
+- The throwaway `motion-mcp-phase3-verify.chroma` test project was deleted from
+  `~/Movies/Chroma/` after verification.
+- `npx tsc --noEmit -p app` — exactly 64 `error TS` lines, checked BOTH before and after the
+  `tauri.conf.json`/`vite.config.mjs` revert (`git checkout --`), unchanged from the documented
+  baseline; zero errors in `useMotionControl.ts` or any other file this pass touched.
+- `cargo check --workspace --all-targets` not re-run this pass — no Rust files were touched
+  (confirmed by `git diff --stat` showing only `packages/motion/src/useMotionControl.ts` after the
+  scratch-config revert); the one real Rust build performed (`cargo run` for the live-verification
+  instance) compiled clean end to end with only the same pre-existing `ai_processing.rs` dead-code
+  warnings D-167/D-168 already recorded.
+- `packages/motion`'s own `vitest run` — 10 files, 362 tests, all passing, both before and after
+  this pass's changes (no test file was added or modified this pass — every new op is exercised
+  live against a running instance, the same verification bar D-167/D-168 already set for Phase
+  1/2, rather than by new unit tests against `manifestEdit.ts`'s already-tested functions).
+- Both scratch config files (`app/src-tauri/tauri.conf.json`'s `identifier`/`build.devUrl`,
+  `app/vite.config.mjs`'s `server.port` and the temporarily-commented react-compiler babel plugin)
+  were reverted via `git checkout --` before this entry's own commit — confirmed via `git diff
+  --stat` showing zero changes to either file, only `packages/motion/src/useMotionControl.ts`
+  modified.
+- This session's own second instance (PID 44608 and its `vite`/`tauri dev` wrapper processes, PIDs
+  25684/25470) was killed before finishing; the coordinator's own instance (PID 98482, port
+  `19788`) was left running, untouched, throughout.
+
+**Not built this pass (unchanged from the research doc's own phasing, still deferred, not
+forgotten):** Phase 4 (`select`/`seek`/`save_manifest`/`render` — `seek` still needs the
+`playerRef`/`measureApiRef` live-ref bridge extension the research doc's §5 caveat named as real,
+unstarted work) and the multi-key-nudge bonus op (this entry's own explicit scope-boundary call,
+above). The Python `mcp/server.py` wrappers for every op shipped across all three phases so far
+remain unbuilt too, per that file's own "thin boilerplate, not logic" scope and D-167's own
+explicit deferral, restated each phase since.
+
+**Numbering.** Checked against the real tip of `main` in the main repo (`git -C
+~/my_projects/chroma log --oneline -5`) both when this task started and again immediately before
+writing this entry: `8a30dbe` ("Add missing CHANGELOG entry for D-168") at the tip both times,
+matching this worktree's own branch point exactly and this worktree's own `docs/08-decisions.md`
+highest number (D-168) / `docs/BUGS.md` highest number (B-062) — **D-169** is free. No new
+`B`-number: no bug was found in existing code this pass (the `@rolldown/plugin-babel` gap above is
+the same pre-existing environment/tooling issue D-168 already recorded, not a new bug, and
+`schema.ts`'s B-062 ease-validation gap is guarded against at the MCP boundary here, not fixed at
+its own root — still open, unchanged).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

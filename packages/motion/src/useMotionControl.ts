@@ -76,6 +76,80 @@
  * retime a key's `at`, and are Phase 3 (keyframing) scope, not this pass's.
  * A real, current limitation, documented rather than worked around with new
  * logic this pass wasn't scoped to add.
+ *
+ * **Phase 3** (research doc §5's "Phase 3" table) adds the LAYER-keyframing
+ * surface: `motion_set_layer_transform_keys` (replace a layer's
+ * `transform.keys` array wholesale — `setLayerTransformKeys`),
+ * `motion_add_layer_keyframe` (upsert one key at a given time from the
+ * layer's current on-screen position — `upsertLayerTransformKeyXY`, the
+ * same auto-keyframe write path a canvas drag uses), and
+ * `motion_move_layer_keyframe` (retime one existing key —
+ * `moveLayerTransformKeyAt`). Same `{scene_index, target}` addressing and
+ * `resolveOrError` id-preference as Phase 2 — reused, not re-decided.
+ *
+ * **`add_layer_keyframe`'s args, and why.** The Phase 3 table's own wording
+ * ("from the layer's current on-screen position") names `layerDragBase` as
+ * the read half this op needs on top of `upsertLayerTransformKeyXY` itself:
+ * that function's real signature (`manifestEdit.ts`) takes `x`/`y`
+ * EXPLICITLY — it does not derive them — so something has to supply them.
+ * Reading `layerDragBase`'s own contract settled it: it needs a `frame`
+ * (`Math.round(at * fps)`, `fps` off `manifest.fps`) and returns the
+ * layer's CURRENTLY INTERPOLATED position at that instant (whether or not
+ * the layer is already keyed), which is exactly "lock the layer where it
+ * visually already is at this time" — the honest MCP analogue of a canvas
+ * drag that starts and ends at the same spot (a pure "add a hold point"
+ * gesture). So this op's args are `{scene_index, target, at, x?, y?}`:
+ * `at` is required; `x`/`y` are OPTIONAL overrides — when both are given,
+ * they're used verbatim (an agent that already knows exactly where it wants
+ * the key doesn't need a derive-then-resend round trip); when either is
+ * omitted, it's filled in from `layerDragBase`'s own current-position read.
+ * A selection with no draggable position AND a missing `x`/`y` is a real
+ * error (nothing to derive from), not a silent `{x:0,y:0}`.
+ *
+ * **A small, deliberate addition beyond `upsertLayerTransformKeyXY`'s own
+ * signature: an optional `ease` on `add_layer_keyframe`.** The wrapped
+ * function has no `ease` parameter at all (it only ever touches `x`/`y`),
+ * so a literal wrap can't author an eased keyframe in one call — the only
+ * way would be `add_layer_keyframe` then a full `set_layer_transform_keys`
+ * resend just to attach one key's easing. Rejected as needless ceremony for
+ * something this small: after the upsert, if `ease` was given, this op
+ * finds the SAME key (by the identical `Math.round(at*fps)` frame match
+ * `upsertLayerTransformKeyXY` itself uses) in the resulting array and sets
+ * its `ease`, folded into the SAME manifest before the one `commit()` call
+ * (one undo step, same "compose pure writes, commit once" discipline
+ * `moveLayersByDeltaAutoKey` already uses for its own two-field write).
+ * This is genuinely new (if small) logic, the same class of addition
+ * D-168's own `resolveOrError` was — not a new manifest-mutation PRIMITIVE
+ * (no new schema field, no new interpolation rule), just the missing glue
+ * an MCP call needs that a two-call round trip would otherwise force.
+ *
+ * **Ease validation — B-062's exact gap, not repeated here.** `schema.ts`'s
+ * `ease` is a bare 4-tuple with NO runtime validation; `Easing.bezier`
+ * (`interpolateKeys.ts`) throws unless `x1`,`x2` ∈ `[0,1]` (B-062, still
+ * open — `docs/BUGS.md`). Rather than accept a raw tuple blind here, any
+ * `ease` this file receives (`add_layer_keyframe`, and each key inside
+ * `set_layer_transform_keys`'s `keys` array) is checked with
+ * `easeCurve.ts`'s own real exports — `resolveEaseCurve` (shape: a genuine
+ * 4-length array of finite numbers, `null` otherwise — a real error, not a
+ * silent default) then `clampEaseCurve` (the SAME clamp the Inspector's own
+ * bezier-curve widget applies before ever letting a drag reach the
+ * manifest) — with a `warning` (never a blocking error) when clamping
+ * actually changed a value. `schema.ts` itself is untouched — this is a
+ * guard at the MCP boundary, not a fix to the still-open bug.
+ *
+ * **Bonus op considered, deliberately NOT built: multi-key nudge
+ * (`moveKeysByDelta`, D-163).** A real capability, but its own
+ * `KeyMoveTarget.baseAtSeconds` is captured ONCE at a live drag's start and
+ * carried through the gesture (`moveKeysByDelta`'s own doc comment) — an
+ * MCP call has no drag session to capture that base from, and the shape it
+ * WOULD need on the wire (a list mixing camera/scene3d-camera/layer key
+ * targets, each with its own remembered base) is real new wire-protocol
+ * design the Phase 3 table never asked for. The single-key case
+ * (`move_layer_keyframe`) already covers the common "retime one key" need;
+ * an agent wanting several keys moved the same amount can call it N times
+ * (no atomicity loss that matters here — each call is already its own
+ * commit/undo step, same as every other op in this file). Left out as a
+ * scope boundary, not silently dropped.
  */
 import { useEffect, useRef } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -84,23 +158,30 @@ import {
   addLayer,
   alignSelections,
   distributeSelections,
+  layerDragBase,
+  layerTransformKeys,
   layerWorldPosition,
   moveLayersByDelta,
+  moveLayerTransformKeyAt,
   resolveSelection,
   resolveSelections,
   selectedLayer,
+  selectedScene,
   setCamera2d,
   setCamera3d,
   setLayerField,
   setLayerPosition,
   setLayerSize,
+  setLayerTransformKeys,
   setSceneField,
+  upsertLayerTransformKeyXY,
   type AlignEdge,
 } from './manifestEdit';
 import { catalogEntries, type PrimitiveUse } from './catalog';
 import { fieldsForPrimitive, SCENE_FIELDS } from './propCatalog';
+import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
 import type { Selection } from './LayerList';
-import type { Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
+import type { Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import type { useMotionManifest } from './useMotionManifest';
 
 type MotionManifestApi = ReturnType<typeof useMotionManifest>;
@@ -198,6 +279,33 @@ function resolveOrError(manifest: any, selection: Selection): Selection | { erro
     };
   }
   return resolved;
+}
+
+/**
+ * Phase 3's ease-validation guard — B-062's exact gap (`docs/BUGS.md`,
+ * still open: `schema.ts`'s `ease` is a bare 4-tuple with no runtime check,
+ * and `Easing.bezier` throws unless `x1`,`x2` ∈ `[0,1]`), closed at THIS
+ * boundary rather than in the still-open schema bug. Reuses
+ * `easeCurve.ts`'s own real exports — the same validation the Inspector's
+ * bezier-curve widget applies to a drag before it ever reaches the
+ * manifest — not a reimplementation. `undefined`/`null` (no `ease` given)
+ * is a no-op success with no curve and no warning; a present-but-malformed
+ * value (wrong length, non-numeric, `NaN`/`Infinity`) is a real `{error}`,
+ * never silently dropped; a well-shaped but out-of-range value is clamped
+ * and reported back as a `warning`, never a blocker.
+ */
+function validateEaseArg(raw: unknown): { curve?: EaseCurve; warning?: string } | { error: string } {
+  if (raw === undefined || raw === null) return {};
+  const resolved = resolveEaseCurve(raw);
+  if (!resolved) {
+    return { error: 'ease must be a 4-number array [x1, y1, x2, y2] (Easing.bezier control points)' };
+  }
+  const clamped = clampEaseCurve(resolved);
+  const changed = clamped.some((v, i) => v !== resolved[i]);
+  return {
+    curve: clamped,
+    warning: changed ? `ease ${JSON.stringify(resolved)} was out of range — clamped to ${JSON.stringify(clamped)}` : undefined,
+  };
 }
 
 /**
@@ -608,6 +716,186 @@ export function useMotionControl(m: MotionManifestApi): void {
         if (next === cur.manifest) return { error: 'no change' };
         cur.commit(next, 'Set 3D camera');
         return { sceneIndex, keyCount: keys.length };
+      },
+
+      // ---- Phase 3: layer keyframing (research doc §5's "Phase 3" table) --
+
+      // replace a layer/scene3d-child's `transform.keys` array WHOLESALE —
+      // `setLayerTransformKeys`. Every key needs a numeric `at`; a present
+      // `ease` on any key is validated/clamped via `validateEaseArg`
+      // (B-062's guard) rather than trusted verbatim.
+      motion_set_layer_transform_keys: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+        if (resolved.target.kind !== 'layer' && resolved.target.kind !== 'scene3d-child') {
+          return {
+            error: `set_layer_transform_keys targets a layer or scene3d-child, got target.kind="${resolved.target.kind}"`,
+          };
+        }
+
+        const rawKeys = a?.keys;
+        if (!Array.isArray(rawKeys)) {
+          return { error: 'keys (array of {at, x?, y?, scale?, rot?, opacity?, ease?}) required' };
+        }
+
+        const keys: TransformKey[] = [];
+        const warnings: string[] = [];
+        for (let i = 0; i < rawKeys.length; i++) {
+          const k = rawKeys[i];
+          if (!k || typeof k !== 'object' || typeof k.at !== 'number' || !Number.isFinite(k.at)) {
+            return { error: `keys[${i}] needs a numeric "at"` };
+          }
+          const ease = validateEaseArg(k.ease);
+          if ('error' in ease) return { error: `keys[${i}].${ease.error}` };
+          if (ease.warning) warnings.push(`keys[${i}]: ${ease.warning}`);
+          const key: TransformKey = { at: k.at };
+          for (const field of ['x', 'y', 'scale', 'rot', 'opacity'] as const) {
+            if (typeof k[field] === 'number' && Number.isFinite(k[field])) key[field] = k[field];
+          }
+          if (ease.curve) key.ease = ease.curve as unknown as TransformKey['ease'];
+          keys.push(key);
+        }
+
+        const next = setLayerTransformKeys(cur.manifest, resolved, keys);
+        if (next === cur.manifest && keys.length > 0) {
+          return { error: 'no change — selection did not resolve to an editable layer' };
+        }
+        cur.commit(next, 'Set transform keys');
+        return { selection: resolved, keyCount: keys.length, warnings: warnings.length ? warnings : undefined };
+      },
+
+      // upsert ONE `transform.keys` row at a given time, from the layer's
+      // current on-screen position (`layerDragBase` + `upsertLayerTransformKeyXY`
+      // — the same auto-keyframe write path a canvas drag uses). `x`/`y` are
+      // optional overrides — see this file's own module doc comment for the
+      // full reasoning on the args shape and the small `ease` addition.
+      motion_add_layer_keyframe: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+        if (resolved.target.kind !== 'layer' && resolved.target.kind !== 'scene3d-child') {
+          return {
+            error: `add_layer_keyframe targets a layer or scene3d-child, got target.kind="${resolved.target.kind}"`,
+          };
+        }
+
+        const at = Number(a?.at);
+        if (!Number.isFinite(at)) return { error: 'at (seconds, number) required' };
+
+        const easeResult = validateEaseArg(a?.ease);
+        if ('error' in easeResult) return easeResult;
+
+        const fps = typeof cur.manifest.fps === 'number' && cur.manifest.fps > 0 ? cur.manifest.fps : 30;
+        const hasX = typeof a?.x === 'number' && Number.isFinite(a.x);
+        const hasY = typeof a?.y === 'number' && Number.isFinite(a.y);
+
+        let x: number;
+        let y: number;
+        let derivedFrom: 'explicit' | 'current-position';
+        if (hasX && hasY) {
+          x = a.x;
+          y = a.y;
+          derivedFrom = 'explicit';
+        } else {
+          const frame = Math.round(at * fps);
+          const dragBase = layerDragBase(cur.manifest, resolved, frame, fps);
+          if (!dragBase) {
+            return { error: 'selection has no draggable position to derive x/y from — pass explicit x and y' };
+          }
+          x = hasX ? a.x : dragBase.base.x;
+          y = hasY ? a.y : dragBase.base.y;
+          derivedFrom = 'current-position';
+        }
+
+        let next = upsertLayerTransformKeyXY(cur.manifest, resolved, at, fps, x, y);
+        if (next === cur.manifest) {
+          return { error: 'no change — selection did not resolve to an editable layer' };
+        }
+
+        if (easeResult.curve) {
+          const frame = Math.round(at * fps);
+          const keys = layerTransformKeys(next, resolved);
+          const idx = keys.findIndex((k) => Math.round((typeof k.at === 'number' ? k.at : 0) * fps) === frame);
+          if (idx !== -1) {
+            const withEase = keys.map((k, i) => (i === idx ? { ...k, ease: easeResult.curve as unknown as TransformKey['ease'] } : k));
+            next = setLayerTransformKeys(next, resolved, withEase);
+          }
+        }
+
+        cur.commit(next, 'Add keyframe');
+        return {
+          selection: resolved,
+          at,
+          x,
+          y,
+          derivedFrom,
+          ease: easeResult.curve ?? null,
+          warning: easeResult.warning,
+        };
+      },
+
+      // retime one existing `transform.keys` entry — `moveLayerTransformKeyAt`
+      // (D-158's shared `moveKeyAt` core: reorders past a neighbor, clamps to
+      // the scene's own `[0, dur]`, never blocks).
+      motion_move_layer_keyframe: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+        if (resolved.target.kind !== 'layer' && resolved.target.kind !== 'scene3d-child') {
+          return {
+            error: `move_layer_keyframe targets a layer or scene3d-child, got target.kind="${resolved.target.kind}"`,
+          };
+        }
+
+        const keyIndexRaw = a?.key_index ?? a?.keyIndex;
+        const keyIndex = Math.round(Number(keyIndexRaw));
+        if (!Number.isFinite(keyIndex)) return { error: 'key_index (integer) required' };
+
+        const newAtRaw = a?.new_at ?? a?.newAt;
+        const newAt = Number(newAtRaw);
+        if (!Number.isFinite(newAt)) return { error: 'new_at (seconds, number) required' };
+
+        const existingKeys = layerTransformKeys(cur.manifest, resolved);
+        if (keyIndex < 0 || keyIndex >= existingKeys.length) {
+          return { error: `no key at index ${keyIndex} (layer has ${existingKeys.length} key(s))` };
+        }
+
+        const scene = selectedScene(cur.manifest, resolved.sceneIndex);
+        const clampedAt = scene ? Math.min(scene.dur, Math.max(0, newAt)) : newAt;
+
+        const next = moveLayerTransformKeyAt(cur.manifest, resolved, keyIndex, newAt);
+        if (next === cur.manifest) {
+          return { error: 'no change — selection did not resolve to a scene' };
+        }
+        cur.commit(next, 'Move keyframe');
+        return {
+          selection: resolved,
+          keyIndex,
+          at: clampedAt,
+          warning: clampedAt !== newAt ? `${newAt}s was outside the scene's [0, ${scene?.dur}] range — clamped to ${clampedAt}s` : undefined,
+        };
       },
     };
 

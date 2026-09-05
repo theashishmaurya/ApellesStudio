@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Motion tab MCP surface, Phase 3: layer keyframing (D-169).** Three new
+  `motion_*` ops: `set_layer_transform_keys` (replace a layer/scene3d-child's `transform.keys`
+  wholesale), `add_layer_keyframe` (upsert one key at a given time — `x`/`y` optional, derived from
+  the layer's current on-screen position via `layerDragBase` when omitted), `move_layer_keyframe`
+  (retime one existing key, reorders/clamps like a canvas drag). Added a real correctness guard
+  along the way: a new `validateEaseArg` helper closes B-062's exact gap (an `ease` 4-tuple that
+  can crash `Easing.bezier` if `x1`/`x2` fall outside `[0,1]`) at the MCP boundary, reusing
+  `easeCurve.ts`'s own `resolveEaseCurve`/`clampEaseCurve` — a real error for a malformed value, a
+  `warning` (never a blocker) for one that got clamped. Considered and deliberately left out:
+  `moveKeysByDelta`'s multi-key nudge (D-163) — its own `baseAtSeconds` needs a live drag session
+  an MCP call doesn't have; a real scope boundary, not a silent drop. All three ops live-verified
+  against a real second running instance with before/after `motion_get_manifest` diffs. `tsc -p
+  app` unchanged at 64; `packages/motion`'s own vitest suite unchanged at 362/362.
+
 - **2026-09-06** — **Motion tab MCP surface, Phase 2: the rest of the non-keyframe edit surface
   (D-168).** Nine new `motion_*` ops in `useMotionControl.ts`: `set_layer_field`,
   `set_layer_position`/`size`, `move_layers_by_delta`, `align_layers`/`distribute_layers`,
