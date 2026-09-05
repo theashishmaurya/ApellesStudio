@@ -166,3 +166,56 @@ did before `id` existed. When an `id` IS present, a selection built from it
 survives a reorder/insert/delete elsewhere in the layer array (a hand-edit in
 `ManifestEditor.tsx`'s raw-JSON textarea, most concretely) instead of silently
 pointing at whatever now happens to sit at the old index.
+
+## Per-layer transform keyframes + the shared `interpolateKeys` (D-159)
+
+The [layer transform wrapper](#layer-transform-wrapper-d-157) above gains an
+optional `keys: TransformKey[]` (`{at, x?, y?, scale?, rot?, opacity?, ease?}`,
+`at` in SECONDS like `cam2dKey`) — the manifest's SECOND authored spatial
+animation channel, after the camera. Purely additive: absent `keys` renders
+byte-identically to before this pass (verified via `remotion still`, D-159's
+own decision entry).
+
+**Every field is a DELTA on top of the STATIC `layerTransform` field of the
+same name**, uniformly across all five (not a per-field mix of additive/
+multiplicative rules) — an unset delta always defaults to `0`, so an
+all-default key and an absent `keys` array behave identically by
+construction. See `schema.ts`'s own `layerTransform` doc comment for the full
+reasoning, including the tradeoff this implies for authoring a `scale`
+animation (deltas off the static scale, not absolute per-key factors).
+
+**`src/lib/interpolateKeys.ts`** is the one shared keyframe interpolator —
+sort by `at`, clamp outside the range, ease via `Easing.bezier` between the
+two keys surrounding the current frame, linearly interpolate each named field
+on that eased `t`. Extracted verbatim from `Camera.tsx`'s own pre-D-159
+inline logic (verified byte-for-byte unchanged via `remotion still`) and now
+used by BOTH `Camera.tsx` (`x`/`y`/`zoom`) and `Video.tsx`'s `renderLayers`
+(`x`/`y`/`scale`/`rot`/`opacity`) — "reuse the camera's own key mechanics,
+don't invent a second interpolator," per `docs/notes/motion-visual-builder-
+research.md` §4 Phase 4. `@chroma/motion`'s `manifestEdit.ts` ALSO imports
+this function directly (a real, sanctioned cross-package value import, the
+same kind `MotionPreview.tsx` already makes for `Video`/`totalFrames`) to
+compute a drag's "current value" for the auto-keyframe decision below — the
+editor's own drag math must agree with what this file renders, or a keyed
+layer would visibly jump the instant a drag starts.
+
+**B-059 fixed as part of this phase** (`docs/BUGS.md`): `cam2dKey` and
+`cam3dKey` (the SAME gap, found while checking — `Scene3D.tsx`'s `CameraRig`
+reads `CamKey.ease` the identical way `Camera.tsx` does, so `cam3dKey`'s
+plain `z.object` was silently stripping an authored `ease` there too, despite
+that bug's own original text guessing it was harmless) both now declare a
+real, typed `ease: easeCurve.optional()` instead of relying on a strict
+`z.object`'s default key-stripping to (accidentally) reject typos. The new
+`transformKey` uses the same `easeCurve` shape.
+
+**The auto-keyframe drag decision** (Remotion Studio's own cited rule: a drag
+writes a keyframe at the current frame when the property is already
+keyframed, the static base when it is not) lives in `@chroma/motion`'s
+`manifestEdit.ts` (`layerDragBase`/`upsertLayerTransformKeyXY`/
+`moveLayersByDeltaAutoKey`), not in this engine package — this package only
+needs to RENDER `transform.keys` correctly, which `renderLayers`'s use of
+`interpolateKeys` above does regardless of how a key got there (a drag, or a
+hand-typed value in the Inspector's keyframe-list editor). See D-159's own
+decision entry (`docs/08-decisions.md`) for the full per-property (not
+per-layer) reasoning behind that decision, including why it's scoped to the
+move-drag's position pair and does not extend to resize.

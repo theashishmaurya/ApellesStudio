@@ -12634,3 +12634,303 @@ phase started from — no concurrent work landed a competing D-158 in the meanti
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-159 — Motion visual builder, Phase 4: per-layer keyframes, the shared `interpolateKeys` extraction, and B-059 (camera/layer key `ease`)
+
+**decided + built (2026-09-05).** Built directly on D-155/D-156/D-157/D-158's four prerequisites +
+Phases 1–3, per `docs/notes/motion-visual-builder-research.md`'s own phasing. This is the phase the
+research doc itself flags as "where the manifest genuinely has to grow" — until now the camera was
+the only authored spatial animation channel (§1a); this phase gives an individual LAYER one too,
+via the D-157 layer-transform wrapper's own recommended extension point.
+
+### 1 — Schema: `layer.transform.keys`, additive, delta-on-top-of-static
+
+`schema.ts`'s `layerTransform` object (D-157) gains an optional `keys: TransformKey[]`, where
+`transformKey` is `{at, x?, y?, scale?, rot?, opacity?, ease?}` — `at` in SECONDS, matching
+`cam2dKey`'s own convention exactly, converted the same way `Video.tsx` already converts the
+camera (`Math.round(at * fps)`). Purely additive: absent `keys` (every manifest written before
+this pass) renders byte-identically, verified by real `remotion still` renders (§ Verification).
+
+**Every numeric field is a DELTA added on top of the STATIC `layerTransform` field of the same
+name, uniformly across all five fields — a real design call, made and documented in `schema.ts`'s
+own doc comment, not just here.** The research doc's own framing only spells out "delta" for x/y;
+extending the identical additive rule to `scale`/`rot`/`opacity` (rather than, say, a multiplicative
+delta for `scale`, which would read more naturally for a scale factor in isolation) means ONE rule
+for all five fields instead of a per-field special case, and — the load-bearing reason — guarantees
+"absent `keys`" and "a `keys` array whose one entry leaves every field unset" behave IDENTICALLY:
+every unset delta field defaults to `0` (never `1`), so `appliedScale = staticScale (default 1) +
+keyDeltaScale (default 0) = staticScale` regardless, with no per-field default table for a caller
+(human or model) to get wrong. Accepted tradeoff: authoring a scale ANIMATION means writing deltas
+off the static scale (`keys:[{at:0,scale:0},{at:1,scale:0.5}]` to grow from static to static+0.5),
+not absolute scale factors per key — a real authoring consideration, not a hidden footgun, and
+consistent with how the static `layerTransform` fields already relate to a primitive's own
+positioning (additive offsets on top of something else, never the whole story alone).
+
+### 2 — B-059 fixed (`docs/BUGS.md`), and a second instance found while fixing it
+
+`cam2dKey` gains a real, typed `ease: easeCurve.optional()` field (`easeCurve` — the shared
+`z.tuple([number,number,number,number])` shape, also used by `cam3dKey` and the new
+`transformKey`) instead of the previous plain `z.object`, which zod's default "strip unknown
+keys" behaviour was silently dropping — `Camera.tsx`'s `CameraKey.ease` has been genuinely
+supported since that component was written; the schema was the only thing in the way. Fixed
+exactly as B-059's own proposed fix describes.
+
+**A second instance of the identical bug, found this pass while checking `cam3dKey` per this
+phase's own instruction ("and cam3dKey if it has the same gap — check"):** `docs/BUGS.md`'s own
+B-059 write-up asserts `cam3dKey`'s strict shape is "harmless... since Scene3D has no ease
+concept." **That's wrong.** Reading `Scene3D.tsx`'s `CameraRig` directly (not trusting the bug's
+own prose) shows `CamKey.ease?: readonly [number,number,number,number]` exists there too, read
+the identical way (`cb(b.ease ?? design.ease.inOut)`), and `Video.tsx`'s `ThreeD` already spreads
+a 3D camera key through verbatim (`{ ...k, at: … }`) the same as the 2D case — so `cam3dKey` had
+the EXACT SAME live bug, just never filed separately. Fixed the same way: `cam3dKey` also gains
+`ease: easeCurve.optional()`. No `Scene3D.tsx`/`Video.tsx` change was needed on top — declaring the
+field in the schema is the whole fix for both cases, since both components' own read paths were
+already correct and already wired.
+
+**B-059 verification (`packages/motion/src/schema.test.ts`, 5 tests):** an authored `ease` on a 2D
+camera key, a 3D camera key, and a new layer transform key all round-trip through
+`manifestSchema.parse` unchanged; a camera key with no `ease` still parses fine (`ease` absent, not
+a regression); and — the test the task specifically asked for — one test reconstructs the EXACT
+OLD `cam2dKey` shape (a plain `z.object` with no `ease` field, not `.passthrough()`) inline and
+proves it strips `ease` (`'ease' in stripped === false`, B-059's own repro), then proves the
+CURRENT schema does not have this problem on the identical input. This is a test that would have
+FAILED against the pre-D-159 schema, not merely one that passes against the new one.
+
+**B-061 (`docs/BUGS.md`, the camera-`at`-labelled-as-frame-but-stored-as-seconds bug) is
+DELIBERATELY NOT touched by this pass** — it's a real, separate, already-filed low-severity bug
+about `CAM2D_KEY_FIELDS`'/`CAM3D_KEY_FIELDS`' existing `at` label, out of this phase's own scope
+(B-059 specifically); fixing it under this D-number would smuggle an unrelated one-word change
+into a phase that didn't scope it. The NEW `LAYER_TRANSFORM_KEY_FIELDS`' own `at` field
+gets the CORRECT "At (s)" label from the start (§5 below) — B-061 isn't repeated in new code, just
+left unfixed where it already existed.
+
+### 3 — The shared `interpolateKeys` extraction (`packages/motion-engine/src/lib/interpolateKeys.ts`)
+
+`Camera.tsx`'s own pre-D-159 inline logic — sort keys by `at`, resolve each key's fields against a
+default, clamp before-the-first-key/after-the-last-key, ease between the two keys surrounding the
+current frame via `Easing.bezier`, then linearly interpolate each field on that eased `t` — is now
+one generic function, `interpolateKeys<Fields, K>(keys, frame, fields, defaults, fallbackEase)`.
+`Camera.tsx` is refactored to call it (`{x,y,zoom}` fields, `{x:cx,y:cy,zoom:1}` defaults,
+`design.ease.inOut` fallback) — the OLD inline logic is gone, not left duplicated alongside the new
+call. `Video.tsx`'s `renderLayers` uses the SAME function for the new layer-transform keys
+(`{x,y,scale,rot,opacity}` fields, all-zero defaults, `design.ease.inOut` fallback) — exactly the
+research doc's own instruction: "reuse the camera's own key mechanics, don't invent a second
+interpolator."
+
+**This is a real refactor of already-working code, verified as such, not assumed:**
+- `packages/motion/src/interpolateKeys.test.ts` (10 tests, new): empty keys → the supplied
+  defaults; a single key clamps to its own value at every frame (before, at, and long after);
+  a key that omits a field falls back to the supplied default; before-first-key and
+  after-last-key clamping; linear interpolation at a midpoint and at an arbitrary `t`; correct
+  key selection across 3+ keys; order-independence (pre-sorted vs. reverse-order input produce
+  identical output); an authored per-key `ease` overriding an asymmetric fallback ease (proven
+  with `design.ease.anticipate`'s own asymmetric curve, which resolves to ≈0.597 at t=0.5 — a
+  real discriminator between "used the key's own ease" and "used the fallback," not a curve that
+  would coincidentally agree with either); and multi-field resolution in one call (the camera's
+  own x/y/zoom shape).
+- **Byte-for-byte `remotion still` renders, before vs. after the WHOLE cumulative diff to
+  `motion-engine`** (`schema.ts`, `Video.tsx`, `Camera.tsx`, plus the new `interpolateKeys.ts`),
+  using the engine's own unmodified `sample` manifest (real camera keys already present on
+  scene 0: `[{at:0,zoom:1},{at:0.4,zoom:1},{at:1.6,x:1150,y:520,zoom:1.5}]`) at three frames — 0
+  (before any camera move), 54 (mid-interpolation, the research doc's own worked `scribble`
+  example frame), and 200 (inside the `scene3d` scene, a completely different render path,
+  included to confirm nothing there was disturbed): **`shasum -a 256` match AND `cmp` clean at
+  all three frames**, via `git stash push -u -- <the 4 changed/new engine files>`, render "before,"
+  `git stash pop`, render "after" again off the exact same `sample.json`. This single before/after
+  pair simultaneously proves (a) the schema addition with `keys` absent is byte-identical (§1's own
+  claim) AND (b) the camera's behaviour is unchanged by the `interpolateKeys` extraction (this
+  section's own claim) — frame 54 exercises real camera easing/interpolation, so it is not a
+  vacuous comparison.
+- **`motion-engine` has no `test` script at all** (confirmed pre-existing, the same finding D-155
+  and D-157 both already recorded) — `Camera.tsx` has no unit tests of its own to keep passing
+  unchanged, so the task's "if it doesn't [have tests], add a couple confirming its output is
+  unchanged after the extraction" is satisfied by the `interpolateKeys` unit tests above (the
+  IDENTICAL math, now decoupled from the React component and thoroughly covered) plus the
+  byte-for-byte render comparison, which is the established, working convention this whole
+  package boundary already uses for exactly this class of claim (D-155/D-156/D-157/D-158 all
+  verify engine-level changes this same way, for this same reason) — not a lesser substitute
+  chosen for convenience.
+
+### 4 — The auto-keyframe design decision (drag behaviour)
+
+**This is the "single most surprising behaviour in any animation tool" the research doc calls
+out by name (§4 Phase 4) — given its own clearly-labelled subsection here, not a buried
+paragraph, per the task's own instruction.**
+
+**The rule, restated exactly:** Remotion Studio's own cited convention — a drag creates or updates
+a keyframe AT THE CURRENT PLAYHEAD FRAME when the property being dragged is already keyframed, and
+moves the static base (exactly Phase 1's existing behaviour) when it is not.
+
+**Decision: PER-PROPERTY, scoped to the move-drag's own position pair (`x`+`y` together), not
+per-layer, and NOT extended to resize.** Concretely, in `manifestEdit.ts`'s `layerDragBase`:
+
+- A layer's position is considered "keyframed" for the purpose of a move-drag if and only if
+  `transform.keys` has AT LEAST ONE entry that defines `x` OR `y` on THAT layer. A `transform.keys`
+  array that exists but only ever defines, say, `opacity` (a fade authored some other way) does
+  **NOT** flip that same layer's position into key-writing mode — the answer to the task's own
+  posed ambiguity ("does dragging an unkeyed layer with keyframes elsewhere still just move the
+  base?") is **YES, it still just moves the base.**
+- `x` and `y` are decided TOGETHER, as one unit, not independently per axis. Rationale: a move-drag
+  is inherently ONE gesture producing one `(dx,dy)`, and Remotion's own precedent groups a CSS
+  property as the unit that gets keyframed ("`style.translate`," not "`style.translateX`" and
+  "`style.translateY`" separately) — treating the position PAIR as the property, not each axis
+  independently, is the same granularity, applied to this schema's actual field names. So if
+  EITHER `x` or `y` has ever been keyframed on a layer, dragging it writes/updates a key with BOTH
+  fields (the field that was never keyed before starts being one from that point on — a natural
+  consequence of a 2D drag, not a separate design choice).
+- **Resize is UNCHANGED by this phase, on purpose, not by oversight.** `transformKey` (the schema
+  type this phase adds) mirrors `cam2dKey`'s own field SHAPE — `x`/`y`/`zoom`-like scalar deltas —
+  and has no width/height field at all. A resize handle (D-157) always writes the primitive's own
+  size field (`box[2]/[3]`, `cardW`/`cardH`, `cell`, `maxWidth`) regardless of `transform.keys`,
+  because there is no matching keyed field for it to write to under this phase's own schema. This
+  is a scope decision recorded here, not a gap discovered later: a "resize keyframe" concept
+  (animating a layer's SIZE over time) simply does not exist yet in this schema, and inventing one
+  as a side effect of the drag-gesture wiring — rather than as its own scoped schema addition with
+  its own Inspector support — would be exactly the kind of silent scope creep this phase's own
+  auto-keyframe write-up warns against.
+
+**The write path (`manifestEdit.ts`):**
+- `layerDragBase(manifest, selection, frame, fps)` — the decision function above. Returns
+  `{base, keyed: false}` (base = `layerWorldPosition`'s native x/y, Phase 1 unchanged) for an
+  unkeyed layer, or `{base, keyed: true}` (base = `layerTransformKeyDelta`'s INTERPOLATED value at
+  `frame` — the actual on-screen delta the picture is showing RIGHT NOW, via the SAME shared
+  `interpolateKeys` §3 introduced, not a second hand-rolled interpolator) for a keyed one. Reusing
+  `interpolateKeys` here — in the EDITOR's own drag math, not just the render path — matters for a
+  reason `canvasGeometry.ts`'s own doc comment already states about this exact class of bug:
+  "getting this wrong is silent." A drag's captured base must agree with what `Video.tsx` is
+  actually rendering at that frame, or the layer would visibly jump the instant a drag starts.
+- `upsertLayerTransformKeyXY(manifest, selection, atSeconds, fps, x, y)` — creates a NEW
+  `transform.keys` row at the frame closest to `atSeconds` (the same `Math.round(at*fps)`
+  conversion `Video.tsx` uses, so "the same frame" means the exact frame the picture already
+  resolves that key to) if none exists there, or overwrites an EXISTING key's `x`/`y` in place
+  (preserving that key's OWN `at`/`scale`/`rot`/`opacity`/`ease`) if one already sits at that
+  frame.
+- `moveLayersByDeltaAutoKey(manifest, moves, dx, dy, atSeconds, fps)` — the D-158 group-move shape
+  (`moves: {selection, base, keyed}[]`, one shared `dx`/`dy`), except each entry now routes to
+  EITHER `upsertLayerTransformKeyXY` or the plain `setLayerPosition`, per its own captured `keyed`
+  flag — a MIXED selection (some layers keyed, some not) is fully supported, each entry decided
+  independently, composed into ONE resulting `Manifest` (one undo entry for the whole gesture,
+  exactly D-158's own "one commit regardless of group size" convention).
+- **`moveLayersByDelta` (D-158) is left completely untouched** — same export, same behaviour, same
+  4 passing tests — rather than widened to take a `keyed` flag: this is a genuinely separate
+  function for a separate caller (the auto-keyframe-aware drag path), not a breaking change to
+  code D-158 already shipped and tested.
+
+`MotionCanvasOverlay.tsx`'s move-drag gesture now captures `currentFrame` (via
+`playerRef.current?.getCurrentFrame()`) and `atSeconds` (`currentFrame / manifest.fps`) ONCE at
+pointerdown (the same "captured once, a drag doesn't move the playhead" convention `map` already
+uses), builds each `moves` entry via `layerDragBase`, and both the live-preview path
+(`onPointerMove`) and the commit path (`onPointerUp`) call `moveLayersByDeltaAutoKey` instead of
+`moveLayersByDelta`. The commit label distinguishes a keyed move (`"Move layer (keyframe)"` /
+`"Move layers (keyframe)"`) from a plain one, so the undo history stays legible about which kind
+of edit just happened.
+
+**The rejected alternative, named explicitly:** "any `transform.keys` existing at all, for ANY
+field, forces every subsequent drag on that layer into key-writing mode" — rejected because it
+directly contradicts the research doc's own "per-property, not per-layer" framing, and would
+produce a genuinely surprising result the task itself warned against: fading a layer's opacity via
+a manually-authored key, then dragging it once to nudge its position, would silently start
+recording position keyframes the author never asked for, on a layer they thought was just sitting
+still with a fade on top.
+
+### 5 — Inspector support: a per-layer keyframe-list editor
+
+`InspectorPanel.tsx`'s camera-only `CameraKeyList` (D-099) is generalized to `KeyframeList<K
+extends {at:number}>` — same add/remove/edit-row behaviour, same JSX, just typed through a wider
+generic so the identical component now also drives the new editor rather than a third bespoke one
+being written (per the task's own "adapt or generalize... rather than writing a third bespoke
+editor" instruction). The two existing camera call sites (`CAM2D_KEY_FIELDS`/`CAM3D_KEY_FIELDS`)
+are unchanged in behaviour — only the type parameter widened.
+
+`propCatalog.ts` gains `LAYER_TRANSFORM_KEY_FIELDS` (`at` — correctly labelled "At (s)" from the
+start, unlike the pre-existing camera fields' own B-061 mislabel, which this pass does not touch;
+`x`/`y`/`scale`/`rot`/`opacity` deltas; `ease`) and both `CAM2D_KEY_FIELDS`/`CAM3D_KEY_FIELDS` gain
+the new `ease` field (a raw `[x1,y1,x2,y2]` JSON tuple, the same lighter-touch editor `pos`/`look`
+already use) — completing B-059's own proposed fix text verbatim: "expose it as a real control in
+the Inspector's existing camera keyframe editor."
+
+`InspectorPanel.tsx` gains `TransformKeysSection`, rendered via `KeyframeList` +
+`LAYER_TRANSFORM_KEY_FIELDS`, reading/writing through `manifestEdit.ts`'s new
+`layerTransformKeys`/`setLayerTransformKeys`.
+
+**Rendered ONLY for a single-selection 2D layer, never inside `MultiLayerInspector`'s lockstep
+view — a real design call, made and documented (in `TransformKeysSection`'s own doc comment, and
+here) rather than left to fall out of the code by accident, matching the task's own suggested
+option.** The static `TransformFieldGroup` (D-157) lockstep-edits cleanly across N layers because
+"set this scalar field on every selected layer" has one obvious meaning. A KEYFRAME LIST does not:
+two different layers' `transform.keys` arrays can have a different row count, at different times,
+with different field coverage, and there is no single well-defined "add a keyframe to N layers at
+once" operation (align by index? by nearest `at`? create-if-missing-else-edit?) — inventing one
+would be exactly the kind of silently-surprising behaviour §4 above argues against introducing
+casually. Per-layer keyframes are inherently per-layer; this matches how `MultiLayerInspector`
+already drops to a "select one layer" note for a mismatched-`use` primitive field group rather than
+guessing at a lockstep semantics that doesn't exist.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — the same 2 pre-existing `document`-typing errors
+  in `Scene3D.tsx` as on `main` before this pass, zero new errors.
+- `npm test --workspace @chroma/motion` — **199/199** (was 159 at D-158; **+40** new:
+  10 `interpolateKeys` (empty/one-key/multi-key/before-first-clamp/after-last-clamp/midpoint
+  interpolation/multi-key-selection/order-independence/per-key-ease-override/multi-field), 5
+  `schema.test.ts` (B-059 retention on 2D camera keys, 3D camera keys, and layer transform keys;
+  a key with no `ease` still parses; the OLD-schema-reproduction test), and 25 new
+  `manifestEdit.test.ts` tests across `layerTransformKeys`/`setLayerTransformKeys` (7),
+  `layerTransformKeyDelta` (4), `layerDragBase` (5), `upsertLayerTransformKeyXY` (5), and
+  `moveLayersByDeltaAutoKey` (4) — every new pure function gets real tests, per this package's own
+  established convention; `MotionCanvasOverlay.tsx`'s drag-wiring changes are DOM/pointer-event
+  plumbing, deliberately untested, the same split D-156/D-157/D-158 already set.
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- Byte-for-byte `remotion still` renders of the engine's unmodified `sample` manifest, three
+  frames (0, 54 — the doc's own worked `scribble` example and a real camera-easing midpoint, 200 —
+  inside the `scene3d` scene), before vs. after the WHOLE cumulative `motion-engine` diff
+  (`schema.ts`+`Video.tsx`+`Camera.tsx`+new `interpolateKeys.ts`, isolated via `git stash push -u`
+  on just those four paths): **identical PNG output, `shasum -a 256` match AND `cmp` clean at all
+  three frames** — this is the evidence for BOTH "schema addition with `keys` absent is
+  byte-identical" and "the `interpolateKeys` extraction didn't change the camera" in one pass, per
+  §3's own reasoning for why one comparison covers both claims.
+- Smoke render WITH real layer transform keys set (`text` layer, `transform.keys:
+  [{at:0,x:0},{at:2,x:300}]` on top of its static `x:180`) at frames 0 (pre-entrance, nothing
+  visible yet — the layer's own `at:0.2` entrance delay, unrelated to the new feature), 30 (1s in,
+  ~halfway through the 0→2s key span) and 60 (2s in, fully at the second key): the text is visibly
+  further right at frame 60 than at frame 30 (confirmed by eye against the rendered PNGs, not just
+  "renders without error") — real interpolation, not a static offset.
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it, the same
+disclosed constraint every entry since D-125 carries; the drag-wiring changes in
+`MotionCanvasOverlay.tsx` (capturing `currentFrame`/`atSeconds`, routing through
+`moveLayersByDeltaAutoKey`) are reasoned from the same verified DOM/bubbling and `PlayerRef`
+semantics D-156's own move-drag already relied on (`getCurrentFrame()` is `PlayerRef`'s own
+documented method, per the research doc's §1d), not separately re-verified against a real window.
+(2) D-157's own disclosed gap (a layer with a non-identity `transform.scale`/`transform.rot` sits
+behind an extra transform the screen↔world map doesn't account for) is UNCHANGED and now also
+applies to the auto-keyframe write path — worth re-stating explicitly since a KEYED layer (one an
+author is actively animating) is plausibly MORE likely than average to also carry a non-identity
+static `scale`/`rot`. Nothing new introduced; the auto-keyframe write is additive onto whatever
+`transform.x`/`y` already resolves to, using the SAME (already-approximate) world map every other
+drag on this surface uses. (3) The Inspector's `TransformKeysSection` has no "snap to layer"-style
+convenience and no visual timeline — it's the same flat add/remove/edit-row list the camera
+editor already has, per the task's own "adapt... rather than writing a third bespoke editor"
+instruction; a real keyframe TIMELINE (see-the-animation, drag-keys-along-time) is explicitly
+`docs/notes/motion-visual-builder-research.md`'s own Phase 5, named there as "a major feature,"
+and not attempted here. (4) `layerTransformKeyDelta`/`layerDragBase` only ever resolve `x`/`y` —
+`scale`/`rot`/`opacity` keys are fully supported by the SCHEMA and the RENDER path (`Video.tsx`)
+and fully editable via the Inspector's `TransformKeysSection`, but have no on-canvas drag gesture
+of their own to auto-keyframe (there is no rotate handle, no opacity slider, no scale-via-transform
+handle anywhere in this tab) — consistent with §4's own "only the move-drag gesture participates"
+scope call, not a separate omission.
+
+**Numbering.** Drafted as **D-159**, fixing **B-059** (status now `fixed` in `docs/BUGS.md`).
+Re-confirmed against the REAL current tip of `main` in the main repo
+(`/Users/ashishmaurya/my_projects/chroma`, not this worktree) immediately before writing this
+entry: `git log --oneline -5` shows `8272108` (`D-158 Phase 3: decisions log + changelog + roadmap
++ READMEs`) still at the tip — unchanged from what D-158's own entry recorded — and
+`grep -oE 'D-[0-9]+' docs/08-decisions.md | sort -t- -k2 -n -u | tail` / the equivalent for
+`docs/BUGS.md`'s `B-[0-9]+` both show **D-158 / B-061** as the highest numbers in the MAIN repo,
+confirming **D-159** and referencing **B-059** are both free of any concurrent collision.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion visual builder, Phase 4: per-layer keyframes (D-159), on top of
+  Phase 0/1/2/3 (D-155/D-156/D-157/D-158).** `schema.ts`'s `layer.transform` (D-157) gains an
+  optional `keys: TransformKey[]` (`{at, x?, y?, scale?, rot?, opacity?, ease?}`, seconds, additive
+  DELTA on top of the static field of the same name, uniformly across all five fields) — the
+  manifest's second authored spatial animation channel after the camera. `Camera.tsx`'s own inline
+  sort/clamp/ease/interpolate logic extracted into one shared `interpolateKeys`
+  (`motion-engine/src/lib/`), used by BOTH the camera and the new layer keys (`Video.tsx`'s
+  `renderLayers`) — verified byte-for-byte unchanged via `remotion still` before/after the
+  extraction. B-059 fixed (`cam2dKey`'s silently-stripped `ease` field, now real and typed) — and a
+  SECOND instance of the identical gap found and fixed on `cam3dKey` (that bug's own text guessed
+  it was harmless; `Scene3D.tsx`'s `CameraRig` reads `ease` the same way, so it wasn't). Auto-
+  keyframe on drag: `MotionCanvasOverlay.tsx`'s move-drag now writes/updates a `transform.keys` row
+  at the current playhead frame when a layer's position is already keyed (any key defines `x` or
+  `y`), or the native base field exactly as Phase 1 when it isn't — per-PROPERTY (not per-layer:
+  keys existing for `opacity` alone doesn't flip position into key mode), scoped to the move gesture
+  only (resize is unaffected — `transformKey` has no size field). `InspectorPanel.tsx`'s camera-only
+  `CameraKeyList` generalized to `KeyframeList`, now also driving a new per-layer
+  `TransformKeysSection` (single-selection only — a documented scope call, keyframe lists don't
+  lockstep-edit the way scalar fields do). `tsc` clean both packages (`app`'s 64-error baseline
+  unchanged), `@chroma/motion` 199/199 (40 new tests: `interpolateKeys`, B-059 schema retention, the
+  new `manifestEdit.ts` functions).
 - **2026-09-05** — **Motion visual builder, Phase 3: multiple elements (D-158), on top of
   Phase 0/1/2 (D-155/D-156/D-157).** The owner said "multiple elements" first. `LayerList.tsx`'s
   `Selection` → `Selection[]` (same-kind `layer`, same-scene, or a single entry of any kind —

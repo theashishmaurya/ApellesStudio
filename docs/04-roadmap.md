@@ -1052,17 +1052,20 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   there is **no migration to write**; the work is tooling. The recommended screen↔world map is
   *measured* from the live `@remotion/player` DOM (`data-motion-world` +
   `getBoundingClientRect`), not a second copy of `Camera.tsx`'s math.
-  **Phases 0–3 BUILT (D-155/D-156/D-157/D-158, 2026-09-05):** DOM hooks + transient-preview
+  **Phases 0–4 BUILT (D-155/D-156/D-157/D-158/D-159, 2026-09-05):** DOM hooks + transient-preview
   override + undo + world-space discipline (Phase 0); click-select + move-drag (Phase 1); resize
   handles + "snap to layer" + the layer transform wrapper (Phase 2); `Selection[]` + marquee-select
   + shift-click-extend + shared-delta group move + stable layer identity (`layer.id`) +
-  align/distribute actions (Phase 3 — D-158). Part C's `</>` raw-JSON collapse shipped separately
-  as D-153.
-  **Remaining: Phase 4 (per-layer keyframes — the manifest genuinely grows here) and Phase 5 — a
-  real keyframe timeline, a MAJOR feature** comparable in cost to the Edit tab's own timeline, and
-  must not be attached quietly to the end of Phase 4. Snapping/alignment GUIDES (visual
-  guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see
-  that decision's own entry for the smallest next step.
+  align/distribute actions (Phase 3 — D-158); per-layer keyframes on the transform wrapper
+  (`layer.transform.keys`, additive deltas), the shared `interpolateKeys` extraction (now used by
+  BOTH the camera and layer keys), B-059 fixed (a camera keyframe's `ease` was silently stripped by
+  the schema — also found and fixed on `cam3dKey`, the same gap that bug's own text wrongly called
+  harmless), and auto-keyframe-on-drag (per-property, move-drag only — Phase 4, D-159). Part C's
+  `</>` raw-JSON collapse shipped separately as D-153.
+  **Remaining: Phase 5 — a real keyframe timeline, a MAJOR feature** comparable in cost to the Edit
+  tab's own timeline, and must not be attached quietly to anything else. Snapping/alignment GUIDES
+  (visual guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort
+  spike — see that decision's own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

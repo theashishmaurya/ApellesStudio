@@ -666,6 +666,32 @@ Recommended shape, and the reasoning:
 **Size: medium-to-large.** A schema addition, a shared interpolator extraction, a wrapper that
 consumes it, Inspector support for a key list, and the auto-keyframe decision.
 
+> **Built as D-159 (2026-09-05).** Every bullet above shipped: `layer.transform.keys`
+> (`schema.ts`'s new `transformKey`, `{at, x?, y?, scale?, rot?, opacity?, ease?}`, seconds), the
+> shared `interpolateKeys` extraction (`motion-engine/src/lib/interpolateKeys.ts`, used by BOTH
+> `Camera.tsx` and `Video.tsx`'s `renderLayers`, verified byte-for-byte unchanged for the camera via
+> `remotion still`), Inspector support (the camera-only `CameraKeyList` generalized to
+> `KeyframeList`, now also driving a new per-layer `TransformKeysSection`), and B-059 fixed exactly
+> as this section names it, PLUS a second instance of the identical gap found on `cam3dKey` (this
+> note's own §6 write-up of B-059 asserted `cam3dKey` was harmless; it wasn't — `Scene3D.tsx`'s
+> `CameraRig` reads `ease` the same way `Camera.tsx` does). One real deviation from this section's
+> own wording, made and documented rather than silently assumed: "every field is a DELTA on top of
+> the static x/y" is stated here only for x/y; D-159 extended the SAME additive rule, uniformly, to
+> `scale`/`rot`/`opacity` too (rather than, say, a multiplicative delta for `scale`), specifically so
+> "absent `keys`" and "a `keys` array whose one entry leaves every field unset" are guaranteed
+> identical by construction — see `schema.ts`'s own `layerTransform` doc comment and D-159's decision
+> entry for the full reasoning. The auto-keyframe decision — this section's own "single most
+> surprising behaviour" — landed as: per-PROPERTY (not per-layer), scoped to the move-drag's own
+> position pair (`x`+`y` together, since one gesture always changes both), and explicitly NOT
+> extended to resize (`transformKey` has no size field, mirroring `cam2dKey`'s own x/y/zoom shape,
+> not a size concept) — a real design call this section leaves as an open question, resolved and
+> documented in D-159's own decision entry with a dedicated, clearly-labelled subsection per this
+> note's own instruction. See `docs/08-decisions.md`'s D-159 entry and
+> `packages/motion-engine/README.md`'s "Per-layer transform keyframes" section for the complete
+> writeup, including the honest gaps (no on-canvas rotate/scale/opacity gesture exists to
+> auto-keyframe those fields, resize stays untouched by this phase, and D-157's known transform/
+> world-map drag gap is unchanged and now also applies to a keyed layer).
+
 ### Phase 5 — a real keyframe timeline. **This is a major feature. Name it as one.**
 
 Everything above lets you set *values* at the playhead. It does not give you a place to *see*
