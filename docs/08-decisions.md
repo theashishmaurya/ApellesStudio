@@ -12051,3 +12051,191 @@ audit already recorded).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-155 — Motion visual builder, Phase 0: the four prerequisites (DOM hooks, transient preview, undo, world-space discipline)
+
+**decided + built (2026-09-05).** `docs/notes/motion-visual-builder-research.md` (D-152) scoped
+a visual builder in phases and named Phase 0 "four prerequisites, none optional" before any
+drag could be built. This entry is that phase; D-156 (next) is Phase 1 built on top of it.
+
+**0a — stable DOM hooks in the engine (`packages/motion-engine`).** Three attributes, all pure
+additions, verified zero-pixel-change by an actual byte-for-byte `remotion still` comparison
+(before/after, two different frames of the engine's own sample manifest — not just reasoning
+about CSS):
+
+- `data-motion-world` on `Camera.tsx`'s inner transformed `<AbsoluteFill>`, and on a camera-less
+  2D scene's own root (`Video.tsx`'s `TwoD`, a new wrapping `<AbsoluteFill>` for that branch —
+  pixel-identical to the fragment it replaces, since `AbsoluteFill`'s own defaults are the same
+  full-fill flex box at every nesting depth).
+- `data-motion-layer="<sceneIndex>.<layerIndex>"` on a `display:contents` wrapper `<div>` around
+  each 2D layer in `renderLayers` (`Video.tsx`) — invisible to layout AND to absolute
+  positioning, so a primitive's own `position:absolute` resolves exactly as before. `Video.tsx`
+  had to thread a new `sceneIndex` prop down through `OneScene`/`TwoD` to make this possible.
+- `data-motion-box` on each primitive's genuinely tight visible element(s), checked individually
+  against the real source rather than assumed: `Text`'s own wrapper `div` (already tight, all 4
+  presets); `Matrix`'s outer `<svg>` (already sized `width={w} height={h}` to the grid's real
+  footprint — **the research doc's own §3b table is wrong here**, claiming no explicit
+  width/height; the code has always had it, verified by reading `Matrix.tsx` directly rather
+  than trusting the doc); each card `<div>` in `Layers` (the stack container itself has no size
+  of its own); the `<path>` inside `Emphasis`'s `ring`/`scribble` (the `<svg>` around it is
+  `inset:0`, the whole canvas). `Graph` and `Emphasis`'s `pulse`/`glow` get no hook — no tight
+  box exists at their own level — an honest, documented "falls back to whole canvas" case, not a
+  gap silently left open. Documented as a real cross-package DOM contract in
+  `packages/motion-engine/README.md`'s new "DOM contract (D-155)" section, including the table
+  above, since `@chroma/motion` now genuinely depends on this engine's rendered shape.
+
+**0b — a commit path that isn't the 300ms text round-trip.** `MotionPreview.tsx` now accepts a
+`transientManifest` prop, fed straight to `<Player inputProps>` ahead of the stable `manifest` —
+no `JSON.stringify`/parse/debounce on the hot path of a drag. `MotionTab.tsx` owns the one new
+piece of state (`transientManifest`, `useState<Manifest|null>`).
+
+**0c — undo, via `@chroma/history` (D-051).** `useMotionManifest.ts` gains `commit(next, label)`
+— serializes through the existing `setText` path (so the JSON text stays the one serialized
+source of truth, per the tab's own long-standing contract) AND pushes a `before`/`after` snapshot
+entry to the same shared `useHistoryStore` the Edit tab's `timelineStore.applyOp` already uses
+(`tab: 'motion'`, so the shell's existing generic Ctrl+Z/Y handler — which already switches the
+active tab to whichever one an undo entry belongs to — needed zero changes). `commit` also calls
+`applyParse` synchronously on top of the debounced `setTextLive`, a deliberate addition beyond
+"just call setText": without it, D-156's drag commit would clear its transient override before
+the 300ms debounce re-parsed `text`, and the picture would visibly flash back to the pre-drag
+position for up to 300ms. `MotionTab.tsx`'s `onInspectorChange` is the first customer, wired this
+pass (real, testable undo before any drag exists) — `onCatalogAdd` (D-151) deliberately stays on
+the plain `setText` path; extending undo to every mutation site in this tab was not this phase's
+scope.
+
+**0d — world-space discipline (no code, a decision + a tested module).** The research doc's own
+warning: writing a layer's position from a raw screen-space pointer delta is silent — the
+manifest still validates, it's just wrong under any camera move. `canvasGeometry.ts` (new,
+`@chroma/motion`) is the pure math from the doc's §3a technique — `measureWorldMap`/
+`screenToWorld`/`worldDelta`, plus `unionRects`/`toContainerLocal` (for turning `data-motion-box`
+descendants into a screen-space selection outline) and `axisLock` (D-156's Shift-lock) — kept
+apart from any DOM-touching component, mirroring `@chroma/editor`'s own `transformGeometry.ts`
+split, for the same reason: this is exactly the kind of math a silent bug hides in, and it gets
+a real unit-test floor. 15 new tests, including one that reproduces the research doc's own
+hand-worked camera example (§2c: zoom 1.5, `T=(-765,-240)`) and asserts the code agrees with the
+doc's arithmetic, not just with itself. `manifestEdit.ts` gains the actual read/write pair —
+`layerWorldPosition`/`setLayerPosition` — driven by a new `propCatalog.ts` map,
+`positionFields(use)`, exactly where the research doc named as its natural home: `'xy'` for
+`text`/`matrix`/`layers`, `'box-xy'` for `emphasis` (writes `box[0]`/`box[1]`, preserves
+`box[2]`/`box[3]`), `undefined` (no draggable anchor) for `graph` and every `in3d` primitive.
+11 new tests.
+
+**Scope call, documented rather than silently made:** `layerWorldPosition` falls back to an
+*approximate* canvas centre (`manifest.width/2`, `manifest.height/2`) when a `text`/`matrix`/
+`layers` field has no explicit `x`/`y` yet — not exact for `matrix`/`layers`, whose real default
+also depends on the grid/stack's own measured size, which this function deliberately does not
+reach into. Good enough to seed a first drag on a never-positioned layer; not a claim about
+where it's currently drawn. If this proves visibly wrong in practice (the layer "jumps" on its
+first drag), the fix is measuring the primitive's actual rect via `data-motion-box` instead of
+computing an approximation — the hook already exists (0a), this just doesn't use it for that yet.
+
+**Verification.** `npx tsc --noEmit -p packages/motion` clean. `npx tsc --noEmit -p
+packages/motion-engine` — the same 2 pre-existing `document`-typing errors in `Scene3D.tsx` as
+on `main` before this pass (confirmed via `git stash`/`tsc`/`git stash pop`), zero new errors.
+`npm test --workspace @chroma/motion` — 92/92 (was 66/66 on D-154; +26 new: 15 `canvasGeometry`,
+11 `manifestEdit`). `npm test --workspace @chroma/motion-engine` has no `test` script (confirmed
+pre-existing — not something this pass added or removed). `npx tsc --noEmit -p app` — exactly
+**64** errors, matching the documented baseline exactly (no worktree/symlink drift). Additionally,
+byte-for-byte `remotion still` renders of the engine's sample manifest at two frames (one with
+just the text layer, one mid-`scribble`), before vs. after every 0a change: **identical PNG
+output** (`shasum -a 256` match, `cmp` clean) — the strongest evidence available in this sandbox
+for "zero pixel change," short of a running app.
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it, the
+same constraint every entry this week discloses; the `remotion still` renders above are real
+evidence for the ENGINE half of this work, not the tab UI. (2) `Graph` gets no `data-motion-box`
+and no `positionFields` entry — a real, acknowledged gap (not a bug): the primitive has no single
+world-space anchor and no per-node hook exists yet; a future pass could add one if graph
+dragging is wanted.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-156 — Motion visual builder, Phase 1: select a layer on the canvas, drag it — nothing else
+
+**decided + built (2026-09-05).** Built directly on D-155's four prerequisites, per
+`docs/notes/motion-visual-builder-research.md`'s own phasing. The owner's original ask, first
+real slice: *"i would like to drag and drop multiple elements and set position... a visual
+builder for me."* Multi-element is explicitly D-152's Phase 3, not this one — this phase is
+exactly what its own title says and nothing more.
+
+**What was built.** `MotionCanvasOverlay.tsx` (new), a DOM sibling of `<Player>` in
+`MotionPreview.tsx` (which now wraps both in a `containerRef`'d div — the same shape
+`@chroma/editor`'s `PreviewPane.tsx` uses for `TransformOverlay`):
+
+- **Click-to-select**, working across the WHOLE canvas, not just an already-selected box (a
+  genuine advantage of this tab's live-DOM preview over the Edit tab's server-rendered JPEG, per
+  the research doc — and the reason this phase's pointer-event wiring does NOT mirror
+  `TransformOverlay.tsx`'s, only its "sibling div" shape; see the component's own doc comment).
+  `document.elementsFromPoint()` at the pointer, `.closest('[data-motion-layer]')`, resolved
+  straight to the existing `Selection` type and `MotionTab`'s existing `onSelect` — selection
+  stays two-way with `LayerList` and `InspectorPanel`, exactly as scoped.
+- **Drag** writes `x`/`y` (`text`/`matrix`/`layers`) or `box[0]`/`box[1]` (`emphasis`) via
+  D-155's `setLayerPosition`, converted from the screen-space pointer delta through a `WorldMap`
+  measured ONCE at drag-start (`measureWorldMap` on the `[data-motion-world]` element) — not
+  re-measured per pointermove, since the STABLE manifest driving that measurement doesn't change
+  mid-drag (only the transient one does, and that's the layer moving, not the camera).
+- **Live preview** via D-155's transient-manifest override; **one commit** on pointer-up via
+  D-155's undo-wired `commit`; **Escape cancels** (reverts, no commit); **Shift locks to an
+  axis** (`canvasGeometry.ts`'s `axisLock`, recomputed from the total delta every move — Remotion
+  Studio's own cited convention, research doc §3c).
+- A drawn selection outline (union of the selected layer's `data-motion-box` descendants,
+  screen-measured, re-measured on the player's own `frameupdate`/`scalechange` events so it
+  tracks a camera move while paused-and-scrubbing without a manual rAF loop) — not asked for
+  explicitly, but the natural, near-free consequence of 0a's hooks existing, and without it
+  "select a layer" would have no visible feedback at all.
+
+**The one real design deviation from the literal spec, and why.** The research doc says mirror
+`TransformOverlay.tsx`; that component makes everything except its drawn box/handles
+`pointer-events:none`, because the Edit tab defers click-to-select entirely. This phase can't
+copy that: something has to be clickable across the WHOLE canvas before any selection exists,
+and making this overlay itself `pointer-events:auto` over the whole player would sit on top of
+`@remotion/player`'s own control bar (`PlayerControls.js`, read directly this pass — a plain
+absolutely-positioned div with no pointer-events toggling of its own) and silently break
+play/pause/scrub. Resolution: this component's own rendered `<div>` stays `pointer-events:none`
+throughout (pure visual outline); the actual click/drag listeners are native
+`addEventListener`s on `containerRef` — an ANCESTOR of both `<Player>` and this overlay — which
+receive every pointer event via ordinary DOM bubbling regardless of what got hit, without ever
+being the hit-test target themselves. A click that doesn't land on a `[data-motion-layer]`
+(empty canvas, or one of Remotion's own controls) triggers no `preventDefault`/pointer-capture at
+all, so whatever's really there — including Remotion's controls — handles it normally. This
+keeps the literal "DOM sibling, positioned over it" shape while sidestepping a real regression
+the literal pointer-event wiring would have caused. Not verified against a live app (see honest
+gaps) — reasoned from Remotion's own source, not observed.
+
+**Explicitly out of scope, per the phase's own spec — not built, not stubbed:** multi-select,
+resize handles, rotate, keyframes, `scene3d` manipulation of any kind, snapping/alignment
+guides, the animation timeline.
+
+**A pre-existing rough edge inherited, not introduced:** `MotionTab.tsx`'s `onSelect` (D-081)
+always seeks the player to the clicked layer's scene START frame. For a `LayerList` row click
+that's the point (jump to a scene you weren't looking at); for a canvas click the scene is
+ALREADY the one on screen, so this will visibly snap the playhead to frame 0 of the current
+scene on every canvas selection. The research doc's own spec says to "call the same `onSelect`
+MotionTab already has," so this reuses it as-is rather than forking selection behavior by
+caller — a one-line fast-follow (skip the seek when `s.sceneIndex` is already the frame under
+the playhead) if this proves annoying in daily use.
+
+**Verification.** Covered together with D-155 above (both packages' `tsc`, `@chroma/motion`
+92/92, `app`'s 64-error baseline unchanged) — this phase added no new test-bearing pure logic of
+its own beyond what D-155's `canvasGeometry.ts`/`manifestEdit.ts` additions already cover;
+`MotionCanvasOverlay.tsx` itself is DOM/pointer-event wiring, deliberately untested per this
+package's existing split (pure math tested, DOM wiring around it is not — same convention
+`TransformOverlay.tsx`/`transformGeometry.ts` set).
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it. The
+click/drag/pointer-capture logic is reasoned from Remotion's and the browser's own documented
+behavior (verified: `PlayerControls.js` source read directly, `elementsFromPoint`/
+`closest`/pointer-capture semantics are standard DOM, and the underlying coordinate math is
+unit-tested) but has not been exercised by an actual pointer in an actual window. (2) The
+"jump to scene start on canvas click" rough edge above. (3) No resize/no multi-touch handling —
+two simultaneous pointer-down drags would leave the first stuck uncommitted until its pointerup
+event is spuriously ignored (a real, narrow edge case inherent to a single-`dragRef` design;
+out of scope for a "select one thing, drag it" phase).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

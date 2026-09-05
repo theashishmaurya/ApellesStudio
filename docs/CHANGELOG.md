@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion visual builder, Phase 1: select + drag a layer on the canvas
+  (D-156), on top of four prerequisites (D-155).** The owner's "drag and drop... a visual
+  builder for me" ask, first slice. Engine: `data-motion-world`/`data-motion-layer`/
+  `data-motion-box` DOM hooks (zero pixel change — verified with byte-identical `remotion still`
+  renders before/after, not just reasoning). Tab: a transient-manifest drag preview (no
+  JSON round-trip), `@chroma/history` wired in via a new `useMotionManifest.commit` (Inspector
+  edits first, drag commits second), and `MotionCanvasOverlay.tsx` — click-to-select via
+  `elementsFromPoint`, drag writes world-space `x`/`y` (`text`/`matrix`/`layers`) or
+  `box[0]`/`box[1]` (`emphasis`) through a measured screen↔world map (`canvasGeometry.ts`,
+  the exact `docs/notes/motion-visual-builder-research.md` §3a technique, 15 new unit tests
+  including the doc's own worked camera example), Escape cancels, Shift locks an axis. Out of
+  scope, explicitly: resize, rotate, multi-select, keyframes, `scene3d`. `tsc` clean both
+  packages, `@chroma/motion` 92/92 (26 new tests).
 - **2026-09-05** — **Motion Inspector: position/size tuples get separate X/Y/W/H fields (D-154).**
   Owner: *"we should be able to have all this as x: y: h: w: separate."* `emphasis.box`
   (the exact field behind a misplaced-scribble screenshot), `particleflow.from`/`to`/`center`,
