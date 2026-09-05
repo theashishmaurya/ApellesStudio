@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Full regression run finds and fixes a real gap (D-166).** `@chroma/editor`'s
+  D-142 `jsdom` devDependency was declared in `package.json` but never actually installed on
+  `main` — its flagship permanent DOM regression test (`TimelinePane.marquee.dom.test.tsx`) has
+  been silently not executing since it merged (`npm test` still exited 0; vitest treats an
+  unhandled collection error as a warning, not a failure). Fixed via `npm install` at the repo
+  root. `@chroma/editor` now 8/8 files, 294/294 tests, for real. `cargo check --workspace
+  --all-targets` clean, `@chroma/motion` 362/362, `@chroma/history` 11/11, `tsc -p app` unchanged
+  at 64. No CI exists to catch this class of drift automatically — named as an open gap.
+
 - **2026-09-05** — **A standalone Motion-tab browser harness, and the first live verification of
   the whole D-150–D-164 initiative (D-165).** `app/motion-harness.html` +
   `app/src/motion-harness-main.tsx` — the Motion-tab sibling of D-142's `TimelinePane` harness —

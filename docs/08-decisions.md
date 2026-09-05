@@ -14134,3 +14134,56 @@ does.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-166 — Full regression run finds D-142's `jsdom` devDependency was declared but never installed on `main`; `npm install` fixes it, `@chroma/editor` DOM harness test was silently not running
+
+**decided + built (2026-09-05).** Owner asked for a full regression pass. Ran `cargo check
+--workspace --all-targets` (pass) and `npm test --workspace <pkg>` across every package plus
+`npx tsc --noEmit -p app` (exactly 64, the documented baseline, unchanged). One real finding.
+
+**The finding.** `@chroma/editor`'s test run reported `Test Files 7 passed (8)` with a separate
+"1 unhandled error" — not a failing assertion, a collection-time crash: `Error: Cannot find
+package 'jsdom' imported from .../node_modules/vitest/...`. `packages/editor/package.json`
+declares `jsdom: "^29.1.1"` as a devDependency — added by D-142 specifically so
+`TimelinePane.marquee.dom.test.tsx` (the permanent real-DOM pointer-gesture regression test for
+marquee-select) could run — but `node_modules/jsdom` did not exist anywhere in the tree. D-142's
+own entry disclosed running `npm install` inside its OWN worktree before trusting its results
+(the same "worktree node_modules is a stale symlink" class of gotcha named repeatedly this
+session); what it did not do, and what nothing since has caught, is get that `npm install`
+re-run against `main`'s own `node_modules` after the branch merged — the `package.json` diff
+landed, the lockfile enrollment landed, but the actual installed package never did. Net effect:
+D-142's own flagship permanent test — the one built specifically to give this exact class of bug
+(pointer-gesture code passing pure-logic tests while breaking against real DOM behavior)
+permanent coverage — has been silently not executing on `main` since it merged, with `npm test`
+still exiting 0 because vitest treats an unhandled collection error as a warning banner, not a
+failed assertion, in its own summary line.
+
+**Fix.** `npm install` at the repo root (`/Users/ashishmaurya/my_projects/chroma`) — 35 packages
+added, `package-lock.json` updated, nothing else touched (confirmed via `git status`: only
+`package-lock.json`, no `package.json` changes anywhere). Re-ran `@chroma/editor`'s suite:
+**8/8 test files, 294/294 tests**, including `TimelinePane.marquee.dom.test.tsx`'s own 9 real
+scenarios, actually executing now.
+
+**The rest of the regression, for the record:** `cargo check --workspace --all-targets` — clean.
+`@chroma/motion` — 362/362 (current `main` tip). `@chroma/history` — 11/11. `@chroma/motion-engine`,
+`@chroma/inspector`, `@chroma/shell`, `@chroma/player`, `@chroma/tokens`, `@chroma/ui`,
+`@chroma/bridge` — no `test` script at all (confirmed via each package's own `package.json`,
+no `scripts` block present) — pre-existing, not a regression, matching D-155's own prior finding
+for `motion-engine` specifically.
+
+**Honest gap, named rather than silently left for a future pass to rediscover:** this is exactly
+the kind of drift a CI job running `npm ci && npm test` on every merge would have caught the
+moment D-142 landed — none exists for this repo yet. Out of scope for this entry (a regression
+run, not a CI setup task), but worth flagging explicitly: without one, "the tests pass" only
+means "the tests that were reachable in whichever `node_modules` happened to be on disk passed,"
+which is precisely the gap that let this go unnoticed for as many decisions as separate D-142
+from this entry.
+
+**Numbering.** Checked against the real tip of `main` immediately before writing this entry:
+`git log --oneline -1` shows `99dc72b` (D-165) at the tip, `docs/08-decisions.md`'s own highest
+number is **D-165**, no `B-NNN` touched — **D-166** is free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
