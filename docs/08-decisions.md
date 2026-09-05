@@ -14222,6 +14222,27 @@ right habit regardless of cause.) The frontend dev port (Vite, `1420`→`1425` i
 worktree before this entry — the two are unrelated (one is Vite's HMR dev server, the other is the
 Rust-side MCP control server) and both had to be handled for two instances to coexist.
 
+**Addendum (found by a later resumed pass on this same task, after this entry's own port fix had
+already merged): the port bump alone is not sufficient for a second dev instance — the app
+`identifier` matters too.** `app/src-tauri/src/lib.rs:1713` installs
+`tauri_plugin_single_instance::init(...)`, which keys its OS-level lock off the app's
+`tauri.conf.json` `identifier`, not the binary path or working directory — a second `cargo run`
+sharing the SAME identifier as an already-running instance silently hands its launch args to that
+already-running process and self-exits, with no panic, no error line, nothing in the usual log
+sink. This is the working explanation (not independently reproduced with a log capture, but
+consistent with the symptom and with why this same task's own worktree needed a **distinct
+`identifier`** — `"...RapidRAW.dev-motion-mcp-surface"` — to get a second window to actually open
+at all) for why the FIRST attempt at a second worktree instance in this task appeared to launch
+(`cargo run` printed `Running`) and then died within seconds with zero diagnostic output. **The
+port fix and the identifier fix are two separate collisions** (Vite's dev server, the Rust control
+server, and Tauri's own single-instance lock are three independent things sharing no code), and a
+future session running two Chroma instances side by side needs to override all that apply — port
+alone silently reproducing this exact "instance just vanishes" confusion otherwise. The identifier
+change itself was reverted from `main` after this entry's own merge (see the immediately-following
+commit) since it was scratch test config, not a product decision — this addendum exists so the
+NEXT person to need a second instance does not have to rediscover the identifier half of this from
+scratch the way this task did.
+
 **What got live-verified, against the confirmed-correct port (`19790`), with a fresh/no-project
 instance (`get_state` → `session:{active:0,shots:[]}`, `project:null` — not the main instance's
 loaded session):**
