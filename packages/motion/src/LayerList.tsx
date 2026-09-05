@@ -43,8 +43,17 @@
  * comment covers the drag/marquee side; `manifestEdit.ts`'s
  * `resolveSelection`/`resolveSelections` cover keeping the array pointing
  * at the right layers as the manifest changes under it.
+ *
+ * **D-160, Phase 5a of `docs/notes/motion-keyframe-timeline-research.md`
+ * ("key visibility"):** every row that can carry keyframes (a layer with
+ * `transform.keys`, a scene's 2D camera, a scene's 3D camera) now shows a
+ * small trailing key-count badge — the visual-builder research doc's own
+ * "deliberately cheaper intermediate" for a real keyframe timeline, taken
+ * seriously as a real first slice rather than a lesser fallback. Counting
+ * logic lives in `keyframeVisibility.ts` (pure, tested), not here.
  */
 import type { Manifest, Layer } from '@chroma/motion-engine/src/engine/schema';
+import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 
 /**
  * `id` on the two layer-shaped target kinds is D-158 (Phase 3 of
@@ -165,16 +174,30 @@ export function LayerList({
   selections: Selection[];
   onSelect: (s: Selection) => void;
 }) {
-  const row = (sceneIndex: number, target: SelectionTarget, label: string, indent = false) => {
+  const row = (sceneIndex: number, target: SelectionTarget, label: string, indent = false, keyCount = 0) => {
     const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
     return (
       <button
         type="button"
         key={`${target.kind}-${'index' in target ? target.index : ''}`}
-        className={[rowBase, isSel ? rowSelected : 'text-text-secondary', indent ? 'pl-4' : ''].join(' ')}
+        className={[rowBase, 'flex items-center justify-between gap-1', isSel ? rowSelected : 'text-text-secondary', indent ? 'pl-4' : ''].join(' ')}
         onClick={() => onSelect({ sceneIndex, target })}
       >
-        {label}
+        <span className="truncate">{label}</span>
+        {/* D-160 — a key-count badge, only when there's something to count
+           (0 keys shows nothing rather than a "0" that would clutter every
+           un-keyed row, the common case for most manifests today). */}
+        {keyCount > 0 && (
+          <span
+            className={[
+              'shrink-0 rounded-full px-1.5 text-[9px] leading-4',
+              isSel ? 'bg-button-text/20 text-button-text' : 'bg-bg-primary text-text-secondary',
+            ].join(' ')}
+            title={`${keyCount} keyframe${keyCount === 1 ? '' : 's'}`}
+          >
+            {keyCount}
+          </span>
+        )}
       </button>
     );
   };
@@ -184,13 +207,13 @@ export function LayerList({
       {manifest.scenes.map((scene, si) => (
         <div key={scene.id} className="flex flex-col gap-0.5">
           {row(si, { kind: 'scene' }, scene.id)}
-          {scene.camera && row(si, { kind: 'camera' }, 'Camera', true)}
+          {scene.camera && row(si, { kind: 'camera' }, 'Camera', true, cameraKeyCount(scene))}
           {scene.layers?.map((layer, li) =>
-            row(si, { kind: 'layer', index: li, id: layer.id }, layerLabel(layer), true),
+            row(si, { kind: 'layer', index: li, id: layer.id }, layerLabel(layer), true, layerKeyCount(layer)),
           )}
           {scene.scene3d && (
             <>
-              {row(si, { kind: 'scene3d-camera' }, '3D Camera', true)}
+              {row(si, { kind: 'scene3d-camera' }, '3D Camera', true, scene3dCameraKeyCount(scene))}
               {scene.scene3d.children.map((child, ci) =>
                 row(si, { kind: 'scene3d-child', index: ci, id: child.id }, layerLabel(child), true),
               )}

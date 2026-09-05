@@ -42,6 +42,15 @@
  * `onSelectionChange`, `onTransientChange`, `onCommit`) are required
  * together, same as before — omit all four to use this component with no
  * on-canvas interaction at all.
+ *
+ * D-160 (Phase 5a of `docs/notes/motion-keyframe-timeline-research.md`,
+ * "key visibility"): the player+overlay now sit in a `flex flex-col`
+ * container with `<KeyframeStrip>` fixed beneath — a small, ALWAYS-mounted
+ * (never behind the interaction-props gate above, since it does no manifest
+ * mutation and is useful even in a caller with no on-canvas editing at all)
+ * read-only strip showing camera + the current single layer selection's own
+ * keyframes and the live playhead. See that component's own doc comment for
+ * why it's a sibling rather than a modification of Remotion's own scrubber.
  */
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
@@ -54,6 +63,7 @@ import type { Selection } from './LayerList';
 import { MotionCanvasOverlay } from './MotionCanvasOverlay';
 import { measureWorldMap, type RectLike, type WorldMap } from './canvasGeometry';
 import { measureLayerScreenBox, findWorldElement } from './layerMeasure';
+import { KeyframeStrip } from './KeyframeStrip';
 
 /** D-157's imperative measurement escape hatch — see the module doc comment. */
 export interface MotionCanvasMeasureApi {
@@ -133,33 +143,43 @@ export function MotionPreview({
   }
 
   return (
-    <div className="h-full w-full flex items-center justify-center bg-black">
-      <div ref={containerRef} className="relative h-full w-full">
-        <Player
-          ref={effectivePlayerRef}
-          component={Video}
-          inputProps={shown}
-          durationInFrames={totalFrames(shown)}
-          fps={shown.fps}
-          compositionWidth={shown.width}
-          compositionHeight={shown.height}
-          controls
-          loop
-          style={{ width: '100%', height: '100%' }}
-        />
-        {onSelect && onSelectionChange && onTransientChange && onCommit && (
-          <MotionCanvasOverlay
-            containerRef={containerRef}
-            playerRef={effectivePlayerRef}
-            manifest={manifest}
-            selections={selections}
-            onSelect={onSelect}
-            onSelectionChange={onSelectionChange}
-            onTransientChange={onTransientChange}
-            onCommit={onCommit}
+    <div className="h-full w-full flex flex-col bg-black">
+      <div className="relative flex-1 min-h-0 flex items-center justify-center">
+        <div ref={containerRef} className="relative h-full w-full">
+          <Player
+            ref={effectivePlayerRef}
+            component={Video}
+            inputProps={shown}
+            durationInFrames={totalFrames(shown)}
+            fps={shown.fps}
+            compositionWidth={shown.width}
+            compositionHeight={shown.height}
+            controls
+            loop
+            style={{ width: '100%', height: '100%' }}
           />
-        )}
+          {onSelect && onSelectionChange && onTransientChange && onCommit && (
+            <MotionCanvasOverlay
+              containerRef={containerRef}
+              playerRef={effectivePlayerRef}
+              manifest={manifest}
+              selections={selections}
+              onSelect={onSelect}
+              onSelectionChange={onSelectionChange}
+              onTransientChange={onTransientChange}
+              onCommit={onCommit}
+            />
+          )}
+        </div>
       </div>
+      {/* D-160 — always mounted regardless of the interaction props above:
+          this strip only ever seeks the player, so it's useful even for a
+          caller with no on-canvas editing wired up. Reads the STABLE
+          manifest (not `shown`/`transientManifest`) — a key's `at` never
+          changes mid-drag today (only `x`/`y` values do), so there's
+          nothing this strip would show differently during a drag; see its
+          own doc comment. */}
+      <KeyframeStrip manifest={manifest} selections={selections} playerRef={effectivePlayerRef} />
     </div>
   );
 }
