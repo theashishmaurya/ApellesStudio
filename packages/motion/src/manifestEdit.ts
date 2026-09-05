@@ -20,7 +20,9 @@
  * through `Record<string, unknown>`, the same cast `LayerList.tsx`'s
  * `layerLabel` already uses.
  */
-import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
+import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
+import { interpolateKeys } from '@chroma/motion-engine/src/lib/interpolateKeys';
+import { design } from '@chroma/motion-engine/src/design';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
 import { positionFields, sizeFields } from './propCatalog';
@@ -513,6 +515,163 @@ export function setLayerTransformField(manifest: Manifest, selection: Selection,
   else existing[key] = value;
   if (Object.keys(existing).length === 0) delete raw.transform;
   else raw.transform = existing;
+  return next;
+}
+
+/** The D-157 layer-transform wrapper's `keys` array (D-159, Phase 4 — "the
+ *  animation model: per-layer keyframes") a selection's layer currently
+ *  carries, or `[]` for a selection that doesn't resolve to a layer, has no
+ *  `transform` at all, or has a `transform` with no (or a malformed)
+ *  `keys` — the same "reads as not-draggable/not-keyed rather than a crash"
+ *  floor every other read function in this file already holds. The
+ *  `InspectorPanel.tsx` keyframe-list editor (`KeyframeList`, generalized
+ *  from D-155's camera-only `CameraKeyList`) reads through this rather than
+ *  digging into `found.raw.transform` itself. */
+export function layerTransformKeys(manifest: Manifest, selection: Selection): TransformKey[] {
+  const found = selectedLayer(manifest, selection);
+  const t = found?.raw.transform as Raw | undefined;
+  return Array.isArray(t?.keys) ? (t.keys as TransformKey[]) : [];
+}
+
+/** Writes a whole new `keys` array back through `setLayerTransformField` —
+ *  the write half of `layerTransformKeys` above, and the Inspector's
+ *  keyframe-list editor's own `onChange`. An EMPTY array deletes the field
+ *  entirely (`setLayerTransformField`'s own `value === undefined` branch),
+ *  matching this file's existing "an empty/all-default nested object doesn't
+ *  linger in the saved manifest" convention (`setLayerTransformField`'s own
+ *  doc comment) — `keys: []` and "no `keys` field" already mean the exact
+ *  same thing to every reader of this schema (`Video.tsx`'s `renderLayers`
+ *  only takes the keyed branch when `keys.length > 0`). */
+export function setLayerTransformKeys(manifest: Manifest, selection: Selection, keys: TransformKey[]): Manifest {
+  return setLayerTransformField(manifest, selection, 'keys', keys.length > 0 ? keys : undefined);
+}
+
+/** The interpolated `x`/`y` DELTA `transform.keys` produces at `frame`
+ *  (frames; `fps` converts from the manifest's stored seconds) — reuses the
+ *  SAME shared `interpolateKeys` `motion-engine`'s `Camera.tsx`/`Video.tsx`
+ *  use to render a frame (D-159's own "reuse the camera's own key
+ *  mechanics, don't invent a second interpolator" instruction, applied here
+ *  to the EDITOR's drag math too, not just the render path — see
+ *  `layerDragBase` below for why this matters: a drag's captured "current
+ *  value" must agree with what the picture is actually showing at that
+ *  instant, and re-deriving that with a second hand-rolled interpolator
+ *  would be exactly the kind of drift this file's own `canvasGeometry.ts`
+ *  doc comment warns "getting this wrong is silent" about). `{x:0,y:0}` for
+ *  an empty `keys` array — `interpolateKeys` already returns the supplied
+ *  defaults in that case; this function exists so callers never construct
+ *  the `['x','y']`/defaults/`design.ease.inOut` call themselves. */
+export function layerTransformKeyDelta(keys: TransformKey[], frame: number, fps: number): { x: number; y: number } {
+  const frameKeys = keys.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
+  return interpolateKeys(frameKeys, frame, ['x', 'y'] as const, { x: 0, y: 0 }, design.ease.inOut);
+}
+
+/**
+ * D-159, Phase 4's auto-keyframe decision (see this file's own module doc
+ * comment cross-reference and D-159's decision entry for the FULL reasoning
+ * — this is the load-bearing function behind it, not just a helper).
+ * Decides, for ONE selection, what a MOVE drag should treat as its starting
+ * "base" position and whether that drag should write a `transform.keys` row
+ * (Remotion Studio's own cited rule: "drags create or update a keyframe at
+ * the current frame" when the property is already keyframed) or the
+ * primitive's own base position field exactly as Phase 1 always has (when
+ * it is not).
+ *
+ * **Per-PROPERTY, not per-layer** — the research doc's own framing, applied
+ * here as: position (`x`+`y` together, since ONE move-drag gesture always
+ * changes both, the same way Remotion's own precedent groups
+ * `style.translate` as one property) counts as "keyframed" only when
+ * `transform.keys` has AT LEAST ONE entry that defines `x` OR `y` on THIS
+ * layer specifically — `transform.keys` existing at all (say, for an
+ * `opacity` fade authored some other way) does NOT flip a layer's position
+ * into key-writing mode; that field's own key history is what's checked,
+ * never merely "does this layer have a `keys` array." This directly answers
+ * the task's own posed ambiguity ("does dragging an unkeyed layer with
+ * keyframes elsewhere still just move the base — yes; per-property, not
+ * per-layer, exactly as the research doc's phrasing implies).
+ *
+ * Returns `null` for a selection with no draggable position at all (the
+ * same "not draggable" floor `layerWorldPosition` already holds — `graph`,
+ * an `in3d` primitive, or a stale selection).
+ */
+export function layerDragBase(
+  manifest: Manifest,
+  selection: Selection,
+  frame: number,
+  fps: number,
+): { base: { x: number; y: number }; keyed: boolean } | null {
+  const keys = layerTransformKeys(manifest, selection);
+  const keyed = keys.some((k) => typeof k.x === 'number' || typeof k.y === 'number');
+  if (keyed) {
+    return { base: layerTransformKeyDelta(keys, frame, fps), keyed: true };
+  }
+  const pos = layerWorldPosition(manifest, selection);
+  return pos ? { base: pos, keyed: false } : null;
+}
+
+/** The auto-keyframe write path: upserts (creates, or overwrites in place)
+ *  ONE `transform.keys` row's `x`/`y` at the frame closest to `atSeconds`
+ *  (the SAME `Math.round(at * fps)` conversion `Video.tsx` uses to resolve a
+ *  key to a frame, so "the same frame" here means the exact frame the
+ *  picture would already resolve that key to). An existing key at that
+ *  frame is overwritten IN PLACE — its own `at` and every OTHER field
+ *  (`scale`/`rot`/`opacity`/`ease`) are preserved, only `x`/`y` change; no
+ *  existing key at that frame appends a new one with exactly `{at: atSeconds,
+ *  x, y}`. No-op (same manifest reference back) for a selection that
+ *  doesn't resolve to a layer — the same defensive floor every function in
+ *  this file already holds. */
+export function upsertLayerTransformKeyXY(
+  manifest: Manifest,
+  selection: Selection,
+  atSeconds: number,
+  fps: number,
+  x: number,
+  y: number,
+): Manifest {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return manifest;
+  const cloned = cloneLayerRaw(manifest, selection);
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
+  const t: Raw = raw.transform && typeof raw.transform === 'object' ? { ...(raw.transform as Raw) } : {};
+  const existingKeys: Raw[] = Array.isArray(t.keys) ? (t.keys as Raw[]) : [];
+  const targetFrame = Math.round(atSeconds * fps);
+  const idx = existingKeys.findIndex((k) => Math.round((typeof k.at === 'number' ? k.at : 0) * fps) === targetFrame);
+  const nextKeys = [...existingKeys];
+  if (idx === -1) nextKeys.push({ at: atSeconds, x, y });
+  else nextKeys[idx] = { ...nextKeys[idx], x, y };
+  t.keys = nextKeys;
+  raw.transform = t;
+  return next;
+}
+
+/**
+ * D-159, Phase 4 — the group-move counterpart to D-158's `moveLayersByDelta`
+ * that actually applies the auto-keyframe decision per entry, rather than
+ * unconditionally writing every selected layer's native position field.
+ * `moves` is captured ONCE at drag-start by the caller
+ * (`MotionCanvasOverlay.tsx`) via `layerDragBase` above — each entry already
+ * knows, individually, whether IT is keyed (a mixed group — some layers
+ * keyed, some not — is fully supported, each entry routes independently).
+ * `moveLayersByDelta` itself is left completely untouched (same export,
+ * same behaviour, same passing tests) rather than widened to take a `keyed`
+ * flag — this is a SEPARATE function for a SEPARATE caller (the drag path
+ * once auto-keyframing exists), not a replacement for the simpler
+ * unconditional-write function D-158 already shipped and tested.
+ */
+export function moveLayersByDeltaAutoKey(
+  manifest: Manifest,
+  moves: { selection: Selection; base: { x: number; y: number }; keyed: boolean }[],
+  dx: number,
+  dy: number,
+  atSeconds: number,
+  fps: number,
+): Manifest {
+  let next = manifest;
+  for (const { selection, base, keyed } of moves) {
+    next = keyed
+      ? upsertLayerTransformKeyXY(next, selection, atSeconds, fps, base.x + dx, base.y + dy)
+      : setLayerPosition(next, selection, base.x + dx, base.y + dy);
+  }
   return next;
 }
 

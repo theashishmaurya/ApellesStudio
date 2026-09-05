@@ -16,6 +16,12 @@ import {
   snapEmphasisToRect,
   SNAP_TO_LAYER_PAD,
   setLayerTransformField,
+  layerTransformKeys,
+  setLayerTransformKeys,
+  layerTransformKeyDelta,
+  layerDragBase,
+  upsertLayerTransformKeyXY,
+  moveLayersByDeltaAutoKey,
   parseJsonField,
   resolveSelection,
   resolveSelections,
@@ -440,6 +446,215 @@ describe('setLayerTransformField', () => {
     const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
     const next = setLayerTransformField(sample, sel, 'scale', 2);
     expect(next).toBe(sample);
+  });
+});
+
+describe('layerTransformKeys / setLayerTransformKeys (D-159, Phase 4)', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+
+  it('reads [] for a layer with no transform at all', () => {
+    expect(layerTransformKeys(sample, textSel)).toEqual([]);
+  });
+
+  it('reads [] for a layer with a transform but no keys field', () => {
+    const withTransform = structuredClone(sample);
+    (withTransform.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = { x: 10 };
+    expect(layerTransformKeys(withTransform, textSel)).toEqual([]);
+  });
+
+  it('reads back a real keys array', () => {
+    const withKeys = structuredClone(sample);
+    (withKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }, { at: 1, x: 50 }],
+    };
+    expect(layerTransformKeys(withKeys, textSel)).toEqual([{ at: 0, x: 0 }, { at: 1, x: 50 }]);
+  });
+
+  it('writes a non-empty keys array through setLayerTransformField', () => {
+    const next = setLayerTransformKeys(sample, textSel, [{ at: 0, x: 5, y: 6 }]);
+    expect(layerTransformKeys(next, textSel)).toEqual([{ at: 0, x: 5, y: 6 }]);
+  });
+
+  it('an empty array DELETES the keys field (and the whole transform, if keys was the only field)', () => {
+    const withKeys = structuredClone(sample);
+    (withKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }],
+    };
+    const next = setLayerTransformKeys(withKeys, textSel, []);
+    expect(layerTransformKeys(next, textSel)).toEqual([]);
+    expect(selectedLayer(next, textSel)?.raw.transform).toBeUndefined();
+  });
+
+  it('an empty array clears keys but preserves OTHER transform fields', () => {
+    const withBoth = structuredClone(sample);
+    (withBoth.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      x: 10,
+      keys: [{ at: 0, x: 0 }],
+    };
+    const next = setLayerTransformKeys(withBoth, textSel, []);
+    expect(selectedLayer(next, textSel)?.raw.transform).toEqual({ x: 10 });
+  });
+
+  it('is a no-op for a selection that does not resolve to a layer', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(setLayerTransformKeys(sample, sel, [{ at: 0, x: 1 }])).toBe(sample);
+    expect(layerTransformKeys(sample, sel)).toEqual([]);
+  });
+});
+
+describe('layerTransformKeyDelta (D-159 — reuses the shared interpolateKeys)', () => {
+  const fps = 30;
+
+  it('returns {x:0,y:0} for an empty keys array', () => {
+    expect(layerTransformKeyDelta([], 15, fps)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('a single key clamps to its own delta at every frame', () => {
+    const keys = [{ at: 1, x: 40, y: -20 }]; // at 1s * 30fps = frame 30
+    expect(layerTransformKeyDelta(keys, 0, fps)).toEqual({ x: 40, y: -20 });
+    expect(layerTransformKeyDelta(keys, 30, fps)).toEqual({ x: 40, y: -20 });
+    expect(layerTransformKeyDelta(keys, 999, fps)).toEqual({ x: 40, y: -20 });
+  });
+
+  it('interpolates between two keys, converting `at` from seconds to frames', () => {
+    const keys = [
+      { at: 0, x: 0, y: 0 },
+      { at: 1, x: 100, y: 0 }, // frame 30
+    ];
+    // frame 15 == 0.5s == the midpoint
+    expect(layerTransformKeyDelta(keys, 15, fps).x).toBeCloseTo(50, 0);
+  });
+
+  it('a field never specified on any key defaults to 0, independent of the other field', () => {
+    const keys = [{ at: 0, x: 10 }]; // y never appears
+    expect(layerTransformKeyDelta(keys, 0, fps)).toEqual({ x: 10, y: 0 });
+  });
+});
+
+describe('layerDragBase (D-159 — the auto-keyframe drag decision)', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } }; // x:180, y:300
+  const fps = 30;
+
+  it('unkeyed layer (no transform at all): keyed=false, base = native world position', () => {
+    const result = layerDragBase(sample, textSel, 0, fps);
+    expect(result).toEqual({ base: { x: 180, y: 300 }, keyed: false });
+  });
+
+  it('a transform.keys array that never touches x/y: still keyed=false (per-PROPERTY, not per-layer)', () => {
+    const withOpacityKeys = structuredClone(sample);
+    (withOpacityKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, opacity: 0 }, { at: 1, opacity: 1 }],
+    };
+    const result = layerDragBase(withOpacityKeys, textSel, 0, fps);
+    expect(result).toEqual({ base: { x: 180, y: 300 }, keyed: false });
+  });
+
+  it('a transform.keys array with an x (or y) entry: keyed=true, base = the INTERPOLATED delta at that frame', () => {
+    const withXKeys = structuredClone(sample);
+    (withXKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }, { at: 1, x: 100 }],
+    };
+    const atStart = layerDragBase(withXKeys, textSel, 0, fps);
+    expect(atStart).toEqual({ base: { x: 0, y: 0 }, keyed: true });
+    const atMid = layerDragBase(withXKeys, textSel, 15, fps); // frame 15 == 0.5s
+    expect(atMid?.keyed).toBe(true);
+    expect(atMid?.base.x).toBeCloseTo(50, 0);
+  });
+
+  it('keyed on y alone still counts as keyed for the whole position (x/y move together)', () => {
+    const withYKeys = structuredClone(sample);
+    (withYKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, y: 40 }],
+    };
+    expect(layerDragBase(withYKeys, textSel, 0, fps)).toEqual({ base: { x: 0, y: 40 }, keyed: true });
+  });
+
+  it('returns null for a selection with no draggable position at all', () => {
+    const staleSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(layerDragBase(sample, staleSel, 0, fps)).toBeNull();
+  });
+});
+
+describe('upsertLayerTransformKeyXY (D-159 — the auto-keyframe write path)', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+  const fps = 30;
+
+  it('creates a new key at the target frame when none exists there', () => {
+    const next = upsertLayerTransformKeyXY(sample, textSel, 0.5, fps, 12, -8);
+    expect(layerTransformKeys(next, textSel)).toEqual([{ at: 0.5, x: 12, y: -8 }]);
+  });
+
+  it('overwrites an EXISTING key at that exact frame in place, preserving its other fields', () => {
+    const withKey = structuredClone(sample);
+    (withKey.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0.5, x: 1, y: 2, scale: 0.2, ease: [0, 0, 1, 1] }],
+    };
+    const next = upsertLayerTransformKeyXY(withKey, textSel, 0.5, fps, 99, 88);
+    expect(layerTransformKeys(next, textSel)).toEqual([
+      { at: 0.5, x: 99, y: 88, scale: 0.2, ease: [0, 0, 1, 1] },
+    ]);
+  });
+
+  it('a target frame that rounds the same as an existing key updates it, not a duplicate', () => {
+    const withKey = structuredClone(sample);
+    (withKey.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0.501, x: 1, y: 1 }], // rounds to frame 15, same as 0.5s
+    };
+    const next = upsertLayerTransformKeyXY(withKey, textSel, 0.5, fps, 7, 7);
+    const keys = layerTransformKeys(next, textSel);
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toEqual({ at: 0.501, x: 7, y: 7 }); // `at` unchanged, only x/y overwritten
+  });
+
+  it('appends alongside an existing key at a DIFFERENT frame, rather than overwriting it', () => {
+    const withKey = structuredClone(sample);
+    (withKey.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0, y: 0 }],
+    };
+    const next = upsertLayerTransformKeyXY(withKey, textSel, 1, fps, 40, 40);
+    expect(layerTransformKeys(next, textSel)).toEqual([
+      { at: 0, x: 0, y: 0 },
+      { at: 1, x: 40, y: 40 },
+    ]);
+  });
+
+  it('is a no-op for a selection that does not resolve to a layer', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(upsertLayerTransformKeyXY(sample, sel, 0, fps, 1, 1)).toBe(sample);
+  });
+});
+
+describe('moveLayersByDeltaAutoKey (D-159 — group move with per-entry auto-keyframe)', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } }; // unkeyed
+  const emphasisSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } }; // will be keyed
+
+  it('an unkeyed entry writes the native base position, exactly like moveLayersByDelta', () => {
+    const moves = [{ selection: textSel, base: { x: 180, y: 300 }, keyed: false }];
+    const next = moveLayersByDeltaAutoKey(sample, moves, 10, 10, 0, 30);
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 190, y: 310 });
+    expect(layerTransformKeys(next, textSel)).toEqual([]); // no key was written
+  });
+
+  it('a keyed entry writes/updates a transform.keys row at the given frame instead of the native field', () => {
+    const moves = [{ selection: textSel, base: { x: 0, y: 0 }, keyed: true }];
+    const next = moveLayersByDeltaAutoKey(sample, moves, 15, -5, 0.5, 30);
+    expect(layerTransformKeys(next, textSel)).toEqual([{ at: 0.5, x: 15, y: -5 }]);
+    // the native x/y field is UNTOUCHED — the drag went to the key instead
+    expect((selectedLayer(next, textSel)?.raw as Record<string, unknown>).x).toBe(180);
+  });
+
+  it('a MIXED group (one keyed, one not) routes each entry independently in ONE resulting manifest', () => {
+    const moves = [
+      { selection: textSel, base: { x: 180, y: 300 }, keyed: false },
+      { selection: emphasisSel, base: { x: 0, y: 0 }, keyed: true },
+    ];
+    const next = moveLayersByDeltaAutoKey(sample, moves, 20, 20, 1, 30);
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 200, y: 320 });
+    expect(layerTransformKeys(next, emphasisSel)).toEqual([{ at: 1, x: 20, y: 20 }]);
+  });
+
+  it('an empty moves array is a true no-op — same manifest reference back', () => {
+    expect(moveLayersByDeltaAutoKey(sample, [], 5, 5, 0, 30)).toBe(sample);
   });
 });
 

@@ -88,7 +88,7 @@
  * change, marquee gesture, and align/distribute functions.
  */
 import { useState } from 'react';
-import type { Manifest, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
+import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import { layerLabel, type Selection } from './LayerList';
 import {
@@ -101,6 +101,8 @@ import {
   setCamera2d,
   setCamera3d,
   setLayerTransformField,
+  layerTransformKeys,
+  setLayerTransformKeys,
   setFieldOnSelections,
   setTransformFieldOnSelections,
   alignSelections,
@@ -114,6 +116,7 @@ import {
   CAM2D_KEY_FIELDS,
   CAM3D_KEY_FIELDS,
   LAYER_TRANSFORM_FIELDS,
+  LAYER_TRANSFORM_KEY_FIELDS,
   type FieldSpec,
 } from './propCatalog';
 
@@ -354,10 +357,19 @@ function FieldGroup({
   );
 }
 
-/** the 2D/3D camera keyframe-list editor — a real add/remove/edit list
- *  (not JSON) since a keyframe array is a small, flat, fixed shape, unlike
- *  Matrix/Graph's genuinely nested content props. */
-function CameraKeyList<K extends Cam2dKey | Cam3dKey>({
+/** A real add/remove/edit list (not JSON) for any small, flat, fixed-shape
+ *  keyframe array — a keyframe row is nothing like Matrix/Graph's genuinely
+ *  nested content props, so it earns its own editor rather than falling
+ *  back to a raw JSON textarea. Originally built (D-099) as `CameraKeyList`,
+ *  camera-only (`Cam2dKey | Cam3dKey`); generalized here (D-159, Phase 4 of
+ *  the research doc — "Inspector support for a per-layer key list... adapt
+ *  or generalize [`CameraKeyList`] rather than writing a third bespoke
+ *  editor") to any `{at: number, ...}` shape so the SAME component now also
+ *  drives the new per-layer `transform.keys` editor
+ *  (`TransformKeysSection` below) — a real generalization of already-working
+ *  code, not a parallel copy: the camera call sites in `InspectorPanel`
+ *  below are unchanged in behavior, just typed through the wider generic. */
+function KeyframeList<K extends { at: number }>({
   fields,
   keys,
   makeDefault,
@@ -427,6 +439,48 @@ function TransformFieldGroup({
       {LAYER_TRANSFORM_FIELDS.map((spec) => (
         <FieldControl key={spec.key} spec={spec} value={raw[spec.key]} onCommit={(v) => onCommit(spec.key, v)} />
       ))}
+    </InspectorSection>
+  );
+}
+
+/**
+ * D-159, Phase 4's per-layer keyframe-list editor — "Inspector support for
+ * a per-layer key list... adapt or generalize [the camera's keyframe list]
+ * rather than writing a third bespoke editor." Reuses `KeyframeList`
+ * (generalized from D-099's camera-only `CameraKeyList` above) with
+ * `LAYER_TRANSFORM_KEY_FIELDS` (`propCatalog.ts`) — the exact same
+ * add/remove/edit-row shape the camera keyframe editor already gives the
+ * owner, now for a layer's own `transform.keys`.
+ *
+ * **Rendered ONLY for a single-selection 2D layer, never in
+ * `MultiLayerInspector`'s lockstep view — a real design call, made and
+ * documented rather than left to fall out of the code by accident.** The
+ * static `TransformFieldGroup` above lockstep-edits cleanly across N
+ * layers because "set this scalar field on every selected layer" has one
+ * obvious meaning. A KEYFRAME LIST does not: two different layers'
+ * `transform.keys` arrays can have a different number of rows, at different
+ * times, with different field coverage — there is no single well-defined
+ * "add a keyframe to N layers at once" operation the way there is for "set
+ * opacity to 0.5 on N layers," and inventing one (align by index? by
+ * nearest `at`? create if missing, else edit?) would be exactly the kind of
+ * silently-surprising behavior this phase's OWN auto-keyframe write-up
+ * argues against introducing casually. Per-layer keyframes are inherently
+ * per-layer; selecting exactly one layer to edit its own timeline is the
+ * honest floor, matching how `MultiLayerInspector` already drops to a
+ * "select one layer" note for a mismatched-`use` primitive field group
+ * (same file, `InspectorPanel`'s own module doc comment) rather than
+ * guessing at a lockstep semantics that doesn't exist yet.
+ */
+function TransformKeysSection({
+  keys,
+  onChange,
+}: {
+  keys: TransformKey[];
+  onChange: (next: TransformKey[]) => void;
+}) {
+  return (
+    <InspectorSection label="Transform keyframes">
+      <KeyframeList fields={LAYER_TRANSFORM_KEY_FIELDS} keys={keys} makeDefault={() => ({ at: 0 })} onChange={onChange} />
     </InspectorSection>
   );
 }
@@ -655,7 +709,7 @@ export function InspectorPanel({
     if (!keys) return <StaleNotice />;
     return (
       <div className="h-full w-full overflow-y-auto p-3">
-        <CameraKeyList
+        <KeyframeList
           fields={CAM2D_KEY_FIELDS}
           keys={keys}
           makeDefault={() => ({ at: 0 })}
@@ -670,10 +724,10 @@ export function InspectorPanel({
     if (!keys) return <StaleNotice />;
     return (
       <div className="h-full w-full overflow-y-auto p-3">
-        <CameraKeyList
+        <KeyframeList
           fields={CAM3D_KEY_FIELDS}
           keys={keys}
-          makeDefault={() => ({ at: 0, pos: [0, 0, 0] })}
+          makeDefault={(): Cam3dKey => ({ at: 0, pos: [0, 0, 0] })}
           onChange={(next) => onChange(setCamera3d(manifest, selection.sceneIndex, next))}
         />
       </div>
@@ -707,6 +761,12 @@ export function InspectorPanel({
         <TransformFieldGroup
           raw={(found.raw.transform as Record<string, unknown>) ?? {}}
           onCommit={(key, value) => onChange(setLayerTransformField(manifest, selection, key, value))}
+        />
+      )}
+      {isLayer2d && (
+        <TransformKeysSection
+          keys={layerTransformKeys(manifest, selection)}
+          onChange={(next) => onChange(setLayerTransformKeys(manifest, selection, next))}
         />
       )}
       {isLayer2d && found.use === 'emphasis' && onSnapToLayer && (

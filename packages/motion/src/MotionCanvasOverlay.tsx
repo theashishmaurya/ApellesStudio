@@ -70,19 +70,40 @@
  *      guarantees instead).
  *
  * **Coordinate math is 0d, not reinvented here.** A drag writes the
- * layer's WORLD `x`/`y` (`manifestEdit.ts`'s `setLayerPosition`/
- * `moveLayersByDelta`); a resize writes its WORLD `w`/`h` (`setLayerSize`)
- * — both converted from a screen-space pointer delta via
- * `canvasGeometry.ts`'s `measureWorldMap`/`worldDelta` — "measure the live
- * DOM, don't re-derive the camera" (research doc §3a). The world map is
- * re-measured at drag-start and is NOT re-measured mid-drag: a drag is a
- * bounded, sub-second human gesture, and `manifest.width` never changes
- * during one — the one thing that WOULD invalidate a stale map (the camera
- * itself moving under the drag) doesn't happen either, since `manifest`
- * here is the STABLE, already-committed manifest, not the transient one
- * this same drag is writing into `<Player inputProps>` (0b) — the layer(s)
- * move, the camera doesn't, so the map measured once at pointerdown stays
- * correct for the whole gesture.
+ * layer's WORLD `x`/`y` (`manifestEdit.ts`'s `layerDragBase`/
+ * `moveLayersByDeltaAutoKey`, D-159 — see below); a resize writes its WORLD
+ * `w`/`h` (`setLayerSize`) — both converted from a screen-space pointer
+ * delta via `canvasGeometry.ts`'s `measureWorldMap`/`worldDelta` — "measure
+ * the live DOM, don't re-derive the camera" (research doc §3a). The world
+ * map is re-measured at drag-start and is NOT re-measured mid-drag: a drag
+ * is a bounded, sub-second human gesture, and `manifest.width` never
+ * changes during one — the one thing that WOULD invalidate a stale map (the
+ * camera itself moving under the drag) doesn't happen either, since
+ * `manifest` here is the STABLE, already-committed manifest, not the
+ * transient one this same drag is writing into `<Player inputProps>` (0b) —
+ * the layer(s) move, the camera doesn't, so the map measured once at
+ * pointerdown stays correct for the whole gesture.
+ *
+ * **D-159, Phase 4 — auto-keyframe on drag.** A move-drag's WRITE TARGET
+ * now depends on whether the dragged layer's `transform.keys` (the new
+ * per-layer animation channel) already keyframes `x`/`y`: `manifestEdit.ts`'s
+ * `layerDragBase(manifest, selection, currentFrame, fps)` decides this ONCE
+ * per selected layer at pointerdown — `keyed: true` means the drag's base is
+ * the CURRENT INTERPOLATED transform delta at the playhead (not the
+ * primitive's native position), and the commit path
+ * (`moveLayersByDeltaAutoKey`) upserts a `transform.keys` row AT THE
+ * CURRENT PLAYHEAD FRAME (`drag.atSeconds`, captured once at pointerdown,
+ * same as `map`) instead of writing the primitive's own base field. `keyed:
+ * false` (the common case — no `keys` at all, or `keys` that never touched
+ * `x`/`y`) drags the native base position exactly as Phase 1 always has.
+ * See `layerDragBase`'s own doc comment in `manifestEdit.ts` for the full
+ * per-property (not per-layer) reasoning, and D-159's decision entry for the
+ * dedicated "auto-keyframe design decision" writeup. Resize is UNCHANGED by
+ * this — `transformKey` (the new schema type) has no width/height field to
+ * write to (it mirrors `cam2dKey`'s x/y/zoom-shaped fields, not a size
+ * concept), so a resize handle always writes the primitive's own size
+ * field(s) regardless of `transform.keys`, a deliberate scope call recorded
+ * in the same decision entry rather than an oversight.
  *
  * **Multi-select is `Selection[]`, constrained to same-kind (`layer`),
  * same-scene, per `LayerList.tsx`'s own module doc comment** — see that
@@ -98,6 +119,10 @@
  * account for that layer's own transform sitting between the camera and the
  * primitive — a drag, resize, OR group-move on such a layer will be
  * slightly off. Unchanged scope call from D-157; see its own decision entry.
+ * D-159 doesn't widen this gap (the auto-keyframe write is additive onto
+ * whatever `transform.x/y` already resolves to, using the SAME world map),
+ * but doesn't fix it either — worth re-stating since a KEYED layer is
+ * exactly the layer most likely to also carry a non-identity `scale`/`rot`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
@@ -108,9 +133,8 @@ import type { Selection } from './LayerList';
 import { sameSelection, toggleSelection } from './LayerList';
 import {
   selectedLayer,
-  layerWorldPosition,
-  setLayerPosition,
-  moveLayersByDelta,
+  layerDragBase,
+  moveLayersByDeltaAutoKey,
   layerWorldSize,
   setLayerSize,
 } from './manifestEdit';
@@ -154,12 +178,24 @@ type DragState =
       kind: 'move';
       pointerId: number;
       /** D-158: one entry per selected layer that resolves a draggable
-       *  position at drag-start (`layerWorldPosition`) — a single-selection
-       *  move is just the `moves.length === 1` case of this same shape, not
-       *  a separately maintained code path. */
-      moves: { selection: Selection; base: { x: number; y: number } }[];
+       *  position at drag-start — a single-selection move is just the
+       *  `moves.length === 1` case of this same shape, not a separately
+       *  maintained code path. D-159 (Phase 4, "auto-keyframe on drag"):
+       *  `base`/`keyed` now come from `manifestEdit.ts`'s `layerDragBase`
+       *  (not `layerWorldPosition` directly) — `keyed` records, PER ENTRY,
+       *  whether THIS layer's `transform.keys` already defines `x`/`y`, so a
+       *  mixed selection (some keyed, some not) is fully supported: each
+       *  entry routes independently in `moveLayersByDeltaAutoKey`. */
+      moves: { selection: Selection; base: { x: number; y: number }; keyed: boolean }[];
       map: ReturnType<typeof measureWorldMap>;
       start: Point;
+      /** D-159: the playhead's position in SECONDS at drag-start
+       *  (`playerRef.getCurrentFrame() / manifest.fps`) — where a keyed
+       *  entry's `transform.keys` row gets created/updated (Remotion
+       *  Studio's own cited rule: "drags create or update a keyframe AT THE
+       *  CURRENT FRAME"). Captured once, like `map` above, since a drag is a
+       *  bounded gesture and the playhead doesn't move during one. */
+      atSeconds: number;
     }
   | {
       kind: 'resize';
@@ -416,14 +452,18 @@ export function MotionCanvasOverlay({
         if (!manifest) return; // selected, but nothing to compute a drag against yet
         const worldEl = findWorldElement(container);
         if (!worldEl) return;
-        const moves = activeSelections.reduce<{ selection: Selection; base: { x: number; y: number } }[]>(
-          (acc, s) => {
-            const base = layerWorldPosition(manifest, s);
-            if (base) acc.push({ selection: s, base });
-            return acc;
-          },
-          [],
-        );
+        // D-159: the playhead frame this drag's keyframed entries (if any)
+        // write to — captured ONCE here, before any move happens, same as
+        // `map` below (a canvas drag doesn't move the playhead).
+        const currentFrame = playerRef.current?.getCurrentFrame() ?? 0;
+        const atSeconds = currentFrame / manifest.fps;
+        const moves = activeSelections.reduce<
+          { selection: Selection; base: { x: number; y: number }; keyed: boolean }[]
+        >((acc, s) => {
+          const dragBase = layerDragBase(manifest, s, currentFrame, manifest.fps);
+          if (dragBase) acc.push({ selection: s, base: dragBase.base, keyed: dragBase.keyed });
+          return acc;
+        }, []);
         if (moves.length === 0) return; // nothing draggable in the group (e.g. a lone `graph`)
 
         e.preventDefault();
@@ -434,6 +474,7 @@ export function MotionCanvasOverlay({
           moves,
           map: measureWorldMap(worldEl.getBoundingClientRect(), manifest.width),
           start: { x: e.clientX, y: e.clientY },
+          atSeconds,
         };
         return;
       }
@@ -494,7 +535,7 @@ export function MotionCanvasOverlay({
       if (!manifest) return;
       if (drag.kind === 'move') {
         const d = moveDelta(drag, e);
-        onTransientChange(moveLayersByDelta(manifest, drag.moves, d.x, d.y));
+        onTransientChange(moveLayersByDeltaAutoKey(manifest, drag.moves, d.x, d.y, drag.atSeconds, manifest.fps));
       } else {
         const s = nextSize(drag, e);
         onTransientChange(setLayerSize(manifest, drag.selection, s.w, s.h));
@@ -547,8 +588,16 @@ export function MotionCanvasOverlay({
       if (!manifest) return;
       if (drag.kind === 'move') {
         const d = moveDelta(drag, e);
-        const label = drag.moves.length > 1 ? 'Move layers' : 'Move layer';
-        onCommit(moveLayersByDelta(manifest, drag.moves, d.x, d.y), label);
+        const anyKeyed = drag.moves.some((m) => m.keyed);
+        const label =
+          drag.moves.length > 1
+            ? anyKeyed
+              ? 'Move layers (keyframe)'
+              : 'Move layers'
+            : anyKeyed
+              ? 'Move layer (keyframe)'
+              : 'Move layer';
+        onCommit(moveLayersByDeltaAutoKey(manifest, drag.moves, d.x, d.y, drag.atSeconds, manifest.fps), label);
       } else {
         const s = nextSize(drag, e);
         onCommit(setLayerSize(manifest, drag.selection, s.w, s.h), 'Resize layer');
@@ -563,7 +612,7 @@ export function MotionCanvasOverlay({
       container.removeEventListener('pointermove', onPointerMove);
       container.removeEventListener('pointerup', onPointerUp);
     };
-  }, [containerRef, manifest, selections, onSelect, onSelectionChange, onTransientChange, onCommit]);
+  }, [containerRef, playerRef, manifest, selections, onSelect, onSelectionChange, onTransientChange, onCommit]);
 
   const selectedUse =
     manifest && selections.length === 1 && selections[0].target.kind === 'layer'

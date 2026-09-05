@@ -177,18 +177,31 @@ export const SCENE_FIELDS: FieldSpec[] = [
 ];
 
 /** a 2D camera keyframe's own fields (`cam2dKey` in `schema.ts`) — used by
- *  the Camera/3D-Camera keyframe-list editor, not the generic field form. */
+ *  the Camera/3D-Camera keyframe-list editor, not the generic field form.
+ *  `at` is labelled "(frame)" here even though the manifest stores SECONDS
+ *  (B-061, `docs/BUGS.md` — open, NOT fixed by this pass; out of this
+ *  phase's own scope, which is B-059 specifically) — left as-is deliberately
+ *  rather than smuggling in an unrelated one-word fix under a different
+ *  D-number. `ease` (D-159/B-059 — the field is now real and typed in
+ *  `schema.ts`, no longer silently stripped by the zod schema) is new: a raw
+ *  `[x1,y1,x2,y2]` JSON tuple, the same lighter-touch editor `pos`/`look`
+ *  below already use for a fixed-shape-but-not-a-simple-scalar field, rather
+ *  than a bespoke 4-handle bezier-curve widget — completing B-059's own
+ *  proposed fix ("expose it as a real control in the Inspector's existing
+ *  camera keyframe editor"). */
 export const CAM2D_KEY_FIELDS: FieldSpec[] = [
   { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
   { key: 'x', label: 'X', kind: 'number', group: 'layout' },
   { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
   { key: 'zoom', label: 'Zoom', kind: 'number', group: 'layout' },
+  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
 ];
 
 export const CAM3D_KEY_FIELDS: FieldSpec[] = [
   { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
   { key: 'pos', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
   { key: 'look', label: 'Look at [x,y,z]', kind: 'json', group: 'layout' },
+  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
 ];
 
 /** Which manifest field(s) a canvas DRAG writes for a primitive's `use:`
@@ -271,4 +284,29 @@ export const LAYER_TRANSFORM_FIELDS: FieldSpec[] = [
   { key: 'opacity', label: 'Opacity', kind: 'number', group: 'fill' },
   { key: 'clipWidth', label: 'Clip width', kind: 'number', group: 'layout' },
   { key: 'clipHeight', label: 'Clip height', kind: 'number', group: 'layout' },
+];
+
+/** D-159, Phase 4's per-layer transform keyframes (`schema.ts`'s
+ *  `transformKey`, on `layer.transform.keys`) — one keyframe row's own
+ *  fields, the layer-transform counterpart to `CAM2D_KEY_FIELDS` above.
+ *  `InspectorPanel.tsx` renders these through the SAME generalized
+ *  `KeyframeList` component the camera keyframe editor already uses (add/
+ *  remove/edit rows for a small flat shape), not a third bespoke editor —
+ *  see that file's own doc comment. Labelled "At (s)" (not "(frame)",
+ *  unlike `CAM2D_KEY_FIELDS` — B-061 is a pre-existing, separately-tracked
+ *  mislabel on the camera fields this pass deliberately doesn't touch; this
+ *  is a NEW field group and gets the correct unit label from the start).
+ *  Every numeric field here is a DELTA on top of the static
+ *  `LAYER_TRANSFORM_FIELDS` field of the same name (see `schema.ts`'s
+ *  `layerTransform` doc comment for the full "why additive, uniformly
+ *  across all five fields" reasoning) — labelled "delta" so that relation
+ *  is visible in the Inspector, not just in a code comment. */
+export const LAYER_TRANSFORM_KEY_FIELDS: FieldSpec[] = [
+  { key: 'at', label: 'At (s)', kind: 'number', group: 'timing' },
+  { key: 'x', label: 'X delta', kind: 'number', group: 'layout' },
+  { key: 'y', label: 'Y delta', kind: 'number', group: 'layout' },
+  { key: 'scale', label: 'Scale delta', kind: 'number', group: 'layout' },
+  { key: 'rot', label: 'Rotation delta (deg)', kind: 'number', group: 'layout' },
+  { key: 'opacity', label: 'Opacity delta', kind: 'number', group: 'fill' },
+  { key: 'ease', label: 'Ease [x1,y1,x2,y2]', kind: 'json', group: 'timing' },
 ];
