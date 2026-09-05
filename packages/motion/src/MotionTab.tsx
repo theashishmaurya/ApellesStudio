@@ -1,19 +1,24 @@
 /**
  * @chroma/motion — the Motion tab (D-039 roadmap "Motion tab MVP", D-046;
- * layer list D-081).
+ * layer list D-081; catalog D-151).
  *
  * Wires the already-functional `@chroma/motion-engine` Remotion engine into
  * a real tab: a `@remotion/player` preview (`MotionPreview`) of whatever
  * manifest is loaded, a real scene/layer list (`LayerList`, D-081 — Phase 1
  * of `docs/notes/global-inspector.md`), a real property panel bound to that
- * selection (`InspectorPanel`, D-099 — Phase 2), and a JSON manifest editor
+ * selection (`InspectorPanel`, D-099 — Phase 2), a browsable primitive
+ * Catalog that inserts a new layer into the selected scene (`CatalogPanel`,
+ * D-151 — the first way to CREATE anything in this tab without hand-typing
+ * JSON; see `docs/notes/motion-tab-audit.md`), and a JSON manifest editor
  * (`ManifestEditor`) that live-updates the preview and can save / render it.
  * Selecting a row in the layer list seeks the player to that scene's start
  * frame AND drives the Inspector's fields — both real, standalone-useful
  * pieces of navigation/editing, not just bookkeeping for something later.
- * The three right-hand panes (layer list / Inspector / manifest editor) are
- * real resizable panels (`resizable.tsx`, D-099) per the standing CLAUDE.md
- * rule that a resizable-by-nature pane must actually be resizable.
+ * The three right-hand panes (Layers/Catalog sidebar / Inspector / manifest
+ * editor) are real resizable panels (`resizable.tsx`, D-099) per the
+ * standing CLAUDE.md rule that a resizable-by-nature pane must actually be
+ * resizable. Layers and Catalog share the sidebar pane as two tabs rather
+ * than the Catalog taking a fifth column (D-151 — see the pane's own note).
  * Persistence and rendering are project-scoped
  * (`app/src-tauri/src/chroma/motion.rs`), so — same contract `@chroma/
  * editor`'s `EditorTab` already uses — a project must be open.
@@ -31,14 +36,21 @@ import { Button } from './Button';
 import { MotionPreview } from './MotionPreview';
 import { LayerList, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
+import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
+import { addLayer } from './manifestEdit';
+import type { PrimitiveUse } from './catalog';
 import { useMotionManifest } from './useMotionManifest';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
+
+/** the two views the left sidebar pane switches between (D-151) */
+type SidebarTab = 'layers' | 'catalog';
 
 export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
   const m = useMotionManifest(onRendered);
   const playerRef = useRef<PlayerRef>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('layers');
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.projectOpen`) and nothing else, so it can no
@@ -97,6 +109,26 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     if (next) m.setText(JSON.stringify(next, null, 2));
   };
 
+  // D-151: which scene a catalog insert lands in — the selected scene, or
+  // the last one when nothing is selected. The schema guarantees at least
+  // one scene (`scenes.min(1)`), so a loaded manifest always has a real
+  // target; `?? null` covers only the moment before one is parsed.
+  const targetSceneIndex = selection?.sceneIndex ?? (m.manifest ? m.manifest.scenes.length - 1 : null);
+  const targetSceneId =
+    m.manifest && targetSceneIndex !== null ? (m.manifest.scenes[targetSceneIndex]?.id ?? null) : null;
+
+  // D-151: insert a catalog primitive, then select it — so the Inspector is
+  // immediately showing the new layer's fields and the player has jumped to
+  // its scene. Writes back through the same `setText` path every other edit
+  // in this tab uses (see `onInspectorChange`), keeping the manifest text
+  // the one place the document is serialized.
+  const onCatalogAdd = (use: PrimitiveUse) => {
+    if (!m.manifest || targetSceneIndex === null) return;
+    const { manifest: next, selection: added } = addLayer(m.manifest, targetSceneIndex, use);
+    m.setText(JSON.stringify(next, null, 2));
+    if (added) onSelect(added);
+  };
+
   return (
     <div className="h-full w-full min-h-0 bg-bg-primary">
       <PanelGroup>
@@ -104,9 +136,38 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
           <MotionPreview manifest={m.manifest} playerRef={playerRef} />
         </ResizablePanel>
         <ResizableHandle />
-        <ResizablePanel defaultSize={180} minSize={120} maxSize={320}>
-          <div className="h-full border-l border-border-color">
-            {m.manifest && <LayerList manifest={m.manifest} selection={selection} onSelect={onSelect} />}
+        {/* D-151: Layers and Catalog share one pane rather than the Catalog
+            claiming a fifth — four panes across already leaves the sidebar at
+            180px, and a catalog with real descriptions needs more than a
+            slice of that. They also belong together: the Catalog is where a
+            layer comes FROM and the layer list is where it lands, so
+            "add here → appears there" reads as one place. The pane's own
+            max width goes up to 420 to give the catalog room, and it stays
+            fully resizable per the standing CLAUDE.md rule. */}
+        <ResizablePanel defaultSize={220} minSize={140} maxSize={420}>
+          <div className="h-full border-l border-border-color flex flex-col min-h-0">
+            <div className="shrink-0 flex border-b border-border-color">
+              {(['layers', 'catalog'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={[
+                    'flex-1 h-7 text-[11px] capitalize transition-colors',
+                    sidebarTab === t
+                      ? 'text-text-primary border-b-2 border-accent'
+                      : 'text-text-secondary hover:text-text-primary border-b-2 border-transparent',
+                  ].join(' ')}
+                  onClick={() => setSidebarTab(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 min-h-0">
+              {sidebarTab === 'layers'
+                ? m.manifest && <LayerList manifest={m.manifest} selection={selection} onSelect={onSelect} />
+                : <CatalogPanel targetSceneId={targetSceneId} onAdd={onCatalogAdd} />}
+            </div>
           </div>
         </ResizablePanel>
         <ResizableHandle />

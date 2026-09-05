@@ -16,6 +16,25 @@ One or two lines per session. Detail lives in the decision it references.
   so instead of lying. 9 new tests (2 confirmed red against the old behaviour);
   `tsc`/`cargo check` state unchanged. Also filed: `closeProject` leaves the Rust
   `ProjectRef` stale — an adjacent hole this pass deliberately did not fix.
+- **2026-09-05** — **Motion tab audit + the Catalog (D-151).** Owner: *"map out
+  where we lag, have a Catalog Section where all our built catalog is there
+  which we can get on our current thing."* The audit
+  (`docs/notes/motion-tab-audit.md`, to `timeline-feature-audit.md`'s rigor bar)
+  found the tab **could edit everything and create nothing** — `manifestEdit.ts`
+  had nine functions, all readers or field-setters, and adding a layer meant
+  hand-typing JSON including `use` strings and required props the UI never
+  listed. Built the fix: `catalog.ts` (all 8 primitives, exhaustive against the
+  engine's own zod enum so a new primitive is a `tsc` error until catalogued,
+  plus schema-valid default fragments), `addLayer` in `manifestEdit.ts`
+  (immutable, routes 3D primitives into `scene3d.children` and creates that
+  container with a valid camera when absent, returns the new `Selection` so the
+  Inspector opens on it), and `CatalogPanel.tsx` as a second tab in the sidebar
+  pane. Glyphs not live thumbnails, argued in D-151 (three primitives need a
+  WebGL context each). 18 → 57 tests, fragments asserted against the real
+  `manifestSchema` and mutation-checked; zero new `tsc` errors. Also filed
+  **B-059** (camera `ease` is supported by the engine and silently stripped by
+  the schema), found by fact-checking a wrong draft claim. Next priority named,
+  not built: on-canvas manipulation.
 - **2026-09-05** — **`chroma-project` real extraction (D-148) — Wave 1–3 of the
   crate migration is done.** `chroma/project.rs` L1–1638 (the manifest, every
   schema migration, the media pool + bins, the D-070 unified clip identity and

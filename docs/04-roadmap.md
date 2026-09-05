@@ -825,6 +825,56 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     carried forward unexamined), a ripple-insert of a pair onto a
     non-sync-locked audio track.
 
+16. **Motion tab — a real authoring model** — owner, 2026-09-05: *"motion is not
+    loaded lets now work on out motion thingy, [m]ap out where we lag, have a
+    Catalog Section where all our built catalog is there which we can get on our
+    current thing."* **A new item rather than an addendum to item 7**, argued:
+    item 7 (Global Inspector) is finished and struck through, and burying a live
+    workstream inside a closed item hides it; the Motion tab has never had a
+    dedicated roadmap item the way Edit-tab multi-track has item 6, and that
+    absence is itself part of what "where we lag" turned out to mean. Full audit
+    against the Edit tab, every claim cited to a real file/line or a named grep:
+    **`docs/notes/motion-tab-audit.md`** (2026-09-05).
+    Real finding, and the reason the Catalog was asked for: **the tab could edit
+    everything and create nothing** — no `addLayer`/`addScene` existed anywhere
+    (grep: 0 hits), so every new layer meant hand-typing JSON, including `use`
+    strings and per-primitive required props the UI never listed. Also confirmed
+    **no dead primitives** (all 8 wired in schema + registry + a demo each) and
+    turned up **B-059** (the engine supports per-camera-key bezier `ease`; the
+    schema silently strips it) while fact-checking a wrong draft claim.
+    The audit's own priority order, which is this item's queue:
+    - ~~**1. A creation path — the Catalog + `addLayer`**~~ — **done, D-151
+      (2026-09-05).** `catalog.ts` (exhaustive against the engine's zod enum via
+      `Record<Layer['use'], …>`, so a new primitive is a `tsc` error until it is
+      catalogued) + `addLayer` in `manifestEdit.ts` (immutable, 3D primitives
+      routed into `scene3d.children` with the container created when absent,
+      returns the `Selection` so the Inspector opens on the new layer) +
+      `CatalogPanel.tsx`, a second tab in the sidebar pane. 18 → 57 tests,
+      fragments validated against the real `manifestSchema` and mutation-checked.
+      Glyphs rather than live thumbnails — argued in D-151, not conceded: three
+      of the eight primitives need a live WebGL context each. **Not verified in
+      the real Tauri window** (sandboxed worktree) — an honest gap.
+    - **2. On-canvas manipulation** — the next thing a user reaches for once
+      layers can be created; typing `x: 180` into a number field is the sharpest
+      remaining friction. Needs a composition-coords ↔ screen-coords mapping over
+      `MotionPreview`'s `<Player>`, then drag → `setLayerField('x'|'y')`. D-136
+      solved the analogous Edit-tab problem and is the reference.
+    - **3. A Motion MCP surface** — the AI-native gap, and the sharpest one:
+      `mcp/server.py` has 45 tools and **zero** touch Motion, so it is the one tab
+      an agent cannot use at all. Cheap now that D-151's ops exist —
+      `get_manifest`/`add_layer`/`set_layer_field`/`render_manifest` wrap tested
+      pure functions instead of reimplementing manifest surgery in Python.
+    - **4. Undo/redo for Motion** — D-052 deferred it for a real reason ("no
+      natural edit-history unit"); with `addLayer`/`setLayerField` as discrete
+      named immutable ops that unit now exists. Push before/after `Manifest`
+      snapshots into `@chroma/history`, as `useEditorTimelineStore.applyOp` does.
+    - **5. A scene/layer timeline UI** — the biggest visible gap vs. both After
+      Effects and this repo's own Edit tab, and the largest build. After #2, so it
+      can reuse those drag mechanics rather than inventing a second set.
+    - **6. Lower-urgency, mutually independent** — multi-select, delete/duplicate,
+      multi-manifest per project (D-046's deliberate one-per-project limit; wait
+      for a real need), and **B-059**'s camera easing, which is nearly free.
+
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
 **→ The execution map is `docs/notes/crate-extraction-plan.md` (D-141, 2026-09-05).**

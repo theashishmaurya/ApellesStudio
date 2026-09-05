@@ -11644,5 +11644,149 @@ all three sibling worktrees (`motion-audit-catalog`, `motion-visual-builder-rese
 `motion-no-project-fix`), none of which had committed a higher number at the time of this
 commit.
 
+---
+
+## D-151 — The Motion tab audit, and the Catalog: the tab could edit everything and create nothing
+
+**audited + built (2026-09-05).** Owner, tonight: *"motion is not loaded lets
+now work on out motion thingy, [m]ap out where we lag, have a Catalog Section
+where all our built catalog is there which we can get on our current thing."*
+Two deliverables, done in that order on purpose — the audit scoped the build
+rather than running beside it.
+
+### The audit, and its one real finding
+
+`docs/notes/motion-tab-audit.md`, written to the rigor bar
+`docs/notes/timeline-feature-audit.md` set: the actual code read and cited line
+by line, every "there is none" confirmed by a named `grep`, and the comparison
+anchored on the Edit tab in this same repo rather than on remembered claims
+about other tools.
+
+The finding that mattered: **the Motion tab has no creation path at all.**
+`manifestEdit.ts` — the whole manifest-mutation layer the Inspector is built on
+— exported nine functions, four readers and four field-writers on things that
+already exist, plus a JSON helper. `grep addLayer\|addScene\|insertLayer\|
+duplicate` over `packages/motion/src` returned **0 hits**. To put a text callout
+on screen the owner had to hand-type JSON into `ManifestEditor.tsx`'s textarea,
+including the exact `use` string — which nothing in the UI listed — and the
+per-primitive required props (`Matrix` needs `rows`/`cols`, `Graph` needs
+`nodes`/`edges`, `Layers` needs `items`), which nothing in the UI listed either.
+`propCatalog.ts` has held the complete verified field catalog for all 8
+primitives since D-099, but it is only consulted *after* a layer with a
+recognized `use` already exists. Pure chicken-and-egg: the tool's own knowledge
+of its primitives was unreachable until you had already done the hard part by
+hand.
+
+That is why the owner asked for a Catalog. "Show me what we've built so I can
+get it on our current thing" and "give me a way to add things" are the same
+request.
+
+**The pattern was already proven in-file and simply never extended.**
+`CameraKeyList`'s `+ Add keyframe` (`InspectorPanel.tsx` L287–293) constructs a
+default, appends it, and writes the new manifest back through `onChange` →
+`setText`. That is exactly the mechanism a catalog insert needs; it existed,
+worked, and had only ever been pointed at camera keyframes.
+
+**Two things the audit went looking for and did not find, said plainly rather
+than dressed up:** there is no dead primitive (all 8 manifest-addressable
+primitives are in both the schema enum and the registry and every one has a demo
+composition), and Motion's camera interpolation is not linear. Chasing that
+second wrong assumption turned up **B-059** instead: `Camera.tsx` has supported
+per-key bezier `ease` since it was written and `Video.tsx` spreads it through,
+but `cam2dKey` is a strict `z.object` while its sibling `layer` is
+`.passthrough()`, so zod silently strips `ease` from every manifest. Filed, not
+fixed — it belongs with the audit's own priority-6 item, not smuggled into this
+pass.
+
+### What was built, and the three real calls
+
+1. **`catalog.ts` — data + fragment construction, no JSX.** Typed
+   `Record<Layer['use'], CatalogEntry>`, where `Layer['use']` comes straight off
+   the engine's zod enum, so **adding a primitive to the schema without a
+   catalog row is a `tsc` error**, not a silently-missing row. That matters
+   because the audit had to do the "is everything wired" check by hand this
+   time; it should not need doing again. `defaultLayerFor` builds every literal
+   fresh per call — two `particleflow` inserts sharing one `from: [-6,0,0]`
+   array would make an Inspector edit to one silently change the other.
+
+2. **`addLayer` in `manifestEdit.ts` — extended, not invented.** Same immutable
+   `structuredClone` contract and same defensive out-of-range floor as every
+   `set*` beside it. Placement is decided by the catalog rather than the caller:
+   a 3D primitive is a three.js object that only means anything under
+   `<Scene3D>`, so it goes into `scene.scene3d.children`, **creating the
+   container with a minimum valid camera when the scene has none** (`cam3dKey[]`
+   is `.min(1)`, so an empty container would not validate). It returns the new
+   `Manifest` *and* the `Selection` pointing at what was added — a bare
+   `Manifest` like the `set*` functions would throw that index away and force
+   the caller to re-derive it, and the point is that the Inspector shows the new
+   layer's fields with no second click.
+
+3. **Glyphs, not live thumbnails — a real call, on real grounds.** A rendered
+   preview per row is the ideal and was rejected for this pass: three of the
+   eight only render inside a `@remotion/three` `<ThreeCanvas>`, i.e. a live
+   WebGL context each, against a browser cap commonly 8–16 that
+   `MotionPreview`'s player already draws from — eight always-mounted previews
+   would sit on that ceiling permanently for a panel that is idle most of the
+   time. `@remotion/player` also exposes no cheap render-one-still API to this
+   package; the still renderer is the Node/CLI path. So: hand-drawn inline SVG
+   showing each primitive's actual shape, deterministic, `currentColor` so it
+   tracks the theme, zero runtime cost. A pre-rendered-stills pass generated
+   from the `*Demo` compositions is the honest future upgrade and is named as
+   such rather than pretended away.
+
+**Where it lives:** Layers and Catalog share the sidebar pane as two tabs rather
+than the Catalog claiming a fifth column. Four panes across already left the
+sidebar at 180px and a catalog with real descriptions needs more than a slice of
+that; they also belong together, since the Catalog is where a layer comes *from*
+and the layer list is where it lands. The pane's max width goes 320 → 420 and it
+stays fully resizable per the standing CLAUDE.md rule.
+
+**Deliberately not built:** on-canvas manipulation — the audit's own next
+priority, and named there as such rather than half-started here.
+
+### Verification
+
+`packages/motion` `tsc` clean. `app` `tsc` diffed before/after: **64 errors both
+ways, byte-identical — zero new** (the established baseline, re-verified
+directly against `main` at merge time — not the 143 a worktree-symlink
+artifact has reported for this same baseline more than once tonight).
+`packages/motion-engine`'s 2 pre-existing `Scene3D.tsx` DOM-lib errors
+unchanged. Tests 18 → **57** (39 new), all passing.
+
+Fragments are asserted against the **engine's own `manifestSchema`**, not
+hand-checked shapes. The honest limit of that, recorded in the test file rather
+than glossed: `layer` is `.passthrough()`, so zod waves per-primitive props
+through and a `matrix` missing its `rows`/`cols` would be schema-valid and
+render nothing — which is why a separate explicit required-props test exists.
+Both guards were **mutation-checked**: drop `rows`/`cols` ⇒ the required-props
+test fails; share a `from` array between calls ⇒ the aliasing test fails; make
+`at` a string ⇒ both schema tests fail. Insertion is also tested against
+`sample.ts`, the engine's own real multi-scene manifest, for the
+D-099 backward-compatibility bar, including the `JSON.stringify` →
+`JSON.parse` round trip `MotionTab` actually applies edits through.
+
+**Not verified live in the real app window** — this pass ran in a sandboxed
+worktree with no ability to launch the Tauri shell, so the panel's actual
+on-screen rendering and a real click-to-insert are unconfirmed. Stated as a gap
+rather than implied working.
+
+Number: written as D-150 against a main at D-149, and **renumbered to D-151 at
+commit time** — the re-check immediately before committing found
+`fork/motion-no-project-fix` had landed on main as D-150 (carrying its own
+B-058) while this pass was running. Taking the next free number rather than
+colliding is the same move D-147 made when D-146 landed underneath it. This
+entry's bug was renumbered to **B-059** for the same reason.
+
+**Real overlap to know about when this branch is merged:** that fork touched
+`MotionTab.tsx` and `useMotionManifest.ts`, the same two files this pass edits.
+The changes sit in different parts — theirs rewrite the `no-project`/`error`
+early-return blocks and move readiness onto a `motionProjectStore` signal, this
+one edits the header comment, the imports, and the render JSX below them — so
+the two are complementary, not contradictory. Expect at most a small
+adjacent-line conflict where both added a line near the `useState` block. There
+is no semantic conflict between "the tab knows when a project is open" and "the
+tab can insert a primitive," and this branch was deliberately **not** rebased
+onto that change, per this pass's own brief.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
