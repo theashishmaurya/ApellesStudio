@@ -25,8 +25,17 @@
  * itself (the STABLE, committed value) is what the overlay reads to work
  * out where a drag starts from — see `MotionCanvasOverlay`'s own doc
  * comment for why those must not be the same value.
+ *
+ * D-157 (Phase 2): `measureApiRef` is an optional imperative escape hatch —
+ * the same shape `playerRef` already is — so `MotionTab.tsx`'s "snap to
+ * layer" action (triggered from the Inspector, which has no DOM access of
+ * its own to the live player) can measure a target layer's real screen rect
+ * and the current camera world-map on demand, ONE-OFF, without this
+ * component needing to know anything about snapping itself. Uses the same
+ * `layerMeasure.ts` helpers `MotionCanvasOverlay.tsx`'s own selection
+ * outline already shares — one measurement technique, three consumers.
  */
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { Video } from '@chroma/motion-engine/src/engine/Video';
@@ -35,11 +44,26 @@ import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
 import { MotionCanvasOverlay } from './MotionCanvasOverlay';
+import { measureWorldMap, type RectLike, type WorldMap } from './canvasGeometry';
+import { measureLayerScreenBox, findWorldElement } from './layerMeasure';
+
+/** D-157's imperative measurement escape hatch — see the module doc comment. */
+export interface MotionCanvasMeasureApi {
+  /** the union of `sceneIndex.layerIndex`'s `[data-motion-box]` descendants,
+   *  in screen/viewport coordinates — `null` if that layer isn't in the DOM
+   *  right now (wrong scene under the playhead, out of range, not yet
+   *  mounted). */
+  layerScreenBox: (sceneIndex: number, layerIndex: number) => RectLike | null;
+  /** the current screen↔world map, measured fresh off `[data-motion-world]`
+   *  — `null` if the world container isn't in the DOM (no scene mounted). */
+  worldMap: () => WorldMap | null;
+}
 
 export function MotionPreview({
   manifest,
   transientManifest = null,
   playerRef,
+  measureApiRef,
   selection = null,
   onSelect,
   onTransientChange,
@@ -50,6 +74,10 @@ export function MotionPreview({
   /** 0b's in-flight override, preferred for what's actually shown while dragging. */
   transientManifest?: Manifest | null;
   playerRef?: RefObject<PlayerRef | null>;
+  /** D-157 — see `MotionCanvasMeasureApi`'s own doc comment above. Optional:
+   *  a caller with no snap-style need (e.g. a future standalone preview
+   *  embed) just omits it. */
+  measureApiRef?: RefObject<MotionCanvasMeasureApi | null>;
   selection?: Selection | null;
   /** Required together (D-156): omit all four to use this component with no
    *  on-canvas interaction at all (the overlay isn't rendered). */
@@ -60,6 +88,29 @@ export function MotionPreview({
   const containerRef = useRef<HTMLDivElement>(null);
   const localPlayerRef = useRef<PlayerRef>(null);
   const effectivePlayerRef = playerRef ?? localPlayerRef;
+
+  // D-157 — populate the measure API once (and again whenever the manifest
+  // this scale calc depends on changes) rather than rebuilding it on every
+  // render; a `ref` mutation like this deliberately does not trigger a
+  // re-render of its own; nothing here reads React state.
+  useEffect(() => {
+    if (!measureApiRef) return;
+    measureApiRef.current = {
+      layerScreenBox: (sceneIndex, layerIndex) => {
+        const container = containerRef.current;
+        return container ? measureLayerScreenBox(container, sceneIndex, layerIndex) : null;
+      },
+      worldMap: () => {
+        const container = containerRef.current;
+        if (!container || !manifest) return null;
+        const worldEl = findWorldElement(container);
+        return worldEl ? measureWorldMap(worldEl.getBoundingClientRect(), manifest.width) : null;
+      },
+    };
+    return () => {
+      if (measureApiRef) measureApiRef.current = null;
+    };
+  }, [measureApiRef, manifest]);
 
   const shown = transientManifest ?? manifest;
   if (!shown) {

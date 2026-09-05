@@ -47,12 +47,12 @@ import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import { Button } from './Button';
-import { MotionPreview } from './MotionPreview';
+import { MotionPreview, type MotionCanvasMeasureApi } from './MotionPreview';
 import { LayerList, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
-import { addLayer } from './manifestEdit';
+import { addLayer, snapEmphasisToRect } from './manifestEdit';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest } from './useMotionManifest';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
@@ -85,6 +85,10 @@ function labelForSelection(selection: Selection | null): string {
 export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
   const m = useMotionManifest(onRendered);
   const playerRef = useRef<PlayerRef>(null);
+  // D-157 — the preview's imperative measurement escape hatch (see
+  // `MotionPreview.tsx`'s own doc comment), used ONLY by `onSnapToLayer`
+  // below: the Inspector has no DOM access of its own to the live player.
+  const measureApiRef = useRef<MotionCanvasMeasureApi | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('layers');
   // D-156, Phase 0b — a Phase 1 drag's in-flight preview override; `null`
@@ -172,6 +176,27 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     if (added) onSelect(added);
   };
 
+  // D-157 — "snap to layer": the Inspector's own target-picker (rendered
+  // only when the current selection is an `emphasis` layer, `InspectorPanel`
+  // §"Snap to layer") already knows WHICH other layer in the scene to snap
+  // to (`targetLayerIndex`); this is the part it can't do itself — measuring
+  // that target's real screen rect and the current camera world-map, both
+  // of which require live DOM access the Inspector doesn't have (see
+  // `MotionPreview.tsx`'s own doc comment on `measureApiRef`). A `null` from
+  // either measurement (the target layer isn't in the DOM right now — wrong
+  // scene under the playhead, or hasn't mounted yet) is a real, honest
+  // no-op rather than a crash or a wrong guess: the owner sees nothing
+  // happen, which is correct, since there is nothing real to measure yet.
+  const onSnapToLayer = (targetLayerIndex: number) => {
+    if (!m.manifest || !selection) return;
+    const api = measureApiRef.current;
+    if (!api) return;
+    const targetRect = api.layerScreenBox(selection.sceneIndex, targetLayerIndex);
+    const map = api.worldMap();
+    if (!targetRect || !map) return;
+    m.commit(snapEmphasisToRect(m.manifest, selection, targetRect, map), 'Snap to layer');
+  };
+
   return (
     <div className="h-full w-full min-h-0 bg-bg-primary">
       <PanelGroup>
@@ -180,6 +205,7 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             manifest={m.manifest}
             transientManifest={transientManifest}
             playerRef={playerRef}
+            measureApiRef={measureApiRef}
             selection={selection}
             onSelect={onSelect}
             onTransientChange={setTransientManifest}
@@ -224,7 +250,14 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
         <ResizableHandle />
         <ResizablePanel defaultSize={280} minSize={200} maxSize={480}>
           <div className="h-full border-l border-border-color">
-            {m.manifest && <InspectorPanel manifest={m.manifest} selection={selection} onChange={onInspectorChange} />}
+            {m.manifest && (
+              <InspectorPanel
+                manifest={m.manifest}
+                selection={selection}
+                onChange={onInspectorChange}
+                onSnapToLayer={onSnapToLayer}
+              />
+            )}
           </div>
         </ResizablePanel>
         <ResizableHandle />

@@ -37,7 +37,7 @@
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-import type { Selection } from './LayerList';
+import { layerLabel, type Selection } from './LayerList';
 import {
   selectedScene,
   selectedLayer,
@@ -47,9 +47,17 @@ import {
   setSceneField,
   setCamera2d,
   setCamera3d,
+  setLayerTransformField,
   parseJsonField,
 } from './manifestEdit';
-import { fieldsForPrimitive, SCENE_FIELDS, CAM2D_KEY_FIELDS, CAM3D_KEY_FIELDS, type FieldSpec } from './propCatalog';
+import {
+  fieldsForPrimitive,
+  SCENE_FIELDS,
+  CAM2D_KEY_FIELDS,
+  CAM3D_KEY_FIELDS,
+  LAYER_TRANSFORM_FIELDS,
+  type FieldSpec,
+} from './propCatalog';
 
 const GROUP_LABEL: Record<FieldSpec['group'], string> = {
   source: 'Source',
@@ -340,14 +348,109 @@ function CameraKeyList<K extends Cam2dKey | Cam3dKey>({
   );
 }
 
+/** D-157, Phase 2's layer-transform wrapper — a generic field group every
+ *  2D layer gets, rendered through its own small sub-editor (rather than
+ *  folded into `FieldGroup`/`fieldsForPrimitive`) because it reads/writes a
+ *  NESTED `layer.transform.<key>`, not a top-level layer field
+ *  (`manifestEdit.ts`'s `setLayerTransformField`). Absent `transform`
+ *  (the common case — every field in it is optional, so "absent" and "every
+ *  field empty" already mean the exact same thing) shows every field blank,
+ *  same "unset, not a guessed default" convention `FieldControl` already
+ *  uses elsewhere in this file. */
+function TransformFieldGroup({
+  raw,
+  onCommit,
+}: {
+  raw: Record<string, unknown>;
+  onCommit: (key: string, value: unknown) => void;
+}) {
+  return (
+    <InspectorSection label="Transform">
+      {LAYER_TRANSFORM_FIELDS.map((spec) => (
+        <FieldControl key={spec.key} spec={spec} value={raw[spec.key]} onCommit={(v) => onCommit(spec.key, v)} />
+      ))}
+    </InspectorSection>
+  );
+}
+
+/** D-157's "snap to layer" — the direct fix for the owner's original
+ *  complaint (a misplaced `emphasis` scribble box), scoped exactly as the
+ *  research doc's §3d put it: "a button, not a subsystem." Rendered ONLY
+ *  when the current selection is an `emphasis` layer (the one primitive
+ *  with a `box` worth snapping). This component owns nothing but a small
+ *  target-picker's local `useState` — the actual measurement + write
+ *  happens in `MotionTab.tsx`'s `onSnapToLayer` (which has the DOM access
+ *  this panel deliberately doesn't).
+ *
+ *  Keyed by the caller on `${sceneIndex}.${layerIndex}` (see
+ *  `InspectorPanel`'s own render below) so switching between two different
+ *  `emphasis` layers remounts this control instead of carrying a stale
+ *  `targetIndex` from the PREVIOUS selection's sibling list into the new
+ *  one. */
+function SnapToLayerControl({
+  manifest,
+  selection,
+  onSnap,
+}: {
+  manifest: Manifest;
+  selection: Selection;
+  onSnap: (targetLayerIndex: number) => void;
+}) {
+  const scene = selectedScene(manifest, selection.sceneIndex);
+  const layers = scene?.layers ?? [];
+  const selfIndex = selection.target.kind === 'layer' ? selection.target.index : -1;
+  const options = layers.map((l, i) => ({ i, label: layerLabel(l) })).filter((o) => o.i !== selfIndex);
+  const [targetIndex, setTargetIndex] = useState<number | null>(options[0]?.i ?? null);
+
+  if (options.length === 0) {
+    return (
+      <InspectorSection label="Snap to layer">
+        <p className="text-[10px] text-text-secondary">No other layers in this scene to snap to.</p>
+      </InspectorSection>
+    );
+  }
+
+  return (
+    <InspectorSection label="Snap to layer">
+      <div className="flex flex-col gap-1.5">
+        <select
+          className={inputBase}
+          value={targetIndex ?? ''}
+          onChange={(e) => setTargetIndex(e.target.value === '' ? null : Number(e.target.value))}
+        >
+          {options.map((o) => (
+            <option key={o.i} value={o.i}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={targetIndex === null}
+          className="h-7 rounded border border-border-color text-[11px] text-text-primary hover:border-accent hover:text-accent disabled:opacity-40"
+          onClick={() => targetIndex !== null && onSnap(targetIndex)}
+        >
+          Snap box to selected layer
+        </button>
+      </div>
+    </InspectorSection>
+  );
+}
+
 export function InspectorPanel({
   manifest,
   selection,
   onChange,
+  onSnapToLayer,
 }: {
   manifest: Manifest;
   selection: Selection | null;
   onChange: (next: Manifest) => void;
+  /** D-157 — see `SnapToLayerControl`'s own doc comment. Optional: a caller
+   *  with no live-DOM measurement access (a future non-interactive Inspector
+   *  embed, say) just omits it and the emphasis "Snap to layer" section
+   *  simply doesn't render. */
+  onSnapToLayer?: (targetLayerIndex: number) => void;
 }) {
   if (!selection) {
     return <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>;
@@ -403,20 +506,39 @@ export function InspectorPanel({
   const found = selectedLayer(manifest, selection);
   if (!found) return <StaleNotice />;
   const fields = fieldsForPrimitive(found.use);
-  if (!fields) {
-    return (
-      <InspectorEmptyState>
-        No editable fields recognized for "{found.use}" — edit its manifest JSON directly in the editor pane.
-      </InspectorEmptyState>
-    );
-  }
+  // D-157: the layer-transform wrapper (`schema.ts`'s `layerTransform`) is
+  // ONLY applied by `motion-engine`'s `renderLayers` for 2D `scene.layers` —
+  // `scene3d.children` render through a completely different path
+  // (`Video.tsx`'s `ThreeD`) that never reads it, so it's offered here only
+  // for a real `{kind:'layer'}` target, never a `scene3d-child` one.
+  const isLayer2d = target.kind === 'layer';
   return (
-    <div className="h-full w-full overflow-y-auto p-3">
-      <FieldGroup
-        fields={fields}
-        raw={found.raw}
-        onCommit={(key, value) => onChange(setLayerField(manifest, selection, key, value))}
-      />
+    <div className="h-full w-full overflow-y-auto p-3 flex flex-col gap-4">
+      {fields ? (
+        <FieldGroup
+          fields={fields}
+          raw={found.raw}
+          onCommit={(key, value) => onChange(setLayerField(manifest, selection, key, value))}
+        />
+      ) : (
+        <InspectorEmptyState>
+          No editable fields recognized for "{found.use}" — edit its manifest JSON directly in the editor pane.
+        </InspectorEmptyState>
+      )}
+      {isLayer2d && (
+        <TransformFieldGroup
+          raw={(found.raw.transform as Record<string, unknown>) ?? {}}
+          onCommit={(key, value) => onChange(setLayerTransformField(manifest, selection, key, value))}
+        />
+      )}
+      {isLayer2d && found.use === 'emphasis' && onSnapToLayer && (
+        <SnapToLayerControl
+          key={`${selection.sceneIndex}.${target.kind === 'layer' ? target.index : ''}`}
+          manifest={manifest}
+          selection={selection}
+          onSnap={onSnapToLayer}
+        />
+      )}
     </div>
   );
 }
