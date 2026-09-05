@@ -14019,3 +14019,118 @@ in the main repo — **D-164** and **B-062** are both free of any concurrent col
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-165 — A standalone Motion-tab browser harness (`app/motion-harness.html`), and the first real, live, human-eyes-equivalent verification of the whole D-150–D-164 initiative
+
+**decided + built (2026-09-05).** Every one of D-150 through D-164's fifteen decision entries
+disclosed the identical gap: "not seen in the assembled Tauri app — this sandbox cannot launch
+it." D-142 already solved exactly this problem for the Edit tab's own pointer-gesture-heavy
+surface (`TimelinePane`) by promoting a scratch-and-delete harness (`app/harness.html` +
+`app/src/harness-main.tsx`) to a permanent, checked-in one. This entry is the direct Motion-tab
+sibling of that pattern, applied to `MotionTab` instead of `TimelinePane` — and, unlike D-142's
+own first pass, this one was actually driven live over CDP in this same session, not just built
+and left for a future pass to try.
+
+**What was built.** `app/motion-harness.html` + `app/src/motion-harness-main.tsx` — same shape
+D-142 established: mount one real component (`MotionTab`, `@chroma/motion`'s own real export)
+standalone in a plain Vite page, stub `window.__TAURI_INTERNALS__.invoke` for exactly the three
+commands this tab calls (`chroma_motion_get_manifest`/`_save_manifest`/`_render`,
+`packages/motion/src/manifestIO.ts`), push `useMotionProjectStore.setProjectOpen(true)` +
+a seeded manifest directly into the store (the same store D-150/B-058 built specifically so
+this tab's readiness is never inferred from a failed read), and expose a small
+`window.__chromaMotionHarness` control surface (`seed`/`reset`/`setStrictMode`/live
+`manifest`/`savedManifest` getters) mirroring `__chromaHarness`'s own shape.
+
+**The fixture: `packages/motion-engine`'s own `sample` manifest, not reinvented, plus three
+additions.** `sample` (`sample.ts`) is the exact manifest every byte-for-byte `remotion still`
+check across D-155 through D-164 was verified against — importing it rather than writing a new
+one means the harness is seeded with something already known-correct at the engine level.
+Three additions make one seed exercise everything this initiative built: an authored,
+non-default `ease` (`[0.34, 1.56, 0.64, 1]`, a real overshoot curve) on the "hook" scene's
+zoom-in camera key (a curve-editor target); `transform.keys` on the "hook" scene's text layer
+(a keyframe-timeline row, D-159/D-162); and `transform.keys` on the "stack" scene's `layers`
+primitive (a SECOND keyed row, so the timeline has more than one lane to prove D-162's per-row
+separation is real, not a single-row coincidence).
+
+**Live verification actually run, this session, in a real Chromium tab (`mcp__claude-in-chrome`),
+not deferred:**
+
+1. Started `app`'s plain `vite` dev server (port 4174, no Tauri needed), opened
+   `motion-harness.html`. Mounted cleanly — no "No project open" false state (B-058 confirmed
+   fixed against a real store transition, not just its own unit tests), `LayerList` showed
+   correct per-row key-count badges (Camera 3, text 2, layers 2, 3D Camera 2 — D-160) and the
+   keyframe timeline rendered 4 real rows in the correct scene→camera→layer order (D-162) with
+   diamonds at the correct time positions — confirmed by zooming out and finding the "space"
+   scene's 3D-camera keys exactly where the frame math predicted (initially off-screen at the
+   default zoom, appearing correctly once zoomed out — the math was right, the first look was
+   just zoomed too far in).
+2. Clicked the "text" layer in `LayerList` → the canvas overlay drew a real selection outline
+   around it (D-156) and the Inspector populated with real typed fields, including separate
+   X/Y number inputs (D-099) — not a raw JSON blob.
+3. Dragged on the canvas → a layer's box moved live, the manifest editor's header flipped to
+   "Scene manifest · unsaved" (the real undo-wired `commit`, D-155), and the Inspector's
+   `Box` field showed separate X/Y/W/H number inputs (D-154's `vec` kind) with the dragged
+   values reflected — confirmed the drag actually hit the `emphasis` layer (its scribble visibly
+   overlaps the text layer's own screen region, and `elementsFromPoint`'s real front-to-back hit
+   order picked the topmost element there, D-156's own documented mechanism) — a real, correct
+   consequence of two overlapping primitives, not a bug.
+4. Clicked a camera keyframe row → the Inspector switched to the camera `KeyframeList`, and
+   **D-164's bezier curve editor rendered and worked exactly as designed**: an unset key showed
+   a muted, dashed `design.ease.inOut` curve with the "Not set — defaults to Ease In Out"
+   caption (§3 of D-164's own entry, confirmed against a real render); the key carrying the
+   seeded authored `ease` showed a real, correctly-shaped overshoot curve with a solid handle at
+   `(0.34, 1.56)` — the exact seeded value, round-tripped through the real Inspector, not
+   asserted only in a unit test.
+5. Dragged a keyframe diamond on the "hook · text" row rightward along the timeline (D-161) →
+   the marker moved to the new time position, the manifest flipped to "unsaved," and expanding
+   the `</>` toggle (D-153) showed the real, live JSON with the dragged key's new `at` value —
+   confirming the collapse toggle, the drag-a-key write path, and the raw-JSON escape hatch all
+   agree with each other and with what's on screen.
+6. Zero uncaught console errors observed across the whole session (not formally captured via
+   `read_console_messages` with a pattern, unlike D-142's own `captureConsole` rigor — a real,
+   disclosed gap in this pass's own verification, not a claim of a rigor this pass didn't
+   actually apply).
+
+**What this does NOT claim.** This is the same tier D-142 named for `TimelinePane` — a real
+Chromium tab, real pointer events (via `computer`'s synthetic mouse actions, not
+`pointerHarness.ts`'s own hand-constructed `PointerEvent`s — a real, disclosed difference from
+D-142's own methodology, see below), real layout and paint — not the real Tauri/WKWebView
+window. Still the single largest asterisk on the whole initiative, same as every entry since
+D-125 discloses. Multi-select/marquee (D-158), the timeline's own box-select + nudge (D-163),
+and an actual resize-handle drag (only the handles' presence was confirmed visually, not a
+completed resize gesture) were **not** exercised this pass — a real, disclosed gap, not silently
+implied as covered by the scenarios above. `packages/motion` still has no `testUtils/
+pointerHarness.ts` of its own (unlike `@chroma/editor`'s, D-142) — this pass drove real browser
+`computer` actions rather than hand-constructed `PointerEvent`s over `evaluate_script`, which is
+weaker than D-142's own methodology in one specific way: `computer`'s synthetic mouse events may
+not be bit-identical to a real `PointerEvent` sequence the way `pointerHarness.ts`'s own
+`dragPointer` is documented to be. A permanent jsdom-tier regression test (D-142's own
+`TimelinePane.marquee.dom.test.tsx` equivalent) also does not exist yet for this tab — building
+one, and a proper `packages/motion/src/testUtils/pointerHarness.ts`, is real, valuable follow-up
+work this pass scoped out rather than attempted, given the size the multi-gesture surface here
+(click/move-drag/resize-drag/marquee/timeline-drag/box-select) would require to cover properly.
+
+**Also fixed in this pass: `packages/motion/src/index.ts`'s own module doc comment**, which
+still read "Known gaps — no on-canvas manipulation, no timeline UI, no undo/redo" — stale since
+D-155, and flatly false as of D-164. Updated to describe what actually shipped and point at the
+real decision entries, rather than leaving the package's own front door lying about its status.
+
+**Verification.** `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline,
+unchanged — confirms the two new harness files introduce no type errors. No `vitest`/`cargo`
+changes (this pass adds no testable pure logic of its own, only a mount point and a fixture).
+
+**Honest gaps.** (1) Not the real Tauri/WKWebView window (stated above, the persistent
+initiative-wide asterisk). (2) Marquee/multi-select, box-select+nudge, and a completed
+resize-drag were not exercised live this pass. (3) No permanent jsdom regression test or
+`pointerHarness.ts` for this package yet — real follow-up work, not done here. (4) Console
+output was watched, not formally captured/asserted clean the way D-142's own `captureConsole`
+does.
+
+**Numbering.** Checked against the real tip of `main` immediately before writing this entry:
+`git log --oneline -3` shows `b3d2486` (D-164) at the tip, and `docs/08-decisions.md`/
+`docs/BUGS.md`'s own highest numbers are **D-164 / B-062** — **D-165** is free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

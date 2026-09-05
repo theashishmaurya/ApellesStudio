@@ -11,9 +11,18 @@
  *
  * Status: real preview + layer list (D-081) + Inspector (D-099/D-103) +
  * primitive Catalog (D-151) + editor + save + render, one manifest per
- * project. Known gaps — no on-canvas manipulation, no timeline UI, no
- * undo/redo, no MCP surface — are audited with citations in
- * `docs/notes/motion-tab-audit.md` and queued as roadmap item 16.
+ * project — plus, as of the D-150–D-164 visual-builder/keyframe-timeline
+ * initiative: on-canvas click-select/drag/resize/snap-to-layer/multi-select/
+ * marquee/align-distribute, undo/redo (`@chroma/history`), per-layer
+ * keyframes with auto-keyframe-on-drag, and a real per-row keyframe
+ * timeline (lanes, a shared zoomable ruler, drag-a-key, box-select + nudge,
+ * a bezier curve/easing editor). See `docs/notes/motion-visual-builder-
+ * research.md` and `docs/notes/motion-keyframe-timeline-research.md` for
+ * the full scoping, and `docs/08-decisions.md`'s D-150 through D-164 for
+ * what actually shipped vs. what's still disclosed as open. No MCP surface
+ * yet — still queued as roadmap item 16. `app/motion-harness.html` (D-165)
+ * is a standalone browser harness for exercising this tab's real pointer
+ * gestures outside the full Tauri app.
  */
 
 export { MotionTab } from './MotionTab';

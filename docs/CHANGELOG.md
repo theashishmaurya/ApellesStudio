@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **A standalone Motion-tab browser harness, and the first live verification of
+  the whole D-150–D-164 initiative (D-165).** `app/motion-harness.html` +
+  `app/src/motion-harness-main.tsx` — the Motion-tab sibling of D-142's `TimelinePane` harness —
+  mounts the real `MotionTab` standalone, seeded with `motion-engine`'s own `sample` manifest
+  plus real keyframes/an authored ease. Actually driven live over CDP this session (not just
+  built): click-select + canvas drag + undo-commit, the Inspector's separate X/Y/W/H fields, the
+  per-row keyframe timeline at the correct positions, drag-a-key retiming, and the bezier curve
+  editor rendering a correctly-shaped authored overshoot curve all confirmed working end to end
+  in a real browser. Also fixed `packages/motion/src/index.ts`'s stale doc comment (still said
+  "no on-canvas manipulation, no timeline UI, no undo/redo" — false since D-155).
 - **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 4): a real bezier curve/easing
   editor (D-164) — closes Phase 5b and the whole Motion visual-builder/keyframe-timeline
   initiative (D-150 through D-164).** New `easeCurve.ts` (pure: `curveToPixel`/`pixelToCurve` —
