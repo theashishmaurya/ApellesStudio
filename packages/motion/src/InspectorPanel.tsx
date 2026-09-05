@@ -33,6 +33,59 @@
  * them through one polymorphic component would mean rewriting two already-
  * working panels for no real benefit. See `@chroma/inspector`'s README for
  * the full reasoning.
+ *
+ * **D-158, Phase 3 — the multi-layer view, and the design call behind it.**
+ * `selections` is now `Selection[]` (was `Selection | null`). 0/1 entries
+ * render EXACTLY as before this pass (byte-identical code path — see the
+ * `selections.length <= 1` branch in `InspectorPanel` below). 2+ entries are
+ * always all `{kind:'layer'}` in one scene (`LayerList.tsx`'s own
+ * constraint) and render through `MultiLayerInspector`, a real, documented
+ * design decision rather than a stopgap:
+ *
+ * - **Align/distribute (item 5 of the research doc's Phase 3 scope)
+ *   ALWAYS shows** for 2+ selected layers — it needs nothing about the
+ *   layers beyond their position/size, which every selected layer has
+ *   regardless of `use`.
+ * - **The Transform group (D-157's generic `{x,y,scale,rot,opacity,
+ *   clipWidth,clipHeight}` wrapper) ALWAYS shows too, in LOCKSTEP** — one
+ *   edit writes the same value to every selected layer
+ *   (`setTransformFieldOnSelections`). This is genuinely use-agnostic (every
+ *   2D layer carries the same optional `transform`), so it's the one field
+ *   group that makes unqualified sense across a mixed-primitive selection —
+ *   the option-(b) "shared cross-primitive fields" shape from the task
+ *   brief.
+ * - **When every selected layer shares the SAME `use`, the primitive's own
+ *   field group ALSO shows, in lockstep** (`setFieldOnSelections`) — option
+ *   (a), "same-use lockstep editing." Editing any field (e.g. bumping
+ *   `size` on three `text` layers at once) writes it to every selected
+ *   layer; each layer's OTHER fields are untouched. The displayed value is
+ *   the FIRST selected layer's own value, not a computed "mixed" indicator
+ *   — a real gap, disclosed rather than silently accepted: a proper
+ *   multi-edit panel (Figma/Photoshop-style) shows "Mixed" when values
+ *   differ across the selection and clears it on a shared write. Building
+ *   that needs a per-field "do all N values agree" check threaded through
+ *   `FieldControl`'s existing single-`value` prop — a real, scoped-out
+ *   enhancement, not attempted this pass because the *far* more common case
+ *   (batch-nudge a shared property that's usually already the same, or that
+ *   you're intentionally overwriting) works correctly without it.
+ * - **When the selected layers do NOT share a `use`,** the primitive-
+ *   specific group is replaced with a short note pointing the user at
+ *   selecting one layer to edit its own fields.
+ *
+ * **The alternative considered and rejected: a live per-layer sub-picker**
+ * ("N layers selected — pick one to edit its own fields," option (c) from
+ * the task brief) that would let the Inspector narrow to one layer's full
+ * field set WITHOUT changing the actual canvas/`LayerList` selection. Not
+ * built: it needs its own separate "which layer am I currently VIEWING
+ * inside a multi-selection" state (distinct from "which layers are
+ * SELECTED"), which is real, non-trivial state-plumbing for a capability
+ * the lockstep-editing shape above already covers for the owner's actual
+ * stated ask ("set position or size... in lockstep" reads far more like "N
+ * layers, one dial" than "let me tunnel into one of the N"). If daily use
+ * shows the mixed-`use` note is genuinely annoying, the sub-picker is the
+ * documented next step — not dropped from consideration, just not worth
+ * its own state model in the same pass as the structural `Selection[]`
+ * change, marquee gesture, and align/distribute functions.
  */
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
@@ -48,6 +101,11 @@ import {
   setCamera2d,
   setCamera3d,
   setLayerTransformField,
+  setFieldOnSelections,
+  setTransformFieldOnSelections,
+  alignSelections,
+  distributeSelections,
+  type AlignEdge,
   parseJsonField,
 } from './manifestEdit';
 import {
@@ -437,14 +495,129 @@ function SnapToLayerControl({
   );
 }
 
+/** D-158, Phase 3 — the alignment/distribute toolbar. Real pure functions
+ *  (`manifestEdit.ts`'s `alignSelections`/`distributeSelections`), a
+ *  minimal, un-fancy button row per the task's own "keep it simple"
+ *  instruction: six align buttons (always shown for 2+ selections) and two
+ *  distribute buttons (shown, but disabled with a title, below 3
+ *  selections — matching `distributeSelections`' own "for 3+" scoping
+ *  rather than hiding the buttons and leaving the user to guess why). */
+const ALIGN_EDGES: { edge: AlignEdge; label: string }[] = [
+  { edge: 'left', label: '⊢ Left' },
+  { edge: 'centerH', label: '⊣⊢ Center H' },
+  { edge: 'right', label: '⊣ Right' },
+  { edge: 'top', label: '⊤ Top' },
+  { edge: 'centerV', label: '⊥⊤ Center V' },
+  { edge: 'bottom', label: '⊥ Bottom' },
+];
+
+function AlignDistributeToolbar({
+  manifest,
+  selections,
+  onChange,
+}: {
+  manifest: Manifest;
+  selections: Selection[];
+  onChange: (next: Manifest) => void;
+}) {
+  const canDistribute = selections.length >= 3;
+  const buttonClass =
+    'h-7 rounded border border-border-color text-[10px] text-text-primary hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border-color disabled:hover:text-text-primary';
+  return (
+    <InspectorSection label="Align & distribute">
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-3 gap-1.5">
+          {ALIGN_EDGES.map(({ edge, label }) => (
+            <button
+              key={edge}
+              type="button"
+              className={buttonClass}
+              onClick={() => onChange(alignSelections(manifest, selections, edge))}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={!canDistribute}
+            title={canDistribute ? undefined : 'Distribute needs 3+ selected layers'}
+            onClick={() => onChange(distributeSelections(manifest, selections, 'horizontal'))}
+          >
+            Distribute ↔
+          </button>
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={!canDistribute}
+            title={canDistribute ? undefined : 'Distribute needs 3+ selected layers'}
+            onClick={() => onChange(distributeSelections(manifest, selections, 'vertical'))}
+          >
+            Distribute ↕
+          </button>
+        </div>
+      </div>
+    </InspectorSection>
+  );
+}
+
+/** D-158, Phase 3's multi-layer view — see the module doc comment's own
+ *  "the multi-layer view, and the design call behind it" section for the
+ *  full reasoning. Only ever rendered for 2+ selections, all `{kind:
+ *  'layer'}` in one scene (`LayerList.tsx`'s own constraint) — this
+ *  component trusts that invariant rather than re-checking it. */
+function MultiLayerInspector({
+  manifest,
+  selections,
+  onChange,
+}: {
+  manifest: Manifest;
+  selections: Selection[];
+  onChange: (next: Manifest) => void;
+}) {
+  const layers = selections.map((s) => selectedLayer(manifest, s)).filter((l): l is { use: string; raw: Record<string, unknown> } => l !== null);
+  const first = layers[0];
+  const sameUse = layers.length > 0 && layers.every((l) => l.use === first.use);
+  const fields = sameUse ? fieldsForPrimitive(first.use) : undefined;
+
+  return (
+    <div className="h-full w-full overflow-y-auto p-3 flex flex-col gap-4">
+      <p className="text-[11px] text-text-secondary">{selections.length} layers selected</p>
+      <AlignDistributeToolbar manifest={manifest} selections={selections} onChange={onChange} />
+      <TransformFieldGroup
+        raw={(first?.raw.transform as Record<string, unknown>) ?? {}}
+        onCommit={(key, value) => onChange(setTransformFieldOnSelections(manifest, selections, key, value))}
+      />
+      {fields ? (
+        <FieldGroup
+          fields={fields}
+          raw={first.raw}
+          onCommit={(key, value) => onChange(setFieldOnSelections(manifest, selections, key, value))}
+        />
+      ) : (
+        <InspectorEmptyState>
+          Selected layers use different primitives — select just one to edit its own fields, or use Transform/
+          Align above to edit them together.
+        </InspectorEmptyState>
+      )}
+    </div>
+  );
+}
+
 export function InspectorPanel({
   manifest,
-  selection,
+  selections,
   onChange,
   onSnapToLayer,
 }: {
   manifest: Manifest;
-  selection: Selection | null;
+  /** D-158 — the whole live selection (was `Selection | null`). 0 entries:
+   *  the empty state. 1 entry: exactly today's single-selection view,
+   *  unchanged. 2+ entries: `MultiLayerInspector` — see this file's own
+   *  module doc comment for the full design reasoning. */
+  selections: Selection[];
   onChange: (next: Manifest) => void;
   /** D-157 — see `SnapToLayerControl`'s own doc comment. Optional: a caller
    *  with no live-DOM measurement access (a future non-interactive Inspector
@@ -452,10 +625,15 @@ export function InspectorPanel({
    *  simply doesn't render. */
   onSnapToLayer?: (targetLayerIndex: number) => void;
 }) {
-  if (!selection) {
+  if (selections.length === 0) {
     return <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>;
   }
 
+  if (selections.length > 1) {
+    return <MultiLayerInspector manifest={manifest} selections={selections} onChange={onChange} />;
+  }
+
+  const selection = selections[0];
   const { target } = selection;
 
   if (target.kind === 'scene') {
