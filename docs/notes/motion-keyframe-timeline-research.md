@@ -311,7 +311,106 @@ local `dragPreview` overlay on top of a marker list that stays derived from the 
 for the whole gesture. Full writeup, edge-case reasoning, and verification: `docs/08-decisions.md`'s
 **D-161** entry.
 
-**Still not built: the other three pieces** — per-row lanes (one track per layer/camera, the real
-row-layout infrastructure investment §4 named as the bulk of the remaining work), box-select +
-nudge multiple keys, and a curve/easing editor. Recommended order unchanged from §4's own
-original call: lanes next, then box-select, then the curve editor last.
+**Still not built at the time this section was written: the other three pieces** — per-row lanes
+(one track per layer/camera, the real row-layout infrastructure investment §4 named as the bulk
+of the remaining work), box-select + nudge multiple keys, and a curve/easing editor. Recommended
+order unchanged from §4's own original call: lanes next, then box-select, then the curve editor
+last. **Per-row lanes are now built — see §8 below.**
+
+---
+
+## 8. Phase 5b, part 2 — "per-row lanes" — built (D-162, 2026-09-05)
+
+The second of §4's own four named pieces, built in its own pass on top of Phase 5b part 1 (D-161),
+in §4/§7's own recommended order. This is the piece §4 itself named as "genuinely most of what
+makes `TimelinePane.tsx` 2,948 lines in the first place" — row virtualization/height math, per-row
+selection state, a real vertical scroll region synced to `LayerList`'s own row order — and it is
+built accordingly as a real restructuring, not a patch on top of the flat strip.
+
+**The row model.** `keyframeVisibility.ts`'s new `keyframeLanes(manifest)` is the "which rows
+exist, in what order" pure function §4 asked for: one row per (scene, 2D camera) with `>0` keys,
+one per (scene, layer) with `>0` `transform.keys`, one per (scene, 3D camera) with `>0` keys —
+never for an un-keyed layer/camera or for a scene row itself, mirroring `LayerList.tsx`'s own
+"badge only when count > 0" precedent (D-160) applied to whether a ROW exists at all. Row order is
+scene order, then camera → layers → 3D-camera within a scene — exactly `LayerList.tsx`'s own
+render order. `laneKeyMarkers(manifest, lane)` and `selectionForLane(manifest, lane)` are the
+per-lane replacements for D-160's whole-manifest `cameraKeyMarkers` and selection-scoped
+`selectedLayerKeyMarkers`, both retired this pass (not kept alongside as a second, redundant read
+path). A real capability improvement falls out of this for free: because a lane already names its
+own exact (scene, layer), ANY keyed layer's keys can now be seen — and dragged — without first
+selecting that layer via `LayerList`, unlike the flat strip, which only ever showed the CURRENTLY
+SELECTED layer's markers.
+
+**The layout call, made explicitly rather than left as an assumption.** D-160 put the flat strip
+inside `MotionPreview.tsx`, squeezed under the player in a `flex flex-col` column — fine for a
+fixed 24px bar, unworkable for N independently-scrollable rows needing their own resizable height.
+Both real precedents were read before deciding (not just the reuse-verdict already in §2): the
+Edit tab's own `EditorTab.tsx` puts `TimelinePane` in its own row below `PreviewPane`, inside the
+SAME left `ResizablePanel` (`packages/editor/src/EditorTab.tsx:112-147` — a nested vertical split,
+`h-[46%] min-h-[180px]`), NOT nested inside the preview component itself, with the Inspector as a
+further sibling column outside that whole stack. `packages/editor/src/TimelinePane.tsx` was read
+for its row/track layout and scroll handling as genuine precedent (not just the D-160 reuse
+verdict) — its own scroll region is a single scrollable div per its `@xzdarcy/react-timeline-
+editor` embed; nothing from it was imported (per §2's own verdict, unchanged), but it confirmed
+that a real timeline needs its own dedicated scroll region, not a shared one squeezed into a
+sibling's leftover space. **Decision: `KeyframeTimeline.tsx` moved OUT of `MotionPreview.tsx` into
+a new full-width sibling panel in `MotionTab.tsx`'s own layout** — a nested VERTICAL `PanelGroup`
+inside the tab's existing left `ResizablePanel` (`<MotionPreview>` over `<KeyframeTimeline>`, a
+real `ResizableHandle` between them), the same relative shape `EditorTab.tsx` uses one nesting
+level shallower (Motion's left panel is itself one of four sibling columns in the tab's outer
+horizontal group, where Edit's left panel has no other siblings inside it — Motion's Inspector and
+manifest-editor panes stay OUTSIDE this nested group entirely, matching how Edit's own Inspector
+sits outside its preview+timeline stack). `MotionPreview.tsx` reverts to exactly its pre-D-160
+shape — no opinion about a keyframe timeline at all.
+
+**Shared time axis, independent zoom — a genuinely new mechanism, not the Edit tab's D-134
+system.** `timelineZoom.ts`'s `trackWidthPx(totalFrames, fps, pxPerSecond)` sizes every lane's
+track div and the ruler's own track div identically, so a frame's `left: N%` position
+(`frameToPercent`, unchanged by zoom — percent-of-the-same-width stays correct at any zoom) lands
+at the same pixel column in every row: one shared axis. Zoom is ONE `pxPerSecond` value for the
+whole timeline, not per-row — a per-row zoom was considered and rejected explicitly: rows would
+stop agreeing on where in time a pixel column sits, defeating the point of drawing a scene
+boundary or the playhead once across all of them. D-134's own bounds (`MIN_PX_PER_SEC`/
+`MAX_PX_PER_SEC`, `ruler.ts`) were confirmed (again, independently of the §2b reuse-verdict) to be
+sized around `chroma::filmstrip`'s Rust-side video-thumbnail decimation ladder — no equivalent
+exists in this package at all, so `timelineZoom.ts`'s bounds (`10`–`400` px/sec) are chosen fresh,
+for what looks usable in a resizable panel a few hundred px tall.
+
+**The ruler.** `timelineRuler.ts` re-authors (does not import) `ruler.ts`'s `niceTickIntervalSeconds`/
+`formatTimecode` verbatim-in-behavior — confirmed against that file directly this pass, not from
+memory — plus a new `rulerTicks(totalSeconds, fps, pxPerSecond)` that walks the chosen interval
+from `0` to the total, real tested loop-bound handling (no dropped/duplicated trailing tick).
+Scene-boundary lines (`sceneBoundaryFrames`, D-160, unchanged) render on the ruler and on every
+lane's own track.
+
+**Vertical + horizontal scroll, one region, no virtualization library.** The whole ruler+lanes
+stack lives inside one `overflow-auto` div; each lane's own label column is `position: sticky;
+left: 0`, the ruler row is `position: sticky; top: 0` with its own corner cell sticky on both axes
+— the standard "frozen row + frozen column" CSS technique. Real and working at the row counts this
+engine's manifests have (one row per keyed layer/camera, not per video frame) — a genuine
+virtualization library was judged unnecessary for this phase, a call `TimelinePane.tsx`'s own much
+larger, per-video-frame-timeline scale didn't have the luxury of making.
+
+**Selection reuses `MotionTab.tsx`'s existing `onSelect` — no parallel mechanism**, per the task's
+own explicit instruction: a click on a lane's label OR its own track background calls
+`onSelect(selectionForLane(manifest, lane))`, the identical `Selection` shape `LayerList.tsx`'s row
+click already produces (including the layer's own `id` snapshot, D-158). `onSelect` already seeks
+the player to the scene's start frame (unchanged, `MotionTab.tsx`); a track-background click
+additionally seeks to the exact clicked frame right after, so the more precise seek wins.
+
+**D-161's drag gesture, generalized per row.** The write primitives
+(`moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`, `manifestEdit.ts`) are
+unchanged; what changed is where they get their target from — the LANE the pointer landed in,
+never the tab's live `selections`, which is what makes "drag any keyed layer's keys, not just the
+selected one" possible. D-161's own "live visual feedback without touching marker identity
+mid-drag" finding (re-deriving a marker list from a live-reordering transient manifest can remount
+the dragged button and drop `setPointerCapture`) still applies WITHIN one row exactly as before;
+the `dragPreview` override is now scoped by `{laneKey(lane), keyIndex}` rather than `{kind,
+sceneIndex, keyIndex}`, since two DIFFERENT layers in the same scene can now each have their own
+`keyIndex === 0` marker (each gets its own row).
+
+Full writeup, verification, and honest gaps: `docs/08-decisions.md`'s **D-162** entry.
+
+**Still not built: the other two pieces** — box-select + nudge multiple keys, and a curve/easing
+editor. Recommended order unchanged from §4's own original call: box-select next, then the curve
+editor last.

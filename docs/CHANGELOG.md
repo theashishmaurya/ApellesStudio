@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 2): per-row lanes (D-162), on top
+  of Phase 5b part 1 (D-161).** Retires D-160/D-161's flat single-strip `KeyframeStrip.tsx` for a
+  real per-row `KeyframeTimeline.tsx`: one row per keyed 2D camera/layer/3D camera
+  (`keyframeVisibility.ts`'s new `keyframeLanes`, `LayerList`'s own row order — rows
+  appear/disappear as keys are added/removed), `laneKeyMarkers`/`selectionForLane` as the
+  per-lane replacements for the old whole-manifest/whole-selection functions, a shared time ruler
+  via a REIMPLEMENTED (not imported) copy of `packages/editor/src/ruler.ts`'s tick algorithm
+  (`timelineRuler.ts`), a new independent zoom mechanism (`timelineZoom.ts`, bounds chosen fresh
+  for this UI, not reused from the Edit tab's D-134 system), a combined vertical+horizontal
+  scroll region (sticky row labels + sticky ruler), per-row click-to-select reusing
+  `MotionTab.tsx`'s own `onSelect`, and D-161's drag-a-key gesture generalized so any keyed
+  layer's keys can be dragged without first selecting that layer. Layout: the timeline moved out
+  of `MotionPreview.tsx` into a new full-width sibling panel in `MotionTab.tsx` (nested vertical
+  `PanelGroup`), mirroring the Edit tab's own `PreviewPane`/`TimelinePane` stack. `tsc` clean,
+  `app`/`motion-engine` baselines unchanged, `@chroma/motion` 292/292 (was 255, +37: 12 in
+  `timelineZoom.test.ts`, 15 in `timelineRuler.test.ts`, the rest replacing/extending
+  `keyframeVisibility.test.ts`'s old flat-strip coverage).
 - **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 1): drag a key along time (D-161),
   on top of Phase 5a (D-160).** New write primitive `manifestEdit.ts`'s `moveKeyAt` (one generic
   core over `layer.transform.keys`/`scene.camera`/`scene.scene3d.camera`) plus three thin

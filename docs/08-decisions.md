@@ -13284,3 +13284,232 @@ and no `B-NNN` is used or fixed by this pass.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-162 — Motion keyframe timeline, Phase 5b (part 2): per-row lanes
+
+**decided + built (2026-09-05).** The second of Phase 5b's own four named pieces (`docs/notes/
+motion-keyframe-timeline-research.md` §4: "drag a key along time; per-row lanes; box-select +
+nudge; a curve/easing editor" — §4/§7's own recommended order, lanes second). Built directly on
+D-161's flat single-strip `KeyframeStrip.tsx`, which this pass retires in favor of a real per-row
+`KeyframeTimeline.tsx` — the piece §4 itself named as "genuinely most of what makes
+`TimelinePane.tsx` 2,948 lines in the first place."
+
+### 1 — Required reading, done before writing anything
+
+Re-read in full: the research doc's §4 (the four-piece scoping) and §2 (the reuse-verdict table,
+especially `ruler.ts`'s tick algorithm and the "neither tab package depends on the other" house
+rule); D-160/D-161's own decision entries in full. Read as genuine architectural precedent (not
+just re-confirming the D-160 reuse verdict): `packages/editor/src/EditorTab.tsx` (how
+`TimelinePane` is composed relative to `PreviewPane` — a nested vertical split inside the same
+left `ResizablePanel`, `h-[46%] min-h-[180px]`, with the Inspector as a further sibling column
+outside that stack — `EditorTab.tsx:112-147`), `packages/editor/src/TimelinePane.tsx` (its own row/
+track layout and scroll handling, to understand the shape of the problem without importing its
+code — confirmed a real timeline needs its own dedicated scroll region), and `packages/editor/src/
+ruler.ts` (in full, for the reimplementation below). The actual code changed: `KeyframeStrip.tsx`,
+`keyframeVisibility.ts`, `MotionPreview.tsx`, `MotionTab.tsx`, `LayerList.tsx` (read, unchanged —
+its row order is the source of truth the new `keyframeLanes` mirrors, not reinvents).
+
+### 2 — The row model: `keyframeVisibility.ts`'s `keyframeLanes`/`laneKey`/`laneKeyMarkers`/`selectionForLane`
+
+`keyframeLanes(manifest)` is the "which rows exist, in what order" pure function §4 asked for: one
+row per (scene, 2D camera) with `>0` keys, one per (scene, layer) with `>0` `transform.keys`, one
+per (scene, 3D camera) with `>0` keys — never for an un-keyed layer/camera (nothing to show) or a
+scene row itself (a scene can never carry keys), mirroring `LayerList.tsx`'s own "badge only when
+count > 0" precedent (D-160) applied to whether a ROW exists at all rather than just whether it
+shows a number. Row order is scene order, then camera → layers → 3D-camera within a scene —
+exactly `LayerList.tsx`'s own render order, confirmed by reading that component again rather than
+assumed. A lane is identified structurally (`sceneIndex` + `kind` + `layerIndex` for `kind:
+'layer'`), never by its position in `keyframeLanes`' own returned array, since that position
+shifts whenever an earlier lane's key count crosses 0.
+
+`laneKeyMarkers(manifest, lane)` and `selectionForLane(manifest, lane)` are the per-lane
+replacements for D-160's whole-manifest `cameraKeyMarkers` (which merged every scene's camera keys
+into one row) and selection-scoped `selectedLayerKeyMarkers` (which showed only the CURRENTLY
+SELECTED layer's keys) — both retired this pass, not kept alongside as a second, now-redundant
+read path. **A real capability improvement falls out of this for free, not just a reshuffling of
+the same data:** because a lane already names its own exact (scene, layer), ANY keyed layer's keys
+can now be seen — and dragged, §5 below — without first selecting that layer via `LayerList`,
+something the flat strip could never do (it only ever showed the live single-selection's own
+markers). `selectionForLane` mirrors `LayerList.tsx`'s own row-click selection shape exactly,
+including capturing the layer's own `id` snapshot (D-158) rather than a bare index.
+
+### 3 — The layout call: a full-width sibling panel in `MotionTab.tsx`, not inside `MotionPreview.tsx`
+
+D-160 put the flat strip inside `MotionPreview.tsx`, squeezed under the player in a `flex
+flex-col` column — a fixed 24px bar could live there at zero layout cost. A real per-row lane
+timeline cannot: it needs its own resizable height, its own scroll region, and room for a ruler
+plus N rows, none of which a strip wedged into the bottom of the preview's own flex column can
+give it without starving the player. Both real precedents were read before deciding, per the
+task's own instruction (not just the reuse-verdict already in the research doc's §2): the Edit
+tab's own `EditorTab.tsx` puts `TimelinePane` in its own row below `PreviewPane`, inside the SAME
+left `ResizablePanel` — a nested vertical split — NOT nested inside the preview component's own
+JSX, with the Inspector as a further sibling column entirely outside that stack.
+
+**Decision: `KeyframeTimeline.tsx` moved out of `MotionPreview.tsx` into a new full-width sibling
+panel in `MotionTab.tsx`'s own layout** — a nested VERTICAL `PanelGroup` (`orientation="vertical"`,
+`resizable.tsx`'s `Group` already forwards this prop) inside the tab's existing left
+`ResizablePanel`: `<MotionPreview>` on top (`defaultSize={520}`), `<KeyframeTimeline>` below
+(`defaultSize={220}`, `minSize={120}`, `maxSize={480}`), a real `ResizableHandle` between them —
+the same relative shape `EditorTab.tsx` uses, one nesting level deeper (Motion's left panel is
+itself one of four sibling columns in the tab's own outer horizontal `PanelGroup`, where Edit's
+left panel has no other siblings inside it at all; Motion's Inspector and manifest-editor panes
+stay OUTSIDE this nested group, matching how Edit's own Inspector sits outside its
+preview+timeline stack). `MotionPreview.tsx` reverts to exactly its pre-D-160 shape — the player +
+`MotionCanvasOverlay`, no opinion at all about a keyframe timeline.
+
+**Rejected alternative:** keep the strip inside `MotionPreview.tsx` and just make it taller/
+scrollable in place. Rejected because the preview's own `flex-1 min-h-0` sizing exists specifically
+so the PLAYER gets whatever space is left after a small fixed-height sibling — growing that
+sibling into a real, independently-resizable, potentially-large timeline would mean the preview
+component needs to know about and manage the split between "video" and "timeline" itself, which is
+exactly the layout responsibility `MotionTab.tsx`'s own `PanelGroup` already owns for every other
+pane in this tab. Matching the Edit tab's own precedent (a real sibling, not a component that
+grows an opinion about its own neighbor) was judged the more consistent, more maintainable shape.
+
+### 4 — Shared time axis, independent zoom: `timelineZoom.ts` (new bounds, not D-134's)
+
+`trackWidthPx(totalFrames, fps, pxPerSecond)` sizes every lane's own track div and the ruler's own
+track div identically — the shared axis: a frame's `left: N%` position (`frameToPercent`,
+unchanged by zoom, since percent-of-the-same-width stays correct at any zoom level) lands at the
+same pixel column in every row. Zoom is ONE `pxPerSecond` React state for the WHOLE timeline, not
+per row — a per-row independent zoom was considered and explicitly rejected: rows would stop
+agreeing on where in time a given pixel column sits, defeating the entire point of a shared axis a
+scene-boundary line or the playhead can be drawn once and have every row agree with it. "a shared
+time axis and independent zoom" (§4's own phrase) is read here as "independent of the Edit tab's
+own zoom system," not "independent per row."
+
+`ruler.ts`'s own `MIN_PX_PER_SEC`/`MAX_PX_PER_SEC` (D-134) were re-confirmed this pass (not just
+trusted from the research doc's own §2b reuse-verdict) to be sized around `chroma::filmstrip`'s
+Rust-side video-thumbnail-tile decimation ladder — a storage-level concern this package has no
+equivalent of at all. `timelineZoom.ts`'s own bounds (`MIN_PX_PER_SEC = 10`, `MAX_PX_PER_SEC =
+400`, `DEFAULT_PX_PER_SEC = 70`) are chosen fresh, for what looks usable in a resizable panel a few
+hundred px tall — a 60s composition fits without horizontal scroll at the minimum, and one second
+renders 400px wide at the maximum (comfortably wide enough to drag two nearby keys apart without
+them overlapping under a pointer). A geometric (not additive) `zoomStep` — `×1.4`/`÷1.4` — keeps a
+single button press feeling similarly significant at either end of the range.
+
+### 5 — The ruler: `timelineRuler.ts`, a reimplementation, confirmed against `ruler.ts` directly
+
+`niceTickIntervalSeconds`/`formatTimecode`/`NICE_TICK_STEPS_SECONDS` are re-authored here with the
+IDENTICAL algorithm and constants `ruler.ts` uses — confirmed by reading that file directly this
+pass (not from memory or the D-160 research doc's own prose), per that doc's own explicit §2b
+verdict: the algorithm is TECHNIQUE, cheap enough to re-author, never an import (`@chroma/motion`
+cannot depend on `@chroma/editor`, the same `@chroma/inspector`-stated house rule both D-160/D-161
+already cited). New this pass: `rulerTicks(totalSeconds, fps, pxPerSecond, targetPx)` — walks the
+chosen interval from `0` to `totalSeconds`, converting each tick to an absolute frame via
+`Math.round(seconds * fps)` (the same conversion every other seconds→frame site in this package
+uses). A real, tested edge case: floating-point drift in repeated addition (`0.1 + 0.1 + 0.1 !==
+0.3` exactly) could otherwise land a tick just past `totalSeconds` and silently drop the final
+one, or — when `totalSeconds` divides evenly by the interval — double-render a tick sitting exactly
+on the boundary; both are guarded (an epsilon on the loop bound, an explicit `break` the instant a
+clamped tick reaches the total) and covered by dedicated tests, not just asserted.
+
+### 6 — Vertical + horizontal scroll: one region, sticky row labels + sticky ruler, no virtualization library
+
+The whole ruler+lanes stack lives inside ONE `overflow-auto` div. Each lane's own label column is
+`position: sticky; left: 0` (visible while scrolling horizontally; scrolls away normally with the
+rest of its row when scrolling vertically); the ruler row is `position: sticky; top: 0` (visible
+while scrolling vertically through many rows), and its own corner cell is sticky on BOTH axes — the
+standard "frozen row + frozen column" CSS technique, requiring no separate scroll-sync code (both
+axes share the one native scroll position) and no virtualization library at the row counts this
+engine's manifests realistically have (one row per keyed layer/camera, not per video frame — a
+scale `TimelinePane.tsx`'s own much larger per-video-frame timeline didn't have the luxury of
+assuming).
+
+### 7 — Selection: reuses `MotionTab.tsx`'s existing `onSelect`, no parallel mechanism
+
+Per the task's own explicit instruction. A click on a lane's label OR its own track background
+(off any marker) calls `onSelect(selectionForLane(manifest, lane))` — the IDENTICAL `Selection`
+shape `LayerList.tsx`'s own row click already produces. `MotionTab.tsx`'s `onSelect` already seeks
+the player to the scene's start frame on every call (unchanged) — a track-background click
+additionally seeks to the EXACT clicked frame right after, so the more precise of the two wins
+(it runs second). A marker's own plain click (sub-drag-threshold) does the same: selects its own
+lane, then seeks to the key's own exact frame.
+
+### 8 — D-161's drag gesture, generalized per row
+
+The write primitives (`moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`,
+`manifestEdit.ts`) are UNCHANGED — per the task's own instruction, only the row-layout wrapping
+them changed. What's different is where a drag gets its TARGET from: the LANE the pointer landed
+in (`drag.lane.sceneIndex`/`drag.lane.kind`/`drag.lane.layerIndex`), never the tab's live
+`selections` — this is what makes "drag any keyed layer's keys, not just the selected one"
+possible, and it is a strict simplification over D-161's own design (which had to capture
+`activeLayerSelection` at `pointerdown` specifically because a layer marker's identity depended on
+what was selected; a lane already IS that identity, so there is nothing to capture beyond the lane
+itself).
+
+D-161's own "live visual feedback without touching marker identity mid-drag" finding — re-deriving
+a marker list from a live-reordering transient manifest mid-drag risks React remounting the
+dragged button and silently dropping its `setPointerCapture` — still applies WITHIN one row,
+unchanged in mechanism: the rendered marker list for a row stays derived from the STABLE manifest
+for the whole gesture; a local `dragPreview` overlay shows the live position instead. **What
+changed:** the override is now scoped by `{laneKey(lane), keyIndex}` rather than D-161's `{kind,
+sceneIndex, keyIndex}`, because two DIFFERENT layers in the SAME scene can now each have their own
+`keyIndex === 0` marker (each gets its own row) — D-161's own identity tuple was ambiguous the
+moment more than one layer's markers could be on screen at once, which never happened under the
+flat strip's single-selection scoping.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — untouched this pass (no schema/engine change);
+  the same 2 pre-existing `document`-typing errors in `Scene3D.tsx` as on `main`, confirmed
+  unchanged.
+- `npm test --workspace @chroma/motion` — **292/292** (was 255 at D-161; **+37** new: 15 in
+  `timelineRuler.test.ts` (mirrors `ruler.test.ts`'s own `niceTickIntervalSeconds`/
+  `formatTimecode` coverage, plus new `rulerTicks` tests — empty inputs, start/end-exact bounds,
+  interval spacing, zoom-density, no duplicate trailing tick, frame rounding), 12 in
+  `timelineZoom.test.ts` (`clampPxPerSecond`, `zoomStep` in/out/bounds/round-trip,
+  `trackWidthPx` linearity + non-positive-input floor), and `keyframeVisibility.test.ts` gains
+  `keyframeLanes`/`laneKey`/`laneKeyMarkers`/`selectionForLane` coverage replacing the retired
+  `cameraKeyMarkers`/`selectedLayerKeyMarkers` tests (net +10 there) — every new pure function
+  gets real tests, per this package's own established convention; `KeyframeTimeline.tsx`'s
+  DOM/pointer wiring is deliberately untested, the same split D-156/157/158/159/160/161 already
+  set.
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- No `remotion still` render comparison — this pass touches neither `motion-engine`'s schema nor
+  its render path, so there is nothing whose pixel output could have changed; confirmed by `git
+  status` showing only `@chroma/motion` files touched (`KeyframeStrip.tsx` deleted;
+  `KeyframeTimeline.tsx`, `timelineRuler.ts`/`.test.ts`, `timelineZoom.ts`/`.test.ts` new;
+  `keyframeVisibility.ts`/`.test.ts`, `MotionPreview.tsx`, `MotionTab.tsx` modified).
+- No Rust/`app/src-tauri` touched — frontend-only, per the task's own instruction; confirmed by
+  `git status`.
+
+**Honest gaps.** (1) **Not seen in the assembled Tauri app** — this sandbox cannot launch it, the
+same disclosed constraint every entry since D-125 carries; the sticky-row/sticky-ruler scroll
+layout, the zoom controls, and the pointer-drag wiring are reasoned from CSS `position: sticky`'s
+documented behavior and `PointerEvent`'s documented capture semantics, not exercised against a
+real pointer in a real scrolled window. (2) **No visual verification that `position: sticky`'s
+"frozen row + frozen column" combination renders as intended inside `react-resizable-panels`'
+own flex layout** — the technique is standard CSS, but this sandbox cannot screenshot it; a real
+risk (disclosed, not fixed) is that a `Panel`'s own overflow/sizing behavior could interact with
+sticky positioning in a way only visible on screen. (3) **Zoom state resets on remount** —
+`pxPerSecond` is local `useState` inside `KeyframeTimeline`, not persisted anywhere; switching
+tabs and back, or a manifest reload, resets zoom to `DEFAULT_PX_PER_SEC`. Judged acceptable for a
+first slice (the Edit tab's own zoom is also session-local, not persisted) — a real, cheap
+follow-up if it turns out to matter. (4) **No mouse-wheel/pinch zoom, only the two toolbar
+buttons** — `zoomStep` is real and tested, but only wired to `+`/`−` buttons this pass; wheel-zoom
+(common in the Edit tab and most timeline UIs) is real, separable follow-up work. (5) **A lane's
+own scene-span shading (the subtle background tint marking where a row's own scene lives on the
+shared axis) is a new visual touch not requested by the task** — added because a layer/camera's
+markers only ever occupy a fraction of the whole-composition axis on any but the shortest
+manifests, and an unshaded empty row looked like a bug during design, not a feature; disclosed as
+an addition beyond the literal ask, not hidden. (6) **Per-row overlapping markers (two keys at the
+exact same frame within one row) still render fully overlapping, unchanged from D-160's own
+honest gap 5** — not addressed this pass; the per-row split doesn't make this worse (it's now
+scoped to one row instead of a whole merged strip) but doesn't fix it either. (7) Box-select +
+nudge multiple keys, and a curve/easing editor, remain entirely unbuilt — Phase 5b's own final two
+pieces, explicitly not attempted here.
+
+**Numbering.** Drafted as **D-162**, checked against the REAL current tip of `main` in the main
+repo (`/Users/ashishmaurya/my_projects/chroma`, not this worktree) both before starting this pass
+and immediately before writing this entry: `git log --oneline -5` shows `9a481a0` (`D-161 Phase
+5b part 1: drag a key along time`) still at the tip, unchanged across the whole pass, and
+`grep -oE 'D-[0-9]+' docs/08-decisions.md | sort -t- -k2 -n -u | tail` / `grep -oE 'B-[0-9]+'
+docs/BUGS.md | sort -t- -k2 -n -u | tail` both still show **D-161 / B-061** as the highest
+numbers — **D-162** is free, and no `B-NNN` is used or fixed by this pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

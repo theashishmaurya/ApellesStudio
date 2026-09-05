@@ -43,24 +43,20 @@
  * together, same as before — omit all four to use this component with no
  * on-canvas interaction at all.
  *
- * D-160 (Phase 5a of `docs/notes/motion-keyframe-timeline-research.md`,
- * "key visibility"): the player+overlay now sit in a `flex flex-col`
- * container with `<KeyframeStrip>` fixed beneath — a small, ALWAYS-mounted
- * (never behind the interaction-props gate above; navigation alone needs no
- * manifest mutation) strip showing camera + the current single layer
- * selection's own keyframes and the live playhead. See that component's own
- * doc comment for why it's a sibling rather than a modification of
- * Remotion's own scrubber.
- *
- * Phase 5b of the same research doc ("drag a key along time") reuses this
- * component's OWN `onTransientChange`/`onCommit` — already destructured
- * here for `MotionCanvasOverlay` below — as `<KeyframeStrip>`'s, unguarded
- * by the four-props-together check the overlay uses: the strip's marker-
- * drag gesture only needs the two mutation callbacks, not `onSelect`/
- * `onSelectionChange` (it never changes what's selected), so it becomes
- * drag-capable independently of whether on-canvas editing is wired up at
- * all. A caller supplying neither keeps Phase 5a's read-only strip exactly
- * as it was.
+ * D-160/D-161 (Phase 5a/5b part 1 of `docs/notes/
+ * motion-keyframe-timeline-research.md`) briefly put a `<KeyframeStrip>`
+ * (one flat marker strip + click-to-seek + drag-a-key) directly beneath the
+ * player here, inside this component's own `flex flex-col`. **D-162 (Phase
+ * 5b part 2, "per-row lanes") moves it back out.** A per-row lane timeline
+ * needs real independent estate (a resizable height, its own scroll region,
+ * room for a ruler and N rows) that a strip wedged into the bottom of the
+ * preview never needed — see `KeyframeTimeline.tsx`'s own module doc
+ * comment for the full layout reasoning (the Edit tab's own
+ * `PreviewPane`+`TimelinePane` stack, read as precedent, puts its timeline
+ * outside the preview component entirely). This component is back to
+ * exactly its pre-D-160 shape: just the player + `MotionCanvasOverlay`, no
+ * opinion at all about what (if anything) a caller stacks below it —
+ * `MotionTab.tsx`'s own layout owns that now.
  */
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
@@ -73,7 +69,6 @@ import type { Selection } from './LayerList';
 import { MotionCanvasOverlay } from './MotionCanvasOverlay';
 import { measureWorldMap, type RectLike, type WorldMap } from './canvasGeometry';
 import { measureLayerScreenBox, findWorldElement } from './layerMeasure';
-import { KeyframeStrip } from './KeyframeStrip';
 
 /** D-157's imperative measurement escape hatch — see the module doc comment. */
 export interface MotionCanvasMeasureApi {
@@ -153,53 +148,33 @@ export function MotionPreview({
   }
 
   return (
-    <div className="h-full w-full flex flex-col bg-black">
-      <div className="relative flex-1 min-h-0 flex items-center justify-center">
-        <div ref={containerRef} className="relative h-full w-full">
-          <Player
-            ref={effectivePlayerRef}
-            component={Video}
-            inputProps={shown}
-            durationInFrames={totalFrames(shown)}
-            fps={shown.fps}
-            compositionWidth={shown.width}
-            compositionHeight={shown.height}
-            controls
-            loop
-            style={{ width: '100%', height: '100%' }}
+    <div className="relative h-full w-full flex items-center justify-center bg-black">
+      <div ref={containerRef} className="relative h-full w-full">
+        <Player
+          ref={effectivePlayerRef}
+          component={Video}
+          inputProps={shown}
+          durationInFrames={totalFrames(shown)}
+          fps={shown.fps}
+          compositionWidth={shown.width}
+          compositionHeight={shown.height}
+          controls
+          loop
+          style={{ width: '100%', height: '100%' }}
+        />
+        {onSelect && onSelectionChange && onTransientChange && onCommit && (
+          <MotionCanvasOverlay
+            containerRef={containerRef}
+            playerRef={effectivePlayerRef}
+            manifest={manifest}
+            selections={selections}
+            onSelect={onSelect}
+            onSelectionChange={onSelectionChange}
+            onTransientChange={onTransientChange}
+            onCommit={onCommit}
           />
-          {onSelect && onSelectionChange && onTransientChange && onCommit && (
-            <MotionCanvasOverlay
-              containerRef={containerRef}
-              playerRef={effectivePlayerRef}
-              manifest={manifest}
-              selections={selections}
-              onSelect={onSelect}
-              onSelectionChange={onSelectionChange}
-              onTransientChange={onTransientChange}
-              onCommit={onCommit}
-            />
-          )}
-        </div>
+        )}
       </div>
-      {/* D-160 (Phase 5a) — always mounted regardless of the interaction
-          props above: read-only navigation needs no manifest mutation, so
-          it's useful even for a caller with no on-canvas editing wired up.
-          Phase 5b adds `onTransientChange`/`onCommit` (independent of the
-          four-props check above — see the module doc comment): reads the
-          STABLE manifest for marker positions (never `shown`/
-          `transientManifest` — see `KeyframeStrip.tsx`'s own doc comment
-          for why re-deriving markers from a live-mutating transient
-          manifest mid-drag would be actively unsafe, not just unnecessary),
-          but CAN now write into it via a drag, through the same two
-          callbacks `MotionCanvasOverlay` already uses. */}
-      <KeyframeStrip
-        manifest={manifest}
-        selections={selections}
-        playerRef={effectivePlayerRef}
-        onTransientChange={onTransientChange}
-        onCommit={onCommit}
-      />
     </div>
   );
 }

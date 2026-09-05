@@ -41,6 +41,19 @@
  * tab, and catalog inserts are a different, already-shipped (D-151)
  * customer this pass doesn't touch.
  *
+ * D-162 (Phase 5b part 2 of `docs/notes/motion-keyframe-timeline-research.md`,
+ * "per-row lanes"): the left `ResizablePanel` (the preview column) now
+ * nests its OWN vertical `PanelGroup` — `<MotionPreview>` on top,
+ * `<KeyframeTimeline>` below, a real `ResizableHandle` between them —
+ * mirroring `@chroma/editor`'s own `EditorTab.tsx` (`PreviewPane` stacked
+ * over `TimelinePane`, full-width of their shared column, not nested inside
+ * the preview). See `KeyframeTimeline.tsx`'s own module doc comment for the
+ * full layout decision and why D-160's `KeyframeStrip` (squeezed inside
+ * `MotionPreview.tsx`) didn't survive becoming a per-row lane timeline.
+ * `KeyframeTimeline` reuses this tab's own `onSelect` (row/marker clicks
+ * select exactly like a `LayerList` row click) and the same
+ * `onTransientChange`/`onCommit` pair `MotionCanvasOverlay` already uses.
+ *
  * D-158 (Phase 3): `selection` (singular) becomes `selections: Selection[]`
  * — the owner said "multiple elements" first, so `LayerList.tsx`'s own
  * multi-select constraint (2+ entries ⇒ same-kind `layer`, same scene) now
@@ -63,6 +76,7 @@ import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import { Button } from './Button';
 import { MotionPreview, type MotionCanvasMeasureApi } from './MotionPreview';
+import { KeyframeTimeline } from './KeyframeTimeline';
 import { LayerList, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
@@ -262,17 +276,37 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     <div className="h-full w-full min-h-0 bg-bg-primary">
       <PanelGroup>
         <ResizablePanel defaultSize={800} minSize={300}>
-          <MotionPreview
-            manifest={m.manifest}
-            transientManifest={transientManifest}
-            playerRef={playerRef}
-            measureApiRef={measureApiRef}
-            selections={selections}
-            onSelect={onSelect}
-            onSelectionChange={onSelectionChange}
-            onTransientChange={setTransientManifest}
-            onCommit={m.commit}
-          />
+          {/* D-162 — a nested VERTICAL split: the preview on top, the
+              per-row keyframe timeline full-width beneath it, independently
+              resizable — see `KeyframeTimeline.tsx`'s own module doc
+              comment for why this replaced D-160's `KeyframeStrip` living
+              squeezed inside `MotionPreview.tsx` itself. */}
+          <PanelGroup orientation="vertical">
+            <ResizablePanel defaultSize={520} minSize={200}>
+              <MotionPreview
+                manifest={m.manifest}
+                transientManifest={transientManifest}
+                playerRef={playerRef}
+                measureApiRef={measureApiRef}
+                selections={selections}
+                onSelect={onSelect}
+                onSelectionChange={onSelectionChange}
+                onTransientChange={setTransientManifest}
+                onCommit={m.commit}
+              />
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={220} minSize={120} maxSize={480}>
+              <KeyframeTimeline
+                manifest={m.manifest}
+                selections={selections}
+                playerRef={playerRef}
+                onSelect={onSelect}
+                onTransientChange={setTransientManifest}
+                onCommit={m.commit}
+              />
+            </ResizablePanel>
+          </PanelGroup>
         </ResizablePanel>
         <ResizableHandle />
         {/* D-151: Layers and Catalog share one pane rather than the Catalog

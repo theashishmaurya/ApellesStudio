@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { sample } from '@chroma/motion-engine/src/engine/sample';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
-import type { Selection } from './LayerList';
 import {
   layerKeyCount,
   cameraKeyCount,
   scene3dCameraKeyCount,
-  cameraKeyMarkers,
-  selectedLayerKeyMarkers,
+  keyframeLanes,
+  laneKey,
+  laneKeyMarkers,
+  selectionForLane,
   sceneBoundaryFrames,
   frameToPercent,
   percentToFrame,
@@ -61,72 +62,143 @@ describe('cameraKeyCount / scene3dCameraKeyCount', () => {
   });
 });
 
-describe('cameraKeyMarkers', () => {
-  it('covers every 2D and 3D camera key across the whole manifest, in scene/kind/key order', () => {
-    const markers = cameraKeyMarkers(sample);
-    expect(markers).toEqual([
+describe('keyframeLanes', () => {
+  it('produces one lane per keyed camera/3D-camera, scene order then camera-before-layers-before-3D per scene', () => {
+    // sample: scene 0 (hook) has a keyed 2D camera and NO keyed layers
+    // (neither of its two layers carries transform.keys); scene 1 (stack)
+    // has no camera and no keyed layers; scene 2 (space) has a keyed 3D
+    // camera and no 2D layers at all.
+    expect(keyframeLanes(sample)).toEqual([
+      { sceneIndex: 0, kind: 'camera' },
+      { sceneIndex: 2, kind: 'scene3d-camera' },
+    ]);
+  });
+
+  it('adds a layer lane once that layer has >0 transform.keys, and not before', () => {
+    const before = keyframeLanes(sample);
+    const withKeys = withLayerKeys([{ at: 0, x: 0 }]);
+    const after = keyframeLanes(withKeys);
+    expect(before.some((l) => l.sceneIndex === 0 && l.kind === 'layer')).toBe(false);
+    expect(after).toContainEqual({ sceneIndex: 0, kind: 'layer', layerIndex: 0 });
+  });
+
+  it('never produces a lane for a camera/3D-camera/layer with 0 keys', () => {
+    const m: Manifest = { ...sample, scenes: [sample.scenes[1]] }; // "stack": no camera, no keyed layers
+    expect(keyframeLanes(m)).toEqual([]);
+  });
+
+  it('never produces a lane for a scene row itself, or for scene3d children', () => {
+    const lanes = keyframeLanes(sample);
+    expect(lanes.every((l) => l.kind !== ('scene' as never))).toBe(true);
+    expect(lanes.every((l) => l.kind !== ('scene3d-child' as never))).toBe(true);
+  });
+
+  it('is deterministic across repeated calls on the same manifest', () => {
+    expect(keyframeLanes(sample)).toEqual(keyframeLanes(sample));
+  });
+});
+
+describe('laneKey', () => {
+  it('differs for two layer lanes in the same scene at different indices', () => {
+    expect(laneKey({ sceneIndex: 0, kind: 'layer', layerIndex: 0 })).not.toBe(
+      laneKey({ sceneIndex: 0, kind: 'layer', layerIndex: 1 }),
+    );
+  });
+
+  it('differs for the same layerIndex in two different scenes', () => {
+    expect(laneKey({ sceneIndex: 0, kind: 'layer', layerIndex: 0 })).not.toBe(
+      laneKey({ sceneIndex: 1, kind: 'layer', layerIndex: 0 }),
+    );
+  });
+
+  it('differs between a camera lane and a scene3d-camera lane in the same scene', () => {
+    expect(laneKey({ sceneIndex: 0, kind: 'camera' })).not.toBe(laneKey({ sceneIndex: 0, kind: 'scene3d-camera' }));
+  });
+});
+
+describe('laneKeyMarkers', () => {
+  it("covers a 2D camera lane's own keys, in its own scene, unaffected by any other scene", () => {
+    expect(laneKeyMarkers(sample, { sceneIndex: 0, kind: 'camera' })).toEqual([
       { sceneIndex: 0, keyIndex: 0, frame: 0, kind: 'camera' },
       { sceneIndex: 0, keyIndex: 1, frame: 12, kind: 'camera' },
       { sceneIndex: 0, keyIndex: 2, frame: 48, kind: 'camera' },
+    ]);
+  });
+
+  it("covers a 3D camera lane's own keys, offset by ITS scene's own start frame", () => {
+    expect(laneKeyMarkers(sample, { sceneIndex: 2, kind: 'scene3d-camera' })).toEqual([
       { sceneIndex: 2, keyIndex: 0, frame: 300, kind: 'scene3d-camera' },
       { sceneIndex: 2, keyIndex: 1, frame: 450, kind: 'scene3d-camera' },
     ]);
   });
 
-  it('is empty for a manifest with no cameras at all', () => {
-    const m: Manifest = { ...sample, scenes: [sample.scenes[1]] };
-    expect(cameraKeyMarkers(m)).toEqual([]);
+  it('is empty for a camera lane on a scene with no camera at all', () => {
+    expect(laneKeyMarkers(sample, { sceneIndex: 1, kind: 'camera' })).toEqual([]);
   });
 
-  it('is deterministic across repeated calls on the same manifest', () => {
-    expect(cameraKeyMarkers(sample)).toEqual(cameraKeyMarkers(sample));
-  });
-});
-
-describe('selectedLayerKeyMarkers', () => {
-  it('is empty with no selection', () => {
-    expect(selectedLayerKeyMarkers(sample, [])).toEqual([]);
-  });
-
-  it('is empty with 2+ selections (no lockstep meaning, matches TransformKeysSection\'s own scoping)', () => {
-    const sels: Selection[] = [
-      { sceneIndex: 0, target: { kind: 'layer', index: 0 } },
-      { sceneIndex: 0, target: { kind: 'layer', index: 1 } },
-    ];
-    expect(selectedLayerKeyMarkers(sample, sels)).toEqual([]);
-  });
-
-  it('is empty for a non-layer single selection (scene/camera/3D-camera)', () => {
-    expect(selectedLayerKeyMarkers(sample, [{ sceneIndex: 0, target: { kind: 'scene' } }])).toEqual([]);
-    expect(selectedLayerKeyMarkers(sample, [{ sceneIndex: 0, target: { kind: 'camera' } }])).toEqual([]);
-    expect(selectedLayerKeyMarkers(sample, [{ sceneIndex: 2, target: { kind: 'scene3d-camera' } }])).toEqual([]);
-  });
-
-  it('is empty for a scene3d-child selection (transform.keys only exists on 2D layers)', () => {
-    const sel: Selection = { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0 } };
-    expect(selectedLayerKeyMarkers(sample, sel ? [sel] : [])).toEqual([]);
-  });
-
-  it('is empty for a real layer selection that has no transform.keys', () => {
-    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
-    expect(selectedLayerKeyMarkers(sample, [sel])).toEqual([]);
-  });
-
-  it('converts a real transform.keys array to absolute frames in its own scene', () => {
+  it("converts a layer lane's own transform.keys to absolute frames in its own scene", () => {
     const m = withLayerKeys([{ at: 0, x: 0 }, { at: 2, x: 300 }]);
-    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
-    expect(selectedLayerKeyMarkers(m, [sel])).toEqual([
+    expect(laneKeyMarkers(m, { sceneIndex: 0, kind: 'layer', layerIndex: 0 })).toEqual([
       { sceneIndex: 0, keyIndex: 0, frame: 0, kind: 'layer' },
       { sceneIndex: 0, keyIndex: 1, frame: 60, kind: 'layer' }, // 2s * 30fps, scene 0 starts at frame 0
     ]);
   });
 
-  it('offsets by the selected layer\'s own scene start frame, not scene 0\'s', () => {
+  it("offsets a layer lane by ITS OWN scene's start frame, not scene 0's", () => {
     const m = structuredClone(sample);
     (m.scenes[1].layers![0] as unknown as Record<string, unknown>).transform = { keys: [{ at: 1, x: 0 }] };
-    const sel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 0 } };
     // scene 1 ("stack") starts at frame 120; 1s * 30fps = 30 -> absolute 150
-    expect(selectedLayerKeyMarkers(m, [sel])).toEqual([{ sceneIndex: 1, keyIndex: 0, frame: 150, kind: 'layer' }]);
+    expect(laneKeyMarkers(m, { sceneIndex: 1, kind: 'layer', layerIndex: 0 })).toEqual([
+      { sceneIndex: 1, keyIndex: 0, frame: 150, kind: 'layer' },
+    ]);
+  });
+
+  it('a layer lane only ever shows THAT layer\'s own keys, never a sibling layer\'s', () => {
+    const m = structuredClone(sample);
+    (m.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = { keys: [{ at: 0, x: 0 }] };
+    expect(laneKeyMarkers(m, { sceneIndex: 0, kind: 'layer', layerIndex: 1 })).toEqual([]);
+  });
+
+  it('is empty for a lane whose scene/layerIndex no longer resolves', () => {
+    expect(laneKeyMarkers(sample, { sceneIndex: 99, kind: 'camera' })).toEqual([]);
+    expect(laneKeyMarkers(sample, { sceneIndex: 0, kind: 'layer', layerIndex: 99 })).toEqual([]);
+  });
+});
+
+describe('selectionForLane', () => {
+  it('resolves a camera lane to a {kind: camera} selection in its own scene', () => {
+    expect(selectionForLane(sample, { sceneIndex: 0, kind: 'camera' })).toEqual({
+      sceneIndex: 0,
+      target: { kind: 'camera' },
+    });
+  });
+
+  it('resolves a scene3d-camera lane to a {kind: scene3d-camera} selection in its own scene', () => {
+    expect(selectionForLane(sample, { sceneIndex: 2, kind: 'scene3d-camera' })).toEqual({
+      sceneIndex: 2,
+      target: { kind: 'scene3d-camera' },
+    });
+  });
+
+  it('resolves a layer lane to a {kind: layer} selection carrying that layer\'s own id when it has one', () => {
+    const m = structuredClone(sample);
+    m.scenes[0].layers![0].id = 'headline';
+    expect(selectionForLane(m, { sceneIndex: 0, kind: 'layer', layerIndex: 0 })).toEqual({
+      sceneIndex: 0,
+      target: { kind: 'layer', index: 0, id: 'headline' },
+    });
+  });
+
+  it('resolves a layer lane to id: undefined when the layer has none, same as LayerList\'s own row click', () => {
+    expect(selectionForLane(sample, { sceneIndex: 0, kind: 'layer', layerIndex: 0 })).toEqual({
+      sceneIndex: 0,
+      target: { kind: 'layer', index: 0, id: undefined },
+    });
+  });
+
+  it('is null for a lane whose scene/layerIndex no longer resolves', () => {
+    expect(selectionForLane(sample, { sceneIndex: 99, kind: 'camera' })).toBeNull();
+    expect(selectionForLane(sample, { sceneIndex: 0, kind: 'layer', layerIndex: 99 })).toBeNull();
   });
 });
 

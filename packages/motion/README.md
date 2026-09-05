@@ -12,7 +12,14 @@ commands (`app/src-tauri/src/chroma/motion.rs`) → the `chroma-motion` crate.
 ## Layout
 
 Four resizable panes (`resizable.tsx`): **preview** · **sidebar** (Layers /
-Catalog, two tabs) · **Inspector** · **manifest editor**.
+Catalog, two tabs) · **Inspector** · **manifest editor**. As of D-162, the
+preview pane is itself a nested VERTICAL split — the `@remotion/player`
+preview on top, the per-row **keyframe timeline** full-width beneath it,
+independently resizable — mirroring `@chroma/editor`'s own
+`PreviewPane`/`TimelinePane` stack (see `KeyframeTimeline.tsx`'s own module
+doc comment for the full layout reasoning and why D-160's `KeyframeStrip`,
+squeezed inside the preview component itself, didn't survive becoming a
+per-row lane timeline).
 
 ## Files
 
@@ -21,7 +28,9 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   project-scoped), then lays out the four panes and owns `selections:
   Selection[]` (D-158, Phase 3 of `docs/notes/motion-visual-builder-
   research.md` — was a single `Selection | null`) plus the Phase 0b transient
-  drag-preview override.
+  drag-preview override. D-162 nests a vertical `PanelGroup` inside the
+  preview pane (`<MotionPreview>` over `<KeyframeTimeline>`) — see the
+  Layout section above.
 - `MotionCanvasOverlay.tsx` — on-canvas select/drag (D-156), resize (D-157),
   and marquee-select/shift-click/shared-delta group-move (D-158): a DOM
   sibling of `<Player>` handling four pointer gestures on one surface. See
@@ -48,27 +57,30 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   — nothing outside this tab needs it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
-  `totalFrames`/schema defaults (`build.ts`), not reimplemented here. A
-  `flex flex-col` column since D-160: the player + canvas overlay on top,
-  `<KeyframeStrip>` fixed-height beneath, always mounted.
-- `KeyframeStrip.tsx` — Phase 5a of `docs/notes/motion-keyframe-timeline-
-  research.md` (D-160): a small bar under the player showing scene-boundary
-  ticks, every camera key (2D + 3D, whole composition) and the
-  currently-selected single layer's own `transform.keys`, plus a live
-  playhead — click anywhere or a marker to seek. A separate strip alongside
-  the untouched `<Player>`, not a modification of its own scrub bar — see
-  the file's own doc comment for why (Remotion's bundled controls have no
-  extension point, checked directly). Phase 5b part 1 (D-161): a marker can
-  now be DRAGGED to retime it — `onTransientChange`/`onCommit` (optional,
-  required together; omit both to keep the strip pure-navigation, D-155's
-  undo/commit plumbing simply doesn't apply then) wire the SAME
-  transient-preview/commit discipline `MotionCanvasOverlay.tsx` uses onto a
-  1D time axis. See the file's own doc comment for the gesture-
-  disambiguation reasoning (marker-drag vs. background click-to-seek vs.
-  click-vs-drag on the same marker) and why the dragged marker's live
-  position is a local overlay rather than re-derived from a transient
-  manifest (a drag-triggered reorder could otherwise change the dragged
-  button's own React key mid-gesture and silently drop its pointer capture).
+  `totalFrames`/schema defaults (`build.ts`), not reimplemented here. Back to
+  its pre-D-160 shape as of D-162 — just the player + `MotionCanvasOverlay`,
+  no opinion about a keyframe timeline at all (moved out to
+  `KeyframeTimeline.tsx`, now a `MotionTab.tsx`-level sibling panel — see the
+  Layout section above and that file's own doc comment for why).
+- `KeyframeTimeline.tsx` — Phase 5b part 2 of `docs/notes/
+  motion-keyframe-timeline-research.md` ("per-row lanes," D-162): a real
+  per-row keyframe timeline, replacing D-160/D-161's single-strip
+  `KeyframeStrip.tsx`. One row per keyed 2D camera, keyed layer, or keyed 3D
+  camera (`keyframeVisibility.ts`'s `keyframeLanes` — rows appear/disappear
+  as keys are added/removed, `LayerList`'s own row order), a shared
+  horizontal time ruler (`timelineRuler.ts`'s reimplemented "nice numbers"
+  tick algorithm) with independent zoom (`timelineZoom.ts`, new bounds —
+  not the Edit tab's own D-134 system), a combined vertical+horizontal
+  scroll region (sticky row labels + a sticky ruler, the standard
+  "frozen row/column" technique, no virtualization library needed at these
+  row counts), per-row click-to-select (reuses `MotionTab.tsx`'s own
+  `onSelect` — no parallel selection mechanism), and D-161's drag-a-key
+  gesture generalized to work per-row (any keyed layer's keys can now be
+  dragged without first selecting that layer in `LayerList` — a real
+  capability improvement over the flat strip, not just a reshuffling). See
+  the file's own module doc comment for the full layout decision (why this
+  moved out of `MotionPreview.tsx`) and the gesture-disambiguation/
+  drag-identity reasoning inherited from D-161.
 - `LayerList.tsx` — the scene → camera → layers → scene3d-children tree, and
   the `Selection`/`Selection[]` model everything else here binds to (D-081;
   `Selection[]` + `toggleSelection`/`sameSelection`/`resolveSelections`-
@@ -110,15 +122,33 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   Phase 5b part 1 — the write primitive that moves a key's `at`: one generic
   core over the three key-array shapes, reorders past a neighbor rather than
   clamping, boundary-clamps to `[0, scene.dur]`).
-- `keyframeVisibility.ts` — Phase 5a of `docs/notes/
-  motion-keyframe-timeline-research.md` (D-160): pure functions for
-  `LayerList.tsx`'s key-count badges and `KeyframeStrip.tsx`'s marker
-  positions — `layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`,
-  `cameraKeyMarkers`/`selectedLayerKeyMarkers` (absolute-frame conversion via
-  the engine's own `sceneStartFrame`, never a second copy of that math,
-  `keyIndex` added D-161 for the drag gesture to identify which key it hit),
-  and `frameToPercent`/`percentToFrame` (D-161's own pointer-position→frame
-  inverse, for a drag). No manifest mutation, no DOM.
+- `keyframeVisibility.ts` — pure functions for `LayerList.tsx`'s key-count
+  badges (`layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`, D-160)
+  and `KeyframeTimeline.tsx`'s row layout + marker positions. D-162 retired
+  the flat-strip functions (`cameraKeyMarkers`/`selectedLayerKeyMarkers`) in
+  favor of the per-row model: `keyframeLanes` (which rows exist, in what
+  order — one per keyed camera/3D-camera/layer, `LayerList`'s own row
+  order), `laneKey` (a lane's stable string identity), `laneKeyMarkers` (one
+  lane's own keys as absolute frames — any keyed layer's, not just the
+  selected one, a real capability improvement), and `selectionForLane` (a
+  lane → the `Selection` `MotionTab.tsx`'s `onSelect` takes, including the
+  layer's own `id` snapshot). `frameToPercent`/`percentToFrame` (D-161's
+  pointer-position↔frame conversions, unchanged) and `sceneBoundaryFrames`
+  (D-160) carry over as-is — zoom doesn't affect them since they're
+  percent-of-track-width, and every lane's track renders at the same
+  zoomed width (`timelineZoom.ts`'s `trackWidthPx`). No manifest mutation,
+  no DOM.
+- `timelineRuler.ts` — D-162: a REIMPLEMENTATION (not an import — `@chroma/
+  motion` cannot depend on `@chroma/editor`) of `packages/editor/src/
+  ruler.ts`'s "nice numbers" tick-density algorithm
+  (`niceTickIntervalSeconds`/`formatTimecode`), plus `rulerTicks` (the
+  ruler's own tick list for one render, given the total duration/fps/zoom).
+- `timelineZoom.ts` — D-162: `KeyframeTimeline.tsx`'s own zoom mechanism —
+  `pxPerSecond` bounds/stepping new to this file, deliberately NOT reused
+  from `ruler.ts`'s D-134 system (that one's bounds bracket a Rust-side
+  video-thumbnail decimation ladder with no equivalent here) — and
+  `trackWidthPx`, the "how many frames map to how many pixels" math every
+  lane's track and the ruler render at.
 - `ManifestEditor.tsx` — the JSON `<textarea>` + inline parse/save/render
   error surfacing. Still the only way to delete a layer or add a scene.
 - `manifestIO.ts` — thin wrappers around the three `chroma_motion_*` Tauri
@@ -147,12 +177,16 @@ engine side.
 
 `npm test --workspace @chroma/motion` (vitest, `node` environment — the
 testable logic here is deliberately kept out of the components, per the
-`canvasGeometry.ts`/`layerMeasure.ts` split above). 255 tests across
+`canvasGeometry.ts`/`layerMeasure.ts` split above). 292 tests across
 `canvasGeometry.test.ts`, `manifestEdit.test.ts` (D-161 adds `moveKeyAt`/
 `moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`),
 `catalog.test.ts`, `motionProjectStore.test.ts`, `interpolateKeys.test.ts`,
-`schema.test.ts`, and `keyframeVisibility.test.ts` (D-160, plus D-161's
-`percentToFrame`).
+`schema.test.ts`, `keyframeVisibility.test.ts` (D-160/D-161/D-162 — the
+per-row `keyframeLanes`/`laneKey`/`laneKeyMarkers`/`selectionForLane` tests
+replaced the old flat-strip ones), and, new at D-162, `timelineRuler.test.ts`
+(the reimplemented tick algorithm — mirrors `ruler.test.ts`'s own coverage,
+plus `rulerTicks` itself) and `timelineZoom.test.ts` (the new zoom
+mechanism's bounds/stepping/pixel-width math).
 
 ## Status
 
@@ -168,25 +202,25 @@ wrapper (`layer.transform.keys`, additive deltas, the same shared
 `interpolateKeys` the camera uses, auto-keyframed on a move-drag once a
 layer's position is already keyed). Plus, as of D-160 (2026-09-05,
 `docs/notes/motion-keyframe-timeline-research.md`'s Phase 5a), real
-**key visibility**: a per-row key-count badge in `LayerList`, and a
-keyframe strip under the player showing every camera key and the selected
-layer's own keys with a live playhead and click-to-seek. As of D-161 (same
-day, Phase 5b part 1), that strip's markers can be **dragged to retime
-them** — a real new write primitive (`moveKeyAt`) reorders past a
-neighboring key rather than clamping, and boundary-clamps to the dragged
-key's own scene duration.
+**key visibility**, and D-161 (same day, Phase 5b part 1), **drag a key to
+retime it**. As of D-162 (Phase 5b part 2), the flat single-strip timeline
+became a real **per-row lane timeline**: one row per keyed 2D camera,
+layer, or 3D camera (`LayerList`'s own row order), a shared ruler with
+independent zoom, per-row click-to-select, and D-161's drag gesture
+generalized so any keyed layer's keys can be dragged without first
+selecting that layer.
 
 **Known gaps**, most audited in full with citations in
 `docs/notes/motion-tab-audit.md` (pre-D-155) and queued as roadmap item 16 —
-re-checked against what D-155–D-161 actually closed rather than assumed
-stale: Phase 5b's other three pieces still unbuilt (`docs/notes/
-motion-keyframe-timeline-research.md` — per-row lanes, box-select + nudge
-multiple keys, a curve/easing editor; D-161 only closed "drag a key along
-time"), no drag-and-drop from outside the app, no delete/duplicate of a
-layer from the GUI, no multi-manifest per project (D-046), no snapping
-GUIDES while dragging (D-158's own explicit scope-down), no group RESIZE
-for a multi-selection (single-selection only), and **no MCP tools at
-all** — Motion is the one tab an agent cannot drive. The Catalog (D-151)
-closed the largest GUI-creation gap; D-155–D-159 closed the largest
-on-canvas-manipulation gap; D-160/D-161 are the first two steps toward a
-real keyframe timeline, not the whole of it.
+re-checked against what D-155–D-162 actually closed rather than assumed
+stale: Phase 5b's other two pieces still unbuilt (`docs/notes/
+motion-keyframe-timeline-research.md` — box-select + nudge multiple keys, a
+curve/easing editor; D-162 only closed "per-row lanes"), no drag-and-drop
+from outside the app, no delete/duplicate of a layer from the GUI, no
+multi-manifest per project (D-046), no snapping GUIDES while dragging
+(D-158's own explicit scope-down), no group RESIZE for a multi-selection
+(single-selection only), and **no MCP tools at all** — Motion is the one
+tab an agent cannot drive. The Catalog (D-151) closed the largest
+GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
+gap; D-160/D-161/D-162 are three of four steps toward a real keyframe
+timeline — box-select and the curve editor remain.

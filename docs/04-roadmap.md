@@ -1084,11 +1084,27 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   `MotionCanvasOverlay.tsx` already uses, with its own local `dragPreview` overlay (rather than
   re-deriving markers from a live-mutating transient manifest) to avoid losing pointer capture
   when a drag-triggered reorder would otherwise change a marker's own React key mid-gesture.
-  **Remaining: Phase 5b's other three pieces — per-row lanes, box-select + nudge multiple keys, a
-  curve/easing editor — still real, unbuilt work**, comparable in cost to the Edit tab's own
-  timeline, and must not be attached quietly to anything else. Snapping/alignment GUIDES (visual
-  guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see
-  that decision's own entry for the smallest next step.
+  **Phase 5b, part 2 (per-row lanes) BUILT — D-162, 2026-09-05.** The flat single-strip
+  `KeyframeStrip.tsx` (D-160/D-161) is retired, replaced by `KeyframeTimeline.tsx`: one row per
+  keyed 2D camera/layer/3D camera (`keyframeVisibility.ts`'s new `keyframeLanes`, `LayerList`'s
+  own row order — rows appear/disappear as keys are added/removed), a shared time ruler using a
+  REIMPLEMENTATION of `ruler.ts`'s tick-density algorithm (`timelineRuler.ts`, not an import — the
+  standing package-boundary rule), independent zoom (`timelineZoom.ts`, new bounds, not the Edit
+  tab's D-134 system — that one bracket a Rust thumbnail-decimation ladder with no equivalent
+  here), a combined vertical+horizontal scroll region (sticky row labels + sticky ruler, no
+  virtualization library needed), per-row click-to-select reusing `MotionTab.tsx`'s own
+  `onSelect`, and D-161's drag-a-key gesture generalized per row — any keyed layer's keys can now
+  be dragged without first selecting that layer, a real capability improvement over the flat
+  strip. Layout call: the timeline moved OUT of `MotionPreview.tsx` into a new full-width sibling
+  panel in `MotionTab.tsx`'s own layout (a nested vertical `PanelGroup`, preview over timeline),
+  mirroring the Edit tab's own `PreviewPane`/`TimelinePane` stack — a flat 24px strip could live
+  squeezed under the player, but N independently-scrollable rows need real, resizable estate of
+  their own.
+  **Remaining: Phase 5b's other two pieces — box-select + nudge multiple keys, a curve/easing
+  editor — still real, unbuilt work**, comparable in cost to the Edit tab's own timeline, and must
+  not be attached quietly to anything else. Snapping/alignment GUIDES (visual guide-lines while
+  dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see that decision's
+  own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays
