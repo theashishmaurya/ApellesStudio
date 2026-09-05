@@ -35,6 +35,22 @@ One or two lines per session. Detail lives in the decision it references.
   **B-059** (camera `ease` is supported by the engine and silently stripped by
   the schema), found by fact-checking a wrong draft claim. Next priority named,
   not built: on-canvas manipulation.
+- **2026-09-05** — **Motion visual builder: research pass, no code (D-152).** The owner asked
+  for on-canvas drag/size/animate with a human in the loop, pointing at a `scribble` emphasis
+  circling the wrong words. Read the engine end to end, and the framing going in turned out to
+  be wrong: **this is not D-136 again.** The Motion model is already scene/world space with the
+  camera applied at render time, the camera is an invertible 2D similarity, and the reference
+  frame is `manifest.width`/`height` declared in the document — so nothing needs migrating. The
+  screenshot's real cause is that `emphasis.box` is a hand-authored duplicate of a rectangle
+  only the layout engine can know (plus `Emphasis` drawing the ellipse at `w×1.18` / `h×1.5`).
+  Recommended technique: **measure the live DOM** (`data-motion-world` +
+  `getBoundingClientRect`) instead of reimplementing the camera's math — drift, easing and the
+  player's fit-scale all cancel for free. Phased 0–5, with **Phase 5 (a real keyframe timeline)
+  named as a major feature**, crop answered "no, and here is why", and 3D excluded. Also filed
+  B-060 (drift rate uses the hardcoded `design.fps` token) and B-061 (Inspector labels camera
+  `at` in frames; the manifest is seconds), and scoped Part C (collapse the raw JSON behind a
+  `</>` chip) for a fast follow-up — the trap being that Save/Render **and the error strip** live
+  inside the panel being collapsed. `docs/notes/motion-visual-builder-research.md`.
 - **2026-09-05** — **`chroma-project` real extraction (D-148) — Wave 1–3 of the
   crate migration is done.** `chroma/project.rs` L1–1638 (the manifest, every
   schema migration, the media pool + bins, the D-070 unified clip identity and

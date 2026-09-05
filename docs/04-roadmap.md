@@ -1043,6 +1043,22 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
+- **Motion tab visual builder — on-canvas drag / size / animate** — owner asked for it live
+  2026-09-05 ("drag and drop multiple elements… a visual builder for me and animation as well…
+  fix easily, with human in loop"). **Researched and phased, not built: D-152,
+  `docs/notes/motion-visual-builder-research.md`.** The load-bearing finding is that the Motion
+  engine's coordinate model is **already correct** — scene/world space, camera applied at render
+  time, an invertible 2D similarity, reference frame declared in the manifest — so unlike D-136
+  there is **no migration to write**; the work is tooling. The recommended screen↔world map is
+  *measured* from the live `@remotion/player` DOM (`data-motion-world` +
+  `getBoundingClientRect`), not a second copy of `Camera.tsx`'s math. Phase 0 has four real
+  prerequisites (DOM hooks in the engine; a gesture commit path that skips the 300 ms text
+  round-trip; **undo, which the Motion tab has none of today**; and a recorded world-space call).
+  **Phase 5 — a real keyframe timeline — is a major feature**, comparable in cost to the Edit
+  tab's own timeline, and must not be attached quietly to the end of Phase 4. Two immediate,
+  much smaller wins sit inside it and can be pulled forward: an Inspector **"snap the highlight
+  to that layer"** action (the direct fix for the owner's screenshot) and Part C's `</>` collapse
+  of the raw JSON panel.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

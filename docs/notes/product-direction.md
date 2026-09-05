@@ -231,5 +231,16 @@ Short version, not financial advice:
   re-litigated since.
 - Multi-timeline / nested-sequence support (a Motion composition as a pool
   item) — flagged, deferred, not designed.
-- Whether `chroma-motion`'s manifest editor becomes visual or stays
-  JSON-in/agent-driven for v1 — not decided, no strong signal either way yet.
+- ~~Whether `chroma-motion`'s manifest editor becomes visual or stays
+  JSON-in/agent-driven for v1 — not decided, no strong signal either way yet.~~
+  **Signal arrived 2026-09-05, from the owner, unprompted: visual.** *"i would
+  like to drag and drop multiple elements and set position or change them size
+  crop animation and all those things :) a visual builder for me and animation
+  as well… and fix easily, with human in loop"* — plus, of the raw JSON pane,
+  *"as a user i dont need that you will need only, put it behind this kinda
+  button [`</>`]."* So it is **both**, with the emphasis reversed from today's
+  build: the canvas is the creator surface and the JSON stays as the agent
+  surface, collapsed by default rather than co-equal. Researched and phased in
+  **D-152** / `docs/notes/motion-visual-builder-research.md`; still unbuilt, so
+  what remains genuinely open is the *scope* of v1's visual half (Phase 1's drag
+  is small; Phase 5's keyframe timeline is a major feature), not the direction.

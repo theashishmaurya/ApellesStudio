@@ -11788,5 +11788,170 @@ is no semantic conflict between "the tab knows when a project is open" and "the
 tab can insert a primitive," and this branch was deliberately **not** rebased
 onto that change, per this pass's own brief.
 
+---
+
+## D-152 — Research pass: a visual builder for the Motion tab. The coordinate model is already correct, so the fix is a measured screen↔world map, not a D-136-shaped migration
+
+**decided (2026-09-05)** — research + scoping only; **no feature code written**. Full note:
+`docs/notes/motion-visual-builder-research.md`.
+
+**Context.** Owner, live, with a screenshot: *"i would like to drag and drop multiple elements
+and set position or change them size crop animation and all those things :) a visual builder
+for me and animation as well… and fix easily, with human in loop."* Then, pointing at a
+rendered frame where a red `scribble` emphasis ellipse circles the wrong words: *"i know the
+highlight is off, i can move it to right place directly but it should follow the animation as
+well :/ so all those things we need a smart way to handle, do some research."* Plus a separate,
+small ask: collapse `ManifestEditor`'s raw JSON behind a `</>` toggle, because the manifest is
+an agent surface, not a creator surface.
+
+The obvious framing going in was that this is D-136 again — the Edit tab's
+`position_x`/`position_y` migration from preview-resolution-dependent pixels to normalised
+composition-space fractions, made necessary because a layer's on-screen position drifted under
+an unstable transform. **That framing is wrong, and the note's first job was to prove it either
+way rather than assume it.**
+
+### The finding that decides the shape of the work
+
+`schema.ts`, `build.ts`, `Video.tsx`, `Camera.tsx` and every 2D primitive were read in full.
+The model is **scene/world space with the camera applied on top at render time** — option (a)
+of the three the brief asked to weigh, and it is already correct:
+
+- A layer's `x`/`y` (or `emphasis.box`) is consumed *inside* the camera's transformed
+  `AbsoluteFill`, so it means "where this sits in the untransformed scene."
+- The camera really is a keyframed, eased array (`interpolate` + `Easing.bezier`,
+  `design.ease.inOut` by default), and the transform it emits is a **2D similarity — uniform
+  scale plus translation, no rotation, no shear, no perspective** — hence invertible in closed
+  form.
+- The reference frame for a stored coordinate is `manifest.width`/`height`, **declared in the
+  document**. Unlike B-043, it does not change with a render setting: the player's fit-scale is
+  a viewport zoom outside the composition, and `metadataFromManifest` feeds the composition its
+  size from the manifest directly.
+
+So there is no unit ambiguity, nothing unrecoverable on disk, and **no migration to write**.
+`position_*` had to change meaning in D-136; here the numbers already mean the right thing.
+Recording this explicitly because the wrong reading is expensive: it would produce a schema
+migration nobody needs and still not fix the screenshot.
+
+**What the owner's bug actually is.** The screenshot is the engine's own
+`sample.ts` (`"EVERY call re-sends the whole prompt"`, `box:[980,250,520,130]`, camera pushing
+to `x:1150,y:520,zoom:1.5`). Worked out at the frame the emphasis fires: the box's centre sits
+**~30 world px above the text's centre** (the text's own box is `top:300` + `78×1.15`, centre
+344.9; the box's centre is 315); `Emphasis` then draws the ellipse at **`box.w × 1.18` by
+`box.h × 1.5`**, so it is half again taller than the rectangle that was typed; and the result
+overshoots the end of the sentence. The root cause is not drift and not a coordinate defect:
+**the emphasis box is a hand-authored duplicate of a rectangle only the layout engine can
+know** (font file, glyph metrics, `letterSpacing`, wrapping — none of it in the manifest, none
+of it computable by whatever emitted the manifest). The one *genuinely* D-136-shaped hazard is
+adjacent and latent: measuring pixels off a rendered screenshot writes **screen** coordinates
+into a **world**-space field. That mistake is committed by a human with a ruler, not by the
+engine — and a naive drag tool would institutionalise it.
+
+### The decision: measure the live DOM, don't re-derive the camera
+
+The Motion preview is a real `@remotion/player` embed — the composition live in the DOM, not
+the Edit tab's server-rendered JPEG. So the recommended screen↔world map is **measured, not
+reconstructed**: mark the camera's transformed container `data-motion-world`, read its
+`getBoundingClientRect()`, and take `k = rect.width / manifest.width` as the composed scale
+(player fit-scale × camera zoom) with `rect.left/top` as the composed origin.
+
+Chosen over the obvious alternative — reimplementing `Camera.tsx`'s interpolation and inverting
+it in `@chroma/motion` — for reasons that are the house rules rather than taste: it is a second
+copy of a transform that must stay bit-identical forever, in a different package, and it would
+have to grow copies of the drift sinusoid, `design.ease`, the clamp-before-first-key behaviour,
+and `CameraKey.ease` (which exists in the component and is not even in the zod schema).
+Measuring composes all of it, including anything added later, for free — and **drift cancels
+twice over**: out of a delta because it is a translation, and out of an absolute because the
+reference rect is measured at the same instant. `PlayerRef` already exposes `getScale()`,
+`getContainerNode()`, `getCurrentFrame()` and a `scalechange` event, so the library supplies the
+outer half outright.
+
+The honest cost, and it is real: the engine must emit stable DOM hooks (`data-motion-world`,
+`data-motion-layer`, and per-primitive `data-motion-box`), because a generic wrapper's rect is
+**not** a usable box for most primitives — checked individually, `Matrix`'s `<svg>` has no
+width/height (CSS-default 300×150), `Layers`' root is zero-area, and `Graph`/`Emphasis` use
+`inset: 0` SVGs whose rect is the whole canvas. Attributes only; zero pixel change; the
+determinism invariant is untouched.
+
+**Also settled, from a verified external precedent rather than invented:** Remotion's own Studio
+does canvas-side visual editing where *"drags create or update keyframes at the current frame"*
+(and Shift locks an axis). That is the answer to the auto-keyframe question
+`on-canvas-transform.md`'s Phase 4 left open for the Edit tab — a precedent to point at when
+Motion's own keyframe phase is built. After Effects' World/View/Local axis modes are the other
+real reference: a serious motion tool treats "which space is my drag in?" as an exposed choice.
+What could *not* be verified, and is not claimed: how AE back-solves a pointer delta under an
+animated camera at a non-key frame.
+
+### The phasing, and the one part that is a major feature
+
+Phase 0 (four prerequisites, none optional): the DOM hooks; a gesture commit path that bypasses
+the 300 ms `JSON.stringify`→parse text round-trip `useMotionManifest` puts every write through;
+**undo — the Motion tab has none at all today** (`@chroma/history` is Edit-tab only), so
+D-136's "don't flood the undo stack" problem is replaced by a worse one; and a recorded call
+that a drag writes world coordinates. Phase 1: click-to-select on the canvas (cheap here,
+unlike the Edit tab, because layers are real DOM nodes) + drag position. Phase 2: per-primitive
+resize, a **"snap the highlight to that layer"** action — the direct fix for the screenshot —
+and a generic layer transform wrapper. Phase 3: multi-select (needs stable layer `id`s; today
+identity is an array index). Phase 4: per-layer keyframes as a delta on the Phase 2 wrapper,
+reusing an extracted shared interpolator rather than a second one. **Phase 5 — a real keyframe
+timeline — is a major feature and is named as one**, comparable in cost to the Edit tab's own
+timeline; a cheaper intermediate (key markers on the player scrubber, a key count in
+`LayerList`) is offered instead.
+
+**Deliberately answered "no" rather than dropped:** *crop*. Motion has no crop concept, and most
+primitives have nothing to crop; the honest equivalents are `text.maxWidth` and clip-to-box on
+the Phase 2 wrapper. Porting the Edit tab's four-inset model here would be cargo-culting.
+**Excluded from every phase:** `scene3d` on-canvas manipulation — a Three.js perspective camera
+is projective, not a similarity, and needs unprojection onto a chosen plane; that is its own
+effort.
+
+**Part C** (the `</>` collapse) is scoped for a fast follow-up rather than built, to avoid
+colliding with a sibling fork live in `MotionTab.tsx`. The trap worth handing over: `Save`,
+`Render` **and the entire error strip** live inside `ManifestEditor`'s own header, so collapsing
+the panel hides the only place a validation error is ever surfaced — the real fix lifts those
+out and gives the chip an error state, using D-126's elevated-chip treatment.
+
+**Two real defects found while reading, filed and not fixed:** B-060 (the ambient drift's rate
+uses the hardcoded `design.fps` token instead of the manifest's fps, so the same manifest at
+two frame rates is not the same motion) and B-061 (the Motion Inspector labels camera keyframe
+`at` as "At (frame)" when the manifest stores seconds).
+
+**Also updated in place:** `product-direction.md` §9's open question *"whether `chroma-motion`'s
+manifest editor becomes visual or stays JSON-in/agent-driven for v1 — not decided, no strong
+signal either way yet"*. There is a strong signal now; the line records it rather than being
+left to rot.
+
+**Verification.** Docs-only pass. `git diff --stat -- ':!docs'` is **empty** — no source file was
+touched. `npx tsc --noEmit -p packages/motion` — clean, zero output.
+`npx tsc --noEmit -p packages/motion-engine` reports two **pre-existing** `TS2584: Cannot find
+name 'document'` errors in `Scene3D.tsx` (that package's `tsconfig` does not include the `dom`
+lib); unrelated to this pass and unchanged by it, which the empty source diff proves rather than
+asserts.
+
+**Re-verified mid-pass against a moving `main`.** D-150 (B-058, the Motion tab's readiness state
+machine) landed from `fork/motion-no-project-fix` while this note was being written, changing
+`MotionTab.tsx` and `useMotionManifest.ts`. Re-read on `main` at `08e2d7b`: it moves the
+*readiness* signal into a new `motionProjectStore.ts` and explicitly leaves the manifest
+text/parse/save/render state where it was — so `DEBOUNCE_MS = 300`, the debounce→parse chain, the
+panel layout and `ManifestEditor` are all unchanged. Every finding here still holds on current
+`main`, and the note records that re-check inline rather than leaving a reader to wonder.
+
+**Honest gaps.** (1) Nothing was seen running — this sandbox cannot launch the Tauri window,
+the same constraint every entry since D-125 discloses. The camera arithmetic behind the
+screenshot analysis is exact; the *text-width* figure in it is an estimate, because measuring
+Kalam's real glyph metrics needs a browser (the vertical miscentring and the `×1.18/×1.5`
+inflation do not depend on it). (2) **The measure-the-DOM technique is reasoned from the
+transform's shape and `getBoundingClientRect`'s documented post-transform semantics, not run
+against a live `<Player>` here** — the note makes a 30-minute spike the first task of Phase 1
+rather than a formality. (3) The `of`-attaches-to-a-layer variant of the emphasis fix has an
+unresolved determinism question inside `remotion render`, which is why the Inspector "snap"
+action is recommended first.
+
+**Numbering.** Drafted as **D-152**, re-checked immediately before this commit per the standing
+instruction after numbering collided on nearly every merge on 2026-09-04. At that check `main`
+(`08e2d7b`) is at **D-150 / B-058** — D-150 landed from `fork/motion-no-project-fix` mid-pass —
+and the one still-live sibling, `fork/motion-audit-catalog`, has taken no `D-`/`B-` number
+(D-149 / B-057, i.e. its pre-fork base). So D-152 and B-060/B-061 are the next free ones; if
+that fork lands first and claims them, this entry renumbers rather than the other way round.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
