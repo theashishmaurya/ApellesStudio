@@ -10,6 +10,7 @@ dependencies = [
  "base64 0.23.1",
  "blake3",
  "bytemuck",
+ "chroma-gpu",
  "chroma-grade-model",
  "chroma-motion",
  "chroma-timeline",
@@ -950,6 +951,15 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chroma-gpu"
+version = "0.0.0"
+dependencies = [
+ "log",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]

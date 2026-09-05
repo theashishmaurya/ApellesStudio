@@ -157,6 +157,23 @@ slices never edit the same line. The shims are then deleted in one cheap sweep a
 
 ### 2.1 `chroma-gpu` — `render_core` only, and it is smaller than it looks
 
+**Status: done, partial-by-design (D-144, 2026-09-05).** The entanglement question
+below was resolved by reading the real definitions: `GpuContext` *does* split.
+`crates/chroma-gpu` now holds a headless `GpuContext { device, queue, limits }` +
+`init_gpu_context()`, moved verbatim from `render_core.rs`. The app's own
+`image_processing::GpuContext` (unchanged) is the app-side half — same three fields
+plus the `display: Arc<Mutex<Option<WgpuDisplay>>>` field, because `WgpuDisplay`
+(`gpu_processing.rs`) owns a `wgpu::Surface<'static>` bound to a native window plus
+the on-screen present pipeline — genuinely app/GUI-side, not a domain concept.
+`render_core::init_gpu_context()` stays at its old path and signature, now a
+2-line wrapper around `chroma_gpu::init_gpu_context()` that adds `display: None`
+back on, so the 6 `render_core::` call sites in `chroma/export.rs`,
+`chroma/playback.rs`, `chroma/relight.rs` needed zero changes. `render()` did not
+move, per plan. `cargo check -p chroma-gpu` is clean; the full-workspace
+`cargo check -p RapidRAW -p chroma-timeline -p chroma-gpu --all-targets` and
+`cargo test -p RapidRAW --lib -- chroma::` are the real proof and are recorded in
+`docs/CHANGELOG.md`.
+
 **Real content:** `app/src-tauri/src/render_core.rs`, 120 lines. That is genuinely all of it
 that is extractable today.
 

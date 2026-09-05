@@ -13,6 +13,14 @@ One or two lines per session. Detail lives in the decision it references.
   now thin calls into the crate. Corrected a stale `chroma-types` dependency
   edge in `architecture-lock.md`/`crates/README.md` that the real code never
   had.
+- **2026-09-05** — **`chroma-gpu` real extraction (D-144).** `render_core::init_gpu_context()`'s
+  real body moved verbatim into the new crate; `render_core`'s own version is now a thin
+  wrapper. Resolved the one open question D-141's scoping left: `GpuContext` really does
+  split into two structs — a headless `chroma-gpu::GpuContext` (device/queue/limits) and
+  the unchanged app-side `image_processing::GpuContext` (same three fields plus the
+  `display` surface wrapper). `render()` and the grade path stay app-side, gated on the
+  later `chroma-grade` effort. `cargo check --workspace` clean; the 6 known call sites
+  (`export.rs`/`playback.rs`/`relight.rs`/`gpu_processing.rs`) are unchanged.
 - **2026-09-05** — **Pacing & audio assistance scoped (D-140), no feature code.**
   Turned D-139's research into a buildable plan:
   `docs/notes/pacing-audio-assistance-plan.md`. Beat detection runs in the `ai/`

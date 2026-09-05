@@ -10607,3 +10607,71 @@ confirmed unused on `main` at commit time.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-144 — `chroma-gpu` real extraction: `init_gpu_context()` moves verbatim; `GpuContext` really does split into two structs
+
+**decided + built (2026-09-05).** Executes D-141's plan §2.1, in an isolated
+worktree (`fork/extract-chroma-gpu`) alongside two sibling forks extracting
+disjoint slices of the same plan. The prior two attempts at this slice each
+made this exact progress and were cut off by a real infrastructure stall
+(a 600-second watchdog timeout, not a task problem — every Wave 1 slice hit
+this at least once tonight); this pass is the one that reached a commit.
+
+- **The one real open question D-141 left for this slice — resolved.**
+  `GpuContext` really does split into two structs, "scenario B" from the
+  scoping pass. This crate's `GpuContext` is the headless half: `device` +
+  `queue` + `limits`, nothing else. `app/src-tauri`'s own
+  `image_processing::GpuContext` is unchanged and is the app-side half — the
+  same three fields plus `display: Arc<Mutex<Option<WgpuDisplay>>>`, which
+  owns a real `wgpu::Surface<'static>` bound to a native window and the
+  present-time render pipeline. Those are GUI-lifecycle concerns, not
+  headless-render ones, and stay in `app/src-tauri` by design, not by
+  omission.
+
+- **What moved:** `render_core::init_gpu_context()`'s real body — adapter
+  request, feature negotiation, device/queue open, the uncaptured-error
+  logger — moved verbatim into `crates/chroma-gpu/src/lib.rs`. The only
+  change from the original is the return type dropping the `display` field.
+  `render_core::init_gpu_context()` is now a thin wrapper: call
+  `chroma_gpu::init_gpu_context()`, add `display: Arc::new(Mutex::new(None))`
+  back on, return the app's own `GpuContext`. Its signature — and every one
+  of the 6 `render_core::` call sites in `chroma/export.rs`,
+  `chroma/playback.rs`, `chroma/relight.rs`, and `gpu_processing.rs` itself —
+  is completely unchanged.
+
+- **What did not move, and stays exactly where it was:** `render()` — a
+  pass-through into `gpu_processing::process_and_get_dynamic_image_inner`,
+  whose signature (`RenderCaches`, `RenderRequest`, `AllAdjustments`, mask
+  bitmaps, LUTs) is entirely RapidRAW-core. Moving it means moving the whole
+  grade path — `chroma-grade`, a separate and much larger later effort, not
+  this slice.
+
+- **Verification.** `cargo check --workspace --all-targets` — clean (the 6
+  pre-existing `ai_processing.rs` dead-code warnings noted by every recent
+  entry tonight, none new). This is the real proof the 6 known call sites —
+  `export.rs`/`playback.rs`/`relight.rs`/`gpu_processing.rs` — still compile
+  completely unchanged against the new crate. `chroma-gpu` itself has no
+  unit tests: it is a device/queue constructor with no pure logic to test
+  headlessly (an adapter/device request needs a real GPU), matching
+  `render_core`'s own original test coverage, which was also none.
+
+- **Honest gaps.** (1) **Not exercised against a real GPU render** — `cargo
+  check` proves the types line up, not that a frame actually renders through
+  the moved constructor; `render_core`'s own original code had the same gap
+  (no integration test ever drove a real frame through `init_gpu_context`
+  end to end). (2) **Not seen in the assembled app** — this sandbox cannot
+  launch the Tauri window, the same disclosed constraint every entry since
+  D-125.
+
+**Numbering.** Assigned D-144 directly against `main`'s real tip at merge
+time (D-143, `chroma-grade-model`, landed first among the three sibling
+Wave 1 forks). The in-code doc comments this pass shipped with initially
+said "D-142" (drafted against an earlier, stale view of `main`) — renumbered
+consistently across `crates/README.md`, `crates/chroma-gpu/{README.md,
+Cargo.toml,src/lib.rs}`, `app/src-tauri/src/render_core.rs`,
+`docs/04-roadmap.md`, and `docs/notes/crate-extraction-plan.md`.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

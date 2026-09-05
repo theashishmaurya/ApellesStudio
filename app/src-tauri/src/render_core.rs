@@ -9,6 +9,15 @@
 //! [`RenderCaches`] instead of `AppState`); the GUI commands in `gpu_processing`
 //! stay as thin wrappers that build a `RenderCaches` from `AppState`. Keep it that
 //! way so upstream RapidRAW fixes to the render path still cherry-pick.
+//!
+//! **D-144 update:** the actual headless wgpu device/queue/limits construction
+//! now lives in the `chroma-gpu` crate (`crates/chroma-gpu`) — this module's
+//! [`init_gpu_context`] is a thin wrapper that calls `chroma_gpu::init_gpu_context()`
+//! and adds the `display` field back on, so its signature (and every one of the
+//! 6 `render_core::` call sites in `chroma/export.rs`, `chroma/playback.rs` and
+//! `chroma/relight.rs`) is unchanged. `render()` itself, and `GpuContext` as used
+//! here, stay exactly as they were — see the crate's module doc for why they
+//! don't move (the grade path, `chroma-grade`, is a separate later effort).
 
 // The headless entry points (`render`, `init_gpu_context`, `OwnedRenderCaches`) are
 // unused until the Chroma control/MCP server lands — that's the point of the seam.
@@ -77,44 +86,17 @@ pub fn render(
 /// A Tauri-free GPU context: device + queue, **no display surface**. For headless
 /// render. The GUI uses `gpu_processing::get_or_init_gpu_context`, which also wires
 /// the native `WgpuDisplay` surface and needs the `AppHandle` + window.
+///
+/// D-144: the device/queue/limits construction itself now lives in
+/// `chroma_gpu::init_gpu_context()` — this wrapper calls it and adds the
+/// app-side `display` field (always `None` here; only the GUI path ever
+/// populates it), so the return type and every call site are unchanged.
 pub fn init_gpu_context() -> Result<GpuContext, String> {
-    let instance_desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-    let instance = wgpu::Instance::new(instance_desc);
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        ..Default::default()
-    }))
-    .map_err(|e| format!("Failed to find a wgpu adapter: {e}"))?;
-
-    let mut required_features = wgpu::Features::empty();
-    if adapter
-        .features()
-        .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
-    {
-        required_features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
-    }
-    let limits = adapter.limits();
-
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("Chroma Headless Device"),
-        required_features,
-        required_limits: limits.clone(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
-    }))
-    .map_err(|e| e.to_string())?;
-
-    device.on_uncaptured_error(Arc::new(|err: wgpu::Error| {
-        log::error!("[wgpu-error] {err}");
-    }));
-
+    let headless = chroma_gpu::init_gpu_context()?;
     Ok(GpuContext {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        limits,
+        device: headless.device,
+        queue: headless.queue,
+        limits: headless.limits,
         display: Arc::new(Mutex::new(None)),
     })
 }

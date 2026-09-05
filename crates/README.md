@@ -14,7 +14,7 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 | layer | crate | exists? | responsibility | deps |
 |---|---|---|---|---|
 | L0 | `chroma-types` | **yes (stub)** | `Frame` / `Rational` / `Resolution` / `ColorSpace` / `TimeRange`, typed IDs, error enums — zero heavy deps | — |
-| L0 | `chroma-gpu` | future | wgpu context (no surface), texture pool, `render_core` (D-014, extracted) | `wgpu`, types |
+| L0 | `chroma-gpu` | **yes, partial (D-144)** | headless wgpu device/queue/limits (`init_gpu_context`, D-014, extracted). No display surface, no texture pool yet, no `render()` — those stay app-side / gated on `chroma-grade` | `wgpu`, `pollster`, `log` |
 | L1 | `chroma-media` | future | decode / probe / encode — VideoToolbox→texture, ffmpeg-CLI fallback (D-015), decode pipe (D-030), export encode pipe (D-022) | gpu, types |
 | L1 | `chroma-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021) | gpu, types, `app/` engine |
 | L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
@@ -40,3 +40,16 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   roadmap-tracked. Order: leaf pure crates → `chroma-gpu` / `chroma-media` /
   `chroma-project` → `chroma-agent` / `chroma-ai` → `chroma-grade` +
   `chroma-app` thin binary. `chroma-compositor` is greenfield from day one.
+- **`chroma-gpu` (D-144, 2026-09-05):** `render_core::init_gpu_context()` moved
+  verbatim (device + queue + limits, headless). `render_core::render()` did
+  **not** move — it is a pass-through into
+  `gpu_processing::process_and_get_dynamic_image_inner`, whose signature is
+  entirely RapidRAW-core types (`GpuContext`'s `display` field,
+  `RenderCaches`, `RenderRequest`), and moving it is `chroma-grade`, later.
+  Resolved the one open question from D-141's scoping pass: `GpuContext`
+  *does* split into two structs — this crate's headless one, and the app's
+  own `image_processing::GpuContext` (unchanged) which wraps it plus a
+  `display: Arc<Mutex<Option<WgpuDisplay>>>` for the on-screen present path.
+  `render_core.rs` keeps its old `init_gpu_context()` signature as a thin
+  wrapper, so the 6 `render_core::` call sites in `chroma/export.rs`,
+  `chroma/playback.rs`, `chroma/relight.rs` need zero changes.
