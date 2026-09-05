@@ -13,6 +13,7 @@ dependencies = [
  "chroma-ai",
  "chroma-gpu",
  "chroma-grade-model",
+ "chroma-media",
  "chroma-motion",
  "chroma-timeline",
  "chroma-types",
@@ -982,6 +983,23 @@ dependencies = [
  "base64 0.23.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "chroma-media"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "blake3",
+ "chroma-types",
+ "filetime",
+ "image",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "walkdir",
 ]
 
 [[package]]

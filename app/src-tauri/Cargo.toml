@@ -22,6 +22,7 @@ chroma-grade-model = { path = "../../crates/chroma-grade-model" }
 chroma-types = { path = "../../crates/chroma-types" }
 chroma-gpu = { path = "../../crates/chroma-gpu" }
 chroma-ai = { path = "../../crates/chroma-ai" }
+chroma-media = { path = "../../crates/chroma-media" }
 # Chroma editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,
 # no FFI; the audio stack named in D-039/architecture-lock.md.
@@ -108,6 +109,15 @@ include_dir = "0.7.4"
 gtk = "0.18.2"
 webkit2gtk = "=2.0.2"
 webkit2gtk-nvidia-quirk = "2.0"
+
+[dev-dependencies]
+# D-146 — `chroma-media`'s test-only hooks (`media_cache::init_for_tests`,
+# `decode_pipe::open_pipe_count`) are behind its `test-support` feature.
+# Enabling it *here* rather than in `[dependencies]` is what keeps them out of
+# a release build while `cargo test` / `cargo check --all-targets` still see
+# them: Cargo unifies a dev-dependency's features only for the targets that
+# actually need dev-dependencies.
+chroma-media = { path = "../../crates/chroma-media", features = ["test-support"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
