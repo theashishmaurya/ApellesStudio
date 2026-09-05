@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion visual builder, Phase 2: resize handles, "snap to layer," the layer
+  transform wrapper (D-157), on top of Phase 0/1 (D-155/D-156).** Resize: `sizeFields(use)`
+  (`propCatalog.ts`) + `layerWorldSize`/`setLayerSize` (`manifestEdit.ts`) for `emphasis.box`,
+  `layers.cardW`/`cardH`, `matrix.cell`, `text.maxWidth`, `graph.width`/`height`; 1–3 on-canvas
+  handles per primitive, sharing D-156's drag machinery via a discriminated `DragState`. "Snap to
+  layer" — the direct fix for the owner's original misplaced-scribble screenshot — an Inspector
+  target-picker on an `emphasis` layer that measures the target's real screen rect
+  (`MotionPreview.tsx`'s new `measureApiRef`) and writes `box` via a new pure
+  `snapEmphasisToRect`. Engine: an optional, additive `layer.transform`
+  (`{x,y,scale,rot,opacity,clipWidth,clipHeight}`, absent ⇒ identity — verified byte-identical
+  `remotion still` renders at three frames before/after) applied by `Video.tsx`'s `renderLayers`
+  on top of a primitive's own positioning — the enabling structural change for Phase 4's
+  keyframes. "Crop" implemented honestly as `clipWidth`/`clipHeight` on that same wrapper, NOT
+  the Edit tab's four-inset model. `tsc` clean both packages (`app`'s 64-error baseline
+  unchanged), `@chroma/motion` 122/122 (30 new tests).
 - **2026-09-05** — **Motion visual builder, Phase 1: select + drag a layer on the canvas
   (D-156), on top of four prerequisites (D-155).** The owner's "drag and drop... a visual
   builder for me" ask, first slice. Engine: `data-motion-world`/`data-motion-layer`/

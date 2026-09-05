@@ -565,6 +565,21 @@ model into Motion.** Say this to the owner rather than silently dropping the wor
 purely additive one (`#[serde(default)]`-equivalent: absent means identity, every existing
 manifest renders byte-identically).
 
+> **Built as D-157 (2026-09-05).** Resize handles (per-primitive named fields, as scoped:
+> `emphasis.box[2]/[3]`, `layers.cardW`/`cardH`, `matrix.cell`, `text.maxWidth`,
+> `graph.width`/`height`), "snap to layer" (an Inspector target-picker + button on an `emphasis`
+> selection — the §3d "cheaper, non-render-path variant," exactly as recommended), and the layer
+> transform wrapper (`{x,y,scale,rot,opacity}`, plus `clipWidth`/`clipHeight` for the "crop,
+> honestly" call below) all shipped together. One real deviation from this section's own wording:
+> the wrapper's `scale`/`rot` pivot at the wrapper's own origin (`transformOrigin: "0 0"`,
+> matching `Camera.tsx`'s own convention), not at "the layer's own position" — reaching the
+> primitive's own anchor would need this engine package to depend on `@chroma/motion`'s
+> `positionFields`, the wrong direction. One honest gap disclosed rather than fixed: a drag/resize
+> on a layer that ALSO carries a non-identity `transform` will be slightly off, since
+> `MotionCanvasOverlay.tsx`'s screen↔world map is still measured off `[data-motion-world]` alone.
+> See `docs/08-decisions.md`'s D-157 entry and `packages/motion-engine/README.md`'s "Layer
+> transform wrapper" section for the full writeup.
+
 ### Phase 3 — multiple elements
 
 The owner said "multiple elements" first, so this is not optional polish.

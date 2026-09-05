@@ -12239,3 +12239,163 @@ out of scope for a "select one thing, drag it" phase).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-157 — Motion visual builder, Phase 2: resize handles, "snap to layer," and the layer transform wrapper
+
+**decided + built (2026-09-05).** Built directly on D-155/D-156's four prerequisites + Phase 1
+select/drag, per `docs/notes/motion-visual-builder-research.md`'s own phasing. Three things
+shipped together, exactly as that section scopes them: resize handles for the primitives with a
+real rectangle, "snap to layer" (the direct fix for the owner's original screenshot complaint —
+a misplaced `emphasis` scribble box), and the layer transform wrapper (the research doc's own
+"recommended alongside, as the enabling structural change for Phase 4").
+
+**1 — Resize handles.** `propCatalog.ts` gains `sizeFields(use)`, a sibling to D-155's
+`positionFields(use)`, mapping each of the five resizable primitives to how its rectangle is
+stored: `'box-wh'` (`emphasis.box[2]/[3]`), `'wh'` (`layers.cardW`/`cardH`, `graph.width`/
+`height` — two independent fields), `'scalar'` (`matrix.cell` — a SINGLE field drives both `w`
+and `h` via `w = cols*(cell+gap)-gap`, `h = rows*(cell+gap)-gap`), and `'w-only'`
+(`text.maxWidth` — no comparable height field exists). `manifestEdit.ts` gains the read/write
+pair `layerWorldSize`/`setLayerSize` (mirroring D-155's `layerWorldPosition`/`setLayerPosition`
+exactly), with two honest, documented approximations: (a) `matrix`'s `'scalar'` case inverts a
+target `(w,h)` independently through each axis and averages the two `cell` results — a real
+1-degree-of-freedom collapse, not an attempt to satisfy both exactly (mitigated by only ever
+offering a corner handle for `matrix`, so both axes move together in practice and agree
+closely); (b) `text.maxWidth`'s read seeds an approximate `800`px when unset (`Text.tsx` has no
+real default — unset means "no wrap constraint," not "some specific width"), the same spirit as
+D-155's own "approximate canvas centre" fallback for an unset `x`/`y`. Every write floors at
+`MIN_RESIZE_PX = 8` so a drag can never push a field to zero/negative.
+
+`MotionCanvasOverlay.tsx`'s selection outline gains 1–3 handles depending on `sizeFields`'
+shape (`'w-only'` → just a right-edge handle; `'scalar'` → just a corner; everything else → an
+edge for each axis plus a corner for both), drawn the same "invisible except real grab targets"
+way `TransformOverlay.tsx`'s own corner handles are (small `pointer-events:auto` squares over an
+otherwise `pointer-events:none` overlay). **A real design decision, not a copy of
+`TransformOverlay.tsx`'s wiring:** a handle's `pointerdown` bubbles to `MotionCanvasOverlay`'s
+own native `containerRef` listener (an ANCESTOR) BEFORE React's synthetic dispatch on a handler
+attached directly to the handle would even run — native bubbling reaches a closer ancestor's
+directly-attached listener first, regardless of what the handle's own React handler later does
+with `stopPropagation`. So a resize handle carries a `data-motion-resize-handle="e"|"s"|"se"`
+attribute instead of its own `onPointerDown`, checked at the TOP of the existing
+`onPointerDown`/`onPointerMove`/`onPointerUp` trio (now a discriminated `DragState` — `'move'`
+from D-156, `'resize'` new here) — one gesture state machine, one set of listeners, both kinds
+of drag. Resize deliberately does NOT axis-lock on Shift (D-156's own move-drag convention):
+a single-axis handle is already axis-locked by construction, and `'se'` is meant to change both.
+
+**Where the resize-drag start size/box-measuring logic came from:** the union-of-`[data-motion-
+box]`-descendants technique D-155/D-156 already built (`MotionCanvasOverlay`'s own selection
+outline) is now factored into a new small file, `layerMeasure.ts`
+(`measureLayerScreenBox`/`findWorldElement`), because Part 2 below needed the SAME technique
+from a second call site (`MotionTab.tsx`, which has no DOM access of its own) — CLAUDE.md's "if
+two places need it, extract it." DOM-touching, so — the same split every file in this package
+already follows — it is not unit-tested; `canvasGeometry.ts`'s `unionRects` (the pure half)
+already is.
+
+**2 — "Snap to layer."** Scoped exactly as the research doc's §3d recommends first: "keep `box`
+as the stored truth, and add a 'snap to layer' action... that measures the target layer once,
+converts, and writes the four numbers" — "a button, not a subsystem," NOT the render-path `of:`
+variant (that one has an open determinism question the doc itself flags as needing a real spike;
+this pass doesn't attempt it). The UI: `InspectorPanel.tsx` renders a target-picker (a `<select>`
+of sibling layers in the SAME scene, by `LayerList.tsx`'s own `layerLabel` — now exported so both
+places describe a layer the same way — plus a "Snap box to selected layer" button) ONLY when the
+current selection is an `emphasis` layer, keyed on `${sceneIndex}.${layerIndex}` so switching
+between two different `emphasis` layers remounts the picker instead of carrying over a stale
+target index from the previous selection's sibling list.
+
+The actual measurement needed live DOM access the Inspector doesn't have, so `MotionPreview.tsx`
+gains an optional imperative escape hatch, `measureApiRef` (the same shape `playerRef` already
+is): `MotionTab.tsx` holds the ref, passes it down, and its own `onSnapToLayer` calls
+`api.layerScreenBox(sceneIndex, targetIndex)` + `api.worldMap()` to get the target's real screen
+rect and the current camera world-map, then hands both to a new PURE function,
+`manifestEdit.ts`'s `snapEmphasisToRect(manifest, selection, targetScreenRect, map)` — converts
+via `canvasGeometry.ts`'s `screenToWorld`/`worldDelta` (never touching the DOM itself) and writes
+`box`, padded by a named `SNAP_TO_LAYER_PAD = 24` world px on every side (a scribble/ring drawn
+flush against its target's exact edges reads as touching it, not circling it — and `Emphasis.tsx`
+already inflates `scribble`/`ring` past whatever `box` you give it, so a snug fit would visually
+undershoot anyway). A `null` from either measurement (the target isn't in the DOM right now —
+wrong scene under the playhead, or hasn't mounted yet) is a real, honest no-op, not a crash or a
+guessed value.
+
+**3 — The layer transform wrapper.** `schema.ts`'s `layer` object gains an optional `transform`
+field — `{x?, y?, scale?, rot?, opacity?, clipWidth?, clipHeight?}` — declared explicitly
+alongside the object's existing `.passthrough()` (so it validates against a real shape rather
+than arriving as an untyped blob, while every OTHER per-primitive prop still passes through
+unchanged). `Video.tsx`'s `renderLayers` applies it as a CSS transform/opacity on a NEW
+`position:absolute` `<div>` between the (still `display:contents`) `data-motion-layer` wrapper
+and the primitive — **on top of the primitive's own positioning, never replacing it** — only
+when `transform` is present; when absent, `renderLayers` emits the exact same JSX it always did.
+`propCatalog.ts` gains `LAYER_TRANSFORM_FIELDS`, a generic field group every 2D layer gets
+(mirroring how `timingFields` already works), rendered by `InspectorPanel.tsx`'s new
+`TransformFieldGroup` for any `{kind:'layer'}` selection (never `scene3d-child` — `ThreeD` in
+`Video.tsx` never reads this field, a completely different render path); `manifestEdit.ts` gains
+`setLayerTransformField` for the nested `layer.transform.<key>` read/write (dropping the whole
+`transform` object once its last field is cleared, rather than leaving `"transform": {}` behind).
+
+**A real design call, made and documented rather than deferred:** `transformOrigin: "0 0"`,
+matching `Camera.tsx`'s OWN convention on the exact same kind of transform — `scale`/`rot` pivot
+at the wrapper's own origin (world `(0,0)`), NOT the layer's own authored position. Scaling or
+rotating a layer away from `(0,0)` will make it appear to swing/fly unless `x`/`y` are set to
+compensate — the same discipline a camera key already needs (`x`/`y` + `zoom` together to keep a
+target point fixed). The alternative — pivot at the primitive's own reported anchor — was
+considered and rejected: it would need this ENGINE package (`motion-engine`) to depend on
+`@chroma/motion`'s `positionFields`, the wrong dependency direction (the editor package depends
+on the engine, never the reverse), and would require per-primitive anchor knowledge duplicated
+across two packages. Documented in `packages/motion-engine/README.md`'s new "Layer transform
+wrapper" section, not left implicit.
+
+**"Crop", honestly — the research doc's own explicit instruction, followed.** `clipWidth`/
+`clipHeight` on the SAME wrapper (`overflow: hidden` + an explicit size, anchored at the
+wrapper's own origin) is the one real, small equivalent implemented; the Edit tab's four-inset
+crop model was deliberately NOT ported — most Motion primitives (a text run, a scribble, a
+force-laid graph) have nothing analogous to a decoded video rectangle to inset. Absent (the
+common case) ⇒ no clipping at all.
+
+**A known, disclosed gap connecting Parts 1 and 3:** `MotionCanvasOverlay.tsx`'s screen↔world map
+(used by BOTH move-drag and resize) is still measured off `[data-motion-world]` alone (the
+camera's own transform, per D-155 §3a) and does NOT additionally account for a layer's OWN
+`transform.scale`/`transform.rot` sitting between the camera and the primitive. Dragging or
+resizing a layer that also carries a non-identity transform will be slightly off. Nothing
+existing hits this today (the wrapper and its Inspector fields are brand new this same pass);
+fixing it means measuring a per-layer world map instead of one shared map per drag — a real
+generalization, out of scope here, left for whichever future phase actually needs to
+drag/resize a transformed layer. Documented in both `MotionCanvasOverlay.tsx`'s own doc comment
+and the engine README.
+
+**Verification.**
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — the same 2 pre-existing `document`-typing errors
+  in `Scene3D.tsx` as on `main` before this pass, zero new errors.
+- `npm test --workspace @chroma/motion` — **122/122** (was 92/92 on D-156; +30 new: `layerWorldSize`
+  (11), `setLayerSize` (10), `snapEmphasisToRect` (4), `setLayerTransformField` (5)) — every new
+  pure function gets real tests, per this codebase's own convention; `MotionCanvasOverlay.tsx`'s
+  new resize-handle wiring is DOM/pointer-event plumbing, deliberately untested (same split
+  D-156 already established for its move-drag wiring).
+- `npm test --workspace @chroma/motion-engine` — still no `test` script (pre-existing, confirmed
+  unchanged, same as D-155's finding).
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- Byte-for-byte `remotion still` renders of the engine's sample manifest, three frames (0, 54 —
+  mid-`scribble`, the doc's own worked example frame, and 200 — inside the `scene3d` scene),
+  before vs. after the `schema.ts`/`Video.tsx` change (`git stash` on just those two files,
+  render, pop, render again): **identical PNG output** (`shasum -a 256` match AND `cmp` clean at
+  all three frames) — the same technique D-155 used, at a frame additionally chosen to exercise
+  the 3D scene path (untouched by this change, confirmed rather than assumed). Additionally
+  smoke-tested a manifest WITH a non-identity `transform` (`{x:300, opacity:0.5}` on a text
+  layer) via `remotion still` — rendered without error, the text visibly shifted right by 300px
+  and dimmed, confirming the new code path actually does something, not just that the old path
+  is undisturbed.
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it, the
+same disclosed constraint every entry this week carries; the resize-handle pointer wiring is
+reasoned from the same verified DOM/bubbling semantics D-156's move-drag already relied on, not
+separately re-verified against a real window. (2) The transform-wrapper/on-canvas-gesture
+interaction gap above. (3) `matrix`'s single-`cell` resize collapse (averaging two axis
+inversions) is an approximation, not exact, for a target `(w,h)` that doesn't already sit on the
+same `cell` for both axes — narrow in practice since only a corner handle is ever offered for
+`matrix`. (4) "Snap to layer" only lists sibling layers in the SAME scene (`scene.layers`, 2D) —
+never `scene3d.children` — matching the research doc's own scope ("listing other layers in the
+same scene") and the fact that a 3D child has no `data-motion-layer`/`data-motion-box` hook to
+measure in the first place.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
