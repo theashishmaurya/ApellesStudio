@@ -23,7 +23,8 @@
 import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
-import { positionFields } from './propCatalog';
+import { positionFields, sizeFields } from './propCatalog';
+import { screenToWorld, worldDelta, type RectLike, type WorldMap } from './canvasGeometry';
 
 type Raw = Record<string, unknown>;
 
@@ -68,20 +69,38 @@ export function selectedCamera3d(manifest: Manifest, sceneIndex: number): Cam3dK
   return selectedScene(manifest, sceneIndex)?.scene3d?.camera ?? null;
 }
 
-/** set (or, if `value === undefined`, delete) one field on the layer a
- *  selection points at. No-op (returns the same manifest reference) if the
- *  selection doesn't resolve to a layer — callers already hide the form in
- *  that case, this is a defensive floor, not the primary guard. */
-export function setLayerField(manifest: Manifest, selection: Selection, key: string, value: unknown): Manifest {
+/** Clones `manifest` and resolves a mutable reference to the raw layer
+ *  object `selection` points at inside that SAME clone — the "clone, then
+ *  find the identical spot inside the clone" step every `set*` function
+ *  below that mutates a layer's own fields shares verbatim
+ *  (`setLayerField`, `setLayerPosition`, `setLayerSize`,
+ *  `setLayerTransformField`), factored out once four call sites needed it
+ *  (CLAUDE.md's "if two places need it, extract it"). `null` for a
+ *  selection that doesn't resolve to a layer at all (scene/camera target,
+ *  out-of-range index, scene without `layers`/`scene3d`) — every caller
+ *  treats `null` the same way it already treated its own inlined version of
+ *  this check: return the ORIGINAL `manifest` unchanged. */
+function cloneLayerRaw(manifest: Manifest, selection: Selection): { next: Manifest; raw: Raw } | null {
   const scene = selectedScene(manifest, selection.sceneIndex);
-  if (!scene) return manifest;
+  if (!scene) return null;
   const { target } = selection;
   const next = clone(manifest);
   const nScene = next.scenes[selection.sceneIndex];
   let raw: Raw | undefined;
   if (target.kind === 'layer') raw = nScene.layers?.[target.index] as unknown as Raw;
   else if (target.kind === 'scene3d-child') raw = nScene.scene3d?.children[target.index] as unknown as Raw;
-  if (!raw) return manifest;
+  if (!raw) return null;
+  return { next, raw };
+}
+
+/** set (or, if `value === undefined`, delete) one field on the layer a
+ *  selection points at. No-op (returns the same manifest reference) if the
+ *  selection doesn't resolve to a layer — callers already hide the form in
+ *  that case, this is a defensive floor, not the primary guard. */
+export function setLayerField(manifest: Manifest, selection: Selection, key: string, value: unknown): Manifest {
+  const found = cloneLayerRaw(manifest, selection);
+  if (!found) return manifest;
+  const { next, raw } = found;
   if (value === undefined) delete raw[key];
   else raw[key] = value;
   return next;
@@ -92,6 +111,12 @@ export function setLayerField(manifest: Manifest, selection: Selection, key: str
  *  `defaultLayerFor('emphasis')` starting box, so a drag never has to guess
  *  a size independently of what "insert an emphasis" already means here. */
 const DEFAULT_EMPHASIS_BOX_SIZE = { w: 400, h: 200 };
+
+/** `layers.cardW`/`cardH`'s own runtime defaults (`Layers.tsx`), read here
+ *  so `layerWorldSize` can report a real seed size for a card stack that has
+ *  never had an explicit size — the size-handle counterpart to
+ *  `DEFAULT_EMPHASIS_BOX_SIZE` above. */
+const DEFAULT_LAYERS_CARD_SIZE = { w: 620, h: 110 };
 
 /** A layer's current position in WORLD px (D-155/D-156, §3a/§4 Phase 1 of
  *  `docs/notes/motion-visual-builder-research.md`) — resolved the way
@@ -146,15 +171,9 @@ export function setLayerPosition(manifest: Manifest, selection: Selection, x: nu
   if (!found) return manifest;
   const kind = positionFields(found.use);
   if (!kind) return manifest;
-  const scene = selectedScene(manifest, selection.sceneIndex);
-  if (!scene) return manifest;
-  const { target } = selection;
-  const next = clone(manifest);
-  const nScene = next.scenes[selection.sceneIndex];
-  let raw: Raw | undefined;
-  if (target.kind === 'layer') raw = nScene.layers?.[target.index] as unknown as Raw;
-  else if (target.kind === 'scene3d-child') raw = nScene.scene3d?.children[target.index] as unknown as Raw;
-  if (!raw) return manifest;
+  const cloned = cloneLayerRaw(manifest, selection);
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
   if (kind === 'xy') {
     raw.x = x;
     raw.y = y;
@@ -164,6 +183,218 @@ export function setLayerPosition(manifest: Manifest, selection: Selection, x: nu
     const h = typeof existing[3] === 'number' ? existing[3] : DEFAULT_EMPHASIS_BOX_SIZE.h;
     raw.box = [x, y, w, h];
   }
+  return next;
+}
+
+/** The `[w,h]` a `matrix` layer's grid footprint measures at gap `gap` (the
+ *  same `w = cols*(cell+gap)-gap` / `h = rows*(cell+gap)-gap` `Matrix.tsx`
+ *  itself computes) — pulled out once `layerWorldSize`/`setLayerSize` both
+ *  need to reason about it in opposite directions (size→cell and cell→size). */
+const MATRIX_DEFAULT_CELL = 88; // `Matrix.tsx`'s own `cell = 88` default
+const MATRIX_DEFAULT_GAP = 10; // `Matrix.tsx`'s own `gap = 10` default
+
+/** Seed value for `text.maxWidth` when a drag has to invent one (`Text.tsx`
+ *  has no real default — `maxWidth` unset means "no wrap constraint at
+ *  all," so there is no true value to read back, only a starting point for
+ *  a first resize) — an honest approximation in the same spirit as
+ *  `layerWorldPosition`'s own "approximate canvas centre" fallback, not a
+ *  claim about anything currently rendered. */
+const TEXT_MAX_WIDTH_SEED = 800;
+
+/** The floor a resize drag can never push a field below — guards every
+ *  `setLayerSize` branch against a dragged-past-zero (or negative) width,
+ *  height, or `matrix.cell`, all of which would otherwise render nothing
+ *  (or, for `matrix`, divide-by-effectively-nothing on the next read). */
+const MIN_RESIZE_PX = 8;
+
+/** A layer's current size in WORLD px, per `propCatalog.ts`'s `sizeFields`
+ *  (D-157, Phase 2 of `docs/notes/motion-visual-builder-research.md`) — the
+ *  resize-handle counterpart to `layerWorldPosition` above, same shape and
+ *  same honesty about approximated defaults. `h: null` means "this
+ *  primitive has no independent height field" (`text.maxWidth` only wraps,
+ *  it doesn't set a box height) — a caller's cue to offer only a
+ *  width-changing handle, never a height or corner one, for that primitive.
+ *  `null` (the whole return) for a selection that doesn't resolve to a
+ *  layer, or a `use` with no resizable field at all (`sizeFields` returns
+ *  `undefined` — every `in3d` primitive, and any future/unrecognized
+ *  `use`). */
+export function layerWorldSize(manifest: Manifest, selection: Selection): { w: number; h: number | null } | null {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return null;
+  const kind = sizeFields(found.use);
+  if (!kind) return null;
+  const raw = found.raw;
+
+  if (kind.kind === 'box-wh') {
+    const box = raw.box;
+    const w = Array.isArray(box) && typeof box[2] === 'number' ? box[2] : DEFAULT_EMPHASIS_BOX_SIZE.w;
+    const h = Array.isArray(box) && typeof box[3] === 'number' ? box[3] : DEFAULT_EMPHASIS_BOX_SIZE.h;
+    return { w, h };
+  }
+
+  if (kind.kind === 'wh') {
+    // `layers.cardW`/`cardH` default to `Layers.tsx`'s own 620/110; `graph`
+    // (the only other `'wh'` primitive) defaults its layout box to the
+    // canvas itself (`Graph.tsx`: `W = width ?? cw`) — genuinely different
+    // per-primitive defaults, so this is keyed on `found.use`, not `kind`.
+    const dW = found.use === 'graph' ? manifest.width : DEFAULT_LAYERS_CARD_SIZE.w;
+    const dH = found.use === 'graph' ? manifest.height : DEFAULT_LAYERS_CARD_SIZE.h;
+    const w = typeof raw[kind.w] === 'number' ? (raw[kind.w] as number) : dW;
+    const h = typeof raw[kind.h] === 'number' ? (raw[kind.h] as number) : dH;
+    return { w, h };
+  }
+
+  if (kind.kind === 'scalar') {
+    // matrix: the grid's real footprint, derived from rows/cols/cell/gap —
+    // `Matrix.tsx`'s own `w = cols*(cell+gap)-gap`, `h = rows*(cell+gap)-gap`.
+    const rows = typeof raw.rows === 'number' ? raw.rows : 1;
+    const cols = typeof raw.cols === 'number' ? raw.cols : 1;
+    const cell = typeof raw.cell === 'number' ? raw.cell : MATRIX_DEFAULT_CELL;
+    const gap = typeof raw.gap === 'number' ? raw.gap : MATRIX_DEFAULT_GAP;
+    const step = cell + gap;
+    return { w: cols * step - gap, h: rows * step - gap };
+  }
+
+  // w-only (text.maxWidth)
+  const w = typeof raw[kind.key] === 'number' ? (raw[kind.key] as number) : TEXT_MAX_WIDTH_SEED;
+  return { w, h: null };
+}
+
+/** Writes a new WORLD-px size back through whichever field(s) `sizeFields`
+ *  says this primitive uses — the ONE write path a canvas resize handle
+ *  commits through, mirroring `setLayerPosition`'s own role for drags.
+ *  `h` is ignored for a `'w-only'` primitive (`text` — there is no height
+ *  field to write; a caller offering only a width handle for `text` never
+ *  has a real `h` to pass anyway, per `layerWorldSize`'s own `h: null`).
+ *
+ *  `'scalar'` (`matrix`) is the one case with fewer degrees of freedom than
+ *  the two numbers a resize drag naturally produces: `cell` is a SINGLE
+ *  field driving both `w` and `h` (`w = cols*(cell+gap)-gap`, `h =
+ *  rows*(cell+gap)-gap`), so a target `(w,h)` is inverted independently
+ *  through each axis (`cellFromW`, `cellFromH`) and the two results are
+ *  averaged into the one `cell` actually written — an honest, documented
+ *  collapse, not an attempt to satisfy both exactly (only a corner handle is
+ *  ever offered for `matrix`, see `MotionCanvasOverlay.tsx`, so in practice
+ *  both axes move together and agree closely).
+ *
+ *  Every branch floors its result at `MIN_RESIZE_PX` so a drag can never
+ *  push a field to zero/negative. No-op (same manifest reference back) for
+ *  a selection that doesn't resolve, or a `use` with no size fields at all —
+ *  the same defensive floor every function in this file already holds. */
+export function setLayerSize(manifest: Manifest, selection: Selection, w: number, h: number): Manifest {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return manifest;
+  const kind = sizeFields(found.use);
+  if (!kind) return manifest;
+  const cloned = cloneLayerRaw(manifest, selection);
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
+
+  const W = Math.max(MIN_RESIZE_PX, w);
+  const H = Math.max(MIN_RESIZE_PX, h);
+
+  if (kind.kind === 'box-wh') {
+    const existing = Array.isArray(raw.box) ? (raw.box as unknown[]) : [];
+    const x = typeof existing[0] === 'number' ? existing[0] : 0;
+    const y = typeof existing[1] === 'number' ? existing[1] : 0;
+    raw.box = [x, y, W, H];
+    return next;
+  }
+
+  if (kind.kind === 'wh') {
+    raw[kind.w] = W;
+    raw[kind.h] = H;
+    return next;
+  }
+
+  if (kind.kind === 'scalar') {
+    const rows = typeof raw.rows === 'number' ? (raw.rows as number) : 1;
+    const cols = typeof raw.cols === 'number' ? (raw.cols as number) : 1;
+    const gap = typeof raw.gap === 'number' ? (raw.gap as number) : MATRIX_DEFAULT_GAP;
+    const cellFromW = (W + gap) / cols - gap;
+    const cellFromH = (H + gap) / rows - gap;
+    raw[kind.key] = Math.max(MIN_RESIZE_PX, (cellFromW + cellFromH) / 2);
+    return next;
+  }
+
+  // w-only (text.maxWidth) — `h` has nowhere to go, deliberately dropped
+  raw[kind.key] = W;
+  return next;
+}
+
+/** Padding added on every side of a snapped `emphasis` box, in world px —
+ *  the "snap to layer" action (below) circles/scribbles AROUND the target
+ *  layer's measured rect, not flush against it (a box drawn exactly at the
+ *  target's own edges reads as touching it, not calling it out — and
+ *  `Emphasis.tsx`'s own `scribble`/`ring` presets already inflate their
+ *  drawn shape past the `box` you give them, see that file's header
+ *  comment, so a snug fit here would UNDERSHOOT visually anyway). A named
+ *  constant per the house no-magic-numbers rule; not tuned against anything
+ *  deeper than "reads as circling the sample manifest's own text layer." */
+export const SNAP_TO_LAYER_PAD = 24;
+
+/**
+ * "Snap to layer" (D-157, Phase 2 of `docs/notes/motion-visual-builder-
+ * research.md` §3d) — the direct fix for the owner's original screenshot
+ * complaint (a `scribble` highlight box hand-authored to the wrong place).
+ * The doc's own "cheaper, non-render-path variant": keep `box` as the
+ * stored truth, and let an action measure the TARGET layer's real rect once
+ * and write the four numbers — "a button, not a subsystem."
+ *
+ * Pure: given the target layer's ALREADY-MEASURED screen rect and the
+ * screen↔world map at that instant (both DOM-derived by the caller — this
+ * function never touches the DOM itself, the exact same split
+ * `canvasGeometry.ts`'s own doc comment holds this package to), converts to
+ * world px via `screenToWorld`/`worldDelta` and writes `box` on the
+ * `emphasis` layer `selection` points at, expanded by `SNAP_TO_LAYER_PAD` on
+ * every side. No-op (same manifest reference back) for a selection that
+ * isn't an `emphasis` layer — the Inspector already hides this action for
+ * anything else; this is the same defensive floor every function here holds.
+ */
+export function snapEmphasisToRect(
+  manifest: Manifest,
+  selection: Selection,
+  targetScreenRect: RectLike,
+  map: WorldMap,
+): Manifest {
+  const found = selectedLayer(manifest, selection);
+  if (!found || found.use !== 'emphasis') return manifest;
+  const origin = screenToWorld(map, { x: targetScreenRect.left, y: targetScreenRect.top });
+  const size = worldDelta(map, { x: targetScreenRect.width, y: targetScreenRect.height });
+  return setLayerField(manifest, selection, 'box', [
+    origin.x - SNAP_TO_LAYER_PAD,
+    origin.y - SNAP_TO_LAYER_PAD,
+    size.x + SNAP_TO_LAYER_PAD * 2,
+    size.y + SNAP_TO_LAYER_PAD * 2,
+  ]);
+}
+
+/** Read/write for the D-157 layer-transform wrapper's NESTED
+ *  `layer.transform.<key>` fields (`schema.ts`'s `layerTransform`) — kept
+ *  separate from `setLayerField` because that function only ever writes a
+ *  TOP-LEVEL layer key, never reaches inside a nested object. Setting the
+ *  LAST remaining key to `undefined` deletes `transform` entirely rather
+ *  than leaving `"transform": {}` behind — an all-absent transform object is
+ *  already indistinguishable from no transform at all (every field in
+ *  `layerTransform` is `.optional()`, so `{}` and "absent" parse to the
+ *  exact same runtime meaning), and leaving the empty object around would
+ *  just be textual noise in the saved manifest. No-op (same manifest
+ *  reference back) for a selection that doesn't resolve to a layer — the
+ *  same defensive floor every function in this file already holds. Used for
+ *  BOTH `scene.layers` (2D — where `Video.tsx`'s `renderLayers` actually
+ *  applies it) and `scene3d.children` (3D — harmless to store, `ThreeD` in
+ *  `Video.tsx` never reads it; `InspectorPanel.tsx` only ever renders this
+ *  control for a 2D `layer` selection, so a 3D child never reaches this
+ *  path in practice today). */
+export function setLayerTransformField(manifest: Manifest, selection: Selection, key: string, value: unknown): Manifest {
+  const cloned = cloneLayerRaw(manifest, selection);
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
+  const existing: Raw = raw.transform && typeof raw.transform === 'object' ? { ...(raw.transform as Raw) } : {};
+  if (value === undefined) delete existing[key];
+  else existing[key] = value;
+  if (Object.keys(existing).length === 0) delete raw.transform;
+  else raw.transform = existing;
   return next;
 }
 

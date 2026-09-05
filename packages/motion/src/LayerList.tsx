@@ -44,8 +44,11 @@ export function sameTarget(a: SelectionTarget, b: SelectionTarget): boolean {
  *  copy, not its position) since "text" alone among several text layers in
  *  one scene isn't useful to pick between. `layer` is `.passthrough()`
  *  (`schema.ts`) so per-primitive fields like `text` aren't statically
- *  typed — same cast `registry.ts`'s own adapters already use to read them. */
-function layerLabel(layer: Layer): string {
+ *  typed — same cast `registry.ts`'s own adapters already use to read them.
+ *  Exported (D-157) so `InspectorPanel.tsx`'s "snap to layer" target picker
+ *  can list sibling layers with the SAME label this list already uses,
+ *  rather than growing its own second copy of "how do I describe a layer." */
+export function layerLabel(layer: Layer): string {
   const raw = layer as unknown as Record<string, unknown>;
   if (layer.use === 'text' && typeof raw.text === 'string') {
     const text = raw.text as string;

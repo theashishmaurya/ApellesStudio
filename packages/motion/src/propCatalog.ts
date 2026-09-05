@@ -217,3 +217,58 @@ export function positionFields(use: string): PositionKind | undefined {
   if (use === 'emphasis') return 'box-xy';
   return undefined;
 }
+
+/** Which manifest field(s) a canvas RESIZE handle writes for a primitive's
+ *  `use:` (D-157, Phase 2 of the research doc — "resize handles for the
+ *  primitives that have a real rectangle... per-primitive named fields, not
+ *  a generic `scale`"). Four shapes, one per primitive this phase gives
+ *  handles to:
+ *   - `'wh'`      — two independent fields, `w`/`h` (`layers.cardW`/`cardH`,
+ *                   `graph.width`/`height`).
+ *   - `'box-wh'`  — the last two elements of `emphasis.box`'s `[x,y,w,h]`
+ *                   tuple (`x`/`y`, the first two, untouched by a
+ *                   resize-only drag — same split `positionFields`'
+ *                   `'box-xy'` already makes the other way).
+ *   - `'scalar'`  — a SINGLE field drives both dimensions (`matrix.cell`:
+ *                   `w = cols*(cell+gap)-gap`, `h = rows*(cell+gap)-gap`,
+ *                   `Matrix.tsx`) — a real, honest 1-degree-of-freedom case,
+ *                   not two independent numbers; `manifestEdit.ts`'s
+ *                   `setLayerSize` documents how a 2-number resize target
+ *                   collapses back onto it.
+ *   - `'w-only'`  — `text.maxWidth` (a wrap width; `Text.tsx` has no
+ *                   comparable height knob — text height is intrinsic to
+ *                   its content and font size, not a stored field).
+ *  `undefined` — no resizable field at all (every `in3d` primitive, and any
+ *  future/unrecognized `use`). */
+export type SizeKind =
+  | { kind: 'wh'; w: string; h: string }
+  | { kind: 'box-wh' }
+  | { kind: 'scalar'; key: string }
+  | { kind: 'w-only'; key: string };
+
+export function sizeFields(use: string): SizeKind | undefined {
+  if (use === 'layers') return { kind: 'wh', w: 'cardW', h: 'cardH' };
+  if (use === 'graph') return { kind: 'wh', w: 'width', h: 'height' };
+  if (use === 'emphasis') return { kind: 'box-wh' };
+  if (use === 'matrix') return { kind: 'scalar', key: 'cell' };
+  if (use === 'text') return { kind: 'w-only', key: 'maxWidth' };
+  return undefined;
+}
+
+/** D-157, Phase 2's layer-transform wrapper (`schema.ts`'s `layerTransform`,
+ *  applied by `motion-engine`'s `Video.tsx`) — a generic field group EVERY
+ *  2D layer gets regardless of `use`, the same "shared, not per-primitive"
+ *  shape `timingFields` above already is. `InspectorPanel.tsx` renders these
+ *  through their OWN small sub-editor (`TransformFieldGroup`), not through
+ *  `fieldsForPrimitive`'s flat list, because they read/write a NESTED
+ *  `layer.transform.<key>` rather than a top-level layer field — see
+ *  `manifestEdit.ts`'s `setLayerTransformField`. */
+export const LAYER_TRANSFORM_FIELDS: FieldSpec[] = [
+  { key: 'x', label: 'Transform X', kind: 'number', group: 'layout' },
+  { key: 'y', label: 'Transform Y', kind: 'number', group: 'layout' },
+  { key: 'scale', label: 'Scale', kind: 'number', group: 'layout' },
+  { key: 'rot', label: 'Rotation (deg)', kind: 'number', group: 'layout' },
+  { key: 'opacity', label: 'Opacity', kind: 'number', group: 'fill' },
+  { key: 'clipWidth', label: 'Clip width', kind: 'number', group: 'layout' },
+  { key: 'clipHeight', label: 'Clip height', kind: 'number', group: 'layout' },
+];
