@@ -27,10 +27,24 @@
  * a successful render — this package can't import it into the Sources pool
  * itself (`@chroma/bridge` is app/domain-layer, D-039 layer direction), so
  * the app-level composition (`app/src/main.tsx`) supplies this to do that.
+ *
+ * D-155/D-156 (Phase 0/1 of `docs/notes/motion-visual-builder-research.md`):
+ * `transientManifest` is the ONE piece of new state here — a Phase 1 canvas
+ * drag's in-flight preview override (0b), fed straight to `MotionPreview`
+ * alongside the STABLE `m.manifest` (see that component's own doc comment
+ * for why both are needed). Every whole-manifest write that should be
+ * undoable — an Inspector field edit, and a drag's pointer-up commit — now
+ * goes through `m.commit` (0c) instead of `m.setText(JSON.stringify(...))`
+ * directly; `onCatalogAdd` deliberately still uses the plain `setText` path
+ * (see its own comment below) — Phase 0c's own scope is "the Inspector's
+ * existing edits as the first customer," not every mutation site in this
+ * tab, and catalog inserts are a different, already-shipped (D-151)
+ * customer this pass doesn't touch.
  */
 import { useRef, useState } from 'react';
 import type { PlayerRef } from '@remotion/player';
 import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
+import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import { Button } from './Button';
 import { MotionPreview } from './MotionPreview';
@@ -46,11 +60,37 @@ import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
 /** the two views the left sidebar pane switches between (D-151) */
 type SidebarTab = 'layers' | 'catalog';
 
+/** A short, human label for an undo entry (D-155) — which selection kind an
+ *  Inspector edit landed on. Not per-field (the Inspector's `onCommit`
+ *  doesn't thread a field name up to here) — a deliberate, documented scope
+ *  call: good enough for "Undo <label>," not worth plumbing a field name
+ *  through `InspectorPanel`'s whole `FieldGroup`/`CameraKeyList` call chain
+ *  for this pass. */
+function labelForSelection(selection: Selection | null): string {
+  if (!selection) return 'Edit';
+  switch (selection.target.kind) {
+    case 'scene':
+      return 'Edit scene';
+    case 'camera':
+      return 'Edit camera';
+    case 'scene3d-camera':
+      return 'Edit 3D camera';
+    case 'layer':
+      return 'Edit layer';
+    case 'scene3d-child':
+      return 'Edit 3D layer';
+  }
+}
+
 export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
   const m = useMotionManifest(onRendered);
   const playerRef = useRef<PlayerRef>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('layers');
+  // D-156, Phase 0b — a Phase 1 drag's in-flight preview override; `null`
+  // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
+  // is kept separate from `m.manifest` rather than written into it directly.
+  const [transientManifest, setTransientManifest] = useState<Manifest | null>(null);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.projectOpen`) and nothing else, so it can no
@@ -100,13 +140,13 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     if (m.manifest) playerRef.current?.seekTo(sceneStartFrame(m.manifest, s.sceneIndex));
   };
 
-  // D-099: an Inspector edit produces a new `Manifest` object (pure,
-  // immutable — see `manifestEdit.ts`) — writing it back through
-  // `setText`/`JSON.stringify` keeps `useMotionManifest`'s text state the
-  // one place the manifest is actually serialized, same as a manual edit
-  // in `ManifestEditor`'s own textarea.
+  // D-099/D-155: an Inspector edit produces a new `Manifest` object (pure,
+  // immutable — see `manifestEdit.ts`) — `m.commit` serializes it back
+  // through the same `setText` path a manual `ManifestEditor` edit uses
+  // AND pushes an undo entry (Phase 0c's first customer: real, testable
+  // undo before Phase 1's drag exists at all).
   const onInspectorChange = (next: typeof m.manifest) => {
-    if (next) m.setText(JSON.stringify(next, null, 2));
+    if (next) m.commit(next, labelForSelection(selection));
   };
 
   // D-151: which scene a catalog insert lands in — the selected scene, or
@@ -119,8 +159,11 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
 
   // D-151: insert a catalog primitive, then select it — so the Inspector is
   // immediately showing the new layer's fields and the player has jumped to
-  // its scene. Writes back through the same `setText` path every other edit
-  // in this tab uses (see `onInspectorChange`), keeping the manifest text
+  // its scene. Writes back through the plain `setText` path (NOT `m.commit`
+  // — D-155's Phase 0c scoped undo to "the Inspector's existing edits [and]
+  // Phase 1's drag commits" specifically, not every mutation site in this
+  // tab; a catalog insert is a separate, already-shipped D-151 customer
+  // this pass doesn't extend undo coverage to), keeping the manifest text
   // the one place the document is serialized.
   const onCatalogAdd = (use: PrimitiveUse) => {
     if (!m.manifest || targetSceneIndex === null) return;
@@ -133,7 +176,15 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     <div className="h-full w-full min-h-0 bg-bg-primary">
       <PanelGroup>
         <ResizablePanel defaultSize={800} minSize={300}>
-          <MotionPreview manifest={m.manifest} playerRef={playerRef} />
+          <MotionPreview
+            manifest={m.manifest}
+            transientManifest={transientManifest}
+            playerRef={playerRef}
+            selection={selection}
+            onSelect={onSelect}
+            onTransientChange={setTransientManifest}
+            onCommit={m.commit}
+          />
         </ResizablePanel>
         <ResizableHandle />
         {/* D-151: Layers and Catalog share one pane rather than the Catalog

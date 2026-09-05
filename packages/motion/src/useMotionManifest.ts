@@ -19,10 +19,28 @@
  * A parse/validation error never blinks the preview away: `manifest` only
  * ever holds the last value that parsed clean, so `<MotionPreview>` keeps
  * showing it while `parseError` is surfaced separately in the editor pane.
+ *
+ * D-155 (Phase 0c of `docs/notes/motion-visual-builder-research.md`) adds
+ * `commit` — the ONE path that both an Inspector field edit and a Phase 1
+ * canvas drag write a whole-manifest change through, so both get undo/redo
+ * "for free" from `@chroma/history` (D-051) with no per-mutation-site
+ * wiring. It mirrors `@chroma/editor`'s own `timelineStore.applyOp`
+ * (`before`/`after` snapshots closed over by `undo`/`redo`, pushed to the
+ * SAME shared `useHistoryStore`) — adapted to this tab's "the JSON text is
+ * the one serialized source of truth" contract (`setText`) rather than a
+ * `restoreSnapshot` call. `setText` is `setTextLive`, i.e. still debounced,
+ * so `commit` ALSO calls `applyParse` synchronously on the same string —
+ * without that, a Phase 1 drag's pointer-up would clear its transient
+ * preview override before the debounce re-parses `text`, and the picture
+ * would visibly flash back to the pre-drag position for up to `DEBOUNCE_MS`.
+ * The debounced call still fires a moment later on the identical string —
+ * a harmless redundant parse, not a race, since `after`/`before` are fixed
+ * strings closed over at push time, not read again later.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { manifestSchema, type Manifest } from '@chroma/motion-engine/src/engine/schema';
 import { sample } from '@chroma/motion-engine/src/engine/sample';
+import { useHistoryStore } from '@chroma/history';
 
 import { saveManifest, renderManifest, type MotionRenderResult } from './manifestIO';
 import { useMotionProjectStore } from './motionProjectStore';
@@ -135,6 +153,32 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
 
   const dirty = savedText !== text;
 
+  // D-155 — the one commit path for a whole-manifest change that should be
+  // undoable: an Inspector field edit (first customer, per the research
+  // doc's own Phase 0c) and a Phase 1 canvas-drag commit both call this
+  // instead of `setText(JSON.stringify(...))` directly. `label` is a short,
+  // human-readable one-liner for a future "Undo <label>" affordance, same
+  // spirit as `@chroma/editor`'s `labelForOp`.
+  const commit = useCallback(
+    (next: Manifest, label: string) => {
+      const after = JSON.stringify(next, null, 2);
+      if (after === text) return; // no real change — don't push a no-op undo entry
+      const before = text;
+      const apply = (raw: string) => {
+        setTextLive(raw);
+        applyParse(raw);
+      };
+      apply(after);
+      useHistoryStore.getState().push({
+        tab: 'motion',
+        label,
+        undo: () => apply(before),
+        redo: () => apply(after),
+      });
+    },
+    [text, setTextLive, applyParse],
+  );
+
   const save = useCallback(async (): Promise<boolean> => {
     if (!manifest || parseError) return false;
     setSaving(true);
@@ -193,6 +237,7 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
     setText: setTextLive,
     manifest,
     parseError,
+    commit,
 
     dirty,
     saving,

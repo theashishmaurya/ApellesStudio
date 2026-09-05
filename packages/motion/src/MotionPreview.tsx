@@ -1,5 +1,6 @@
 /**
- * @chroma/motion — the live preview (D-046; player ref forwarded D-081).
+ * @chroma/motion — the live preview (D-046; player ref forwarded D-081;
+ * on-canvas select/drag D-156).
  *
  * A real `@remotion/player` embed of `@chroma/motion-engine`'s own `Video`
  * component — the exact component the `Animation` composition registers in
@@ -12,21 +13,56 @@
  * `PlayerRef`) to jump the preview to whatever scene/layer was selected.
  * Optional so this component still works standalone (a ref is a pure
  * addition, nothing about the preview itself needs one).
+ *
+ * D-156 (Phase 1 of `docs/notes/motion-visual-builder-research.md`) wraps
+ * `<Player>` in a `containerRef`'d div and renders `<MotionCanvasOverlay>`
+ * as its DOM sibling, positioned over it — the same shape `@chroma/editor`'s
+ * `PreviewPane.tsx` uses for `<TransformOverlay containerRef={surfaceRef}>`
+ * next to its own `<img>` (see that component's own doc comment for why
+ * this one's actual pointer-event wiring differs). `transientManifest` is
+ * Phase 0b's in-flight drag override: `shown = transientManifest ??
+ * manifest` is what actually reaches `<Player inputProps>`, while `manifest`
+ * itself (the STABLE, committed value) is what the overlay reads to work
+ * out where a drag starts from — see `MotionCanvasOverlay`'s own doc
+ * comment for why those must not be the same value.
  */
+import { useRef } from 'react';
 import type { RefObject } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { Video } from '@chroma/motion-engine/src/engine/Video';
 import { totalFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
+import type { Selection } from './LayerList';
+import { MotionCanvasOverlay } from './MotionCanvasOverlay';
+
 export function MotionPreview({
   manifest,
+  transientManifest = null,
   playerRef,
+  selection = null,
+  onSelect,
+  onTransientChange,
+  onCommit,
 }: {
+  /** the STABLE, already-committed manifest — the overlay's drag-start baseline. */
   manifest: Manifest | null;
+  /** 0b's in-flight override, preferred for what's actually shown while dragging. */
+  transientManifest?: Manifest | null;
   playerRef?: RefObject<PlayerRef | null>;
+  selection?: Selection | null;
+  /** Required together (D-156): omit all four to use this component with no
+   *  on-canvas interaction at all (the overlay isn't rendered). */
+  onSelect?: (s: Selection) => void;
+  onTransientChange?: (next: Manifest | null) => void;
+  onCommit?: (next: Manifest, label: string) => void;
 }) {
-  if (!manifest) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const localPlayerRef = useRef<PlayerRef>(null);
+  const effectivePlayerRef = playerRef ?? localPlayerRef;
+
+  const shown = transientManifest ?? manifest;
+  if (!shown) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-black text-text-secondary text-sm px-6 text-center">
         Fix the manifest errors to preview it
@@ -36,18 +72,31 @@ export function MotionPreview({
 
   return (
     <div className="h-full w-full flex items-center justify-center bg-black">
-      <Player
-        ref={playerRef}
-        component={Video}
-        inputProps={manifest}
-        durationInFrames={totalFrames(manifest)}
-        fps={manifest.fps}
-        compositionWidth={manifest.width}
-        compositionHeight={manifest.height}
-        controls
-        loop
-        style={{ width: '100%', height: '100%' }}
-      />
+      <div ref={containerRef} className="relative h-full w-full">
+        <Player
+          ref={effectivePlayerRef}
+          component={Video}
+          inputProps={shown}
+          durationInFrames={totalFrames(shown)}
+          fps={shown.fps}
+          compositionWidth={shown.width}
+          compositionHeight={shown.height}
+          controls
+          loop
+          style={{ width: '100%', height: '100%' }}
+        />
+        {onSelect && onTransientChange && onCommit && (
+          <MotionCanvasOverlay
+            containerRef={containerRef}
+            playerRef={effectivePlayerRef}
+            manifest={manifest}
+            selection={selection}
+            onSelect={onSelect}
+            onTransientChange={onTransientChange}
+            onCommit={onCommit}
+          />
+        )}
+      </div>
     </div>
   );
 }

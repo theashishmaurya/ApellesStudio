@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chroma/history": "*",
     "@chroma/inspector": "*",
     "@chroma/motion-engine": "*",
     "@remotion/player": "4.0.519",
