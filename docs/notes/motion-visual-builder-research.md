@@ -653,37 +653,41 @@ change to the world-space storage model (§2b).
 
 ## 5. Part C — collapse the raw JSON behind a `</>` toggle
 
-**Not implemented in this pass, deliberately** — this is a research branch, and a sibling fork
-was live in `MotionTab.tsx` when the pass started (it has since landed as D-150, so the
-collision risk is gone; the reason not to build it here is now just scope). Handing it off with
-the real detail so whoever picks it up does not rediscover the one trap in it.
+**Built as D-153, in a deliberately smaller shape than scoped below.** This section originally
+handed the work off with a `MotionTab`-level architecture (gate the whole `ResizablePanel` +
+`ResizableHandle`, lift `Save`/`Render` up, add an error-state chip). D-153 shipped a
+self-contained alternative instead — recorded here so the gap between "scoped" and "built" is
+explicit rather than silently stale.
 
-The owner's ask is exact: the raw manifest is an agent/power-user surface, not a creator
+The owner's ask was exact: the raw manifest is an agent/power-user surface, not a creator
 surface; it should be collapsed by default behind a small `</>` icon button.
 
-**The shape:** a `showManifest` boolean in `MotionTab`, defaulting `false`, gating the last
-`<ResizablePanel>` **and its preceding `<ResizableHandle>`** (leaving the handle renders a
-dangling divider). The toggle uses D-126's established elevated-chip treatment —
-`rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm` — the same
-treatment `Shell.tsx`'s Sources toggle and `EditorTab.tsx`'s Inspector toggle got, and the
-Motion tab has no such chip yet, so it is a new one at the preview's corner rather than a slot
-in an existing row.
+**Originally scoped shape:** a `showManifest` boolean in `MotionTab`, defaulting `false`,
+gating the last `<ResizablePanel>` **and its preceding `<ResizableHandle>`** (leaving the
+handle renders a dangling divider) — so collapsing would also reclaim the pane's ~420px of
+width for the preview/Inspector. The trap called out at the time: `Save`/`Render` and the
+error/status strip live *inside* `ManifestEditor`'s own header, so naively hiding the panel
+would hide the only place a validation error is ever surfaced — requiring lifting those
+controls out to a `MotionTab`-owned row first.
 
-**The trap, and it is why this is not literally two lines:** `Save` and `Render` live *inside*
-`ManifestEditor`'s own header (`ManifestEditor.tsx`, the `<div>` above the textarea), as does
-the entire error/status strip (`parseError`, `saveError`, `renderError`, `renderResult`).
-Collapsing the panel hides all of it — including the only place a validation error is ever
-surfaced. So the real fix is three parts:
+**What D-153 actually built:** the collapse stays entirely local to `ManifestEditor.tsx` — an
+internal `expanded` boolean (default `false`) gates only the textarea + the JSON-parse-error
+line of the status strip. The header (name/dirty state, the `</>` toggle, Save, Render) and the
+`saveError`/`renderError` lines stay mounted and visible regardless of collapse state, so
+nothing the owner needs disappears. A `parseError` force-expands the body (`showBody = expanded
+|| !!parseError`) rather than needing a separate chip error-indicator, since the one case that
+matters (JSON currently invalid) auto-reveals the JSON that's invalid.
 
-1. Lift `Save`/`Render` out of `ManifestEditor` into a small always-visible action row (or a
-   second chip cluster) owned by `MotionTab`. `ManifestEditor` keeps the textarea and the
-   status strip; the props it takes for save/render move up with the buttons.
-2. Gate the panel + handle on `showManifest`.
-3. Give the `</>` chip an **error state** — when `parseError` is non-null and the panel is
-   collapsed, the chip must show it (a red dot or accent border), or a user gets a preview that
-   silently stops updating with no visible reason. This is the part most likely to be missed.
-
-Small, self-contained, one commit. Worth doing next, ahead of any of §4.
+**Why the smaller shape, not the scoped one:** it satisfies the literal ask — raw JSON hidden
+by default, real actions/errors never hidden — without touching `MotionTab.tsx` or its
+`ResizablePanel` layout math, and without a new elevated-chip component. The tradeoff accepted
+knowingly: the panel's ~420px of width stays allocated even when collapsed, so there's no
+layout-space payoff the way the original scope had. That's a real, still-open gap — worth doing
+as a fast-follow if the fixed width proves annoying in daily use, using the three-part shape
+above unchanged (it was correct then and is still the right shape for it). Not done now because
+the width cost affects one pane, and the bigger visual-builder asks (§4, plus the owner's
+separate ask for per-axis x/y/w/h Inspector fields + a real keyframe timeline) are higher-value
+uses of the same file.
 
 ---
 

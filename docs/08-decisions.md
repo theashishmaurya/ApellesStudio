@@ -11955,3 +11955,51 @@ that fork lands first and claims them, this entry renumbers rather than the othe
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-153 — The scene manifest collapses behind a `</>` toggle by default; Save/Render and real errors stay visible either way
+
+**decided + built (2026-09-05).** Part C of D-152's research doc, picked up directly rather
+than left as a named follow-up — small and well-bounded enough not to warrant its own fork.
+
+**Context.** Owner, live: pointing at `ManifestEditor`'s raw JSON textarea, *"scene manifest as
+a user i dont need that you will need only, put it behind this kinda button [`</>`] I can see
+but it['s] collapsed."* D-152's own research doc named the real trap in doing this naively:
+Save, Render, and the strip that shows a save/render *error* all live inside the same panel as
+the textarea — collapsing the whole panel would hide the owner's actual controls along with the
+JSON they don't want to see.
+
+**What collapses, what doesn't.** `ManifestEditor` gains one piece of local state, `expanded`
+(default `false`). The header — the "Scene manifest · unsaved" label, the new `</>` toggle
+button, and the Save/Render buttons — is unconditional, outside the collapse. Only the
+`<textarea>` and the status strip's *informational* rows (`manifest valid`, the render-success
+line, the parse error itself) are gated on `expanded`. `saveError`/`renderError` are gated on
+their own presence, not on `expanded` — a failed save is a fact the owner needs regardless of
+whether the JSON is showing.
+
+**One deliberate override:** a live `parseError` force-shows the body (`showBody = expanded ||
+!!parseError`) even when collapsed. Reasoning: a parse error means someone (owner or agent) is
+mid-edit of raw JSON right now — that is the one moment collapsing it would be actively unhelpful,
+hiding the only thing that explains why Save/Render just greyed out.
+
+**No new dependency for the icon.** `packages/motion` has no icon library; adding one for a
+single glyph would be a real dependency for a two-character label. A plain `</>` text glyph in a
+small bordered button matches the owner's own literal suggestion and the D-126 "elevated chip"
+pattern (`bg-surface/90` + border) already used elsewhere in this app for exactly this class of
+floating toggle.
+
+**Verification.** `npx tsc --noEmit -p packages/motion` clean. `npm test --workspace
+@chroma/motion` — **66/66**, unchanged (no test touches `ManifestEditor` directly; its behaviour
+is exercised through the tab, which has no dedicated component-test harness yet — the same gap
+D-151's audit already recorded for `MotionTab.tsx`/`CatalogPanel.tsx`).
+
+**Honest gaps.** (1) **Not seen in the assembled app** — this sandbox cannot launch the Tauri
+window, the same constraint every entry tonight discloses. (2) No persistence of the
+expanded/collapsed choice across a tab remount — every fresh mount starts collapsed, which is
+the owner's own stated default, but a power user who always wants it open will have to re-open
+it each session; a `localStorage`/store flag is the obvious small follow-up if that turns out to
+matter in practice.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

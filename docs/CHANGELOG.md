@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **The scene manifest collapses behind a `</>` toggle (D-153).**
+  Owner: *"as a user i dont need that, you will need only."* Only the raw-JSON
+  textarea and its informational status rows (parse OK, render-success line)
+  collapse by default; Save/Render and any real save/render error stay visible
+  regardless, avoiding the trap D-152's research doc named (those controls live
+  in the same panel as the JSON). A live parse error force-expands, since that's
+  the one moment hiding the JSON would hide why Save/Render just greyed out.
+  `tsc` clean, `@chroma/motion` 66/66 unchanged.
 - **2026-09-05** — **The Motion tab's false "No project open" (B-058 / D-150).**
   Owner-reported live; not the D-148 regression the timing suggested —
   `state::set_project` was running fine. The tab mounts at boot like every tab,
