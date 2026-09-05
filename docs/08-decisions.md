@@ -11483,14 +11483,19 @@ an asymmetry with no reason behind it.
 
 `cargo check --workspace --all-targets` clean. `cargo test -p chroma-timeline` —
 **128 passed** (6 new). `cargo test -p chroma-media` — **98 passed** (12 new).
-`cargo test -p RapidRAW --lib -- chroma::` — **178 passed, 0 failed** (5 new;
+`cargo test -p RapidRAW --lib -- chroma::` — **131 passed, 0 failed** (5 new;
 the known-flaky `relight::tests::keyframed_light_without_a_loaded_video_falls_
-back_to_raw_fields` did not fire this run). `npm test --workspace @chroma/editor`
-— **294 passed, 8/8 files** (7 new), including the D-142 real-DOM
-`TimelinePane` harness, which now renders the new track-header control.
-`npx tsc --noEmit -p packages/editor` clean; `tsc -p app` has **143 errors
-before and after** this change (all pre-existing vendored-fork i18n/`any`
-errors), i.e. zero new.
+back_to_raw_fields` did not fire this run). The count is 131, not the 178 this
+section originally reported — that number was measured before this pass
+rebased onto D-148, which moved ~50 of `project.rs`'s tests into
+`chroma-project` in the same window; re-confirmed directly against `main`
+after merge. `npm test --workspace @chroma/editor` — **294 passed, 8/8 files**
+(7 new), including the D-142 real-DOM `TimelinePane` harness, which now
+renders the new track-header control. `npx tsc --noEmit -p packages/editor`
+clean; `tsc -p app` has **64 errors before and after** this change (all
+pre-existing vendored-fork i18n/`any` errors, the established baseline —
+re-verified directly, not the 143 a worktree-symlink artifact reported
+earlier), i.e. zero new.
 
 The tests that matter most, named because a regression would hide behind them:
 the **closed form against the discrete recursion** (that "one-pole" is the real
@@ -11541,9 +11546,10 @@ deserializes un-ducked with `gain`/`sync_locked` untouched.
    nothing about the model blocks it.
 
 **Numbering.** Assigned D-149 after checking `main` **and** the concurrent
-`fork/extract-chroma-project` worktree at the end of this pass: main has landed
-through D-147, and that fork's `chroma-project` extraction has already claimed
-D-148 on its own branch. Taking the next free number rather than colliding is
+`fork/extract-chroma-project` worktree at the end of this pass: main had
+landed through D-147, and that fork's `chroma-project` extraction had already
+claimed D-148 on its own branch — since landed on `main` as D-148. Taking the
+next free number rather than colliding is
 the same move D-147 made when D-146 landed underneath it. No code conflict
 between the two — that fork moves the manifest and timeline lifecycle out of
 `edit.rs`, this one adds two resolvers and four model fields.
