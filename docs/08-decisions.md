@@ -13104,3 +13104,183 @@ both show **D-159 / B-061** as the highest numbers in the main repo — **D-160*
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-161 — Motion keyframe timeline, Phase 5b (part 1): drag a key along time
+
+**decided + built (2026-09-05).** The first of Phase 5b's own four named pieces (`docs/notes/
+motion-keyframe-timeline-research.md` §4: "drag a key along time; per-row lanes; box-select +
+nudge; a curve/easing editor" — that doc's own recommended order, drag-a-key first, "the single
+most direct payoff… and the smallest of the four in isolation"). Built directly on D-160's Phase
+5a (`keyframeVisibility.ts`, `KeyframeStrip.tsx`) and reusing D-155's transient-preview/commit
+discipline unchanged, per that doc's own explicit instruction: *"This needs the same transient-
+preview/commit discipline D-155/D-156 already established for a position drag, applied to a 1D
+time axis instead of a 2D canvas."*
+
+### 1 — The new write primitive: `manifestEdit.ts`'s `moveKeyAt` + three thin wrappers
+
+`moveKeyAt<T extends {at:number}>(keys, index, newAt, sceneDurSeconds): T[]` is the ONE generic
+core (§4 of the research doc left the choice open — "could be one generic function parameterized
+by which array it targets, or three small ones sharing a helper; your call") — parameterized over
+the key array rather than reimplemented three times, since `cam2dKey`/`cam3dKey`/`transformKey`
+all share the identical `{at: number, ...}` shape and the reorder/clamp logic doesn't care which
+one it is. Three thin wrappers read/write through the existing per-location accessors —
+`moveLayerTransformKeyAt` (via `layerTransformKeys`/`setLayerTransformKeys`, D-159),
+`moveCamera2dKeyAt` (via `selectedCamera2d`/`setCamera2d`), `moveCamera3dKeyAt` (via
+`selectedCamera3d`/`setCamera3d`) — each supplying its OWN scene's `dur` (seconds) as the clamp
+bound.
+
+**The two edge cases the task named explicitly, decided and documented rather than left silent:**
+
+- **Dragging a key past a neighbor: REORDERS the array (does not clamp to stay between
+  neighbors).** `moveKeyAt` re-sorts its own output by `at` after moving the one key at `index`.
+  Rejected alternative: clamping the drag so a key can never cross whichever neighbor is currently
+  adjacent. The deciding fact, confirmed by re-reading `interpolateKeys`
+  (`motion-engine/src/lib/interpolateKeys.ts`) directly rather than assumed: it ALREADY re-sorts
+  its own copy of `keys` by `at` on every call, before array order is used for anything — nothing
+  downstream treats this array's on-disk POSITION as meaningful, only each key's `at` VALUE is. A
+  neighbor-clamp would therefore be a purely cosmetic restriction with zero correctness payoff,
+  and would make the ordinary "these two keys are close together, drag one past the other to swap
+  their order" edit impossible without a separate value-edit step first. It also matches the
+  default behaviour of every mainstream keyframe editor this research has cited (Remotion Studio,
+  After Effects, Premiere): dragging a key past its neighbor freely reorders.
+- **Boundary clamping: `newAt` clamps to `[0, scene.dur]`, the DRAGGED key's OWN scene — never
+  before frame 0, never past the manifest's total duration for a key belonging to the LAST scene,
+  and (a case the task didn't name but is the same mechanism) never into a NEIGHBORING scene's
+  own time range either**, since `at` is always scene-relative seconds and there is no manifest
+  operation that moves a key between scenes at all (ruled out explicitly, both in the parent
+  research doc and again here). Dragging a marker on the whole-composition strip into a
+  neighboring scene's visual region simply pins the key to its own scene's start/end rather than
+  jumping into a scene it doesn't belong to.
+- **The FIRST/LAST key is not a special case.** Both are just `index === 0` /
+  `index === keys.length - 1` into an array `moveKeyAt` clamps and re-sorts identically for every
+  index — no off-by-one boundary branch exists that treats an edge key differently. Verified by
+  dedicated tests (below), not just asserted.
+- **A real, disclosed tie-break subtlety found while writing tests, not designed in advance:**
+  when a drag lands a key EXACTLY on an existing key's `at` (a genuine tie), `Array.prototype.sort`
+  (stable since ES2019) breaks the tie by each key's POSITION in the array `moveKeyAt` builds
+  BEFORE sorting — which is the ORIGINAL array's own index order (only the dragged key's `at`
+  value changes prior to sorting, not its position in that intermediate array). Concretely: a key
+  that started at array position 0 and gets dragged onto an existing tie sorts to the FRONT of
+  that tied group, not the back — it is NOT "whichever key just moved goes last." Documented in
+  the function's own doc comment and covered by a dedicated test rather than left as an accidental
+  property of `Array.sort`'s semantics.
+
+### 2 — The frame↔position inverse: `keyframeVisibility.ts`'s `percentToFrame`
+
+The exact INVERSE of D-160's existing `frameToPercent` (frame → screen `%`), needed because a
+drag reports the pointer's position on the strip as a percentage of its own measured width and
+needs to know which absolute composition frame that corresponds to. Kept as a real, tested pure
+function in the same file, same convention as its sibling — never inline arithmetic in
+`KeyframeStrip.tsx` — for the identical "getting this wrong is silent" reason `frameToPercent`
+itself already carries in its own doc comment: a one-frame rounding mismatch between the two
+functions would silently write a key to the wrong `at`. Rounds via `Math.round` (matching every
+other seconds/frame conversion in this package) and clamps to `[0, totalFrames]`. Tested
+including an explicit round-trip check against `frameToPercent` at several frame values.
+
+### 3 — Wiring the drag into `KeyframeStrip.tsx`
+
+`onTransientChange`/`onCommit` — the SAME two callbacks `MotionCanvasOverlay.tsx`'s own move/
+resize drags already use, threaded through unchanged by `MotionPreview.tsx` (both are already
+independently-optional top-level props there, gated together with `onSelect`/`onSelectionChange`
+only for the CANVAS overlay — the strip's own drag needs neither of those, so it's wired
+independently and becomes drag-capable whenever a caller supplies just the two mutation
+callbacks). Both optional and required TOGETHER on `KeyframeStrip` itself: omitting either keeps
+Phase 5a's exact read-only strip, satisfying the same "still useful with nothing wired" floor
+D-160 established.
+
+**Gesture disambiguation (D-137/D-158's discipline, a third real application in this tab, per
+the task's own framing of "at least three things sharing one pointer surface"):** a marker
+`<button>`'s own `onPointerDown` starts a potential key-drag; the bare strip background keeps
+Phase 5a's existing `onClick`-to-seek untouched — decided structurally (which DOM element was
+actually hit: a marker vs. the strip's own background), never by an ad-hoc priority check. Click-
+vs-drag on the SAME marker is resolved by an explicit movement threshold at `pointerup`
+(`KEY_DRAG_MIN_PX = 4`, the same figure `MotionCanvasOverlay.tsx`'s own marquee uses, duplicated
+as a literal with a doc comment pointing at its own precedent rather than shared via a new
+cross-file constant for one number) — modeled on the MARQUEE's own reason for needing a real
+distance check (its pointerup forks into two mutually exclusive outcomes) rather than the plain
+move/resize drags' "no threshold, `commit`'s own no-op-diff guard absorbs a zero-delta press"
+shape: a keyframe marker's click (seek) and drag (retime) are two meanings that must not both
+fire on the same gesture, unlike a layer click (select) which is compatible with also starting a
+drag.
+
+**A real design problem found and solved, not anticipated going in: live visual feedback without
+touching marker identity mid-drag.** The obvious-looking approach — feed `transientManifest` into
+`KeyframeStrip` and re-derive `cameraKeyMarkers`/`selectedLayerKeyMarkers` from it during a drag,
+the same way `<Player inputProps>` already prefers `transientManifest` — was tried in reasoning
+and rejected once `moveKeyAt`'s own reordering behaviour (§1) was accounted for: `moveKeyAt` can
+change a key's ARRAY POSITION mid-drag once it crosses a neighbor, so a marker list re-derived
+from the transient manifest on every pointermove could hand the DRAGGED marker's own `<button>` a
+different `keyIndex` (and therefore a different React `key`) than it had at `pointerdown` — React
+would unmount/remount that exact button mid-gesture, and the in-flight `setPointerCapture` on the
+now-removed DOM node would be silently lost, ending the drag partway through with no error.
+**Resolution:** the rendered marker LIST stays derived from the STABLE `manifest` for the whole
+gesture (unchanged from D-160 — zero risk of the button's own identity shifting), and live visual
+feedback is a small local `dragPreview` override (`{kind, sceneIndex, keyIndex, frame}`) applied
+ONLY to the one marker matching the drag in progress. `onTransientChange` still fires on every
+qualifying pointermove so the PLAYER shows the retimed key's effect immediately — only the
+STRIP's own re-render is decoupled from the live reorder. **The one disclosed visual consequence:**
+a drag that crosses a neighbor shows that neighbor's marker staying visually put at its own
+unchanged position until the drag commits, at which point the strip re-renders from the
+freshly-committed (now genuinely reordered) manifest — a one-frame "catch-up" on release rather
+than a continuous live swap. Judged the right trade for a first slice; a synthetic per-key id
+threaded through the reorder (so identity survives it) is real, separable follow-up work, not a
+correctness bug in what shipped.
+
+**`KeyMarker` (`keyframeVisibility.ts`) gains a `keyIndex` field** — the position in the marker's
+OWN source array (`scene.camera` / `scene.scene3d.camera` / the selected layer's own
+`transform.keys`), read straight off the marker that was hit rather than re-derived from a frame
+number (fragile — two keys CAN share a frame, D-160's own honest gap 5). `cameraKeyMarkers`/
+`selectedLayerKeyMarkers` populate it via each array's own `.forEach((key, keyIndex) => …)` —
+existing call sites/tests updated (`keyIndex` added to every expected marker object), no other
+behavioural change to either function.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — untouched this pass (no schema/engine change —
+  moving a key's `at` needed no new field, `at` already exists on every key type); the same 2
+  pre-existing `document`-typing errors in `Scene3D.tsx` as on `main`, confirmed unchanged.
+- `npm test --workspace @chroma/motion` — **255/255** (was 224 at D-160; **+31** new: 27 in
+  `manifestEdit.test.ts` (11 `moveKeyAt` covering move/reorder-past-either-neighbor/boundary-
+  clamp-both-ends/first-key/last-key/out-of-range-index/empty-array/single-key/field-preservation/
+  stable-tie-break, 4 `moveLayerTransformKeyAt`, 4 `moveCamera2dKeyAt`, 3 `moveCamera3dKeyAt`),
+  8 in `keyframeVisibility.test.ts` (`percentToFrame`, including a round-trip check against
+  `frameToPercent`) — every new pure function gets real tests, per this package's own established
+  convention; `KeyframeStrip.tsx`'s new pointer-drag wiring is DOM/pointer-event plumbing,
+  deliberately untested, the same split D-156/157/158/159/160 already set.
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- No `remotion still` render comparison — this pass touches neither `motion-engine`'s schema nor
+  its render path (`Video.tsx`/`Camera.tsx`/`interpolateKeys.ts` all untouched — moving a key's
+  `at` reuses the exact same field every render-path reader already handles), so there is nothing
+  whose pixel output could have changed; confirmed by `git status` showing only `@chroma/motion`
+  files touched.
+- No Rust/`app/src-tauri` touched — frontend-only, per the task's own instruction; confirmed by
+  `git status`.
+
+**Honest gaps.** (1) **Not seen in the assembled Tauri app** — this sandbox cannot launch it, the
+same disclosed constraint every entry since D-125 carries; the pointer-drag wiring (capture,
+threshold, the click-vs-drag fork) is reasoned from `PointerEvent`'s own documented capture
+semantics, not exercised against a real pointer in a real window. (2) **The "live visual
+feedback" gap named in §3 above** — a crossed-over neighbor's marker doesn't visually swap until
+the drag commits. (3) **D-160's own honest gap 3** ("the strip's markers read the STABLE manifest
+only, never `transientManifest` — an auto-keyframe canvas-drag that creates a BRAND NEW key won't
+show up on the strip until it commits") is UNCHANGED, not fixed by this pass — a genuinely
+different scenario (a canvas gesture, not this strip's own drag) that this pass's own
+`dragPreview` mechanism doesn't address and wasn't trying to; still open. (4) **No axis-lock, by
+design** — the research doc's own task framing already called this out ("this is already a pure
+1D drag"), so there was never a second axis to lock. (5) Per-row lanes, box-select + nudge
+multiple keys, and the curve/easing editor remain entirely unbuilt — Phase 5b's own next three
+pieces, in the research doc's recommended order, explicitly not attempted in this pass.
+
+**Numbering.** Drafted as **D-161**, checked against the REAL current tip of `main` in the main
+repo (`/Users/ashishmaurya/my_projects/chroma`, not this worktree) both before starting this pass
+and immediately before writing this entry: `git log --oneline -5` shows `25587e7` (`D-160 Phase
+5a part 2: …`) still at the tip, unchanged across the whole pass, and `grep -oE 'D-[0-9]+'
+docs/08-decisions.md | sort -t- -k2 -n -u | tail` / `grep -oE 'B-[0-9]+' docs/BUGS.md | sort -t-
+-k2 -n -u | tail` both still show **D-160 / B-061** as the highest numbers — **D-161** is free,
+and no `B-NNN` is used or fixed by this pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

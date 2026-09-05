@@ -1072,11 +1072,23 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   whole composition, live playhead, click/marker-click-to-seek — pure navigation, no manifest
   mutation). One disclosed deviation: "the player's own scrubber gains markers" wasn't buildable
   as literally worded (Remotion's bundled controls have no extension point) — a separate strip
-  alongside the untouched player instead. **Remaining: Phase 5b — drag a key along time, per-row
-  lanes, box-select + nudge multiple keys, a curve/easing editor — still a MAJOR feature**,
-  comparable in cost to the Edit tab's own timeline, and must not be attached quietly to anything
-  else. Snapping/alignment GUIDES (visual guide-lines while dragging) were explicitly scoped out
-  of D-158 pending a UI-effort spike — see that decision's own entry for the smallest next step.
+  alongside the untouched player instead.
+  **Phase 5b, part 1 (drag a key along time) BUILT — D-161, 2026-09-05.** `manifestEdit.ts`'s
+  new `moveKeyAt` (one generic core, `layer.transform.keys`/`scene.camera`/`scene.scene3d.camera`
+  all share it) plus three thin wrappers; two edge cases decided and tested — a drag past a
+  neighbor REORDERS the array (`interpolateKeys` already re-sorts by `at`, so array order was
+  never meaningful downstream) rather than clamping, boundary-clamped to `[0, scene.dur]`, the
+  dragged key's own scene. `keyframeVisibility.ts` gains `percentToFrame` (the pointer-position→
+  frame inverse of `frameToPercent`). `KeyframeStrip.tsx`'s marker drag reuses D-155's
+  transient-preview/commit discipline via the SAME `onTransientChange`/`onCommit`
+  `MotionCanvasOverlay.tsx` already uses, with its own local `dragPreview` overlay (rather than
+  re-deriving markers from a live-mutating transient manifest) to avoid losing pointer capture
+  when a drag-triggered reorder would otherwise change a marker's own React key mid-gesture.
+  **Remaining: Phase 5b's other three pieces — per-row lanes, box-select + nudge multiple keys, a
+  curve/easing editor — still real, unbuilt work**, comparable in cost to the Edit tab's own
+  timeline, and must not be attached quietly to anything else. Snapping/alignment GUIDES (visual
+  guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see
+  that decision's own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

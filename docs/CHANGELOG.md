@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion keyframe timeline, Phase 5b (part 1): drag a key along time (D-161),
+  on top of Phase 5a (D-160).** New write primitive `manifestEdit.ts`'s `moveKeyAt` (one generic
+  core over `layer.transform.keys`/`scene.camera`/`scene.scene3d.camera`) plus three thin
+  wrappers. Two edge cases decided + tested: dragging past a neighbor REORDERS the array
+  (`interpolateKeys` already re-sorts by `at`, so array position was never meaningful — clamping
+  would only be cosmetic); boundary-clamped to `[0, scene.dur]`, the dragged key's own scene.
+  `keyframeVisibility.ts` gains `percentToFrame` (the pixel/percent→frame inverse of
+  `frameToPercent`) and `KeyMarker.keyIndex`. `KeyframeStrip.tsx` wires the drag through the SAME
+  `onTransientChange`/`onCommit` `MotionCanvasOverlay.tsx` already uses; a real problem found and
+  solved along the way — re-deriving markers from a live-reordering transient manifest mid-drag
+  would silently drop `setPointerCapture` on the dragged button when React remounts it — solved
+  with a local `dragPreview` overlay on a STABLE-manifest-derived marker list instead. `tsc`
+  clean, `app`/`motion-engine` baselines unchanged, `@chroma/motion` 255/255 (was 224, +31).
 - **2026-09-05** — **Motion keyframe timeline, Phase 5a: key visibility (D-160), scoping +
   first slice on top of Phase 0-4 (D-155-159).** New scoping doc,
   `docs/notes/motion-keyframe-timeline-research.md`, re-verifies the visual-builder research

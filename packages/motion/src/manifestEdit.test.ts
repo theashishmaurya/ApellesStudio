@@ -22,6 +22,10 @@ import {
   layerDragBase,
   upsertLayerTransformKeyXY,
   moveLayersByDeltaAutoKey,
+  moveKeyAt,
+  moveLayerTransformKeyAt,
+  moveCamera2dKeyAt,
+  moveCamera3dKeyAt,
   parseJsonField,
   resolveSelection,
   resolveSelections,
@@ -499,6 +503,165 @@ describe('layerTransformKeys / setLayerTransformKeys (D-159, Phase 4)', () => {
     const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
     expect(setLayerTransformKeys(sample, sel, [{ at: 0, x: 1 }])).toBe(sample);
     expect(layerTransformKeys(sample, sel)).toEqual([]);
+  });
+});
+
+describe('moveKeyAt (Phase 5b — drag a key along time, the generic core)', () => {
+  it('moves the key at `index` to the new `at`, leaving the others untouched', () => {
+    const keys = [{ at: 0 }, { at: 1 }, { at: 2 }];
+    expect(moveKeyAt(keys, 1, 1.5, 4)).toEqual([{ at: 0 }, { at: 1.5 }, { at: 2 }]);
+  });
+
+  it('reorders (does not clamp) when a drag crosses a neighbor — decision 1', () => {
+    const keys = [{ at: 0, x: 10 }, { at: 1, x: 20 }, { at: 2, x: 30 }];
+    // drag the middle key (x:20) past the LAST key
+    const next = moveKeyAt(keys, 1, 2.5, 4);
+    expect(next).toEqual([{ at: 0, x: 10 }, { at: 2, x: 30 }, { at: 2.5, x: 20 }]);
+  });
+
+  it('reorders past the FIRST key too, in either direction', () => {
+    const keys = [{ at: 0, x: 10 }, { at: 1, x: 20 }, { at: 2, x: 30 }];
+    // drag the LAST key (x:30) before the FIRST key
+    const next = moveKeyAt(keys, 2, -1, 4);
+    // clamped to 0 (boundary), then sorted — ties broken by original order,
+    // so the dragged key (now also at 0) lands AFTER the original first key
+    expect(next).toEqual([{ at: 0, x: 10 }, { at: 0, x: 30 }, { at: 1, x: 20 }]);
+  });
+
+  it('clamps to 0 when dragged before the scene start', () => {
+    const keys = [{ at: 1 }];
+    expect(moveKeyAt(keys, 0, -5, 4)).toEqual([{ at: 0 }]);
+  });
+
+  it('clamps to the scene duration when dragged past the end', () => {
+    const keys = [{ at: 1 }];
+    expect(moveKeyAt(keys, 0, 999, 4)).toEqual([{ at: 4 }]);
+  });
+
+  it('moves the FIRST key with no off-by-one', () => {
+    const keys = [{ at: 0 }, { at: 1 }, { at: 2 }];
+    expect(moveKeyAt(keys, 0, 0.5, 4)).toEqual([{ at: 0.5 }, { at: 1 }, { at: 2 }]);
+  });
+
+  it('moves the LAST key with no off-by-one', () => {
+    const keys = [{ at: 0 }, { at: 1 }, { at: 2 }];
+    expect(moveKeyAt(keys, 2, 3.5, 4)).toEqual([{ at: 0 }, { at: 1 }, { at: 3.5 }]);
+  });
+
+  it('is a no-op for an out-of-range index (negative or too large)', () => {
+    const keys = [{ at: 0 }, { at: 1 }];
+    expect(moveKeyAt(keys, -1, 0.5, 4)).toBe(keys);
+    expect(moveKeyAt(keys, 2, 0.5, 4)).toBe(keys);
+  });
+
+  it('is a no-op on an empty array (nothing to move)', () => {
+    const keys: { at: number }[] = [];
+    expect(moveKeyAt(keys, 0, 1, 4)).toBe(keys);
+  });
+
+  it('a single-key array just clamps, with nothing to reorder against', () => {
+    const keys = [{ at: 2 }];
+    expect(moveKeyAt(keys, 0, 1.5, 4)).toEqual([{ at: 1.5 }]);
+  });
+
+  it('preserves every OTHER field on the moved key, only `at` changes', () => {
+    const keys = [{ at: 0, x: 10, y: 20, ease: [0.1, 0, 0.9, 1] as [number, number, number, number] }];
+    expect(moveKeyAt(keys, 0, 2, 4)).toEqual([{ at: 2, x: 10, y: 20, ease: [0.1, 0, 0.9, 1] }]);
+  });
+
+  it('stable-sorts genuine ties by their ARRAY POSITION, not by which one just moved', () => {
+    const keys = [{ at: 0, tag: 'a' }, { at: 2, tag: 'b' }, { at: 2, tag: 'c' }];
+    // drag key 0 (array position 0) to land exactly on the existing tie at
+    // `at: 2` — a stable sort keeps ties in their PRE-SORT array order, and
+    // the moved key's pre-sort position is still 0 (only its `at` value
+    // changed), so it sorts to the FRONT of the tied group, not the back.
+    expect(moveKeyAt(keys, 0, 2, 4)).toEqual([
+      { at: 2, tag: 'a' },
+      { at: 2, tag: 'b' },
+      { at: 2, tag: 'c' },
+    ]);
+  });
+});
+
+describe('moveLayerTransformKeyAt (Phase 5b)', () => {
+  const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } }; // scene 0 "hook", dur 4
+
+  it('moves a real transform.keys entry, clamped to the scene\'s own duration', () => {
+    const withKeys = structuredClone(sample);
+    (withKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }, { at: 2, x: 100 }],
+    };
+    const next = moveLayerTransformKeyAt(withKeys, sel, 1, 999);
+    expect(layerTransformKeys(next, sel)).toEqual([{ at: 0, x: 0 }, { at: 4, x: 100 }]);
+  });
+
+  it('reorders a layer key past its neighbor, same as the generic core', () => {
+    const withKeys = structuredClone(sample);
+    (withKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }, { at: 1, x: 50 }, { at: 2, x: 100 }],
+    };
+    const next = moveLayerTransformKeyAt(withKeys, sel, 0, 1.5);
+    expect(layerTransformKeys(next, sel)).toEqual([{ at: 1, x: 50 }, { at: 1.5, x: 0 }, { at: 2, x: 100 }]);
+  });
+
+  it('is a no-op for a selection with no scene (out of range)', () => {
+    const badSel: Selection = { sceneIndex: 99, target: { kind: 'layer', index: 0 } };
+    expect(moveLayerTransformKeyAt(sample, badSel, 0, 1)).toBe(sample);
+  });
+
+  it('is a no-op for an out-of-range keyIndex', () => {
+    const withKeys = structuredClone(sample);
+    (withKeys.scenes[0].layers![0] as unknown as Record<string, unknown>).transform = {
+      keys: [{ at: 0, x: 0 }],
+    };
+    const next = moveLayerTransformKeyAt(withKeys, sel, 5, 2);
+    expect(layerTransformKeys(next, sel)).toEqual([{ at: 0, x: 0 }]);
+  });
+});
+
+describe('moveCamera2dKeyAt (Phase 5b)', () => {
+  it('moves one of scene 0 "hook"\'s real camera keys (dur 4), clamped', () => {
+    const next = moveCamera2dKeyAt(sample, 0, 2, -10); // key 2 is {at:1.6, x:1150,...}
+    expect(selectedCamera2d(next, 0)?.[0]).toEqual({ at: 0, zoom: 1 });
+    // the moved key clamps to 0 and sorts to the front, tying with the
+    // existing at:0 key but AFTER it (stable sort preserves original order)
+    expect(selectedCamera2d(next, 0)).toEqual([
+      { at: 0, zoom: 1 },
+      { at: 0, x: 1150, y: 520, zoom: 1.5 },
+      { at: 0.4, zoom: 1 },
+    ]);
+  });
+
+  it('clamps to the scene duration when dragged past the end', () => {
+    const next = moveCamera2dKeyAt(sample, 0, 0, 999); // scene 0 dur is 4
+    expect(selectedCamera2d(next, 0)?.[2]).toEqual({ at: 4, zoom: 1 });
+  });
+
+  it('is a no-op for a scene with no camera at all', () => {
+    expect(moveCamera2dKeyAt(sample, 1, 0, 1)).toBe(sample); // scene 1 "stack" has no camera
+  });
+
+  it('is a no-op for an out-of-range scene index', () => {
+    expect(moveCamera2dKeyAt(sample, 99, 0, 1)).toBe(sample);
+  });
+});
+
+describe('moveCamera3dKeyAt (Phase 5b)', () => {
+  it('moves the FIRST 3D camera key (scene 2 "space", dur 5) with no off-by-one', () => {
+    const next = moveCamera3dKeyAt(sample, 2, 0, 2);
+    expect(selectedCamera3d(next, 2)).toEqual([
+      { at: 2, pos: [0, 0, 12], look: [0, 0, 0] },
+      { at: 5, pos: [3, 2, 9], look: [0, 0, 0] },
+    ]);
+  });
+
+  it('moves the LAST 3D camera key with no off-by-one, clamped to the scene end', () => {
+    const next = moveCamera3dKeyAt(sample, 2, 1, 999);
+    expect(selectedCamera3d(next, 2)?.[1]).toEqual({ at: 5, pos: [3, 2, 9], look: [0, 0, 0] });
+  });
+
+  it('is a no-op for a scene with no scene3d at all', () => {
+    expect(moveCamera3dKeyAt(sample, 0, 0, 1)).toBe(sample); // scene 0 "hook" has no scene3d
   });
 });
 

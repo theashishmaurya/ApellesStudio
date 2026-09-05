@@ -546,6 +546,130 @@ export function setLayerTransformKeys(manifest: Manifest, selection: Selection, 
   return setLayerTransformField(manifest, selection, 'keys', keys.length > 0 ? keys : undefined);
 }
 
+/**
+ * Phase 5b of `docs/notes/motion-keyframe-timeline-research.md` ("drag a key
+ * along time") — the genuinely NEW write primitive the research doc's §4
+ * flagged as not existing anywhere in this file: every writer above touches
+ * a key's VALUE fields (`x`/`y`/`zoom`/`scale`/…), none of them touches
+ * `at`. This is the one shared core, parameterized over the key ARRAY
+ * (generic over the three shapes `cam2dKey`/`cam3dKey`/`transformKey` all
+ * happen to share — `{at: number, ...}`) rather than three independently
+ * hand-rolled reorder/clamp implementations, so the two real design
+ * decisions below only have to be made and tested once.
+ *
+ * **Decision 1 — dragging a key past a NEIGHBOR: reorder, don't clamp.**
+ * This function re-sorts the whole array by `at` after moving the one key
+ * at `index`, allowing it to cross and swap places with any neighbor. The
+ * alternative (clamp the drag so a key can never move past whichever
+ * neighbor is currently adjacent to it) was rejected: `interpolateKeys`
+ * (`motion-engine/src/lib/interpolateKeys.ts`, confirmed by reading it —
+ * the research doc's §1) already re-sorts its OWN copy of `keys` by `at` on
+ * every call, before array order is used for anything — so nothing
+ * downstream ever treats this array's on-disk ORDER as meaningful, only
+ * each key's `at` VALUE is. Clamping at a neighbor would therefore be a
+ * purely cosmetic restriction with no correctness payoff, and would make
+ * the ordinary "these two keys are close together, drag one past the
+ * other to swap their order" edit impossible without a separate
+ * value-editing step first. It also matches the default behaviour of every
+ * mainstream keyframe editor this package's own research has cited
+ * (Remotion Studio, After Effects, Premiere): dragging a key past its
+ * neighbor freely reorders rather than stopping dead at the collision.
+ *
+ * **Decision 2 — boundary clamping.** `newAt` is clamped to
+ * `[0, sceneDurSeconds]` — never before the scene's own start, never past
+ * its own `dur` (seconds, matching `scene.dur`'s own unit) — regardless of
+ * where the pointer that produced `newAt` actually was. This is what makes
+ * dragging a key belonging to one scene, while the pointer strays into a
+ * neighboring scene's region of a whole-composition strip, behave sanely:
+ * the key simply pins to its own scene's start/end rather than jumping
+ * into a scene it doesn't belong to (there is no manifest operation that
+ * moves a key BETWEEN scenes — the research doc's own §4 explicitly rules
+ * this out).
+ *
+ * **The FIRST/LAST key is not a special case.** Both are just `index === 0`
+ * / `index === keys.length - 1` into an array this function clamps and
+ * re-sorts identically for every index — there is no off-by-one boundary
+ * logic that treats an edge key differently from a middle one.
+ *
+ * **Identified by INDEX INTO THE INPUT ARRAY, not by object identity or a
+ * post-sort search.** Every caller (the three thin wrappers below) reads
+ * `keys` fresh from the STABLE manifest and passes the SAME captured
+ * `index` on every call during a live drag (never the index from a
+ * PREVIOUS call's own re-sorted output) — the same "recompute from a
+ * stable base + delta, never from the last frame's own transient result"
+ * discipline every other drag primitive in this file already follows
+ * (`layerDragBase`/`moveLayersByDeltaAutoKey`, `nextSize` in
+ * `MotionCanvasOverlay.tsx`). This is safe specifically BECAUSE the
+ * function is pure and re-sorts its OWN output rather than mutating in
+ * place — two calls with the same `keys`/`index` always agree, even though
+ * the returned array's position for that key can differ.
+ */
+export function moveKeyAt<T extends { at: number }>(
+  keys: T[],
+  index: number,
+  newAt: number,
+  sceneDurSeconds: number,
+): T[] {
+  if (index < 0 || index >= keys.length) return keys;
+  const clamped = Math.min(sceneDurSeconds, Math.max(0, newAt));
+  const next = keys.map((k, i) => (i === index ? { ...k, at: clamped } : k));
+  // `Array.prototype.sort` has been a STABLE sort since ES2019 — two keys
+  // that land on the exact same `at` (a valid, if unusual, authored or
+  // dragged-to shape) keep their existing relative order rather than
+  // swapping arbitrarily on every unrelated re-sort.
+  next.sort((a, b) => a.at - b.at);
+  return next;
+}
+
+/** The `layer.transform.keys` wrapper around `moveKeyAt` — reads the
+ *  selection's own keys and its scene's `dur` (the clamp bound), writes the
+ *  result back through `setLayerTransformKeys` above. No-op (same manifest
+ *  reference back) for a selection that doesn't resolve to a scene — the
+ *  same defensive floor every function in this file already holds; an
+ *  out-of-range `keyIndex` is `moveKeyAt`'s own no-op, not re-checked here. */
+export function moveLayerTransformKeyAt(
+  manifest: Manifest,
+  selection: Selection,
+  keyIndex: number,
+  newAtSeconds: number,
+): Manifest {
+  const scene = selectedScene(manifest, selection.sceneIndex);
+  if (!scene) return manifest;
+  const keys = layerTransformKeys(manifest, selection);
+  return setLayerTransformKeys(manifest, selection, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
+}
+
+/** The `scene.camera` (2D) wrapper around `moveKeyAt` — same shape as
+ *  `moveLayerTransformKeyAt` above, for the camera's own key array instead
+ *  of a layer's. No-op for a scene that doesn't exist or has no camera at
+ *  all (`selectedCamera2d`'s own `null` floor). */
+export function moveCamera2dKeyAt(
+  manifest: Manifest,
+  sceneIndex: number,
+  keyIndex: number,
+  newAtSeconds: number,
+): Manifest {
+  const scene = selectedScene(manifest, sceneIndex);
+  const keys = selectedCamera2d(manifest, sceneIndex);
+  if (!scene || !keys) return manifest;
+  return setCamera2d(manifest, sceneIndex, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
+}
+
+/** The `scene.scene3d.camera` (3D) wrapper around `moveKeyAt` — same shape
+ *  again, for the 3D camera's own key array. No-op for a scene with no
+ *  `scene3d` at all (`selectedCamera3d`'s own `null` floor). */
+export function moveCamera3dKeyAt(
+  manifest: Manifest,
+  sceneIndex: number,
+  keyIndex: number,
+  newAtSeconds: number,
+): Manifest {
+  const scene = selectedScene(manifest, sceneIndex);
+  const keys = selectedCamera3d(manifest, sceneIndex);
+  if (!scene || !keys) return manifest;
+  return setCamera3d(manifest, sceneIndex, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
+}
+
 /** The interpolated `x`/`y` DELTA `transform.keys` produces at `frame`
  *  (frames; `fps` converts from the manifest's stored seconds) — reuses the
  *  SAME shared `interpolateKeys` `motion-engine`'s `Camera.tsx`/`Video.tsx`

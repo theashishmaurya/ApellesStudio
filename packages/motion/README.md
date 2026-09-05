@@ -52,14 +52,23 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   `flex flex-col` column since D-160: the player + canvas overlay on top,
   `<KeyframeStrip>` fixed-height beneath, always mounted.
 - `KeyframeStrip.tsx` — Phase 5a of `docs/notes/motion-keyframe-timeline-
-  research.md` (D-160): a small read-only bar under the player showing
-  scene-boundary ticks, every camera key (2D + 3D, whole composition) and the
+  research.md` (D-160): a small bar under the player showing scene-boundary
+  ticks, every camera key (2D + 3D, whole composition) and the
   currently-selected single layer's own `transform.keys`, plus a live
-  playhead — click anywhere or a marker to seek. Pure navigation (no
-  manifest mutation), so none of D-155's undo/commit plumbing applies. A
-  separate strip alongside the untouched `<Player>`, not a modification of
-  its own scrub bar — see the file's own doc comment for why (Remotion's
-  bundled controls have no extension point, checked directly).
+  playhead — click anywhere or a marker to seek. A separate strip alongside
+  the untouched `<Player>`, not a modification of its own scrub bar — see
+  the file's own doc comment for why (Remotion's bundled controls have no
+  extension point, checked directly). Phase 5b part 1 (D-161): a marker can
+  now be DRAGGED to retime it — `onTransientChange`/`onCommit` (optional,
+  required together; omit both to keep the strip pure-navigation, D-155's
+  undo/commit plumbing simply doesn't apply then) wire the SAME
+  transient-preview/commit discipline `MotionCanvasOverlay.tsx` uses onto a
+  1D time axis. See the file's own doc comment for the gesture-
+  disambiguation reasoning (marker-drag vs. background click-to-seek vs.
+  click-vs-drag on the same marker) and why the dragged marker's live
+  position is a local overlay rather than re-derived from a transient
+  manifest (a drag-triggered reorder could otherwise change the dragged
+  button's own React key mid-gesture and silently drop its pointer capture).
 - `LayerList.tsx` — the scene → camera → layers → scene3d-children tree, and
   the `Selection`/`Selection[]` model everything else here binds to (D-081;
   `Selection[]` + `toggleSelection`/`sameSelection`/`resolveSelections`-
@@ -96,14 +105,20 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   `distributeSelections` (D-158, Phase 3), and `layerTransformKeys`/
   `setLayerTransformKeys`/`layerTransformKeyDelta`/`layerDragBase`/
   `upsertLayerTransformKeyXY`/`moveLayersByDeltaAutoKey` (D-159, Phase 4 —
-  per-layer keyframes + auto-keyframe-on-drag).
+  per-layer keyframes + auto-keyframe-on-drag), and `moveKeyAt`/
+  `moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt` (D-161,
+  Phase 5b part 1 — the write primitive that moves a key's `at`: one generic
+  core over the three key-array shapes, reorders past a neighbor rather than
+  clamping, boundary-clamps to `[0, scene.dur]`).
 - `keyframeVisibility.ts` — Phase 5a of `docs/notes/
-  motion-keyframe-timeline-research.md` (D-160): pure, read-only functions
-  for `LayerList.tsx`'s key-count badges and `KeyframeStrip.tsx`'s marker
+  motion-keyframe-timeline-research.md` (D-160): pure functions for
+  `LayerList.tsx`'s key-count badges and `KeyframeStrip.tsx`'s marker
   positions — `layerKeyCount`/`cameraKeyCount`/`scene3dCameraKeyCount`,
   `cameraKeyMarkers`/`selectedLayerKeyMarkers` (absolute-frame conversion via
-  the engine's own `sceneStartFrame`, never a second copy of that math), and
-  `frameToPercent`. No manifest mutation, no DOM.
+  the engine's own `sceneStartFrame`, never a second copy of that math,
+  `keyIndex` added D-161 for the drag gesture to identify which key it hit),
+  and `frameToPercent`/`percentToFrame` (D-161's own pointer-position→frame
+  inverse, for a drag). No manifest mutation, no DOM.
 - `ManifestEditor.tsx` — the JSON `<textarea>` + inline parse/save/render
   error surfacing. Still the only way to delete a layer or add a scene.
 - `manifestIO.ts` — thin wrappers around the three `chroma_motion_*` Tauri
@@ -132,10 +147,12 @@ engine side.
 
 `npm test --workspace @chroma/motion` (vitest, `node` environment — the
 testable logic here is deliberately kept out of the components, per the
-`canvasGeometry.ts`/`layerMeasure.ts` split above). 224 tests across
-`canvasGeometry.test.ts`, `manifestEdit.test.ts`, `catalog.test.ts`,
-`motionProjectStore.test.ts`, `interpolateKeys.test.ts`, `schema.test.ts`,
-and `keyframeVisibility.test.ts` (2026-09-05, D-160).
+`canvasGeometry.ts`/`layerMeasure.ts` split above). 255 tests across
+`canvasGeometry.test.ts`, `manifestEdit.test.ts` (D-161 adds `moveKeyAt`/
+`moveLayerTransformKeyAt`/`moveCamera2dKeyAt`/`moveCamera3dKeyAt`),
+`catalog.test.ts`, `motionProjectStore.test.ts`, `interpolateKeys.test.ts`,
+`schema.test.ts`, and `keyframeVisibility.test.ts` (D-160, plus D-161's
+`percentToFrame`).
 
 ## Status
 
@@ -152,20 +169,24 @@ wrapper (`layer.transform.keys`, additive deltas, the same shared
 layer's position is already keyed). Plus, as of D-160 (2026-09-05,
 `docs/notes/motion-keyframe-timeline-research.md`'s Phase 5a), real
 **key visibility**: a per-row key-count badge in `LayerList`, and a
-read-only keyframe strip under the player showing every camera key and the
-selected layer's own keys with a live playhead and click-to-seek.
+keyframe strip under the player showing every camera key and the selected
+layer's own keys with a live playhead and click-to-seek. As of D-161 (same
+day, Phase 5b part 1), that strip's markers can be **dragged to retime
+them** — a real new write primitive (`moveKeyAt`) reorders past a
+neighboring key rather than clamping, and boundary-clamps to the dragged
+key's own scene duration.
 
 **Known gaps**, most audited in full with citations in
 `docs/notes/motion-tab-audit.md` (pre-D-155) and queued as roadmap item 16 —
-re-checked against what D-155–D-160 actually closed rather than assumed
-stale: no real KEYFRAME TIMELINE UI (Phase 5b of `docs/notes/
-motion-keyframe-timeline-research.md` — drag a key along time, per-row
-lanes, box-select + nudge multiple keys, a curve/easing editor; D-160's own
-strip is read-only navigation, not that), no drag-and-drop from outside the
-app, no delete/duplicate of a layer from the GUI, no multi-manifest per
-project (D-046), no snapping GUIDES while dragging (D-158's own explicit
-scope-down), no group RESIZE for a multi-selection (single-selection only),
-and **no MCP tools at all** — Motion is the one tab an agent cannot drive.
-The Catalog (D-151) closed the largest GUI-creation gap; D-155–D-159 closed
-the largest on-canvas-manipulation gap; D-160 is the first step toward
-actually SEEING the animation, not the whole of it.
+re-checked against what D-155–D-161 actually closed rather than assumed
+stale: Phase 5b's other three pieces still unbuilt (`docs/notes/
+motion-keyframe-timeline-research.md` — per-row lanes, box-select + nudge
+multiple keys, a curve/easing editor; D-161 only closed "drag a key along
+time"), no drag-and-drop from outside the app, no delete/duplicate of a
+layer from the GUI, no multi-manifest per project (D-046), no snapping
+GUIDES while dragging (D-158's own explicit scope-down), no group RESIZE
+for a multi-selection (single-selection only), and **no MCP tools at
+all** — Motion is the one tab an agent cannot drive. The Catalog (D-151)
+closed the largest GUI-creation gap; D-155–D-159 closed the largest
+on-canvas-manipulation gap; D-160/D-161 are the first two steps toward a
+real keyframe timeline, not the whole of it.

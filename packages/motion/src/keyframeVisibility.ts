@@ -51,9 +51,21 @@ export function scene3dCameraKeyCount(scene: Scene): number {
  *  (`sceneStartFrame(manifest, sceneIndex) + Math.round(at * fps)`, the SAME
  *  conversion `Video.tsx`/`manifestEdit.ts` already use everywhere a key's
  *  `at` becomes a frame — never a second, independently-rounded copy of it)
- *  plus enough to label it and seek to the right scene. */
+ *  plus enough to label it and seek to the right scene.
+ *
+ *  `keyIndex` (Phase 5b, `docs/notes/motion-keyframe-timeline-research.md`
+ *  §4 "drag a key along time") is the position this key holds in its OWN
+ *  source array — `scene.camera` for `kind:'camera'`, `scene.scene3d.camera`
+ *  for `kind:'scene3d-camera'`, the selected layer's own `transform.keys`
+ *  for `kind:'layer'` — the exact index `manifestEdit.ts`'s
+ *  `moveCamera2dKeyAt`/`moveCamera3dKeyAt`/`moveLayerTransformKeyAt` take.
+ *  `KeyframeStrip.tsx`'s drag gesture reads it straight off the marker it
+ *  hit rather than re-deriving "which key is this" from a frame number
+ *  (fragile — two keys can share a frame, §4's own "two keys at the same
+ *  frame render as overlapping markers" honest gap, D-160). */
 export interface KeyMarker {
   sceneIndex: number;
+  keyIndex: number;
   frame: number;
   kind: 'camera' | 'scene3d-camera' | 'layer';
 }
@@ -73,16 +85,22 @@ function keySecondsToAbsoluteFrame(manifest: Manifest, sceneIndex: number, atSec
 export function cameraKeyMarkers(manifest: Manifest): KeyMarker[] {
   const markers: KeyMarker[] = [];
   manifest.scenes.forEach((scene, sceneIndex) => {
-    for (const key of scene.camera ?? []) {
-      markers.push({ sceneIndex, frame: keySecondsToAbsoluteFrame(manifest, sceneIndex, key.at), kind: 'camera' });
-    }
-    for (const key of scene.scene3d?.camera ?? []) {
+    (scene.camera ?? []).forEach((key, keyIndex) => {
       markers.push({
         sceneIndex,
+        keyIndex,
+        frame: keySecondsToAbsoluteFrame(manifest, sceneIndex, key.at),
+        kind: 'camera',
+      });
+    });
+    (scene.scene3d?.camera ?? []).forEach((key, keyIndex) => {
+      markers.push({
+        sceneIndex,
+        keyIndex,
         frame: keySecondsToAbsoluteFrame(manifest, sceneIndex, key.at),
         kind: 'scene3d-camera',
       });
-    }
+    });
   });
   return markers;
 }
@@ -106,8 +124,9 @@ export function selectedLayerKeyMarkers(manifest: Manifest, selections: Selectio
   if (selections.length !== 1) return [];
   const selection = selections[0];
   if (selection.target.kind !== 'layer') return [];
-  return layerTransformKeys(manifest, selection).map((key) => ({
+  return layerTransformKeys(manifest, selection).map((key, keyIndex) => ({
     sceneIndex: selection.sceneIndex,
+    keyIndex,
     frame: keySecondsToAbsoluteFrame(manifest, selection.sceneIndex, key.at),
     kind: 'layer' as const,
   }));
@@ -144,4 +163,39 @@ export function sceneBoundaryFrames(manifest: Manifest): number[] {
 export function frameToPercent(frame: number, totalFrames: number): number {
   if (!(totalFrames > 0)) return 0;
   return Math.min(100, Math.max(0, (frame / totalFrames) * 100));
+}
+
+/**
+ * The INVERSE of `frameToPercent` above — Phase 5b's own need (`docs/notes/
+ * motion-keyframe-timeline-research.md` §4): a drag reports the pointer's
+ * position on the strip as a `[0, 100]` percentage of the strip's own
+ * measured width (`(clientX - rect.left) / rect.width * 100`, computed by
+ * the component — this function stays pixel-free, same as `frameToPercent`,
+ * so it needs no DOM access of its own), and needs the ABSOLUTE composition
+ * frame that position corresponds to, to know which scene it lands in and
+ * what to feed `sceneStartFrame` to derive a scene-relative `at` from.
+ *
+ * Kept as a real, tested function rather than inline arithmetic in
+ * `KeyframeStrip.tsx`, for the identical reason `frameToPercent` itself
+ * already is: this is exactly the class of "turns a screen position into a
+ * frame number" arithmetic this package's `canvasGeometry.ts` doc comment
+ * warns "getting this wrong is silent" about — a drag that's off by even
+ * one frame due to a rounding mismatch between this function and
+ * `frameToPercent` would silently write a key to the wrong `at`.
+ *
+ * Clamped to `[0, totalFrames]` (never negative, never past the
+ * composition's own end) so an out-of-bounds pointer position (dragging off
+ * either edge of the strip) still resolves to a valid frame rather than one
+ * `moveKeyAt`'s own scene-duration clamp would have to additionally guard
+ * against. `Math.round`, matching every other seconds/frame conversion in
+ * this package (`Video.tsx`, `manifestEdit.ts`'s own `Math.round(at * fps)`
+ * calls) — never `Math.floor`/`Math.ceil`, which would bias a drag toward
+ * one end of its own frame. `totalFrames <= 0` (impossible today, same
+ * schema guarantee `frameToPercent` already defends against) returns `0`
+ * rather than `NaN`.
+ */
+export function percentToFrame(percent: number, totalFrames: number): number {
+  if (!(totalFrames > 0)) return 0;
+  const frame = Math.round((percent / 100) * totalFrames);
+  return Math.min(totalFrames, Math.max(0, frame));
 }

@@ -10,6 +10,7 @@ import {
   selectedLayerKeyMarkers,
   sceneBoundaryFrames,
   frameToPercent,
+  percentToFrame,
 } from './keyframeVisibility';
 
 // `sample`'s own real shape (`packages/motion-engine/src/engine/sample.ts`),
@@ -64,11 +65,11 @@ describe('cameraKeyMarkers', () => {
   it('covers every 2D and 3D camera key across the whole manifest, in scene/kind/key order', () => {
     const markers = cameraKeyMarkers(sample);
     expect(markers).toEqual([
-      { sceneIndex: 0, frame: 0, kind: 'camera' },
-      { sceneIndex: 0, frame: 12, kind: 'camera' },
-      { sceneIndex: 0, frame: 48, kind: 'camera' },
-      { sceneIndex: 2, frame: 300, kind: 'scene3d-camera' },
-      { sceneIndex: 2, frame: 450, kind: 'scene3d-camera' },
+      { sceneIndex: 0, keyIndex: 0, frame: 0, kind: 'camera' },
+      { sceneIndex: 0, keyIndex: 1, frame: 12, kind: 'camera' },
+      { sceneIndex: 0, keyIndex: 2, frame: 48, kind: 'camera' },
+      { sceneIndex: 2, keyIndex: 0, frame: 300, kind: 'scene3d-camera' },
+      { sceneIndex: 2, keyIndex: 1, frame: 450, kind: 'scene3d-camera' },
     ]);
   });
 
@@ -115,8 +116,8 @@ describe('selectedLayerKeyMarkers', () => {
     const m = withLayerKeys([{ at: 0, x: 0 }, { at: 2, x: 300 }]);
     const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
     expect(selectedLayerKeyMarkers(m, [sel])).toEqual([
-      { sceneIndex: 0, frame: 0, kind: 'layer' },
-      { sceneIndex: 0, frame: 60, kind: 'layer' }, // 2s * 30fps, scene 0 starts at frame 0
+      { sceneIndex: 0, keyIndex: 0, frame: 0, kind: 'layer' },
+      { sceneIndex: 0, keyIndex: 1, frame: 60, kind: 'layer' }, // 2s * 30fps, scene 0 starts at frame 0
     ]);
   });
 
@@ -125,7 +126,7 @@ describe('selectedLayerKeyMarkers', () => {
     (m.scenes[1].layers![0] as unknown as Record<string, unknown>).transform = { keys: [{ at: 1, x: 0 }] };
     const sel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 0 } };
     // scene 1 ("stack") starts at frame 120; 1s * 30fps = 30 -> absolute 150
-    expect(selectedLayerKeyMarkers(m, [sel])).toEqual([{ sceneIndex: 1, frame: 150, kind: 'layer' }]);
+    expect(selectedLayerKeyMarkers(m, [sel])).toEqual([{ sceneIndex: 1, keyIndex: 0, frame: 150, kind: 'layer' }]);
   });
 });
 
@@ -164,5 +165,46 @@ describe('frameToPercent', () => {
   it('returns 0 rather than NaN/Infinity for a non-positive total', () => {
     expect(frameToPercent(10, 0)).toBe(0);
     expect(frameToPercent(10, -5)).toBe(0);
+  });
+});
+
+describe('percentToFrame (Phase 5b — the INVERSE of frameToPercent, for a drag)', () => {
+  it('maps 0% to frame 0', () => {
+    expect(percentToFrame(0, 450)).toBe(0);
+  });
+
+  it('maps 100% to the last frame', () => {
+    expect(percentToFrame(100, 450)).toBe(450);
+  });
+
+  it('maps a midpoint percentage proportionally', () => {
+    expect(percentToFrame(50, 450)).toBe(225);
+  });
+
+  it('rounds to the nearest frame, matching every other seconds/frame conversion in this package', () => {
+    // 33% of 450 = 148.5 -> rounds up
+    expect(percentToFrame(33, 450)).toBe(149);
+    // 32.9% of 450 = 148.05 -> rounds down
+    expect(percentToFrame(32.9, 450)).toBe(148);
+  });
+
+  it('clamps a percentage past 100% to the last frame, never over', () => {
+    expect(percentToFrame(150, 450)).toBe(450);
+  });
+
+  it('clamps a negative percentage to frame 0, never under', () => {
+    expect(percentToFrame(-10, 450)).toBe(0);
+  });
+
+  it('returns 0 rather than NaN/Infinity for a non-positive total', () => {
+    expect(percentToFrame(50, 0)).toBe(0);
+    expect(percentToFrame(50, -5)).toBe(0);
+  });
+
+  it('round-trips with frameToPercent at exact frame boundaries', () => {
+    for (const frame of [0, 1, 100, 225, 449, 450]) {
+      const percent = frameToPercent(frame, 450);
+      expect(percentToFrame(percent, 450)).toBe(frame);
+    }
   });
 });

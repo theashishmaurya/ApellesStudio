@@ -289,3 +289,29 @@ See `docs/08-decisions.md`'s **D-160** entry for the full verification record (t
 `docs/notes/motion-visual-builder-research.md`'s own Phase 5 section now points here for the
 scoped breakdown and the built slice, rather than duplicating this doc's content — see that
 section's own added pointer.
+
+## 7. Phase 5b, part 1 — "drag a key along time" — built (D-161, 2026-09-05)
+
+The first of §4's own four named pieces, built in its own pass on top of Phase 5a, in the order
+that section itself recommended ("the drag-a-key gesture first... the smallest of the four in
+isolation"). The new write primitive this section predicted would be needed —
+`manifestEdit.ts`'s `moveKeyAt` (one generic core over `layer.transform.keys`/`scene.camera`/
+`scene.scene3d.camera`, plus three thin wrappers) — reorders past a neighboring key rather than
+clamping (`interpolateKeys` already re-sorts by `at`, so array position was never meaningful to
+anything downstream) and boundary-clamps to `[0, scene.dur]`, the dragged key's own scene.
+`keyframeVisibility.ts` gained `percentToFrame` (the pointer-position→frame inverse of
+`frameToPercent`) and a `keyIndex` field on `KeyMarker`. `KeyframeStrip.tsx`'s drag reuses D-155's
+transient-preview/commit discipline through the same `onTransientChange`/`onCommit`
+`MotionCanvasOverlay.tsx` already uses, applied to the 1D time axis exactly as this section
+anticipated — with one real design problem discovered while building it, not predicted here in
+advance: re-deriving the strip's marker list from a live-reordering transient manifest mid-drag
+would risk React remounting the dragged marker's own `<button>` (its `keyIndex` can shift once
+the drag crosses a neighbor) and silently dropping its `setPointerCapture`. Solved with a small
+local `dragPreview` overlay on top of a marker list that stays derived from the STABLE manifest
+for the whole gesture. Full writeup, edge-case reasoning, and verification: `docs/08-decisions.md`'s
+**D-161** entry.
+
+**Still not built: the other three pieces** — per-row lanes (one track per layer/camera, the real
+row-layout infrastructure investment §4 named as the bulk of the remaining work), box-select +
+nudge multiple keys, and a curve/easing editor. Recommended order unchanged from §4's own
+original call: lanes next, then box-select, then the curve editor last.
