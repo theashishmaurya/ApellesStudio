@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion Inspector: position/size tuples get separate X/Y/W/H fields (D-154).**
+  Owner: *"we should be able to have all this as x: y: h: w: separate."* `emphasis.box`
+  (the exact field behind a misplaced-scribble screenshot), `particleflow.from`/`to`/`center`,
+  and `labelbox`/`layerstack`'s `position`/`size` move from one raw-JSON-array field to a new
+  `FieldSpec.kind: 'vec'` — separate labeled number inputs per element, sharing one array value.
+  Content fields (`Matrix.values`, `Graph.nodes`, …) stay `'json'`, unchanged. On-canvas
+  drag/resize sync and the animation timeline are separate, not-yet-built asks (D-152 Phases 0-2
+  and 5). `tsc` clean, `@chroma/motion` 66/66 unchanged.
 - **2026-09-05** — **The scene manifest collapses behind a `</>` toggle (D-153).**
   Owner: *"as a user i dont need that, you will need only."* Only the raw-JSON
   textarea and its informational status rows (parse OK, render-success line)

@@ -20,9 +20,18 @@
  * writeup for why: these are the primitives' actual *content*, not simple
  * transform/timing knobs, and deserve a purpose-built editor rather than a
  * generic one guessed at speed).
+ *
+ * `'vec'` (D-154) is the other tuple case, and is NOT the same as `'json'`:
+ * a fixed-length numeric position/size tuple (`emphasis.box`'s `[x,y,w,h]`,
+ * `particleflow.from/to/center`'s `[x,y,z]`, `labelbox`/`layerstack`'s
+ * `position`/`size`) renders as one labeled number input per element
+ * (`components: ['X','Y','W','H']`, etc.) instead of a raw JSON textarea —
+ * these ARE simple transform/layout knobs, just multi-number ones, and the
+ * owner asked for exactly this directly: "we should be able to have all
+ * this as x: y: h: w: separate."
  */
 
-export type FieldKind = 'number' | 'string' | 'boolean' | 'color' | 'select' | 'json';
+export type FieldKind = 'number' | 'string' | 'boolean' | 'color' | 'select' | 'json' | 'vec';
 
 export interface FieldSpec {
   /** the exact manifest JSON key this field reads/writes */
@@ -31,6 +40,10 @@ export interface FieldSpec {
   kind: FieldKind;
   /** for `kind: 'select'` */
   options?: string[];
+  /** for `kind: 'vec'` — one short label per tuple element, e.g. `['X','Y','W','H']`
+   *  for a `[x,y,w,h]` box. Length fixes the tuple's length: a commit always
+   *  writes back an array of exactly `components.length` numbers. */
+  components?: string[];
   /** grouping, purely cosmetic — mirrors the rejected Editor Starter's
    *  section shape as a *reference* per the scoping doc, not copied */
   group: 'source' | 'layout' | 'fill' | 'timing' | 'content';
@@ -67,7 +80,10 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'color', label: 'Color', kind: 'color', group: 'fill' },
     // manifest tuple [x,y,w,h] — registry.ts's own adapter unpacks it into
     // {x,y,w,h} for the component, but the manifest itself stores the tuple.
-    { key: 'box', label: 'Box [x,y,w,h]', kind: 'json', group: 'layout' },
+    // D-154: separate X/Y/W/H number fields, not one raw JSON tuple — this
+    // is the exact field the owner pointed at ("i know the highlight is
+    // off, i can move it to right place directly... x:y:h:w separate").
+    { key: 'box', label: 'Box', kind: 'vec', components: ['X', 'Y', 'W', 'H'], group: 'layout' },
     { key: 'seed', label: 'Seed', kind: 'number', group: 'source' },
   ],
   matrix: [
@@ -109,19 +125,19 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
   particleflow: [
     { key: 'preset', label: 'Preset', kind: 'select', options: ['stream', 'converge', 'disperse'], group: 'source' },
     { key: 'count', label: 'Count', kind: 'number', group: 'source' },
-    { key: 'from', label: 'From [x,y,z]', kind: 'json', group: 'layout' },
-    { key: 'to', label: 'To [x,y,z]', kind: 'json', group: 'layout' },
+    { key: 'from', label: 'From', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
+    { key: 'to', label: 'To', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
     { key: 'shape', label: 'Shape', kind: 'select', options: ['sphere', 'ring', 'grid'], group: 'source' },
     { key: 'shapeSize', label: 'Shape size', kind: 'number', group: 'layout' },
-    { key: 'center', label: 'Center [x,y,z]', kind: 'json', group: 'layout' },
+    { key: 'center', label: 'Center', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
     { key: 'scatter', label: 'Scatter', kind: 'number', group: 'source' },
     { key: 'color', label: 'Color', kind: 'color', group: 'fill' },
     { key: 'size', label: 'Particle size', kind: 'number', group: 'fill' },
     { key: 'seed', label: 'Seed', kind: 'number', group: 'source' },
   ],
   labelbox: [
-    { key: 'position', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
-    { key: 'size', label: 'Size [w,h,d]', kind: 'json', group: 'layout' },
+    { key: 'position', label: 'Position', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
+    { key: 'size', label: 'Size', kind: 'vec', components: ['W', 'H', 'D'], group: 'layout' },
     { key: 'color', label: 'Color', kind: 'color', group: 'fill' },
     { key: 'emissive', label: 'Emissive color', kind: 'color', group: 'fill' },
     { key: 'emissiveIntensity', label: 'Emissive intensity', kind: 'number', group: 'fill' },
@@ -129,8 +145,8 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
   layerstack: [
     { key: 'count', label: 'Count', kind: 'number', group: 'source' },
     { key: 'gap', label: 'Gap', kind: 'number', group: 'layout' },
-    { key: 'size', label: 'Size [w,h]', kind: 'json', group: 'layout' },
-    { key: 'position', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
+    { key: 'size', label: 'Size', kind: 'vec', components: ['W', 'H'], group: 'layout' },
+    { key: 'position', label: 'Position', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
     { key: 'active', label: 'Active index', kind: 'number', group: 'source' },
     { key: 'lift', label: 'Lift', kind: 'number', group: 'layout' },
   ],

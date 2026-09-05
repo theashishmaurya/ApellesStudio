@@ -141,6 +141,10 @@ function FieldControl({
     return <JsonFieldControl spec={spec} value={value} onCommit={onCommit} />;
   }
 
+  if (spec.kind === 'vec') {
+    return <VecFieldControl spec={spec} value={value} onCommit={onCommit} />;
+  }
+
   if (spec.kind === 'number') {
     return (
       <div className={row}>
@@ -214,6 +218,47 @@ function JsonFieldControl({ spec, value, onCommit }: { spec: FieldSpec; value: u
         }}
       />
       {error && <span className="text-[10px] text-red-400">{error}</span>}
+    </div>
+  );
+}
+
+/** D-154 — a fixed-length numeric tuple (`emphasis.box`'s `[x,y,w,h]`,
+ *  a vec3 position/size, …) as `spec.components.length` separate labeled
+ *  number inputs sharing one array value, instead of one raw JSON textarea.
+ *  Each input commits independently: editing X never touches Y/W/H. A
+ *  missing/non-array value reads as all-empty; committing one element fills
+ *  the rest with `0` rather than leaving holes, since the manifest field is
+ *  a fixed-shape tuple, not an arbitrary-length array. */
+function VecFieldControl({ spec, value, onCommit }: { spec: FieldSpec; value: unknown; onCommit: (v: unknown) => void }) {
+  const components = spec.components ?? [];
+  const arr = Array.isArray(value) ? value : [];
+
+  const commitAt = (i: number, n: number) => {
+    const next = components.map((_, ci) => {
+      if (ci === i) return n;
+      const existing = arr[ci];
+      return typeof existing === 'number' ? existing : 0;
+    });
+    onCommit(next);
+  };
+
+  return (
+    <div className={row}>
+      <span className={label}>{spec.label}</span>
+      <div className="flex gap-1.5">
+        {components.map((c, i) => (
+          <div key={c} className="flex-1 flex flex-col gap-0.5">
+            <span className="text-[9px] text-text-secondary/70 text-center">{c}</span>
+            <input
+              type="number"
+              className={[inputBase, 'text-center px-1'].join(' ')}
+              value={typeof arr[i] === 'number' ? arr[i] : ''}
+              placeholder="0"
+              onChange={(e) => commitAt(i, e.target.value === '' ? 0 : Number(e.target.value))}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

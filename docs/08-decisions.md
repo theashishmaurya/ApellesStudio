@@ -12003,3 +12003,51 @@ matter in practice.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-154 — Inspector position/size tuples (`emphasis.box`, vec3 fields) render as separate labeled X/Y/W/H number inputs, not one raw JSON array
+
+**decided + built (2026-09-05).** Owner, pointing at a rendered frame where an `emphasis`
+scribble was circling the wrong words: *"i know the highlight is off, i can move it to right
+place directly but it should follow the animation as well... schene manifest as a user i dont
+need that"* — then, more generally, in a follow-up: *"we should be able to have all this as
+x: y: h: w: separate."*
+
+**The gap this closes.** `propCatalog.ts`'s `PRIMITIVE_FIELDS` already gives `text`/`matrix`/
+`layers` real separate `X`/`Y` number fields — that part worked. But every fixed-length
+position/size *tuple* field (`emphasis.box`'s `[x,y,w,h]` — the exact field behind the
+screenshot's misplaced scribble; `particleflow.from`/`to`/`center`'s `[x,y,z]`; `labelbox`'s
+`position`/`size`; `layerstack`'s `position`/`size`) was `kind: 'json'` — one raw-array
+textarea per field, the same lighter-touch fallback used for genuinely nested content like
+`Matrix.values` or `Graph.nodes`. A tuple and a content blob aren't the same kind of field: the
+former is a transform/layout knob with N=2-4 numbers, the latter is actual authored content.
+Conflating them meant nudging a scribble's box meant hand-editing `[120,340,260,80]` as text.
+
+**What was built.** A new `FieldSpec.kind: 'vec'` plus `components: string[]` (one short label
+per element, e.g. `['X','Y','W','H']`) in `propCatalog.ts`, and a `VecFieldControl` in
+`InspectorPanel.tsx` rendering `components.length` separate labeled `<input type="number">`s
+sharing one array value — editing one element never touches the others; a missing/non-array
+value reads as all-empty; committing one element backfills the rest with `0` rather than
+leaving holes, since the manifest field is a fixed-shape tuple, not an arbitrary-length array.
+Converted: `emphasis.box` (`X`/`Y`/`W`/`H`), `particleflow.from`/`to`/`center` (`X`/`Y`/`Z`),
+`labelbox.position` (`X`/`Y`/`Z`) / `.size` (`W`/`H`/`D`), `layerstack.position` (`X`/`Y`/`Z`) /
+`.size` (`W`/`H`). Left as `'json'`, deliberately: `Matrix.values`/`highlight`,
+`Graph.nodes`/`edges`/`pulses`/`highlight`, `Layers.items` — genuine nested/variable-length
+content, not a fixed-shape transform tuple, per D-099's original reasoning for the fallback.
+
+**Not this pass.** This is the Inspector-field half of the owner's ask only. The other half —
+"when we drag something on canvas this should accept [the x/y/w/h edit]," i.e. two-way sync
+between these new fields and an on-canvas drag/resize gesture — is D-152's Part B, Phases 0-2
+(`docs/notes/motion-visual-builder-research.md`), not yet built; this entry does not change
+that scope or claim to satisfy it. Likewise the owner's separate ask for a full animation
+timeline (start/end per layer) is D-152's Phase 5, unstarted, a named major feature.
+
+**Verification.** `npx tsc --noEmit -p packages/motion` clean. `npm test --workspace
+@chroma/motion` — 66/66, unchanged (no existing test renders `InspectorPanel`; same gap D-151's
+audit already recorded).
+
+**Honest gap.** Not seen in the assembled app — this sandbox cannot launch the Tauri window.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
