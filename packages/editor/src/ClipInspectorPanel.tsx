@@ -49,9 +49,17 @@
  * real reasoning for why this stayed tab-local, not a shell-level panel).
  */
 import { Diamond, X } from 'lucide-react';
-import { Button, Input } from '@chroma/ui';
+import {
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-import type { Clip } from './timeline';
+import { FADE_PRESETS, fadePresetName, type Clip, type FadeCurve } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 
 export type TransformPatch = Partial<{
@@ -65,6 +73,35 @@ export type TransformPatch = Partial<{
   crop_right: number;
   crop_bottom: number;
 }>;
+
+/** D-147 — what the Fade section's controls hand back. Partial for the same
+ *  reason `TransformPatch` is: the panel edits one field at a time and
+ *  `EditorInspectorPanel` fills the rest from the clip's current values. */
+export type FadePatch = Partial<{
+  fade_in_frames: number;
+  fade_out_frames: number;
+  fade_in_curve: FadeCurve;
+  fade_out_curve: FadeCurve;
+}>;
+
+/** The two fade rows, each a duration + a curve, sharing one layout.
+ *  `durationKey`/`curveKey` are the real `Clip` field names so the row can
+ *  read and write them without a lookup table. */
+const FADE_FIELDS: Array<{
+  label: string;
+  durationKey: 'fade_in_frames' | 'fade_out_frames';
+  curveKey: 'fade_in_curve' | 'fade_out_curve';
+}> = [
+  { label: 'Fade in', durationKey: 'fade_in_frames', curveKey: 'fade_in_curve' },
+  { label: 'Fade out', durationKey: 'fade_out_frames', curveKey: 'fade_out_curve' },
+];
+
+/** The value the curve `<select>` shows for a curve with no matching preset —
+ *  an MCP-authored custom curve. Rendered as a real, selectable-looking option
+ *  so the panel never silently misreports a custom curve as `linear`; picking
+ *  a named preset from there overwrites it, which is the only thing this panel
+ *  can do about a curve it has no editor for (D-147's known gap). */
+const CUSTOM_CURVE = 'custom';
 
 const row = 'flex items-center justify-between gap-2';
 const numInput = 'h-7 w-20 text-right';
@@ -89,6 +126,7 @@ export function ClipInspectorPanel({
   clipKeyframes,
   keyedHere,
   onTransformChange,
+  onFadeChange,
   onUpsertKeyframe,
   onRemoveKeyframeHere,
   onClearKeyframes,
@@ -98,6 +136,7 @@ export function ClipInspectorPanel({
   clipKeyframes: ClipKeyframe[];
   keyedHere: boolean;
   onTransformChange: (patch: TransformPatch) => void;
+  onFadeChange: (patch: FadePatch) => void;
   onUpsertKeyframe: () => void;
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
@@ -210,6 +249,79 @@ export function ClipInspectorPanel({
               />
             </label>
           ))}
+        </InspectorSection>
+
+        {/* D-147 — Fade in / out. Its own section rather than more Transform
+            rows, for the same reason Crop got one: a fade is not part of a
+            clip's geometry, it is a time-domain envelope over whatever that
+            geometry produces, and it applies to audio-track clips that have
+            no transform at all. Both references present it separately too.
+
+            **Durations are frames**, matching every other number the Edit tab
+            speaks (`start_frame`, `duration`, `source_start`) — not seconds,
+            which would need the clip's fps here and would be the only unit on
+            this panel that isn't the stored one.
+
+            The note below is not decoration: one fade drives BOTH picture and
+            sound on a video clip, and a user who does not know that will read
+            a silent picture fade as a bug. See the plan doc §2. */}
+        <InspectorSection label="Fade">
+          {FADE_FIELDS.map(({ label, durationKey, curveKey }) => {
+            const preset = fadePresetName(clip[curveKey]);
+            return (
+              <div className="flex flex-col gap-1" key={durationKey}>
+                <label className={row}>
+                  <span className="text-text-secondary">{label}</span>
+                  <Input
+                    type="number"
+                    // Whole frames, never negative. Not capped at the clip's
+                    // own `duration`: a fade longer than the clip is
+                    // legitimate (the two windows overlap and multiply), and
+                    // capping would silently move a handle the user placed.
+                    step={1}
+                    min={0}
+                    disabled={trackLocked}
+                    className={numInput}
+                    value={clip[durationKey] ?? 0}
+                    onChange={(e) => onFadeChange({ [durationKey]: Number(e.target.value) })}
+                  />
+                </label>
+                <label className={row}>
+                  <span className="text-text-secondary/70 pl-2 text-[11px]">Curve</span>
+                  <Select
+                    value={preset ?? CUSTOM_CURVE}
+                    onValueChange={(v) => {
+                      const hit = FADE_PRESETS.find((p) => p.name === v);
+                      // `custom` is display-only — it names a curve MCP
+                      // authored that this panel has no editor for, so
+                      // selecting it must not overwrite that curve with
+                      // anything.
+                      if (hit) onFadeChange({ [curveKey]: hit.curve });
+                    }}
+                    disabled={trackLocked}
+                  >
+                    <SelectTrigger className="h-7 w-28 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FADE_PRESETS.map((p) => (
+                        <SelectItem key={p.name} value={p.name}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                      {/* Only offered when the clip really has one, so the
+                          list stays the four real presets otherwise. */}
+                      {preset === null && <SelectItem value={CUSTOM_CURVE}>custom</SelectItem>}
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+            );
+          })}
+          <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+            Fades this clip's picture and its sound together. Unlink its audio to fade them
+            separately.
+          </p>
         </InspectorSection>
 
         {/* the exact interaction `RelightPanel.tsx` uses for relight-light

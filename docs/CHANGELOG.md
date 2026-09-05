@@ -24,6 +24,28 @@ One or two lines per session. Detail lives in the decision it references.
   regression tests confirmed to fail against the pre-fix code.
   `cargo check --workspace --all-targets` clean; `cargo test -p chroma-media`
   83 passed; `cargo test -p RapidRAW --lib -- chroma::` 164 passed.
+- **2026-09-05** — **Per-clip fades with real cubic-bezier curves (D-147),** plus the
+  scoping doc for the whole "practical sound control" ask
+  (`docs/notes/audio-fade-duck-crossfade-plan.md`). `Clip` gains
+  `fade_in_frames`/`fade_out_frames` + a `FadeCurve` each; a new
+  `chroma-types::fade` evaluates them (Newton–Raphson + bisection over the CSS
+  `cubic-bezier` model — there was no easing math anywhere in this repo before this).
+  One fade drives picture and sound together: the compositor multiplies it into
+  `opacity`, the mixer applies it per **sample-frame** before summing sources.
+  Landed just after D-146 moved the mixer into `crates/chroma-media` — `FadeEnvelope`
+  moved with it (beside `AudioSourceSpec`, the boundary type it extends), the curve
+  math moved *down* to L0 `chroma-types` so the L1 mixer and the L2 timeline model can
+  share one implementation without an upward dependency (re-exported from
+  `chroma-timeline`, so `chroma_timeline::FadeCurve` still resolves), and
+  `chroma_audio_play`'s timeline-resolution half stayed app-side per D-146 — it is
+  what converts a clip's fade frames to the envelope's seconds. Inspector section + presets, and the first two Edit-tab MCP
+  tools (`get_timeline`, `set_clip_fade`) — which also exercise D-140 §6c's "agent
+  edits go through `applyOp` so they stay undoable" for the first time rather than
+  only stating it. **Crossfade found blocked** on D-104's no-overlap invariant: the
+  no-overlap version is a dip-to-silence, not a crossfade, and no curve fixes that —
+  the renderer and mixer are already N-source ready, only the model isn't. **Ducking
+  scoped, not built** — it reuses the same time-varying-gain primitive, which is why
+  the envelope was shaped as one.
 - **2026-09-05** — **`chroma-grade-model` real extraction landed (D-143),** per
   D-141's plan §2.4. `save_grade`/`load_grade`/`migrate_v1`/`relativize`/
   `resolve`/`grade_name` + `SCHEMA`/`MATTE_KEYS`/`SaveResult` moved verbatim

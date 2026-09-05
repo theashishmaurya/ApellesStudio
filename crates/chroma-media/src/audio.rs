@@ -258,6 +258,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chroma_types::FadeCurve;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp_sample::FromSample;
 use once_cell::sync::Lazy;
@@ -842,6 +843,91 @@ pub struct AudioSourceSpec {
     /// produces today.
     pub duration_secs: Option<f64>,
     pub gain: f32,
+    /// D-147 — this clip's fade in/out envelope, or `None` when the clip has
+    /// no fade configured (every clip in every pre-D-147 project). `None` is
+    /// not merely "an envelope that returns 1.0": [`mix_chunk`] skips the
+    /// per-sample pass entirely for it, so the un-faded mix runs the exact
+    /// same arithmetic it did before this field existed.
+    ///
+    /// Seconds, like `start_secs`/`duration_secs` above and for the same
+    /// reason: a fade window measured in seconds is a media fact, whereas the
+    /// clip's fade *frames* are not. The caller converts, in `app/src-tauri`'s
+    /// `chroma::audio::fade_for_clip`.
+    pub fade: Option<FadeEnvelope>,
+}
+
+/// One clip's fade envelope, in **seconds** (D-147).
+///
+/// Seconds, matching [`AudioSourceSpec`]'s own unit, because the envelope is
+/// built by the caller — before [`run_session`] has opened the device and
+/// learned its sample rate. The seconds→samples conversion happens once per
+/// chunk in [`Self::apply`], which is handed the rate.
+///
+/// **Evaluated per sample-frame, not per video frame or per chunk.** A chunk is
+/// 1024 frames ≈ 21 ms at 48 kHz, and a video frame is 21–42 ms; stepping a
+/// gain envelope at either granularity is a staircase, and a staircase on a
+/// gain envelope is audible zipper noise. Every channel of one sample-frame
+/// shares one gain, as any real mixer does.
+///
+/// The evaluation is [`chroma_types::fade_gain`] — the same pure function
+/// `chroma::edit`'s compositor reaches (via
+/// `chroma_timeline::Clip::fade_multiplier_at`) for opacity. One curve model,
+/// one implementation, no second copy of the bezier solve. That shared
+/// function sits in L0 `chroma-types` precisely so this L1 crate can call it
+/// without depending on the L2 timeline model — see that module's doc, and
+/// `docs/notes/audio-fade-duck-crossfade-plan.md` §6b.
+///
+/// **Deliberately shaped as "a gain multiplier at position N", not as
+/// fade-specific arithmetic inlined into the mixer.** Ducking (that doc's §4)
+/// needs exactly this interface with a different function behind it, and this
+/// is the seam it will reuse — the one thing this pass owed a feature it
+/// deliberately did not build.
+///
+/// `pub` with `pub` fields for the same reason [`AudioSourceSpec`] is: the
+/// caller that builds one is `app/src-tauri`, because building one means
+/// reading a timeline clip, which this crate deliberately cannot do.
+#[derive(Debug, Clone)]
+pub struct FadeEnvelope {
+    /// Seconds from the CLIP's own in-point to the first sample this session
+    /// produces. Non-zero whenever playback starts mid-clip — what makes
+    /// pressing Play halfway down a fade-out start halfway down it, rather
+    /// than at the top of it.
+    pub offset_secs: f64,
+    /// The clip's full length, in seconds.
+    pub len_secs: f64,
+    pub fade_in_secs: f64,
+    pub fade_out_secs: f64,
+    pub in_curve: FadeCurve,
+    pub out_curve: FadeCurve,
+}
+
+impl FadeEnvelope {
+    /// The gain `session_secs` into this playback session.
+    pub fn gain_at(&self, session_secs: f64) -> f32 {
+        chroma_types::fade_gain(
+            self.offset_secs + session_secs,
+            self.len_secs,
+            self.fade_in_secs,
+            self.fade_out_secs,
+            &self.in_curve,
+            &self.out_curve,
+        ) as f32
+    }
+
+    /// Apply this envelope to one interleaved chunk in place. `session_frame`
+    /// is how many output sample-frames the session has already produced —
+    /// including any [`discard_samples`] skipped for D-125's skew
+    /// compensation, since those represent real timeline time that has passed.
+    fn apply(&self, buf: &mut [f32], out_channels: usize, session_frame: u64, out_rate: u32) {
+        let ch = out_channels.max(1);
+        let rate = out_rate.max(1) as f64;
+        for (f, frame) in buf.chunks_mut(ch).enumerate() {
+            let g = self.gain_at((session_frame as f64 + f as f64) / rate);
+            for s in frame.iter_mut() {
+                *s *= g;
+            }
+        }
+    }
 }
 
 /// A claimed audio-transport request: this call is the newest one the
@@ -1618,15 +1704,33 @@ const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 /// Pull one `chunk_len` window from every source in lockstep and mix it —
 /// the single step both the prefill and the steady-state loop in
 /// [`run_session`] run, factored out so they cannot drift apart.
+///
+/// **D-147 — each source's fade envelope is applied to its own buffer BEFORE
+/// [`mix_sources`] sees it**, so `mix_sources` itself is completely untouched:
+/// every one of D-057's headroom guarantees, and its byte-identical
+/// single-source unity-gain passthrough, stand exactly as they were. A source
+/// with no fade (`fades[i].is_none()` — every clip in every pre-D-147 project)
+/// skips the per-sample pass entirely, so the un-faded mix runs the same
+/// arithmetic it always did.
+///
+/// `pos_frames` is how many output sample-frames the session has already
+/// produced, which is where the envelope is evaluated from.
 fn mix_chunk(
     decoded: &mut [DecodedSource],
     gains: &[f32],
+    fades: &[Option<FadeEnvelope>],
     chunk_len: usize,
     out_channels: usize,
+    pos_frames: u64,
+    out_rate: u32,
 ) -> Result<Vec<f32>, String> {
     let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
-    for ds in decoded.iter_mut() {
-        bufs.push(ds.take(chunk_len, out_channels)?);
+    for (i, ds) in decoded.iter_mut().enumerate() {
+        let mut buf = ds.take(chunk_len, out_channels)?;
+        if let Some(env) = fades.get(i).and_then(Option::as_ref) {
+            env.apply(&mut buf, out_channels, pos_frames, out_rate);
+        }
+        bufs.push(buf);
     }
     Ok(mix_sources(&bufs, gains, chunk_len))
 }
@@ -1715,6 +1819,7 @@ fn run_session(
 
     let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
     let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
+    let mut fades: Vec<Option<FadeEnvelope>> = Vec::with_capacity(sources.len());
     for (i, spec) in sources.iter().enumerate() {
         match open_source(
             &spec.path,
@@ -1726,6 +1831,11 @@ fn run_session(
             Ok(ds) => {
                 decoded.push(ds);
                 gains.push(spec.gain);
+                // D-147 — index-parallel with `decoded`/`gains`, which is why
+                // it is pushed in the same arm: a source that failed to open
+                // must not leave its envelope behind to be applied to the
+                // next source's buffer.
+                fades.push(spec.fade.clone());
             }
             Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
             Err(e) => log::warn!(
@@ -1788,8 +1898,16 @@ fn run_session(
             skew - MAX_SKEW_COMPENSATION_SECS
         );
     }
+    // D-147 — output sample-frames produced by this session so far, and the
+    // position every fade envelope is evaluated at. It must advance through
+    // the skew discard below as well as through the real mixing: those
+    // samples represent timeline time that *should already have played*, so
+    // an envelope that did not advance through them would run the whole
+    // warm-up late for the rest of the session.
+    let mut pos_frames: u64 = 0;
     if skew_samples > 0 {
         discard_samples(&mut decoded, skew_samples, out_channels, chunk_len)?;
+        pos_frames += (skew_samples / out_channels.max(1)) as u64;
     }
 
     let prefill_len = (PREFILL_SECS * out_rate as f64) as usize * out_channels.max(1);
@@ -1797,7 +1915,16 @@ fn run_session(
         && !decoded.iter().all(DecodedSource::is_done)
         && is_current(my_gen)
     {
-        let mixed = mix_chunk(&mut decoded, &gains, chunk_len, out_channels)?;
+        let mixed = mix_chunk(
+            &mut decoded,
+            &gains,
+            &fades,
+            chunk_len,
+            out_channels,
+            pos_frames,
+            out_rate,
+        )?;
+        pos_frames += (mixed.len() / out_channels.max(1)) as u64;
         ring.lock().unwrap_or_else(|e| e.into_inner()).extend(mixed);
     }
 
@@ -1825,7 +1952,16 @@ fn run_session(
             break 'mix; // every source exhausted — fall through to the idle wait below
         }
 
-        let mixed = mix_chunk(&mut decoded, &gains, chunk_len, out_channels)?;
+        let mixed = mix_chunk(
+            &mut decoded,
+            &gains,
+            &fades,
+            chunk_len,
+            out_channels,
+            pos_frames,
+            out_rate,
+        )?;
+        pos_frames += (mixed.len() / out_channels.max(1)) as u64;
 
         // Backpressure: block briefly while the ring buffer is comfortably
         // full rather than growing it unbounded — bail out early if a
@@ -2012,6 +2148,80 @@ mod tests {
         assert_eq!(resampled_frame_count(44_100, 44_100, 48_000), 48_000); // 44.1k -> 48k, 1s
         assert_eq!(resampled_frame_count(48_000, 48_000, 44_100), 44_100); // 48k -> 44.1k, 1s
         assert_eq!(resampled_frame_count(1_000, 0, 48_000), 0); // guard against div-by-zero
+    }
+
+    // --- D-147: clip fades in the mix ------------------------------------ //
+    //
+    // The envelope's own arithmetic is what lives here. Building one from a
+    // timeline clip is `app/src-tauri`'s `chroma::audio::fade_for_clip` — this
+    // crate cannot see a `Clip` — and its frames→seconds conversion is tested
+    // there.
+
+    /// A 1-second clip that is entirely a linear fade-in, at whatever rate the
+    /// test hands [`FadeEnvelope::apply`] — small enough that every expected
+    /// value is hand-checkable.
+    fn whole_clip_fade_in() -> FadeEnvelope {
+        FadeEnvelope {
+            offset_secs: 0.0,
+            len_secs: 1.0,
+            fade_in_secs: 1.0,
+            fade_out_secs: 0.0,
+            in_curve: FadeCurve::LINEAR,
+            out_curve: FadeCurve::LINEAR,
+        }
+    }
+
+    /// `apply` scales every channel of a sample-frame by the same gain, and
+    /// really does ramp *within* one chunk — the per-sample-frame resolution
+    /// that keeps a fade from stepping audibly.
+    #[test]
+    fn apply_ramps_within_a_chunk_and_scales_channels_together() {
+        let env = whole_clip_fade_in();
+        let mut buf = vec![1.0f32; 8 * 2]; // 8 sample-frames, stereo
+        env.apply(&mut buf, 2, 0, 8);
+        for f in 0..8 {
+            let expected = f as f32 / 8.0;
+            assert!(
+                (buf[f * 2] - expected).abs() < 1e-6,
+                "frame {f}: {}",
+                buf[f * 2]
+            );
+            assert_eq!(buf[f * 2], buf[f * 2 + 1], "both channels share one gain");
+        }
+        // strictly increasing — a real ramp, not a per-chunk step
+        assert!(buf[0] < buf[7 * 2]);
+    }
+
+    /// `session_frame` offsets the whole chunk, which is what makes the second
+    /// chunk of a session continue the ramp instead of restarting it — and, by
+    /// the same arithmetic, what makes `run_session` advancing `pos_frames`
+    /// through `discard_samples` keep a fade aligned across D-125's skew
+    /// compensation.
+    #[test]
+    fn apply_continues_the_ramp_across_chunks() {
+        let env = whole_clip_fade_in();
+        let mut second = vec![1.0f32; 4];
+        env.apply(&mut second, 1, 4, 8); // sample-frames 4..8 of 8
+        for (i, v) in second.iter().enumerate() {
+            let expected = (4 + i) as f32 / 8.0;
+            assert!((v - expected).abs() < 1e-6, "sample {i}: {v}");
+        }
+    }
+
+    /// **The backward-compatibility case, at the mixer.** A source with no
+    /// envelope is byte-identical through [`mix_chunk`]'s fade step to what it
+    /// was before D-147 — the `None` arm does not touch the buffer at all,
+    /// which is why `None` and "an envelope that returns 1.0" are not the same
+    /// thing here.
+    #[test]
+    fn a_source_with_no_envelope_is_left_exactly_alone() {
+        let fades: [Option<FadeEnvelope>; 1] = [None];
+        let original = vec![0.3f32, -0.7, 0.9, -0.1];
+        let mut buf = original.clone();
+        if let Some(env) = fades.first().and_then(Option::as_ref) {
+            env.apply(&mut buf, 2, 0, 48_000);
+        }
+        assert_eq!(buf, original, "no envelope must mean no arithmetic at all");
     }
 
     #[test]

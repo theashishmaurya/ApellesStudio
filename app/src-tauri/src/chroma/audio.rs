@@ -22,10 +22,18 @@
 //! exactly: `chroma_media::audio::begin_play` stamps `requested_at` and claims
 //! the session **before** the resolution below runs, so the resolution's own
 //! cost is still inside the skew `run_session` measures.
+//!
+//! D-147 added a third, strictly-derived thing to point 2: [`fade_for_clip`],
+//! which turns a clip's fade *frames* into the seconds-based
+//! `chroma_media::audio::FadeEnvelope` the mixer applies. That conversion is
+//! the same frames→seconds step [`chroma_audio_play`] already does for
+//! `start_secs` / `duration_secs`, done for one more pair of fields; the
+//! envelope's arithmetic, and the decision to apply it per output sample-frame,
+//! are the crate's.
 
 use std::path::PathBuf;
 
-use chroma_media::audio::AudioSourceSpec;
+use chroma_media::audio::{AudioSourceSpec, FadeEnvelope};
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
@@ -154,6 +162,13 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 start_secs: info.frame_to_secs(source_frame),
                 duration_secs: Some(info.frame_to_secs(remaining_frames)),
                 gain: 1.0,
+                // D-147 — a fade on a VIDEO clip fades its embedded audio too,
+                // not just its picture. One fade handle per clip, whose meaning
+                // follows what the clip contributes (see
+                // `chroma_timeline::Clip::fade_in_frames` and the plan doc §2);
+                // this is the "…and its sound" half of that, the compositor's
+                // `resolve_clip_transform` being the picture half.
+                fade: fade_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
             });
         } else {
             log::debug!(
@@ -163,18 +178,65 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         }
     }
 
-    for (path, start_secs, duration_secs, gain) in
-        super::edit::resolve_audio_track_positions(start_frame)?
-    {
+    for (clip, info, gain) in super::edit::resolve_audio_track_positions(start_frame)? {
+        // Where in the clip the playhead is, and how much of it is still
+        // ahead — the same two derivations the embedded-audio baseline above
+        // makes, now made once here for an audio-track clip too rather than
+        // inside the resolver (D-147; see `resolve_audio_track_positions`).
+        let elapsed_frames = start_frame as i64 - clip.start_frame;
+        let source_frame = clip.source_start + elapsed_frames;
+        let remaining_frames = (clip.end_frame() - start_frame as i64).max(0) as u64;
         sources.push(AudioSourceSpec {
-            path,
-            start_secs,
-            duration_secs: Some(duration_secs),
+            path: PathBuf::from(&clip.source_path),
+            start_secs: info.frame_to_secs(source_frame.max(0) as u64),
+            duration_secs: Some(info.frame_to_secs(remaining_frames)),
             gain,
+            // D-147 — an audio clip's fade is a gain fade, the direct
+            // counterpart of the opacity fade a video clip's picture gets.
+            fade: fade_for_clip(&clip, &info, elapsed_frames),
         });
     }
 
     chroma_media::audio::start(session, sources)
+}
+
+/// Build the fade envelope for `clip`, or `None` if it has no fade — the
+/// common path, and the one that keeps the mix byte-identical to pre-D-147
+/// (see [`FadeEnvelope`], whose `None` case makes the mixer skip its
+/// per-sample pass entirely rather than multiply by a 1.0 it computed).
+///
+/// **This is the timeline→media half of D-147, which is why it is app-side
+/// rather than in `chroma-media`.** [`FadeEnvelope`] is seconds — a media
+/// fact, exactly like [`AudioSourceSpec`]'s `start_secs`/`duration_secs`
+/// beside it. A *clip* with fade *frames* is not: converting one to the other
+/// needs `chroma_timeline::Clip` and the clip's probed
+/// [`super::video::VideoInfo`], and a media crate reaching for either would be
+/// reaching *up* a layer (D-039/D-146 — the same rule that kept
+/// [`chroma_audio_play`]'s body here at all).
+///
+/// `elapsed_frames` is how far into the clip playback is starting, in timeline
+/// frames. Frames → seconds goes through the clip's own probed
+/// [`super::video::VideoInfo::frame_to_secs`], the same conversion the clip
+/// out-point arithmetic (B-048/D-130) already uses a few lines up at each call
+/// site — so this inherits the model's existing assumption that a clip's source
+/// fps is its timeline fps rather than introducing a second one.
+fn fade_for_clip(
+    clip: &chroma_timeline::Clip,
+    info: &super::video::VideoInfo,
+    elapsed_frames: i64,
+) -> Option<FadeEnvelope> {
+    if clip.fade_in_frames <= 0 && clip.fade_out_frames <= 0 {
+        return None;
+    }
+    let secs = |frames: i64| info.frame_to_secs(frames.max(0) as u64);
+    Some(FadeEnvelope {
+        offset_secs: secs(elapsed_frames),
+        len_secs: secs(clip.duration),
+        fade_in_secs: secs(clip.fade_in_frames),
+        fade_out_secs: secs(clip.fade_out_frames),
+        in_curve: clip.fade_in_curve,
+        out_curve: clip.fade_out_curve,
+    })
 }
 
 #[cfg(test)]
@@ -215,6 +277,100 @@ mod tests {
     fn session_test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    // --- D-147: clip fades → the mixer's envelope ------------------------ //
+    //
+    // The timeline→media conversion is what lives here, so it is what is
+    // tested here. The envelope's own arithmetic (`apply` — the
+    // per-sample-frame ramp, the cross-chunk continuation, the untouched
+    // no-envelope buffer) is `chroma-media`'s and is tested in that crate's
+    // `audio::tests`.
+
+    /// A 25 fps `VideoInfo` with an audio stream — enough for
+    /// [`fade_for_clip`], whose only use of one is the frames→seconds
+    /// conversion.
+    fn info_25fps() -> super::super::video::VideoInfo {
+        super::super::video::VideoInfo {
+            resolution: chroma_types::Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            fps_num: 25,
+            fps_den: 1,
+            duration_secs: 10.0,
+            frame_count: 250,
+            codec: "h264".into(),
+            pix_fmt: "yuv420p".into(),
+            color_primaries: String::new(),
+            color_transfer: String::new(),
+            color_space: String::new(),
+            has_audio: true,
+            audio_sample_rate: 48_000,
+            audio_channels: 2,
+        }
+    }
+
+    fn clip_with_fade(duration: i64, fade_in: i64, fade_out: i64) -> chroma_timeline::Clip {
+        chroma_timeline::Clip {
+            duration,
+            source_len: duration,
+            fade_in_frames: fade_in,
+            fade_out_frames: fade_out,
+            ..Default::default()
+        }
+    }
+
+    /// **The backward-compatibility case for the mixer.** A clip with no fade
+    /// gets NO envelope at all — not an envelope that happens to return 1.0 —
+    /// so `chroma-media`'s `mix_chunk` skips the per-sample pass entirely and
+    /// the mix runs exactly the arithmetic it ran before D-147.
+    #[test]
+    fn a_clip_with_no_fade_gets_no_envelope_at_all() {
+        let info = info_25fps();
+        assert!(fade_for_clip(&clip_with_fade(100, 0, 0), &info, 0).is_none());
+        // a negative / nonsense value is "no fade" too, not an envelope
+        assert!(fade_for_clip(&clip_with_fade(100, -5, 0), &info, 0).is_none());
+        // …and one real fade window IS enough to get one
+        assert!(fade_for_clip(&clip_with_fade(100, 25, 0), &info, 0).is_some());
+    }
+
+    /// Frames convert to seconds through the clip's own fps: at 25 fps a
+    /// 25-frame fade is exactly one second.
+    #[test]
+    fn fade_for_clip_converts_frames_to_seconds_at_the_clips_own_fps() {
+        let env = fade_for_clip(&clip_with_fade(250, 25, 50), &info_25fps(), 0).unwrap();
+        assert!((env.len_secs - 10.0).abs() < 1e-9);
+        assert!((env.fade_in_secs - 1.0).abs() < 1e-9);
+        assert!((env.fade_out_secs - 2.0).abs() < 1e-9);
+        assert_eq!(env.offset_secs, 0.0);
+    }
+
+    /// **Full fade to silence at the boundary**, through a real envelope built
+    /// from a real clip rather than only the pure curve math: the very first
+    /// sample of a fade-in is exactly silent, and so is the out-point.
+    #[test]
+    fn the_envelope_is_exactly_silent_at_both_fade_boundaries() {
+        let env = fade_for_clip(&clip_with_fade(250, 25, 25), &info_25fps(), 0).unwrap();
+        assert_eq!(env.gain_at(0.0), 0.0);
+        assert_eq!(env.gain_at(10.0), 0.0); // the out-point, 10 s in
+        assert!(
+            (env.gain_at(5.0) - 1.0).abs() < 1e-6,
+            "unity well clear of both windows"
+        );
+    }
+
+    /// Starting playback mid-clip starts part-way down the ramp, not at the
+    /// top of it — what `offset_secs` exists for. 12 frames into a 25-frame
+    /// (1 s) linear fade-in is gain 0.48 at the session's very first sample.
+    #[test]
+    fn a_mid_fade_play_starts_part_way_down_the_ramp() {
+        let env = fade_for_clip(&clip_with_fade(250, 25, 0), &info_25fps(), 12).unwrap();
+        assert!(
+            (env.gain_at(0.0) - 0.48).abs() < 1e-6,
+            "got {}",
+            env.gain_at(0.0)
+        );
     }
 
     #[test]

@@ -1,14 +1,25 @@
 # chroma-types
 
 **Layer 0 (foundation).** Shared value types for the whole Chroma workspace:
-`Resolution`, `Rational`, `ChromaError` (real, in use). `Frame`, `ColorSpace`,
-`TimeRange`, and typed IDs stay undesigned — no real duplicate of any of them
-turned up in the `app/src-tauri` audit, see below.
+`Resolution`, `Rational`, `ChromaError`, and the `fade` curve model (real, in
+use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay undesigned — no
+real duplicate of any of them turned up in the `app/src-tauri` audit, see below.
 
 - **Deps:** `serde`, `thiserror`. Nothing heavy — no `wgpu`, no `ffmpeg`, no fs.
 - **Depended on by:** every other `chroma-*` crate. It is the root of the
   one-directional dependency graph (D-039). `chroma-motion` (D-046) already
-  consumes `ChromaError`; `app/src-tauri` (D-053) now consumes `Resolution`.
+  consumes `ChromaError`; `app/src-tauri` (D-053) now consumes `Resolution`;
+  `chroma-timeline` and `chroma-media` (D-147) both consume `fade`.
+- **`src/fade.rs` (D-147)** is the one piece of real *math* here, as opposed to
+  plain value types: `FadeCurve { x1, y1, x2, y2 }` — the CSS / After Effects
+  `cubic-bezier` model — plus `fade_gain()`, a Newton–Raphson-with-bisection
+  inverse solve (WebKit's `UnitBezier`). Pure `f64`, deterministic, no I/O,
+  unit-agnostic. It is **here rather than beside the `Clip` fields it
+  evaluates** because its two consumers straddle layers: `chroma-timeline`
+  (L2) uses it for the compositor's `opacity`, `chroma-media` (L1) for the
+  audio mixer's gain, and L1 cannot depend on L2. `chroma-timeline` re-exports
+  `FadeCurve`/`fade_gain`, so callers working in the timeline model need not
+  know it came from here.
 
 ## Status
 

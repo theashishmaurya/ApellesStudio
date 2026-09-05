@@ -93,6 +93,13 @@ pub enum ChromaError {
 /// Convenience alias.
 pub type Result<T, E = ChromaError> = std::result::Result<T, E>;
 
+/// Cubic-bezier fade curves + the fade multiplier (D-147). Pure, unit-agnostic
+/// math — see the module doc for why it is L0 rather than living beside the
+/// timeline model whose `Clip` fields are typed by it.
+pub mod fade;
+
+pub use fade::{FadeCurve, fade_gain};
+
 #[cfg(test)]
 mod tests {
     use super::*;

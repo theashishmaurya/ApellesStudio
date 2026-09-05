@@ -44,10 +44,24 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Gap: Edit tab / multi-track NLE — 0 tools
+## Gap: Edit tab / multi-track NLE — 2 tools (was a real zero until D-147, 2026-09-05)
 
-Every Tauri command in `chroma::edit` (`app/src-tauri/src/chroma/edit.rs`) has no
-MCP equivalent at all:
+> **The zero is broken, but only just.** D-147 (clip fades) shipped the first two
+> Edit-tab tools, and they are the two its own feature needed — not a sweep of the
+> list below:
+>
+> | Tool | What it does |
+> |---|---|
+> | `get_timeline` | Read-only. Every track and clip on the active timeline, with the `index` the mutating tools address a clip by and the `id` that survives a reorder. Exactly the "without which no tool can name a clip" prerequisite the callout below already predicted. |
+> | `set_clip_fade` | Sets a clip's fade in/out durations (in frames) and cubic-bezier curve shapes. |
+>
+> Both go through `useEditorTimelineStore.applyOp`, so this is also the first time
+> the "which path does a tool call" answer below is actually *exercised* rather
+> than only written down: an agent's fade edit lands on the same undo stack a
+> human's does. Everything else in this section is still a real zero.
+
+Every other Tauri command in `chroma::edit` (`app/src-tauri/src/chroma/edit.rs`)
+has no MCP equivalent at all:
 
 - `chroma_timeline_get` / `chroma_timeline_set` / `chroma_timeline_frame`
 - `chroma_timeline_list` / `chroma_timeline_create` / `chroma_timeline_set_active`
@@ -91,9 +105,9 @@ MCP equivalent at all:
 > presupposes: `get_timeline` (shaped `chroma_timeline_get`), without which no
 > tool can name a clip. See `docs/notes/pacing-audio-assistance-plan.md` §6.
 
-**Net effect: an agent cannot touch the Edit tab / NLE at all right now** — no
-adding clips, no trimming, no track management, none of tonight's new
-compositing/lock/hide/rearrange/keyframe work either, once it ships.
+**Net effect: an agent can read the timeline and set a clip's fades, and nothing
+else on this tab** (D-147) — no adding clips, no trimming, no track management,
+none of the compositing/lock/hide/rearrange/keyframe work.
 
 ## Gap: Motion tab — 0 tools
 

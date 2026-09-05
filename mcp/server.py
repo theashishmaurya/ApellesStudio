@@ -298,6 +298,91 @@ def seek(frame: int) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# Edit tab — timeline read + clip fades (D-147)
+#
+# The first Edit-tab tools on this surface; everything above is Colorist.
+# `get_timeline` exists because `set_clip_fade(track, clip, ...)` is unusable
+# without a way to learn a track/clip index — it is scoped to that need, not an
+# attempt to close the whole Edit-tab MCP gap.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def get_timeline() -> str:
+    """The active edit timeline: every track and every clip on it, with the
+    indices the mutating Edit-tab tools address clips by.
+
+    Returns {id, name, durationFrames, tracks: [{index, kind: "video"|"audio",
+    gain, locked, hidden, clips: [{index, id, name, sourcePath, startFrame,
+    duration, sourceStart, sourceLen, linkGroup, fadeInFrames, fadeOutFrames,
+    fadeInCurve, fadeOutCurve, fadeInCurveName, fadeOutCurveName}]}]}.
+
+    All positions and durations are in FRAMES, not seconds — the unit every
+    Edit-tab number is in. `index` is what set_clip_fade addresses; `id` is the
+    stable identity that survives a reorder, for re-finding a clip after an
+    edit. Read-only, cheap, no side effects."""
+    import json
+
+    return json.dumps(_op("get_timeline"), indent=2, default=str)
+
+
+@mcp.tool()
+def set_clip_fade(
+    track: int,
+    clip: int,
+    fade_in_frames: int | None = None,
+    fade_out_frames: int | None = None,
+    fade_in_curve: str | list[float] | None = None,
+    fade_out_curve: str | list[float] | None = None,
+) -> str:
+    """Set a clip's fade in / fade out. `track` and `clip` are the 0-based
+    indices from get_timeline.
+
+    Durations are in FRAMES (not seconds, not percent). Negative or fractional
+    values are floored to whole frames >= 0; the returned values are what was
+    actually stored, so check them rather than assuming. A fade LONGER than the
+    clip is allowed and is deliberately not clamped: the two windows then
+    overlap and their multipliers multiply, so a clip fully fading in and out
+    sits at 0.25 in the middle. Omitting a duration leaves that one as it is.
+
+    A curve is either a preset NAME -- "linear" | "ease-in" | "ease-out" |
+    "ease-in-out" (also "ease", CSS's own) -- or four cubic-bezier control
+    points [x1, y1, x2, y2], the same model CSS cubic-bezier() and After
+    Effects keyframe easing use (P0=(0,0) and P3=(1,1) implicit; x is progress
+    through the fade window, y the multiplier at that progress). An unknown
+    preset name is rejected, not silently substituted. Curves always come back
+    as four control points plus the matching preset name if there is one, so a
+    curve read and written back is exactly what was read.
+
+    Two real properties to set this with, rather than guess at:
+
+    1. A fade on a VIDEO clip fades its picture (opacity) AND its own embedded
+       audio (gain) together -- one handle, as Premiere's and Resolve's fade
+       handle does. To fade them differently, unlink the clip's audio; it
+       becomes its own clip with its own fade. A clip on an audio track fades
+       gain only.
+    2. The curve is a straight multiplier on amplitude / alpha, NOT a
+       perceptual one. Perceived loudness is roughly logarithmic in amplitude,
+       so a perceptually even AUDIO fade-in is nearer "ease-in" than "linear"
+       ("linear" is the exact straight ramp, and is the default). Picture has
+       no equivalent skew. Pick with that stated rather than assuming one curve
+       suits both.
+
+    Undoable: this goes through the same store action and the same undo stack
+    the GUI's own Inspector writes to, so a human can Cmd+Z it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if fade_in_frames is not None:
+        args["fade_in_frames"] = fade_in_frames
+    if fade_out_frames is not None:
+        args["fade_out_frames"] = fade_out_frames
+    if fade_in_curve is not None:
+        args["fade_in_curve"] = fade_in_curve
+    if fade_out_curve is not None:
+        args["fade_out_curve"] = fade_out_curve
+    return json.dumps(_op("set_clip_fade", **args), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
 # multi-shot session (D-033)
 # --------------------------------------------------------------------------- #
 @mcp.tool()

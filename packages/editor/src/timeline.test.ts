@@ -13,6 +13,8 @@ import {
   computeInsertion,
   endFrame,
   ensureAudioTrackWithRoom,
+  FADE_PRESETS,
+  fadePresetName,
   findClip,
   gapAt,
   labelForOp,
@@ -837,6 +839,114 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
   });
 });
 
+describe('set_clip_fade (D-147)', () => {
+  it('writes both durations and both curves together', () => {
+    const before = tl(backToBack());
+    const after = applyOp(before, {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: 12,
+      fade_out_frames: 24,
+      fade_in_curve: FADE_PRESETS[1].curve, // ease-in
+      fade_out_curve: FADE_PRESETS[2].curve, // ease-out
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.fade_in_frames).toBe(12);
+    expect(c.fade_out_frames).toBe(24);
+    expect(fadePresetName(c.fade_in_curve)).toBe('ease-in');
+    expect(fadePresetName(c.fade_out_curve)).toBe('ease-out');
+    // the OTHER clip is untouched
+    expect(after.tracks[0].clips[1].fade_in_frames).toBeUndefined();
+  });
+
+  it('omitted curves default to linear, matching the Rust-side default', () => {
+    const after = applyOp(tl(backToBack()), {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: 5,
+      fade_out_frames: 0,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(fadePresetName(c.fade_in_curve)).toBe('linear');
+    expect(fadePresetName(c.fade_out_curve)).toBe('linear');
+  });
+
+  /** Floored and integral on the way in, so a negative or fractional frame
+   *  count can never reach `project.json` — the same discipline
+   *  `set_clip_transform` applies to its crop insets. A cleared numeric input
+   *  arrives as `NaN` and has to land on "no fade", not propagate. */
+  it('floors durations to whole frames >= 0 and turns NaN into no fade', () => {
+    const after = applyOp(tl(backToBack()), {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: -5,
+      fade_out_frames: 7.9,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.fade_in_frames).toBe(0);
+    expect(c.fade_out_frames).toBe(7);
+
+    const nan = applyOp(tl(backToBack()), {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: Number.NaN,
+      fade_out_frames: 3,
+    });
+    expect(nan.tracks[0].clips[0].fade_in_frames).toBe(0);
+  });
+
+  /** Deliberately NOT clamped to the clip's own `duration`: a fade longer
+   *  than the clip is legitimate (the two windows overlap and their
+   *  multipliers multiply — see `fade_gain`'s doc in `chroma-timeline`), and
+   *  clamping would silently move a handle the user placed. */
+  it('does not clamp a fade longer than the clip', () => {
+    const after = applyOp(tl([clip('a', 'Short', { duration: 10 })]), {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: 40,
+      fade_out_frames: 40,
+    });
+    expect(after.tracks[0].clips[0].fade_in_frames).toBe(40);
+    expect(after.tracks[0].clips[0].fade_out_frames).toBe(40);
+  });
+
+  it('is a no-op for a track or clip that does not exist', () => {
+    const before = tl(backToBack());
+    const op = { fade_in_frames: 5, fade_out_frames: 5 } as const;
+    expect(applyOp(before, { kind: 'set_clip_fade', track: 9, clip: 0, ...op })).toBe(before);
+    expect(applyOp(before, { kind: 'set_clip_fade', track: 0, clip: 9, ...op })).toBe(before);
+  });
+
+  it('labels the history entry with the clip name', () => {
+    const before = tl(backToBack());
+    expect(
+      labelForOp({ kind: 'set_clip_fade', track: 0, clip: 1, fade_in_frames: 5, fade_out_frames: 0 }, before),
+    ).toBe('Fade "B-roll 1"');
+  });
+});
+
+describe('fadePresetName / FADE_PRESETS (D-147)', () => {
+  it('every preset round-trips to its own name', () => {
+    for (const p of FADE_PRESETS) expect(fadePresetName(p.curve)).toBe(p.name);
+  });
+
+  it('an absent curve reads as linear, matching the server default', () => {
+    expect(fadePresetName(undefined)).toBe('linear');
+  });
+
+  /** A custom curve — which MCP can author today even though the Inspector
+   *  has no curve editor — must report as custom rather than being silently
+   *  misreported as `linear`. */
+  it('a custom curve has no preset name', () => {
+    expect(fadePresetName({ x1: 0.1, y1: 0.9, x2: 0.9, y2: 0.1 })).toBeNull();
+  });
+});
+
 describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::TimelineError::TrackLocked', () => {
   function lockedTl(): Timeline {
     return { id: 't1', name: 'Timeline', tracks: [{ kind: 'video', clips: backToBack(), locked: true }] };
@@ -871,6 +981,13 @@ describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::Time
     const before = lockedTl();
     expect(
       applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 0.5, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP }),
+    ).toBe(before);
+  });
+
+  it('set_clip_fade is refused on a locked track', () => {
+    const before = lockedTl();
+    expect(
+      applyOp(before, { kind: 'set_clip_fade', track: 0, clip: 0, fade_in_frames: 10, fade_out_frames: 10 }),
     ).toBe(before);
   });
 

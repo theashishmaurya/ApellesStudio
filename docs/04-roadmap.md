@@ -912,6 +912,38 @@ flag itself).
   carried in that plan as flagged item **F-4**, to be decided when `video.rs`
   moves rather than left to drift.
 
+- ~~**Practical sound control, Phase 1 — per-clip fade in / fade out**~~ — **done,
+  D-147 (2026-09-05).** Owner: "sound engineer"-style control, "enough for
+  transitions etc.", then concretely "build the fade in and fade out with bezier
+  curve support." `Clip::fade_in_frames`/`fade_out_frames` plus a real cubic-bezier
+  `FadeCurve` each, evaluated by the new `crates/chroma-types/src/fade.rs` (genuinely
+  new math — D-034's keyframe engine was verified to be strictly linear and left
+  alone; L0 because its two consumers straddle crate layers — see D-147's
+  reconciliation section). One fade drives picture and sound together: `opacity` in
+  the compositor, per-**sample-frame** gain in `chroma-media`'s mixer
+  (`audio::FadeEnvelope`). Inspector section with the four presets, and
+  the first two Edit-tab MCP tools (`get_timeline`, `set_clip_fade`). Scoping for the
+  whole surface: `docs/notes/audio-fade-duck-crossfade-plan.md`.
+  - **Custom-curve UI — deferred, not blocked.** The model, evaluator, wire format
+    and MCP surface all take arbitrary control points today (an MCP-authored custom
+    curve round-trips through the GUI and renders correctly, and the panel reports
+    it honestly as "custom"). What is missing is a draggable two-handle widget so a
+    *human* can author one.
+  - **Crossfade — genuinely blocked on a model change, not scheduled.** D-104
+    rejects clip overlap unconditionally, and a no-overlap "crossfade" is
+    arithmetically a dip-to-silence, not a crossfade (plan doc §3 — no curve fixes
+    it). The compositor and mixer are already N-source ready; only the model forbids
+    the arrangement that would feed them. The tractable path is *cross-track*
+    overlap behind an explicit `create_crossfade` op — reinstating D-096's policy
+    that D-104 reversed for a UX reason — which needs the owner's call. Same-track
+    overlap is much bigger: it changes what `Track::clip_at`'s `.find()` means
+    everywhere in the app.
+  - **Ducking (music under dialogue) — scoped, not built.** Plan doc §4. It cannot
+    ride D-057's static `Track::gain`; it needs time-varying gain, which is exactly
+    what D-147's fade envelope already is — so it reuses that seam rather than
+    adding a second one. That is why the envelope was built as "a gain multiplier
+    at position N" instead of the two-line special case a fade alone needed.
+
 - **Steps 3–7 — scoped, not started (D-141, 2026-09-05).**
   `docs/notes/crate-extraction-plan.md` is the map: per-crate real contents with
   line ranges, real dependency edges in both directions (including the five

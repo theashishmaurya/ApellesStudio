@@ -271,25 +271,34 @@ pub(crate) fn resolve_video_position(pos: u64) -> Result<Option<(Clip, u64, Vide
 }
 
 /// Resolve every genuine `TrackKind::Audio` clip on the active timeline that
-/// overlaps `pos` to `(source path, source start in seconds, how many seconds
-/// of that clip are still ahead of `pos`, that track's gain)` — the Phase C
-/// (D-056) counterpart to [`resolve_video_position`]'s
-/// single video-track lookup, feeding `chroma::audio`'s mixer the extra
-/// sources to sum in alongside the baseline video-embedded audio. Uses
+/// overlaps `pos` to `(the clip, its probed VideoInfo, that track's gain)` —
+/// the Phase C (D-056) counterpart to [`resolve_video_position`]'s single
+/// video-track lookup, feeding `chroma::audio`'s mixer the extra sources to sum
+/// in alongside the baseline video-embedded audio. Uses
 /// [`chroma_timeline::Track::clip_at`] exactly like the video path — a track
-/// with nothing covering `pos` (a gap, or an empty track, which today is
-/// every `Audio` track since nothing in the app populates one yet — see
-/// `chroma::audio`'s module doc) contributes nothing, silently, same "not an
-/// error" contract `resolve_video_position` already has. A clip whose source
-/// turns out to have no audio stream is skipped the same way.
+/// with nothing covering `pos` (a gap, or an empty track) contributes nothing,
+/// silently, the same "not an error" contract `resolve_video_position` already
+/// has. A clip whose source turns out to have no audio stream is skipped the
+/// same way.
 ///
-/// The third element is the clip's **out-point** measured forward from `pos`
-/// (B-048): `chroma::audio` streams each source until it runs out, so it has to
-/// be told where the clip actually ends or it keeps playing the rest of the
-/// file underneath whatever the timeline cut to next.
+/// **D-147 — this returns the `Clip` + `VideoInfo` rather than D-057's
+/// original `(path, start_secs, duration_secs, gain)` tuple**, and that is a
+/// simplification, not an extension. The mixer needs the clip's fade fields
+/// now, and it *already* derives `start_secs`/`duration_secs` from exactly
+/// this pair for the embedded-audio baseline a few lines away in
+/// `chroma_audio_play` — so returning the pair removes a duplicated piece of
+/// seconds arithmetic instead of adding a fifth positional element to a tuple
+/// that was already hard to read. It also keeps the module dependency
+/// one-way: `chroma::audio` knows about `chroma::edit`, not the reverse, so
+/// the mixer's own `FadeEnvelope` type stays in the mixer.
+///
+/// The clip's **out-point** (B-048) is the caller's `clip.end_frame() - pos`:
+/// `chroma::audio` streams each source until it runs out, so it has to be told
+/// where the clip actually ends or it keeps playing the rest of the file
+/// underneath whatever the timeline cut to next.
 pub(crate) fn resolve_audio_track_positions(
     pos: u64,
-) -> Result<Vec<(PathBuf, f64, f64, f32)>, String> {
+) -> Result<Vec<(Clip, VideoInfo, f32)>, String> {
     let timeline = resolve_timeline(false)?;
     let mut out = Vec::new();
     for track in timeline
@@ -297,7 +306,7 @@ pub(crate) fn resolve_audio_track_positions(
         .iter()
         .filter(|t| t.kind == TrackKind::Audio)
     {
-        let Some((clip, source_frame)) = track.clip_at(pos as i64) else {
+        let Some((clip, _source_frame)) = track.clip_at(pos as i64) else {
             continue;
         };
         if clip.source_path.is_empty() {
@@ -307,14 +316,7 @@ pub(crate) fn resolve_audio_track_positions(
         if !info.has_audio {
             continue;
         }
-        let start_secs = info.frame_to_secs(source_frame.max(0) as u64);
-        let remaining_frames = (clip.end_frame() - pos as i64).max(0) as u64;
-        out.push((
-            PathBuf::from(&clip.source_path),
-            start_secs,
-            info.frame_to_secs(remaining_frames),
-            track.gain,
-        ));
+        out.push((clip.clone(), info, track.gain));
     }
     Ok(out)
 }
@@ -803,7 +805,35 @@ impl ClipTransform {
 /// convention every other keyframeable thing in this codebase — masks,
 /// relight lights — already uses: "the current frame" of whatever's loaded,
 /// which for a single clip IS its source frame).
+///
+/// **D-147 — the clip's fade multiplies into `opacity` last**, after the
+/// static-or-keyframed value has been resolved, so a keyframed opacity
+/// animation and the clip's own fade compose *multiplicatively* (clip opacity
+/// keyframes × the fade handle — what a real NLE does, and the only order
+/// under which neither silently overrides the other). The position within the
+/// clip comes free and exactly: `source_frame - clip.source_start`, straight
+/// out of `Track::clip_at`'s own definition (`source_start + (timeline_frame -
+/// start_frame)`), so this needs no signature change. A clip with no fade
+/// configured gets exactly `1.0` from `fade_multiplier_at` with no arithmetic
+/// at all — the byte-identical-to-pre-D-147 guarantee.
+///
+/// Note this deliberately does NOT need a change to
+/// [`ClipTransform::is_identity`]: the fade is already folded into `opacity`
+/// by the time that runs, so a faded lone clip correctly fails the
+/// `opacity >= 1.0` test and goes through the compositor instead of
+/// [`timeline_frame`]'s plain-decode fast path — which is exactly the
+/// D-132/B-053 lesson about a lone clip's transform being silently discarded.
 fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
+    let mut t = resolve_clip_transform_unfaded(clip, source_frame);
+    t.opacity *= clip.fade_multiplier_at(source_frame - clip.source_start);
+    t
+}
+
+/// [`resolve_clip_transform`] without D-147's fade multiply — the D-088/D-132
+/// static-or-keyframed resolution on its own. Split out purely so the fade can
+/// be applied at one place after every one of this function's three return
+/// paths, rather than repeated at each.
+fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransform {
     let base = ClipTransform {
         opacity: clip.opacity,
         position_x: clip.position_x,
@@ -1146,6 +1176,116 @@ mod composite_tests {
         // before the first key -> held at the first key's value (0.0)
         let t0 = resolve_clip_transform(&clip, 0);
         assert_eq!(t0.opacity, 0.0);
+    }
+
+    // --- D-147: clip fades in the compositor ----------------------------- //
+
+    /// **The backward-compatibility case for the compositor.** A clip with no
+    /// fade configured — every clip in every pre-D-147 project — resolves to
+    /// exactly the opacity it did before, bit for bit, at every frame.
+    #[test]
+    fn a_clip_with_no_fade_resolves_to_exactly_the_old_opacity() {
+        for opacity in [1.0, 0.5, 0.0] {
+            let clip = Clip {
+                opacity,
+                duration: 100,
+                ..Default::default()
+            };
+            for f in [0, 1, 50, 99, 100] {
+                let t = resolve_clip_transform(&clip, f);
+                assert_eq!(
+                    t.opacity.to_bits(),
+                    opacity.to_bits(),
+                    "opacity {opacity} at frame {f} changed to {}",
+                    t.opacity
+                );
+            }
+        }
+    }
+
+    /// A fade really reaches zero opacity at both boundaries, and unity in the
+    /// clear middle — the compositor half of the same property the audio
+    /// envelope and the pure curve math are each tested for.
+    #[test]
+    fn a_faded_clip_reaches_zero_opacity_at_both_boundaries() {
+        let clip = Clip {
+            opacity: 1.0,
+            duration: 100,
+            fade_in_frames: 20,
+            fade_out_frames: 20,
+            ..Default::default()
+        };
+        assert_eq!(resolve_clip_transform(&clip, 0).opacity, 0.0);
+        assert_eq!(resolve_clip_transform(&clip, 100).opacity, 0.0);
+        assert!((resolve_clip_transform(&clip, 10).opacity - 0.5).abs() < 1e-6);
+        assert!((resolve_clip_transform(&clip, 50).opacity - 1.0).abs() < 1e-6);
+        assert!((resolve_clip_transform(&clip, 90).opacity - 0.5).abs() < 1e-6);
+    }
+
+    /// The fade is measured from the clip's own IN-POINT, not from source
+    /// frame 0 — so a trimmed clip (`source_start > 0`) fades over its own
+    /// first frames, not over frames it does not contain.
+    #[test]
+    fn the_fade_window_is_measured_from_the_clips_in_point() {
+        let clip = Clip {
+            opacity: 1.0,
+            source_start: 500,
+            duration: 100,
+            fade_in_frames: 20,
+            ..Default::default()
+        };
+        // source frame 500 IS this clip's first frame
+        assert_eq!(resolve_clip_transform(&clip, 500).opacity, 0.0);
+        assert!((resolve_clip_transform(&clip, 510).opacity - 0.5).abs() < 1e-6);
+        assert!((resolve_clip_transform(&clip, 520).opacity - 1.0).abs() < 1e-6);
+    }
+
+    /// The fade multiplies into the KEYFRAMED opacity, not instead of it —
+    /// clip opacity keyframes × the fade handle, which is what a real NLE
+    /// does and the only order under which neither silently overrides the
+    /// other.
+    #[test]
+    fn the_fade_multiplies_into_a_keyframed_opacity() {
+        let clip = Clip {
+            opacity: 1.0,
+            duration: 100,
+            fade_in_frames: 20,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "opacity": 0.5 } },
+                { "frame": 100, "params": { "opacity": 0.5 } },
+            ])),
+            ..Default::default()
+        };
+        // keyframed opacity is a flat 0.5; halfway through the fade-in the
+        // multiplier is 0.5, so the result must be 0.25 — not 0.5 (fade
+        // ignored) and not 0.5 (keyframe ignored).
+        let t = resolve_clip_transform(&clip, 10);
+        assert!(
+            (t.opacity - 0.25).abs() < 1e-6,
+            "expected 0.25, got {}",
+            t.opacity
+        );
+    }
+
+    /// A faded clip must NOT be treated as an identity transform — otherwise
+    /// `timeline_frame`'s single-layer fast path would return a plain decode
+    /// and the fade would silently do nothing in the preview. This is exactly
+    /// the D-132/B-053 failure mode, checked for the new field.
+    #[test]
+    fn a_faded_lone_clip_is_not_identity_so_it_cannot_take_the_fast_path() {
+        let clip = Clip {
+            opacity: 1.0,
+            duration: 100,
+            fade_in_frames: 20,
+            ..Default::default()
+        };
+        assert!(!resolve_clip_transform(&clip, 5).is_identity(), "mid-fade");
+        // …and it IS identity again once clear of the fade window, so an
+        // un-faded stretch of a faded clip still takes the cheap path.
+        assert!(
+            resolve_clip_transform(&clip, 50).is_identity(),
+            "clear of the fade"
+        );
     }
 
     /// Opacity 0 must be a real no-op — the canvas is untouched, not just

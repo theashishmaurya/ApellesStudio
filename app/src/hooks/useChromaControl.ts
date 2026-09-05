@@ -4,6 +4,18 @@ import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { safeUnlisten } from '../utils/tauriListeners';
 
+// D-147 — the Edit tab's own store + fade curve helpers. `app` already depends
+// on `@chroma/editor` (see `main.tsx`), and `useChromaControl()` is mounted
+// app-level in `App.tsx`, so an Edit-tab op is reachable from here without new
+// plumbing. Going through `applyOp` (not the Rust commands) is D-140 §6c.
+import {
+  useEditorTimelineStore,
+  timelineDuration,
+  FADE_PRESETS,
+  DEFAULT_FADE_CURVE,
+  fadePresetName,
+  type FadeCurve,
+} from '@chroma/editor';
 import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
 import { useAgentStore } from '../store/useAgentStore';
@@ -307,6 +319,126 @@ export function useChromaControl() {
             })),
             active: useSessionStore.getState().activeIndex,
           },
+        };
+      },
+
+      // ---- Edit tab: timeline read + clip fades (D-147) -------------------
+      // The FIRST Edit-tab MCP tools — `mcp-tool-coverage.md` recorded a
+      // verified zero. `get_timeline` is a prerequisite, not scope creep:
+      // `set_clip_fade(track, clip, …)` is unusable if an agent has no way to
+      // learn a track or clip index. It is scoped to exactly that need and is
+      // not an attempt to close the whole Edit-tab MCP gap, which stays its
+      // own tracked item.
+      get_timeline: () => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return { error: 'no timeline — open a project first' };
+        return {
+          id: tl.id,
+          name: tl.name,
+          durationFrames: timelineDuration(tl),
+          tracks: tl.tracks.map((t, ti) => ({
+            index: ti,
+            kind: t.kind,
+            gain: t.gain ?? 1,
+            locked: !!t.locked,
+            hidden: !!t.hidden,
+            clips: t.clips.map((c, ci) => ({
+              // `index` is what every mutating op addresses a clip by
+              // (`set_clip_fade`, `chroma_timeline_move_clip`); `id` is the
+              // stable identity that survives a reorder. Both, deliberately —
+              // an agent that reads here and writes there needs the index, and
+              // one that wants to re-find a clip after an edit needs the id.
+              index: ci,
+              id: c.id,
+              name: c.name,
+              sourcePath: c.source_path,
+              startFrame: c.start_frame,
+              duration: c.duration,
+              sourceStart: c.source_start,
+              sourceLen: c.source_len,
+              linkGroup: c.link_group ?? null,
+              fadeInFrames: c.fade_in_frames ?? 0,
+              fadeOutFrames: c.fade_out_frames ?? 0,
+              // Always the four control points, plus the preset name when it
+              // matches one — so an agent that reads a curve and writes it
+              // back gets exactly what it read, and a name stays a convenience
+              // on input rather than the stored truth (D-147).
+              fadeInCurve: c.fade_in_curve ?? DEFAULT_FADE_CURVE,
+              fadeOutCurve: c.fade_out_curve ?? DEFAULT_FADE_CURVE,
+              fadeInCurveName: fadePresetName(c.fade_in_curve),
+              fadeOutCurveName: fadePresetName(c.fade_out_curve),
+            })),
+          })),
+        };
+      },
+
+      set_clip_fade: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return { error: 'no timeline — open a project first' };
+        const track = Math.round(Number(a?.track));
+        const clip = Math.round(Number(a?.clip));
+        const tr = tl.tracks[track];
+        if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+        const c = tr.clips[clip];
+        if (!c) return { error: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
+        if (tr.locked) return { error: `track ${track} is locked — unlock it first` };
+
+        // A curve arrives as either a preset name ("ease-in") or four control
+        // points (`[x1,y1,x2,y2]` or `{x1,y1,x2,y2}`). An unknown NAME is
+        // reported rather than silently substituted — a caller that typo'd
+        // "ease-inn" must not quietly get a linear fade.
+        const parseCurve = (v: any, which: string): FadeCurve | { error: string } | undefined => {
+          if (v == null) return undefined;
+          if (typeof v === 'string') {
+            const hit = FADE_PRESETS.find((p) => p.name === v);
+            return (
+              hit?.curve ?? {
+                error: `unknown ${which} "${v}" — one of ${FADE_PRESETS.map((p) => p.name).join(' | ')}, or four control points [x1,y1,x2,y2]`,
+              }
+            );
+          }
+          const pts = Array.isArray(v) ? v : [v?.x1, v?.y1, v?.x2, v?.y2];
+          if (pts.length !== 4 || pts.some((n: any) => typeof n !== 'number' || !Number.isFinite(n))) {
+            return { error: `${which} must be a preset name or four finite numbers [x1,y1,x2,y2]` };
+          }
+          return { x1: pts[0], y1: pts[1], x2: pts[2], y2: pts[3] };
+        };
+        const inCurve = parseCurve(a?.fade_in_curve, 'fade_in_curve');
+        if (inCurve && 'error' in inCurve) return inCurve;
+        const outCurve = parseCurve(a?.fade_out_curve, 'fade_out_curve');
+        if (outCurve && 'error' in outCurve) return outCurve;
+
+        // Through `applyOp`, NOT the Rust `chroma_timeline_*` commands —
+        // D-140 §6c's already-settled answer, exercised here for the first
+        // time. `applyOp` pushes a before/after pair onto the shared
+        // `@chroma/history` undo stack (D-051); the Rust commands do not, so
+        // going direct would produce an agent edit the user cannot undo.
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_fade',
+          track,
+          clip,
+          fade_in_frames: Number(a?.fade_in_frames ?? c.fade_in_frames ?? 0),
+          fade_out_frames: Number(a?.fade_out_frames ?? c.fade_out_frames ?? 0),
+          fade_in_curve: inCurve ?? c.fade_in_curve ?? DEFAULT_FADE_CURVE,
+          fade_out_curve: outCurve ?? c.fade_out_curve ?? DEFAULT_FADE_CURVE,
+        });
+
+        // Read back from the store rather than echoing the request: `applyOp`
+        // floors and normalises (see the op in `timeline.ts`), and a caller
+        // that asked for -5 frames should be told it got 0.
+        const after = useEditorTimelineStore.getState().timeline?.tracks[track]?.clips[clip];
+        return {
+          ok: true,
+          track,
+          clip,
+          name: after?.name ?? c.name,
+          fadeInFrames: after?.fade_in_frames ?? 0,
+          fadeOutFrames: after?.fade_out_frames ?? 0,
+          fadeInCurve: after?.fade_in_curve ?? DEFAULT_FADE_CURVE,
+          fadeOutCurve: after?.fade_out_curve ?? DEFAULT_FADE_CURVE,
+          fadeInCurveName: fadePresetName(after?.fade_in_curve),
+          fadeOutCurveName: fadePresetName(after?.fade_out_curve),
+          note: 'a fade on a video clip fades its picture AND its embedded audio together',
         };
       },
 

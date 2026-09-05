@@ -1036,5 +1036,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   size: a predicted one could drift from the upstream function by a pixel and
   shear the whole file.
 
+- **2026-09-05** — **Per-clip fades (D-147)** · **zero upstream-file edits.**
+  Everything is in Chroma's own files: `crates/chroma-types/src/{fade.rs,
+  lib.rs}`, `crates/chroma-timeline/src/lib.rs`,
+  `crates/chroma-media/src/audio.rs`, `chroma/audio.rs`, `chroma/edit.rs`,
+  `packages/editor/*`, and one
+  Chroma-owned frontend file in the fork, `app/src/hooks/useChromaControl.ts`
+  (the D-020 MCP bridge — a Chroma addition, not an upstream RapidRAW file), which
+  gains two ops in its existing `OPS` registry and an `@chroma/editor` import.
+  No `generate_handler!` line was added: the fade rides the existing
+  `chroma_timeline_get`/`chroma_timeline_set` verbatim-document contract rather
+  than getting a command of its own, so the Tauri surface is unchanged. Logged
+  because the *absence* of an upstream edit is the point — a new clip property
+  reaching both the compositor and the audio mixer is exactly the kind of change
+  that could have leaked into `image_processing.rs`, and did not.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

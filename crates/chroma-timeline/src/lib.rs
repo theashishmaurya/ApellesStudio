@@ -85,6 +85,16 @@ use serde::{Deserialize, Serialize};
 
 use chroma_types::Rational;
 
+// D-147 — the fade curve math itself lives in `chroma-types` (L0), not here.
+// It is pure, unit-agnostic bezier arithmetic with two consumers on two
+// different layers: this crate's `Clip::fade_multiplier_at` (L2, video frames,
+// for the compositor's opacity) and `chroma_media::audio::FadeEnvelope` (L1,
+// output sample-frames, for the mixer's gain). L1 cannot depend on L2 — D-039's
+// dependency graph is one-way — so the shared half sits below both. Re-exported
+// here because `Clip`'s own fade fields are typed by it, and a caller working
+// in the timeline model should not have to know which crate the type came from.
+pub use chroma_types::fade::{self, FadeCurve, fade_gain};
+
 /// The whole edit — every track, top to bottom.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Timeline {
@@ -436,6 +446,57 @@ pub struct Clip {
     /// "no keyframes → None → caller uses the raw fields" contract).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chroma_keyframes: Option<serde_json::Value>,
+
+    // --- Fade in / out (D-147) -------------------------------------------- //
+    // How many frames at the head / tail of this clip its output ramps up /
+    // down over, and the curve each ramp is shaped by. The evaluation is
+    // `fade::fade_gain`; the consumers are `chroma::edit`'s compositor (which
+    // multiplies the result into `opacity`) and `chroma::audio`'s mixer (which
+    // multiplies it into this clip's samples).
+    //
+    // **One pair, driving both picture and sound** — not separate video/audio
+    // fades. That is what Premiere and Resolve actually do: one fade handle
+    // per clip, whose meaning follows what the clip contributes (opacity on a
+    // video clip, volume on an audio one; both on a video clip that still
+    // carries its own embedded audio). A user who genuinely wants them to
+    // differ unlinks the A/V pair (D-129) and gets two clips with two
+    // independent fades — the workflow both references push you toward.
+    // Full reasoning in `docs/notes/audio-fade-duck-crossfade-plan.md` §2.
+    //
+    // **`i64`, not `u32`**, despite these being non-negative by nature: every
+    // frame count on this struct (`duration`, `source_len`, `source_start`,
+    // `start_frame`) is `i64`, and a `u32` here would need a cast at every
+    // comparison against `duration` — including inside the audio mixer's
+    // sample arithmetic. A negative or nonsense value is treated as "no fade"
+    // at the point of use (`fade_gain`), the same "the model stores what the
+    // UI wrote, the consumer decides what it means" rule `crop_left` states.
+    //
+    // `#[serde(default)]` is correct here (unlike `opacity`/`scale`, and like
+    // the crop insets): `i64::default() == 0`, and zero frames genuinely IS
+    // "no fade", so a pre-D-147 `project.json` clip with none of these keys
+    // loads un-faded and renders and mixes byte-identically. No migration
+    // sentinel, no backfill pass. `fade_gain` short-circuits to exactly `1.0`
+    // for that case, so it also costs nothing.
+    /// Frames at the head of the clip over which its output ramps up from
+    /// silence/transparency. `0` = no fade in.
+    #[serde(default)]
+    pub fade_in_frames: i64,
+    /// Frames at the tail of the clip over which its output ramps down to
+    /// silence/transparency. `0` = no fade out.
+    #[serde(default)]
+    pub fade_out_frames: i64,
+    /// The shape of the fade-in ramp — a `cubic-bezier(x1,y1,x2,y2)` curve
+    /// (see [`FadeCurve`]). Defaults to [`FadeCurve::LINEAR`], the exact
+    /// identity, for a missing key AND for `Clip::default()`.
+    #[serde(default)]
+    pub fade_in_curve: FadeCurve,
+    /// The shape of the fade-out ramp. Separate from `fade_in_curve` because
+    /// both references let you shape each handle independently, and it costs
+    /// one field. Note the ramp is evaluated on *distance from the
+    /// out-point*, so this curve's `x = 0` is the very end of the clip — an
+    /// `ease-in` fade-out is slow near silence, matching an `ease-in` fade-in.
+    #[serde(default)]
+    pub fade_out_curve: FadeCurve,
 }
 
 fn default_opacity() -> f64 {
@@ -477,6 +538,17 @@ impl Default for Clip {
             crop_right: 0.0,
             crop_bottom: 0.0,
             chroma_keyframes: None,
+            // D-147 — zero frames really is "no fade", so unlike
+            // `opacity`/`scale` these two need no non-zero migration default.
+            fade_in_frames: 0,
+            fade_out_frames: 0,
+            // …but the curves DO: `FadeCurve`'s own `Default` is `LINEAR`,
+            // not the type's zero value, which is a real, badly-behaved curve
+            // (see that impl). Spelled out here rather than relying on it
+            // implicitly, since this whole `impl Default` exists because a
+            // derived one got exactly this class of thing wrong.
+            fade_in_curve: FadeCurve::LINEAR,
+            fade_out_curve: FadeCurve::LINEAR,
         }
     }
 }
@@ -496,6 +568,29 @@ impl Clip {
     /// arithmetic this type exists to own.
     pub fn end_frame(&self) -> i64 {
         self.start_frame + self.duration
+    }
+
+    /// D-147 — this clip's fade multiplier `frames_into_clip` frames after its
+    /// own in-point, in `0.0..=1.0`. Exactly `1.0`, with no arithmetic, for a
+    /// clip with no fade configured — which is every clip in every pre-D-147
+    /// project, so the render/mix paths stay byte-identical.
+    ///
+    /// `pub` for the same reason [`Self::end_frame`] is: two `app/src-tauri`
+    /// consumers need it (`chroma::edit`'s compositor, in *video* frames, and
+    /// `chroma::audio`'s mixer, which uses the unit-agnostic [`fade_gain`]
+    /// directly at *sample*-frame resolution instead — a per-video-frame step
+    /// would be audible zipper noise). Both would otherwise re-spell this
+    /// against `duration` at the call site, which is the arithmetic this type
+    /// exists to own.
+    pub fn fade_multiplier_at(&self, frames_into_clip: i64) -> f64 {
+        fade_gain(
+            frames_into_clip as f64,
+            self.duration as f64,
+            self.fade_in_frames as f64,
+            self.fade_out_frames as f64,
+            &self.fade_in_curve,
+            &self.fade_out_curve,
+        )
     }
 
     /// The per-clip half of [`Timeline::normalise_legacy_positions`] — see

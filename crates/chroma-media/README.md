@@ -30,8 +30,15 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   `app/src-tauri/src/chroma/*.rs` as a thin wrapper.
 - **Resolve the timeline.** "Which clip is under this playhead" belongs to
   `chroma-timeline` + the app's `chroma::edit` today and to
-  `chroma-compositor` later. This crate is handed a path, a source second and
-  a gain; it never works one out.
+  `chroma-compositor` later. This crate is handed a path, a source second, a
+  gain and (D-147) a fade envelope in seconds; it never works one out.
+  `audio::AudioSourceSpec` is that boundary, and every field on it is a
+  *media* fact stated in seconds — which is why D-147's `audio::FadeEnvelope`
+  is seconds too, and why the frames→seconds conversion that needs a `Clip`
+  stays app-side, in `chroma::audio::fade_for_clip`. The curve math the
+  envelope evaluates (`chroma_types::fade_gain`) is in **L0** for the same
+  reason: it is shared with `chroma-timeline`'s compositor-side fade without
+  this crate depending on `chroma-timeline`.
 - **Touch the GPU, the grade, or `AppState`.**
 
 ## The `test-support` feature

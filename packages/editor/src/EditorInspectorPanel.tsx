@@ -36,8 +36,8 @@ import {
   removeClipKeyframe,
   upsertClipKeyframe,
 } from './clipKeyframes';
-import { ClipInspectorPanel, type TransformPatch } from './ClipInspectorPanel';
-import { findClip } from './timeline';
+import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
+import { DEFAULT_FADE_CURVE, findClip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 
 export function EditorInspectorPanel() {
@@ -80,6 +80,25 @@ export function EditorInspectorPanel() {
       crop_top: patch.crop_top ?? selectedClip.crop_top ?? 0,
       crop_right: patch.crop_right ?? selectedClip.crop_right ?? 0,
       crop_bottom: patch.crop_bottom ?? selectedClip.crop_bottom ?? 0,
+    });
+  };
+
+  // D-147 — fades get their own op rather than riding `set_clip_transform`
+  // (see that op's own doc in `timeline.ts` for why this is the opposite call
+  // D-132 made for crop, and deliberately so). Same fill-the-rest-from-the-clip
+  // shape `applyTransform` uses, since `set_clip_fade` also replaces the whole
+  // set — an omitted field would otherwise reset to the default rather than
+  // being left alone.
+  const applyFade = (patch: FadePatch) => {
+    if (!primary || !selectedClip || selectedIdx < 0) return;
+    applyOp({
+      kind: 'set_clip_fade',
+      track: primary.track,
+      clip: selectedIdx,
+      fade_in_frames: patch.fade_in_frames ?? selectedClip.fade_in_frames ?? 0,
+      fade_out_frames: patch.fade_out_frames ?? selectedClip.fade_out_frames ?? 0,
+      fade_in_curve: patch.fade_in_curve ?? selectedClip.fade_in_curve ?? DEFAULT_FADE_CURVE,
+      fade_out_curve: patch.fade_out_curve ?? selectedClip.fade_out_curve ?? DEFAULT_FADE_CURVE,
     });
   };
 
@@ -135,6 +154,7 @@ export function EditorInspectorPanel() {
       clipKeyframes={clipKeyframes}
       keyedHere={keyedHere}
       onTransformChange={applyTransform}
+      onFadeChange={applyFade}
       onUpsertKeyframe={doUpsertKeyframe}
       onRemoveKeyframeHere={doRemoveKeyframeHere}
       onClearKeyframes={doClearKeyframes}

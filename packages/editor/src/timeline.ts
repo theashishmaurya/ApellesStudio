@@ -125,6 +125,75 @@ export interface Clip {
    *  (Rust-side) interpolates it at render time relative to the clip's own
    *  source frame — this file never interpolates it itself. */
   chroma_keyframes?: Array<{ frame: number; params: Record<string, unknown> }>;
+  /** Fade in / out (D-147) — mirrors `chroma_timeline::Clip::fade_in_frames`
+   *  / `fade_out_frames` / `fade_in_curve` / `fade_out_curve`.
+   *
+   *  How many frames at the head / tail of this clip its output ramps up /
+   *  down over, and the cubic-bezier curve each ramp is shaped by. **One pair
+   *  drives both picture and sound**: opacity on a video clip, gain on an
+   *  audio clip, and both on a video clip that still carries its own embedded
+   *  audio — which is what Premiere's and Resolve's single fade handle
+   *  actually does. See the Rust field's own doc and
+   *  `docs/notes/audio-fade-duck-crossfade-plan.md` §2.
+   *
+   *  Optional here for the same reason the transform fields are: absent on a
+   *  pre-D-147 clip, defaulted server-side (`0` frames, `linear` curves) on
+   *  the next `chroma_timeline_get`. Frames, not seconds — the unit every
+   *  other number on this type is in. */
+  fade_in_frames?: number;
+  fade_out_frames?: number;
+  fade_in_curve?: FadeCurve;
+  fade_out_curve?: FadeCurve;
+}
+
+/** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147) — mirrors
+ *  `chroma_timeline::FadeCurve`. `P0 = (0,0)` and `P3 = (1,1)` are implicit;
+ *  `x` is normalised progress through the fade window, `y` the multiplier at
+ *  that progress.
+ *
+ *  **No preset name is stored** — the four control points are the only truth,
+ *  and [`fadePresetName`] matches a curve back to a label for display.
+ *  Storing both would be two sources of truth that disagree the moment a
+ *  custom curve is authored (which MCP can already do — D-147's known UI
+ *  gap is the editor widget, not the model). */
+export interface FadeCurve {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** The four curve presets the Inspector offers, as real control points —
+ *  mirroring `chroma_timeline::FadeCurve`'s own constants exactly.
+ *
+ *  `linear` is `(1/3, 2/3)` rather than CSS's `(0,0,1,1)`. Both trace the same
+ *  straight line — any control points on the `y = x` diagonal do — but
+ *  `1/3, 2/3` is the *uniform* parameterisation, which is better-conditioned
+ *  for the Rust-side solver. See that constant's own doc for the full
+ *  reasoning; this list must stay in step with it, or a preset picked here
+ *  would round-trip back as "custom". */
+export const FADE_PRESETS: ReadonlyArray<{ name: string; curve: FadeCurve }> = [
+  { name: 'linear', curve: { x1: 1 / 3, y1: 1 / 3, x2: 2 / 3, y2: 2 / 3 } },
+  { name: 'ease-in', curve: { x1: 0.42, y1: 0, x2: 1, y2: 1 } },
+  { name: 'ease-out', curve: { x1: 0, y1: 0, x2: 0.58, y2: 1 } },
+  { name: 'ease-in-out', curve: { x1: 0.42, y1: 0, x2: 0.58, y2: 1 } },
+];
+
+/** `linear` — what an absent curve means, matching Rust's `FadeCurve::default()`. */
+export const DEFAULT_FADE_CURVE: FadeCurve = FADE_PRESETS[0].curve;
+
+/** The preset `c` exactly matches, or `null` for a custom curve. An absent
+ *  curve is `linear`, matching the server-side default. Exact comparison, the
+ *  same call Rust's `FadeCurve::preset_name` makes and for the same reason:
+ *  these values come from the preset list itself, so "the user picked ease-in"
+ *  really is the exact literal, and a tolerance would invent a second notion
+ *  of identity. */
+export function fadePresetName(c: FadeCurve | undefined | null): string | null {
+  if (!c) return FADE_PRESETS[0].name;
+  const hit = FADE_PRESETS.find(
+    (p) => p.curve.x1 === c.x1 && p.curve.y1 === c.y1 && p.curve.x2 === c.x2 && p.curve.y2 === c.y2,
+  );
+  return hit ? hit.name : null;
 }
 
 /** A clip's exclusive timeline end frame — `chroma-timeline::Clip::end_frame`. */
@@ -976,6 +1045,34 @@ export type EditOp =
       track: number;
       clip: number;
       keyframes: Array<{ frame: number; params: Record<string, unknown> }>;
+    }
+  /** D-147 — set a clip's fade in/out durations and curve shapes. Refused
+   *  (no-op) if the clip's track is locked, same as every other per-clip op.
+   *
+   *  **Its own op rather than riding `set_clip_transform`**, which is the
+   *  opposite call D-132 made for crop, and deliberately so. Crop rides the
+   *  transform op because crop and the D-082 five are one clip's *geometry*,
+   *  edited from one form. A fade is not geometry — it is a time-domain
+   *  envelope over whatever that geometry produces, it applies to audio-track
+   *  clips that have no transform at all, and (unlike crop) it is the one
+   *  clip property an MCP agent is expected to set on its own without
+   *  touching the transform. Folding it into `set_clip_transform` would mean
+   *  every fade write also restated four crop insets and five transform
+   *  values it did not intend to change — precisely the "an optional field
+   *  would silently reset" hazard that op's own doc names as the reason its
+   *  fields are required.
+   *
+   *  Durations are **frames** and are floored at 0 on the way in; the curves
+   *  are optional and default to `linear` (the server's own default), so a
+   *  caller that only wants to change a duration need not restate them. */
+  | {
+      kind: 'set_clip_fade';
+      track: number;
+      clip: number;
+      fade_in_frames: number;
+      fade_out_frames: number;
+      fade_in_curve?: FadeCurve;
+      fade_out_curve?: FadeCurve;
     };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
@@ -1027,6 +1124,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.syncLocked ? `Sync-lock track ${op.track + 1}` : `Unsync track ${op.track + 1}`;
     case 'move_track':
       return `Reorder track ${op.from + 1}`;
+    case 'set_clip_fade':
+      return `Fade ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_transform':
       return `Adjust ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_keyframes':
@@ -1231,6 +1330,32 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const nc = next.tracks[op.track].clips[op.clip];
     // normalize `[]` to `undefined` — see the op's own doc.
     nc.chroma_keyframes = op.keyframes.length > 0 ? op.keyframes : undefined;
+    return next;
+  }
+  if (op.kind === 'set_clip_fade') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    // Floored and integral here, on the way in, so a negative or fractional
+    // frame count can never reach `project.json` — the same reason the crop
+    // insets are clamped here rather than left entirely to the backend. Rust
+    // still treats a nonsense value as "no fade" at the point of use
+    // (`fade_gain`), because `chroma_timeline_set` stores whatever it is given
+    // and MCP writes reaching the store by another route must degrade safely
+    // too; the UI's own writes should be well-formed at rest, not merely
+    // survivable.
+    //
+    // NOT clamped to the clip's `duration`: a fade longer than the clip is a
+    // legitimate thing to author (the two windows then overlap and multiply —
+    // see `fade_gain`'s doc), and clamping would silently move a handle the
+    // user placed.
+    nc.fade_in_frames = Math.max(0, Math.floor(op.fade_in_frames || 0));
+    nc.fade_out_frames = Math.max(0, Math.floor(op.fade_out_frames || 0));
+    nc.fade_in_curve = op.fade_in_curve ?? DEFAULT_FADE_CURVE;
+    nc.fade_out_curve = op.fade_out_curve ?? DEFAULT_FADE_CURVE;
     return next;
   }
   if (op.kind === 'move') {

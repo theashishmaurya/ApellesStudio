@@ -10893,5 +10893,257 @@ landed.
 **Numbering.** Assigned D-146 against `main`'s real tip (`3edb9e5`, D-145) and
 re-verified free immediately before the docs commit.
 
+---
+
+## D-147 — Per-clip fade in/out with real cubic-bezier curves; crossfade found blocked on the no-overlap invariant, ducking scoped onto the same primitive
+
+**decided + built (2026-09-05).** Owner: "sound engineer"-style control over
+audio — clarified as real practical control, "enough for transitions etc.",
+explicitly *not* the AI emotional understanding D-139/D-140 already scoped
+out — then, concretely, "build the fade in and fade out with bezier curve
+support." Scoping doc: `docs/notes/audio-fade-duck-crossfade-plan.md`.
+
+### The scoping half
+
+- **Crossfade is genuinely blocked, and the blocker is one invariant.** Read
+  D-104's overlap rejection in `Timeline::move_clip` rather than assuming it:
+  overlap is refused for *every* move, same-track and cross-track alike, and
+  `ripple: true` is not an exception (it makes room, it does not permit
+  overlap). The cheap "no-overlap crossfade" — fade-out tail meeting fade-in
+  head at the cut — was reasoned through properly and **does not work**: there
+  is no frame at which both clips exist, so the output goes full A → *zero* →
+  full B. That is a dip-to-black/dip-to-silence, a different (real) transition,
+  and no choice of curve rescues it, because the hole is a consequence of
+  non-overlap and not of the curve's shape.
+- **The renderer and mixer are already crossfade-ready; only the model isn't.**
+  `resolve_visible_video_layers_at` + `composite_video_frame` already
+  alpha-blend N layers, and `mix_sources` already sums N sources. Worth
+  recording, because it makes the remaining work much smaller than it looks —
+  and much easier to underestimate.
+- **The real path, proposed and deliberately not built:** *cross-track* overlap
+  only, which is D-096's original policy that D-104 reversed for a UX reason
+  ("landing on top of a clip shouldn't be a reachable outcome of a plain
+  move") rather than a correctness one. Two clips overlapping on adjacent
+  tracks with complementary fades is a genuine crossfade, and `Track::clip_at`'s
+  `.find()` stays correct because there is still one clip per track per frame.
+  *Same-track* overlap is the big version and is not on the table: it changes
+  what "the clip at this frame" means everywhere, including that `.find()`.
+  Not built tonight because it needs the owner's call on reversing his own live
+  UX decision, and because the fades it composes should exist first. Also
+  recorded there: two `linear` fades crossing produce a real **−3 dB dip**, which
+  is why every NLE ships "Constant Power" separately, and `sin(πt/2)` is *not*
+  exactly a cubic bezier — a real design question for that pass, not one this
+  curve model already answers.
+- **Ducking cannot ride D-057's `Track::gain`** — that is a static `f32`
+  resolved once at `chroma_audio_play` and never re-read. It needs time-varying
+  gain, which is precisely what fades needed. **So the fade envelope was
+  deliberately built as "give me a gain multiplier at position N", applied per
+  sample-frame before `mix_sources`, rather than as the two-line special case a
+  fade alone would have needed.** Ducking is the same interface with a
+  different function behind it. That is the one thing this pass owed a feature
+  it did not build.
+
+### The build
+
+- **`crates/chroma-types/src/fade.rs`** — `FadeCurve { x1, y1, x2, y2 }`, the
+  CSS/After Effects `cubic-bezier` model, plus `fade_gain()`. **There was no
+  easing math anywhere in this repo** (verified by grep across `crates/`,
+  `app/src-tauri/`, `packages/*`): D-034's `chroma::keyframes` is strictly
+  linear, so this is genuinely new. It went in a crate, not in
+  `chroma::keyframes`, because a fade curve has no keys, interpolates within one
+  clip's own window, and is needed by **two** consumers —
+  CLAUDE.md's own "if two places need it, extract it," and `Clip::end_frame()`'s
+  precedent. Easing the D-034 engine would change every existing mask and
+  relight keyframe and was left alone. (This pass first put it in
+  `chroma-timeline`; the D-146 reconciliation at the end of this entry moved it
+  down to L0 `chroma-types`, re-exported from `chroma-timeline`, because the
+  second consumer turned out to sit *below* the timeline model. Read that
+  section for the full argument.)
+- **The evaluator is Newton–Raphson (8 iterations, analytic derivative) with a
+  guarded bisection fallback** — WebKit's `UnitBezier`, what browsers ship. The
+  problem is an *inverse* one (given `x`, find `t`, then `y(t)`), which is why
+  De Casteljau is not the answer on its own: it evaluates at a given `t` and
+  would still need wrapping in a search. Bisection covers the degenerate
+  tangents (`x1 == x2 == 0` has `x'(0) == 0`) Newton alone divides by ~zero on.
+  Deterministic by construction: pure `f64`, fixed caps, input-only exit
+  condition.
+- **A real correction the tests forced, recorded because the wrong version is
+  the intuitive one.** The first draft claimed `linear` must be
+  `(1/3,1/3,2/3,2/3)` and that CSS's `(0,0,1,1)` "would be a smoothstep-shaped
+  S." That is **false** — *any* control points on the `y = x` diagonal trace the
+  same straight line, and a unit test caught it immediately. The real reason to
+  ship `1/3, 2/3` is numeric: it is the *uniform* parameterisation (`x(t) = t`),
+  so the solver's initial guess is already the exact root for the default curve
+  every un-set fade evaluates per sample-frame, whereas `(0,0,1,1)` has a
+  degenerate start tangent that forces bisection near the start of every fade.
+  Same line, better-conditioned. A test now asserts both are the identity so the
+  wrong intuition cannot be re-derived into the constant.
+- **Model:** `Clip` gains `fade_in_frames`/`fade_out_frames` (`i64`, matching
+  every other frame count on the struct — a `u32` would need a cast at every
+  comparison against `duration`) and `fade_in_curve`/`fade_out_curve`.
+  `#[serde(default)]` throughout is correct here, unlike `opacity`/`scale`:
+  zero frames genuinely *is* "no fade," so every pre-D-147 project loads
+  un-faded with no migration, no sentinel, no backfill. `FadeCurve`'s own
+  `Default` is manual (`LINEAR`) for the same reason `Clip`'s is — the type's
+  zero value is a real, badly-behaved curve, not "no curve."
+- **One fade pair drives picture AND sound**, not separate video/audio fades.
+  That is what Premiere's and Resolve's single fade handle does: one gesture
+  whose meaning follows what the clip contributes. Chroma's model already
+  carries that shape, and D-129 already provides the escape hatch — unlink the
+  A/V pair and you have two clips with two independent fades, which is the
+  workflow both references push you toward anyway. The honest asymmetry (a
+  perceptually even *audio* fade is nearer `ease-in` than `linear`, because
+  loudness is roughly logarithmic in amplitude) is **stated in the field docs
+  and the MCP tool text rather than silently applied** — applying a different
+  curve to audio would make one stored number mean two different things.
+- **Video:** the fade multiplies into `opacity` in `resolve_clip_transform`,
+  *after* keyframe resolution, so a keyframed opacity animation and the fade
+  compose multiplicatively — the only order under which neither silently
+  overrides the other. Position comes free and exactly as `source_frame -
+  clip.source_start`. `ClipTransform::is_identity()` needed no change and that
+  was verified rather than assumed: the fade is already folded into `opacity`
+  by then, so a faded lone clip correctly fails the fast path — the D-132/B-053
+  lesson, checked for the new field with its own test.
+- **Audio:** a new `FadeEnvelope` on `AudioSourceSpec`, applied to each source's
+  buffer in `mix_chunk` **before** `mix_sources` — so `mix_sources` is
+  completely untouched and every D-057 headroom guarantee, including its
+  byte-identical single-source passthrough test, stands. Evaluated **per
+  sample-frame**, not per chunk (1024 frames ≈ 21 ms is a staircase, and a
+  staircase on a gain envelope is zipper noise) and not per video frame. The
+  session's `pos_frames` counter advances through `discard_samples` too, since
+  D-125's skew compensation discards samples that represent timeline time that
+  should already have played.
+- **`resolve_audio_track_positions` now returns `(Clip, VideoInfo, f32)`**
+  instead of D-057's `(PathBuf, f64, f64, f32)`. This is a simplification, not
+  an extension: `chroma_audio_play` already derived exactly those seconds from
+  exactly that pair for the embedded-audio baseline twenty lines away, so this
+  removes a duplication rather than adding a fifth positional element — and it
+  keeps the module dependency one-way (`audio` → `edit`, never the reverse), so
+  the mixer's `FadeEnvelope` stays in the mixer.
+- **Inspector:** a Fade section in `ClipInspectorPanel.tsx` (its own section, not
+  more Transform rows — a fade is a time-domain envelope, not geometry, and it
+  applies to audio clips that have no transform), two duration fields in frames
+  plus a curve select per direction. `set_clip_fade` is its **own** op, which is
+  the *opposite* call D-132 made for crop, deliberately: crop rides
+  `set_clip_transform` because crop and the D-082 five are one clip's geometry
+  edited from one form, whereas a fade is the one clip property an agent sets
+  without touching the transform, and folding it in would make every fade write
+  restate nine values it did not intend to change.
+- **MCP: `get_timeline` + `set_clip_fade` — the first Edit-tab tools on a
+  surface `mcp-tool-coverage.md` recorded as a verified zero.** `get_timeline`
+  is a prerequisite, not scope creep (an agent cannot name a clip otherwise) and
+  is the same read op D-140 §6a independently identified. Both go through
+  `timelineStore.applyOp`, which **exercises D-140 §6c's answer for the first
+  time** rather than only restating it: `applyOp` pushes onto the shared
+  `@chroma/history` stack and the Rust commands do not, so an agent's fade is
+  undoable. A curve is accepted as a preset name *or* four control points and
+  always returned as four control points plus the matched name — a curve read
+  and written back is exactly what was read, and an unknown preset name is
+  rejected rather than silently substituted.
+
+### Verification
+
+Measured on this pass's own (pre-D-146) base. For the numbers after the rebase
+onto `main` and the D-146 reconciliation — which is the tree that actually
+landed — see the reconciliation section at the end of this entry.
+
+`cargo check -p RapidRAW -p chroma-timeline --all-targets` clean (only the 6
+pre-existing `ai_processing.rs` dead-code warnings every entry since D-143 has
+noted). `cargo test -p chroma-timeline` — 139 passed (17 new). `cargo test -p
+RapidRAW --lib -- chroma::` — 252 passed, 0 failed (10 new; the known flaky
+`relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
+did not fire this run). `npm test --workspace @chroma/editor` — 287 passed (14
+new). `npx tsc --noEmit -p packages/editor` clean; `tsc -p app` has 64 errors
+**before and after** this change (all pre-existing i18n/`any` errors in the
+vendored fork), i.e. zero new. Clippy clean on all new code.
+
+The three tests that matter most, named explicitly because they are the ones a
+regression would hide behind: a clip with **no fade configured** returns
+*exactly* `1.0` from `fade_gain` (bit-compared), resolves to a bit-identical
+`opacity`, and gets **no `FadeEnvelope` at all** rather than a unity one — so the
+un-faded render and mix paths run the same arithmetic they ran before D-147.
+
+### Honest gaps
+
+1. **No custom-curve UI.** The Inspector ships the four presets as a select. The
+   model, evaluator, wire format and MCP surface all take arbitrary control
+   points *today* — an MCP-authored custom curve round-trips through the GUI and
+   renders correctly, and the panel reports it as "custom" rather than
+   misreporting it as linear — but a human cannot author one from the app. A
+   small SVG two-handle widget is the deferred piece; the math and model are not
+   blocking it.
+2. **Not seen in the assembled app** — this sandbox cannot launch the Tauri
+   window, the same disclosed constraint every entry since D-125 carries.
+   Specifically unverified by eye/ear: that a fade *looks* right in the preview,
+   and that it *sounds* smooth. The per-sample-frame choice is the reasoned
+   defence against zipper noise, not a measurement of its absence.
+3. **The `discard_samples` interaction is reasoned, not measured** — advancing
+   `pos_frames` through D-125's skew compensation is right by construction, but
+   that path only fires on a real device warm-up this environment cannot
+   exercise.
+4. **A pre-existing gap will look like this feature failing.** Roadmap item 1's
+   known limitation — a source's set is fixed at `chroma_audio_play`, so a
+   multi-clip timeline goes quiet after the first clip until the next Play/seek
+   — is untouched here. A fade on clip 2 is correct when playback *starts* in
+   clip 2 and is not heard at all when playback runs into it from clip 1,
+   because clip 2 is not a source in that session. Not introduced by this pass,
+   but it is the most likely way a user first sees a fade "not work."
+
+**Numbering, and the D-146 reconciliation (done, not flagged).** Assigned D-147
+after re-checking `main` at the end of this pass: D-146 was taken by the
+`chroma-media` extraction, which landed while this fork was in progress. That
+was not only a numbering collision — **D-146 moved the entire audio engine
+(`mix_chunk`, `run_session`, `mix_sources`, `AudioSourceSpec`) out of
+`app/src-tauri/src/chroma/audio.rs` into `crates/chroma-media/src/audio.rs`**,
+and this fork's audio work was written against the pre-move file. It was
+rebased onto `main` and reconciled rather than left as a flag. Where each piece
+ended up, and why:
+
+- **`FadeEnvelope` → `crates/chroma-media/src/audio.rs`**, beside
+  `AudioSourceSpec` and `mix_chunk`, which is what it multiplies into. The
+  envelope is *seconds* — `offset_secs` / `len_secs` / `fade_in_secs` /
+  `fade_out_secs` plus the two curves — which is a media fact of exactly the
+  same kind as `AudioSourceSpec`'s existing `start_secs` / `duration_secs`,
+  the boundary D-146 designed for this sort of extension. `mix_chunk` applies
+  each source's envelope to that source's own buffer *before* `mix_sources`
+  sees it, so D-057's headroom guarantees and its byte-identical single-source
+  passthrough are untouched.
+- **`FadeEnvelope::for_clip` → `chroma::audio::fade_for_clip`, app-side**, as
+  a free function. Building an envelope means reading a `chroma_timeline::Clip`
+  and its probed `VideoInfo` to convert fade *frames* to seconds — timeline
+  resolution, which is precisely the thing D-146 kept app-side when it split
+  this file. So the boundary is: the app converts frames→seconds and hands the
+  crate a finished envelope, exactly as it already does for `start_secs` and
+  `duration_secs`. The alternative — passing the raw clip through
+  `AudioSourceSpec` and letting `start()` build the envelope — was rejected
+  because it would have put a `Clip` in a media-layer struct, which is the
+  layer violation D-146 split the file to avoid.
+- **`FadeCurve` / `fade_gain` → `chroma-types` (L0)**, moved down from
+  `chroma-timeline` (L2), re-exported there so `chroma_timeline::{FadeCurve,
+  fade_gain}` still resolve and nothing else changed. This is the one piece
+  that did *not* land where the original pass put it, and the reason is
+  D-039's one-way dependency graph: `chroma-media` is **L1**, *below* the
+  timeline model ("no timeline model" is that crate's stated boundary), so it
+  cannot depend on `chroma-timeline` to reach the bezier solver. The three
+  options were (a) add the upward `chroma-media → chroma-timeline` edge —
+  rejected, it would be the workspace's first violation of a lock CLAUDE.md
+  calls "the law"; (b) copy the solver into the mixer — rejected, that is the
+  duplication "if two places need it, extract it" forbids and would give the
+  compositor and the mixer two curve implementations to drift apart; (c) move
+  the shared, dependency-free half down to the layer both consumers can see —
+  taken. `fade.rs` needs nothing but `serde`, and `FadeCurve` is a shared value
+  type in the same sense `Resolution` and `Rational` are.
+
+`edit.rs`'s `resolve_audio_track_positions` change auto-merged (it is app-side
+and stayed there); the `chroma-timeline` model, Inspector and MCP halves were
+unaffected. Verified after the rebase: `cargo check --workspace --all-targets`
+clean; `chroma-types` 21/21 (17 fade), `chroma-timeline` 122/122,
+`chroma-media` 86/86 (including the three relocated envelope tests),
+`RapidRAW --lib chroma::` 173/173 (including the four relocated
+`fade_for_clip` tests and the five compositor fade tests); `tsc --noEmit -p
+packages/editor` clean. The backward-compat property still holds and is still
+tested at both ends: a clip with no fade gets `None`, not a 1.0 envelope, so
+`mix_chunk` never touches its buffer.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

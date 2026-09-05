@@ -25,8 +25,16 @@ export { TimelinePane } from './TimelinePane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
-export type { Timeline, Track, Clip, EditOp, DraggedMedia } from './timeline';
+export type { Timeline, Track, Clip, EditOp, DraggedMedia, FadeCurve } from './timeline';
 export {
+  // D-147 — fade curve presets + the curve→preset-name match, exported for
+  // the MCP bridge: `useChromaControl`'s `set_clip_fade` accepts a preset name
+  // and `get_timeline` reports one back.
+  FADE_PRESETS,
+  DEFAULT_FADE_CURVE,
+  fadePresetName,
+  // D-147 — `get_timeline` reports the timeline's own duration.
+  timelineDuration,
   CHROMA_MEDIA_DRAG_MIME,
   clipFromDraggedMedia,
   // D-129 — A/V link groups (`docs/notes/av-linking.md`).
