@@ -10522,3 +10522,88 @@ WKWebView's own DnD engine.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-143 — `chroma-grade-model` real extraction: `save_grade`/`load_grade` + the schema migration gate move verbatim, zero-dependency-edge claim confirmed on contact
+
+**decided + built (2026-09-05).** Executes D-141's plan §2.4, in an isolated
+worktree (`fork/extract-grade-model`) alongside two sibling forks extracting
+disjoint slices of the same plan.
+
+- **Context.** D-141 read `chroma/grade.rs` and found it the cleanest
+  extraction in the repo: `save_grade` / `load_grade` / `migrate_v1` /
+  `relativize` / `resolve` / `grade_name` + `SCHEMA` / `MATTE_KEYS` /
+  `SaveResult` (~300 of the file's 376 lines) import nothing but
+  `std::path`, `base64`, `serde_json` — no `super::`, no `crate::`. This pass
+  moves that code for real, following the `chroma-motion`/`motion.rs` shape
+  D-141 names as the template.
+
+- **The zero-dependency-edge claim held exactly.** Moved the six functions
+  and three items into `crates/chroma-grade-model/src/lib.rs` verbatim (only
+  change: `fn` → `pub fn` on `save_grade`/`load_grade`, the two the command
+  wrappers call). Nothing else needed touching to compile standalone.
+
+- **One correction made while landing it.** `docs/notes/architecture-lock.md`
+  and `crates/README.md` both listed `chroma-grade-model` as depending on
+  `chroma-types` — an aspirational guess from before anyone had read the real
+  code. The real file has no such dependency, so the crate's `Cargo.toml`
+  drops it rather than adding an unused dep to match a stale doc; both
+  reference tables corrected in place. This crate already existed as a stub
+  with a placeholder typed `Grade`/`ShotRef` pair (D-039 step 1) — that
+  skeleton was never wired to any caller (`grep` for `chroma_grade_model`
+  outside the crate itself returns nothing) and is replaced outright by the
+  real extraction, not kept alongside it, since the real document is
+  intentionally untyped `serde_json::Value` past the envelope (D-025's own
+  reasoning for rejecting a typed `stack` in v1 applies equally to a typed
+  Rust mirror of it).
+
+- **Commands do not move (D-141 §1).** `chroma_save_grade` / `chroma_load_grade`
+  stay `#[tauri::command]` fns in `app/src-tauri/src/chroma/grade.rs`, now
+  three-line bodies calling `chroma_grade_model::save_grade`/`load_grade`.
+  `lib.rs`'s `generate_handler!` list is untouched — both commands are still
+  at their original path. One re-export landed (`pub use
+  chroma_grade_model::SaveResult;`, needed for the command's own return
+  type); `SCHEMA` and `MATTE_KEYS` were **not** re-exported at the old path —
+  a first attempt did, and rustc immediately flagged both as
+  `unused_imports` (nothing outside the crate ever referenced
+  `grade::SCHEMA`/`grade::MATTE_KEYS`, confirmed by grep before writing the
+  shim, not after) — so the shim was trimmed to exactly what the wrapper
+  file actually uses rather than shimming for its own sake.
+
+- **Verification.**
+  - `cargo check -p RapidRAW -p chroma-timeline -p chroma-grade-model
+    --all-targets` — clean. The only warnings are the 6 pre-existing
+    `ai_processing.rs` dead-code warnings D-132/D-136/D-138 already noted
+    (unused CLIP-model constants/fn); none from this change.
+  - `cargo test -p chroma-grade-model` — **3 passed, 0 failed** (the round-trip
+    externalise/inline test, the newer-major rejection test, the
+    `grade_name` suffix-stripping test — moved verbatim from `grade.rs`'s
+    original `#[cfg(test)]` module).
+  - `cargo test -p RapidRAW --lib -- chroma::` — see the CHANGELOG/commit
+    message for the final count (run concurrently with two sibling forks'
+    own full rebuilds, so it was still compiling at the time this entry was
+    drafted). The known pre-existing flake
+    (`chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
+    under parallel test-threads, confirmed pre-existing by multiple sibling
+    forks tonight) is not chased if it reproduces.
+
+- **Honest gaps.** (1) No behaviour change was possible to get wrong here in
+  a way tests wouldn't catch — this is a pure code move, and the moved
+  `#[cfg(test)]` module is the same one that guarded the original file, not
+  new coverage. (2) The `Grade`/`ShotRef` skeleton this crate shipped with at
+  D-039 step 1 is deleted, not deprecated — if some other in-flight slice
+  had started depending on it, this would conflict; `grep` before writing
+  found zero such call sites, but that is a point-in-time check against a
+  repo with concurrent forks in flight.
+
+**Numbering.** Drafted as D-142 against this worktree's base (`D-141` the
+highest landed at the time). Before committing, fetched `main` fresh
+(`cdc4a43..55eb53f`) and found a sibling fork had landed **D-142** first —
+"A reusable pointer-gesture test harness + permanent marquee-select
+regression coverage." Renumbered this entry and every reference to it
+(`CHANGELOG.md`, `04-roadmap.md`, `crate-extraction-plan.md`,
+`architecture-lock.md`, `crates/README.md`, this crate's `README.md` and
+`src/lib.rs` doc comments, `chroma/grade.rs`, `chroma/mod.rs`) to **D-143**,
+confirmed unused on `main` at commit time.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -26,7 +26,8 @@
 //!                grade layer + resolve its depth source (D-046)
 //! - `control`  — in-app HTTP control server bridging MCP ⇄ the frontend (D-020)
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
-//! - `grade`    — the `grade.json` document: save / load / versioned schema (D-025)
+//! - `grade`    — the `grade.json` document command bridge: save / load
+//!                (D-025); the model itself lives in `chroma-grade-model` (D-143)
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
 //! - `sidecar`  — spawn + supervise the `ai/` FastAPI sidecar, kill it on exit (D-028)
 

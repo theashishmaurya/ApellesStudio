@@ -5,9 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Chroma L2 — the grade.json document model (D-025): adjustments, mask geometry, keyframes, matte/track/depth refs. Pure model (vs chroma-grade, the renderer)."
+description = "Chroma L2 — the grade.json document model (D-025): save/load, schema migration, matte/track/depth-ref externalization. Pure model (vs chroma-grade, the renderer). Zero fork deps."
 
 [dependencies]
-chroma-types = { path = "../chroma-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+base64 = "0.23"

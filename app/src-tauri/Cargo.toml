@@ -18,6 +18,7 @@ tethering = ["dep:gphoto2"]
 # no wgpu/ffmpeg — see crates/README.md.
 chroma-timeline = { path = "../../crates/chroma-timeline" }
 chroma-motion = { path = "../../crates/chroma-motion" }
+chroma-grade-model = { path = "../../crates/chroma-grade-model" }
 chroma-types = { path = "../../crates/chroma-types" }
 # Chroma editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,

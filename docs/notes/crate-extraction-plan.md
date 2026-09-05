@@ -250,6 +250,16 @@ test split being the bulk of the work in this slice.
 
 ### 2.4 `chroma-grade-model` — small, self-contained, and independently landable today
 
+**LANDED — D-143 (2026-09-05).** The zero-dependency-edge claim below held
+exactly as read: the moved code imports only `std::path`, `base64`,
+`serde_json`. One correction made while landing it —
+`architecture-lock.md`/`crates/README.md` both listed a `chroma-types`
+dependency for this crate that the real code never had; corrected in place
+rather than added to match a stale doc. `cargo check -p RapidRAW
+-p chroma-timeline -p chroma-grade-model --all-targets` clean;
+`cargo test -p chroma-grade-model` and `cargo test -p RapidRAW --lib --
+chroma::` both green. See D-143 for the full record.
+
 **Real content:** `chroma/grade.rs`'s `save_grade` / `load_grade` / `migrate_v1` /
 `relativize` / `resolve` / `grade_name` + `SCHEMA` + `MATTE_KEYS` + `SaveResult`, ~300
 lines of the 376. The 2 command wrappers (L55, L158) are three lines each and stay.
@@ -357,7 +367,7 @@ Everything else is decoupled by the `pub use` shim rule (§1).
 
 | slice | files touched | conflicts with |
 |---|---|---|
-| **A — `chroma-grade-model`** (§2.4) | `chroma/grade.rs`, `chroma/mod.rs`, `crates/chroma-grade-model/*`, `app/src-tauri/Cargo.toml` | nothing |
+| **A — `chroma-grade-model`** (§2.4) — **done, D-143** | `chroma/grade.rs`, `chroma/mod.rs`, `crates/chroma-grade-model/*`, `app/src-tauri/Cargo.toml` | nothing |
 | **B — `chroma-ai`** (§2.5) | `chroma/sidecar.rs`, `chroma/mask.rs`, `chroma/depth.rs`, `chroma/mod.rs`, `crates/chroma-ai/*`, `Cargo.toml` | nothing |
 | **C — `chroma-gpu`** (§2.1) | `render_core.rs`, `gpu_processing.rs`, `image_processing.rs` (`GpuContext`), `crates/chroma-gpu/*`, `Cargo.toml` | nothing in `chroma/*` |
 

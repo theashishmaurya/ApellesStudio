@@ -836,7 +836,8 @@ extraction leaves a `pub use` shim in the same commit so `lib.rs`'s handler list
 never contended, and **`chroma-agent` is rescoped out of this wave** — `control.rs`
 has no Tauri-free core and its op registry lives in the frontend. Real order:
 
-1. **wave 1, parallel** — `chroma-grade-model`, `chroma-ai`, `chroma-gpu`
+1. **wave 1, parallel** — ~~`chroma-grade-model`~~ (**done, D-143, 2026-09-05**),
+   `chroma-ai`, `chroma-gpu`
 2. **wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
    leave `edit.rs` first, or `chroma-media` would depend on the app)
 3. **wave 3** — `chroma-project` (needs `chroma-media`; an edge
@@ -849,6 +850,13 @@ This is where isolated-worktree parallel subagents start making sense — the pl
 which slices are genuinely disjoint and which must be sequential (see the "worktrees"
 discussion, 2026-09-02: file-boundary discipline is the actual lever, not the worktree
 flag itself).
+
+- ~~**Wave 1, slice A — `chroma-grade-model`**~~ — **done, D-143 (2026-09-05).**
+  `save_grade`/`load_grade`/`migrate_v1`/`relativize`/`resolve`/`grade_name` +
+  `SCHEMA`/`MATTE_KEYS`/`SaveResult` moved out of `chroma/grade.rs` verbatim;
+  the plan's zero-dependency-edge claim for this slice held on contact. The 2
+  command wrappers stayed in `app/src-tauri` per the "commands do not move"
+  rule and now just call the crate.
 
 - ~~**Step 2 — `chroma-types` real extraction**~~ — **done, partial-by-design,
   D-053 (2026-09-03).** Audited `app/src-tauri/src/chroma/*` for real duplicates

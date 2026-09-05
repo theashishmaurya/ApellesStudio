@@ -19,7 +19,7 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 | L1 | `chroma-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021) | gpu, types, `app/` engine |
 | L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
 | L2 | `chroma-timeline` | **yes (stub)** | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, transcript→EDL. **Pure.** | types |
-| L2 | `chroma-grade-model` | **yes (stub)** | the `grade.json` document (D-025) — adjustments, mask geometry, keyframes (D-034), matte/track/depth refs. **Pure** (model vs renderer). | types |
+| L2 | `chroma-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, schema migration, matte/track/depth-ref externalization. **Pure** (model vs renderer). | — |
 | L2 | `chroma-project` | future | the `.chroma` project (D-037) + settings (D-038) | types, grade-model, timeline |
 | L2 | `chroma-motion` | **yes** (D-046) | manifest → Remotion bridge: shells out to `npx remotion render` in `packages/motion-engine` rather than reimplementing it | types |
 | L3 | `chroma-ai` | future | sidecar client (SAM / ViTMatte / YOLO / depth / whisper) + lifecycle (D-028) | types |

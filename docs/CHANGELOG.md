@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **`chroma-grade-model` real extraction landed (D-143),** per
+  D-141's plan §2.4. `save_grade`/`load_grade`/`migrate_v1`/`relativize`/
+  `resolve`/`grade_name` + `SCHEMA`/`MATTE_KEYS`/`SaveResult` moved verbatim
+  out of `chroma/grade.rs` into the crate — the zero-dependency-edge claim
+  held (only `std::path`/`base64`/`serde_json`). The 2 `#[tauri::command]`
+  wrappers stay in `app/src-tauri` per D-141's "commands do not move" rule,
+  now thin calls into the crate. Corrected a stale `chroma-types` dependency
+  edge in `architecture-lock.md`/`crates/README.md` that the real code never
+  had.
 - **2026-09-05** — **Pacing & audio assistance scoped (D-140), no feature code.**
   Turned D-139's research into a buildable plan:
   `docs/notes/pacing-audio-assistance-plan.md`. Beat detection runs in the `ai/`

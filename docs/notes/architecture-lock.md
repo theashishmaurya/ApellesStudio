@@ -48,7 +48,7 @@ binary, Tauri.**
 | crate | responsibility | depends on |
 |---|---|---|
 | `chroma-timeline` | the OTIO-shaped edit model: tracks, clips, gaps, edits (ripple/roll/slip/slide), transcript→EDL ops. serde ↔ OTIO JSON. **Pure.** | `chroma-types` |
-| `chroma-grade-model` | the `grade.json` document (D-025): adjustments, mask geometry, keyframes (D-034), `$matte`/`$trackDir`/`$depthDir` refs. serde. **Pure** — the *model*; `chroma-grade` is the *renderer* | `chroma-types` |
+| `chroma-grade-model` | the `grade.json` document (D-025): adjustments, mask geometry, keyframes (D-034), `$matte`/`$trackDir`/`$depthDir` refs. serde. **Pure** — the *model*; `chroma-grade` is the *renderer* | none — real extraction (D-143) found zero fork/types edges, corrected from this table's earlier `chroma-types` guess |
 | `chroma-project` | the `.chroma` project (D-037): manifest, per-shot grades, settings (D-038), thumbnails, media-offline / relink | `chroma-types`, `chroma-grade-model`, `chroma-timeline` |
 | `chroma-motion` | the manifest → Remotion bridge (spawn render, read frames as an overlay layer). Thin. | `chroma-types` |
 
