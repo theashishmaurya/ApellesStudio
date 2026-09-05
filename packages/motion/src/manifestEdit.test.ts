@@ -17,9 +17,17 @@ import {
   SNAP_TO_LAYER_PAD,
   setLayerTransformField,
   parseJsonField,
+  resolveSelection,
+  resolveSelections,
+  moveLayersByDelta,
+  setFieldOnSelections,
+  setTransformFieldOnSelections,
+  alignSelections,
+  distributeSelections,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
+import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 describe('selectedScene / selectedLayer / selectedCamera2d / selectedCamera3d', () => {
   it('resolves a real scene by index', () => {
@@ -432,6 +440,266 @@ describe('setLayerTransformField', () => {
     const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
     const next = setLayerTransformField(sample, sel, 'scale', 2);
     expect(next).toBe(sample);
+  });
+});
+
+describe('resolveSelection / resolveSelections (D-158, stable layer identity)', () => {
+  it('with no id, trusts the index as long as it still resolves', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+    expect(resolveSelection(sample, sel)).toEqual(sel);
+  });
+
+  it('with no id, returns null once the index no longer resolves', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(resolveSelection(sample, sel)).toBeNull();
+  });
+
+  it('returns null when the scene itself no longer exists', () => {
+    const sel: Selection = { sceneIndex: 99, target: { kind: 'layer', index: 0 } };
+    expect(resolveSelection(sample, sel)).toBeNull();
+  });
+
+  it('scene/camera/scene3d-camera targets resolve as long as the scene exists — positional by nature', () => {
+    expect(resolveSelection(sample, { sceneIndex: 0, target: { kind: 'scene' } })).toEqual({
+      sceneIndex: 0,
+      target: { kind: 'scene' },
+    });
+    expect(resolveSelection(sample, { sceneIndex: 0, target: { kind: 'camera' } })).not.toBeNull();
+    expect(resolveSelection(sample, { sceneIndex: 99, target: { kind: 'camera' } })).toBeNull();
+  });
+
+  it('with an id, corrects a stale index after a reorder', () => {
+    const withIds: Manifest = structuredClone(sample);
+    withIds.scenes[0].layers![0].id = 'text-a';
+    withIds.scenes[0].layers![1].id = 'emphasis-b';
+    // simulate a reorder: emphasis now sits at index 0, text at index 1
+    withIds.scenes[0].layers!.reverse();
+
+    const stale: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'text-a' } };
+    const resolved = resolveSelection(withIds, stale);
+    expect(resolved).toEqual({ sceneIndex: 0, target: { kind: 'layer', index: 1, id: 'text-a' } });
+  });
+
+  it('with an id, returns null once the layer it names is gone (deleted, not just moved)', () => {
+    const withIds: Manifest = structuredClone(sample);
+    withIds.scenes[0].layers![0].id = 'text-a';
+    withIds.scenes[0].layers = withIds.scenes[0].layers!.filter((l) => l.id !== 'text-a');
+
+    const stale: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'text-a' } };
+    expect(resolveSelection(withIds, stale)).toBeNull();
+  });
+
+  it('resolves a scene3d-child by id the same way a 2D layer resolves', () => {
+    const withIds: Manifest = structuredClone(sample);
+    const s3 = withIds.scenes[2].scene3d!;
+    s3.children[0].id = 'stream';
+    s3.children[1].id = 'converge';
+    s3.children.reverse();
+
+    const stale: Selection = { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0, id: 'stream' } };
+    expect(resolveSelection(withIds, stale)).toEqual({
+      sceneIndex: 2,
+      target: { kind: 'scene3d-child', index: 1, id: 'stream' },
+    });
+  });
+
+  it('resolveSelections drops unresolvable entries and keeps the rest, in order', () => {
+    const withIds: Manifest = structuredClone(sample);
+    withIds.scenes[0].layers![0].id = 'text-a';
+
+    const selections: Selection[] = [
+      { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'text-a' } },
+      { sceneIndex: 0, target: { kind: 'layer', index: 99 } }, // stale, no id — drops
+      { sceneIndex: 0, target: { kind: 'layer', index: 1 } }, // still resolves positionally
+    ];
+    expect(resolveSelections(withIds, selections)).toEqual([
+      { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'text-a' } },
+      { sceneIndex: 0, target: { kind: 'layer', index: 1 } },
+    ]);
+  });
+});
+
+describe('moveLayersByDelta', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+  const emphasisSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+
+  it('applies the SAME dx/dy to every entry, from each one\'s own captured base', () => {
+    const moves = [
+      { selection: textSel, base: { x: 180, y: 300 } },
+      { selection: emphasisSel, base: { x: 980, y: 250 } },
+    ];
+    const next = moveLayersByDelta(sample, moves, 20, -10);
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 200, y: 290 });
+    expect(layerWorldPosition(next, emphasisSel)).toEqual({ x: 1000, y: 240 });
+    // a position-only move never touches the emphasis box's own w/h
+    expect(layerWorldSize(next, emphasisSel)).toEqual({ w: 520, h: 130 });
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const moves = [{ selection: textSel, base: { x: 180, y: 300 } }];
+    moveLayersByDelta(sample, moves, 50, 50);
+    expect(layerWorldPosition(sample, textSel)).toEqual({ x: 180, y: 300 });
+  });
+
+  it('an empty moves array is a true no-op — same manifest reference back', () => {
+    expect(moveLayersByDelta(sample, [], 100, 100)).toBe(sample);
+  });
+
+  it('produces ONE resulting manifest for N moves — a single object a caller commits once', () => {
+    const moves = [
+      { selection: textSel, base: { x: 180, y: 300 } },
+      { selection: emphasisSel, base: { x: 980, y: 250 } },
+    ];
+    const next = moveLayersByDelta(sample, moves, 5, 5);
+    // both edits landed in the SAME returned manifest, not two competing ones
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 185, y: 305 });
+    expect(layerWorldPosition(next, emphasisSel)).toEqual({ x: 985, y: 255 });
+  });
+});
+
+describe('setFieldOnSelections / setTransformFieldOnSelections (Inspector lockstep edit)', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+  const emphasisSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+
+  it('writes the same top-level field to every selected layer', () => {
+    const next = setFieldOnSelections(sample, [textSel, emphasisSel], 'dur', 5);
+    expect(selectedLayer(next, textSel)?.raw.dur).toBe(5);
+    expect(selectedLayer(next, emphasisSel)?.raw.dur).toBe(5);
+  });
+
+  it('does not mutate the original manifest', () => {
+    setFieldOnSelections(sample, [textSel, emphasisSel], 'dur', 5);
+    expect(selectedLayer(sample, textSel)?.raw.dur).toBeUndefined();
+  });
+
+  it('skips a selection that does not resolve rather than throwing', () => {
+    const stale: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    const next = setFieldOnSelections(sample, [textSel, stale], 'dur', 3);
+    expect(selectedLayer(next, textSel)?.raw.dur).toBe(3);
+  });
+
+  it('writes the same nested transform field to every selected layer', () => {
+    const next = setTransformFieldOnSelections(sample, [textSel, emphasisSel], 'opacity', 0.5);
+    expect(selectedLayer(next, textSel)?.raw.transform).toEqual({ opacity: 0.5 });
+    expect(selectedLayer(next, emphasisSel)?.raw.transform).toEqual({ opacity: 0.5 });
+  });
+});
+
+describe('alignSelections', () => {
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } }; // x:180,y:300, w:800(seed),h:null→0
+  const emphasisSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } }; // box [980,250,520,130]
+
+  it('is a no-op (same reference) with fewer than 2 resolvable boxes', () => {
+    expect(alignSelections(sample, [textSel], 'left')).toBe(sample);
+    expect(alignSelections(sample, [], 'left')).toBe(sample);
+  });
+
+  it('left: moves every box to the leftmost box\'s own left edge', () => {
+    const next = alignSelections(sample, [textSel, emphasisSel], 'left');
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 180, y: 300 }); // already leftmost
+    expect(layerWorldPosition(next, emphasisSel)).toEqual({ x: 180, y: 250 });
+  });
+
+  it('right: moves every box so its right edge lands on the rightmost box\'s own right edge', () => {
+    // text right edge = 180+800=980; emphasis right edge = 980+520=1500 (rightmost)
+    const next = alignSelections(sample, [textSel, emphasisSel], 'right');
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 700, y: 300 }); // 1500-800
+    expect(layerWorldPosition(next, emphasisSel)).toEqual({ x: 980, y: 250 }); // unchanged, already rightmost
+  });
+
+  it('centerH: aligns every box\'s horizontal center to the midpoint of the group\'s extremes', () => {
+    // extremes: min x=180, max right=1500 → mid=840
+    const next = alignSelections(sample, [textSel, emphasisSel], 'centerH');
+    expect(layerWorldPosition(next, textSel)).toEqual({ x: 440, y: 300 }); // 840-800/2
+    expect(layerWorldPosition(next, emphasisSel)).toEqual({ x: 580, y: 250 }); // 840-520/2
+  });
+
+  it('top / bottom / centerV: same logic on the Y axis, treating text\'s null height as 0', () => {
+    // tops: text=300, emphasis=250 → min=250. bottoms: text=300 (h=0), emphasis=380 → max=380.
+    const top = alignSelections(sample, [textSel, emphasisSel], 'top');
+    expect(layerWorldPosition(top, textSel)?.y).toBe(250);
+    expect(layerWorldPosition(top, emphasisSel)?.y).toBe(250); // already topmost
+
+    const bottom = alignSelections(sample, [textSel, emphasisSel], 'bottom');
+    expect(layerWorldPosition(bottom, textSel)?.y).toBe(380); // 380-0
+    expect(layerWorldPosition(bottom, emphasisSel)?.y).toBe(250); // 380-130, already bottommost
+
+    const centerV = alignSelections(sample, [textSel, emphasisSel], 'centerV');
+    expect(layerWorldPosition(centerV, textSel)?.y).toBe(315); // mid(250,380)=315, -0
+    expect(layerWorldPosition(centerV, emphasisSel)?.y).toBe(250); // 315-130/2
+  });
+
+  it('never touches size — only setLayerPosition is used', () => {
+    const next = alignSelections(sample, [textSel, emphasisSel], 'left');
+    expect(layerWorldSize(next, emphasisSel)).toEqual({ w: 520, h: 130 });
+  });
+
+  it('a selection with no resolvable position (e.g. a stale index) is dropped, not given a 0,0 box', () => {
+    const stale: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    // only 1 REAL box remains once the stale one is dropped — no-op, same reference
+    expect(alignSelections(sample, [textSel, stale], 'left')).toBe(sample);
+  });
+});
+
+describe('distributeSelections', () => {
+  // Three `emphasis` boxes on one axis, unequally spaced, so the equal-gap
+  // result is unambiguous and easy to hand-verify: A@x0 w100, B@x300 w100,
+  // C@x1000 w100. span = (1000+100)-0 = 1100; totalSize = 300; gap = 400.
+  function threeBoxManifest(): Manifest {
+    const m: Manifest = structuredClone(sample);
+    m.scenes[0].layers = [
+      { use: 'emphasis', preset: 'scribble', box: [0, 0, 100, 50] },
+      { use: 'emphasis', preset: 'scribble', box: [300, 0, 100, 50] },
+      { use: 'emphasis', preset: 'scribble', box: [1000, 0, 100, 50] },
+    ];
+    return m;
+  }
+  const a: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+  const b: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+  const c: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 2 } };
+
+  it('is a no-op (same reference) with fewer than 3 resolvable boxes', () => {
+    const m = threeBoxManifest();
+    expect(distributeSelections(m, [a, b], 'horizontal')).toBe(m);
+    expect(distributeSelections(m, [], 'horizontal')).toBe(m);
+  });
+
+  it('spaces the middle box(es) so every gap between adjacent boxes is equal', () => {
+    const m = threeBoxManifest();
+    const next = distributeSelections(m, [a, b, c], 'horizontal');
+    expect(layerWorldPosition(next, a)?.x).toBe(0); // first stays put
+    expect(layerWorldPosition(next, b)?.x).toBe(500); // 0 + 100 + 400
+    expect(layerWorldPosition(next, c)?.x).toBe(1000); // last stays put
+  });
+
+  it('is order-independent in the input array — sorts by position itself', () => {
+    const m = threeBoxManifest();
+    const next = distributeSelections(m, [c, a, b], 'horizontal');
+    expect(layerWorldPosition(next, b)?.x).toBe(500);
+  });
+
+  it('vertical axis uses y/h the same way', () => {
+    const m: Manifest = structuredClone(sample);
+    m.scenes[0].layers = [
+      { use: 'emphasis', preset: 'scribble', box: [0, 0, 50, 100] },
+      { use: 'emphasis', preset: 'scribble', box: [0, 300, 50, 100] },
+      { use: 'emphasis', preset: 'scribble', box: [0, 1000, 50, 100] },
+    ];
+    const next = distributeSelections(m, [a, b, c], 'vertical');
+    expect(layerWorldPosition(next, a)?.y).toBe(0);
+    expect(layerWorldPosition(next, b)?.y).toBe(500);
+    expect(layerWorldPosition(next, c)?.y).toBe(1000);
+  });
+
+  it('never touches x/width when distributing vertically', () => {
+    const m: Manifest = structuredClone(sample);
+    m.scenes[0].layers = [
+      { use: 'emphasis', preset: 'scribble', box: [42, 0, 50, 100] },
+      { use: 'emphasis', preset: 'scribble', box: [42, 300, 50, 100] },
+      { use: 'emphasis', preset: 'scribble', box: [42, 1000, 50, 100] },
+    ];
+    const next = distributeSelections(m, [a, b, c], 'vertical');
+    expect(layerWorldPosition(next, b)?.x).toBe(42);
   });
 });
 

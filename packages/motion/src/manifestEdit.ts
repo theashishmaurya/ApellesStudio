@@ -69,6 +69,84 @@ export function selectedCamera3d(manifest: Manifest, sceneIndex: number): Cam3dK
   return selectedScene(manifest, sceneIndex)?.scene3d?.camera ?? null;
 }
 
+/**
+ * D-158 (Phase 3, "stable layer identity" — the research doc's §1g finding,
+ * carried over from D-155's own honest gap: "identity is positional... it
+ * breaks the moment the builder can reorder, insert, or delete layers with
+ * a selection live"). Re-resolves ONE `Selection` against `manifest`,
+ * preferring `target.id` (`schema.ts`'s new optional `layer.id`) over the
+ * `index` it was captured with, whenever an `id` is present:
+ *
+ * - No `id` on the target (a hand-written manifest's layer, or a
+ *   scene/camera/scene3d-camera target, which have no identity concept
+ *   beyond `sceneIndex` at all): falls back to exactly what this file did
+ *   before `id` existed — trust `index`, confirm the thing it points at
+ *   still exists, `null` if it doesn't (the manifest shrank under a stale
+ *   selection — the raw-JSON textarea can do this at any time).
+ * - An `id` present: search the SAME scene's layer list for a match. Found
+ *   at a DIFFERENT index than recorded → return a corrected `Selection`
+ *   pointing at the new index (this is the actual payoff: the selection
+ *   survives a reorder/insert/delete elsewhere in the array). Not found at
+ *   all → `null` (the layer was deleted, or the id belonged to a manifest
+ *   this one no longer is).
+ *
+ * Deliberately scoped to the SAME `sceneIndex` the selection already
+ * carried, not a search across every scene: nothing in this package moves
+ * a layer between scenes (no such op exists), so widening the search would
+ * only risk a false-positive match against an unrelated layer that happens
+ * to share an id (ids are short and random, `manifestEdit.ts`'s own
+ * `genLayerId`, not universally unique) — same-scene-only is both simpler
+ * and safer.
+ */
+export function resolveSelection(manifest: Manifest, selection: Selection): Selection | null {
+  const scene = manifest.scenes[selection.sceneIndex];
+  if (!scene) return null;
+  const { target } = selection;
+
+  if (target.kind === 'layer') {
+    const list = scene.layers;
+    if (!list) return null;
+    if (target.id) {
+      const idx = list.findIndex((l) => l.id === target.id);
+      return idx === -1 ? null : { sceneIndex: selection.sceneIndex, target: { kind: 'layer', index: idx, id: target.id } };
+    }
+    return list[target.index] ? selection : null;
+  }
+
+  if (target.kind === 'scene3d-child') {
+    const list = scene.scene3d?.children;
+    if (!list) return null;
+    if (target.id) {
+      const idx = list.findIndex((l) => l.id === target.id);
+      return idx === -1
+        ? null
+        : { sceneIndex: selection.sceneIndex, target: { kind: 'scene3d-child', index: idx, id: target.id } };
+    }
+    return list[target.index] ? selection : null;
+  }
+
+  // scene / camera / scene3d-camera — positional by nature (there is
+  // exactly one of each per scene, nothing to reorder), so the scene
+  // existing (already checked above) is the whole check.
+  return selection;
+}
+
+/** `resolveSelection` over a whole selection array — drops any entry that
+ *  no longer resolves (deleted layer, id belonged to a manifest this one
+ *  no longer is) rather than leaving a dangling `Selection` a consumer
+ *  would have to null-check individually. Used by `MotionTab.tsx` whenever
+ *  the STABLE manifest changes (a commit, a catalog insert, a hand-edit in
+ *  the raw-JSON textarea) — the moment a reorder/insert/delete could have
+ *  invalidated a live multi-selection's indices. */
+export function resolveSelections(manifest: Manifest, selections: Selection[]): Selection[] {
+  const out: Selection[] = [];
+  for (const s of selections) {
+    const r = resolveSelection(manifest, s);
+    if (r) out.push(r);
+  }
+  return out;
+}
+
 /** Clones `manifest` and resolves a mutable reference to the raw layer
  *  object `selection` points at inside that SAME clone — the "clone, then
  *  find the identical spot inside the clone" step every `set*` function
@@ -182,6 +260,46 @@ export function setLayerPosition(manifest: Manifest, selection: Selection, x: nu
     const w = typeof existing[2] === 'number' ? existing[2] : DEFAULT_EMPHASIS_BOX_SIZE.w;
     const h = typeof existing[3] === 'number' ? existing[3] : DEFAULT_EMPHASIS_BOX_SIZE.h;
     raw.box = [x, y, w, h];
+  }
+  return next;
+}
+
+/**
+ * D-158, Phase 3 — "drag moves every selected layer by one shared world
+ * delta." The multi-layer counterpart to `setLayerPosition` above: given
+ * each selected layer's OWN base position (captured once, at drag-start,
+ * by the caller — `MotionCanvasOverlay.tsx` — via `layerWorldPosition`, the
+ * exact same function a single-layer drag already used), applies the SAME
+ * `dx`/`dy` to every one of them and returns ONE resulting `Manifest`.
+ *
+ * Implemented by threading the manifest through `setLayerPosition` once per
+ * entry rather than mutating a single clone's raw layers directly — a
+ * second, subtly different traversal of the same "find this selection's
+ * raw layer" logic `cloneLayerRaw` already owns would be exactly the
+ * duplication CLAUDE.md's "if two places need it, extract it" warns about,
+ * and `setLayerPosition` already IS that logic, fully tested on its own.
+ * The threading still produces a SINGLE final `Manifest` object — which is
+ * the actual requirement ("one atomic manifest change, one undo step, not N
+ * separate commits"), not an implementation detail: `MotionCanvasOverlay`
+ * calls `onCommit` exactly once with whatever this function returns,
+ * regardless of how many layers moved.
+ *
+ * A `moves` entry whose primitive has no position field at all is never
+ * constructed by the caller in the first place (`layerWorldPosition`
+ * already returned `null` for it and it was filtered out before this
+ * function ever sees it) — this function has nothing defensive to do about
+ * that case itself, `setLayerPosition`'s own no-op floor covers it anyway
+ * if a caller ever did pass one through.
+ */
+export function moveLayersByDelta(
+  manifest: Manifest,
+  moves: { selection: Selection; base: { x: number; y: number } }[],
+  dx: number,
+  dy: number,
+): Manifest {
+  let next = manifest;
+  for (const { selection, base } of moves) {
+    next = setLayerPosition(next, selection, base.x + dx, base.y + dy);
   }
   return next;
 }
@@ -398,6 +516,181 @@ export function setLayerTransformField(manifest: Manifest, selection: Selection,
   return next;
 }
 
+/**
+ * D-158, Phase 3 — the Inspector's multi-layer "lockstep" edit path (see
+ * `InspectorPanel.tsx`'s own doc comment for the fuller reasoning behind
+ * this design and the alternatives it didn't take). Writes the SAME `key`/
+ * `value` to every selection in `selections`, threading the manifest
+ * through `setLayerField` once per entry — the identical "compose N pure
+ * single-target writes into one final `Manifest`" shape `moveLayersByDelta`
+ * above already established, reused here rather than re-invented for a
+ * second multi-target case. A selection that doesn't resolve to a layer is
+ * silently skipped (`setLayerField`'s own no-op floor), not an error — the
+ * Inspector only ever offers this control for an all-`layer`-kind
+ * selection, so in practice every entry resolves; this is the same
+ * defensive floor every function in this file already holds, not a load-
+ * bearing check here. */
+export function setFieldOnSelections(manifest: Manifest, selections: Selection[], key: string, value: unknown): Manifest {
+  let next = manifest;
+  for (const selection of selections) next = setLayerField(next, selection, key, value);
+  return next;
+}
+
+/** The lockstep counterpart to `setFieldOnSelections` for the NESTED
+ *  `layer.transform.<key>` fields — the Transform group is generic across
+ *  every primitive (D-157), so it's the one field group the Inspector's
+ *  multi-select view offers in lockstep regardless of whether the selected
+ *  layers share a `use`. Same composition shape as every other multi-target
+ *  function in this file. */
+export function setTransformFieldOnSelections(
+  manifest: Manifest,
+  selections: Selection[],
+  key: string,
+  value: unknown,
+): Manifest {
+  let next = manifest;
+  for (const selection of selections) next = setLayerTransformField(next, selection, key, value);
+  return next;
+}
+
+/** One selected layer's approximate world-space bounding box — the shared
+ *  input `alignSelections`/`distributeSelections` (below) both reduce over.
+ *  Built from `layerWorldPosition`/`layerWorldSize`, the SAME two functions
+ *  the drag/resize handles already use, not a third way of reading a
+ *  layer's geometry: `x`/`y` from `layerWorldPosition` (already an honest
+ *  approximation for a never-positioned layer, see that function's own doc
+ *  comment) and `w`/`h` from `layerWorldSize` — every primitive that
+ *  resolves a position here (`text`/`matrix`/`layers`/`emphasis`) also
+ *  resolves a size, EXCEPT `text`, whose `layerWorldSize` reports `h: null`
+ *  (`'w-only'` — `text.maxWidth` only wraps, `Text.tsx` has no stored
+ *  height field at all). That `null` is treated as `0` height here: "align
+ *  tops/bottoms/centers vertically" then degenerates to "align by the
+ *  layer's own `y` anchor," the most honest thing to do with a primitive
+ *  whose vertical extent isn't a number this file has access to (the same
+ *  spirit as `layerWorldSize`'s own documented approximations elsewhere in
+ *  this file). A selection that doesn't resolve to a draggable position at
+ *  all (`layerWorldPosition` returns `null` — `graph`, an `in3d` primitive,
+ *  or a stale selection) is dropped from the collection entirely, not given
+ *  a degenerate `0,0` box — it has nothing correct to contribute to an
+ *  alignment computed from real positions. */
+interface WorldBox {
+  selection: Selection;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function collectWorldBoxes(manifest: Manifest, selections: Selection[]): WorldBox[] {
+  const boxes: WorldBox[] = [];
+  for (const selection of selections) {
+    const pos = layerWorldPosition(manifest, selection);
+    if (!pos) continue;
+    const size = layerWorldSize(manifest, selection);
+    boxes.push({ selection, x: pos.x, y: pos.y, w: size?.w ?? 0, h: size?.h ?? 0 });
+  }
+  return boxes;
+}
+
+/** Which edge (or center line) an align action lines every selected layer's
+ *  box up against — D-158, Phase 3's "alignment/distribute actions...
+ *  implement a reasonable minimal set for a 2+ layer selection." */
+export type AlignEdge = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom';
+
+/**
+ * Aligns every selected layer's `WorldBox` (above) to a shared line —
+ * `left`/`right`/`centerH` move `x`, `top`/`bottom`/`centerV` move `y`,
+ * writing through `setLayerPosition` (never touching size). The target
+ * line is the extreme (or midpoint of the extremes) across the WHOLE
+ * selection's ORIGINAL boxes, computed once before any write, exactly the
+ * way a real align tool works: aligning three layers "left" moves every one
+ * of them to the leftmost layer's own left edge, not to some running
+ * average that shifts as each write lands.
+ *
+ * No-op (same manifest reference back) for fewer than 2 resolvable boxes —
+ * "align" has no meaning for zero or one layer, and this is the same
+ * no-op-on-nothing-to-do convention every other function in this file
+ * already holds, not a new kind of guard.
+ */
+export function alignSelections(manifest: Manifest, selections: Selection[], edge: AlignEdge): Manifest {
+  const boxes = collectWorldBoxes(manifest, selections);
+  if (boxes.length < 2) return manifest;
+
+  let target: number;
+  switch (edge) {
+    case 'left':
+      target = Math.min(...boxes.map((b) => b.x));
+      break;
+    case 'right':
+      target = Math.max(...boxes.map((b) => b.x + b.w));
+      break;
+    case 'centerH':
+      target = (Math.min(...boxes.map((b) => b.x)) + Math.max(...boxes.map((b) => b.x + b.w))) / 2;
+      break;
+    case 'top':
+      target = Math.min(...boxes.map((b) => b.y));
+      break;
+    case 'bottom':
+      target = Math.max(...boxes.map((b) => b.y + b.h));
+      break;
+    case 'centerV':
+      target = (Math.min(...boxes.map((b) => b.y)) + Math.max(...boxes.map((b) => b.y + b.h))) / 2;
+      break;
+  }
+
+  let next = manifest;
+  for (const b of boxes) {
+    let x = b.x;
+    let y = b.y;
+    if (edge === 'left') x = target;
+    else if (edge === 'right') x = target - b.w;
+    else if (edge === 'centerH') x = target - b.w / 2;
+    else if (edge === 'top') y = target;
+    else if (edge === 'bottom') y = target - b.h;
+    else if (edge === 'centerV') y = target - b.h / 2;
+    next = setLayerPosition(next, b.selection, x, y);
+  }
+  return next;
+}
+
+/**
+ * Distributes 3+ selected layers with equal GAPS between their boxes along
+ * one axis — the standard "distribute spacing" a design tool means by this
+ * (not "equal center-to-center spacing," which double-counts differently
+ * sized boxes): sorts by position along the axis, holds the first and last
+ * box fixed as the span's own bounds, and spaces every box in between so
+ * the gap between each pair of adjacent boxes is identical. D-158's own
+ * scoping: "for 3+" — with exactly 2 boxes there is only one gap, and
+ * "distribute" degenerates to a no-op with nothing to equalize, so this
+ * returns the manifest unchanged (same reference) below that count, the
+ * same no-op convention every other function here holds.
+ */
+export function distributeSelections(manifest: Manifest, selections: Selection[], axis: 'horizontal' | 'vertical'): Manifest {
+  const boxes = collectWorldBoxes(manifest, selections);
+  if (boxes.length < 3) return manifest;
+
+  const sorted = [...boxes].sort((a, b) => (axis === 'horizontal' ? a.x - b.x : a.y - b.y));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const span =
+    axis === 'horizontal' ? last.x + last.w - first.x : last.y + last.h - first.y;
+  const totalSize = sorted.reduce((sum, b) => sum + (axis === 'horizontal' ? b.w : b.h), 0);
+  const gap = (span - totalSize) / (sorted.length - 1);
+
+  let next = manifest;
+  let cursor = axis === 'horizontal' ? first.x : first.y;
+  for (const b of sorted) {
+    if (axis === 'horizontal') {
+      next = setLayerPosition(next, b.selection, cursor, b.y);
+      cursor += b.w + gap;
+    } else {
+      next = setLayerPosition(next, b.selection, b.x, cursor);
+      cursor += b.h + gap;
+    }
+  }
+  return next;
+}
+
 export function setSceneField(manifest: Manifest, sceneIndex: number, key: string, value: unknown): Manifest {
   if (!manifest.scenes[sceneIndex]) return manifest;
   const next = clone(manifest);
@@ -451,6 +744,19 @@ export function setCamera3d(manifest: Manifest, sceneIndex: number, keys: Cam3dK
  * same defensive floor every function above holds, since the raw-JSON
  * textarea can shrink the manifest under a stale selection at any time.
  */
+/** A short, random layer id (D-158, Phase 3 — "stable layer identity").
+ *  Generated ONLY for layers this package creates (`addLayer`, below); a
+ *  hand-written or pre-existing manifest simply has no `id` on its layers,
+ *  which is the documented, non-breaking fallback `resolveSelection` above
+ *  already handles. Not cryptographic — there is no security property to
+ *  uphold here, just enough entropy (8 base-36 characters, ~41 bits) that
+ *  two layers in the same scene colliding is astronomically unlikely, the
+ *  same bar `crates/chroma-timeline`'s own id-generation doc comment sets
+ *  for a similar "this just needs to not collide in practice" case. */
+function genLayerId(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 export function addLayer(
   manifest: Manifest,
   sceneIndex: number,
@@ -460,14 +766,15 @@ export function addLayer(
 
   const next = clone(manifest);
   const scene = next.scenes[sceneIndex];
-  const fragment = defaultLayerFor(use) as unknown as Layer;
+  const id = genLayerId();
+  const fragment = { ...defaultLayerFor(use), id } as unknown as Layer;
 
   if (catalogEntry(use).in3d) {
     if (!scene.scene3d) scene.scene3d = { camera: DEFAULT_SCENE3D_CAMERA(), children: [] };
     scene.scene3d.children.push(fragment);
     return {
       manifest: next,
-      selection: { sceneIndex, target: { kind: 'scene3d-child', index: scene.scene3d.children.length - 1 } },
+      selection: { sceneIndex, target: { kind: 'scene3d-child', index: scene.scene3d.children.length - 1, id } },
     };
   }
 
@@ -475,7 +782,7 @@ export function addLayer(
   scene.layers.push(fragment);
   return {
     manifest: next,
-    selection: { sceneIndex, target: { kind: 'layer', index: scene.layers.length - 1 } },
+    selection: { sceneIndex, target: { kind: 'layer', index: scene.layers.length - 1, id } },
   };
 }
 

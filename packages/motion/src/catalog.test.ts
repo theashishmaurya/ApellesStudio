@@ -114,8 +114,15 @@ describe('addLayer — insertion', () => {
     const { manifest, selection } = addLayer(before, 0, 'text');
 
     expect(manifest.scenes[0].layers).toHaveLength(2);
-    expect(selection).toEqual({ sceneIndex: 0, target: { kind: 'layer', index: 1 } });
+    // D-158: `addLayer` now also generates a random `id` and threads it into
+    // the returned selection — `toMatchObject` for the stable shape, a
+    // separate assertion for the id existing (it's random, not a fixed value
+    // a `toEqual` could assert against).
+    expect(selection).toMatchObject({ sceneIndex: 0, target: { kind: 'layer', index: 1 } });
+    expect(typeof (selection?.target as { id?: string }).id).toBe('string');
     expect(selectedLayer(manifest, selection!)?.use).toBe('text');
+    // the same id is on the actual manifest layer, not just echoed back
+    expect(manifest.scenes[0].layers?.[1].id).toBe((selection?.target as { id?: string }).id);
   });
 
   it('does not mutate the manifest it was given', () => {
@@ -137,7 +144,7 @@ describe('addLayer — insertion', () => {
     const { manifest, selection } = addLayer(flat(), 1, 'layers');
     expect(manifest.scenes[0].layers).toHaveLength(1);
     expect(manifest.scenes[1].layers).toHaveLength(2);
-    expect(selection).toEqual({ sceneIndex: 1, target: { kind: 'layer', index: 1 } });
+    expect(selection).toMatchObject({ sceneIndex: 1, target: { kind: 'layer', index: 1 } });
   });
 
   it('creates a valid scene3d container when a 3D primitive lands in a 2D scene', () => {
@@ -147,7 +154,7 @@ describe('addLayer — insertion', () => {
     const { manifest, selection } = addLayer(before, 0, 'particleflow');
     expect(manifest.scenes[0].scene3d?.children).toHaveLength(1);
     expect(manifest.scenes[0].scene3d?.camera.length).toBeGreaterThanOrEqual(1);
-    expect(selection).toEqual({ sceneIndex: 0, target: { kind: 'scene3d-child', index: 0 } });
+    expect(selection).toMatchObject({ sceneIndex: 0, target: { kind: 'scene3d-child', index: 0 } });
     // the 2D layers that were already there are not disturbed
     expect(manifest.scenes[0].layers).toHaveLength(1);
   });
@@ -159,7 +166,7 @@ describe('addLayer — insertion', () => {
 
     expect(twice.scenes[0].scene3d?.children).toHaveLength(2);
     expect(twice.scenes[0].scene3d?.camera).toEqual(camera);
-    expect(selection).toEqual({ sceneIndex: 0, target: { kind: 'scene3d-child', index: 1 } });
+    expect(selection).toMatchObject({ sceneIndex: 0, target: { kind: 'scene3d-child', index: 1 } });
   });
 
   it('is a no-op with a null selection for an out-of-range scene index', () => {
@@ -189,7 +196,7 @@ describe('addLayer — against the engine\'s own real sample manifest', () => {
     const { manifest, selection } = addLayer(before, scene3dIndex, 'labelbox');
 
     expect(manifest.scenes[scene3dIndex].scene3d?.children).toHaveLength(childrenBefore + 1);
-    expect(selection?.target).toEqual({ kind: 'scene3d-child', index: childrenBefore });
+    expect(selection?.target).toMatchObject({ kind: 'scene3d-child', index: childrenBefore });
     for (let i = 0; i < before.scenes.length; i++) {
       if (i !== scene3dIndex) expect(manifest.scenes[i]).toEqual(before.scenes[i]);
     }

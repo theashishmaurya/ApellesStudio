@@ -123,3 +123,39 @@ export function toContainerLocal(rect: RectLike, container: RectLike): RectLike 
 export function axisLock(d: Point): Point {
   return Math.abs(d.x) >= Math.abs(d.y) ? { x: d.x, y: 0 } : { x: 0, y: d.y };
 }
+
+/**
+ * D-158 (Phase 3, marquee-select) — the two pure primitives the marquee
+ * gesture needs, split out for the same reason every other function in this
+ * file is: `MotionCanvasOverlay.tsx`'s pointer wiring is DOM-touching and
+ * untested by this package's own convention, but the rectangle math it's
+ * built on is exactly the kind of thing that should have a real unit-test
+ * floor. Both operate in whatever coordinate space the caller passes in
+ * (client/viewport px for hit-testing against `getBoundingClientRect()`
+ * results, or container-local for drawing the band) — neither one cares.
+ */
+
+/** The axis-aligned rect spanning two points (e.g. a marquee's `pointerdown`
+ *  origin and its current `pointermove` position) — `left`/`top` are always
+ *  the smaller of the two, so a marquee dragged in any of the four
+ *  directions produces the same rect a drag in the opposite direction would. */
+export function rectFromPoints(a: Point, b: Point): RectLike {
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  return { left, top, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+}
+
+/** Standard open-interval rectangle overlap — the same predicate D-137's
+ *  timeline marquee uses (`clip.start < rect.end && clip.end > rect.start`,
+ *  generalized to two axes): partial overlap and full containment both
+ *  count as an intersection, a zero-area edge-graze does not (matching that
+ *  precedent's own reasoning — a marquee that merely grazes a layer's edge
+ *  reads as "missed it," not "caught it"). */
+export function rectsIntersect(a: RectLike, b: RectLike): boolean {
+  return (
+    a.left < b.left + b.width &&
+    a.left + a.width > b.left &&
+    a.top < b.top + b.height &&
+    a.top + a.height > b.top
+  );
+}

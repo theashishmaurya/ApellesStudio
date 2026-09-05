@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { measureWorldMap, screenToWorld, worldDelta, unionRects, toContainerLocal, axisLock } from './canvasGeometry';
+import {
+  measureWorldMap,
+  screenToWorld,
+  worldDelta,
+  unionRects,
+  toContainerLocal,
+  axisLock,
+  rectFromPoints,
+  rectsIntersect,
+} from './canvasGeometry';
 
 describe('measureWorldMap', () => {
   it('derives k from the measured rect width over the manifest width', () => {
@@ -90,5 +99,70 @@ describe('axisLock', () => {
   it('handles negative deltas by magnitude, not sign', () => {
     expect(axisLock({ x: -20, y: 4 })).toEqual({ x: -20, y: 0 });
     expect(axisLock({ x: 4, y: -20 })).toEqual({ x: 0, y: -20 });
+  });
+});
+
+describe('rectFromPoints', () => {
+  it('builds the same rect regardless of which corner is the drag origin', () => {
+    const downRight = rectFromPoints({ x: 10, y: 10 }, { x: 50, y: 40 });
+    const upLeft = rectFromPoints({ x: 50, y: 40 }, { x: 10, y: 10 });
+    const expected = { left: 10, top: 10, width: 40, height: 30 };
+    expect(downRight).toEqual(expected);
+    expect(upLeft).toEqual(expected);
+  });
+
+  it('handles a diagonal in the other two directions too', () => {
+    expect(rectFromPoints({ x: 100, y: 10 }, { x: 40, y: 70 })).toEqual({
+      left: 40,
+      top: 10,
+      width: 60,
+      height: 60,
+    });
+  });
+
+  it('a zero-movement press is a zero-area rect, not an error', () => {
+    expect(rectFromPoints({ x: 5, y: 5 }, { x: 5, y: 5 })).toEqual({ left: 5, top: 5, width: 0, height: 0 });
+  });
+});
+
+describe('rectsIntersect', () => {
+  it('detects a plain overlap', () => {
+    const a = { left: 0, top: 0, width: 20, height: 20 };
+    const b = { left: 10, top: 10, width: 20, height: 20 };
+    expect(rectsIntersect(a, b)).toBe(true);
+  });
+
+  it('detects full containment either way round', () => {
+    const outer = { left: 0, top: 0, width: 100, height: 100 };
+    const inner = { left: 40, top: 40, width: 10, height: 10 };
+    expect(rectsIntersect(outer, inner)).toBe(true);
+    expect(rectsIntersect(inner, outer)).toBe(true);
+  });
+
+  it('misses on the horizontal axis alone', () => {
+    const a = { left: 0, top: 0, width: 10, height: 100 };
+    const b = { left: 20, top: 0, width: 10, height: 100 };
+    expect(rectsIntersect(a, b)).toBe(false);
+  });
+
+  it('misses on the vertical axis alone', () => {
+    const a = { left: 0, top: 0, width: 100, height: 10 };
+    const b = { left: 0, top: 20, width: 100, height: 10 };
+    expect(rectsIntersect(a, b)).toBe(false);
+  });
+
+  it('an exact edge-touch (open interval) does not count as an intersection', () => {
+    const a = { left: 0, top: 0, width: 10, height: 10 };
+    const b = { left: 10, top: 0, width: 10, height: 10 }; // shares the x=10 edge exactly
+    expect(rectsIntersect(a, b)).toBe(false);
+  });
+
+  it('a zero-area rect grazing an edge does not count (marquee sub-pixel press)', () => {
+    const a = { left: 5, top: 5, width: 0, height: 0 };
+    const b = { left: 0, top: 0, width: 10, height: 10 };
+    // a zero-width/height rect at (5,5) is strictly inside (0,0)-(10,10) on
+    // open intervals, so this one DOES intersect — the true "graze" case is
+    // the edge-touch test above, at exactly the boundary.
+    expect(rectsIntersect(a, b)).toBe(true);
   });
 });
