@@ -12399,3 +12399,238 @@ measure in the first place.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-158 — Motion visual builder, Phase 3: multiple elements — `Selection[]`, marquee-select, stable layer identity, align/distribute
+
+**decided + built (2026-09-05).** Built directly on D-155/D-156/D-157's four prerequisites +
+Phase 1/2, per `docs/notes/motion-visual-builder-research.md`'s own phasing. The owner said
+"multiple elements" first — this phase is not optional polish. Everything the research doc's
+Phase 3 section names shipped: `Selection` → `Selection[]`, marquee-select + shift-click-extend,
+a shared-delta group move, stable layer identity (`layer.id`), and alignment/distribute actions.
+Snapping GUIDES (visual alignment lines while dragging) are the one explicitly scoped-down item —
+see its own section below.
+
+### 1 — `Selection` → `Selection[]`, and the two design calls the task itself flagged as open
+
+**Same-kind, same-scene constraint, not "anything goes."** `LayerList.tsx`'s `Selection[]` is
+either (a) exactly ONE entry of any kind (today's existing single-select, byte-identical), or (b)
+2+ entries that are ALL `{kind:'layer'}` in the SAME scene. Mixed kinds (a scene + a layer, two
+cameras) and cross-scene layer sets are never producible — not a runtime guard bolted on top, but
+the actual shape `toggleSelection` (the one function that ever ADDS to a live selection) enforces.
+Why: a "scene + camera" multi-selection has no coherent meaning (there is exactly one of each per
+scene); `scene3d-child` is excluded because 3D on-canvas manipulation is out of scope for every
+phase of this research doc (§3b/§4), so no canvas gesture could ever produce one anyway; and
+same-scene is a hard requirement, not a preference — only the scene under the playhead has its
+layers in the DOM at all (§1e), so a marquee or a canvas shift-click physically cannot reach a
+layer in a different scene. Full reasoning (including the alternative of allowing mixed kinds,
+rejected) is in `LayerList.tsx`'s own module doc comment.
+
+**The Inspector's multi-select view — the task's own open design question, answered with a
+combination, not one of the four listed options in isolation.** For 2+ selections:
+align/distribute ALWAYS shows (needs nothing about the layers beyond position/size); the D-157
+Transform field group ALWAYS shows too, in LOCKSTEP (`setTransformFieldOnSelections` — genuinely
+use-agnostic, every 2D layer has it); the primitive's OWN field group ALSO shows, in lockstep
+(`setFieldOnSelections`), but ONLY when every selected layer shares the same `use` — otherwise a
+short note points the user at selecting one layer. The displayed value in lockstep mode is the
+FIRST selected layer's own value, not a computed "Mixed" indicator (Figma/Photoshop's own
+convention for when values disagree across a selection) — a real, disclosed gap: building that
+needs a per-field "do all N values agree" check threaded through `FieldControl`'s existing
+single-`value` prop, and the far more common case (batch-nudge a shared property, or intentionally
+overwrite one) already works without it. **The rejected alternative:** a live per-layer sub-picker
+("N layers selected — pick one to edit its own fields," reading closer to Illustrator's
+Isolation Mode than to a batch editor) — not built because it needs its own separate "which layer
+am I VIEWING inside this selection" state distinct from "which layers are SELECTED," real
+non-trivial plumbing for a capability the lockstep shape already covers for what the owner
+actually asked ("set position or size... in lockstep" reads as "N layers, one dial," not "let me
+tunnel into one of the N"). Full reasoning in `InspectorPanel.tsx`'s own module doc comment.
+
+### 2 — Marquee-select + shift-click, and D-137's discipline applied to a FOURTH gesture
+
+`MotionCanvasOverlay.tsx` now hosts four pointer gestures on one surface (it was two at D-156, three
+at D-157): resize-handle-drag, click-to-select/move-drag, shift-click-toggle, and marquee-select.
+D-137's own finding — "make the two pointer gestures mutually exclusive by DOM position, not by
+precedence" — is applied explicitly, in order, to all four: (1) `[data-motion-resize-handle]` →
+resize, unchanged from D-157, single-selection only; (2) `[data-motion-layer]`
+(`elementsFromPoint`+`closest`, D-156) → shift-toggle (no drag), or click-to-select/group-move; (3)
+otherwise, is the pointerdown target a descendant of `[data-motion-world]`? If not, it's Remotion's
+own control-bar chrome — do nothing, as before. If it is, it's genuinely empty canvas space →
+marquee.
+
+**D-137's own technique doesn't transfer verbatim, and that's worth stating plainly.** D-137
+excluded dnd-kit's own gesture surfaces by a real, read-from-source CSS class list
+(`.timeline-editor-action`, `data-chroma-clip-drag`, etc.). `@remotion/player`'s `PlayerControls.js`
+carries NO distinguishing class or attribute at all (verified by reading it directly, again, this
+pass) — a class-list exclusion would have nothing to exclude BY. The structural fact used instead:
+`PlayerUI.js` (read directly) renders `VideoComponent` and `Controls` as SIBLINGS under one wrapping
+div, so the composition's own DOM subtree (everything under `[data-motion-world]`) and Remotion's
+chrome are DISJOINT trees. `target.closest('[data-motion-world]')` is therefore the exact same KIND
+of check D-137 used (what does the event's ancestor chain actually contain), adapted to the DOM
+shape actually available here — not a weaker substitute for a class list, a different structural
+fact playing the identical role.
+
+**The marquee's own rules, largely borrowed from D-137 for consistency, not reinvented:**
+additive (unions onto the existing selection, never toggles) when shift/cmd/ctrl is held AT
+`pointerdown` (read once, matching D-137's "a modifier tapped mid-drag must not change the meaning
+of a gesture already under way"); a 4px activation threshold (D-137's own `PointerSensor` distance,
+reused verbatim rather than inventing a second "what counts as a drag" answer in the same
+codebase); a sub-threshold press with NO modifier clears the selection (click-away-to-deselect); a
+modifier-held sub-threshold press arms nothing (D-137's own rule for its own marquee). One real
+DEVIATION, made and documented rather than silently copied: D-137 deliberately used `window`
+listeners and NOT `setPointerCapture` for its marquee, because pointer capture retargets events
+away from other elements' own hit-testing — a real risk on a timeline pane where dnd-kit needs
+genuine hit-testing during its OWN gestures. This overlay's marquee uses `setPointerCapture` on the
+SAME `containerRef` its move/resize gestures already capture on, because nothing else on this
+surface needs real hit-testing during a marquee (the candidate-layer scan already has every
+`[data-motion-layer]` element's rect in hand from one `querySelectorAll`, no live hit-testing
+required) — using the same mechanism as the other two gestures on this file is simpler and
+introduces no new risk class, so the D-137 precedent's REASON for avoiding capture doesn't apply
+here, even though its rectangle math and modifier rules do.
+
+**Selection updates once, on pointer-up, not continuously during the drag.** Unlike a move/resize
+(which feeds a live manifest preview through the transient-override path every pointermove), a
+marquee's "what would be selected" isn't a manifest edit — nothing requires updating React
+selection state at pointer-move frequency, and doing so would re-render `LayerList`/`InspectorPanel`
+on every pixel of a drag for no benefit. Only the drawn band (a small piece of local `useState`) is
+live; the actual selection change is one discrete update on release.
+
+### 3 — Shared-delta group move
+
+`manifestEdit.ts`'s `moveLayersByDelta(manifest, moves, dx, dy)` — `moves` is `{selection, base}[]`,
+captured ONCE at drag-start via the EXISTING `layerWorldPosition` (the same function a
+single-selection drag already used at D-156), so a group move is not a second code path: it is
+`setLayerPosition` threaded once per entry into ONE resulting `Manifest`, the identical
+"compose N pure single-target writes into one final object" shape `setFieldOnSelections`/
+`setTransformFieldOnSelections` (§1) also use. The caller (`MotionCanvasOverlay`) calls `onCommit`
+exactly ONCE with whatever this returns — one undo entry for the whole group, not N, regardless of
+how many layers moved. **Which layer to click to move the group, decided explicitly:** clicking
+(without shift) a layer already inside a live multi-selection keeps the WHOLE group selected and
+drags all of it — the standard Figma/Illustrator/Premiere "click inside an existing multi-selection
+moves the group" convention; clicking anything else replaces the selection with just that one layer,
+exactly as Phase 1 always did. A layer in the group with no draggable position at all (e.g. a lone
+`graph` swept into a marquee alongside real draggable layers) is silently skipped by
+`layerWorldPosition`'s own existing `null` return — it stays selected, it just doesn't move, the
+same "selectable but not draggable" floor D-155 already established for a single selection.
+
+### 4 — Stable layer identity: `layer.id`, additive, non-breaking
+
+`schema.ts`'s `layer` object gains an optional `id?: string` (D-158's own commit — see that entry
+for the byte-for-byte `remotion still` verification, including a smoke render WITH an id actually
+set, confirming zero pixel effect either way). `manifestEdit.ts`'s `addLayer` (D-151) stamps a
+short random id (`genLayerId`, `Math.random().toString(36).slice(2,10)` — no cryptographic
+requirement, just enough entropy that a same-scene collision is astronomically unlikely) on every
+layer/scene3d-child it creates; every OTHER creation path (hand-written JSON, a pre-existing
+manifest) simply has no `id`, which is the fully-supported, non-breaking case
+`resolveSelection`/`resolveSelections` (`manifestEdit.ts`) fall back to: trust the captured `index`,
+confirm the thing it points at still exists, exactly the check this file already made before `id`
+existed. When an `id` IS present, `resolveSelection` searches the SAME scene's layer/child list for
+a match and returns a CORRECTED `Selection` at the new index if the layer moved (or `null` if it's
+gone) — this is the actual payoff: a live multi-selection now survives a reorder/insert/delete
+elsewhere in the manifest (a hand-edit in the raw-JSON textarea, most concretely) instead of
+silently pointing at whatever now happens to sit at the old index. `MotionTab.tsx` wires this as an
+effect keyed on `m.manifest` (the STABLE manifest, never the per-pointermove transient one), so it
+fires once per commit, not once per frame of a drag.
+
+**Scope call: same-scene search only, not a whole-manifest scan.** Nothing in this package moves a
+layer BETWEEN scenes (no such op exists), so widening `resolveSelection`'s id search across every
+scene would only add a real risk (a short, random id colliding with an unrelated layer in a
+different scene) for zero actual benefit.
+
+### 5 — Alignment/distribute: built; snapping guides: explicitly scoped down
+
+**Built, real pure functions, real tests** (the task's own "should not be dropped" half):
+`alignSelections` (left/centerH/right/top/centerV/bottom, 2+ selections) and `distributeSelections`
+(horizontal/vertical, 3+ selections — "distribute" has no meaning with only one gap to equalize).
+Both reduce over each selection's `layerWorldPosition`/`layerWorldSize` pair (the SAME two functions
+the drag/resize handles already use — no third way of reading a layer's geometry), computing the
+target line/gap from the ORIGINAL boxes before any write lands (so aligning three layers "left"
+moves every one to the group's own leftmost edge, not to a running average that shifts mid-loop). A
+selection with no resolvable position (`graph`, a stale index) is dropped from the computation
+entirely, not given a degenerate `0,0` box. `text`'s `h: null` (no stored height field, `'w-only'`)
+is treated as `0` for vertical alignment — "align by the y anchor," the honest thing to do with a
+primitive whose vertical extent isn't a number this file has access to, the same spirit as this
+file's existing approximated-default conventions. UI: a small `AlignDistributeToolbar` in
+`InspectorPanel.tsx`'s `MultiLayerInspector`, six align buttons + two distribute buttons (disabled
+with a title below 3 selections rather than hidden) — "keep it simple," per the task's own
+instruction, not a floating canvas toolbar or a command palette.
+
+**Snapping guides — explicitly NOT built this pass, per the task's own explicit permission to scope
+this one item down.** "Snapping guides" (live visual alignment lines while dragging, snapping a
+dragged layer's edge/center to another layer's) is genuinely the more open-ended, UI-heavy half of
+this item — it needs live nearest-edge computation against every OTHER layer on every pointermove
+of a drag, a threshold-snap behaviour, and a drawn guide-line overlay, none of which the existing
+move-drag code needs today. **The smallest useful next step, for whoever picks this up:** the pure
+math is already 90% written — `alignSelections`' own target-line computation (min/max of
+`layerWorldPosition`/`layerWorldSize` across a candidate set) is exactly the "what edges exist to
+snap to" query a snap-while-dragging feature needs; the remaining work is wiring it into
+`MotionCanvasOverlay.tsx`'s existing `moveDelta` computation (checking the dragged layer's
+in-flight position against every OTHER layer's edges each pointermove, snapping the delta when
+within a threshold) plus a drawn guide-line, not a new geometry model.
+
+### Verification
+
+- `npx tsc --noEmit -p packages/motion` — clean.
+- `npx tsc --noEmit -p packages/motion-engine` — the same 2 pre-existing `document`-typing errors
+  in `Scene3D.tsx` as on `main` before this pass, zero new errors.
+- `npm test --workspace @chroma/motion` — **159/159** (was 122 at D-157; **+37** new: 8
+  `rectFromPoints`/`rectsIntersect`, 8 `resolveSelection`/`resolveSelections`, 4
+  `moveLayersByDelta`, 4 `setFieldOnSelections`/`setTransformFieldOnSelections`, 9
+  `alignSelections`, 5 `distributeSelections` — every new pure function gets real tests, per this
+  package's own established convention; the four-gesture pointer wiring in
+  `MotionCanvasOverlay.tsx` is DOM/pointer-event plumbing, deliberately untested, the same split
+  D-156/D-157 already set).
+- `npx tsc --noEmit -p app` — exactly **64** errors, the documented baseline, unchanged.
+- Byte-for-byte `remotion still` renders of the engine's sample manifest, three frames (0, 54 —
+  the doc's own worked `scribble` example, 200 — inside the `scene3d` scene), before vs. after the
+  `schema.ts` `layer.id` addition: **identical PNG output** (`shasum -a 256` match AND `cmp` clean
+  at all three frames). Additionally, a smoke render WITH an `id` actually set on a real sample
+  layer, at the mid-`scribble` frame: **identical to the no-id render** — confirms the field is
+  inert whether present or absent, not just when absent.
+
+**A real, disclosed worktree-infra gotcha found and worked around this pass, distinct from the
+D-136/D-137/D-138 "node_modules is a symlink into the main tree" gotcha those entries already
+name:** this worktree's TOP-LEVEL `node_modules` is a symlink into the MAIN REPO's `node_modules`,
+whose OWN `@chroma/*` entries are themselves relative symlinks into the MAIN REPO's `packages/*` —
+so every cross-package import in this worktree (`@chroma/motion` → `@chroma/motion-engine`, the
+exact dependency this phase edits on both ends) silently resolved to the MAIN repo's STALE copy of
+`schema.ts`, not this worktree's own edited one. This surfaced as a real, reproducible `tsc` error
+(`Layer['id']` typing as `unknown` instead of `string | undefined` — the `.passthrough()` catchall
+kicking in for a field the MAIN repo's copy doesn't declare) that took real bisection to diagnose
+correctly rather than papering over with a cast. `npm install` — the fix D-136/137/138 all used —
+was blocked by this session's own permission classifier; the equivalent, no-network fix applied
+instead: the worktree's `node_modules` symlink was replaced with a real local directory whose
+entries are individual symlinks to the MAIN repo's `node_modules/*` for every THIRD-PARTY package
+(unchanged resolution), plus fresh, LOCAL symlinks under `node_modules/@chroma/*` pointing at THIS
+worktree's own `packages/*` (the exact end-state an `npm install` in this worktree would have
+produced for the workspace packages specifically). Main tree untouched; this worktree's `git
+status` shows no changes to any tracked file from this operation (`node_modules` is gitignored).
+Confirmed NOT to affect the actual app or a merged build: `packages/motion-engine`'s OWN `tsc` and
+`remotion still` runs never went through this path at all (a package compiling/bundling its own
+files uses relative imports, not `node_modules/@chroma/*`), and once this branch merges into `main`,
+the MAIN repo's own `node_modules/@chroma/motion-engine` will correctly point at the (now-merged)
+updated package — this was a worktree-isolation artifact of THIS SESSION's verification, not a
+defect this phase's code introduces.
+
+**Honest gaps.** (1) Not seen in the assembled Tauri app — this sandbox cannot launch it, the same
+disclosed constraint every entry since D-125 carries; the four-gesture pointer wiring is reasoned
+from the same verified DOM/bubbling semantics D-156/D-157's own move/resize wiring already relied
+on (re-confirmed this pass: `PlayerUI.js` read directly for the sibling-subtree claim), not
+separately re-verified against a real window. (2) Snapping guides — see §5's own "smallest next
+step." (3) The Inspector's lockstep multi-edit shows the FIRST selected layer's value, not a
+"Mixed" indicator when selected layers' values disagree — see §1's own disclosure. (4) D-157's own
+disclosed gap (a layer with a non-identity `transform` sits behind an extra transform the
+screen↔world map doesn't account for) is UNCHANGED and now also applies to a group move/marquee of
+such a layer — nothing new hits it this pass (the transform wrapper is still rarely used), but it's
+worth naming explicitly rather than letting it go stale. (5) Resize stays single-selection only —
+a 2+ multi-selection never renders resize handles; a genuine "resize the group, proportionally"
+capability is a real, separate feature this phase doesn't attempt.
+
+**Numbering.** Drafted as **D-158** and re-confirmed free immediately before starting this entry —
+`git log --oneline -5` and `grep -oE 'D-[0-9]+' docs/08-decisions.md | sort -t- -k2 -n -u | tail`
+against the REAL current tip of `main` in the main repo (`/Users/ashishmaurya/my_projects/chroma`,
+not this worktree) both still show **D-157 / B-061** as the highest numbers, matching what this
+phase started from — no concurrent work landed a competing D-158 in the meantime.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

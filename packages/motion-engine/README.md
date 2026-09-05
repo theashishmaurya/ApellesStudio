@@ -146,3 +146,23 @@ Two things worth knowing before reaching for this:
   Inspector fields to set it both land in this same pass); fixing it means
   measuring a per-layer world map instead of one shared map per drag, left
   for whichever future phase actually needs to drag a transformed layer.
+
+## Stable layer identity (D-158)
+
+`schema.ts`'s `layer` object carries an optional `id?: string` (Phase 3 of
+`docs/notes/motion-visual-builder-research.md`, "the prerequisite that bites
+here: stable layer identity," §1g). Purely additive and NOT read anywhere in
+the render path (`Video.tsx` never looks at it) — its presence or absence has
+zero effect on a rendered frame, verified with byte-for-byte `remotion still`
+renders of the engine's own sample manifest before/after the schema change,
+plus a smoke render with an id actually set on a real layer (all identical).
+
+`@chroma/motion`'s `addLayer` (D-151) stamps a short random id on every layer
+it creates from here on; a hand-written or pre-existing manifest simply has no
+`id`, which `@chroma/motion`'s `resolveSelection`/`resolveSelections`
+(`manifestEdit.ts`) treat as the fully-supported, non-breaking default —
+falling back to positional identity (the array index) exactly as this package
+did before `id` existed. When an `id` IS present, a selection built from it
+survives a reorder/insert/delete elsewhere in the layer array (a hand-edit in
+`ManifestEditor.tsx`'s raw-JSON textarea, most concretely) instead of silently
+pointing at whatever now happens to sit at the old index.

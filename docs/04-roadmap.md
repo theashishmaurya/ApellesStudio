@@ -1045,20 +1045,24 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 
 - **Motion tab visual builder — on-canvas drag / size / animate** — owner asked for it live
   2026-09-05 ("drag and drop multiple elements… a visual builder for me and animation as well…
-  fix easily, with human in loop"). **Researched and phased, not built: D-152,
+  fix easily, with human in loop"). **Researched and phased: D-152,
   `docs/notes/motion-visual-builder-research.md`.** The load-bearing finding is that the Motion
   engine's coordinate model is **already correct** — scene/world space, camera applied at render
   time, an invertible 2D similarity, reference frame declared in the manifest — so unlike D-136
   there is **no migration to write**; the work is tooling. The recommended screen↔world map is
   *measured* from the live `@remotion/player` DOM (`data-motion-world` +
-  `getBoundingClientRect`), not a second copy of `Camera.tsx`'s math. Phase 0 has four real
-  prerequisites (DOM hooks in the engine; a gesture commit path that skips the 300 ms text
-  round-trip; **undo, which the Motion tab has none of today**; and a recorded world-space call).
-  **Phase 5 — a real keyframe timeline — is a major feature**, comparable in cost to the Edit
-  tab's own timeline, and must not be attached quietly to the end of Phase 4. Two immediate,
-  much smaller wins sit inside it and can be pulled forward: an Inspector **"snap the highlight
-  to that layer"** action (the direct fix for the owner's screenshot) and Part C's `</>` collapse
-  of the raw JSON panel.
+  `getBoundingClientRect`), not a second copy of `Camera.tsx`'s math.
+  **Phases 0–3 BUILT (D-155/D-156/D-157/D-158, 2026-09-05):** DOM hooks + transient-preview
+  override + undo + world-space discipline (Phase 0); click-select + move-drag (Phase 1); resize
+  handles + "snap to layer" + the layer transform wrapper (Phase 2); `Selection[]` + marquee-select
+  + shift-click-extend + shared-delta group move + stable layer identity (`layer.id`) +
+  align/distribute actions (Phase 3 — D-158). Part C's `</>` raw-JSON collapse shipped separately
+  as D-153.
+  **Remaining: Phase 4 (per-layer keyframes — the manifest genuinely grows here) and Phase 5 — a
+  real keyframe timeline, a MAJOR feature** comparable in cost to the Edit tab's own timeline, and
+  must not be attached quietly to the end of Phase 4. Snapping/alignment GUIDES (visual
+  guide-lines while dragging) were explicitly scoped out of D-158 pending a UI-effort spike — see
+  that decision's own entry for the smallest next step.
 - **Proxy / optimized media** — whole downscaled transcodes of source clips for
   editing, the way Premiere ("proxies") and Resolve ("optimized media") do it:
   a generate step, progress tracking, and a relink model so the timeline plays

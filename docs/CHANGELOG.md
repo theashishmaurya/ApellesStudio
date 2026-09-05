@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-05** — **Motion visual builder, Phase 3: multiple elements (D-158), on top of
+  Phase 0/1/2 (D-155/D-156/D-157).** The owner said "multiple elements" first. `LayerList.tsx`'s
+  `Selection` → `Selection[]` (same-kind `layer`, same-scene, or a single entry of any kind —
+  enforced by `toggleSelection`). `MotionCanvasOverlay.tsx` gains a FOURTH pointer gesture
+  (marquee-select + shift-click-extend, alongside resize/move/click), D-137's "mutually exclusive
+  by DOM position" discipline applied explicitly (`[data-motion-resize-handle]` →
+  `[data-motion-layer]` → `[data-motion-world]` containment → Remotion's own untouched chrome).
+  Drag now moves every selected layer by one shared world delta (`moveLayersByDelta`), one commit
+  per gesture. Stable layer identity: an optional, additive `layer.id` (schema.ts) stamped by
+  `addLayer`, with `resolveSelection`/`resolveSelections` preferring it over a captured index so a
+  live multi-selection survives a reorder/insert/delete — verified inert on render via
+  byte-identical `remotion still` output, id present or absent. `InspectorPanel.tsx`'s
+  `MultiLayerInspector`: align/distribute (real pure functions,
+  `alignSelections`/`distributeSelections`) always shows for 2+ selections; the D-157 Transform
+  group always shows in lockstep; the primitive's own fields also show in lockstep when every
+  selected layer shares a `use`. Snapping GUIDES explicitly scoped down (open-ended UI work, not
+  built — see D-158's own "smallest next step"). A worktree-infra `node_modules` symlink gotcha
+  (cross-package types resolving to the MAIN repo's stale copy) found and worked around without
+  `npm install` (blocked by this session's permission classifier) — see D-158's own writeup.
+  `tsc` clean both packages (`app`'s 64-error baseline unchanged), `@chroma/motion` 159/159
+  (37 new tests).
 - **2026-09-05** — **Motion visual builder, Phase 2: resize handles, "snap to layer," the layer
   transform wrapper (D-157), on top of Phase 0/1 (D-155/D-156).** Resize: `sizeFields(use)`
   (`propCatalog.ts`) + `layerWorldSize`/`setLayerSize` (`manifestEdit.ts`) for `emphasis.box`,

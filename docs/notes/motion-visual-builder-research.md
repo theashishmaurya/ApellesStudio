@@ -598,6 +598,34 @@ The owner said "multiple elements" first, so this is not optional polish.
 
 **Size: medium.**
 
+> **Built as D-158 (2026-09-05).** Every bullet above shipped except one, scoped down exactly as
+> this pass's own instructions permitted: `Selection[]` (constrained to same-kind `layer`,
+> same-scene, or a single entry of any kind — a real design call not spelled out above, documented
+> in `LayerList.tsx`'s own module doc comment); marquee-select + shift-click-extend, D-137's
+> discipline applied to a FOURTH gesture sharing `MotionCanvasOverlay.tsx`'s pointer surface
+> (resize/move/click/marquee) — D-137's own CLASS-LIST exclusion technique doesn't transfer
+> verbatim (Remotion's control bar carries no distinguishing class or attribute at all), so
+> `[data-motion-world]` DOM containment plays the equivalent structural role instead; a
+> shared-world-delta group move (`moveLayersByDelta`, one commit per gesture regardless of group
+> size); stable layer identity, built exactly as recommended (`layer.id`, optional, additive,
+> `addLayer`-generated, positional fallback when absent, `resolveSelection`/`resolveSelections`
+> preferring it when present); and alignment/distribute (`alignSelections`/`distributeSelections`,
+> real pure functions with real tests, a small toolbar in the Inspector's new multi-select view).
+> **Snapping guides were the one item explicitly scoped down**, per this pass's own standing
+> permission to do so provided align/distribute shipped — the open-ended, UI-heavy half (live
+> nearest-edge computation on every pointermove, a threshold-snap, a drawn guide-line overlay) with
+> no small version of it; the smallest real next step (the align functions' own target-line math is
+> already most of what a snap-while-dragging feature would need) is recorded in D-158's own
+> decision entry rather than attempted here. One additional design call this section didn't fully
+> resolve, made and documented rather than left implicit: the Inspector's multi-select view is a
+> COMBINATION of the options this doc's own owner-facing task later posed — align/distribute and a
+> generic Transform group always show; a primitive's own fields show too, in lockstep, only when
+> every selected layer shares a `use`; a live per-layer sub-picker was considered and rejected (see
+> `InspectorPanel.tsx`'s own module doc comment for the full reasoning). See `docs/08-decisions.md`'s
+> D-158 entry for the complete writeup, including a real worktree-infra gotcha (cross-package
+> `tsc` types silently resolving to the MAIN repo's stale `schema.ts` through a symlink chain) found
+> and worked around this pass.
+
 ### Phase 4 — the animation model: per-layer keyframes
 
 This is where the manifest genuinely has to grow, and where "so we can build crazy things"

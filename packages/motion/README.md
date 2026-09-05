@@ -18,7 +18,22 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
 
 - `MotionTab.tsx` — the tab: gates on a project being open (same contract
   `@chroma/editor`'s `EditorTab` uses — manifest persistence is
-  project-scoped), then lays out the four panes and owns the `Selection`.
+  project-scoped), then lays out the four panes and owns `selections:
+  Selection[]` (D-158, Phase 3 of `docs/notes/motion-visual-builder-
+  research.md` — was a single `Selection | null`) plus the Phase 0b transient
+  drag-preview override.
+- `MotionCanvasOverlay.tsx` — on-canvas select/drag (D-156), resize (D-157),
+  and marquee-select/shift-click/shared-delta group-move (D-158): a DOM
+  sibling of `<Player>` handling four pointer gestures on one surface. See
+  its own module doc comment for the full gesture-disambiguation reasoning
+  (D-137's "mutually exclusive by DOM position" discipline, applied here).
+- `canvasGeometry.ts` — pure screen↔world coordinate math (measure-the-DOM,
+  not re-derive-the-camera) plus the marquee's rectangle math
+  (`rectFromPoints`/`rectsIntersect`) — kept apart from any DOM-touching
+  component so it gets a real unit-test floor.
+- `layerMeasure.ts` — the shared "measure a layer's real screen rect from its
+  `data-motion-box` descendants" helper, used by the canvas overlay's
+  selection outline, "snap to layer," and the marquee's hit-test.
 - `motionProjectStore.ts` — **readiness** (B-058/D-150): `projectOpen`, pushed in
   from the composition root (`app/src/main.tsx`), plus where the manifest read
   stands (`idle`/`loading`/`ready`/`error`). A store, not tab-local state,
@@ -35,12 +50,17 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
   `totalFrames`/schema defaults (`build.ts`), not reimplemented here.
 - `LayerList.tsx` — the scene → camera → layers → scene3d-children tree, and
-  the `Selection` model everything else here binds to (D-081).
+  the `Selection`/`Selection[]` model everything else here binds to (D-081;
+  `Selection[]` + `toggleSelection`/`sameSelection`/`resolveSelections`-
+  adjacent helpers D-158, Phase 3 — see this file's own module doc comment
+  for the same-kind/same-scene multi-select constraint).
 - `InspectorPanel.tsx` — the property form for whatever is selected: typed
   controls per `propCatalog.ts`, a live-validated JSON fallback for nested
   content props, and an add/remove camera-keyframe list (D-099). Shares its
   empty state + section headings with the Edit tab via `@chroma/inspector`
-  (D-103).
+  (D-103). For a 2+ multi-selection (D-158), renders `MultiLayerInspector`
+  instead — align/distribute + lockstep Transform/field editing; see its own
+  module doc comment for the full design reasoning.
 - `propCatalog.ts` — *what fields the Inspector shows* for each `use`,
   transcribed from each primitive's own prop type + `registry.ts`'s adapter.
 - `CatalogPanel.tsx` — *what primitives exist and how to add one* (D-151):
@@ -54,7 +74,12 @@ Catalog, two tabs) · **Inspector** · **manifest editor**.
 - `manifestEdit.ts` — the pure manifest read/write layer both the Inspector
   and the Catalog go through. Immutable (`structuredClone`); every function
   degrades to a no-op rather than throwing on a stale selection. `addLayer`
-  (D-151) is the only op here that *creates*.
+  (D-151) is the only op here that *creates* (and, D-158, stamps a random
+  `id` on what it creates). Also: `resolveSelection`/`resolveSelections`
+  (id-preferred, index-fallback selection resolution), `moveLayersByDelta`/
+  `setFieldOnSelections`/`setTransformFieldOnSelections` (multi-target
+  writes composed into one `Manifest`), and `alignSelections`/
+  `distributeSelections` (D-158, Phase 3).
 - `ManifestEditor.tsx` — the JSON `<textarea>` + inline parse/save/render
   error surfacing. Still the only way to delete a layer or add a scene.
 - `manifestIO.ts` — thin wrappers around the three `chroma_motion_*` Tauri
@@ -82,19 +107,30 @@ engine side.
 ## Tests
 
 `npm test --workspace @chroma/motion` (vitest, `node` environment — the
-testable logic here is deliberately kept out of the components). 57 tests
-across `manifestEdit.test.ts` and `catalog.test.ts`.
+testable logic here is deliberately kept out of the components, per the
+`canvasGeometry.ts`/`layerMeasure.ts` split above). 159 tests across
+`canvasGeometry.test.ts`, `manifestEdit.test.ts`, `catalog.test.ts`, and
+`motionProjectStore.test.ts` (2026-09-05, D-158).
 
 ## Status
 
 Real preview + layer list + Inspector + Catalog + editor + save + render, one
-manifest per project.
+manifest per project — plus, as of D-155–D-158 (2026-09-05,
+`docs/notes/motion-visual-builder-research.md`'s Phases 0–3), a real visual
+builder: click-select and drag a layer or a multi-selection on the canvas
+(world-space, camera-move-safe), resize handles, "snap to layer," a generic
+per-layer transform (scale/rotate/opacity/clip), marquee-select +
+shift-click, align/distribute actions, and undo (`@chroma/history`) for
+every Inspector edit and canvas gesture.
 
-**Known gaps**, audited in full with citations in
-`docs/notes/motion-tab-audit.md` (2026-09-05) and queued as roadmap item 16:
-no on-canvas manipulation (positions are typed, not dragged), no drag and
-drop, no scene/layer timeline UI, no undo/redo (D-052 deferred Motion), no
-delete/duplicate of a layer from the GUI, no multi-manifest per project
-(D-046), and **no MCP tools at all** — Motion is the one tab an agent cannot
-drive. The Catalog (D-151) closed the largest of these: before it, nothing in
-this package could make a layer exist except hand-typed JSON.
+**Known gaps**, most audited in full with citations in
+`docs/notes/motion-tab-audit.md` (pre-D-155) and queued as roadmap item 16 —
+re-checked against what D-155–D-158 actually closed rather than assumed
+stale: no scene/layer TIMELINE UI and no per-layer KEYFRAMES (Phase 4/5 of
+the research doc — the manifest's only animated spatial channel is still the
+camera), no drag-and-drop from outside the app, no delete/duplicate of a
+layer from the GUI, no multi-manifest per project (D-046), no snapping GUIDES
+while dragging (D-158's own explicit scope-down), no group RESIZE for a
+multi-selection (single-selection only), and **no MCP tools at all** — Motion
+is the one tab an agent cannot drive. The Catalog (D-151) closed the largest
+GUI-creation gap; D-155–D-158 closed the largest on-canvas-manipulation gap.
