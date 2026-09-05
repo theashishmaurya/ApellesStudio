@@ -42,6 +42,34 @@ const cam3dKey = z.object({
   look: vec3.optional(),
 });
 
+/**
+ * D-157, Phase 2 of `docs/notes/motion-visual-builder-research.md` ("the
+ * enabling structural change for Phase 4"): a generic post-hoc transform
+ * every 2D layer can optionally carry, applied ON TOP of the primitive's own
+ * positioning (`motion-engine/src/engine/Video.tsx`'s `renderLayers`), never
+ * replacing it. Purely additive — `.optional()` on the field itself (§ below)
+ * means absent ⇒ identity ⇒ every manifest written before this pass renders
+ * byte-identically (verified by real `remotion still` renders, not just
+ * reasoning about the schema — see D-157's own decision entry).
+ *
+ * `clipWidth`/`clipHeight` are the research doc's own "crop, honestly"
+ * scoping call (§4 Phase 2): NOT the Edit tab's four-inset crop model — most
+ * Motion primitives have nothing analogous to a decoded video rectangle to
+ * inset — but the one real, small equivalent named in the doc: clip the
+ * layer to an explicit `clipWidth`×`clipHeight` box via `overflow: hidden`
+ * on this SAME wrapper. Both absent (the common case) ⇒ no clipping at all,
+ * today's full-bleed behaviour.
+ */
+const layerTransform = z.object({
+  x: z.number().optional(),
+  y: z.number().optional(),
+  scale: z.number().optional(),
+  rot: z.number().optional(),
+  opacity: z.number().optional(),
+  clipWidth: z.number().optional(),
+  clipHeight: z.number().optional(),
+});
+
 /** one primitive placement. `use` picks the primitive; the rest are its props.
  *  passthrough so per-primitive props don't all need re-declaring here. */
 const layer = z
@@ -60,6 +88,11 @@ const layer = z
     at: z.number().optional(),
     dur: z.number().optional(),
     active: activeSchema.optional(),
+    /** D-157 — see `layerTransform`'s own doc comment above. Declared
+     *  explicitly (not left to `.passthrough()`) so it validates against a
+     *  real shape rather than arriving as an untyped blob; every OTHER
+     *  per-primitive prop still passes through unchanged below. */
+    transform: layerTransform.optional(),
   })
   .passthrough();
 
@@ -96,6 +129,7 @@ export const manifestSchema = z.object({
 export type Manifest = z.infer<typeof manifestSchema>;
 export type Scene = z.infer<typeof scene>;
 export type Layer = z.infer<typeof layer>;
+export type LayerTransform = z.infer<typeof layerTransform>;
 export type Cam2dKey = z.infer<typeof cam2dKey>;
 export type Cam3dKey = z.infer<typeof cam3dKey>;
 export type Active = z.infer<typeof activeSchema>;

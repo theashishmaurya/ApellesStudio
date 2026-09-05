@@ -26,14 +26,65 @@ import type { Manifest, Scene as SceneT } from "./schema";
  * exactly as before this wrapper existed) — zero pixel/visual change.
  * `sceneIndex` is `<Video>`'s own `manifest.scenes` index, so it lines up
  * directly with `LayerList.tsx`'s `Selection.sceneIndex`.
+ *
+ * `l.transform` (D-157, Phase 2 of the research doc — "the layer transform
+ * wrapper") is applied on an INNER real element only when present, ON TOP OF
+ * the primitive's own positioning: a `position:absolute` box exactly the
+ * size/place the `display:contents` outer wrapper would otherwise have made
+ * invisible (`inset:0` normally, or an explicit `clipWidth`×`clipHeight` box
+ * with `overflow:hidden` when both are set — the research doc's own "crop,
+ * honestly" call), carrying the CSS transform + opacity. `transformOrigin:
+ * "0 0"` matches `Camera.tsx`'s own convention on the SAME kind of transform
+ * — scale/rotate pivot at the wrapper's own origin (world `(0,0)`, i.e. the
+ * canvas top-left for the common `inset:0` case), not the layer's own
+ * position; combining `x`/`y` with `scale`/`rot` to keep a layer's own point
+ * fixed under a scale/rotate is on the author (or a future tool), exactly
+ * the same way a camera key must combine `x`/`y` with `zoom`. Getting this
+ * wrapper to instead pivot around a primitive's own reported anchor would
+ * need per-primitive position knowledge (`@chroma/motion`'s `positionFields`)
+ * that this ENGINE package must not depend on (wrong direction, `@chroma/
+ * motion` depends on this package, never the reverse) — a known, honest
+ * scope call, not an oversight. When `l.transform` is absent, `node` below is
+ * the exact same JSX this function always produced — zero pixel/visual
+ * change, verified with real byte-for-byte `remotion still` renders (D-157).
  */
 const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, sceneIndex: number) =>
   (layers ?? []).map((l, i) => {
     const { component: C, adapt } = lookup(l.use);
     const props = adapt(l as unknown as Record<string, unknown>, fps, frame);
+    const t = l.transform;
+    const node = t ? (
+      <div
+        style={
+          t.clipWidth !== undefined && t.clipHeight !== undefined
+            ? {
+                position: "absolute",
+                left: 0,
+                top: 0,
+                width: t.clipWidth,
+                height: t.clipHeight,
+                overflow: "hidden",
+                transformOrigin: "0 0",
+                transform: `translate(${t.x ?? 0}px, ${t.y ?? 0}px) rotate(${t.rot ?? 0}deg) scale(${t.scale ?? 1})`,
+                opacity: t.opacity ?? 1,
+              }
+            : {
+                position: "absolute",
+                inset: 0,
+                transformOrigin: "0 0",
+                transform: `translate(${t.x ?? 0}px, ${t.y ?? 0}px) rotate(${t.rot ?? 0}deg) scale(${t.scale ?? 1})`,
+                opacity: t.opacity ?? 1,
+              }
+        }
+      >
+        <C {...props} />
+      </div>
+    ) : (
+      <C {...props} />
+    );
     return (
       <div key={`${l.use}-${i}`} data-motion-layer={`${sceneIndex}.${i}`} style={{ display: "contents" }}>
-        <C {...props} />
+        {node}
       </div>
     );
   });

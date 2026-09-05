@@ -100,3 +100,49 @@ all pure additions with **zero pixel/visual change**:
   wrapper's first rendered child (`layerEl.firstElementChild`) — for `graph`
   and `emphasis`'s `pulse`/`glow`, that IS the whole-canvas `<svg>`/`div`, an
   intentional, documented degradation rather than a crash.
+
+## Layer transform wrapper (D-157)
+
+`schema.ts`'s `layer` object carries an optional `transform` field
+(`{x?, y?, scale?, rot?, opacity?, clipWidth?, clipHeight?}`, additive —
+`.optional()` on the field itself, so absent means identity). When present,
+`Video.tsx`'s `renderLayers` inserts one real `position:absolute` `<div>`
+between the (still `display:contents`) `data-motion-layer` wrapper and the
+primitive itself, carrying a CSS `transform`/`opacity` — **on top of the
+primitive's own positioning, never replacing it.** When `transform` is
+absent (every manifest written before this pass, and most written after it),
+`renderLayers` emits the exact same JSX it always did — verified
+byte-for-byte identical via `remotion still` at three frames of the engine's
+own sample manifest, before vs. after this schema change (D-157's own
+decision entry has the shasum/`cmp` output).
+
+Two things worth knowing before reaching for this:
+
+- **`transformOrigin: "0 0"`**, matching `Camera.tsx`'s own convention on the
+  same kind of transform — `scale`/`rot` pivot at the wrapper's own origin
+  (world `(0,0)`, the canvas top-left for the common full-bleed case), NOT
+  the layer's own authored position. Scaling or rotating a layer that sits
+  away from `(0,0)` will make it appear to swing/fly rather than pivot in
+  place unless you also set `x`/`y` to compensate — the same discipline a
+  camera key already needs (`x`/`y` + `zoom` together to keep a target point
+  fixed). Pivoting around a primitive's own reported anchor instead would
+  need this ENGINE package to know per-primitive position semantics that
+  belong to `@chroma/motion`'s `propCatalog.ts` (`positionFields`) — the
+  wrong dependency direction (`@chroma/motion` depends on this package,
+  never the reverse) — so it's a known, documented scope call, not an
+  oversight.
+- **`clipWidth`/`clipHeight`** are the research doc's own "crop, honestly"
+  call (`docs/notes/motion-visual-builder-research.md` §4 Phase 2): NOT the
+  Edit tab's four-inset crop model (most Motion primitives have nothing
+  analogous to a decoded video rectangle to inset) — the one real, small
+  equivalent, clip-to-box via `overflow: hidden` on this same wrapper. Both
+  absent (the common case) ⇒ no clipping at all.
+- **A drag/resize gap, disclosed rather than silently left:** `@chroma/
+  motion`'s `MotionCanvasOverlay.tsx` measures its screen↔world map off
+  `[data-motion-world]` alone (the camera's own transform). A layer that ALSO
+  carries a non-identity `transform` sits behind an EXTRA transform this map
+  doesn't account for, so dragging or resizing such a layer on-canvas will be
+  slightly off. Nothing existing hits this yet (the wrapper and the
+  Inspector fields to set it both land in this same pass); fixing it means
+  measuring a per-layer world map instead of one shared map per drag, left
+  for whichever future phase actually needs to drag a transformed layer.
