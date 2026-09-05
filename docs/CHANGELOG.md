@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Motion tab MCP surface, Phase 1: live-verified (D-167).** New
+  `packages/motion/src/useMotionControl.ts`, mounted from `MotionTab.tsx`, answers `motion_*` ops
+  over the existing D-020 HTTP↔Tauri-event bridge — zero `control.rs`/Rust changes.
+  `motion_get_manifest` (read) and `motion_add_layer` (wraps `manifestEdit.addLayer`, committed
+  through the real undo-wired `useMotionManifest().commit()`) built and live-verified via `curl`
+  against a real running instance: opened a real `.chroma` project over the same bridge
+  (`new_project`), confirmed `motion_get_manifest`'s `loadState` going `no-project` → `ready`, then
+  a real before/after manifest diff proving `motion_add_layer` actually mutates state (scene
+  `hook`'s `layers` array 2 → 3 entries, matching `catalog.ts`'s `defaultLayerFor('text')` shape).
+  Also fixed a two-listener race (`useChromaControl` now skips any `motion_*` op so it can't win
+  the response slot ahead of Motion's real multi-`await` handler) and found/documented a
+  `CHROMA_CONTROL_PORT` gotcha: the control server's port-collision failure is silent, so a second
+  Chroma instance for testing needs an explicit distinct `CHROMA_CONTROL_PORT`, verified via
+  `lsof`/`ps eww` rather than assumed. `tsc -p app` unchanged at 64, `cargo check --workspace
+  --all-targets` clean. Full scoping + tool-list roadmap:
+  `docs/notes/motion-mcp-surface-research.md`.
+
 - **2026-09-05** — **Full regression run finds and fixes a real gap (D-166).** `@chroma/editor`'s
   D-142 `jsdom` devDependency was declared in `package.json` but never actually installed on
   `main` — its flagship permanent DOM regression test (`TimelinePane.marquee.dom.test.tsx`) has

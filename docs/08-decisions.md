@@ -14187,3 +14187,88 @@ number is **D-165**, no `B-NNN` touched — **D-166** is free.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-167 — Motion tab MCP surface, Phase 1 (`motion_get_manifest` / `motion_add_layer`), live-verified against a second running instance, plus a `CHROMA_CONTROL_PORT` port-collision gotcha for anyone running two Chroma instances at once
+
+**decided + built (2026-09-06).** Full scoping is `docs/notes/motion-mcp-surface-research.md`
+(read that first — it works out the addressing scheme, the mount/reachability question, and the
+two-listener race with Colorist's own `useChromaControl`, all from reading the real files, not
+guessed). This entry records what got live-verified and the operational gotcha found while doing
+it.
+
+**The port-collision gotcha (record this for the next person testing a second instance).**
+`app/src-tauri/src/chroma/control.rs` binds a FIXED port, `19788`, unless overridden by
+`CHROMA_CONTROL_PORT` (its own `DEFAULT_PORT` const, read once in `serve()`). The bind failure
+path is deliberately non-fatal — it just `log::error!`s and returns, so the app keeps running with
+no control server at all, silently. This session had TWO real Chroma checkouts alive at once: the
+owner's own instance from `main` (`~/my_projects/chroma`) already holding `19788`, and this
+worktree's freshly-built binary. Without `CHROMA_CONTROL_PORT` set, the worktree binary's own bind
+would have failed silently and every `curl` against `19788` would have round-tripped to the
+*other* (main-repo, pre-Motion-MCP-changes) instance instead — a false positive, since `get_state`/
+`get_manifest`-shaped ops are real, pre-existing, and would have answered normally with the WRONG
+instance's data, giving no signal at all that the new code was untested. **Fix: set
+`CHROMA_CONTROL_PORT` to a distinct value per running instance** — `19790` was used here,
+confirmed via `lsof -p <pid> -a -iTCP -sTCP:LISTEN` and the running process's own real environment
+block (`ps eww <pid> | grep CHROMA_CONTROL_PORT`) before trusting any `curl` result against it, not
+just assumed from the env var that was set at launch. (One launch attempt this session did land on
+an unexpected port — `19789`, one below the intended `19790` — despite the identical
+`CHROMA_CONTROL_PORT=19790 npm run tauri dev` invocation; a second, identical launch bound `19790`
+correctly. Root cause not pinned down — a `pgrep`/`ps eww` cross-check on the actual bound port and
+the actual process environment, not just "the env var I passed," is what caught it, and is the
+right habit regardless of cause.) The frontend dev port (Vite, `1420`→`1425` in
+`app/vite.config.mjs`/`tauri.conf.json`) is a SEPARATE collision, already fixed in this same
+worktree before this entry — the two are unrelated (one is Vite's HMR dev server, the other is the
+Rust-side MCP control server) and both had to be handled for two instances to coexist.
+
+**What got live-verified, against the confirmed-correct port (`19790`), with a fresh/no-project
+instance (`get_state` → `session:{active:0,shots:[]}`, `project:null` — not the main instance's
+loaded session):**
+
+- `motion_get_manifest` with no project open → `{"loadState":"no-project","manifest":null}` —
+  real, not a crash or an "unknown op," proving the new `useMotionControl` listener is reachable
+  over HTTP even before any Motion project exists (same shape of answer D-020's `get_state` gives
+  Colorist with no shot loaded).
+- Opened a real project over the SAME HTTP bridge, using the pre-existing (unmodified this pass)
+  `new_project` Colorist op — `{"op":"new_project","args":{"name":"motion-mcp-verify"}}` →
+  created `~/Movies/Chroma/motion-mcp-verify.chroma`. This is the honest way to get a Motion
+  project open for HTTP-only testing: Motion's own `loadState` is driven by
+  `useSessionStore`'s `projectPath` (B-058/D-150, see the research doc §4), which only a saved
+  `.chroma` project sets — there is no `motion_open_project` op yet (not in Phase 1's scope), so
+  reusing Colorist's already-verified `new_project` was the only way to reach `ready` state
+  without clicking the GUI. Documenting this rather than skipping it: the constraint this task's
+  brief anticipated ("Motion tab must be active") turned out to be false (research doc §4, B-007
+  guarantees `MotionTab` mounted from boot regardless of active tab) — the REAL constraint is "a
+  saved `.chroma` project must be open," which is what actually gated the fresh instance.
+- `motion_get_manifest` after opening the project → `loadState:"ready"`, a real 3-scene sample
+  manifest (`hook`/`stack`/`space`), scene `hook` with 2 layers.
+  `motion_add_layer({"scene_index":0,"use":"text"})` → `{"addedUse":"text","sceneIndex":0,
+  "selection":{"sceneIndex":0,"target":{"id":"t1o7quid","index":2,"kind":"layer"}}}`. A follow-up
+  `motion_get_manifest` shows scene `hook`'s `layers` array now length 3, the new entry
+  `{"at":0,"id":"t1o7quid","preset":"fade-up","size":64,"text":"New text","use":"text","x":180,
+  "y":300}` — exactly `catalog.ts`'s `defaultLayerFor('text')` shape, `id` matching the
+  `motion_add_layer` response's own `selection.target.id`. This is the real before/after JSON
+  diff proving the mutation actually went through `manifestEdit.addLayer` → `useMotionManifest`'s
+  real (undo-wired) `commit()` path, not a stub.
+- The throwaway `motion-mcp-verify.chroma` test project was deleted from disk after verification
+  (`~/Movies/Chroma/`) — it was created solely to exercise the HTTP bridge, not real work.
+
+**Also run:** `npx tsc --noEmit -p app` — 64 errors, unchanged from the documented baseline (same
+pre-existing errors, confirmed by count not just by eyeballing a truncated list).
+`cargo check --workspace --all-targets` — clean (only the pre-existing `ai_processing.rs` dead-code
+warnings, no new errors), confirming the Rust side (`control.rs` itself untouched this pass) is
+still sound.
+
+**Not built this pass (unchanged from the research doc's own "deliberately not built" note):** the
+Python `mcp/server.py` wrappers for `get_manifest`/`add_layer`, and Phases 2–4 of the tool list
+(the rest of the edit surface, keyframing, navigation/selection/persistence, `seek`'s `playerRef`
+bridge). All flagged as deferred, not forgotten, in the research doc.
+
+**Numbering.** Checked against the real tip of `main` in the main repo
+(`git -C ~/my_projects/chroma log --oneline -5`) immediately before writing this entry: `5b18399`
+(D-166) at the tip, matching this worktree's own `docs/08-decisions.md` highest number (D-166) —
+**D-167** is free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

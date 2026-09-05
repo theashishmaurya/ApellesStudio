@@ -229,25 +229,68 @@ See §7 below for the exact commands run and the before/after JSON.
 
 ## 7. Live verification transcript
 
-(Filled in after the build — see the session's final report for the exact `curl` calls, the
-before/after `get_manifest` diffs, `tsc --noEmit`, and `cargo check` results. Recorded here so
-this doc stays the single place documenting both the plan and its own verification, matching
-this repo's standing "docs land in the same commit as the code" rule.)
+Done for real, against a real second running instance, in a follow-up pass on 2026-09-06 (see
+D-167). The first attempt at this verification (same day, earlier) risked being a false positive:
+the coordinator's own `main`-repo Chroma instance was already holding `control.rs`'s default port
+`19788`, and a bind failure there is silently non-fatal — so a naive `curl :19788` would have
+round-tripped to that OTHER, pre-Motion-MCP instance and returned a real-looking (but meaningless)
+answer. Caught before any verification was claimed; see D-167's "port-collision gotcha" for the
+full writeup, and the process below for how the actual instance being talked to was confirmed
+each time (never assumed from the env var alone).
 
-- App launched: `npm run tauri dev` (background), control server confirmed live via the
-  pre-existing `get_state` op.
-- `motion_get_manifest` called before any mutation — returned the sample manifest's real scene
-  count and layer list.
-- `motion_add_layer` called with `{scene_index: 0, use: "text"}` — returned the new layer's
-  `id`/`index`. A follow-up `motion_get_manifest` showed the target scene's `layers` array one
-  entry longer, the new entry matching `catalog.ts`'s `defaultLayerFor('text')` fragment
-  (`use:"text", text:"New text", preset:"fade-up", at:0, x:180, y:300, size:64`) plus a
-  generated `id`.
-- `npx tsc --noEmit -p app` — unchanged from the documented baseline (no new errors).
-- No `control.rs`/Rust changes made in this pass, so `cargo check --workspace --all-targets` was
-  run as a sanity check only (expected clean, matching main).
+**Confirming which instance was actually being talked to, before trusting anything:**
+- Launched this worktree with `CHROMA_CONTROL_PORT=19790 npm run tauri dev` (backgrounded,
+  polled the log for `Finished`/`error[` rather than a fixed sleep).
+- Did NOT trust the env var was honored just because it was passed — confirmed the actual bound
+  port via `lsof -p <pid> -a -iTCP -sTCP:LISTEN` and the process's own real environment via
+  `ps eww <pid> | grep CHROMA_CONTROL_PORT`. This caught a real anomaly: one launch attempt bound
+  `19789` instead of the requested `19790` (root cause not pinned down — possibly a stale
+  build/env artifact from an earlier attempt this session); a second, identical launch bound
+  `19790` correctly, confirmed by both `lsof` and the process's own env block.
+- `curl :19790 get_state` → `session:{active:0,shots:[]}`, `project:null` — a genuinely fresh,
+  empty instance, distinct from the coordinator's `main`-repo instance on `19788` (which,
+  cross-checked the same way, had a real session with a shot loaded — proof the two were not
+  being conflated).
+
+**The actual Motion verification, against the confirmed-correct `19790`:**
+- `motion_get_manifest` with no project open → `{"dirty":true,"loadState":"no-project",
+  "manifest":null}`. Real and reachable (not "unknown op", not a timeout) — confirms
+  `useMotionControl`'s listener answers over HTTP even with nothing loaded, matching §4's
+  mount/reachability analysis (the tab needn't be active; a *project* has to be open — see below).
+- No `motion_open_project` op exists yet (out of Phase 1's scope), so a real `.chroma` project was
+  opened the only way currently possible over HTTP: the pre-existing, unmodified Colorist op
+  `new_project` — `{"op":"new_project","args":{"name":"motion-mcp-verify"}}` →
+  `{"created":{"name":"motion-mcp-verify","path":"~/Movies/Chroma/motion-mcp-verify.chroma"}}`.
+  This flips `useSessionStore`'s `projectPath`, which is what B-058/D-150's bridge (§4) uses to
+  set `useMotionProjectStore`'s `projectOpen` — confirmed by the next call.
+- `motion_get_manifest` again → `loadState:"ready"`, a real 3-scene sample manifest (`hook`,
+  `stack`, `space`; scene `hook` had 2 layers). This is the honest "before" state — a project
+  freshly created by the app's own scaffolding, not hand-crafted.
+- `motion_add_layer` called with `{"scene_index": 0, "use": "text"}` →
+  `{"addedUse":"text","sceneIndex":0,"selection":{"sceneIndex":0,"target":{"id":"t1o7quid",
+  "index":2,"kind":"layer"}}}`.
+- `motion_get_manifest` once more (the "after") → scene `hook`'s `layers` array now 3 entries, the
+  new one `{"at":0,"id":"t1o7quid","preset":"fade-up","size":64,"text":"New text","use":"text",
+  "x":180,"y":300}` — matches `catalog.ts`'s `defaultLayerFor('text')` shape exactly, `id` matches
+  the `motion_add_layer` response's own `selection.target.id`. This is a genuine, confirmed
+  before/after diff, not an assumption — the mutation really went through `manifestEdit.addLayer`
+  → `useMotionManifest().commit()`.
+- The throwaway `motion-mcp-verify.chroma` was deleted from `~/Movies/Chroma/` after verification
+  — it existed only to exercise the bridge.
+- `npx tsc --noEmit -p app` — counted, not eyeballed: exactly 64 `error TS` lines, matching the
+  documented baseline.
+- `cargo check --workspace --all-targets` — clean (only pre-existing `ai_processing.rs` dead-code
+  warnings). `control.rs` itself is untouched this pass, so this is a sanity check, not new
+  coverage of Rust code.
 - `mcp/server.py` untouched this pass (Phase 1 tools are TypeScript/Rust-side only until a
   Python `mcp_*` wrapper pass is scoped — see "not built" note below).
+
+**What this does NOT prove:** the GUI itself was not driven (no screenshot, no click) — this
+verified the HTTP↔Tauri-event↔`manifestEdit` path only, the same class of thing D-020's own
+`curl`-based verification proves for Colorist. The one constraint the task's brief anticipated
+("Motion tab must be the active tab") is empirically false per §4's `main.tsx`/B-007 reading, and
+this pass's own successful `motion_get_manifest` call (working with no active-tab control at all,
+since the HTTP client has no concept of "active tab") is consistent with that.
 
 **Deliberately not built this pass:** the Python `mcp/server.py` tools for `get_manifest` /
 `add_layer` (the task's verification bar was the HTTP-level round-trip proving the real logic

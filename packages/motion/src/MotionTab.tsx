@@ -84,6 +84,7 @@ import { ManifestEditor } from './ManifestEditor';
 import { addLayer, snapEmphasisToRect, resolveSelections } from './manifestEdit';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest } from './useMotionManifest';
+import { useMotionControl } from './useMotionControl';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
 
 /** the two views the left sidebar pane switches between (D-151) */
@@ -115,6 +116,14 @@ function labelForSelections(selections: Selection[]): string {
 
 export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
   const m = useMotionManifest(onRendered);
+  // Motion's half of the Chroma control server bridge (D-020's architecture,
+  // reused — docs/notes/motion-mcp-surface-research.md). Mounted here (not
+  // conditionally on any loadState) so it registers its Tauri listener from
+  // boot, same as `useChromaControl` does in App.tsx — B-007 already
+  // guarantees this component stays mounted regardless of which tab has
+  // focus. Individual ops still check `m.loadState`/`m.manifest` themselves
+  // for the "no project open" / "not loaded yet" cases.
+  useMotionControl(m);
   const playerRef = useRef<PlayerRef>(null);
   // D-157 — the preview's imperative measurement escape hatch (see
   // `MotionPreview.tsx`'s own doc comment), used ONLY by `onSnapToLayer`

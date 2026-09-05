@@ -1636,6 +1636,15 @@ export function useChromaControl() {
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};
       const { id, op, args } = payload;
+      // Motion ops (namespaced `motion_*`) are answered by `@chroma/motion`'s
+      // own `useMotionControl` listener, mounted from `MotionTab.tsx` — see
+      // docs/notes/motion-mcp-surface-research.md §6. Both listeners see
+      // every `chroma://request` event (Tauri doesn't scope `listen()` by
+      // payload), so this early return is load-bearing: without it, this
+      // handler's synchronous "unknown op" branch below would race ahead of
+      // Motion's real (multi-`await`) handler and win the one-shot
+      // `chroma://response/<id>` slot with a false "unknown op" error.
+      if (typeof op === 'string' && op.startsWith('motion_')) return;
       const respond = (body: any) => emit(`chroma://response/${id}`, body);
 
       const fn = OPS[op];
