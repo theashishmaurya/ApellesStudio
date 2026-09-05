@@ -190,3 +190,30 @@ export const CAM3D_KEY_FIELDS: FieldSpec[] = [
   { key: 'pos', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
   { key: 'look', label: 'Look at [x,y,z]', kind: 'json', group: 'layout' },
 ];
+
+/** Which manifest field(s) a canvas DRAG writes for a primitive's `use:`
+ *  (D-155/D-156, Phase 0d/Phase 1 of `docs/notes/motion-visual-builder-
+ *  research.md` — that doc names this file as "the natural home for a
+ *  `positionFields(use)` map"). Two shapes cover every 2D primitive with a
+ *  real, single world-space anchor point:
+ *   - `'xy'`     — the primitive's own `x`/`y` fields (`text`, `matrix`,
+ *                  `layers` — the same three fields `PRIMITIVE_FIELDS`
+ *                  already exposes as separate Inspector X/Y number inputs).
+ *   - `'box-xy'` — the first two elements of a `[x,y,w,h]` tuple
+ *                  (`emphasis.box` — D-154's own `vec` field, `w`/`h`
+ *                  untouched by a position-only drag).
+ *  `undefined` means "no draggable anchor": `graph` lays its nodes out with
+ *  d3-force and has no single x/y to move (its `width`/`height` are a
+ *  layout BOX, not a position); the three `in3d` primitives never appear in
+ *  a 2D `renderLayers` pass at all — `data-motion-layer` (`motion-engine`'s
+ *  `Video.tsx`) is only ever written for `scene.layers`, never
+ *  `scene.scene3d.children` — so a click on the canvas can't select one to
+ *  begin with (3D is out of scope for every phase this pass touches, per
+ *  the research doc §3b/§4). */
+export type PositionKind = 'xy' | 'box-xy';
+
+export function positionFields(use: string): PositionKind | undefined {
+  if (use === 'text' || use === 'matrix' || use === 'layers') return 'xy';
+  if (use === 'emphasis') return 'box-xy';
+  return undefined;
+}

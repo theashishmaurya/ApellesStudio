@@ -23,6 +23,7 @@
 import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey } from '@chroma/motion-engine/src/engine/schema';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
+import { positionFields } from './propCatalog';
 
 type Raw = Record<string, unknown>;
 
@@ -83,6 +84,86 @@ export function setLayerField(manifest: Manifest, selection: Selection, key: str
   if (!raw) return manifest;
   if (value === undefined) delete raw[key];
   else raw[key] = value;
+  return next;
+}
+
+/** The `[x,y,w,h]` an `emphasis` layer starts with when a drag has to
+ *  invent a width/height (`box` missing or malformed) — D-151's own
+ *  `defaultLayerFor('emphasis')` starting box, so a drag never has to guess
+ *  a size independently of what "insert an emphasis" already means here. */
+const DEFAULT_EMPHASIS_BOX_SIZE = { w: 400, h: 200 };
+
+/** A layer's current position in WORLD px (D-155/D-156, §3a/§4 Phase 1 of
+ *  `docs/notes/motion-visual-builder-research.md`) — resolved the way
+ *  `propCatalog.ts`'s `positionFields` says THIS primitive's anchor is
+ *  stored, never by re-deriving anything from the DOM (the DOM is only ever
+ *  measured for the screen↔world SCALE/ORIGIN — `canvasGeometry.ts` — a
+ *  layer's own authored position is already a world coordinate sitting
+ *  right in the manifest, per the research doc's own §3a). `null` for a
+ *  selection that doesn't resolve to a layer, an unrecognized `use`
+ *  (`positionFields` returns `undefined`), or — `emphasis` only — a `box`
+ *  that isn't a real `[x,y,w,h]` tuple (the `pulse`/`glow` presets don't use
+ *  one at all, see `Emphasis.tsx`), all of which read as "not draggable"
+ *  rather than a crash.
+ *
+ *  `x`/`y` fall back to an approximate canvas centre when unset, mirroring
+ *  `Matrix.tsx`'s/`Layers.tsx`'s own "no x/y ⇒ centred" default — an
+ *  approximation, not exact (their real default also depends on the
+ *  grid/stack's own measured size, which this file deliberately does not
+ *  reach into): good enough to seed a FIRST drag on a layer that has never
+ *  had an explicit position, not a claim about where it's currently drawn. */
+export function layerWorldPosition(manifest: Manifest, selection: Selection): { x: number; y: number } | null {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return null;
+  const kind = positionFields(found.use);
+  if (kind === 'xy') {
+    const x = typeof found.raw.x === 'number' ? found.raw.x : manifest.width / 2;
+    const y = typeof found.raw.y === 'number' ? found.raw.y : manifest.height / 2;
+    return { x, y };
+  }
+  if (kind === 'box-xy') {
+    const box = found.raw.box;
+    if (!Array.isArray(box) || typeof box[0] !== 'number' || typeof box[1] !== 'number') return null;
+    return { x: box[0], y: box[1] };
+  }
+  return null;
+}
+
+/** Writes a new WORLD-px position back through whichever field(s)
+ *  `positionFields` says this primitive uses — the ONE write path a canvas
+ *  drag commits through (§4 Phase 1), so `text`/`matrix`/`layers` and
+ *  `emphasis` never need their own bespoke drag-commit code, and adding a
+ *  fifth draggable primitive later only ever means adding a case to
+ *  `positionFields`, not to this function. `box-xy` preserves the existing
+ *  `w`/`h` (or `DEFAULT_EMPHASIS_BOX_SIZE` if the box was missing/malformed)
+ *  — a position drag never touches size. No-op (same manifest reference
+ *  back) for a selection that doesn't resolve, or a `use` with no position
+ *  fields at all (`graph`, an `in3d` primitive, or a future `use` this
+ *  build doesn't recognize) — the same defensive floor every function in
+ *  this file already holds. */
+export function setLayerPosition(manifest: Manifest, selection: Selection, x: number, y: number): Manifest {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return manifest;
+  const kind = positionFields(found.use);
+  if (!kind) return manifest;
+  const scene = selectedScene(manifest, selection.sceneIndex);
+  if (!scene) return manifest;
+  const { target } = selection;
+  const next = clone(manifest);
+  const nScene = next.scenes[selection.sceneIndex];
+  let raw: Raw | undefined;
+  if (target.kind === 'layer') raw = nScene.layers?.[target.index] as unknown as Raw;
+  else if (target.kind === 'scene3d-child') raw = nScene.scene3d?.children[target.index] as unknown as Raw;
+  if (!raw) return manifest;
+  if (kind === 'xy') {
+    raw.x = x;
+    raw.y = y;
+  } else {
+    const existing = Array.isArray(raw.box) ? (raw.box as unknown[]) : [];
+    const w = typeof existing[2] === 'number' ? existing[2] : DEFAULT_EMPHASIS_BOX_SIZE.w;
+    const h = typeof existing[3] === 'number' ? existing[3] : DEFAULT_EMPHASIS_BOX_SIZE.h;
+    raw.box = [x, y, w, h];
+  }
   return next;
 }
 

@@ -9,6 +9,8 @@ import {
   setSceneField,
   setCamera2d,
   setCamera3d,
+  layerWorldPosition,
+  setLayerPosition,
   parseJsonField,
 } from './manifestEdit';
 import type { Selection } from './LayerList';
@@ -108,6 +110,79 @@ describe('setCamera2d / setCamera3d', () => {
 
   it('is a no-op setting a 3D camera on a scene with no scene3d', () => {
     const next = setCamera3d(sample, 0, [{ at: 0, pos: [1, 1, 1] }]);
+    expect(next).toBe(sample);
+  });
+});
+
+describe('layerWorldPosition', () => {
+  it('reads a text layer\'s explicit x/y', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    expect(layerWorldPosition(sample, sel)).toEqual({ x: 180, y: 300 });
+  });
+
+  it('reads an emphasis layer\'s box[0]/box[1] (D-155 box-xy)', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+    expect(layerWorldPosition(sample, sel)).toEqual({ x: 980, y: 250 });
+  });
+
+  it('falls back to an approximate canvas centre for an unset xy axis', () => {
+    // scene "stack" layer 1 (`layers`) sets only `y: 560`, no `x` at all.
+    const sel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+    expect(layerWorldPosition(sample, sel)).toEqual({ x: sample.width / 2, y: 560 });
+  });
+
+  it('returns null for a primitive with no position fields (graph/in3d)', () => {
+    // scene "space" child 0 is a `particleflow` (in3d — never a `positionFields` hit)
+    const sel: Selection = { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0 } };
+    expect(layerWorldPosition(sample, sel)).toBeNull();
+  });
+
+  it('returns null for a selection that does not resolve', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(layerWorldPosition(sample, sel)).toBeNull();
+  });
+
+  it('returns null for an emphasis layer whose box is missing/malformed', () => {
+    const noBox = structuredClone(sample);
+    noBox.scenes[0].layers = [{ use: 'emphasis', preset: 'pulse', at: 0 }];
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    expect(layerWorldPosition(noBox, sel)).toBeNull();
+  });
+});
+
+describe('setLayerPosition', () => {
+  it('writes x/y on a text layer without mutating the original', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    const next = setLayerPosition(sample, sel, 400, 500);
+    expect(layerWorldPosition(next, sel)).toEqual({ x: 400, y: 500 });
+    expect(layerWorldPosition(sample, sel)).toEqual({ x: 180, y: 300 }); // original untouched
+  });
+
+  it('writes box[0]/box[1] on an emphasis layer and preserves box[2]/[3]', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+    const next = setLayerPosition(sample, sel, 100, 200);
+    const raw = selectedLayer(next, sel)?.raw as { box: number[] };
+    expect(raw.box).toEqual([100, 200, 520, 130]); // w/h (520,130) untouched
+  });
+
+  it('invents a default box size for an emphasis layer with no box yet', () => {
+    const noBox = structuredClone(sample);
+    noBox.scenes[0].layers = [{ use: 'emphasis', preset: 'pulse', at: 0 }];
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    const next = setLayerPosition(noBox, sel, 10, 20);
+    const raw = selectedLayer(next, sel)?.raw as { box: number[] };
+    expect(raw.box).toEqual([10, 20, 400, 200]);
+  });
+
+  it('is a no-op for a primitive with no position fields (graph/in3d)', () => {
+    const sel: Selection = { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0 } };
+    const next = setLayerPosition(sample, sel, 1, 1);
+    expect(next).toBe(sample);
+  });
+
+  it('is a no-op for a selection that does not resolve', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    const next = setLayerPosition(sample, sel, 1, 1);
     expect(next).toBe(sample);
   });
 });
