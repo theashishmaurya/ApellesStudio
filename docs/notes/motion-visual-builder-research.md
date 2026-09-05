@@ -713,6 +713,20 @@ grows a per-layer key *count* and a "keys" sub-row, and the player's own scrubbe
 markers for the selected layer. Not a timeline; enough to see that keys exist and to jump
 between them. Costs days, not weeks.
 
+> **Scoped further and its first slice built as Phase 5a, `docs/notes/
+> motion-keyframe-timeline-research.md` (2026-09-05, D-160).** That doc independently
+> re-verifies this section's own "most of the Edit tab's timeline isn't reusable, but the cost is
+> comparable" claim against the real code (verdict: confirmed, piece by piece — nothing transfers
+> as code, `ruler.ts`'s tick-algorithm and D-137's gesture-separation discipline transfer as
+> technique only), phases the remaining work as Phase 5a (built: `LayerList` key-count badges +
+> a read-only keyframe strip under the player, camera and selected-layer markers, click-to-seek)
+> and Phase 5b (not built: drag-a-key, per-row lanes, box-select, a curve editor — still a major
+> feature). One real, disclosed deviation from this section's own wording: "the player's own
+> scrubber gains key markers" turned out not to be buildable as literally worded — Remotion's
+> bundled player controls have no extension point (checked directly) — so Phase 5a builds a
+> separate small strip alongside the untouched player instead. See that doc for the complete
+> writeup.
+
 ### Explicitly out of scope for all phases above
 
 `scene3d` on-canvas manipulation (§3b), crop as the Edit tab means it (§ Phase 2), and any
