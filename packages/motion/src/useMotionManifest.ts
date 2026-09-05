@@ -36,6 +36,27 @@
  * The debounced call still fires a moment later on the identical string —
  * a harmless redundant parse, not a race, since `after`/`before` are fixed
  * strings closed over at push time, not read again later.
+ *
+ * **`save`/`render`'s return values, extended for D-170 (Motion tab MCP
+ * surface, Phase 4).** Before this pass, both were `Promise<boolean>` /
+ * `Promise<void>` — real failures only ever surfaced as a SIDE EFFECT
+ * (`saveError`/`renderError` React state), which is fine for the GUI (the
+ * next render just shows it) but not for `useMotionControl.ts`'s
+ * `motion_save_manifest`/`motion_render` ops: a Tauri-event handler awaiting
+ * `cur.save()`/`cur.render()` has no reliable way to observe a LATER
+ * re-render of this same component from outside it — reading `mRef.current
+ * .saveError` right after the `await` resolves would be racing this
+ * component's own re-render (state updates here are not part of any React
+ * *event* the bridge's caller participates in, so there's no batching
+ * guarantee they've committed yet). Rather than accept that race, `save` now
+ * resolves to a real `SaveOutcome` (`{ok, error?, path?}`) and `render` to a
+ * real `RenderOutcome` (`{ok, error?, result?}`) — the definitive answer,
+ * carried on the SAME promise the caller already awaits, no state re-read
+ * required. Every existing side effect (`saveError`/`renderError`/
+ * `renderResult`/`onRendered`) is unchanged — this only ADDS a return value
+ * neither the GUI's `<Button onClick={m.save}>` / `<Button onClick={m.render}>`
+ * (typed `() => void` in `ManifestEditor.tsx`, so a resolved-but-ignored
+ * return value is exactly as before) nor any other existing caller reads.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { manifestSchema, type Manifest } from '@chroma/motion-engine/src/engine/schema';
@@ -48,6 +69,22 @@ import { useMotionProjectStore } from './motionProjectStore';
 const DEBOUNCE_MS = 300;
 
 export type LoadState = 'loading' | 'no-project' | 'ready' | 'error';
+
+/** See this file's own module doc comment ("save/render's return values,
+ *  extended for D-170") for why these carry the definitive outcome on the
+ *  promise itself rather than leaving it to a later state read. */
+export interface SaveOutcome {
+  ok: boolean;
+  error?: string;
+  /** the sidecar path `chroma_motion_save_manifest` wrote to, on success. */
+  path?: string;
+}
+
+export interface RenderOutcome {
+  ok: boolean;
+  error?: string;
+  result?: MotionRenderResult;
+}
 
 export function useMotionManifest(onRendered?: (outputPath: string) => void) {
   const projectOpen = useMotionProjectStore((s) => s.projectOpen);
@@ -179,34 +216,45 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
     [text, setTextLive, applyParse],
   );
 
-  const save = useCallback(async (): Promise<boolean> => {
-    if (!manifest || parseError) return false;
+  const save = useCallback(async (): Promise<SaveOutcome> => {
+    if (!manifest || parseError) {
+      return { ok: false, error: parseError ?? 'no manifest to save' };
+    }
     setSaving(true);
     setSaveError(null);
     try {
-      await saveManifest(manifest);
+      const path = await saveManifest(manifest);
       setSavedText(text);
-      return true;
+      return { ok: true, path };
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
-      return false;
+      const message = e instanceof Error ? e.message : String(e);
+      setSaveError(message);
+      return { ok: false, error: message };
     } finally {
       setSaving(false);
     }
   }, [manifest, parseError, text]);
 
-  const render = useCallback(async () => {
+  const render = useCallback(async (): Promise<RenderOutcome> => {
     setRenderError(null);
     setRenderResult(null);
     if (!manifest || parseError) {
-      setRenderError('fix the manifest errors above before rendering');
-      return;
+      const error = 'fix the manifest errors above before rendering';
+      setRenderError(error);
+      return { ok: false, error };
     }
     setRendering(true);
     try {
       if (dirty) {
-        const ok = await save();
-        if (!ok) return;
+        const saveOutcome = await save();
+        if (!saveOutcome.ok) {
+          // `save()` itself already set `saveError` — mirrors the pre-D-170
+          // behaviour exactly (a failed pre-render save surfaced only via
+          // the editor's own save-error display, never `renderError`), now
+          // additionally reported on this promise for a caller with no
+          // component state to read (`motion_render`).
+          return { ok: false, error: saveOutcome.error ?? 'save failed' };
+        }
       }
       const result = await renderManifest();
       setRenderResult(result);
@@ -221,8 +269,11 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
       // timeline automatically (the owner may not want it there yet, or may
       // want it on a different timeline/track than whatever's active).
       onRendered?.(result.outputPath);
+      return { ok: true, result };
     } catch (e) {
-      setRenderError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setRenderError(message);
+      return { ok: false, error: message };
     } finally {
       setRendering(false);
     }

@@ -4,6 +4,32 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Motion tab MCP surface, Phase 4: navigation, selection, persistence
+  (D-170) — closes the whole scoped tool list (18 ops across 4 phases).** Four new `motion_*`
+  ops: `select` (set the live selection + seek the player to the scene's start frame, mirrors
+  `MotionTab.tsx`'s own `onSelect`), `seek` (absolute `{frame}` or `{scene_index, at}` seconds),
+  `save_manifest` (wraps `useMotionManifest().save`), `render` (wraps `useMotionManifest().render`
+  — a real `remotion render` subprocess to disk). `useMotionControl` now takes a `refs`
+  parameter (`playerRef`/`measureApiRef`/`setSelections`) alongside `m` — no `mRef`-style re-sync
+  needed for any of the three (a stable `useRef` object and a stable `useState` setter, unlike
+  `m`'s fresh-every-render object). `save`/`render` (`useMotionManifest.ts`) now resolve to a real
+  `SaveOutcome`/`RenderOutcome` instead of a bare `boolean`/`void`, so an MCP call gets a
+  definitive answer on the promise itself rather than racing a later re-render for `saveError`/
+  `renderError` state — every existing GUI side effect unchanged. Found and empirically confirmed
+  a real, pre-existing constraint along the way: `control.rs`'s generic 20s bridge timeout applies
+  to `motion_render` too (a live render took 33s; the `curl` caller got a 504 at 20.012s while the
+  frontend kept rendering to a real, `ffprobe`-confirmed MP4 in the background) — documented as a
+  known limitation (poll the deterministic output path), not "fixed" with new polling machinery
+  against this task's own explicit instruction not to invent any. Also documents what's still
+  open across the WHOLE surface: no Python `mcp/server.py` wrappers for any of the 18 ops yet, no
+  `motion_open_project` (still borrows Colorist's `new_project` for test setup), and a real gap
+  found while closing out — `set_camera_2d`/`3d` (D-168) never got B-062's ease-validation guard
+  Phase 3 added for layer keyframes. Both `motion_render` branches (>20s and <20s) live-verified
+  with real rendered files; a real coordinator-instance-killed-by-an-overbroad-`pkill` mistake was
+  made and fixed during cleanup, recorded honestly in the decision entry rather than omitted.
+  `tsc -p app` unchanged at 64 (diffed identical, not just counted); `packages/motion`'s vitest
+  suite unchanged at 362/362.
+
 - **2026-09-06** — **Motion tab MCP surface, Phase 3: layer keyframing (D-169).** Three new
   `motion_*` ops: `set_layer_transform_keys` (replace a layer/scene3d-child's `transform.keys`
   wholesale), `add_layer_keyframe` (upsert one key at a given time — `x`/`y` optional, derived from

@@ -150,9 +150,67 @@
  * (no atomicity loss that matters here — each call is already its own
  * commit/undo step, same as every other op in this file). Left out as a
  * scope boundary, not silently dropped.
+ *
+ * **Phase 4** (research doc §5's "Phase 4" table — navigation, selection,
+ * persistence) is the LAST phase on the scoped tool list: `motion_select`
+ * (mirrors `MotionTab.tsx`'s own `onSelect` — sets the live selection AND
+ * seeks the player to the target scene's start frame, `sceneStartFrame`;
+ * read-only w.r.t. the manifest, no `commit()`), `motion_seek` (moves the
+ * player to an absolute frame or a `{scene_index, at}` seconds-within-scene
+ * pair), `motion_save_manifest` (wraps `useMotionManifest().save`), and
+ * `motion_render` (wraps `useMotionManifest().render` — the one op in the
+ * WHOLE Motion MCP surface that triggers a real `remotion render`
+ * subprocess to disk). This needed a real signature extension this file
+ * doesn't own: see `useMotionManifest.ts`'s own module doc comment
+ * ("save/render's return values, extended for D-170") for why `save`/
+ * `render` now resolve to a real `SaveOutcome`/`RenderOutcome` instead of a
+ * bare `boolean`/`void` — an MCP call has no component re-render to read
+ * `saveError`/`renderError` state off of afterward the way the GUI does.
+ *
+ * **`motion_select`/`motion_seek` need refs `m` doesn't own — the new
+ * `MotionControlRefs` parameter, above.** `MotionTab.tsx`'s live selection
+ * (`selections`) is its OWN `useState`, not part of `useMotionManifest`'s
+ * return value, and the player is a `useRef<PlayerRef>` that component owns
+ * too. See `MotionControlRefs`'s own doc comment for why these don't need
+ * an `mRef`-style per-render re-sync the way `m` does.
+ *
+ * **`motion_render`'s blocking-vs-polling decision — no new machinery
+ * added.** `chroma_motion_render` (`app/src-tauri/src/chroma/motion.rs`) is
+ * already an `async fn` that `spawn_blocking`s the real render and
+ * `.await`s it — the Rust side was already "single-await, non-blocking of
+ * the Tokio runtime" before this pass touched anything, so `motion_render`
+ * here just does the same: `await cur.render()`, however long that takes,
+ * no timeout, no progress polling invented. **One real, discovered
+ * constraint this doesn't (and per this task's own instructions, shouldn't)
+ * paper over:** `control.rs`'s own `dispatch()` — shared by EVERY op, Motion
+ * or Colorist, unrelated to this pass — hardcodes `BRIDGE_TIMEOUT = 20s` on
+ * the `mpsc::channel` it blocks the HTTP thread on. A render that takes
+ * longer than 20s will make the ORIGINAL `curl`/HTTP caller see a 504
+ * ("frontend did not respond within 20s") — `control.rs` gives up on ITS
+ * side and `app.unlisten`s the one-shot handler — but the frontend's own
+ * `await cur.render()` keeps running regardless (nothing here observes or
+ * reacts to the HTTP client giving up), the real render keeps going to
+ * completion on disk, and this hook's own `respond(...)` call, once the
+ * render finally finishes, just emits into a Tauri event nobody is listening
+ * for any more (a harmless no-op, not an error). Fixing this would mean
+ * either editing `control.rs` (against this whole surface's foundational
+ * "zero Rust changes" design, D-167 §1) or building a real polling
+ * mechanism (explicitly out of this pass's scope, no existing precedent in
+ * `manifestIO.ts` to wrap) — so it's recorded here as a genuine, known
+ * limitation for a render slow enough to cross 20s, not silently accepted
+ * nor incorrectly "fixed" with new machinery. An agent that expects a slow
+ * render can work around this today WITHOUT any new server-side code: the
+ * render's destination is deterministic when no custom output path is given
+ * (`<project>.chroma/motion/render.mp4`, `motion.rs`'s own
+ * `default_output_path`), so it can treat a 504 from `motion_render` as
+ * "inconclusive, not failed" and poll for that file's existence/mtime on
+ * disk itself — exactly how this pass's own live verification confirmed a
+ * render actually completed (see the D-170 decision entry).
  */
 import { useEffect, useRef } from 'react';
+import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
+import type { PlayerRef } from '@remotion/player';
 
 import {
   addLayer,
@@ -181,10 +239,57 @@ import { catalogEntries, type PrimitiveUse } from './catalog';
 import { fieldsForPrimitive, SCENE_FIELDS } from './propCatalog';
 import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
 import type { Selection } from './LayerList';
+import type { MotionCanvasMeasureApi } from './MotionPreview';
+import { sceneStartFrame, totalFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import type { useMotionManifest } from './useMotionManifest';
 
 type MotionManifestApi = ReturnType<typeof useMotionManifest>;
+
+/**
+ * D-170 (Phase 4) — the navigation/selection refs `motion_select`/
+ * `motion_seek` need, none of which `m` (`useMotionManifest`) owns: the
+ * live selection is `MotionTab.tsx`'s own `useState`, and the player/canvas
+ * escape hatches are `MotionTab.tsx`'s own `useRef`s (research doc §5's own
+ * caveat: "seek needs `playerRef`... the same live-ref bridge extended to
+ * cover `playerRef` and `measureApiRef` too, not just `m`").
+ *
+ * **Why these DON'T need an `mRef`-style per-render re-sync.** `mRef` exists
+ * because `m` is a plain object literal `useMotionManifest` RETURNS fresh
+ * every render — the object reference itself goes stale the instant
+ * anything in it changes, so `mRef.current = m` (a plain assignment in the
+ * render body) has to re-run every render to keep pointing at the latest
+ * one. `playerRef`/`measureApiRef` are different in kind: they're
+ * `useRef(...)` objects `MotionTab.tsx` creates ONCE and never recreates —
+ * the ref OBJECT's identity is stable for the component's whole lifetime;
+ * only its `.current` field mutates (written by `<Player ref={playerRef}>`/
+ * `MotionPreview`'s own imperative-handle wiring, read here at call time).
+ * `setSelections` is equally stable: a `useState` dispatch function's
+ * identity never changes across renders, by React's own contract. So this
+ * hook can just destructure `refs` ONCE, in the render body (below, same
+ * place `mRef` is declared), with no ref-of-a-ref wrapper and no re-sync
+ * effect — reading `refs.playerRef.current`/calling `refs.setSelections(...)`
+ * from inside the mount-once `useEffect` below always reaches the live
+ * values, even though the `useEffect` itself only runs once. Confirmed by
+ * reading `MotionTab.tsx` before assuming this, not guessed (task's own
+ * instruction) — `playerRef`/`measureApiRef` are declared via `useRef` and
+ * `selections` via `useState`, exactly as this reasoning requires.
+ *
+ * `measureApiRef` is accepted here for the SAME reason the research doc
+ * names it alongside `playerRef` ("the same live-ref bridge extended to
+ * cover playerRef AND measureApiRef too") even though no Phase 4 op reads it
+ * yet — `motion_select`/`motion_seek` only need `playerRef`. Plumbed through
+ * for parity with the pattern the research doc describes and so a future op
+ * needing a screen-space measurement (e.g. an MCP-driven "snap to layer",
+ * `MotionTab.tsx`'s own `onSnapToLayer`) doesn't need a THIRD signature
+ * change to `useMotionControl` just to add a ref that was always available
+ * one render up. Not a load-bearing part of this phase's shipped ops.
+ */
+export interface MotionControlRefs {
+  playerRef: RefObject<PlayerRef | null>;
+  measureApiRef: RefObject<MotionCanvasMeasureApi | null>;
+  setSelections: (next: Selection[]) => void;
+}
 
 const MOTION_OP_PREFIX = 'motion_';
 
@@ -340,9 +445,14 @@ function safeUnlisten(unlistenPromise: Promise<(() => void) | undefined | void>)
  * *entry point* into the one `useMotionManifest` instance the tab already
  * owns).
  */
-export function useMotionControl(m: MotionManifestApi): void {
+export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs): void {
   const mRef = useRef(m);
   mRef.current = m;
+  // No `refsRef`-style wrapper needed — see `MotionControlRefs`'s own doc
+  // comment above for why `playerRef`/`measureApiRef`/`setSelections` are
+  // already stable across renders and can just be destructured here, read
+  // fresh (`.current`) at call time from inside the mount-once effect below.
+  const { playerRef, measureApiRef, setSelections } = refs;
 
   useEffect(() => {
     // ---- ops --------------------------------------------------------
@@ -896,6 +1006,124 @@ export function useMotionControl(m: MotionManifestApi): void {
           at: clampedAt,
           warning: clampedAt !== newAt ? `${newAt}s was outside the scene's [0, ${scene?.dur}] range — clamped to ${clampedAt}s` : undefined,
         };
+      },
+
+      // ---- Phase 4: navigation, selection, persistence (research doc §5's
+      // "Phase 4" table — the LAST phase on the scoped tool list) ----------
+
+      // Set the tab's live selection AND seek the player to the target
+      // scene's start frame — the exact two-part behaviour of `MotionTab
+      // .tsx`'s own `onSelect` (`setSelections([s]); playerRef.current
+      // ?.seekTo(sceneStartFrame(m.manifest, s.sceneIndex));`), reached here
+      // via the `MotionControlRefs` bridge instead of a click. Read-only
+      // w.r.t. the MANIFEST (no `commit()`) — it only moves live UI state
+      // (`selections`) and the player's position, exactly like the GUI
+      // action it mirrors.
+      motion_select: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+
+        const parsed = parseSelectionArg(a);
+        if ('error' in parsed) return parsed;
+        const resolved = resolveOrError(cur.manifest, parsed);
+        if ('error' in resolved) return resolved;
+
+        setSelections([resolved]);
+        playerRef.current?.seekTo(sceneStartFrame(cur.manifest, resolved.sceneIndex));
+        return { selection: resolved };
+      },
+
+      // Move the player to an absolute frame, or to `{scene_index, at}`
+      // (seconds within that scene, converted via the SAME `sceneStartFrame`
+      // term `MotionTab.tsx`'s own `onSelect`/`KeyframeTimeline.tsx` use) —
+      // whichever the caller finds easier: an agent that already read a
+      // layer's keyframe `at` off `motion_get_manifest` wants the
+      // scene-relative form; one that wants to scrub the whole timeline
+      // (matching `KeyframeTimeline`'s own ruler-click behaviour) wants an
+      // absolute frame. `frame` wins if both are given. Out-of-range values
+      // are clamped to `[0, totalFrames-1]` with a `warning`, never a hard
+      // error — the same "clamp, don't block" floor `move_layer_keyframe`
+      // already established for a seek-shaped op in this file.
+      motion_seek: (a) => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet' };
+        if (!playerRef.current) return { error: 'player is not mounted yet' };
+
+        const fps = typeof cur.manifest.fps === 'number' && cur.manifest.fps > 0 ? cur.manifest.fps : 30;
+        let frame: number;
+        if (a?.frame !== undefined && a?.frame !== null) {
+          frame = Math.round(Number(a.frame));
+          if (!Number.isFinite(frame)) return { error: 'frame must be a finite number' };
+        } else {
+          const sceneIndexRaw = a?.scene_index ?? a?.sceneIndex;
+          if (sceneIndexRaw === undefined || sceneIndexRaw === null) {
+            return { error: 'seek needs either {frame} (absolute) or {scene_index, at} (seconds within a scene)' };
+          }
+          const sceneIndex = Math.round(Number(sceneIndexRaw));
+          if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+          if (!cur.manifest.scenes[sceneIndex]) {
+            return { error: `no scene at index ${sceneIndex} (0..${cur.manifest.scenes.length - 1})` };
+          }
+          const at = Number(a?.at ?? 0);
+          if (!Number.isFinite(at)) return { error: 'at (seconds, number) required alongside scene_index' };
+          frame = sceneStartFrame(cur.manifest, sceneIndex) + Math.round(at * fps);
+        }
+
+        const lastFrame = Math.max(0, totalFrames(cur.manifest) - 1);
+        const clamped = Math.min(Math.max(0, frame), lastFrame);
+        playerRef.current.seekTo(clamped);
+        return {
+          frame: clamped,
+          warning: clamped !== frame ? `frame ${frame} was outside [0, ${lastFrame}] — clamped to ${clamped}` : undefined,
+        };
+      },
+
+      // Force-write the manifest sidecar now — the autosave-equivalent
+      // action `ManifestEditor.tsx`'s own Save button calls
+      // (`useMotionManifest().save`). Real async, real error: `save` now
+      // resolves to a `SaveOutcome` (`useMotionManifest.ts`'s own D-170
+      // extension) instead of a bare boolean specifically so this op can
+      // surface the real failure message on the SAME promise it already
+      // awaits, no risky re-read of `saveError` state afterward.
+      motion_save_manifest: async () => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet — nothing to save' };
+
+        const outcome = await cur.save();
+        if (!outcome.ok) return { error: outcome.error ?? 'save failed' };
+        return { saved: true, path: outcome.path };
+      },
+
+      // The real Remotion render — `useMotionManifest().render`, which
+      // saves first if dirty, then calls `manifestIO.ts`'s `renderManifest`
+      // → the `chroma_motion_render` Tauri command (a real `remotion
+      // render` subprocess). This op just `await`s it, however long that
+      // takes — no new polling machinery; see this file's own module doc
+      // comment ("motion_render's blocking-vs-polling decision") for the
+      // full reasoning, including the real (pre-existing, Motion-agnostic)
+      // `control.rs` 20s bridge-timeout caveat that decision doesn't paper
+      // over. Real success/failure and the real output path are surfaced
+      // via `render`'s own D-170 `RenderOutcome` return value — never
+      // swallowed into a state field this caller has no safe way to re-read.
+      motion_render: async () => {
+        const cur = mRef.current;
+        if (cur.loadState === 'no-project') {
+          return { error: 'no project open — open one in the Colorist tab' };
+        }
+        if (!cur.manifest) return { error: 'no manifest loaded yet — nothing to render' };
+
+        const outcome = await cur.render();
+        if (!outcome.ok || !outcome.result) return { error: outcome.error ?? 'render failed' };
+        return { outputPath: outcome.result.outputPath, stdoutTail: outcome.result.stdoutTail };
       },
     };
 

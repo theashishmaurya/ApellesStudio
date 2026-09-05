@@ -116,14 +116,6 @@ function labelForSelections(selections: Selection[]): string {
 
 export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
   const m = useMotionManifest(onRendered);
-  // Motion's half of the Chroma control server bridge (D-020's architecture,
-  // reused — docs/notes/motion-mcp-surface-research.md). Mounted here (not
-  // conditionally on any loadState) so it registers its Tauri listener from
-  // boot, same as `useChromaControl` does in App.tsx — B-007 already
-  // guarantees this component stays mounted regardless of which tab has
-  // focus. Individual ops still check `m.loadState`/`m.manifest` themselves
-  // for the "no project open" / "not loaded yet" cases.
-  useMotionControl(m);
   const playerRef = useRef<PlayerRef>(null);
   // D-157 — the preview's imperative measurement escape hatch (see
   // `MotionPreview.tsx`'s own doc comment), used ONLY by `onSnapToLayer`
@@ -138,6 +130,22 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
   const [transientManifest, setTransientManifest] = useState<Manifest | null>(null);
+
+  // Motion's half of the Chroma control server bridge (D-020's architecture,
+  // reused — docs/notes/motion-mcp-surface-research.md). Mounted here (not
+  // conditionally on any loadState) so it registers its Tauri listener from
+  // boot, same as `useChromaControl` does in App.tsx — B-007 already
+  // guarantees this component stays mounted regardless of which tab has
+  // focus. Individual ops still check `m.loadState`/`m.manifest` themselves
+  // for the "no project open" / "not loaded yet" cases. D-170 (Phase 4):
+  // moved below the `playerRef`/`measureApiRef`/`setSelections` declarations
+  // above (was directly after `useMotionManifest`) so it can be handed the
+  // SAME ref objects and state setter `MotionPreview`/`onSelect` already use
+  // — `useRef`'s object identity and `useState`'s setter identity are both
+  // stable across renders (unlike `m`, a plain object literal returned fresh
+  // every render), so no `mRef`-style per-render re-sync is needed for
+  // these; see `useMotionControl.ts`'s own module doc comment.
+  useMotionControl(m, { playerRef, measureApiRef, setSelections });
 
   // D-158 — keeps `selections` pointing at the right layers as the STABLE
   // manifest changes underneath it (a commit, a catalog insert, a hand-edit

@@ -14696,3 +14696,291 @@ its own root — still open, unchanged).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-170 — Motion tab MCP surface, Phase 4 (navigation, selection, persistence): `select`, `seek`, `save_manifest`, `render` — all live-verified, closing out the whole Motion MCP tool list
+
+**decided + built (2026-09-06).** Full scoping is `docs/notes/motion-mcp-surface-research.md` §5's
+"Phase 4" table (read that first). D-167/D-168/D-169 shipped Phases 1–3 and this entry's own
+architecture (`useMotionControl.ts`, the `motion_*` namespace convention, the `mRef` live-ref
+bridge, `{scene_index, target}` addressing, `resolveOrError`'s `id`-preference). This is the LAST
+phase on the scoped tool list — see the closing note at the end of this entry for what the whole
+surface now covers and what's still genuinely open.
+
+**Ops shipped:** `motion_select` (set the live selection + seek the player to the target scene's
+start frame — mirrors `MotionTab.tsx`'s own `onSelect`), `motion_seek` (move the player to an
+absolute frame or a `{scene_index, at}` seconds-within-scene pair), `motion_save_manifest` (wraps
+`useMotionManifest().save`), `motion_render` (wraps `useMotionManifest().render` — the one op in
+the whole surface that triggers a real `remotion render` subprocess to disk).
+
+**The ref-bridge extension — simpler than `mRef`, not more of the same machinery.**
+`useMotionControl`'s signature is now `useMotionControl(m: MotionManifestApi, refs:
+MotionControlRefs)`, where `MotionControlRefs = {playerRef, measureApiRef, setSelections}`. Read
+`MotionTab.tsx` before assuming anything (per this task's own instruction) — it settles a real
+design question the research doc's own §5 caveat left open ("nothing structurally hard about it,
+same pattern, more refs synced into the same object"): `playerRef`/`measureApiRef` are
+`useRef(...)` objects `MotionTab.tsx` creates ONCE (never recreated) — the ref OBJECT's identity
+is stable for the component's whole lifetime, only `.current` mutates — and `setSelections` is a
+`useState` dispatch function, whose identity React guarantees stable across renders by contract.
+Neither needs the `mRef` treatment (`const mRef = useRef(m); mRef.current = m;`, re-assigned every
+render) that `m` needs, because `m` is a plain object literal `useMotionManifest` returns FRESH
+every render — its reference goes stale the instant anything in it changes. So `useMotionControl`
+just destructures `refs` ONCE in the render body (same place `mRef` is declared) with no
+ref-of-a-ref wrapper and no re-sync effect; reading `refs.playerRef.current` / calling
+`refs.setSelections(...)` from inside the mount-once `useEffect` always reaches the live values.
+`MotionTab.tsx`'s own `useMotionControl(m)` call site moved below the `playerRef`/`measureApiRef`/
+`selections` declarations (was directly after `useMotionManifest`) so it can be handed these —
+still called unconditionally every render, same position in the hook-call sequence relative to
+every OTHER hook, so this doesn't violate the rules of hooks. `measureApiRef` is threaded through
+even though no Phase 4 op reads it yet, matching the research doc's own phrasing ("extend... to
+ALSO cover `playerRef` and `measureApiRef` too") — parity for a future op (e.g. an MCP-driven
+"snap to layer," mirroring `MotionTab.tsx`'s own `onSnapToLayer`) that would otherwise need a
+THIRD signature change just to add a ref that was always one render away. Not load-bearing for
+anything shipped this pass.
+
+**`motion_select`'s wire shape — literally `{scene_index, target}`, resolved via the SAME
+`parseSelectionArg`/`resolveOrError` every other Phase 2/3 op already uses**, not reinvented. It
+sets `refs.setSelections([resolved])` and calls `refs.playerRef.current?.seekTo(sceneStartFrame
+(cur.manifest, resolved.sceneIndex))` — the exact two-part behaviour `MotionTab.tsx`'s own
+`onSelect` closure has (`setSelections([s]); playerRef.current?.seekTo(sceneStartFrame(...))`),
+reimplemented inline inside the hook rather than calling that closure directly, since `onSelect` is
+a local `const` in `MotionTab.tsx`, not an exported function, and it closes over `m.manifest` from
+whatever render created it — reaching it from the hook would need yet another `mRef`-style
+re-sync for no benefit, when the hook already has live access to `cur.manifest` (via `mRef`) and
+`refs.playerRef`/`refs.setSelections` directly. Read-only w.r.t. the MANIFEST (no `commit()`
+call) — it only moves live UI state, exactly matching the research doc's own framing ("a real,
+standalone-useful GUI action... not because any mutating tool depends on it").
+
+**`motion_seek`'s wire shape — a decision this pass had to make, the research doc's own §5 left it
+open ("your call... informed by what's easiest/most useful for an agent").** Accepts EITHER an
+absolute `{frame}` (matching how `KeyframeTimeline.tsx`'s own ruler-click seeks — useful for an
+agent that wants to scrub the whole composition) OR `{scene_index, at}` (seconds within that scene,
+converted via the SAME `sceneStartFrame` + `fps` term `add_layer_keyframe` already uses for its own
+frame math — useful for an agent that just read a layer's keyframe `at` off `motion_get_manifest`
+and wants to preview that exact instant without hand-computing an absolute frame). `frame` wins if
+both are given. Out-of-range values are clamped to `[0, totalFrames-1]` with a `warning`, never a
+hard error — reusing the exact "clamp, don't block" floor `move_layer_keyframe` (D-169) already
+established for a seek-shaped op in this file, not a new policy invented for this op.
+**Rejected alternative:** a THIRD shape, `{scene_index}` alone (seek to a scene's start, redundant
+with `motion_select`'s own seek side effect) — dropped as pure duplication of a capability
+`motion_select` already provides for free.
+
+**`motion_save_manifest`/`motion_render` needed a real signature extension this file doesn't own —
+`useMotionManifest.ts`'s `save`/`render`, changed from `Promise<boolable>`/`Promise<void>` to a
+real `SaveOutcome`/`RenderOutcome` (`{ok, error?, path?}` / `{ok, error?, result?}`).** This is the
+one genuinely new (if small) piece of logic this pass added, the same class of addition
+`resolveOrError` (D-168) and `validateEaseArg` (D-169) were. The reason: before this pass, both
+functions only surfaced a real failure as a SIDE EFFECT (`saveError`/`renderError` React state) —
+fine for the GUI (`ManifestEditor.tsx` just renders whatever's current on the next paint) but wrong
+for `motion_save_manifest`/`motion_render`, which have no re-render of their own to read that state
+off of afterward: a Tauri-event handler `await`ing `cur.save()`/`cur.render()` is racing this
+component's OWN re-render (triggered by the state updates INSIDE `save`/`render` themselves) for
+whichever happens first once the promise resolves — reading `mRef.current.saveError` right after
+the `await` would be a real, silent correctness bug (a coin-flip on whether the freshest error text
+has actually landed in `mRef.current` yet), not a hypothetical one. Every EXISTING side effect
+(`saveError`/`renderError`/`renderResult`/`onRendered`, and `render`'s own "save first if dirty"
+short-circuit) is byte-for-byte unchanged — this only ADDS a definitive outcome on the SAME promise
+the caller already awaits. Verified non-breaking for the GUI: `ManifestEditor.tsx`'s own
+`onSave`/`onRender` props are typed `() => void`, and a function resolving to a real value is
+still structurally assignable to a void-returning function type in TypeScript (confirmed by `tsc`
+staying at the unchanged 64-error baseline, not just asserted) — `<Button onClick={m.save}>` and
+`<Button onClick={m.render}>` behave identically to before; nothing reads the new resolved value
+except the two new MCP ops.
+
+**`motion_render`'s blocking-vs-polling decision — no new machinery added, and a real,
+EMPIRICALLY CONFIRMED (not theoretical) 20-second ceiling found along the way.**
+`chroma_motion_render` (`app/src-tauri/src/chroma/motion.rs`) was already an `async fn` that
+`spawn_blocking`s the real render and `.await`s it before this pass touched anything — so
+`motion_render` here just does the same on the frontend side: `await cur.render()`, however long
+that takes, no progress polling invented, matching this whole architecture's stated philosophy
+("dispatch to a REAL existing function, no new machinery"). **The real constraint this doesn't
+paper over:** `control.rs`'s own `dispatch()` — shared by EVERY op, Motion or Colorist, completely
+unrelated to this pass's own code — hardcodes `BRIDGE_TIMEOUT = Duration::from_secs(20)` on the
+`mpsc::channel` recv that blocks the HTTP request thread. Live-verified, not assumed: rendering the
+fresh project's own real 3-scene sample manifest (`hook`/`stack`/`space`, `space` carrying a real
+`scene3d` block with 2 `particleflow` children, total duration 15s / 450 frames at 30fps) via
+`motion_render` took **33 seconds wall-clock** (file `mtime` 1788648449 − curl start 1788648416) —
+past the 20s ceiling. The `curl` client got exactly the generic 504-equivalent body `control.rs`
+already returns for ANY slow op — `{"error":"frontend did not respond within 20s — is the Chroma
+window open?","ok":false}` at 20.012s — while the frontend's own `await cur.render()` kept running
+regardless (nothing observes or reacts to the HTTP client giving up) and the real render completed
+onto disk 13 seconds after the client had already been told to give up: a genuine, real H.264
+1920×1080@30fps MP4, `ffprobe`-confirmed duration `15.061s` (matching the manifest's own
+4+6+5=15s), 3.37 MB. **Fixing this would mean either editing `control.rs`** (against this whole
+surface's foundational "zero Rust changes" design, reconfirmed unbroken across all 4 phases) **or
+building a real polling mechanism** (explicitly out of this pass's scope, no existing precedent in
+`manifestIO.ts` to wrap) — so it's recorded as a genuine, known limitation for a render slow enough
+to cross 20s, not silently accepted nor incorrectly "fixed" with new machinery. An agent that
+expects a slow render can work around this TODAY with zero new server-side code: the render
+destination is deterministic when no custom output path is given
+(`<project>.chroma/motion/render.mp4`, `motion.rs`'s own `default_output_path`), so it can treat a
+504 from `motion_render` as "inconclusive, not failed" and poll that path's existence/mtime itself
+— exactly how this pass's own verification confirmed the slow render actually succeeded. The SAME
+live instance also proved the fast-path success shape for real: after shrinking all 3 scenes'
+`dur` to 0.5s each (via the already-verified `motion_set_scene_field`, 3 calls) and re-rendering
+(now dirty, exercising `render`'s own "save first" branch too), the call returned in **3.672s**
+with the real success payload — `{"ok":true,"result":{"outputPath":".../render.mp4","stdoutTail":
+"...Rendered 45/45\nEncoded 45/45\n○ .../render.mp4 274 kB"}}` — `ffprobe`-confirmed 1.557s
+duration, 274 KB, matching 3×0.5s=1.5s. Both branches of this op are now real, evidenced behaviour,
+not just design intent.
+
+**Live verification — done for real, against a real second running instance**, following D-167–
+D-169's own playbook (distinct `CHROMA_CONTROL_PORT` AND distinct `tauri.conf.json` `identifier`,
+`lsof`/`ps eww` cross-checks before trusting any `curl` result):
+
+- `lsof -i :19788/:19789/…/19794` — only `19788` (coordinator, PID 98482 at the time) was held;
+  `19794` was free, used for `CHROMA_CONTROL_PORT`. `lsof -i :1420/:1425/:1430/:1435/:1440` — only
+  `1420` (coordinator's Vite) was held; `1440` was free, used for `tauri.conf.json`'s
+  `build.devUrl` and `vite.config.mjs`'s `server.port`. `identifier` set to
+  `io.github.CyberTimon.RapidRAW.dev-motion-mcp-phase4`.
+- Hit the SAME pre-existing, repo-wide `@rolldown/plugin-babel` install gap D-168/D-169 already
+  documented — worked around identically (commented out in `app/vite.config.mjs` for this
+  verification instance only, reverted via `git checkout --` before commit, confirmed via
+  `git status`/`git diff --stat` showing zero changes to either scratch file afterward).
+- **A new, real build flake this pass hit and had to actually fix (not just retry through):** the
+  first TWO launch attempts failed at the final `RapidRAW(bin)` link step with
+  `error: crate 'rawler' required to be available in rlib format, but was not found in this form`,
+  then (after a plain retry) a DIFFERENT link error — undefined symbols in `libjxl_encoder-*.rlib`
+  (`ld: symbol(s) not found for architecture arm64`), alongside `ld: warning: object file... was
+  built for newer 'macOS' version (26.2) than being linked (11.0)` on unrelated `.rlib`s — a
+  genuinely corrupted incremental-build cache for the `jxl-encoder` crate specifically (this
+  worktree's OWN `target/debug`, not shared with the coordinator's checkout), most likely from an
+  earlier `kill` of a mid-link cargo process during this same session's own retry loop. A THIRD
+  plain retry reproduced the identical symbol error (ruling out pure raciness) — the actual fix was
+  `cargo clean -p jxl-encoder` (scoped to that one crate, not a full `cargo clean` — removed 23
+  files / 38.5 MiB) followed by a launch that then compiled clean end to end in 21.18s (mostly
+  relink, since every OTHER crate's cache was intact). Recorded as a real, if narrower, addition to
+  D-168's own "transient `jxl-encoder`/`rawler` build flake" note: sometimes a plain retry is
+  enough (D-168's own experience), sometimes the cache is actually corrupted and needs a
+  crate-scoped `cargo clean` (this pass's).
+- Confirmed which instance was actually being talked to before trusting anything: `ps aux` showed
+  the coordinator's `RapidRAW` and this session's own (`chroma-worktrees/motion-mcp-phase4`) as
+  distinct PIDs; `lsof -p <this session's PID> -a -iTCP -sTCP:LISTEN` showed `localhost:19794`;
+  `ps eww <PID> | grep CHROMA_CONTROL_PORT` showed `CHROMA_CONTROL_PORT=19794`; `GET /health`
+  against `19794` showed `project:null`/`session:{active:0,shots:[]}` (a genuinely fresh instance,
+  not the coordinator's loaded one).
+- Opened a real project the only way currently possible over HTTP — no `motion_open_project` op
+  exists yet — via the pre-existing, unmodified Colorist `new_project` op:
+  `{"op":"new_project","args":{"name":"motion-mcp-phase4-verify"}}` → created
+  `~/Movies/Chroma/motion-mcp-phase4-verify.chroma`. `motion_get_manifest` confirmed `loadState`
+  `no-project` → `ready`, a real 3-scene sample manifest (this project's sample was richer than
+  D-167's own — `space` scene already carrying a `scene3d`/`particleflow` block, incidentally
+  giving the render test a real, non-trivial 3D composition to render).
+- `motion_add_layer({"scene_index":1,"use":"text"})` → id `52nwypq8`, index 2, scene `stack` — a
+  real addressable layer to exercise `motion_select` against.
+- `motion_select({"scene_index":1,"target":{"kind":"layer","id":"52nwypq8"}})` →
+  `{"selection":{"sceneIndex":1,"target":{"id":"52nwypq8","index":2,"kind":"layer"}}}` (`id`
+  preferred over the initially-unset `index`, matching `resolveOrError`'s own D-158 preference); an
+  unresolvable id (`"does-not-exist"`) returned the expected `{error:...}`, never a silent no-op; a
+  `{kind:"scene3d-camera"}` target on scene 2 resolved cleanly too, proving the addressing isn't
+  layer-only.
+- `motion_seek` exercised on all three of its real branches, each hand-verified against the
+  manifest's own `fps:30`/scene `dur`s (`hook`=4s→120fr, `stack`=6s→180fr, `space`=5s→150fr,
+  total 450fr): `{"frame":200}` → `{"frame":200}`; `{"scene_index":2,"at":1.0}` → `{"frame":330}`
+  (120+180+30, exactly `sceneStartFrame(m,2) + round(1.0*30)`); `{"frame":99999}` →
+  `{"frame":449,"warning":"frame 99999 was outside [0, 449] — clamped to 449"}` (449 = 450−1,
+  exactly `totalFrames(m)-1`).
+- `motion_save_manifest` → `{"saved":true,"path":".../motion-mcp-phase4-verify.chroma/motion/
+  manifest.json"}` — the sidecar file confirmed to exist on disk afterward at EXACTLY that path,
+  3001 bytes, containing the `52nwypq8` layer added above (a real grep hit, not assumed).
+- `motion_render` (the slow-path AND fast-path evidence above) — both real, both `ffprobe`-
+  confirmed. The throwaway `motion-mcp-phase4-verify.chroma` project was deleted from
+  `~/Movies/Chroma/` after verification.
+- `npx tsc --noEmit -p app` — exactly 64 `error TS` lines, diffed line-for-line identical against
+  the pre-change baseline capture (not just counted), both before AND after the
+  `tauri.conf.json`/`vite.config.mjs` revert; zero errors anywhere in `packages/motion/src/*`.
+  `npm test --workspace @chroma/motion` — 362/362 passing, unchanged (no new pure-logic helper was
+  factored out this pass to warrant new unit tests — `motion_seek`'s frame math is a direct,
+  one-line composition of `sceneStartFrame`/`totalFrames`, both already exported and covered
+  indirectly via `manifestEdit.test.ts`/`schema.test.ts`'s own exercise of `build.ts`).
+- `cargo check` not re-run — no Rust files touched this pass (`git diff --stat` confirms only the
+  three `packages/motion/src/*` files changed), same as D-168/D-169 found for their own passes.
+- Both scratch config files (`app/src-tauri/tauri.conf.json`'s `identifier`/`build.devUrl`,
+  `app/vite.config.mjs`'s `server.port` and the temporarily-commented `@rolldown/plugin-babel`
+  import/usage) were reverted via `git checkout --` before this entry's own commit — confirmed via
+  `git status`/`git diff --stat` showing zero changes to either file, only the three
+  `packages/motion/src/*` files modified.
+- This session's own second instance (the `tauri dev`/`vite`/`RapidRAW` process trio for
+  `motion-mcp-phase4`) was killed before finishing.
+
+**An operational mistake made and fixed during this pass's own cleanup, recorded honestly rather
+than omitted:** the first kill attempt used an overly broad `pkill -f "target/debug/RapidRAW"` —
+a substring shared by BOTH this worktree's binary path
+(`.../chroma-worktrees/motion-mcp-phase4/target/debug/RapidRAW`) AND the coordinator's own
+main-repo path (`.../chroma/target/debug/RapidRAW`), and it killed the coordinator's real running
+instance (PID 98482, port `19788`) along with the intended target. Caught immediately by the same
+"confirm the port/process, don't assume" discipline this whole task series has followed (`ps -p
+98482` came back empty, `lsof -i :19788` came back empty) — fixed by relaunching the coordinator's
+own instance from its own repo (`npm --prefix ~/my_projects/chroma/app run tauri dev`), confirmed
+back up on the SAME default port `19788` with a working bridge (`GET /health` → `ok:true`) within
+about a minute. **What this did and did not cost:** anything persisted to disk (projects, saved
+manifests) was unaffected — only the coordinator's live GUI process state (whatever was open/
+in-memory at the moment of the kill) was lost, the same as if the app had crashed or been quit
+normally. Recorded here, not swept aside, as the concrete reason a "kill only mine" instruction
+needs a PID- or working-directory-scoped kill (`kill <specific PID>`, or `pkill -f
+"<worktree-specific path prefix>"`), never a bare binary-name substring match, whenever two
+instances of the same binary can be running from different checkouts at once — exactly this task
+series' own recurring operational lesson (D-167's port collision, D-167's addendum on the
+identifier lock), now extended to the KILL side of the same "two instances of one binary" hazard,
+not just the launch side.
+
+**Closing note — this is the last phase on the scoped tool list; naming what's actually done vs.
+still open, not implying more than what's true.** Across D-167/D-168/D-169/D-170, the Motion tab
+MCP surface now covers, end-to-end, real live-verified wraps of: reading the live manifest
+(`get_manifest`); creating a layer (`add_layer`); the full non-keyframe edit surface (`set_layer_
+field`, `set_layer_position`/`size`, `move_layers_by_delta`, `align_layers`/`distribute_layers`,
+`set_scene_field`, `set_camera_2d`/`3d`); layer keyframing (`set_layer_transform_keys`, `add_layer_
+keyframe`, `move_layer_keyframe`); and now navigation/selection/persistence (`select`, `seek`,
+`save_manifest`, `render`) — **18 ops total**, every one a thin, documented adapter over a REAL
+`manifestEdit.ts`/`useMotionManifest.ts`/`manifestIO.ts` function, none inventing new
+manifest-mutation semantics, matching D-020's own founding discipline for the Colorist half of this
+architecture. **What is genuinely still open, not done, named honestly:**
+- **No Python `mcp/server.py` wrappers exist for ANY of these 18 ops.** Every single one has only
+  ever been exercised via raw HTTP `curl` against `control.rs`'s generic `{op,args}` endpoint,
+  across all four phases — never through an actual registered MCP client (Claude Desktop, Claude
+  Code, or otherwise). The op names/arg shapes are locked and stable at this point (four phases of
+  live verification against them without a single reshuffle), so writing the thin Python
+  boilerplate (`mcp/server.py`'s own stated contract: "no grade/mask logic here") is close to
+  mechanical — but it is unstarted work, not a rounding error.
+- **`motion_open_project` still does not exist.** Every phase's own live verification, including
+  this one, has opened a project for HTTP-only testing via the pre-existing, UNMODIFIED Colorist
+  `new_project` op — there is still no Motion-native way to open an EXISTING `.chroma` project by
+  path over this bridge; an agent working with Motion alone (no Colorist ops in its own toolset)
+  cannot get from "closed app" to "a project is open and `motion_get_manifest` returns `ready`"
+  without borrowing a Colorist op.
+- **`motion_set_camera_2d`/`motion_set_camera_3d` (D-168, Phase 2) do not run their camera keys'
+  `ease` fields through `validateEaseArg`/B-062's guard at all** — that guard was added in Phase 3
+  (D-169) and only ever applied to LAYER transform keys (`set_layer_transform_keys`, `add_layer_
+  keyframe`), never retrofitted onto the two Phase 2 camera ops that also accept an `ease` per key.
+  A hand-authored camera key with an out-of-range `ease` via either camera op today reaches
+  `Easing.bezier` unguarded — B-062's exact original gap, still reachable through this one
+  particular corner of the surface. Found while writing this entry's own closing note, not
+  something this pass was scoped to fix (Phase 2 is closed, shipped, and live-verified as its own
+  entry) — flagged here rather than silently left for a future reader to rediscover from scratch.
+- **No granular camera-key-value patch** (D-168's own documented limitation, unchanged): `set_
+  camera_2d`/`3d` still only replace a scene's whole camera array, never one key's `zoom`/`pos` in
+  isolation.
+- **`motion_render`'s 20-second `control.rs` bridge ceiling** (this entry, above) — a real,
+  now-empirically-confirmed constraint for any render whose manifest is slow enough to cross it,
+  worked around only by the caller polling the deterministic output path on disk, not fixed at the
+  bridge level.
+- **No progress reporting for an in-flight `motion_render`** — `chroma_motion_render`'s own
+  `stdoutTail` (real `remotion render` CLI output, "Rendered N/M" lines) is only ever seen in the
+  FINAL response, never streamed; an agent watching a slow render has no partial-progress signal
+  short of polling the output file's own growing size, which this render pipeline doesn't even
+  produce incrementally in a form that reads as "progress" (a single MP4 write at the end, per this
+  pass's own live evidence — the file did not exist at all until the render fully finished, neither
+  in the 33s slow case nor the 3.672s fast case).
+
+**Numbering.** Re-checked against the real tip of `main` in the main repo (`git -C
+~/my_projects/chroma log --oneline -5`) immediately before writing this entry: `21deabd` (D-169) at
+the tip — unchanged from this worktree's own branch point — matching this worktree's own
+`docs/08-decisions.md` highest number (D-169) / `docs/BUGS.md` highest number (B-062) — **D-170**
+is free. No new `B`-number: no bug was found in the CODE this pass ships or touches (the camera-ease
+gap named above is a real, pre-existing gap in Phase 2's own code, arguably B-worthy on its own
+terms, but recording a new bug against another phase's already-shipped, already-reviewed entry is
+an editorial call left to the coordinator rather than assumed here — flagged in prose above either
+way, not silently dropped). The operational mistake recorded above (killing the coordinator's own
+instance) is a process error, not a code defect, and is not filed as a `B`-number either.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
