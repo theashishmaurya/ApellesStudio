@@ -111,6 +111,8 @@ function labelForSelections(selections: Selection[]): string {
       return 'Edit layer';
     case 'scene3d-child':
       return 'Edit 3D layer';
+    case 'layer-item':
+      return 'Move card';
   }
 }
 

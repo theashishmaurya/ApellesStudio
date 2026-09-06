@@ -49,3 +49,24 @@ export function measureLayerScreenBox(
 export function findWorldElement(container: Element): Element | null {
   return container.querySelector('[data-motion-world]');
 }
+
+/** D-182 (Phase 3 of 3) — ONE card's own screen rect within a `layers`
+ *  primitive, scoped by `sceneIndex.layerIndex` first (`data-motion-item-
+ *  index` alone isn't unique across different `layers` layers — every stack
+ *  starts its own item indices from 0) then that item's own index inside it.
+ *  Unlike `measureLayerScreenBox` above, this is never a UNION — a card is
+ *  addressed as one specific element, not "whatever boxes exist," since
+ *  D-182's whole point is selecting/measuring/dragging ONE card independent
+ *  of its siblings. `null` when the layer or that item index isn't in the
+ *  DOM right now (same floor `measureLayerScreenBox` already holds). */
+export function measureLayerItemScreenBox(
+  container: Element,
+  sceneIndex: number,
+  layerIndex: number,
+  itemIndex: number,
+): RectLike | null {
+  const layerEl = container.querySelector(`[data-motion-layer="${sceneIndex}.${layerIndex}"]`);
+  if (!layerEl) return null;
+  const itemEl = layerEl.querySelector(`[data-motion-item-index="${itemIndex}"]`);
+  return itemEl ? itemEl.getBoundingClientRect() : null;
+}

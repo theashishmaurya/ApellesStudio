@@ -115,6 +115,9 @@ import {
   distributeSelections,
   type AlignEdge,
   parseJsonField,
+  selectedLayerItem,
+  setLayerItemField,
+  resetLayerItemPosition,
 } from './manifestEdit';
 import {
   fieldsForPrimitive,
@@ -740,6 +743,49 @@ export function InspectorPanel({
           makeDefault={(): Cam3dKey => ({ at: 0, pos: [0, 0, 0] })}
           onChange={(next) => onChange(setCamera3d(manifest, selection.sceneIndex, next))}
         />
+      </div>
+    );
+  }
+
+  // D-182 (Phase 3 of 3) — one CARD within a `layers` primitive. Its own
+  // minimal, purpose-built form (not `fieldsForPrimitive`/`FieldGroup`,
+  // which describe a whole LAYER's own props, not one item inside its
+  // `items[]`) — just the three fields a card actually has, plus the one
+  // action ("Reset position") this pass's whole reason to exist needs:
+  // undoing a drag back to the computed default without hand-editing JSON.
+  if (target.kind === 'layer-item') {
+    const item = selectedLayerItem(manifest, selection);
+    if (!item) return <StaleNotice />;
+    const hasOffset = item.dx !== undefined || item.dy !== undefined;
+    return (
+      <div className="h-full w-full overflow-y-auto p-3">
+        <InspectorSection label="Content">
+          <FieldControl
+            spec={{ key: 'label', label: 'Label', kind: 'string', group: 'content' }}
+            value={item.label}
+            onCommit={(v) => onChange(setLayerItemField(manifest, selection, 'label', v))}
+          />
+        </InspectorSection>
+        <InspectorSection label="Layout">
+          <FieldControl
+            spec={{ key: 'dx', label: 'X offset', kind: 'number', group: 'layout' }}
+            value={item.dx}
+            onCommit={(v) => onChange(setLayerItemField(manifest, selection, 'dx', v))}
+          />
+          <FieldControl
+            spec={{ key: 'dy', label: 'Y offset', kind: 'number', group: 'layout' }}
+            value={item.dy}
+            onCommit={(v) => onChange(setLayerItemField(manifest, selection, 'dy', v))}
+          />
+          <button
+            type="button"
+            disabled={!hasOffset}
+            className="h-7 rounded border border-dashed border-border-color text-[11px] text-text-secondary hover:text-text-primary hover:border-accent disabled:opacity-40 disabled:hover:text-text-secondary disabled:hover:border-border-color"
+            onClick={() => onChange(resetLayerItemPosition(manifest, selection))}
+          >
+            Reset position
+          </button>
+        </InspectorSection>
       </div>
     );
   }

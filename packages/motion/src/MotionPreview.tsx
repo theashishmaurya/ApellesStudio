@@ -303,9 +303,19 @@ export function MotionPreview({
            scrubber whose own `[0, sceneDur)` range never exposes a frame
            outside this scene. `frame`/`playing` come from the subscription
            effect above; `seekTo`/`toggle` go straight through the same
-           `effectivePlayerRef` the native controls would have used. */}
+           `effectivePlayerRef` the native controls would have used.
+           `data-motion-transport` (found live, Phase 3): `MotionCanvasOverlay
+           .tsx`'s click/drag hit-testing walks the WHOLE `elementsFromPoint`
+           stack looking for a `[data-motion-layer]`/`[data-motion-item-
+           index]` match, not just the topmost element — without this
+           marker, clicking anywhere on this bar (even the plain time text)
+           "saw through" to whatever canvas layer happened to render behind
+           it at that exact pixel and silently selected/dragged it. */}
         {soloWindow && (
-          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-black/70 text-white text-[11px] select-none">
+          <div
+            data-motion-transport
+            className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-black/70 text-white text-[11px] select-none"
+          >
             <button
               type="button"
               onClick={() => effectivePlayerRef.current?.toggle()}

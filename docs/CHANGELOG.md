@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Per-card drag-to-fix for the `layers` primitive, + B-068 (D-182, Phase 3 of 3).**
+  `Layers.tsx`'s `LayerItem` gains optional `dx`/`dy` (a pixel offset added to the computed
+  position, `0,0` default, byte-for-byte identical render for every existing manifest) and a
+  `data-motion-item-index` per card. New `{kind:'layer-item'}` selection lets a card be clicked,
+  outlined, and dragged independent of its siblings (`MotionCanvasOverlay.tsx`'s new
+  `findLayerItem`/`'move-item'` drag, `manifestEdit.ts`'s `selectedLayerItem`/
+  `setLayerItemOffset`/`setLayerItemField`/`resetLayerItemPosition`, a minimal Inspector form).
+  Also fixes **B-068**, found live while testing this: D-181's own solo-scene transport bar let a
+  click "see through" it to select/drag the canvas underneath, since the existing hit-test
+  deliberately walks the whole `elementsFromPoint` stack, not just the topmost element — a new
+  `data-motion-transport` marker + an early bail on `e.target` fixes it. Live-verified end-to-end
+  against the real project manifest (drag → correct `dx`/`dy` written, siblings untouched, Reset
+  works) plus a byte-for-byte render check. `tsc`/`motion-engine`/`app` baselines unchanged,
+  `@chroma/motion` 439/439 (+18). Closes the 3-phase scene-separation + per-card-drag initiative
+  (D-180 export, D-181 solo preview, D-182 this one).
+
 - **2026-09-06** — **Selecting a scene previews/scrubs it as its own 0:00-start clip
   (D-181, Phase 2 of 3).** `MotionPreview.tsx` gains `activeSceneIndex` — when set, swaps
   Remotion's native transport (no notion of a sub-range) for a small owned one scoped to that

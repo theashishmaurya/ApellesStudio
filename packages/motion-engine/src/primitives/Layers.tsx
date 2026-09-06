@@ -19,7 +19,16 @@ import { design } from "../design";
 import { inAt, pop } from "../lib/draw";
 import { roughLine } from "../lib/rough";
 
-export type LayerItem = { label: string; sublabel?: string };
+/** D-182 (Phase 3 of 3, owner live: "layers are also build from
+ *  composition right can we expose those compositions… see like this one
+ *  overlapping i would like to drag and correct it") — `dx`/`dy` are an
+ *  optional pixel offset ADDED to a card's own computed `topOffset`/`left`,
+ *  defaulting to `0,0` so every existing manifest (none of which set these —
+ *  the field didn't exist before this pass) renders byte-for-byte
+ *  identically. Lets one card be nudged to fix a visual overlap without
+ *  touching the shared `cardW`/`cardH`/`gap`/`tilt` every OTHER card still
+ *  computes from. */
+export type LayerItem = { label: string; sublabel?: string; dx?: number; dy?: number };
 
 export const Layers: React.FC<{
   items: LayerItem[];
@@ -69,16 +78,27 @@ export const Layers: React.FC<{
           const appear = inAt(frame, start + i * stagger, start + i * stagger + 12);
           const s = pop(frame, fps, start + i * stagger);
           const isActive = i === active;
-          const topOffset = i * (cardH + gap) - stackH / 2;
+          const topOffset = i * (cardH + gap) - stackH / 2 + (it.dy ?? 0);
           return (
             <div
               key={i}
               data-motion-box
+              // D-182 — `data-motion-item-index` (this card's own index into
+              // `items[]`, distinct from `data-motion-layer`'s whole-layer
+              // `sceneIndex.layerIndex` address, which `Video.tsx` already
+              // writes on an ANCESTOR wrapper around this entire component)
+              // is the finer-grained hit target `MotionCanvasOverlay.tsx`
+              // checks BEFORE falling back to that whole-layer address —
+              // combining the two gives the full
+              // `{sceneIndex, layerIndex, itemIndex}` a card-level
+              // selection needs, with no new prop threaded into this
+              // component (which has never known its own scene/layer index).
+              data-motion-item-index={i}
               style={{
                 position: "absolute",
                 width: cardW,
                 height: cardH,
-                left: -cardW / 2,
+                left: -cardW / 2 + (it.dx ?? 0),
                 top: topOffset,
                 transform: `translateZ(${isActive ? 90 : 0}px) translateX(${isActive ? 40 : 0}px) scale(${s})`,
                 opacity: appear,

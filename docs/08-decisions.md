@@ -15946,3 +15946,123 @@ free, no `B`-number (a missing capability, not a defect).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-182 — Phase 3 of 3 + B-068: per-card drag-to-fix for the `layers` primitive, and a real hit-testing bug D-181's own transport bar introduced
+
+**Context.** Owner, live, on the same real project this whole 3-phase
+initiative started from: "layers are also build from composition right can
+we expose those compositions… see like this one overlapping i would like to
+drag and correct it" — pointing at two overlapping cards in the "stack"
+scene's card stack. Confirmed by research (`Layers.tsx:52-107`): every
+card's position is purely computed (`topOffset = i*(cardH+gap) - stackH/2`,
+shared `cardW`/`cardH`) — no per-card override existed anywhere, so fixing
+an overlap meant hand-editing the primitive's own layout math, not something
+the Inspector or canvas could do. Third and last phase of this initiative.
+
+### 1 — Per-card drag, the actual ask
+
+**Schema (`Layers.tsx`).** `LayerItem` gains optional `dx?: number; dy?:
+number` — a pixel offset ADDED to the computed position, defaulting to
+`0,0` (confirmed no existing manifest sets these — byte-for-byte identical
+render for every manifest that doesn't, verified below). Each card also
+gets `data-motion-item-index={i}` (alongside its existing `data-motion-box`,
+unchanged) — its own index into `items[]`, distinct from `data-motion-layer`'s
+whole-layer `sceneIndex.layerIndex` address (`Video.tsx`, written on an
+ANCESTOR wrapper around the entire `Layers` component) — combining the two
+gives a card's full address with no new prop threaded into a primitive that
+has never known its own scene/layer index.
+
+**New selection kind, `{kind:'layer-item', index, itemIndex}` (`LayerList.tsx`).**
+`sameTarget` compares both indices; `toggleSelection`'s existing `sel.target
+.kind !== 'layer'` guard already excludes it from multi-select with zero
+changes (single-select only for v1 — the ask was fixing ONE card, not
+multi-card editing).
+
+**`manifestEdit.ts`**: `selectedLayerItem` reads a card (coercing a plain
+string to `{label}` — the SAME coercion `registry.ts`'s own adapter already
+does at render time, so a read doing it too is consistent, not a new
+precedent); `setLayerItemOffset` (atomic dx+dy, the drag path's own need)
+and `setLayerItemField`/`resetLayerItemPosition` (single-field Inspector
+edits, "Reset position") all promote a plain-string item to an object on
+first write, via `cloneLayerRaw` against a MANUALLY BUILT `{kind:'layer'}`
+selection for the parent — deliberately NOT a new branch on `cloneLayerRaw`
+itself, which is also the clone-and-locate step every WHOLE-layer writer in
+this file shares; letting it understand card addressing would risk one of
+those generic writers being called with a `layer-item` selection by mistake
+and silently mutating the wrong thing. `resolveSelection` gets an
+index-only branch (no `id` — `LayerItem` has none, nothing reorders cards
+today) — the same "doesn't survive a reorder" honesty every other un-id'd
+target already documents.
+
+**`MotionCanvasOverlay.tsx`**: a new `findLayerItem` hit-test (checked
+BEFORE the whole-layer hit, so clicking a card selects the card, clicking
+anywhere else on the stack still selects the whole layer unchanged) and a
+new `'move-item'` drag kind, reusing the EXACT existing `worldDelta`/
+`measureWorldMap` math — only the write target differs (`setLayerItemOffset`
+instead of `setLayerPosition`). `recomputeBoxes` measures the ONE card's own
+box directly (`layerMeasure.ts`'s new `measureLayerItemScreenBox`), never a
+union — the whole point is one card independent of its siblings. Resize is
+explicitly out of scope — no handles render for a `layer-item` selection.
+
+**`InspectorPanel.tsx`**: a minimal, purpose-built form (not
+`fieldsForPrimitive`/`FieldGroup`, which describe a whole LAYER's props, not
+one item inside it) — `Label`, `X offset`, `Y offset`, and a "Reset
+position" button, disabled when neither offset is set.
+
+### 2 — B-068: the just-shipped (D-181) transport bar could select/drag the canvas THROUGH itself
+
+**Found live**, testing #1 above: clicking the D-181 solo-scene transport's
+own scrubber silently selected AND moved the whole `layers` stack rendered
+behind it at that exact pixel. **Cause**: `MotionCanvasOverlay.tsx`'s hit
+tests (`findLayer`/the new `findLayerItem`) walk the WHOLE `elementsFromPoint`
+stack at a point, not just the topmost element — a deliberate, correct
+design for seeing through a `display:contents` wrapper (`data-motion-layer`'s
+own), but it has the side effect of seeing through an OPAQUE sibling
+positioned on top of the canvas too, which never existed before D-181's own
+transport bar. **Fix**: a `data-motion-transport` marker on that bar
+(`MotionPreview.tsx`) and one new check at the very top of `onPointerDown` —
+`e.target.closest('[data-motion-transport]')` bails before ANY hit-testing.
+`e.target` (real pointer-events/stacking), not `elementsFromPoint`
+(deliberately broader), is the right tool for "was the actual click target
+our own chrome." **Verified**: clicking the transport's scrubber now only
+moves the scrubber — no selection, no dirty flag, confirmed both before
+(reproduced the bug) and after the fix, live in the harness.
+
+**Filed as B-068** (`docs/BUGS.md`) — status `fixed`, filed and closed in
+the same pass; checked against `docs/BUGS.md`'s own ledger (its real max is
+B-067 — a single, much-older stray "B-128" reference exists in this file's
+own prose at D-129, from a different, non-`BUGS.md`-tracked numbering
+generations earlier, not a live collision with anything this session uses).
+
+**Verified.** `manifestEdit.test.ts`: `selectedLayerItem`/`setLayerItemOffset`/
+`setLayerItemField`/`resetLayerItemPosition` (string-promotion, sibling/
+parent-field isolation, no-op floors) and `resolveSelection`'s new branch —
+18 new tests. Byte-for-byte render check (the established `git stash`/
+render/pop/render/`shasum` technique) on the REAL project manifest at the
+"stack" scene's own frame — identical SHA-256 before/after `Layers.tsx`'s
+change, confirming zero pixel change for existing manifests (none of which
+set `dx`/`dy`). Live, in `app/motion-harness.html`, against the SAME real
+manifest: clicked the "system prompt" card directly — only it got a
+selection outline (not the whole stack); dragged it — only it moved,
+outline tracked live, Inspector showed real `X offset`/`Y offset` values;
+raw JSON confirmed `items` became `["tools", {"label":"system
+prompt","dx":…,"dy":…}, "retrieved context", "your question"]` — every
+sibling untouched, still plain strings; "Reset position" removed both
+fields and the card snapped back to its computed default.
+
+`npx tsc --noEmit -p packages/motion` clean; `motion-engine` (2) and `app`
+(64) baselines unchanged. `npm test --workspace @chroma/motion` —
+**439/439** (was 421; +18).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: `git log --oneline -1` shows `4afefa0` (D-181) — **D-182**/
+**B-068** are free.
+
+**This closes the 3-phase initiative** (D-180 export, D-181 solo preview,
+D-182 per-card drag) that began from the owner's live "scene should be a
+separate composition… exported as separate video, not on top of it."
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

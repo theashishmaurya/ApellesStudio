@@ -43,6 +43,10 @@ import {
   setLayerActiveSchedule,
   moveLayerActiveKeyAt,
   addScene,
+  selectedLayerItem,
+  setLayerItemOffset,
+  setLayerItemField,
+  resetLayerItemPosition,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
@@ -1643,5 +1647,116 @@ describe('addScene (D-179 — owner, live: "we need a way to create multiple sce
     const snapshot = JSON.stringify(sample);
     addScene(sample);
     expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+describe('selectedLayerItem / setLayerItemOffset / setLayerItemField / resetLayerItemPosition (D-182 — per-card drag-to-fix for `layers`, owner live: "layers are also build from composition… i would like to drag and correct it")', () => {
+  // sample scene 1 "stack", layer 1 (the "layers" primitive) — its own real
+  // items: ["tools","system prompt","retrieved context","your question"],
+  // every one still a plain string (no dx/dy field exists anywhere in this
+  // manifest — it didn't exist before this pass).
+  const cardSel: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 0 } }; // "tools"
+
+  it("reads a plain-string item as {label}, matching registry.ts's own read-time coercion", () => {
+    expect(selectedLayerItem(sample, cardSel)).toEqual({ label: 'tools' });
+  });
+
+  it('is null for a selection that is not layer-item', () => {
+    const notItem: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+    expect(selectedLayerItem(sample, notItem)).toBeNull();
+  });
+
+  it('is null for an out-of-range itemIndex', () => {
+    const bad: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 99 } };
+    expect(selectedLayerItem(sample, bad)).toBeNull();
+  });
+
+  it('is null when the parent layer does not resolve', () => {
+    const bad: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 99, itemIndex: 0 } };
+    expect(selectedLayerItem(sample, bad)).toBeNull();
+  });
+
+  it('setLayerItemOffset promotes a plain string to {label, dx, dy}, writing both at once', () => {
+    const next = setLayerItemOffset(sample, cardSel, 10, -20);
+    expect(selectedLayerItem(next, cardSel)).toEqual({ label: 'tools', dx: 10, dy: -20 });
+  });
+
+  it('setLayerItemOffset never disturbs a SIBLING card', () => {
+    const next = setLayerItemOffset(sample, cardSel, 10, -20);
+    const sibling: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 1 } };
+    expect(selectedLayerItem(next, sibling)).toEqual({ label: 'system prompt' });
+  });
+
+  it("setLayerItemOffset never disturbs the parent layer's OWN fields (items array aside)", () => {
+    const next = setLayerItemOffset(sample, cardSel, 10, -20);
+    const layer = next.scenes[1].layers![1] as unknown as Record<string, unknown>;
+    expect(layer.callout).toBe('re-sent on every call');
+    expect(layer.active).toEqual([
+      { at: 2.5, i: 2 },
+      { at: 4, i: 0 },
+    ]);
+  });
+
+  it('setLayerItemOffset merges onto an ALREADY-object item, preserving/overwriting correctly', () => {
+    const withObj = setLayerItemOffset(sample, cardSel, 5, 5); // promotes "tools" -> {label,dx:5,dy:5}
+    const next = setLayerItemOffset(withObj, cardSel, 12, 34);
+    expect(selectedLayerItem(next, cardSel)).toEqual({ label: 'tools', dx: 12, dy: 34 });
+  });
+
+  it('is a no-op for a selection that is not layer-item', () => {
+    const notItem: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+    expect(setLayerItemOffset(sample, notItem, 1, 1)).toBe(sample);
+  });
+
+  it('is a no-op for an out-of-range itemIndex', () => {
+    const bad: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 99 } };
+    expect(setLayerItemOffset(sample, bad, 1, 1)).toBe(sample);
+  });
+
+  it('setLayerItemField writes a single field (label), leaving dx/dy alone', () => {
+    const withOffset = setLayerItemOffset(sample, cardSel, 3, 4);
+    const next = setLayerItemField(withOffset, cardSel, 'label', 'TOOLS');
+    expect(selectedLayerItem(next, cardSel)).toEqual({ label: 'TOOLS', dx: 3, dy: 4 });
+  });
+
+  it('setLayerItemField(key, undefined) deletes that one key only', () => {
+    const withOffset = setLayerItemOffset(sample, cardSel, 3, 4);
+    const next = setLayerItemField(withOffset, cardSel, 'dx', undefined);
+    expect(selectedLayerItem(next, cardSel)).toEqual({ label: 'tools', dy: 4 });
+  });
+
+  it('resetLayerItemPosition deletes BOTH dx and dy in one pass', () => {
+    const withOffset = setLayerItemOffset(sample, cardSel, 3, 4);
+    const next = resetLayerItemPosition(withOffset, cardSel);
+    expect(selectedLayerItem(next, cardSel)).toEqual({ label: 'tools' });
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    setLayerItemOffset(sample, cardSel, 1, 1);
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+describe('resolveSelection — layer-item (D-182)', () => {
+  const cardSel: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 0 } };
+
+  it('resolves an existing card unchanged (no id on LayerItem — index-only, like every other un-id\'d target)', () => {
+    expect(resolveSelection(sample, cardSel)).toEqual(cardSel);
+  });
+
+  it('is null when the itemIndex no longer exists', () => {
+    const bad: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 1, itemIndex: 99 } };
+    expect(resolveSelection(sample, bad)).toBeNull();
+  });
+
+  it('is null when the parent layer no longer exists', () => {
+    const bad: Selection = { sceneIndex: 1, target: { kind: 'layer-item', index: 99, itemIndex: 0 } };
+    expect(resolveSelection(sample, bad)).toBeNull();
+  });
+
+  it('is null when the scene no longer exists', () => {
+    const bad: Selection = { sceneIndex: 99, target: { kind: 'layer-item', index: 1, itemIndex: 0 } };
+    expect(resolveSelection(sample, bad)).toBeNull();
   });
 });

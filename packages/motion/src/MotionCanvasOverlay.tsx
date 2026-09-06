@@ -137,6 +137,8 @@ import {
   moveLayersByDeltaAutoKey,
   layerWorldSize,
   setLayerSize,
+  selectedLayerItem,
+  setLayerItemOffset,
 } from './manifestEdit';
 import {
   measureWorldMap,
@@ -149,7 +151,7 @@ import {
   type RectLike,
   type Point,
 } from './canvasGeometry';
-import { measureLayerScreenBox, findWorldElement } from './layerMeasure';
+import { measureLayerScreenBox, measureLayerItemScreenBox, findWorldElement } from './layerMeasure';
 import { sizeFields } from './propCatalog';
 
 /** Which edge/corner a resize handle drives — `'e'`/`'s'` change one axis
@@ -216,6 +218,28 @@ type DragState =
       /** the selection to union onto if `additive`; ignored otherwise. */
       baseSelections: Selection[];
       start: Point;
+    }
+  | {
+      /** D-182 (Phase 3 of 3) — dragging ONE card within a `layers`
+       *  primitive. Deliberately its own kind, not folded into `'move'`
+       *  (whose `moves[]` shape is a list of WHOLE-LAYER positions, keyable
+       *  via `transform.keys` — a card has neither of those; it always
+       *  writes through `setLayerItemOffset`'s own `dx`/`dy`, single card
+       *  only, no keyframing, no group case). */
+      kind: 'move-item';
+      pointerId: number;
+      /** always a `{kind:'layer-item'}` selection in practice (the only
+       *  caller, `onPointerDown`'s new card-hit branch, constructs it that
+       *  way) — typed as the plain `Selection` union, matching `'resize'`'s
+       *  own `selection` field above, rather than narrowing the type here. */
+      selection: Selection;
+      map: ReturnType<typeof measureWorldMap>;
+      start: Point;
+      /** the card's OWN `dx`/`dy` at drag-start (`0,0` if it had none yet) —
+       *  the base a live pointer delta adds to, mirroring every other drag
+       *  in this file's "recompute from a stable base + delta" discipline. */
+      baseDx: number;
+      baseDy: number;
     };
 
 /** Which resize handles a selection's primitive gets, per `sizeFields`'
@@ -317,6 +341,15 @@ export function MotionCanvasOverlay({
       setMultiBoxes([]);
       return;
     }
+    // D-182 — ONE card's own box, never a union (unlike the whole-layer
+    // case above): the entire point of a `layer-item` selection is
+    // outlining/dragging ONE card independent of its siblings.
+    if (first && first.target.kind === 'layer-item') {
+      const rect = measureLayerItemScreenBox(container, first.sceneIndex, first.target.index, first.target.itemIndex);
+      setBox(rect ? toContainerLocal(rect, container.getBoundingClientRect()) : null);
+      setMultiBoxes([]);
+      return;
+    }
     setBox(null);
     if (selections.length < 2) {
       setMultiBoxes([]);
@@ -388,8 +421,44 @@ export function MotionCanvasOverlay({
       return null;
     };
 
+    /** D-182 (Phase 3 of 3) — a card within a `layers` primitive.
+     *  `data-motion-item-index` (`Layers.tsx`) alone only says "which card
+     *  in ITS OWN stack" — the enclosing `[data-motion-layer]` (already
+     *  written by `Video.tsx` around the WHOLE `Layers` component, an
+     *  ancestor of every card it renders) supplies the `sceneIndex.
+     *  layerIndex` half of the address, so no new prop had to be threaded
+     *  into the primitive itself to make a card individually addressable. */
+    const findLayerItem = (clientX: number, clientY: number): { layerEl: Element; itemIndex: number } | null => {
+      for (const el of document.elementsFromPoint(clientX, clientY)) {
+        const itemEl = el.closest('[data-motion-item-index]');
+        if (!itemEl) continue;
+        const layerEl = itemEl.closest('[data-motion-layer]');
+        const itemIndexAttr = itemEl.getAttribute('data-motion-item-index');
+        if (layerEl && itemIndexAttr !== null) return { layerEl, itemIndex: Number(itemIndexAttr) };
+      }
+      return null;
+    };
+
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
+
+      // 0 (D-181/found live during D-182's own testing). `e.target` — NOT
+      // `elementsFromPoint`, which is exactly the bug this guards against —
+      // is inside the solo-scene transport (`MotionPreview.tsx`'s
+      // `data-motion-transport`)? Bail before ANY hit-testing below. Every
+      // check from here on (`findLayer`/`findLayerItem`) walks the WHOLE
+      // `elementsFromPoint` stack at a point looking for a match, not just
+      // the topmost element — deliberately, so a click through a
+      // `display:contents` wrapper (`data-motion-layer`'s own wrapper,
+      // `Video.tsx`) still resolves. That same breadth means a click on an
+      // OPAQUE sibling positioned on top of the canvas (the transport bar)
+      // would otherwise "see through" it to whatever canvas layer happens
+      // to render behind that exact pixel — found live: clicking the
+      // transport's own scrubber silently selected-and-dragged the WHOLE
+      // `layers` stack underneath it. `e.target` reflects real pointer-
+      // events/stacking (unlike `elementsFromPoint`), so it's the right
+      // check for "was the ACTUAL click target our own chrome."
+      if ((e.target as Element | null)?.closest?.('[data-motion-transport]')) return;
 
       // 1. A resize handle (D-157) — checked FIRST, since it's rendered by
       // this same overlay on top of the canvas and must never fall through
@@ -412,6 +481,43 @@ export function MotionCanvasOverlay({
           map: measureWorldMap(worldEl.getBoundingClientRect(), manifest.width),
           start: { x: e.clientX, y: e.clientY },
           startSize,
+        };
+        return;
+      }
+
+      // 1.5 (D-182). A CARD within a `layers` primitive — checked BEFORE
+      // the whole-layer hit below, so clicking a card selects the card, not
+      // the whole stack; clicking anywhere else on the stack still falls
+      // through unchanged. Single-select only (no shift-toggle/group-move
+      // for cards yet — the "expose these compositions" ask was "let me fix
+      // ONE overlapping card," not multi-card editing), and no resize
+      // handles ever render for a `layer-item` selection (`handlesForUse`
+      // below is only ever consulted for `{kind:'layer'}`), so there's
+      // nothing else for this branch to check first.
+      const itemHit = findLayerItem(e.clientX, e.clientY);
+      if (itemHit) {
+        const attr = itemHit.layerEl.getAttribute('data-motion-layer');
+        if (!attr) return;
+        const [sceneIndexStr, indexStr] = attr.split('.');
+        const sceneIndex = Number(sceneIndexStr);
+        const index = Number(indexStr);
+        const sel: Selection = { sceneIndex, target: { kind: 'layer-item', index, itemIndex: itemHit.itemIndex } };
+        onSelect(sel);
+
+        if (!manifest) return; // selected, but nothing to compute a drag against yet
+        const worldEl = findWorldElement(container);
+        const item = selectedLayerItem(manifest, sel);
+        if (!worldEl || !item) return;
+        e.preventDefault();
+        container.setPointerCapture(e.pointerId);
+        dragRef.current = {
+          kind: 'move-item',
+          pointerId: e.pointerId,
+          selection: sel,
+          map: measureWorldMap(worldEl.getBoundingClientRect(), manifest.width),
+          start: { x: e.clientX, y: e.clientY },
+          baseDx: item.dx ?? 0,
+          baseDy: item.dy ?? 0,
         };
         return;
       }
@@ -522,6 +628,16 @@ export function MotionCanvasOverlay({
       return delta;
     };
 
+    // D-182 — the SAME world-space delta math `moveDelta` above uses (a
+    // card's own `dx`/`dy` are already pixel offsets, the exact unit
+    // `worldDelta` already produces — no unit conversion needed), just
+    // scoped to one card instead of a `moves[]` list.
+    const moveItemDelta = (drag: Extract<DragState, { kind: 'move-item' }>, e: PointerEvent) => {
+      let delta = worldDelta(drag.map, { x: e.clientX - drag.start.x, y: e.clientY - drag.start.y });
+      if (e.shiftKey) delta = axisLock(delta);
+      return delta;
+    };
+
     const onPointerMove = (e: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== e.pointerId) return;
@@ -536,6 +652,9 @@ export function MotionCanvasOverlay({
       if (drag.kind === 'move') {
         const d = moveDelta(drag, e);
         onTransientChange(moveLayersByDeltaAutoKey(manifest, drag.moves, d.x, d.y, drag.atSeconds, manifest.fps));
+      } else if (drag.kind === 'move-item') {
+        const d = moveItemDelta(drag, e);
+        onTransientChange(setLayerItemOffset(manifest, drag.selection, drag.baseDx + d.x, drag.baseDy + d.y));
       } else {
         const s = nextSize(drag, e);
         onTransientChange(setLayerSize(manifest, drag.selection, s.w, s.h));
@@ -616,6 +735,9 @@ export function MotionCanvasOverlay({
               ? 'Move layer (keyframe)'
               : 'Move layer';
         onCommit(moveLayersByDeltaAutoKey(manifest, drag.moves, d.x, d.y, drag.atSeconds, manifest.fps), label);
+      } else if (drag.kind === 'move-item') {
+        const d = moveItemDelta(drag, e);
+        onCommit(setLayerItemOffset(manifest, drag.selection, drag.baseDx + d.x, drag.baseDy + d.y), 'Move card');
       } else {
         const s = nextSize(drag, e);
         onCommit(setLayerSize(manifest, drag.selection, s.w, s.h), 'Resize layer');

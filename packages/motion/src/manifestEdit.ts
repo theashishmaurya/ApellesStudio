@@ -156,6 +156,18 @@ export function resolveSelection(manifest: Manifest, selection: Selection): Sele
     return list[target.index] ? selection : null;
   }
 
+  // D-182 — a card has no `id` of its own (`LayerItem` doesn't carry one;
+  // nothing reorders cards today), so this is the SAME "index-only, confirm
+  // it still exists" floor `target.kind === 'layer'` already holds for an
+  // un-id'd layer — never a corrected index the way an id-carrying target
+  // gets, just a pass/fail on whether the parent layer AND that item index
+  // both still exist.
+  if (target.kind === 'layer-item') {
+    const layer = scene.layers?.[target.index] as unknown as Raw | undefined;
+    const items = layer?.items;
+    return Array.isArray(items) && items[target.itemIndex] !== undefined ? selection : null;
+  }
+
   // scene / camera / scene3d-camera — positional by nature (there is
   // exactly one of each per scene, nothing to reorder), so the scene
   // existing (already checked above) is the whole check.
@@ -213,6 +225,90 @@ export function setLayerField(manifest: Manifest, selection: Selection, key: str
   if (value === undefined) delete raw[key];
   else raw[key] = value;
   return next;
+}
+
+/** D-182 (Phase 3 of 3, owner live: "layers are also build from
+ *  composition… i would like to drag and correct it") — one CARD a
+ *  `{kind:'layer-item'}` selection points at, read from its parent layer's
+ *  `items[]` array. A raw item is either a plain string (the D-151 catalog
+ *  default, and every hand-authored manifest's own shape) or an object —
+ *  `registry.ts`'s own adapter already coerces the string form to
+ *  `{label}` at RENDER time; this does the identical coercion for the
+ *  Inspector's own read, so it never has to know which form the manifest
+ *  actually stored. `null` for a selection that isn't `layer-item`, whose
+ *  parent layer doesn't resolve, or whose `itemIndex` is out of range —
+ *  the same "reads as nothing to show, never a crash" floor every other
+ *  read function in this file already holds. */
+export function selectedLayerItem(manifest: Manifest, selection: Selection): { label: string; sublabel?: string; dx?: number; dy?: number } | null {
+  if (selection.target.kind !== 'layer-item') return null;
+  const layer = selectedLayer(manifest, { sceneIndex: selection.sceneIndex, target: { kind: 'layer', index: selection.target.index } });
+  const raw = (layer?.raw.items as unknown[] | undefined)?.[selection.target.itemIndex];
+  if (raw === undefined) return null;
+  return typeof raw === 'string' ? { label: raw } : (raw as { label: string; sublabel?: string; dx?: number; dy?: number });
+}
+
+/** The write half of `selectedLayerItem` above — sets the card's own `dx`/
+ *  `dy` pixel offset (`Layers.tsx`'s own `LayerItem.dx`/`dy`, added by this
+ *  same pass), promoting a plain-string item to `{label, ...}` first if
+ *  that's still its stored shape (mirroring `registry.ts`'s own read-time
+ *  coercion — a write doing the same thing is consistent with it, not a new
+ *  precedent). Every OTHER field on the item (`label`, `sublabel`, any
+ *  future one) survives untouched via the spread — this only ever adds/
+ *  overwrites `dx`/`dy`. Reuses `cloneLayerRaw` against a MANUALLY BUILT
+ *  `{kind:'layer'}` selection for the parent, rather than adding a
+ *  `layer-item` branch to that function itself — `cloneLayerRaw` is also the
+ *  clone-and-locate step every WHOLE-layer writer in this file shares
+ *  (`setLayerField`/`setLayerPosition`/`setLayerSize`/…), and letting it
+ *  understand card addressing would risk one of those generic writers being
+ *  called with a `layer-item` selection by mistake and silently mutating
+ *  the wrong thing (the whole layer instead of one card) — a real footgun
+ *  this function avoids just by staying its own, separate path. No-op (the
+ *  same `Manifest` reference back) for a selection that isn't `layer-item`,
+ *  whose parent layer doesn't resolve, or whose `itemIndex` is out of
+ *  range. */
+export function setLayerItemOffset(manifest: Manifest, selection: Selection, dx: number, dy: number): Manifest {
+  if (selection.target.kind !== 'layer-item') return manifest;
+  const { index: layerIndex, itemIndex } = selection.target;
+  const cloned = cloneLayerRaw(manifest, { sceneIndex: selection.sceneIndex, target: { kind: 'layer', index: layerIndex } });
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
+  const items = raw.items;
+  if (!Array.isArray(items) || itemIndex < 0 || itemIndex >= items.length) return manifest;
+  const current = items[itemIndex];
+  const base = typeof current === 'string' ? { label: current } : { ...(current as Raw) };
+  items[itemIndex] = { ...base, dx, dy };
+  return next;
+}
+
+/** The single-field counterpart to `setLayerItemOffset` above — the
+ *  Inspector's own card-editing form uses THIS for `label` (`setLayerItemOffset`
+ *  is dx/dy-specific, always writing both together for the drag path's own
+ *  atomic-per-pointermove need). Same clone/promote/merge shape; `value ===
+ *  undefined` deletes the key instead of setting it, matching `setLayerField`'s
+ *  own convention for every whole-layer field in this file. */
+export function setLayerItemField(manifest: Manifest, selection: Selection, key: string, value: unknown): Manifest {
+  if (selection.target.kind !== 'layer-item') return manifest;
+  const { index: layerIndex, itemIndex } = selection.target;
+  const cloned = cloneLayerRaw(manifest, { sceneIndex: selection.sceneIndex, target: { kind: 'layer', index: layerIndex } });
+  if (!cloned) return manifest;
+  const { next, raw } = cloned;
+  const items = raw.items;
+  if (!Array.isArray(items) || itemIndex < 0 || itemIndex >= items.length) return manifest;
+  const current = items[itemIndex];
+  const base: Raw = typeof current === 'string' ? { label: current } : { ...(current as Raw) };
+  if (value === undefined) delete base[key];
+  else base[key] = value;
+  items[itemIndex] = base;
+  return next;
+}
+
+/** "Reset position" (`InspectorPanel.tsx`'s own card-editing form) — deletes
+ *  BOTH `dx` and `dy` in one manifest pass (one undo step), back to the
+ *  computed default `Layers.tsx` falls back to when neither is set. Two
+ *  sequential `setLayerItemField` calls, not a bespoke third writer — this
+ *  IS what "reset" means for these two fields, nothing more. */
+export function resetLayerItemPosition(manifest: Manifest, selection: Selection): Manifest {
+  return setLayerItemField(setLayerItemField(manifest, selection, 'dx', undefined), selection, 'dy', undefined);
 }
 
 /** The `[x,y,w,h]` an `emphasis` layer starts with when a drag has to

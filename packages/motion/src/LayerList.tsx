@@ -122,7 +122,16 @@ export type SelectionTarget =
   | { kind: 'camera' }
   | { kind: 'scene3d-camera' }
   | { kind: 'layer'; index: number; id?: string }
-  | { kind: 'scene3d-child'; index: number; id?: string };
+  | { kind: 'scene3d-child'; index: number; id?: string }
+  /** D-182 (Phase 3 of 3) — one CARD within a `layers`-primitive layer:
+   *  `index` is the layer's own index into `scene.layers[]` (same meaning as
+   *  `{kind:'layer'}`'s `index`), `itemIndex` is the card's own position in
+   *  that layer's `items[]`. No `id` — `LayerItem` (`Layers.tsx`) has no id
+   *  field (nothing reorders cards today, unlike D-158's own `layer.id`
+   *  motivation), so this is addressed by plain index, the same honest
+   *  "doesn't survive a reorder" floor every other un-id'd target already
+   *  holds. */
+  | { kind: 'layer-item'; index: number; itemIndex: number };
 
 export interface Selection {
   sceneIndex: number;
@@ -133,6 +142,7 @@ export function sameTarget(a: SelectionTarget, b: SelectionTarget): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'layer' && b.kind === 'layer') return a.index === b.index;
   if (a.kind === 'scene3d-child' && b.kind === 'scene3d-child') return a.index === b.index;
+  if (a.kind === 'layer-item' && b.kind === 'layer-item') return a.index === b.index && a.itemIndex === b.itemIndex;
   return true;
 }
 
