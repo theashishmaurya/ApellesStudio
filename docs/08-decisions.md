@@ -14984,3 +14984,50 @@ instance) is a process error, not a code defect, and is not filed as a `B`-numbe
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-171 — Closing D-170's own gap: `motion_set_camera_2d`/`motion_set_camera_3d` never got B-062's ease-validation guard
+
+**decided + built (2026-09-06).** D-170's own closing note flagged this honestly rather than
+silently leaving it: `motion_set_layer_transform_keys` (D-169) validates/clamps every key's
+`ease` via `validateEaseArg` (wrapping `easeCurve.ts`'s real `resolveEaseCurve`/`clampEaseCurve`
+— the same guard the Inspector's own bezier widget applies) before it ever reaches the manifest,
+closing B-062's exact failure mode (`Easing.bezier` throws outside `x∈[0,1]`, `docs/BUGS.md`,
+still open at the schema level). `motion_set_camera_2d`/`motion_set_camera_3d` (D-168) — built
+BEFORE `validateEaseArg` existed — never got the same treatment: they took each key's `ease`
+verbatim and handed the whole array straight to `setCamera2d`/`setCamera3d`, so an MCP call
+setting an out-of-range camera ease would validate fine at this boundary and only crash the
+render once playback reached that key's own frame, the identical gap B-062 already names for a
+hand-edited manifest.
+
+**Fix.** Both ops now rebuild their `keys` array field-by-field (matching
+`motion_set_layer_transform_keys`'s own established shape) instead of casting the raw input
+array straight to `Cam2dKey[]`/`Cam3dKey[]`: each key's `at`/`x`/`y`/`zoom` (2D) or
+`at`/`pos`/`look` (3D) are validated as before, and `ease` now goes through the same
+`validateEaseArg` — malformed shape is a hard `{error}`, an out-of-range value is clamped and
+surfaced as a `warning` on the op's own response, never a silent acceptance or a blocking
+rejection. One small type wrinkle: `easeCurve.ts`'s `EaseCurve` (D-164) is deliberately
+`readonly`, while `schema.ts`'s zod-inferred `Cam2dKey['ease']`/`Cam3dKey['ease']` is the mutable
+tuple zod always infers — a validated curve is spread into a fresh mutable tuple
+(`[...ease.curve] as [number, number, number, number]`) before assignment, the same pattern
+`motion_set_layer_transform_keys` already uses for the identical readonly/mutable mismatch.
+
+**Verification.** `npx tsc --noEmit -p app` — exactly 64 errors, unchanged baseline (introduced
+and fixed 2 new errors from the readonly/mutable mismatch above during this same pass, both
+resolved before this entry). `npm test --workspace @chroma/motion` — 362/362, unchanged (no new
+pure logic factored out — this reuses `validateEaseArg` verbatim, the same function D-169's own
+tests already exercise indirectly via `easeCurve.test.ts`'s coverage of `resolveEaseCurve`/
+`clampEaseCurve`). No live re-verification against a running instance for this pass — a small,
+mechanical extension of an already-live-verified pattern (D-169's own `motion_set_layer_
+transform_keys`) to two sibling ops, not new behavior needing its own end-to-end proof; the
+coordinator's own already-running instance (port 19788, restarted after D-170's own accidental
+kill) was left untouched throughout.
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` shows `1ddc65f` (D-170) — **D-171** is free, no `B`-number touched (B-062 stays
+open; the schema-level fix it names is still out of scope, same as every prior pass that guarded
+against it at a boundary instead).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

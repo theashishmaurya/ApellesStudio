@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Close D-170's own flagged gap: camera-key `ease` validation (D-171).**
+  `motion_set_camera_2d`/`motion_set_camera_3d` (D-168, built before the ease-validation guard
+  existed) now run every key's `ease` through the same `validateEaseArg` D-169's
+  `motion_set_layer_transform_keys` already uses — malformed shape errors, out-of-range values
+  clamp with a warning instead of validating fine and crashing the render later (B-062's exact
+  failure mode, still open at the schema level). `tsc -p app` unchanged at 64,
+  `@chroma/motion` 362/362.
 - **2026-09-06** — **Motion tab MCP surface, Phase 4: navigation, selection, persistence
   (D-170) — closes the whole scoped tool list (18 ops across 4 phases).** Four new `motion_*`
   ops: `select` (set the live selection + seek the player to the scene's start frame, mirrors

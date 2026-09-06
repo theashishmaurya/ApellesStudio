@@ -768,20 +768,41 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
           return { error: `no scene at index ${sceneIndex} (0..${cur.manifest.scenes.length - 1})` };
         }
 
-        const keys = a?.keys;
-        if (!Array.isArray(keys)) {
+        const rawKeys = a?.keys;
+        if (!Array.isArray(rawKeys)) {
           return { error: 'keys (array of {at, x?, y?, zoom?, ease?}) required' };
         }
-        for (const k of keys) {
-          if (!k || typeof k !== 'object' || typeof k.at !== 'number') {
-            return { error: 'every camera key needs a numeric "at"' };
+
+        const keys: Cam2dKey[] = [];
+        const warnings: string[] = [];
+        for (let i = 0; i < rawKeys.length; i++) {
+          const k = rawKeys[i];
+          if (!k || typeof k !== 'object' || typeof k.at !== 'number' || !Number.isFinite(k.at)) {
+            return { error: `keys[${i}] needs a numeric "at"` };
           }
+          // Same `validateEaseArg` guard `motion_set_layer_transform_keys`
+          // already applies (D-169/B-062) — closing the exact gap D-168's
+          // own pass left open by wrapping `setCamera2d`/`setCamera3d`
+          // BEFORE that guard existed. Malformed ease is a hard error;
+          // out-of-range is clamped with a warning, never a blocker.
+          const ease = validateEaseArg(k.ease);
+          if ('error' in ease) return { error: `keys[${i}].${ease.error}` };
+          if (ease.warning) warnings.push(`keys[${i}]: ${ease.warning}`);
+          const key: Cam2dKey = { at: k.at };
+          for (const field of ['x', 'y', 'zoom'] as const) {
+            if (typeof k[field] === 'number' && Number.isFinite(k[field])) key[field] = k[field];
+          }
+          // `easeCurve.ts`'s `EaseCurve` is deliberately `readonly` (D-164);
+          // the schema-inferred `Cam2dKey['ease']` is the mutable tuple zod
+          // infers — spread into a fresh mutable tuple to satisfy both.
+          if (ease.curve) key.ease = [...ease.curve] as [number, number, number, number];
+          keys.push(key);
         }
 
-        const next = setCamera2d(cur.manifest, sceneIndex, keys as Cam2dKey[]);
+        const next = setCamera2d(cur.manifest, sceneIndex, keys);
         if (next === cur.manifest) return { error: `no scene at index ${sceneIndex}` };
         cur.commit(next, 'Set camera');
-        return { sceneIndex, keyCount: keys.length };
+        return { sceneIndex, keyCount: keys.length, warning: warnings.length ? warnings.join('; ') : undefined };
       },
 
       // replace a scene's 3D camera keyframe array WHOLESALE — `setCamera3d`.
@@ -812,20 +833,34 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
           };
         }
 
-        const keys = a?.keys;
-        if (!Array.isArray(keys) || keys.length < 1) {
+        const rawKeys = a?.keys;
+        if (!Array.isArray(rawKeys) || rawKeys.length < 1) {
           return { error: 'keys (non-empty array of {at, pos:[x,y,z], look?, ease?}) required — scene3d.camera needs at least one key' };
         }
-        for (const k of keys) {
-          if (!k || typeof k !== 'object' || typeof k.at !== 'number' || !Array.isArray(k.pos) || k.pos.length !== 3) {
-            return { error: 'every 3D camera key needs a numeric "at" and a 3-number "pos" [x,y,z]' };
+
+        const keys: Cam3dKey[] = [];
+        const warnings: string[] = [];
+        for (let i = 0; i < rawKeys.length; i++) {
+          const k = rawKeys[i];
+          if (!k || typeof k !== 'object' || typeof k.at !== 'number' || !Number.isFinite(k.at) || !Array.isArray(k.pos) || k.pos.length !== 3) {
+            return { error: `keys[${i}] needs a numeric "at" and a 3-number "pos" [x,y,z]` };
           }
+          // Same guard as `motion_set_camera_2d` above — see that op's own
+          // comment for why.
+          const ease = validateEaseArg(k.ease);
+          if ('error' in ease) return { error: `keys[${i}].${ease.error}` };
+          if (ease.warning) warnings.push(`keys[${i}]: ${ease.warning}`);
+          const key: Cam3dKey = { at: k.at, pos: k.pos as [number, number, number] };
+          if (Array.isArray(k.look) && k.look.length === 3) key.look = k.look as [number, number, number];
+          // See `motion_set_camera_2d`'s own comment on this same spread.
+          if (ease.curve) key.ease = [...ease.curve] as [number, number, number, number];
+          keys.push(key);
         }
 
-        const next = setCamera3d(cur.manifest, sceneIndex, keys as Cam3dKey[]);
+        const next = setCamera3d(cur.manifest, sceneIndex, keys);
         if (next === cur.manifest) return { error: 'no change' };
         cur.commit(next, 'Set 3D camera');
-        return { sceneIndex, keyCount: keys.length };
+        return { sceneIndex, keyCount: keys.length, warning: warnings.length ? warnings.join('; ') : undefined };
       },
 
       // ---- Phase 3: layer keyframing (research doc §5's "Phase 3" table) --
