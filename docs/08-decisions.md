@@ -15031,3 +15031,71 @@ against it at a boundary instead).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-172 — B-063: clicking a layer to select it on the Motion canvas also toggled playback
+
+**Context.** Owner, live, pointing at a screenshot: clicking on the canvas to select/edit an
+element also plays/pauses the video — asked whether this needs fixing for "all the player[s]"
+and whether the Edit/Motion/Colorist tabs share one player component.
+
+**The architecture question, answered by reading the code, not assumed.** `packages/player`
+(`@chroma/player`) IS a real, documented "one shared preview component all 3 tabs embed" (its
+own `Player.tsx` module doc comment, D-039 roadmap item) — a presentational canvas-viewport +
+title-strip + transport-bar wrapper around whatever `surface` a caller hands it (`<img>`,
+`<canvas>`, `@remotion/player`, anything). `@chroma/editor`'s `PreviewPane.tsx` already uses it.
+**But `@chroma/motion` does not** — confirmed by grep, zero `@chroma/player` imports anywhere in
+`packages/motion`. `MotionPreview.tsx` embeds `@remotion/player`'s own raw `<Player>` directly,
+with Remotion's OWN built-in transport bar (`controls`), not `@chroma/player`'s chrome. So the
+honest answer to "is it the same component": no, not today — `@chroma/player` was scoped as
+something Motion/Colorist could adopt LATER (its own doc comment says so explicitly), and Motion
+never has. This bug is specific to Motion's own direct Remotion embed, not a shared-component
+defect.
+
+**Root cause, found by reading `@remotion/player`'s actual source, not guessed.**
+`node_modules/@remotion/player/dist/cjs/Player.js`: when the `clickToPlay` prop isn't explicitly
+given, it defaults to `Boolean(controls)` — `clickToPlay: typeof clickToPlay === 'boolean' ?
+clickToPlay : Boolean(controls)`. `MotionPreview.tsx` passes `controls` (to get the transport
+bar) but never set `clickToPlay`, so Remotion silently ALSO enabled "click anywhere on the
+canvas toggles play/pause" — a behavior that predates and now directly fights
+`MotionCanvasOverlay`'s own click-to-select (D-156), which deliberately never calls
+`stopPropagation()`/`preventDefault()` on a selection click specifically so it can fall through
+to Remotion's own controls normally for clicks that land on empty canvas (D-156's own documented
+reasoning). The unintended side effect: a click that DOES land on a layer (to select it) still
+bubbles to Remotion's own click-to-play handler, toggling playback on every single selection
+click, not just empty-canvas ones.
+
+**Confirmed NOT a shared-component bug.** Checked `@chroma/editor`'s `PreviewPane.tsx` (the
+`@chroma/player`-based Edit tab preview, which already coexists with its own click-to-select
+overlay, `TransformOverlay.tsx`) for the same pattern — its `onPlayPause` is wired ONLY to
+`@chroma/player`'s own dedicated transport-bar button (`onPlayPause={() => setPlaying(!playing)}`
+passed as a prop), never to a generic "click the canvas" handler. The Edit tab was never
+susceptible to this bug in the first place, because `@chroma/player`'s own design (a
+presentational wrapper with an explicit `onPlayPause` prop) has no equivalent to Remotion's
+`clickToPlay`-defaults-to-`controls` behavior to begin with.
+
+**Fix.** `MotionPreview.tsx`'s `<Player>` now passes `clickToPlay={false}` explicitly. The
+dedicated Play/Pause button (still rendered via `controls`) and the spacebar shortcut
+(`spaceKeyToPlayOrPause`, on by default, untouched) are unaffected — only the "click anywhere on
+the canvas toggles play" behavior turns off, which only ever existed as an unwanted side effect
+of enabling the transport bar, never a feature anyone asked for once real click-to-select
+existed.
+
+**Verified live, not just reasoned about.** Rebuilt the `app/motion-harness.html` (D-165) page,
+clicked a layer on the canvas: the layer's real selection box appeared and the Inspector
+populated with its fields (confirmed working, unchanged), and the transport bar's own play
+button stayed on its ▶ (paused) icon at `0:00 / 0:15` — no playback toggle, where the exact same
+click sequence would have started playback before this fix. `npx tsc --noEmit -p app` — 64
+errors, unchanged baseline. `npm test --workspace @chroma/motion` — 362/362, unchanged (no new
+pure logic — a single prop addition to an existing JSX call).
+
+**Filed as B-063** (`docs/BUGS.md`) — status `fixed`, filed and closed in the same pass since the
+fix was small, verified, and low-risk (a single documented prop on a component already reasoned
+about in D-156).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` shows `f0427ca` (D-171) — **D-172**/**B-063** are free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

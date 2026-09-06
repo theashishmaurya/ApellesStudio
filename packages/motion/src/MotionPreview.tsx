@@ -159,6 +159,19 @@ export function MotionPreview({
           compositionWidth={shown.width}
           compositionHeight={shown.height}
           controls
+          // D-172 — `@remotion/player` silently defaults `clickToPlay` to
+          // match `controls` (confirmed by reading its own source,
+          // `Player.js`: `clickToPlay: typeof clickToPlay === 'boolean' ?
+          // clickToPlay : Boolean(controls)`), so enabling the transport bar
+          // ALSO turned every click on the canvas into a play/pause toggle —
+          // fighting `MotionCanvasOverlay`'s own click-to-select (D-156),
+          // which deliberately never calls `stopPropagation` so clicks that
+          // land on empty canvas still reach Remotion's own chrome normally.
+          // The dedicated Play/Pause button (`controls`) and the spacebar
+          // shortcut (`spaceKeyToPlayOrPause`, on by default, untouched) are
+          // unaffected — only the "click anywhere toggles play" convenience
+          // behavior turns off, which only ever conflicted with selection.
+          clickToPlay={false}
           loop
           style={{ width: '100%', height: '100%' }}
         />

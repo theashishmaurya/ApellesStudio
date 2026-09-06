@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **B-063: clicking a layer on the Motion canvas also toggled playback
+  (D-172).** `@remotion/player` silently defaults `clickToPlay` to match `controls`, so enabling
+  the transport bar also made every selection click on the canvas start/stop playback — fighting
+  `MotionCanvasOverlay`'s own click-to-select. Fixed with an explicit `clickToPlay={false}` on
+  `MotionPreview.tsx`'s `<Player>`. Confirmed NOT a shared-component bug — `@chroma/player`
+  (the real cross-tab preview component) isn't used by Motion at all; the Edit tab's own preview
+  was never susceptible. Live-verified in the harness. `tsc -p app` unchanged at 64.
+
 - **2026-09-06** — **Close D-170's own flagged gap: camera-key `ease` validation (D-171).**
   `motion_set_camera_2d`/`motion_set_camera_3d` (D-168, built before the ease-validation guard
   existed) now run every key's `ease` through the same `validateEaseArg` D-169's
