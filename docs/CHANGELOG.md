@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **`LayerList` drag-to-reorder + real per-layer thumbnails (D-177).** New
+  `manifestEdit.ts` `reorderLayers(manifest, sceneIndex, kind, fromIndex, toIndex)` — a pure,
+  field-preserving array move within one scene's `layers[]` or `scene3d.children[]` (never across
+  scenes, never bridging the two arrays), wired into `LayerList.tsx` as a native
+  pointerdown/move/up drag (no drag library, matching this package's own standing convention) with
+  a live drop-line and undo-wired commit. Also: real live per-row thumbnails via `@remotion/player`'s
+  `Thumbnail` component for `matrix`/`layers` (checked empirically — `text`/`emphasis` render
+  illegible hairline strokes at this scale and fall back to a static glyph, same as the 3D three's
+  existing WebGL-context-ceiling fallback), mount-on-visible via `IntersectionObserver`. Found and
+  fixed a real stale-React-state bug in the drag's own drop-target read (fixed with a ref, before
+  ever shipping). `@chroma/motion` 367→382 tests, `tsc` clean, `app`'s 64-error baseline unchanged.
+
 - **2026-09-06** — **B-066: the selection outline froze during a move/resize drag; selecting a
   layer now seeks to its own start (D-176).** `recomputeBoxes` only re-measured on a `selections`
   change or a Remotion `frameupdate`/`scalechange` event — never on `onTransientChange` during a

@@ -15402,3 +15402,183 @@ baseline. `npm test --workspace @chroma/motion` — **373/373** (was 367; +6, al
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-177 — `LayerList` drag-to-reorder (owner: "cant resufle layers") + real per-layer thumbnails (owner: "we need thumblain for layers so we know what are we working with")
+
+**Context.** Two owner-flagged `LayerList.tsx` gaps, worked as one pass since both land in the
+same file and the second (thumbnails) needed the first's row structure to hang off of.
+
+### 1 — Drag-to-reorder within one scene's `layers[]` or `scene3d.children[]`
+
+**New `manifestEdit.ts` export, `reorderLayers(manifest, sceneIndex, kind, fromIndex, toIndex)`**
+(`kind: 'layer' | 'scene3d-child'`) — a real `splice`-out/`splice`-in array move on a clone, never
+a field-by-field copy, so every field on the moved layer (`id`, `transform`, any per-primitive
+`.passthrough()` prop) survives untouched by construction. No-op (same `Manifest` REFERENCE back)
+for: the scene not existing, the requested array not existing, an out-of-range `fromIndex`/
+`toIndex`, or `fromIndex === toIndex` — the same "nothing changed ⇒ identical reference" floor
+every other function in this file already holds. **Scope, explicit:** WITHIN one scene's one
+array only — never across scenes (raises real camera/timing questions this op doesn't need to
+answer, and nothing asked for it), never bridging `layers`↔`scene3d.children` in the same scene
+(two structurally different render paths, `TwoD` vs `ThreeD`). Out-of-range clamps to NOTHING
+(unlike `moveKeyAt`'s own clamp-to-bounds philosophy for a continuous time value) — an array
+INDEX has no equivalent single correct clamp target, and the only caller (`LayerList`'s own drag)
+can only ever produce an in-range `toIndex` anyway, so an out-of-range one reaching this function
+can only mean a stale/racing caller. 15 new tests: field-preservation, same-index no-op (identity
+check), first↔last, middle-past-neighbor, out-of-range `from`/`to`/negative (all no-ops), no
+`layers` array / no `scene3d` (no-ops), out-of-range scene, `scene3d-child` reorder, never
+touching a different scene, and — the one that would fail if reordering silently broke D-158's
+own stable-layer-identity machinery — a live `Selection`/`Selection[]` tracking a moved layer BY
+`id` still resolves to it afterward via the EXISTING `resolveSelection`/`resolveSelections`
+(no new resolution logic needed; this function doesn't touch selection at all). `@chroma/motion`
+367→382 tests.
+
+**Gesture: native `pointerdown`/`pointermove`/`pointerup` on each row**, per this package's own
+repeatedly-reaffirmed convention (D-156/157/158/160/161/162/163) — no drag library. Mirrors
+`KeyframeTimeline.tsx`'s own marker-drag shape exactly rather than inventing a fourth variant:
+`pointerdown` captures the pointer and remembers `fromIndex` (+ the row's own `id`, for the
+sub-threshold fallback); `pointermove` arms the drag past `LAYER_DRAG_MIN_PX` — **4px, the same
+constant `MotionCanvasOverlay.tsx`'s `MARQUEE_MIN_DRAG_PX` and `KeyframeTimeline.tsx`'s
+`KEY_DRAG_MIN_PX` already use**, reused rather than invented — then finds the hovered row via
+`document.elementsFromPoint` + `.closest('[data-layer-row]')` (the same DOM-attribute hit-test
+convention `MotionCanvasOverlay.tsx`'s own `[data-motion-layer]` established, needed instead of
+`e.target` because `setPointerCapture` retargets every event back to the row the drag STARTED
+on); a thin 2px accent border draws above (or, for the last row, below) whichever row the pointer
+is currently over. `pointerup` below the threshold is a plain click (`onSelect`, unchanged); at
+or past it, commits through `onCommit` (`m.commit`, D-155's real undo-wired path — same as every
+other mutation this tab makes). No live canvas preview during the drag (unlike a move-drag, which
+feeds `onTransientChange`) — a reorder changes paint ORDER, not any layer's own geometry, so
+there's nothing meaningful to show in the `<Player>` mid-drag; the list's own drop-line is the
+complete, honest feedback. Escape cancels with no mutation, matching `KeyframeTimeline.tsx`'s own
+precedent for the same key. Dragging onto a different scene's rows, or onto a scene/camera row,
+draws no indicator and commits nothing (`kind`/`sceneIndex` mismatch, or no `[data-layer-row]`
+under the pointer at all) — never a silent corruption.
+
+**A real correctness bug found and fixed while live-verifying this, not shipped:** `pointerup`'s
+first cut read the drop target from the `dropIndicator` REACT STATE closure — but React 18
+batches `setDropIndicator` (called in `pointermove`) asynchronously, so a `pointerdown`→
+`pointermove`→`pointerup` burst delivered without an intervening render (confirmed live: a
+same-tick synthetic `PointerEvent` sequence dispatched via `dispatchEvent`, the exact same
+verification technique D-175's own decision entry used for its own untestable gesture) let
+`pointerup` read a STALE `null` from before its own gesture's `pointermove` update had ever
+committed, silently dropping the reorder. Fixed by ALSO writing the current drop target onto the
+in-flight `LayerDragState` REF (synchronously, same statement as the `setDropIndicator` call) and
+having `pointerup` read `drag.dropTarget` off the ref instead of the state closure — the identical
+"in-flight gesture data lives in a ref, not state" discipline `MotionCanvasOverlay.tsx`'s/
+`KeyframeTimeline.tsx`'s own `DragState`/`KeyDragState` refs already hold for everything else
+about a drag, applied here to the one piece of THIS gesture's data that hadn't been given the same
+treatment. A genuine real mouse drag (or the `computer` tool's own `left_click_drag`, confirmed by
+instrumenting `document`-level listeners: it turned out to emit ONLY `pointermove`/`mousemove`
+events, never `pointerdown`/`pointerup` at all — a limitation of that specific automation action
+for a pointer-capture gesture, not a rendering-timing issue) gives React real yields between
+native events and would very likely never hit this window in practice — but "very likely never"
+isn't a bar this codebase ships bugs against, and the fix costs nothing.
+
+**Verified live**, in `app/motion-harness.html` (D-165), via direct `PointerEvent` dispatch (the
+`computer` tool's `left_click_drag` doesn't emit real pointer events for this gesture, confirmed
+above, so this is the equivalent of D-175's own synthetic-event verification, not a downgrade):
+dragging `emphasis` (index 1) above `text` (index 0) in the `hook` scene reordered the LIST
+(confirmed by reading each row's own label span, not a mixed cross-row query) AND kept
+click-to-select/the Inspector panel working afterward (selecting the moved `layers` row in a
+different scene still populated its own fields correctly); dragging a row from `hook` onto a row
+in `stack` (a different scene) was confirmed a clean no-op — both scenes' row labels
+byte-identical before and after.
+
+### 2 — Real per-layer thumbnails in `LayerList`, via `@remotion/player`'s `Thumbnail`
+
+**New file `LayerThumbnail.tsx`.** The question answered first: primitives here are procedural/
+vector (a text string, a scribble, a data grid, a particle stream —
+`packages/motion-engine/src/primitives/*.tsx`, read in full), not photo/video frames, so there is
+no "grab a frame" thumbnail. Decided: render the layer's OWN real component
+(`lookup(layer.use).component`, `registry.ts`, the SAME adapter `Video.tsx` itself uses — never a
+second hand-rolled prop path) in isolation, frozen at `THUMBNAIL_FRAME = 300` (generously past any
+default entrance/stagger schedule any primitive in this catalog uses — `lib/draw.ts`'s
+`inAt`/`outAt`/`lifetime`/`pop()` all clamp or settle rather than go negative past their own
+window, confirmed by reading them), wherever it's actually LEGIBLE at this scale — see below for
+where that line landed.
+
+**How: `@remotion/player`'s `Thumbnail` component — genuinely investigated, not assumed.**
+`CatalogPanel.tsx`'s own D-151 doc comment claimed "`@remotion/player` exposes no cheap
+render-one-still API to this package"; that claim is corrected in this pass (`CatalogPanel.tsx`'s
+comment now says so) — `Thumbnail` is exactly that, confirmed by reading its own source
+(`node_modules/@remotion/player/dist/cjs/{Thumbnail,ThumbnailUI}.js`): `playing: false`, a FIXED
+frame in its timeline context, no `requestAnimationFrame` loop anywhere — genuinely static, not a
+paused player holding a loop in reserve. It sets up the same `SharedPlayerContexts`/
+`IsPlayerContextProvider` the real `<Player>` uses, which is exactly the lightweight Remotion
+context every primitive's unconditional `useCurrentFrame()`/`useVideoConfig()` call needs to not
+throw (confirmed by grep across every file in `primitives/`) — negligible cost (no WebGL, no video
+decode, no async `React.lazy` delay: passing a plain `component` prop resolves synchronously
+through `useLazyComponent`'s own `component`-prop branch, confirmed by reading it).
+
+**Which primitives actually get a live preview — checked empirically in the harness, and this is
+the real decision.** `compositionWidth`/`compositionHeight` are the manifest's own full canvas
+size (so a `x:980,y:250`-positioned layer resolves to the exact same place it would in the real
+scene), letterbox-scaled down into a small `30×18` on-screen box by `Thumbnail` itself. First pass
+tried this for every 2D primitive: `matrix` (filled grid cells) and `layers` (filled card
+rectangles) rendered as real, recognizable shapes even after the ~60× downscale. `text` and
+`emphasis` did NOT — both draw with a fixed, small stroke width in canvas px (`text`'s
+`stroke-on`'s ~1.5px `WebkitTextStroke`; `emphasis`'s scribble/ring paths) that becomes a fraction
+of a device pixel at that downscale and simply doesn't render (confirmed visually — a blank box —
+and by the arithmetic: `1.5px × (30/1920) × zoom ≥ 1` needs `zoom ≥ ~43`, which for `text` would
+show a few px of one glyph, not "which layer is this"). **A CSS zoom-into-the-layer's-own-box fix
+was built and tried** (`layerWorldPosition`/`layerWorldSize` from `manifestEdit.ts` — the SAME
+functions the canvas drag/resize handles already use — gave a crop box, magnified via `transform:
+scale()`/`transformOrigin`) — reverted, not shipped: it doesn't help `text`/`emphasis` at all (the
+problem is stroke WIDTH, not framing — cropping tighter doesn't thicken a hairline) and it
+actively regressed `layers` in one live check (its own default-size heuristic, tuned for a
+resize-handle's "a plausible starting box," doesn't match that primitive's REAL stacked footprint
+closely enough to center a tight crop correctly) — real complexity with no real payoff, reverted
+rather than shipped. Final, checked allowlist: **`LIVE_PREVIEW_USES = {matrix, layers}`** — live
+for those two (plus, confirmed live via the Catalog's own "+ Add to scene" while testing this,
+a freshly-inserted `matrix` layer renders its real grid+highlight color immediately); the static
+`PrimitiveGlyph` fallback for everything else — `text`, `emphasis`, honestly-unverified `graph`
+(not re-tested this pass; likely a legible-nodes/illegible-edges mix, deliberately not guessed
+either way), and the 3D three.
+
+**`PrimitiveGlyph` extracted from `CatalogPanel.tsx` into its own module** (same file, same SVGs,
+zero visual change to the Catalog panel) — the two consumers now share one glyph set instead of a
+second copy, per CLAUDE.md's "if two places need it, extract it."
+
+**The 3D three (`particleflow`/`labelbox`/`layerstack`) NEVER get a live thumbnail — for a
+DIFFERENT, unrelated reason (kept, not re-litigated): the exact WebGL-context-ceiling constraint
+`CatalogPanel.tsx`'s own D-151 doc comment already established** (those three only render inside a
+`@remotion/three` `<ThreeCanvas>`; browsers cap simultaneous WebGL contexts at 8–16 and
+`MotionPreview`'s player already holds one; `LayerList` can show many rows across many scenes at
+once, unlike the Catalog's fixed 8-row list). `catalogEntry(layer.use).in3d` — the SAME flag
+`addLayer` already uses — is the routing check.
+
+**Performance: mount-on-visible via `IntersectionObserver`, not always-mounted, and never
+torn back down once shown.** `LayerList` lists EVERY scene's rows at once (unlike the canvas
+overlay, which only ever has one scene mounted) — a manifest with many scenes/layers could mean
+dozens of rows in a scrollable panel, most scrolled out of view at any moment. Each live thumbnail
+observes itself against the nearest `[data-layer-list-scroll]` ancestor (`rootMargin: '200px'`,
+so it starts rendering just before scrolling fully into view) and, once visible, STAYS mounted —
+rejected the alternative of scoping live previews to "only the selected scene's rows" (would make
+thumbnails disappear for a scene simply scrolled into view but not selected, a strictly worse
+answer to "so we know what we're working with"), and rejected tearing a shown thumbnail back down
+on scroll-out (a `Thumbnail` costs nothing ongoing once mounted — no RAF loop — so there's nothing
+to amortize, and repeated mount/unmount churn on every scroll would be strictly worse for zero
+benefit).
+
+`npx tsc --noEmit -p packages/motion` clean. `npx tsc --noEmit -p packages/motion-engine` — the
+same pre-existing 2 `Scene3D.tsx` `document`-typing errors, zero new (this pass never edits that
+package). `npx tsc --noEmit -p app` — 64 errors, unchanged baseline. `npm test --workspace
+@chroma/motion` — **382/382** (was 367; +15, all `reorderLayers`).
+
+**Verified live**, in `app/motion-harness.html`: `matrix`/`layers` rows show real, correctly
+colored/shaped miniatures (confirmed via `getComputedStyle` on the rendered DOM, not just a
+screenshot glance — the actual composited card/grid content, positioned and scaled exactly as
+`calculateCanvasTransformation` computes); `text`/`emphasis`/the particleflow (3D) rows show the
+static glyph; click-to-select, the D-160 key-count badge, and the reorder gesture above all
+continued working with the new thumbnail rendered inline in the same row.
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` in the MAIN repo shows `72e51ed` (**D-176**/**B-066**, landed by a concurrent
+session between when this pass started and now) — **D-177** is the next free number, no
+`B`-number needed (the one real bug found this pass, the stale-state drop-target read above, was
+caught and fixed within this same development pass, before ever landing on `main` — nothing
+shipped to file a bug against).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

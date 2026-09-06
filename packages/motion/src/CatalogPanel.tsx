@@ -14,24 +14,34 @@
  * `manifestEdit.ts`, and the reason the insert logic is unit-testable
  * without React.
  *
- * **Why glyphs and not live thumbnails.** The ideal catalog row is a real
- * rendered preview of the primitive. It was considered and rejected for this
- * pass on real grounds, not effort: three of the eight (`particleflow`,
- * `labelbox`, `layerstack`) only render inside `<Scene3D>`, i.e. a
- * `@remotion/three` `<ThreeCanvas>` — a live WebGL context each. Browsers cap
- * simultaneous WebGL contexts (commonly 8–16) and `MotionPreview`'s player
- * already holds one, so a sidebar of eight always-mounted previews would sit
- * on that ceiling permanently, for a panel that is idle most of the time.
- * `@remotion/player` also exposes no cheap render-one-still API to this
- * package — the still renderer is the Node/CLI path (`@remotion/renderer`),
- * not something the tab can call per row. So: hand-drawn inline SVG that
- * shows each primitive's actual *shape* (a grid for `matrix`, nodes and
- * edges for `graph`, tilted cards for `layers`, a point stream for
- * `particleflow`), deterministic, theme-token-coloured, zero runtime cost.
- * A real thumbnail pass — most plausibly pre-rendered stills committed as
- * assets, generated from each `*Demo` composition — is a genuine future
- * improvement and is named as such in `docs/notes/motion-tab-audit.md`
- * rather than pretended away.
+ * **Why glyphs and not live thumbnails, for the 3D three specifically.** The
+ * ideal catalog row is a real rendered preview of the primitive. It was
+ * considered and rejected for THIS panel on real grounds, not effort: three
+ * of the eight (`particleflow`, `labelbox`, `layerstack`) only render inside
+ * `<Scene3D>`, i.e. a `@remotion/three` `<ThreeCanvas>` — a live WebGL
+ * context each. Browsers cap simultaneous WebGL contexts (commonly 8–16)
+ * and `MotionPreview`'s player already holds one, so a sidebar of eight
+ * always-mounted previews would sit on that ceiling permanently, for a panel
+ * that is idle most of the time. So: hand-drawn inline SVG (`PrimitiveGlyph`,
+ * now its own module — see D-176's note below) that shows each primitive's
+ * actual *shape*, deterministic, theme-token-coloured, zero runtime cost.
+ *
+ * **Correction, D-176 (`LayerList.tsx`'s own new `LayerThumbnail.tsx`):**
+ * this doc comment previously also claimed "`@remotion/player` exposes no
+ * cheap render-one-still API to this package" — that turned out to be
+ * *wrong*, found while building a real per-row thumbnail for `LayerList`:
+ * `@remotion/player` ships exactly that, `Thumbnail` (confirmed by reading
+ * its own source — a genuinely static single-frame render, no
+ * `requestAnimationFrame` loop, real Remotion context via the same
+ * `SharedPlayerContexts` the full `<Player>` uses). `LayerThumbnail.tsx`
+ * uses it for the 2D five. It changes nothing about THIS panel's own WebGL-
+ * context ceiling reasoning above, which is specifically about the 3D three
+ * and remains the reason `LayerThumbnail.tsx` ALSO falls back to this same
+ * `PrimitiveGlyph` for exactly those three, never a live `<ThreeCanvas>`
+ * thumbnail — see that file's own doc comment for the fuller writeup. Left
+ * un-revisited for the Catalog panel itself (a live-but-idle-most-of-the-time
+ * sidebar of 2D previews is a separate, smaller design call this pass didn't
+ * need to make to ship the reorder/thumbnail work it was scoped for).
  *
  * Not `@chroma/ui`: same documented `@react-three/fiber` JSX-typing conflict
  * every other file in this package works around — see `Button.tsx` and
@@ -39,95 +49,7 @@
  */
 import type { PrimitiveUse } from './catalog';
 import { catalogEntries } from './catalog';
-
-/**
- * A tiny shape-suggesting icon per primitive, on a 24×24 grid. Deliberately
- * schematic rather than pretty: the job is "which of these eight is the grid
- * one" at a glance. `currentColor` throughout so each glyph inherits the
- * row's own text colour and therefore tracks the theme without a second
- * palette.
- */
-function PrimitiveGlyph({ use }: { use: PrimitiveUse }) {
-  const common = {
-    width: 24,
-    height: 24,
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    stroke: 'currentColor',
-    strokeWidth: 1.4,
-    strokeLinecap: 'round' as const,
-    strokeLinejoin: 'round' as const,
-    'aria-hidden': true,
-  };
-
-  switch (use) {
-    case 'text':
-      return (
-        <svg {...common}>
-          <path d="M4 7h16M12 7v11M8.5 18h7" />
-        </svg>
-      );
-    case 'emphasis':
-      return (
-        <svg {...common}>
-          <ellipse cx="12" cy="12" rx="8.5" ry="6" transform="rotate(-8 12 12)" />
-          <path d="M4.5 15.5c3 2 12 2.5 15.5-.5" opacity="0.55" />
-        </svg>
-      );
-    case 'matrix':
-      return (
-        <svg {...common}>
-          <rect x="3.5" y="3.5" width="17" height="17" rx="1.5" />
-          <path d="M9.2 3.5v17M14.8 3.5v17M3.5 9.2h17M3.5 14.8h17" opacity="0.65" />
-          <rect x="9.2" y="9.2" width="5.6" height="5.6" fill="currentColor" opacity="0.35" stroke="none" />
-        </svg>
-      );
-    case 'graph':
-      return (
-        <svg {...common}>
-          <circle cx="5" cy="7" r="2.2" />
-          <circle cx="19" cy="9" r="2.2" />
-          <circle cx="11" cy="18" r="2.2" />
-          <path d="M7 7.6l9.8 1.1M17.6 11l-5 5.3M9.4 16.2L6 9.2" opacity="0.7" />
-        </svg>
-      );
-    case 'layers':
-      return (
-        <svg {...common}>
-          <path d="M3.5 8.5l8.5-3.5 8.5 3.5-8.5 3.5z" />
-          <path d="M3.5 13l8.5 3.5 8.5-3.5" opacity="0.7" />
-          <path d="M3.5 17l8.5 3.5 8.5-3.5" opacity="0.4" />
-        </svg>
-      );
-    case 'particleflow':
-      return (
-        <svg {...common} strokeWidth={0} fill="currentColor">
-          <circle cx="4" cy="12" r="1.5" />
-          <circle cx="9" cy="8.5" r="1.2" opacity="0.85" />
-          <circle cx="9.5" cy="15.5" r="1.1" opacity="0.7" />
-          <circle cx="14.5" cy="11" r="1.3" opacity="0.85" />
-          <circle cx="15" cy="17" r="1" opacity="0.5" />
-          <circle cx="20" cy="7.5" r="1.5" />
-          <circle cx="20.5" cy="13.5" r="1.1" opacity="0.6" />
-        </svg>
-      );
-    case 'labelbox':
-      return (
-        <svg {...common}>
-          <path d="M4 9l8-4 8 4v6l-8 4-8-4z" />
-          <path d="M4 9l8 4 8-4M12 13v6" opacity="0.65" />
-        </svg>
-      );
-    case 'layerstack':
-      return (
-        <svg {...common}>
-          <path d="M3.5 6.5l8.5-2.5 8.5 2.5-8.5 2.5z" opacity="0.5" />
-          <path d="M3.5 12l8.5-2.5 8.5 2.5-8.5 2.5z" />
-          <path d="M3.5 17.5l8.5-2.5 8.5 2.5-8.5 2.5z" opacity="0.5" />
-        </svg>
-      );
-  }
-}
+import { PrimitiveGlyph } from './PrimitiveGlyph';
 
 /**
  * `sceneLabel` names the insert target in the panel header, so "Add" is
