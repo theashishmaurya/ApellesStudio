@@ -15253,3 +15253,68 @@ entry lands together with D-173 in the same session pass, both after `1aec5a6` (
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-175 — The keyframe timeline's zoom control now matches `@chroma/editor`'s own: real `ZoomIn`/`ZoomOut` icons, a percentage readout, ctrl+scroll-wheel zoom
+
+**Context.** Owner, live: "in the timeline this zoom we need to have a way exactly how edit
+timeline was" — `KeyframeTimeline.tsx`'s own zoom control (D-162) was a plain text `−`/`+`
+button pair with a raw `70px/s` readout and no scroll-wheel support at all; the Edit tab's own
+`TimelinePane.tsx` (D-051/D-072/D-134) uses real lucide `ZoomIn`/`ZoomOut` icons, a percentage
+readout relative to its own default zoom, and ctrl+scroll-wheel zoom (a real pinch gesture on a
+trackpad synthesizes the same `ctrlKey: true` wheel event, so this covers both).
+
+**What matched, and what deliberately didn't.** D-162's own decision entry already made the
+right call to keep — `pxPerSecond`'s VALUE RANGE (10–400) stays this timeline's own, genuinely
+new mechanism, not reused from the Edit tab's `ruler.ts` bounds (which are sized around
+`chroma::filmstrip`'s Rust-side video-thumbnail-tile decimation ladder — a storage concern this
+package has no equivalent of, per the parent research doc's own D-134 reuse-verdict). What this
+pass ports is purely the UI/interaction LAYER on top of that same mechanism:
+
+- **Icons, not text glyphs.** `lucide-react` (`^1.33.0`, the exact version already pinned in
+  `packages/editor`/`packages/ui`/`app`) added as a real, declared dependency to
+  `packages/motion/package.json` — the package was already physically present in the shared
+  `node_modules` (hoisted from those other workspaces), but declaring it explicitly is the same
+  hygiene this session has held everywhere else. `ZoomOut`/`ZoomIn` render at `size={12}` in the
+  same `h-5 w-5` button shape the old text buttons used.
+- **A percentage readout**, computed the identical way `TimelinePane.tsx` computes its own
+  (`Math.round((pxPerSecond / DEFAULT_PX_PER_SEC) * 100)`) — "100%" reads the same across both
+  tabs even though the underlying `pxPerSecond` numbers it's computed from mean different things
+  in each (10–400 here vs. `ruler.ts`'s own bounds there). Was a raw `Npx/s` number, meaningless
+  without knowing this timeline's own bounds by heart.
+- **Ctrl+scroll-wheel zoom**, a new `useEffect` in `KeyframeTimeline.tsx` attaching a plain
+  native `wheel` listener (not React's `onWheel`, which attaches passively by default and
+  silently ignores `preventDefault`, letting the page scroll underneath the zoom — confirmed by
+  reading `TimelinePane.tsx`'s own doc comment on this exact point, the same reasoning applies
+  here verbatim) to a new `scrollRef` on the timeline's own scrollable `overflow-auto` div. Zooms
+  ONLY on `ctrlKey` (synthesized by the browser for both an explicit Ctrl+scroll on a mouse and a
+  real trackpad pinch) — a plain two-finger scroll or physical wheel tick is left alone entirely
+  (no `preventDefault`) and falls through to the div's own native scroll, the identical
+  scroll-vs-zoom split `TimelinePane.tsx` already established. Same geometric `zoomStep` (1.4×)
+  the toolbar buttons already used, so a wheel tick and a button press feel like the same unit.
+
+**Verified live**, in `app/motion-harness.html` (D-165): the toolbar shows real zoom icons and a
+"100%" readout (was "70px/s"); a button click steps it to "140%" exactly; a genuinely fresh
+page load (waited for React to settle, not dispatched immediately after navigation) followed by
+one synthetic `ctrlKey: true` wheel event also steps it to exactly "140%" — matching the
+button's own precision. **A real test-methodology artifact found and ruled out, not shipped as a
+bug:** dispatching the same synthetic wheel event immediately after `navigate` (no settle delay)
+produced "196%" (≈1.4²) instead of "140%" from ONE dispatched event — traced to the test itself
+racing React's `<StrictMode>` mount→cleanup→remount cycle (which intentionally double-invokes
+effects once on mount, netting exactly one attached listener once settled — the same pattern
+`TimelinePane.tsx`'s own effect already relies on), not a genuine duplicate-listener defect in
+the shipped code: a real physical trackpad/mouse gesture, and a page that's actually finished
+mounting before a human can interact with it, never hits this race window at all.
+
+`npx tsc --noEmit -p packages/motion` — clean. `npx tsc --noEmit -p app` — 64 errors, unchanged
+baseline. `npm test --workspace @chroma/motion` — 367/367, unchanged (no new pure logic — this
+pass changes UI/interaction only, reusing `zoomStep`/`clampPxPerSecond` exactly as they already
+were).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` shows `ad71295` (D-173/D-174) — **D-175** is free, no `B`-number touched (a UI/UX
+match to an existing convention, not a bug fix).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

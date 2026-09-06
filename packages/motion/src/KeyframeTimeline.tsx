@@ -159,6 +159,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { PlayerRef } from '@remotion/player';
 import { totalFrames, sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
@@ -321,6 +322,7 @@ export function KeyframeTimeline({
   const dragRef = useRef<KeyDragState | null>(null);
   const marqueeRef = useRef<MarqueeDragState | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every DRAGGED marker's LIVE position while a nudge is in flight — an
   // ARRAY this pass (was a single nullable object pre-nudge, D-161/162):
   // a multi-key nudge previews N markers at once, scoped by
@@ -350,6 +352,31 @@ export function KeyframeTimeline({
     player.addEventListener('frameupdate', onFrameUpdate);
     return () => player.removeEventListener('frameupdate', onFrameUpdate);
   }, [playerRef]);
+
+  // D-175 — ctrl+scroll-wheel zoom, matching `@chroma/editor`'s own
+  // `TimelinePane.tsx` convention exactly (its own doc comment there: the
+  // library has no wheel handling of its own, so this is a plain native
+  // listener rather than React's `onWheel`, which attaches passively by
+  // default and silently ignores `preventDefault`, letting the page scroll
+  // underneath the zoom). Zooms ONLY on `ctrlKey` (synthesized by the
+  // browser for both an explicit Ctrl+scroll on a mouse and a real pinch
+  // gesture on a trackpad) — a plain two-finger scroll or physical wheel
+  // tick is left alone entirely (no `preventDefault`) and falls through to
+  // this div's own native `overflow-auto` scroll, exactly the same
+  // scroll-vs-zoom split the Edit tab's own timeline already established.
+  // Same geometric step (`zoomStep`, 1.4×) the toolbar buttons already use,
+  // so a wheel tick and a button press feel like the same unit of zoom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setPxPerSecond((v) => zoomStep(v, e.deltaY < 0 ? 1 : -1));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   // Escape cancels an in-flight NUDGE (D-161's own precedent, generalized
   // to N keys) OR an in-flight MARQUEE (D-158's own precedent for its 2D
@@ -630,25 +657,38 @@ export function KeyframeTimeline({
     <div className="h-full w-full flex flex-col min-h-0 border-t border-border-color bg-bg-secondary">
       <div className="shrink-0 h-6 flex items-center justify-between gap-2 px-2 border-b border-border-color text-[10px] text-text-secondary">
         <span className="uppercase tracking-wide">Keyframes</span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
             type="button"
-            className="h-4 w-4 flex items-center justify-center rounded hover:bg-hover-color disabled:opacity-30"
-            title="Zoom out"
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-hover-color disabled:opacity-30"
+            title="Zoom out (or ctrl+scroll down over the timeline)"
+            aria-label="Zoom out"
             disabled={pxPerSecond <= MIN_PX_PER_SEC}
             onClick={() => setPxPerSecond((v) => zoomStep(v, -1))}
           >
-            −
+            <ZoomOut size={12} />
           </button>
-          <span className="tabular-nums w-12 text-center">{Math.round(pxPerSecond)}px/s</span>
+          {/* D-175 — a percentage relative to `DEFAULT_PX_PER_SEC`, matching
+              `@chroma/editor`'s own `TimelinePane.tsx` zoom readout exactly
+              (`zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100)`)
+              — was a raw `px/s` number, meaningless without knowing this
+              timeline's own bounds; "100%" reads the same way across both
+              tabs even though the underlying `pxPerSecond` RANGES are
+              deliberately different (D-162's own note: this timeline has no
+              video-decimation ladder to bracket, so its bounds are sized for
+              its own screen real estate, not reused from `ruler.ts`). */}
+          <span className="tabular-nums w-9 text-center">
+            {Math.round((pxPerSecond / DEFAULT_PX_PER_SEC) * 100)}%
+          </span>
           <button
             type="button"
-            className="h-4 w-4 flex items-center justify-center rounded hover:bg-hover-color disabled:opacity-30"
-            title="Zoom in"
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-hover-color disabled:opacity-30"
+            title="Zoom in (or ctrl+scroll up over the timeline)"
+            aria-label="Zoom in"
             disabled={pxPerSecond >= MAX_PX_PER_SEC}
             onClick={() => setPxPerSecond((v) => zoomStep(v, 1))}
           >
-            +
+            <ZoomIn size={12} />
           </button>
         </div>
       </div>
@@ -658,7 +698,7 @@ export function KeyframeTimeline({
           No keyframes yet — add a camera or layer keyframe (Inspector) to see it here.
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-auto">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto">
           <div ref={contentRef} className="relative flex flex-col" style={{ width: LANE_LABEL_WIDTH + trackW }}>
             {/* the shared ruler — sticky top, its own corner cell sticky on
                 both axes (the standard "frozen row + frozen column" trick). */}

@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Keyframe timeline's zoom now matches the Edit tab's own (D-175).** Real
+  `lucide-react` `ZoomIn`/`ZoomOut` icons and a percentage readout (was raw text `−`/`+` and
+  `70px/s`), plus ctrl+scroll-wheel zoom (a plain native `wheel` listener, matching
+  `TimelinePane.tsx`'s own scroll-vs-zoom split exactly). The underlying `pxPerSecond` range
+  stays this timeline's own (D-162's call, unchanged) — only the UI/interaction layer matched.
+  Live-verified: button and wheel both step 100%→140% with identical precision. `tsc` clean,
+  `@chroma/motion` 367/367 unchanged.
+
 - **2026-09-06** — **B-063: clicking a layer on the Motion canvas also toggled playback
   (D-172).** `@remotion/player` silently defaults `clickToPlay` to match `controls`, so enabling
   the transport bar also made every selection click on the canvas start/stop playback — fighting
