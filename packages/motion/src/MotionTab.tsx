@@ -81,7 +81,7 @@ import { LayerList, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
-import { addLayer, snapEmphasisToRect, resolveSelections } from './manifestEdit';
+import { addLayer, snapEmphasisToRect, resolveSelections, sceneIndexAtFrame } from './manifestEdit';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
@@ -130,6 +130,14 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
   const [transientManifest, setTransientManifest] = useState<Manifest | null>(null);
+  // D-172 — the raw JSON panel is collapsed by default (D-153's own ask,
+  // finally built to the shape its research doc originally scoped instead
+  // of the smaller one D-153 shipped): gates the WHOLE ManifestEditor
+  // ResizablePanel + its preceding ResizableHandle below, reclaiming its
+  // width when hidden rather than just hiding the textarea inside a
+  // panel that's still there. Save/Render/dirty/errors moved to this tab's
+  // own always-visible toolbar so they never disappear with the panel.
+  const [showManifest, setShowManifest] = useState(false);
 
   // Motion's half of the Chroma control server bridge (D-020's architecture,
   // reused — docs/notes/motion-mcp-surface-research.md). Mounted here (not
@@ -216,9 +224,23 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // this is the "replace with exactly one" path — `LayerList` row clicks
   // and a plain (non-shift, non-already-in-group) canvas click both still
   // want exactly this behaviour, unchanged from Phase 1.
+  //
+  // D-173 — fixes the exact rough edge D-156/D-162 both disclosed and left
+  // open: only seek when the target is actually in a DIFFERENT scene than
+  // whatever's currently under the playhead. A `LayerList` row click into a
+  // scene you weren't looking at still jumps there (the point of that
+  // gesture); a canvas click only ever selects a layer in the scene ALREADY
+  // on screen (§1e), so it used to reset the playhead to that scene's start
+  // on every single selection — breaking "scrub to a moment, then edit
+  // what's there," the exact workflow this whole tab is for.
   const onSelect = (s: Selection) => {
     setSelections([s]);
-    if (m.manifest) playerRef.current?.seekTo(sceneStartFrame(m.manifest, s.sceneIndex));
+    if (!m.manifest) return;
+    const currentFrame = playerRef.current?.getCurrentFrame();
+    const currentScene = currentFrame === undefined ? null : sceneIndexAtFrame(m.manifest, currentFrame);
+    if (currentScene !== s.sceneIndex) {
+      playerRef.current?.seekTo(sceneStartFrame(m.manifest, s.sceneIndex));
+    }
   };
 
   // D-158 — the array-level counterpart: shift-toggle, a completed marquee,
@@ -290,7 +312,59 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   };
 
   return (
-    <div className="h-full w-full min-h-0 bg-bg-primary">
+    <div className="h-full w-full min-h-0 bg-bg-primary flex flex-col">
+      {/* D-172 — the always-visible toolbar: the `</>` manifest toggle
+          (with an error-state border when a parse error exists and the
+          panel is currently collapsed — the exact indicator D-153's own
+          research doc named as "the part most likely to be missed"), the
+          dirty indicator, any save/render error or a successful render's
+          output path, and Save/Render themselves. None of this lives inside
+          the collapsible panel any more, so none of it can disappear along
+          with the JSON. */}
+      <div className="shrink-0 flex items-center justify-end gap-2 px-3 py-2 border-b border-border-color">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            onClick={() => setShowManifest((v) => !v)}
+            title={showManifest ? 'Hide scene manifest' : 'Show scene manifest (JSON)'}
+            aria-label={showManifest ? 'Hide scene manifest' : 'Show scene manifest'}
+            aria-pressed={showManifest}
+            className={[
+              'shrink-0 h-6 w-6 flex items-center justify-center rounded-md font-mono text-[10px] leading-none border transition-colors',
+              m.parseError && !showManifest
+                ? 'border-red-500/60 bg-red-500/10 text-red-400'
+                : 'border-border-color bg-surface/90 text-text-secondary hover:text-text-primary hover:bg-hover-color',
+            ].join(' ')}
+          >
+            {'</>'}
+          </button>
+          <span className="text-xs font-medium text-text-secondary truncate">
+            Scene manifest{m.dirty ? ' · unsaved' : ''}
+          </span>
+        </div>
+        {m.saveError && (
+          <span className="text-[11px] text-red-400 truncate max-w-[280px]" title={m.saveError}>
+            save failed: {m.saveError}
+          </span>
+        )}
+        {!m.saveError && m.renderError && (
+          <span className="text-[11px] text-red-400 truncate max-w-[280px]" title={m.renderError}>
+            render failed: {m.renderError}
+          </span>
+        )}
+        {!m.saveError && !m.renderError && m.renderResult && (
+          <span className="text-[11px] text-text-secondary truncate max-w-[280px]" title={m.renderResult.outputPath}>
+            rendered → {m.renderResult.outputPath}
+          </span>
+        )}
+        <Button variant="secondary" disabled={!m.dirty || m.saving || !!m.parseError} onClick={m.save}>
+          {m.saving ? 'Saving…' : 'Save'}
+        </Button>
+        <Button disabled={m.rendering || !!m.parseError} onClick={m.render}>
+          {m.rendering ? 'Rendering…' : 'Render'}
+        </Button>
+      </div>
+      <div className="flex-1 min-h-0">
       <PanelGroup>
         <ResizablePanel defaultSize={800} minSize={300}>
           {/* D-162 — a nested VERTICAL split: the preview on top, the
@@ -373,25 +447,18 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             )}
           </div>
         </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize={420} minSize={280}>
-          <div className="h-full border-l border-border-color">
-            <ManifestEditor
-              text={m.text}
-              onChange={m.setText}
-              parseError={m.parseError}
-              dirty={m.dirty}
-              saving={m.saving}
-              saveError={m.saveError}
-              onSave={m.save}
-              rendering={m.rendering}
-              renderError={m.renderError}
-              renderResult={m.renderResult}
-              onRender={m.render}
-            />
-          </div>
-        </ResizablePanel>
+        {showManifest && (
+          <>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={420} minSize={280}>
+              <div className="h-full border-l border-border-color">
+                <ManifestEditor text={m.text} onChange={m.setText} parseError={m.parseError} />
+              </div>
+            </ResizablePanel>
+          </>
+        )}
       </PanelGroup>
+      </div>
     </div>
   );
 }

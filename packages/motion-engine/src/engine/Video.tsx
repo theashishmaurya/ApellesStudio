@@ -177,7 +177,30 @@ const OneScene: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: bg }}>
       {scene.scene3d ? (
-        <ThreeD scene={scene} fps={fps} />
+        <>
+          <ThreeD scene={scene} fps={fps} />
+          {/* D-174 — a scene with `scene3d` used to NEVER render its own
+              `scene.layers` at all: this branch only ever mounted `<ThreeD>`.
+              `addLayer` (`manifestEdit.ts`) only routes a primitive into
+              `scene3d.children` when the primitive itself is 3D-capable
+              (`catalogEntry(use).in3d`) — it never checks whether the TARGET
+              scene already has a `scene3d` block, so inserting an ordinary
+              2D primitive (e.g. `matrix`) into a `scene3d` scene via the
+              Catalog silently created permanently-invisible content: valid,
+              committed manifest JSON with no render path to it at all,
+              regardless of playhead position. Rendering `<TwoD>` as a 2D
+              overlay ON TOP of `<ThreeD>` whenever `scene.layers` actually
+              has entries fixes this the general way (2D captions/graphics
+              over 3D content is a real, useful composition, not just an
+              error case to block) rather than rejecting the insert. Zero
+              pixel change for every EXISTING `scene3d` manifest (including
+              this engine's own sample `space` scene): none has `layers` at
+              all, so this branch never mounts for them — confirmed by the
+              condition itself, not merely reasoned about. */}
+          {scene.layers && scene.layers.length > 0 && (
+            <TwoD scene={scene} fps={fps} sceneIndex={sceneIndex} />
+          )}
+        </>
       ) : (
         <TwoD scene={scene} fps={fps} sceneIndex={sceneIndex} />
       )}

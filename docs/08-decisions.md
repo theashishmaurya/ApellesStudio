@@ -15099,3 +15099,157 @@ about in D-156).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-173 — The scene-manifest panel actually collapses now (D-153's own deferred shape, finally built), the `</>` toggle moved to sit with Save/Render, and B-064: a canvas selection was resetting the playhead
+
+**Context.** Owner, live, pointing at the real running app: the manifest panel should be
+hidden by default with Save/Render always visible regardless — exactly D-153's own research doc
+(Part C) originally scoped, which D-153 itself shipped in a smaller shape (collapse the textarea
+only, keep the whole ~420px panel permanently reserved). Then, after the fuller fix landed: the
+`</>` toggle should sit on the right, next to Save/Render, not on the far left. Then a second,
+unrelated but equally real bug: clicking a layer on the canvas to select/edit it was resetting
+the playhead to the scene's start — a PREDICTED rough edge, disclosed honestly in both D-158's
+and D-162's own decision entries months (well, hours) before it was ever confirmed annoying in
+practice.
+
+### 1 — The manifest panel finally collapses for real
+
+D-153's own entry disclosed the gap explicitly at the time: it built `expanded` as LOCAL state
+inside `ManifestEditor.tsx`, gating only the textarea, with Save/Render/the `</>` toggle/the
+dirty indicator all staying INSIDE that same component's own header — meaning the panel's
+~420px of width stayed permanently allocated in `MotionTab.tsx`'s `PanelGroup` even when
+"collapsed," and the header controls would have vanished entirely if the panel itself were ever
+actually hidden. That was a known, disclosed tradeoff, not an oversight — and the owner has now
+asked for the fuller version D-153's own research doc originally scoped.
+
+**What changed.** `ManifestEditor.tsx` is now JUST the textarea + its own parse-error readout —
+no header, no `</>`, no Save/Render, no dirty indicator, no save/render-error strip. All of that
+moved to a new, always-visible toolbar row in `MotionTab.tsx` itself, added above the tab's own
+`PanelGroup` (the root div became `flex flex-col`; the `PanelGroup` wrapped in its own
+`flex-1 min-h-0` div so it doesn't fight the new toolbar row for height). A new `showManifest`
+boolean (`MotionTab.tsx`, default `false`) gates the LAST `ResizablePanel` (`ManifestEditor`'s
+own) AND its preceding `ResizableHandle` — `react-resizable-panels` (the real engine behind this
+package's own `resizable.tsx` wrapper) recalculates sizing correctly when a panel is
+mounted/unmounted at the END of the group, confirmed by testing it live, not assumed. Collapsing
+now genuinely reclaims the ~420px for the other panes, not just the JSON text within a
+still-reserved rectangle.
+
+**The `</>` toggle's error-state indicator** (a red border when `m.parseError` is set and the
+panel is currently collapsed) — the exact thing D-153's own research doc called "the part most
+likely to be missed" — is built this time, living on the toolbar's own button rather than inside
+the now-gone `ManifestEditor` header.
+
+### 2 — The toggle's position: moved to sit with Save/Render, not on the far left
+
+First shipped with the `</>`+label cluster pinned to the toolbar's LEFT edge (`mr-auto`) and
+Save/Render on the right — a reasonable default, but a real regression in *feel* the owner
+caught immediately: before this pass, the manifest controls lived together as one cluster inside
+the panel's own header (visually on the right, since the panel itself sat on the right side of
+the tab); moving them to a tab-wide toolbar without preserving that grouping made `</>` feel
+newly, arbitrarily far from Save/Render. Fixed by dropping `mr-auto` and switching the toolbar's
+own layout to `justify-end` — the `</>`+label group, the save/render-error/success readout, and
+the Save/Render buttons now flow together as ONE right-aligned cluster, matching where these
+controls visually lived before this pass restructured them.
+
+### 3 — B-064: a canvas selection reset the playhead — the exact predicted rough edge, now fixed
+
+`MotionTab.tsx`'s `onSelect` (D-081) has always unconditionally seeked the player to the
+selected target's scene START frame. D-158's own entry named this explicitly as a rough edge
+inherited, not introduced: correct for a `LayerList` row click jumping to a scene you weren't
+looking at, wrong for a canvas click, which only ever selects a layer in the scene ALREADY on
+screen (§1e) — every such click was resetting the playhead to frame 0 of that scene, breaking
+"scrub to a moment, then edit what's there," reported live as exactly this friction.
+
+**Fix.** `manifestEdit.ts` gains `sceneIndexAtFrame(manifest, frame)` — the real inverse of
+`sceneStartFrame`/`sceneDurationFrames`, a linear scan returning which scene contains a given
+absolute frame, clamping to the first/last scene for an out-of-range input (the same floor
+`frameToPercent`/`percentToFrame` already hold for this exact class of input, `keyframeVisibility.ts`).
+5 new tests: inside the first scene (also covers the boundary case, resolving to the NEXT scene
+— matching `sceneStartFrame`'s own convention), inside a middle/last scene, clamped past the
+end, clamped below zero. `onSelect` now reads the player's CURRENT frame (`playerRef.current?.getCurrentFrame()`),
+resolves its scene via this new function, and only calls `seekTo` when that disagrees with the
+target's own `sceneIndex` — a `LayerList` click into a genuinely different scene still jumps
+there (verified live, unchanged); a canvas click (or a `LayerList` click into the scene ALREADY
+on screen) leaves the playhead exactly where it was.
+
+**Verified live**, in `app/motion-harness.html` (D-165), all three claims: (1) the manifest
+panel now visibly disappears and the other panes reflow into its space when `showManifest` is
+`false`, and the toggle correctly reopens it; (2) the `</>` chip now sits grouped with Save/
+Render on the right; (3) scrubbing to `0:01`, then clicking a layer on the canvas, left the
+player at `0:01` (previously would have reset to `0:00`) — and clicking a `LayerList` row in a
+genuinely different scene (`space`, starting at `0:10`) still correctly seeked there, confirming
+the fix didn't break the legitimate cross-scene jump.
+
+`npx tsc --noEmit -p app` — 64 errors, unchanged baseline. `npx tsc --noEmit -p packages/motion`
+— clean. `npm test --workspace @chroma/motion` — **367/367** (was 362; +5, all `sceneIndexAtFrame`,
+counted directly against the added `describe` block, not assumed from the delta).
+
+**Filed as B-064** (`docs/BUGS.md`) — status `fixed`, filed and closed in the same pass.
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` shows `1aec5a6` (D-172) — **D-173**/**B-064** are free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-174 — B-065: a 2D layer added to a `scene3d` scene rendered nowhere, at any frame
+
+**Context.** Owner, live: added a `matrix` layer (Catalog) to the `space` scene — the sample
+manifest's only `scene3d` scene — and could not see it at all, at any playhead position.
+
+**Root cause, found by reading the real render path, not assumed.** `manifestEdit.ts`'s
+`addLayer` decides where a new primitive's fragment goes with exactly one check:
+`catalogEntry(use).in3d` — a 3D-capable primitive (`particleflow` in 3D mode, `labelbox`,
+`layerstack`) goes into `scene.scene3d.children`; everything else (including `matrix`, `text`,
+`emphasis`, `layers`, `graph` — every 2D primitive) goes into `scene.layers`. It never checks
+whether the TARGET scene already has a `scene3d` block. `packages/motion-engine/src/engine/
+Video.tsx`'s `OneScene` component render branch is a hard ternary: `scene.scene3d ? <ThreeD
+scene={scene}/> : <TwoD scene={scene}/>` — a scene with `scene3d` NEVER rendered `scene.layers`
+at all, at any frame, regardless of what's in it. Net effect: inserting an ordinary 2D primitive
+into a scene that already has 3D content produced valid, committed, schema-passing manifest
+JSON with literally no render path to it — not a wrong-frame or wrong-scene confusion, a
+genuinely dead write.
+
+**Fix, the general way, not just blocking the insert.** `OneScene` now renders `<TwoD>` as a 2D
+overlay ON TOP of `<ThreeD>` whenever `scene.layers` actually has entries (`scene.layers &&
+scene.layers.length > 0`) — 2D captions/graphics composited over 3D content is a real, useful
+thing to want, not just an error case, so the fix adds the missing render path rather than
+rejecting the write at `addLayer`. **Confirmed safe for on-canvas interaction**: `data-motion-
+world` (the attribute `canvasGeometry.ts`'s `findWorldElement`/`measureWorldMap` search for) is
+only ever emitted by `TwoD`'s own path (`Camera.tsx`'s inner container, or `TwoD`'s own camera-
+less `AbsoluteFill` fallback) — `Scene3D`/`ThreeD` never emits it, confirmed by grep before
+assuming it — so stacking both never produces two competing world-space anchors; 3D content
+stays non-interactive on-canvas exactly as already disclosed (`scene3d` on-canvas manipulation is
+explicitly out of scope for every phase of the visual-builder initiative), and the NEW 2D overlay
+layer is fully click-select/drag-capable through the exact same `data-motion-world` mechanism
+every other 2D scene already uses.
+
+**Verified byte-for-byte, not just reasoned about.** Stashed just this file's change
+(`git stash push -- packages/motion-engine/src/engine/Video.tsx`), rendered the engine's own
+sample manifest's `space` scene at frame 330 (`npx remotion still Animation ... --frame=330`),
+popped the stash, rendered again: **identical SHA-256** (`9e08ee0b...`) — the existing sample has
+no `layers` at all in its `space` scene, so the new branch never mounts for it, confirmed rather
+than assumed from reading the condition. Then a real smoke test: a manifest matching the owner's
+own exact scenario — `sample`'s `space` scene plus a `matrix` layer (the identical
+`defaultLayerFor('matrix')` fragment the Catalog itself inserts) — rendered at frame 330: the
+4×6 ripple grid now visibly composites over the particle stream, where before this fix it
+rendered nothing at any frame.
+
+`npx tsc --noEmit -p packages/motion-engine` — the same 2 pre-existing `Scene3D.tsx`
+`document`-typing errors as `main`, zero new. No `packages/motion` files touched this pass (the
+fix is entirely in the engine's own render path), so `@chroma/motion`'s 367/367 and `tsc -p app`'s
+64-error baseline are both unaffected, unchanged by this entry (confirmed, not merely expected,
+since neither package's own files appear in `git status` for this change).
+
+**Filed as B-065** (`docs/BUGS.md`) — status `fixed`, filed and closed in the same pass.
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: this
+entry lands together with D-173 in the same session pass, both after `1aec5a6` (D-172) —
+**D-174**/**B-065** are free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

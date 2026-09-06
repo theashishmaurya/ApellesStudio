@@ -36,6 +36,7 @@ import {
   setTransformFieldOnSelections,
   alignSelections,
   distributeSelections,
+  sceneIndexAtFrame,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
@@ -1278,5 +1279,33 @@ describe('parseJsonField', () => {
   it('reports an error for invalid JSON without throwing', () => {
     const r = parseJsonField('{not json');
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('sceneIndexAtFrame', () => {
+  // sample: hook (dur 4s -> 120fr), stack (dur 6s -> 180fr), space (dur 5s -> 150fr), fps 30
+  // scene starts: hook=0, stack=120, space=300; total=450
+  it('resolves a frame inside the first scene', () => {
+    expect(sceneIndexAtFrame(sample, 0)).toBe(0);
+    expect(sceneIndexAtFrame(sample, 119)).toBe(0);
+  });
+
+  it('resolves exactly on a scene boundary to the NEXT scene', () => {
+    expect(sceneIndexAtFrame(sample, 120)).toBe(1);
+    expect(sceneIndexAtFrame(sample, 300)).toBe(2);
+  });
+
+  it('resolves a frame inside a middle/last scene', () => {
+    expect(sceneIndexAtFrame(sample, 299)).toBe(1);
+    expect(sceneIndexAtFrame(sample, 449)).toBe(2);
+  });
+
+  it('clamps a frame past the end to the last scene', () => {
+    expect(sceneIndexAtFrame(sample, 450)).toBe(2);
+    expect(sceneIndexAtFrame(sample, 100000)).toBe(2);
+  });
+
+  it('clamps a negative frame to the first scene', () => {
+    expect(sceneIndexAtFrame(sample, -5)).toBe(0);
   });
 });

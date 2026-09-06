@@ -23,6 +23,7 @@
 import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import { interpolateKeys } from '@chroma/motion-engine/src/lib/interpolateKeys';
 import { design } from '@chroma/motion-engine/src/design';
+import { sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
 import { positionFields, sizeFields } from './propCatalog';
@@ -1232,4 +1233,27 @@ export function parseJsonField(raw: string): { ok: true; value: unknown } | { ok
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** Which scene contains a given absolute composition frame — the inverse
+ *  of `sceneStartFrame`/`sceneDurationFrames`. Fixes a real, disclosed
+ *  rough edge D-156/D-162 both named and left open: `MotionTab.tsx`'s
+ *  `onSelect` used to ALWAYS seek to the clicked layer's scene start frame
+ *  — correct for a `LayerList` row click jumping to a scene you weren't
+ *  looking at, but wrong for a canvas click, which only ever selects a
+ *  layer in the scene ALREADY on screen (§1e) and should leave the
+ *  playhead exactly where it was, so a mid-scrub edit doesn't get reset.
+ *  `onSelect` now calls this first and only seeks when the answer
+ *  disagrees with the target scene. Clamps to the last scene for a frame
+ *  at or past the end, and to the first scene for a negative one — the
+ *  same "never throw on an out-of-range frame" floor `frameToPercent`/
+ *  `percentToFrame` (`keyframeVisibility.ts`) already hold for this exact
+ *  class of input. */
+export function sceneIndexAtFrame(manifest: Manifest, frame: number): number {
+  for (let i = 0; i < manifest.scenes.length; i++) {
+    const start = sceneStartFrame(manifest, i);
+    const end = start + sceneDurationFrames(manifest, i);
+    if (frame < end) return i;
+  }
+  return Math.max(0, manifest.scenes.length - 1);
 }

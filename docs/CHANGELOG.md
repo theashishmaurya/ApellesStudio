@@ -11,6 +11,30 @@ One or two lines per session. Detail lives in the decision it references.
   `MotionPreview.tsx`'s `<Player>`. Confirmed NOT a shared-component bug — `@chroma/player`
   (the real cross-tab preview component) isn't used by Motion at all; the Edit tab's own preview
   was never susceptible. Live-verified in the harness. `tsc -p app` unchanged at 64.
+- **2026-09-06** — **The scene-manifest panel actually collapses now; `</>` moved to sit with
+  Save/Render; B-064 fixed (D-173).** D-153's own deferred shape, finally built: `ManifestEditor`
+  is now just the textarea, and `showManifest` (`MotionTab.tsx`) gates the WHOLE panel + its
+  handle, reclaiming its ~420px when hidden instead of just hiding the JSON inside a
+  still-reserved rectangle. Save/Render/dirty/errors moved to a new always-visible toolbar, whose
+  `</>` chip gets a red border when a parse error exists and the panel is collapsed. Also:
+  **B-064** — a canvas click to select a layer was resetting the playhead to the scene's start on
+  every click (predicted and disclosed back at D-158/D-162, now confirmed live). New
+  `manifestEdit.ts` export `sceneIndexAtFrame` (5 tests) lets `onSelect` only seek when the
+  target is actually in a different scene than what's under the playhead. Live-verified: same-
+  scene canvas click preserves the playhead, cross-scene `LayerList` click still jumps. `tsc -p
+  app` unchanged at 64, `@chroma/motion` 367/367.
+- **2026-09-06** — **B-065: a 2D layer added to a `scene3d` scene rendered nowhere, ever
+  (D-174).** `addLayer` only checks whether the INSERTED primitive is 3D-capable, never whether
+  the TARGET scene already has a `scene3d` block — so adding an ordinary 2D primitive (e.g.
+  `matrix`) via the Catalog to a scene that already has 3D content silently created permanently
+  invisible layers: `Video.tsx`'s `OneScene` was a hard `scene.scene3d ? <ThreeD/> : <TwoD/>`
+  ternary that never rendered `scene.layers` at all once a scene had `scene3d`, regardless of
+  playhead position. Fixed the general way — `<TwoD>` now renders as a 2D overlay ON TOP of
+  `<ThreeD>` whenever `scene.layers` actually has entries — rather than blocking the insert, since
+  2D graphics over 3D content is a real, useful composition. Byte-for-byte identical renders for
+  every existing `scene3d` manifest (none has `layers` at all, confirmed directly); a real smoke
+  render with a `matrix` layer added to the sample's `space` scene now shows it composited over
+  the particle stream, where before it rendered nothing at any frame.
 
 - **2026-09-06** — **Close D-170's own flagged gap: camera-key `ease` validation (D-171).**
   `motion_set_camera_2d`/`motion_set_camera_3d` (D-168, built before the ease-validation guard
