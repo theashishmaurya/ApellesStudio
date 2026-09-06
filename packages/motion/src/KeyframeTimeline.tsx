@@ -165,7 +165,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { PlayerRef } from '@remotion/player';
-import { totalFrames, sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
+import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
@@ -306,6 +306,7 @@ export function KeyframeTimeline({
   onSelect,
   onTransientChange,
   onCommit,
+  activeSceneIndex = null,
 }: {
   /** `null` mirrors every other consumer of the STABLE manifest in this tab
    *  — renders an empty placeholder rather than assuming non-null. */
@@ -326,6 +327,12 @@ export function KeyframeTimeline({
   /** One commit per completed drag, through `useMotionManifest`'s
    *  undo-wired `commit(next, label)` (D-155's discipline). */
   onCommit?: (next: Manifest, label: string) => void;
+  /** D-181 (Phase 2 of 3) — solo this scene: only its own lanes show, on a
+   *  ruler re-based to `[0, sceneDurationFrames)`. `null` (the default) is
+   *  today's pre-D-181 whole-video behavior, unchanged — every lane, one
+   *  ruler spanning the whole composition. See this file's own "solo-scene
+   *  scoping" block below for the absolute↔local conversion this drives. */
+  activeSceneIndex?: number | null;
 }) {
   const [frame, setFrame] = useState(() => playerRef.current?.getCurrentFrame() ?? 0);
   const [pxPerSecond, setPxPerSecond] = useState(DEFAULT_PX_PER_SEC);
@@ -422,10 +429,34 @@ export function KeyframeTimeline({
     );
   }
 
-  const total = totalFrames(manifest);
+  // D-181 — solo-scene scoping. `soloWindow` is the active scene's own
+  // ABSOLUTE `[start, end)` window, or `null` in whole-video mode.
+  // `absoluteTotal` is ALWAYS the true whole-composition total (used below
+  // only where a per-lane calculation needs the real end of the manifest
+  // regardless of solo mode — the "last scene has no next scene" fallback);
+  // `total` itself is redefined to the LOCAL scene duration while solo'd, so
+  // every existing `frameToPercent`/`percentToFrame`/`trackWidthPx` call
+  // below keeps working UNCHANGED — they don't know or care whether `total`
+  // means the whole composition or one scene, only that everything on
+  // screen agrees on the same one. `toLocalFrame`/`toAbsoluteFrame` are the
+  // ONE place an absolute frame (from `laneKeyMarkers`, the live `frame`
+  // state, or a scene's own `sceneStartFrame`) crosses that boundary in
+  // either direction; every WRITE path underneath (`moveKeysByDelta`,
+  // `seekTo`) still only ever sees real absolute frames, exactly as before
+  // this phase — `frameFromClientX` (below) converts back to absolute
+  // before returning, so none of ITS OWN callers needed to change at all.
+  const absoluteTotal = totalFrames(manifest);
+  const soloWindow =
+    activeSceneIndex !== null && manifest.scenes[activeSceneIndex]
+      ? { start: sceneStartFrame(manifest, activeSceneIndex), end: sceneStartFrame(manifest, activeSceneIndex) + sceneDurationFrames(manifest, activeSceneIndex) }
+      : null;
+  const toLocalFrame = (absoluteFrame: number) => (soloWindow ? absoluteFrame - soloWindow.start : absoluteFrame);
+  const toAbsoluteFrame = (localFrame: number) => (soloWindow ? localFrame + soloWindow.start : localFrame);
+
+  const total = soloWindow ? soloWindow.end - soloWindow.start : absoluteTotal;
   const totalSeconds = manifest.fps > 0 ? total / manifest.fps : 0;
-  const lanes = keyframeLanes(manifest);
-  const boundaries = sceneBoundaryFrames(manifest);
+  const lanes = keyframeLanes(manifest).filter((l) => activeSceneIndex === null || l.sceneIndex === activeSceneIndex);
+  const boundaries = soloWindow ? [] : sceneBoundaryFrames(manifest);
   const trackW = trackWidthPx(total, manifest.fps, pxPerSecond);
   const ticks = rulerTicks(totalSeconds, manifest.fps, pxPerSecond);
   const timelineLayout = { laneAreaTop: RULER_HEIGHT, laneHeight: LANE_HEIGHT, labelWidth: LANE_LABEL_WIDTH };
@@ -447,12 +478,18 @@ export function KeyframeTimeline({
    *  measured track width — every row's track is the SAME width
    *  (`trackWidthPx`, the shared axis), so it doesn't matter which row's
    *  element this is called against; `percentToFrame`'s whole reason to
-   *  exist (D-161). `null` only if the element isn't in the DOM. */
+   *  exist (D-161). `null` only if the element isn't in the DOM.
+   *
+   *  D-181 — `percentToFrame` resolves against `total`, which is LOCAL
+   *  while solo'd; `toAbsoluteFrame` converts back before returning, so
+   *  this function's own return value stays ABSOLUTE regardless of solo
+   *  mode — every existing caller (`seekTo`, `selectAndMaybeSeek`) already
+   *  expects an absolute frame and needed no changes of its own. */
   const frameFromClientX = (clientX: number, trackEl: HTMLElement | null): number | null => {
     if (!trackEl) return null;
     const rect = trackEl.getBoundingClientRect();
     const fraction = rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0;
-    return percentToFrame(fraction * 100, total);
+    return toAbsoluteFrame(percentToFrame(fraction * 100, total));
   };
 
   /** A pointer's screen position -> CONTENT-LOCAL px (the scrollable
@@ -659,7 +696,10 @@ export function KeyframeTimeline({
     }
 
     const rect = rectFromPoints(mq.start, end);
-    const hits = keysInMarqueeRect(manifest, lanes, rect, total, trackW, timelineLayout);
+    // D-181 — `laneKeyMarkers` returns ABSOLUTE frames; `total`/`trackW`
+    // here are LOCAL while solo'd, so `frameOffset` re-bases each marker
+    // the same way `toLocalFrame` does everywhere else in this file.
+    const hits = keysInMarqueeRect(manifest, lanes, rect, total, trackW, timelineLayout, soloWindow?.start ?? 0);
     setKeySelection(mq.additive ? unionKeySelectionEntries(mq.baseSelection, hits) : hits);
   };
 
@@ -748,7 +788,7 @@ export function KeyframeTimeline({
                 ))}
                 <div
                   className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent"
-                  style={{ left: `${frameToPercent(frame, total)}%` }}
+                  style={{ left: `${frameToPercent(toLocalFrame(frame), total)}%` }}
                 />
               </div>
             </div>
@@ -756,9 +796,13 @@ export function KeyframeTimeline({
             {lanes.map((lane) => {
               const key = laneKey(lane);
               const markers = laneKeyMarkers(manifest, lane);
+              // D-181 — computed in ABSOLUTE frames exactly as before this
+              // phase (`absoluteTotal`, never the possibly-local `total`,
+              // for the "last scene has no next scene" fallback), then
+              // converted to local at the render sites below.
               const sceneStart = sceneStartFrame(manifest, lane.sceneIndex);
               const sceneEnd =
-                lane.sceneIndex + 1 < manifest.scenes.length ? sceneStartFrame(manifest, lane.sceneIndex + 1) : total;
+                lane.sceneIndex + 1 < manifest.scenes.length ? sceneStartFrame(manifest, lane.sceneIndex + 1) : absoluteTotal;
               const selected = isSelected(lane);
               return (
                 <div key={key} className="flex border-b border-border-color/60" style={{ height: LANE_HEIGHT }}>
@@ -790,8 +834,8 @@ export function KeyframeTimeline({
                     <div
                       className="pointer-events-none absolute top-0 bottom-0 bg-text-secondary/5"
                       style={{
-                        left: `${frameToPercent(sceneStart, total)}%`,
-                        width: `${frameToPercent(sceneEnd, total) - frameToPercent(sceneStart, total)}%`,
+                        left: `${frameToPercent(toLocalFrame(sceneStart), total)}%`,
+                        width: `${frameToPercent(toLocalFrame(sceneEnd), total) - frameToPercent(toLocalFrame(sceneStart), total)}%`,
                       }}
                     />
                     {boundaries.map((f) => (
@@ -817,8 +861,8 @@ export function KeyframeTimeline({
                                 : 'border-text-secondary bg-bg-primary',
                             draggable ? 'cursor-ew-resize' : 'cursor-pointer',
                           ].join(' ')}
-                          style={{ left: `${frameToPercent(displayFrame(lane, m), total)}%` }}
-                          title={`Key @ frame ${displayFrame(lane, m)}${draggable ? ' — drag to retime, shift-click to box-select' : ''}`}
+                          style={{ left: `${frameToPercent(toLocalFrame(displayFrame(lane, m)), total)}%` }}
+                          title={`Key @ frame ${toLocalFrame(displayFrame(lane, m))}${draggable ? ' — drag to retime, shift-click to box-select' : ''}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             // Shift-click is handled entirely by
@@ -836,7 +880,7 @@ export function KeyframeTimeline({
                     })}
                     <div
                       className="pointer-events-none absolute top-0 bottom-0 w-px bg-accent"
-                      style={{ left: `${frameToPercent(frame, total)}%` }}
+                      style={{ left: `${frameToPercent(toLocalFrame(frame), total)}%` }}
                     />
                   </div>
                 </div>

@@ -21,6 +21,7 @@ import {
   keysInMarqueeRect,
   KEY_MARKER_HIT_PX,
   type KeySelectionEntry,
+  type KeyframeLane,
 } from './keyframeVisibility';
 
 // `sample`'s own real shape (`packages/motion-engine/src/engine/sample.ts`),
@@ -505,5 +506,28 @@ describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pur
   it('is empty for zero lanes', () => {
     const rect = { left: 0, top: 0, width: 1000, height: 1000 };
     expect(keysInMarqueeRect(sample, [], rect, total, 450, layout)).toEqual([]);
+  });
+
+  it('D-181 — frameOffset re-bases an absolute marker frame before hit-testing, for a solo-scene local track', () => {
+    // scene 1 "stack" starts at absolute frame 120; its own 'active' lane's
+    // first key sits at absolute frame 195 (see laneKeyMarkers' own tests).
+    // Solo'd to just that scene: a LOCAL track of width 180 (its own
+    // duration, 1px/frame) with frameOffset=120 should place that marker at
+    // LOCAL frame 75 — the exact spot a rect there would need to hit.
+    const lane: KeyframeLane = { sceneIndex: 1, kind: 'active', layerIndex: 1 };
+    const localTrackW = 180;
+    const markerCenter = keyMarkerContentRect(0, 75, localTrackW, localTrackW, layout);
+    const rect = { left: markerCenter.left - 5, top: markerCenter.top - 5, width: 20, height: 20 };
+    const hits = keysInMarqueeRect(sample, [lane], rect, localTrackW, localTrackW, layout, 120);
+    expect(hits).toContainEqual({ lane, keyIndex: 0 });
+  });
+
+  it('D-181 — frameOffset defaults to 0, matching every pre-D-181 call site exactly', () => {
+    const lanes = keyframeLanes(sample);
+    const trackW = 450;
+    const rect = { left: layout.labelWidth, top: layout.laneAreaTop, width: trackW, height: layout.laneHeight * lanes.length };
+    expect(keysInMarqueeRect(sample, lanes, rect, total, trackW, layout, 0)).toEqual(
+      keysInMarqueeRect(sample, lanes, rect, total, trackW, layout),
+    );
   });
 });

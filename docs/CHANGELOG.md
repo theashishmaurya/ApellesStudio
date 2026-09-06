@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Selecting a scene previews/scrubs it as its own 0:00-start clip
+  (D-181, Phase 2 of 3).** `MotionPreview.tsx` gains `activeSceneIndex` — when set, swaps
+  Remotion's native transport (no notion of a sub-range) for a small owned one scoped to that
+  scene's own window, with a manual loop constraint (`loop`/native `controls` both disabled while
+  soloed). `KeyframeTimeline.tsx` filters lanes to the active scene and re-bases its ruler to
+  `[0, sceneDurationFrames)` — every write path underneath stays absolute-frame, unchanged; only
+  the display/interaction boundary converts. A toolbar "Scene: `<id>` · Whole video" badge is the
+  explicit way back to the combined view. No engine/schema changes at all — same key insight as
+  D-180. Live-verified: local transport time, continuous in-scene looping across multiple cycles,
+  filtered Keyframes panel, and a clean mid-playback revert via the toggle. `tsc` clean,
+  `@chroma/motion` 421/421 (+2). Second of 3 planned phases (per-card drag-to-fix for `layers` next).
+
 - **2026-09-06** — **Render exports every scene as its own separate video file, not one
   combined video (D-180, Phase 1 of 3).** `RenderRequest` (`chroma-motion` crate) gains an
   optional absolute-frame `frame_range`, appending Remotion's own `--frames=start-end` — no

@@ -57,12 +57,31 @@
  * exactly its pre-D-160 shape: just the player + `MotionCanvasOverlay`, no
  * opinion at all about what (if anything) a caller stacks below it —
  * `MotionTab.tsx`'s own layout owns that now.
+ *
+ * D-181 (Phase 2 of 3, "scene should be a separate composition… exported as
+ * separate video, not on top of it" — the owner's own follow-up, after D-180
+ * shipped separate EXPORT: also wants selecting a scene to PREVIEW it as its
+ * own standalone 0:00-start clip). The underlying `<Player>` is unchanged —
+ * still one `Animation` composition, one `durationInFrames`, absolute frames
+ * under the hood (Remotion's own CLI/Player never had a notion of "solo one
+ * scene" to begin with) — this is entirely a display/interaction SCOPING
+ * layer on top of it: `activeSceneIndex` (optional; `null`/`undefined` keeps
+ * today's whole-video behavior byte-for-byte) seeks to that scene's own
+ * `sceneStartFrame` on change, swaps `@remotion/player`'s native `controls`
+ * bar (which has no notion of a sub-range — it always shows progress across
+ * the WHOLE composition, so it can't be "cropped" to feel scene-local) for a
+ * small owned transport scoped to that scene's own window, and loop-
+ * constrains playback to `[sceneStart, sceneEnd)` instead of the whole
+ * composition. `sceneStartFrame`/`sceneDurationFrames` are the SAME
+ * `build.ts` functions `KeyframeTimeline.tsx`'s own scene-boundary lines and
+ * D-180's per-scene export already use — no new scene-window math invented.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { Play, Pause } from 'lucide-react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { Video } from '@chroma/motion-engine/src/engine/Video';
-import { totalFrames } from '@chroma/motion-engine/src/engine/build';
+import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
@@ -82,6 +101,16 @@ export interface MotionCanvasMeasureApi {
   worldMap: () => WorldMap | null;
 }
 
+/** `M:SS` — the exact format `@remotion/player`'s own native controls bar
+ *  already shows (e.g. "0:04"); written locally rather than reused from
+ *  `timelineRuler.ts`'s `formatTimecode` (a RULER-TICK label, parameterized
+ *  by a tick interval — a different job than a transport's own elapsed/total
+ *  time text). */
+function formatSeconds(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 export function MotionPreview({
   manifest,
   transientManifest = null,
@@ -92,6 +121,7 @@ export function MotionPreview({
   onSelectionChange,
   onTransientChange,
   onCommit,
+  activeSceneIndex = null,
 }: {
   /** the STABLE, already-committed manifest — the overlay's drag-start baseline. */
   manifest: Manifest | null;
@@ -110,10 +140,27 @@ export function MotionPreview({
   onSelectionChange?: (s: Selection[]) => void;
   onTransientChange?: (next: Manifest | null) => void;
   onCommit?: (next: Manifest, label: string) => void;
+  /** D-181 — solo this scene: seek/loop/transport scope to its own
+   *  `[sceneStartFrame, sceneStartFrame+sceneDurationFrames)` window. `null`
+   *  (the default) is today's pre-D-181 whole-video behavior, unchanged. */
+  activeSceneIndex?: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const localPlayerRef = useRef<PlayerRef>(null);
   const effectivePlayerRef = playerRef ?? localPlayerRef;
+  // D-181 — the active scene's own absolute frame window, or `null` in
+  // whole-video mode. Recomputed from the STABLE `manifest` (never
+  // `transientManifest` — a drag never changes scene boundaries) so a
+  // mid-drag re-render can't jitter the loop/seek target.
+  const soloWindow =
+    activeSceneIndex !== null && manifest && manifest.scenes[activeSceneIndex]
+      ? {
+          start: sceneStartFrame(manifest, activeSceneIndex),
+          end: sceneStartFrame(manifest, activeSceneIndex) + sceneDurationFrames(manifest, activeSceneIndex),
+        }
+      : null;
+  const [frame, setFrame] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   // D-157 — populate the measure API once (and again whenever the manifest
   // this scale calc depends on changes) rather than rebuilding it on every
@@ -138,6 +185,60 @@ export function MotionPreview({
     };
   }, [measureApiRef, manifest]);
 
+  // D-181 — track the live absolute frame + play state (needed for the
+  // custom transport's scrub position/time text/play-pause icon) and
+  // enforce the solo loop constraint (`frame >= soloWindow.end` seeks back
+  // to `soloWindow.start`, pre-empting `<Player loop>`'s own whole-
+  // composition wraparound — see the `loop={soloWindow === null}` prop
+  // below for why that native behavior is disabled, not just redundant,
+  // whenever a scene other than the last is soloed). Re-subscribes only
+  // when the window's own bounds change (switching scenes, or an earlier
+  // scene's duration shifting this one's start) — cheap, and avoids a
+  // stale closure over `soloWindow` inside the listener.
+  useEffect(() => {
+    const player = effectivePlayerRef.current;
+    if (!player) return;
+    const onFrameUpdate = (e: { detail: { frame: number } }) => {
+      setFrame(e.detail.frame);
+      if (soloWindow && e.detail.frame >= soloWindow.end) player.seekTo(soloWindow.start);
+    };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    player.addEventListener('frameupdate', onFrameUpdate);
+    player.addEventListener('play', onPlay);
+    player.addEventListener('pause', onPause);
+    setFrame(player.getCurrentFrame());
+    setPlaying(player.isPlaying());
+    return () => {
+      player.removeEventListener('frameupdate', onFrameUpdate);
+      player.removeEventListener('play', onPlay);
+      player.removeEventListener('pause', onPause);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePlayerRef, soloWindow?.start, soloWindow?.end]);
+
+  // D-181 — a SAFETY NET, not the primary seek: `MotionTab.tsx`'s own
+  // `onSelect` (B-064/D-176's existing "seek only if not already visible"
+  // logic) already lands the playhead precisely inside whatever was just
+  // selected BEFORE `activeSceneIndex` ever changes here — every real path
+  // that engages solo mode goes through it. This effect only corrects the
+  // rare case where `activeSceneIndex` changes WITHOUT a matching seek
+  // having already happened, by checking (imperatively, not via the
+  // `frame` state — reading that here would re-run this on every single
+  // `frameupdate` during playback) whether the current frame is even inside
+  // the new window at all; if it's already inside (the common case, since
+  // `onSelect` put it there), this is a genuine no-op — it can never
+  // override a more precise seek (e.g. D-176's "jump to a layer's own
+  // `at`," not just its scene's start) with a cruder "go to scene start."
+  useEffect(() => {
+    if (!soloWindow) return;
+    const player = effectivePlayerRef.current;
+    if (!player) return;
+    const current = player.getCurrentFrame();
+    if (current < soloWindow.start || current >= soloWindow.end) player.seekTo(soloWindow.start);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSceneIndex, soloWindow?.start, soloWindow?.end]);
+
   const shown = transientManifest ?? manifest;
   if (!shown) {
     return (
@@ -158,7 +259,6 @@ export function MotionPreview({
           fps={shown.fps}
           compositionWidth={shown.width}
           compositionHeight={shown.height}
-          controls
           // D-172 — `@remotion/player` silently defaults `clickToPlay` to
           // match `controls` (confirmed by reading its own source,
           // `Player.js`: `clickToPlay: typeof clickToPlay === 'boolean' ?
@@ -172,7 +272,18 @@ export function MotionPreview({
           // unaffected — only the "click anywhere toggles play" convenience
           // behavior turns off, which only ever conflicted with selection.
           clickToPlay={false}
-          loop
+          // D-181 — the native controls bar has no notion of a sub-range
+          // (it always shows progress across the WHOLE composition), so it
+          // can't be "cropped" to feel scene-local; solo mode hides it and
+          // renders its own scoped transport below instead. `loop` is
+          // likewise disabled while solo'd — the manual loop-constraint
+          // effect above already resets to `soloWindow.start` before the
+          // player would ever reach the composition's own end (except when
+          // soloing the LAST scene, where the two would otherwise race:
+          // `loop`'s own wraparound resets to absolute frame 0 — the WHOLE
+          // video's start, not this scene's — which is wrong here).
+          controls={soloWindow === null}
+          loop={soloWindow === null}
           style={{ width: '100%', height: '100%' }}
         />
         {onSelect && onSelectionChange && onTransientChange && onCommit && (
@@ -186,6 +297,37 @@ export function MotionPreview({
             onTransientChange={onTransientChange}
             onCommit={onCommit}
           />
+        )}
+        {/* D-181 — the solo-scene transport: play/pause, LOCAL elapsed/total
+           time (scene-relative, not the whole composition's), and a
+           scrubber whose own `[0, sceneDur)` range never exposes a frame
+           outside this scene. `frame`/`playing` come from the subscription
+           effect above; `seekTo`/`toggle` go straight through the same
+           `effectivePlayerRef` the native controls would have used. */}
+        {soloWindow && (
+          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2 px-3 py-1.5 bg-black/70 text-white text-[11px] select-none">
+            <button
+              type="button"
+              onClick={() => effectivePlayerRef.current?.toggle()}
+              className="shrink-0 h-5 w-5 flex items-center justify-center"
+              aria-label={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? <Pause size={14} /> : <Play size={14} />}
+            </button>
+            <span className="tabular-nums shrink-0">
+              {formatSeconds(Math.max(0, frame - soloWindow.start) / shown.fps)} /{' '}
+              {formatSeconds((soloWindow.end - soloWindow.start) / shown.fps)}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, soloWindow.end - soloWindow.start - 1)}
+              value={Math.min(Math.max(0, frame - soloWindow.start), soloWindow.end - soloWindow.start - 1)}
+              onChange={(e) => effectivePlayerRef.current?.seekTo(soloWindow.start + Number(e.target.value))}
+              className="flex-1 accent-accent"
+              aria-label="Scene position"
+            />
+          </div>
         )}
       </div>
     </div>

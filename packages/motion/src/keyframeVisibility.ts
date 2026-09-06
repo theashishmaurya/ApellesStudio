@@ -503,6 +503,15 @@ export function keyMarkerContentRect(
  * marker's position has no such dependency; it's pure arithmetic over the
  * manifest and the current zoom).
  */
+/**
+ * D-181 (Phase 2 of 3, solo-scene preview) adds `frameOffset` — `laneKeyMarkers`
+ * always returns ABSOLUTE composition frames, but `KeyframeTimeline.tsx`'s own
+ * `trackWidthPx`/`totalFrames` (this function's own `totalFrames` param) go
+ * LOCAL (scene-relative) while a scene is soloed, so a marker's absolute frame
+ * needs the same re-basing before it means anything against a local track
+ * width. Defaults to `0` — every pre-D-181 call site (including this file's
+ * own tests) is unaffected, since subtracting 0 changes nothing.
+ */
 export function keysInMarqueeRect(
   manifest: Manifest,
   lanes: KeyframeLane[],
@@ -510,11 +519,12 @@ export function keysInMarqueeRect(
   totalFrames: number,
   trackWidthPx: number,
   layout: TimelineLayout,
+  frameOffset = 0,
 ): KeySelectionEntry[] {
   const hits: KeySelectionEntry[] = [];
   lanes.forEach((lane, rowIndex) => {
     for (const marker of laneKeyMarkers(manifest, lane)) {
-      const markerRect = keyMarkerContentRect(rowIndex, marker.frame, totalFrames, trackWidthPx, layout);
+      const markerRect = keyMarkerContentRect(rowIndex, marker.frame - frameOffset, totalFrames, trackWidthPx, layout);
       if (rectsIntersect(marqueeRect, markerRect)) hits.push({ lane, keyIndex: marker.keyIndex });
     }
   });

@@ -130,6 +130,15 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
   const [transientManifest, setTransientManifest] = useState<Manifest | null>(null);
+  // D-181 (Phase 2 of 3) — solo-scene preview. `true` forces the pre-D-181
+  // whole-video view regardless of the live selection; the default `false`
+  // means "derive the soloed scene from the current selection" (below),
+  // matching the owner's own framing ("select 'stack' → its own timeline").
+  // `onSelect` (an explicit pick, never `onSelectionChange`'s marquee/
+  // shift-toggle/clear — see that callback's own comment for why) flips
+  // this back to `false`, so choosing something always re-engages solo mode
+  // even after stepping back to the combined view.
+  const [wholeVideo, setWholeVideo] = useState(false);
   // D-172 — the raw JSON panel is collapsed by default (D-153's own ask,
   // finally built to the shape its research doc originally scoped instead
   // of the smaller one D-153 shipped): gates the WHOLE ManifestEditor
@@ -235,6 +244,12 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // what's there," the exact workflow this whole tab is for.
   const onSelect = (s: Selection) => {
     setSelections([s]);
+    // D-181 — an explicit pick always re-engages solo-scene mode, even
+    // after stepping back to "Whole video." `onSelectionChange` (marquee/
+    // shift-toggle/clear) deliberately does NOT do this — those gestures
+    // never touch a scene other than whichever is already on screen (D-158
+    // §1e), so there's nothing for them to "engage."
+    setWholeVideo(false);
     if (!m.manifest) return;
     const currentFrame = playerRef.current?.getCurrentFrame();
     if (currentFrame === undefined) return;
@@ -292,6 +307,13 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   const targetSceneIndex = selections[0]?.sceneIndex ?? (m.manifest ? m.manifest.scenes.length - 1 : null);
   const targetSceneId =
     m.manifest && targetSceneIndex !== null ? (m.manifest.scenes[targetSceneIndex]?.id ?? null) : null;
+
+  // D-181 — the soloed scene, or `null` for the whole-video view. Unlike
+  // `targetSceneIndex` above, this does NOT fall back to the last scene when
+  // nothing is selected — "nothing selected" means "show the whole video,"
+  // not "solo whichever scene happens to be last."
+  const activeSceneIndex = wholeVideo ? null : (selections[0]?.sceneIndex ?? null);
+  const activeSceneId = activeSceneIndex !== null ? (m.manifest?.scenes[activeSceneIndex]?.id ?? null) : null;
 
   // D-151: insert a catalog primitive, then select it — so the Inspector is
   // immediately showing the new layer's fields and the player has jumped to
@@ -365,6 +387,20 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             Scene manifest{m.dirty ? ' · unsaved' : ''}
           </span>
         </div>
+        {/* D-181 — solo-scene indicator + the explicit way back to the
+           combined view. Only rendered while actually soloed (selecting
+           something is what engages it, `onSelect` above) — this is purely
+           the escape hatch, not a scene picker of its own. */}
+        {activeSceneIndex !== null && (
+          <button
+            type="button"
+            onClick={() => setWholeVideo(true)}
+            title="Preview stays scoped to this scene — click to see the whole combined video again"
+            className="shrink-0 h-6 px-2 flex items-center gap-1 rounded-md border border-border-color bg-surface/90 text-text-secondary hover:text-text-primary hover:bg-hover-color text-[11px]"
+          >
+            Scene: {activeSceneId} <span className="underline">Whole video</span>
+          </button>
+        )}
         {m.saveError && (
           <span className="text-[11px] text-red-400 truncate max-w-[280px]" title={m.saveError}>
             save failed: {m.saveError}
@@ -416,6 +452,7 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
                 onSelectionChange={onSelectionChange}
                 onTransientChange={setTransientManifest}
                 onCommit={m.commit}
+                activeSceneIndex={activeSceneIndex}
               />
             </ResizablePanel>
             <ResizableHandle />
@@ -427,6 +464,7 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
                 onSelect={onSelect}
                 onTransientChange={setTransientManifest}
                 onCommit={m.commit}
+                activeSceneIndex={activeSceneIndex}
               />
             </ResizablePanel>
           </PanelGroup>

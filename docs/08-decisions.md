@@ -15861,3 +15861,88 @@ is free, no `B`-number (a missing capability, not a defect).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-181 — Phase 2 of 3: selecting a scene previews/scrubs it as its own 0:00-start clip
+
+**Context.** The owner's own follow-up after D-180 shipped separate export:
+"also wants selecting a scene to preview it as its own standalone 0:00-start
+clip, not an offset into a combined scrubber" (confirmed via `AskUserQuestion`
+after disclosing the real cost difference between "export only" and
+"export + separate preview" — the owner picked the latter). Second of the
+3-phase plan.
+
+**The engine still never changes.** `<Player>`/`Video.tsx`'s `<Series>` stay
+exactly as they were — one composition, absolute frames throughout. This
+phase is a pure display/interaction SCOPING layer on top, in
+`packages/motion` only: no schema change, no `Root.tsx`/`build.ts` change.
+
+**`MotionPreview.tsx`.** New `activeSceneIndex?: number | null` prop (`null`
+= today's whole-video behavior, byte-for-byte unchanged). When set:
+`controls={soloWindow === null}` swaps Remotion's native transport (which has
+no notion of a sub-range — it always shows progress across the WHOLE
+composition, so it can't be "cropped" to feel scene-local) for a small owned
+one — play/pause, `local/localDur` time text, a scrubber whose own range
+never exposes a frame outside the scene. `loop={soloWindow === null}` — a
+manual loop-constraint effect (`frame >= soloWindow.end` → `seekTo(soloWindow
+.start)`) pre-empts it while solo'd, since native `loop`'s own wraparound
+resets to ABSOLUTE frame 0 (the whole video's start), which is wrong for
+every scene but the first. A SEPARATE, deliberately narrow safety-net effect
+seeks to `soloWindow.start` only when the current frame is ALREADY outside
+the new window — never unconditionally on scene change, which would have
+overridden `MotionTab.tsx`'s existing, MORE PRECISE seek (D-176's own "jump
+to a layer's own `at`," not just its scene's start) the instant a selection
+also happened to change the active scene. Verified this composition is safe
+by tracing `onSelect`'s call order rather than guessing.
+
+**`KeyframeTimeline.tsx`.** New `activeSceneIndex?: number | null` prop.
+`lanes` filters to the active scene; `total` becomes the LOCAL scene
+duration (`sceneDurationFrames`) instead of the whole composition's; every
+existing `frameToPercent`/`percentToFrame`/`trackWidthPx` call keeps working
+UNCHANGED — they don't know or care whether `total` means the whole
+composition or one scene. Two new local functions, `toLocalFrame`/
+`toAbsoluteFrame`, are the ONE place an absolute frame (a marker, the live
+playhead, a scene's own `sceneStartFrame`) crosses that boundary; every WRITE
+path underneath (`moveKeysByDelta`, `seekTo`) still only ever sees real
+absolute frames — `frameFromClientX` converts back to absolute before
+returning, so none of its own callers needed to change. `keysInMarqueeRect`
+(`keyframeVisibility.ts`) gained an optional `frameOffset` param (default
+`0`, every pre-D-181 call site unaffected) for the same reason: its own
+internal `laneKeyMarkers` call returns absolute frames that need re-basing
+before they mean anything against a local track width.
+
+**`MotionTab.tsx`.** `activeSceneIndex = wholeVideo ? null : (selections[0]
+?.sceneIndex ?? null)` — deliberately does NOT fall back to the last scene
+when nothing is selected, unlike the existing `targetSceneIndex` (catalog
+insert target) — "nothing selected" means "show the whole video." `onSelect`
+(an explicit pick) always re-engages solo mode, even after stepping back to
+"Whole video"; `onSelectionChange` (marquee/shift-toggle/clear) deliberately
+does not, since those gestures never touch a scene other than whichever is
+already on screen (D-158 §1e) — nothing for them to "engage." A small toolbar
+badge ("Scene: `<id>` · Whole video") is the explicit way back to the
+combined view — added because losing the "scrub the whole thing to check
+pacing" workflow entirely, for a one-line toggle's cost, would have been a
+real regression nobody asked to give up.
+
+**Verified live**, in `app/motion-harness.html`: selecting `stack` showed the
+transport at `0:00/0:06` (not `0:04/0:19`), native controls hidden, a custom
+scrubber; playback looped continuously within the scene (confirmed across
+multiple loop cycles, not just once) without ever showing `space`'s or
+`hook`'s content; the Keyframes panel showed only `stack · layers`/`stack ·
+layers · Active` on a 0-based ruler; clicking "Whole video" restored the
+native controls, the full unfiltered lane list, and absolute time (`0:07/
+0:15`), mid-playback, with no jarring reset — the combined view really is
+byte-for-byte the pre-D-181 experience.
+
+`npx tsc --noEmit -p packages/motion` clean; `app` (64) unchanged.
+`npm test --workspace @chroma/motion` — **421/421** (was 419; +2, both
+`keysInMarqueeRect`'s new `frameOffset` param — a real re-basing case and a
+"defaults to 0, matches every existing call site exactly" regression guard).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: `git log --oneline -1` shows `f2c5720` (D-180) — **D-181** is
+free, no `B`-number (a missing capability, not a defect).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
