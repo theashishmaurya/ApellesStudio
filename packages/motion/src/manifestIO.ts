@@ -57,10 +57,25 @@ export interface MotionRenderResult {
   stdoutTail: string;
 }
 
-/** Render the current project's *saved* manifest. Save first if it's dirty. */
-export async function renderManifest(outputPath?: string): Promise<MotionRenderResult> {
+/** Render the current project's *saved* manifest — the caller must save
+ *  first if dirty (`useMotionManifest.ts`'s `render()` does).
+ *
+ *  D-180 — `frameRange` (an inclusive `[start, end]` pair of ABSOLUTE
+ *  composition frames) and `sceneId` let a caller render just ONE scene's
+ *  own window instead of the whole manifest; `sceneId` alone (no explicit
+ *  `outputPath`) also picks `chroma_motion_render`'s per-scene default
+ *  output naming (`<project>/motion/renders/<sceneId>.mp4`) on the Rust
+ *  side — this function never constructs a path itself, matching
+ *  `motion.rs`'s own module doc comment ("only this side actually knows
+ *  where the project lives"). Omitting both renders the whole manifest to
+ *  the single pre-D-180 default path, unchanged. */
+export async function renderManifest(
+  outputPath?: string,
+  frameRange?: [number, number],
+  sceneId?: string,
+): Promise<MotionRenderResult> {
   try {
-    return await invoke<MotionRenderResult>('chroma_motion_render', { outputPath });
+    return await invoke<MotionRenderResult>('chroma_motion_render', { outputPath, frameRange, sceneId });
   } catch (e) {
     rethrow(e);
   }

@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **Render exports every scene as its own separate video file, not one
+  combined video (D-180, Phase 1 of 3).** `RenderRequest` (`chroma-motion` crate) gains an
+  optional absolute-frame `frame_range`, appending Remotion's own `--frames=start-end` — no
+  engine/schema changes needed at all, since the CLI already supports rendering a sub-range of an
+  existing composition. `chroma_motion_render` defaults per-scene output to
+  `<project>/motion/renders/<sceneId>.mp4`. `useMotionManifest.ts`'s `render()` now loops every
+  scene sequentially through `sceneStartFrame`/`sceneDurationFrames`; a scene failing stops the
+  loop (surfacing which one) rather than silently skipping it. Real end-to-end smoke test against
+  the actual project manifest: rendering the `hook` scene's own range produced a 4.05s file, not
+  the manifest's combined 15s. `cargo test -p chroma-motion` 7/7 (+2), `tsc` clean, `@chroma/motion`
+  419/419 unchanged. First of 3 planned phases (solo scene preview, per-card drag-to-fix next).
+
 - **2026-09-06** — **`+ Add scene` in `LayerList` (D-179).** New `manifestEdit.ts`
   `addScene(manifest, afterSceneIndex?)` appends a minimal, schema-valid scene (a short random id,
   `dur: 4`) either at the end or right after the currently-selected scene, selecting (and seeking

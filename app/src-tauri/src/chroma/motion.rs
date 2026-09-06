@@ -105,13 +105,25 @@ impl From<RenderOutcome> for MotionRenderResult {
     }
 }
 
-/// `<project>.chroma/motion/render.mp4` — the default render destination
-/// when the caller doesn't name one. A single fixed name (not timestamped):
-/// this pass is "one manifest per project", so a render at a well-known
-/// path re-render/overwrites is the right default; a save-dialog / render
-/// history is a later step.
-fn default_output_path(project_dir: &Path) -> PathBuf {
-    project_dir.join("motion").join("render.mp4")
+/// `<project>.chroma/motion/render.mp4` — the default whole-manifest render
+/// destination when the caller doesn't name one AND doesn't name a scene
+/// (`scene_id: None`). A single fixed name (not timestamped): this pass is
+/// "one manifest per project", so a render at a well-known path
+/// re-render/overwrites is the right default; a save-dialog / render history
+/// is a later step.
+///
+/// D-180 — with a `scene_id`, the default instead becomes
+/// `<project>.chroma/motion/renders/<scene_id>.mp4`: the frontend's own
+/// per-scene export loop (`packages/motion/src/useMotionManifest.ts`'s
+/// `render()`) passes the scene id but never a full path, so this is the ONE
+/// place project-relative render paths get computed — kept here (not the
+/// frontend) since only this side actually knows where the project lives
+/// (`current_project_dir`/`state::current_project`).
+fn default_output_path(project_dir: &Path, scene_id: Option<&str>) -> PathBuf {
+    match scene_id {
+        Some(id) => project_dir.join("motion").join("renders").join(format!("{id}.mp4")),
+        None => project_dir.join("motion").join("render.mp4"),
+    }
 }
 
 /// Render the current project's saved manifest via `npx remotion render`
@@ -120,9 +132,24 @@ fn default_output_path(project_dir: &Path) -> PathBuf {
 /// (`chroma_motion_save_manifest`) before calling this. Blocks on a
 /// background thread until the render finishes — no progress reporting, one
 /// render at a time (D-046).
+///
+/// D-180 — `frame_range`, an inclusive `(start, end)` ABSOLUTE composition
+/// frame range, renders only that sub-range (`RenderRequest::with_frame_range`
+/// → Remotion's own `--frames=start-end`) instead of the whole manifest.
+/// `scene_id`, when given (and `output_path` is `None`), picks
+/// [`default_output_path`]'s per-scene naming. This command stays
+/// manifest-shape agnostic exactly as its own module doc comment already
+/// promises — it never computes a scene's own frame range itself; the
+/// frontend (`packages/motion/src/useMotionManifest.ts`'s `render()`, which
+/// already owns `sceneStartFrame`/`sceneDurationFrames`) works it out and
+/// passes the two numbers straight through. Both `None` renders every frame
+/// to the single whole-manifest default path, unchanged from this command's
+/// pre-D-180 behavior.
 #[tauri::command]
 pub async fn chroma_motion_render(
     output_path: Option<String>,
+    frame_range: Option<(u32, u32)>,
+    scene_id: Option<String>,
 ) -> Result<MotionRenderResult, String> {
     let dir = current_project_dir()?;
     let manifest = manifest_path(&dir);
@@ -131,11 +158,14 @@ pub async fn chroma_motion_render(
     }
     let out = output_path
         .map(PathBuf::from)
-        .unwrap_or_else(|| default_output_path(&dir));
+        .unwrap_or_else(|| default_output_path(&dir, scene_id.as_deref()));
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    let req = RenderRequest::new(engine_dir(), manifest, out);
+    let mut req = RenderRequest::new(engine_dir(), manifest, out);
+    if let Some((start, end)) = frame_range {
+        req = req.with_frame_range(start, end);
+    }
     tauri::async_runtime::spawn_blocking(move || chroma_motion::run_render(&req))
         .await
         .map_err(|e| format!("render task panicked: {e}"))?

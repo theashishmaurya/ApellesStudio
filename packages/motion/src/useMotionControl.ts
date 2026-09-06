@@ -1141,12 +1141,16 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       // The real Remotion render — `useMotionManifest().render`, which
       // saves first if dirty, then calls `manifestIO.ts`'s `renderManifest`
       // → the `chroma_motion_render` Tauri command (a real `remotion
-      // render` subprocess). This op just `await`s it, however long that
-      // takes — no new polling machinery; see this file's own module doc
-      // comment ("motion_render's blocking-vs-polling decision") for the
-      // full reasoning, including the real (pre-existing, Motion-agnostic)
+      // render` subprocess), ONCE PER SCENE since D-180 (every scene is its
+      // own separate output video, never one combined render). This op just
+      // `await`s the whole per-scene loop, however long that takes — no new
+      // polling machinery; see this file's own module doc comment
+      // ("motion_render's blocking-vs-polling decision") for the full
+      // reasoning, including the real (pre-existing, Motion-agnostic)
       // `control.rs` 20s bridge-timeout caveat that decision doesn't paper
-      // over. Real success/failure and the real output path are surfaced
+      // over (now more likely to matter with N sequential renders instead
+      // of one — not newly introduced by D-180, just more exposed). Real
+      // success/failure and the real per-scene output paths are surfaced
       // via `render`'s own D-170 `RenderOutcome` return value — never
       // swallowed into a state field this caller has no safe way to re-read.
       motion_render: async () => {
@@ -1158,7 +1162,16 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
 
         const outcome = await cur.render();
         if (!outcome.ok || !outcome.result) return { error: outcome.error ?? 'render failed' };
-        return { outputPath: outcome.result.outputPath, stdoutTail: outcome.result.stdoutTail };
+        // D-180 — one result per scene now (Render no longer produces one
+        // combined video) — surfaced as a `results` array rather than the
+        // old single `outputPath`/`stdoutTail` pair.
+        return {
+          results: outcome.result.map((r) => ({
+            sceneId: r.sceneId,
+            outputPath: r.outputPath,
+            stdoutTail: r.stdoutTail,
+          })),
+        };
       },
     };
 

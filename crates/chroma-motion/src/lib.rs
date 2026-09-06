@@ -44,6 +44,18 @@ pub struct RenderRequest {
     /// manifest-driven render — the engine's `*Demo` compositions are
     /// dev-only living references, not render targets.
     pub composition_id: String,
+    /// D-180 — an inclusive `(start, end)` absolute-frame range, rendering
+    /// only that sub-range of the composition (Remotion's own
+    /// `--frames=<start>-<end>` CLI flag) instead of the whole thing.
+    /// `None` renders every frame, unchanged from this struct's original
+    /// shape. Deliberately just two numbers, not a scene id/index — this
+    /// crate stays manifest-shape agnostic (this module's own doc comment:
+    /// "no manifest schema validation beyond is this parseable JSON"); the
+    /// frontend already owns `sceneStartFrame`/`sceneDurationFrames`
+    /// (`packages/motion-engine/src/engine/build.ts`) and computes the range
+    /// itself before this request is ever built — duplicating that scene
+    /// math in Rust would just drift from the one real source of it.
+    pub frame_range: Option<(u32, u32)>,
 }
 
 impl RenderRequest {
@@ -57,7 +69,15 @@ impl RenderRequest {
             manifest_path: manifest_path.into(),
             output_path: output_path.into(),
             composition_id: "Animation".to_string(),
+            frame_range: None,
         }
+    }
+
+    /// Builder for D-180's per-scene export — see `frame_range`'s own doc
+    /// comment for why this takes raw frame numbers, not a scene reference.
+    pub fn with_frame_range(mut self, start: u32, end: u32) -> Self {
+        self.frame_range = Some((start, end));
+        self
     }
 }
 
@@ -102,6 +122,9 @@ pub fn build_command(req: &RenderRequest) -> Command {
         &req.output_path.to_string_lossy(),
         &format!("--props={}", req.manifest_path.display()),
     ]);
+    if let Some((start, end)) = req.frame_range {
+        cmd.arg(format!("--frames={start}-{end}"));
+    }
     cmd
 }
 
@@ -166,6 +189,39 @@ mod tests {
                 "--props=/tmp/manifest.json",
             ]
         );
+    }
+
+    #[test]
+    fn build_command_appends_frames_flag_when_a_range_is_set() {
+        let req = RenderRequest::new("/engine", "/tmp/manifest.json", "/tmp/out.mp4")
+            .with_frame_range(120, 299);
+        let cmd = build_command(&req);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "remotion",
+                "render",
+                "Animation",
+                "/tmp/out.mp4",
+                "--props=/tmp/manifest.json",
+                "--frames=120-299",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_command_omits_frames_flag_by_default() {
+        let req = RenderRequest::new("/engine", "/tmp/manifest.json", "/tmp/out.mp4");
+        let cmd = build_command(&req);
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(!args.iter().any(|a| a.starts_with("--frames=")));
     }
 
     #[test]

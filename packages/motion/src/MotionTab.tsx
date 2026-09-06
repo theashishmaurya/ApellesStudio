@@ -375,9 +375,18 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             render failed: {m.renderError}
           </span>
         )}
-        {!m.saveError && !m.renderError && m.renderResult && (
-          <span className="text-[11px] text-text-secondary truncate max-w-[280px]" title={m.renderResult.outputPath}>
-            rendered → {m.renderResult.outputPath}
+        {/* D-180 — Render now produces one file PER SCENE, never one
+           combined video; this summarizes the whole batch rather than a
+           single path. `title` carries the full per-scene breakdown for a
+           hover, since the truncated one-line summary can't show every
+           path for a manifest with more than a couple of scenes. */}
+        {!m.saveError && !m.renderError && m.renderResult && m.renderResult.length > 0 && (
+          <span
+            className="text-[11px] text-text-secondary truncate max-w-[280px]"
+            title={m.renderResult.map((r) => `${r.sceneId} → ${r.outputPath}`).join('\n')}
+          >
+            rendered {m.renderResult.length} scene{m.renderResult.length === 1 ? '' : 's'} →{' '}
+            {m.renderResult[0].outputPath.replace(/[^/\\]+$/, '')}
           </span>
         )}
         <Button variant="secondary" disabled={!m.dirty || m.saving || !!m.parseError} onClick={m.save}>

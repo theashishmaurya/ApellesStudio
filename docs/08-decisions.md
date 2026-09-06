@@ -15767,3 +15767,97 @@ D-178 authored first in this pass) — **D-179** is free, no separate
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-180 — Phase 1 of 3: Render exports every scene as its own separate video file
+
+**Context.** Owner, live, reacting to D-179's own just-shipped `+ Add scene`
+button: "scene should be a seperate compotition all together and exported as
+seperate video not like on top of it" — the new scene had landed in the SAME
+sequential timeline (extending the combined video's total length), when the
+intent was: scenes stay organized in one project, but each renders to its OWN
+output file. Confirmed via `AskUserQuestion` (two rounds) that the owner wants
+BOTH per-scene export (this decision) AND per-scene solo preview/scrubbing
+(D-181, next), plus a separate per-card drag-to-fix for the `layers`
+primitive (D-182) — planned together as a 3-phase initiative, researched via
+two parallel `Explore` agent passes (the render/build pipeline; the `Layers`
+primitive's card structure and the `Selection` type's extension cost) before
+committing to an approach. This entry covers Phase 1 only.
+
+**The key finding that makes this low-risk:** Remotion's `<Player>`/CLI
+always address the composition in ABSOLUTE frames (`0..totalFrames(manifest)`)
+regardless of what's exported — and its render CLI ALREADY supports
+`--frames=<start>-<end>` to render just a sub-range of an EXISTING
+composition (confirmed by reading `node_modules/@remotion/cli/dist/
+get-cli-options.js`'s own `getAndValidateFrameRange`). So "each scene exports
+separately" needed ZERO engine/schema changes — `Video.tsx`'s `<Series>`
+sequencing and `build.ts`'s `sceneStartFrame`/`sceneDurationFrames` (already
+the exact source of truth `KeyframeTimeline.tsx`'s own scene-boundary lines
+use) are reused verbatim to compute each scene's own absolute window; only
+the RENDER INVOCATION changes, not what's being rendered.
+
+**Rust (`crates/chroma-motion/src/lib.rs`).** `RenderRequest` gains
+`frame_range: Option<(u32, u32)>` (+ a `with_frame_range` builder);
+`build_command` appends `--frames=<start>-<end>` when set. Deliberately just
+two raw numbers, not a scene id/index — this crate stays manifest-shape
+agnostic (its own module doc comment: "no manifest schema validation beyond
+is this parseable JSON"); the frontend already owns the scene-duration math
+and passes the two numbers straight through, so duplicating that math in
+Rust would just drift from the one real source of it.
+
+**Tauri command (`app/src-tauri/src/chroma/motion.rs`).** `chroma_motion_render`
+gains `frame_range: Option<(u32,u32)>` and `scene_id: Option<String>` params.
+`default_output_path` now branches on `scene_id`: given one, defaults to
+`<project>.chroma/motion/renders/<scene_id>.mp4` (a new `renders/`
+subfolder); `None` keeps the old single `motion/render.mp4` default,
+unchanged. Path construction stays entirely on the Rust side — the frontend
+never builds a path itself, since only Rust knows where the project lives
+(`current_project_dir`). No batching added to the Rust side at all: the
+command still does exactly ONE render per call, scoped by whatever range/id
+it's given; the FRONTEND owns the per-scene loop.
+
+**Frontend.** `manifestIO.ts`'s `renderManifest` gains `frameRange`/`sceneId`
+params, passed straight through to `invoke`. `useMotionManifest.ts`'s
+`render()`: after the existing save-if-dirty step (unchanged), loops
+`manifest.scenes` SEQUENTIALLY (never parallel — a render is CPU/GPU-heavy;
+overlapping N of them is a real footgun), computing each scene's own
+`[sceneStartFrame, sceneStartFrame+sceneDurationFrames-1]` window and calling
+`renderManifest(undefined, [start,end], scene.id)`. `RenderOutcome.result`
+and the `renderResult` state both change shape from one `MotionRenderResult`
+to `SceneRenderResult[]` (adds `sceneId` client-side — the backend command
+itself never knows scene identity, matching its own manifest-agnostic
+design). **A scene's render failing STOPS the loop** rather than silently
+skipping it (unlike a geometry clamp elsewhere in this package, a failed
+video render is not something to paper over — the owner needs to know
+exactly which scene failed) — but whichever scenes DID finish before the
+failure are still surfaced via `setRenderResult` in the `catch` branch, not
+discarded. `onRendered` (the app-layer Sources-pool hook, D-062) is now
+called once per scene, so every scene's own file lands there individually.
+`useMotionControl.ts`'s `motion_render` MCP op updated to return a
+`results: [{sceneId, outputPath, stdoutTail}]` array instead of a single
+`outputPath`/`stdoutTail` pair. `MotionTab.tsx`'s render-result strip now
+summarizes the batch ("rendered 3 scenes → …/renders/") with the full
+per-scene breakdown in its `title` tooltip.
+
+**Verified.** `cargo test -p chroma-motion` — 7/7 (2 new: `--frames` argv
+shape present when a range is set, absent by default). `cargo check -p
+RapidRAW` clean. `npx tsc --noEmit -p packages/motion` clean; `app` (64)
+unchanged. `npm test --workspace @chroma/motion` — 419/419, unchanged (this
+phase is imperative orchestration, not new pure logic — no new JS/TS unit
+tests expected or added). **Real end-to-end smoke test**, run directly
+against the actual "prompt stack" project manifest (not the harness sample):
+`npx remotion render Animation /tmp/….mp4 --props=<real manifest> --frames=0-119`
+(the `hook` scene's own absolute range) rendered exactly 120/120 frames, and
+`ffprobe` confirmed the output's real duration is **4.05s** — the `hook`
+scene's own `dur:4`, not the manifest's combined 15s. Confirms the core new
+capability end-to-end without needing the full app-UI round-trip for this
+smoke check (Phases 2/3 still get a real app relaunch once all three land,
+since Rust changes can't be verified in the browser-only harness).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: `git log --oneline -1` shows `8cfe448` (D-178/D-179) — **D-180**
+is free, no `B`-number (a missing capability, not a defect).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
