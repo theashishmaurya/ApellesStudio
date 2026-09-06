@@ -40,7 +40,11 @@
  * appear/disappear as keys are added/removed — the SAME "badge only when
  * count > 0" precedent D-160 already set for `LayerList`'s own badges, now
  * applied to whether a row exists at all rather than just whether it shows
- * a number.
+ * a number. D-178/B-067 adds a SECOND per-layer lane kind, `'active'` — a
+ * `layers`/`layerstack` primitive's own `active: [{at,i}]` schedule, an
+ * entirely separate keyed array from `transform.keys` that this timeline
+ * previously had no row for at all (see that decision's own writeup for
+ * why: it was completely invisible/unretimeable outside a raw JSON edit).
  *
  * **Shared time axis, independent zoom.** Every row (and the ruler) renders
  * its own track div at the SAME pixel width — `timelineZoom.ts`'s
@@ -264,6 +268,8 @@ function labelForLaneKind(kind: KeyframeLane['kind']): string {
       return 'Move 3D camera keyframe';
     case 'layer':
       return 'Move layer keyframe';
+    case 'active':
+      return 'Move active-index keyframe';
   }
 }
 
@@ -278,13 +284,17 @@ function labelForLaneKind(kind: KeyframeLane['kind']): string {
  *  `LayerList.tsx`, which already imports FROM `keyframeVisibility.ts`). */
 function laneLabel(manifest: Manifest, lane: KeyframeLane): string {
   const scene = manifest.scenes[lane.sceneIndex];
+  const layer = lane.layerIndex !== undefined ? scene?.layers?.[lane.layerIndex] : undefined;
   const kind =
     lane.kind === 'camera'
       ? 'Camera'
       : lane.kind === 'scene3d-camera'
         ? '3D Camera'
-        : lane.layerIndex !== undefined && scene?.layers?.[lane.layerIndex]
-          ? layerLabel(scene.layers[lane.layerIndex])
+        : layer
+          // D-178/B-067 — 'active' gets a ' · Active' suffix so it never
+          // reads identically to a 'layer' (transform.keys) lane on the
+          // SAME layer, which would otherwise show the exact same label.
+          ? `${layerLabel(layer)}${lane.kind === 'active' ? ' · Active' : ''}`
           : 'Layer';
   return manifest.scenes.length > 1 ? `${scene?.id ?? '?'} · ${kind}` : kind;
 }
@@ -802,7 +812,7 @@ export function KeyframeTimeline({
                             'absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border',
                             keySelected
                               ? 'border-accent bg-button-text ring-2 ring-accent'
-                              : lane.kind === 'layer'
+                              : lane.kind === 'layer' || lane.kind === 'active'
                                 ? 'border-accent bg-accent'
                                 : 'border-text-secondary bg-bg-primary',
                             draggable ? 'cursor-ew-resize' : 'cursor-pointer',

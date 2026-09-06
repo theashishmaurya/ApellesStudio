@@ -3,6 +3,7 @@ import { sample } from '@chroma/motion-engine/src/engine/sample';
 import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
 import {
   layerKeyCount,
+  layerActiveKeyCount,
   cameraKeyCount,
   scene3dCameraKeyCount,
   keyframeLanes,
@@ -25,9 +26,11 @@ import {
 // `sample`'s own real shape (`packages/motion-engine/src/engine/sample.ts`),
 // worked out by hand once here rather than re-derived in every test below:
 // fps 30; scene 0 "hook" dur 4s -> 120 frames, camera keys at 0/0.4/1.6s ->
-// frames 0/12/48; scene 1 "stack" dur 6s -> 180 frames, no camera; scene 2
-// "space" dur 5s -> 150 frames, scene3d camera keys at 0/5s -> frames 0/150
-// relative to its own start. Scene starts: 0, 120, 300. Total: 450.
+// frames 0/12/48; scene 1 "stack" dur 6s -> 180 frames, no camera, layer 1
+// (the "layers" primitive) has an `active` step-schedule [{at:2.5,i:2},
+// {at:4,i:0}] -> absolute frames 195/240 (D-178/B-067); scene 2 "space" dur
+// 5s -> 150 frames, scene3d camera keys at 0/5s -> frames 0/150 relative to
+// its own start. Scene starts: 0, 120, 300. Total: 450.
 
 function withLayerKeys(keys: { at: number; x?: number }[]): Manifest {
   const next = structuredClone(sample);
@@ -52,6 +55,22 @@ describe('layerKeyCount', () => {
   });
 });
 
+describe('layerActiveKeyCount (D-178/B-067)', () => {
+  it('is 0 for a layer with no active field at all', () => {
+    expect(layerActiveKeyCount(sample.scenes[0].layers![0])).toBe(0);
+  });
+
+  it('is 0 for the plain-number form (nothing to show on a timeline)', () => {
+    const m = structuredClone(sample);
+    (m.scenes[0].layers![0] as unknown as Record<string, unknown>).active = 2;
+    expect(layerActiveKeyCount(m.scenes[0].layers![0])).toBe(0);
+  });
+
+  it("counts sample's own real active step-schedule (stack scene, layers primitive)", () => {
+    expect(layerActiveKeyCount(sample.scenes[1].layers![1])).toBe(2);
+  });
+});
+
 describe('cameraKeyCount / scene3dCameraKeyCount', () => {
   it('counts scene 0 (hook)\'s 2D camera keys', () => {
     expect(cameraKeyCount(sample.scenes[0])).toBe(3);
@@ -71,13 +90,15 @@ describe('cameraKeyCount / scene3dCameraKeyCount', () => {
 });
 
 describe('keyframeLanes', () => {
-  it('produces one lane per keyed camera/3D-camera, scene order then camera-before-layers-before-3D per scene', () => {
+  it('produces one lane per keyed camera/3D-camera/active-schedule, scene order then camera-before-layers-before-3D per scene', () => {
     // sample: scene 0 (hook) has a keyed 2D camera and NO keyed layers
     // (neither of its two layers carries transform.keys); scene 1 (stack)
-    // has no camera and no keyed layers; scene 2 (space) has a keyed 3D
-    // camera and no 2D layers at all.
+    // has no camera, no transform.keys, but layer 1 (the "layers"
+    // primitive) has a real `active` step-schedule (D-178/B-067); scene 2
+    // (space) has a keyed 3D camera and no 2D layers at all.
     expect(keyframeLanes(sample)).toEqual([
       { sceneIndex: 0, kind: 'camera' },
+      { sceneIndex: 1, kind: 'active', layerIndex: 1 },
       { sceneIndex: 2, kind: 'scene3d-camera' },
     ]);
   });
@@ -90,8 +111,26 @@ describe('keyframeLanes', () => {
     expect(after).toContainEqual({ sceneIndex: 0, kind: 'layer', layerIndex: 0 });
   });
 
-  it('never produces a lane for a camera/3D-camera/layer with 0 keys', () => {
-    const m: Manifest = { ...sample, scenes: [sample.scenes[1]] }; // "stack": no camera, no keyed layers
+  it('a layer with BOTH transform.keys and an active schedule gets its own two adjacent lanes, never merged', () => {
+    const withKeys = withLayerKeys([{ at: 0, x: 0 }]); // attaches to scene 0, layer 0 — no active field there
+    const m = structuredClone(withKeys);
+    (m.scenes[0].layers![0] as unknown as Record<string, unknown>).active = [{ at: 1, i: 0 }];
+    const lanes = keyframeLanes(m);
+    expect(lanes).toContainEqual({ sceneIndex: 0, kind: 'layer', layerIndex: 0 });
+    expect(lanes).toContainEqual({ sceneIndex: 0, kind: 'active', layerIndex: 0 });
+    // the 'layer' lane comes first, immediately followed by 'active' — this
+    // exact layer's own two rows stay adjacent even though scene 0 also has
+    // an unrelated camera lane and a second, un-keyed layer.
+    const layerIdx = lanes.findIndex((l) => l.kind === 'layer' && l.layerIndex === 0);
+    expect(lanes[layerIdx + 1]).toEqual({ sceneIndex: 0, kind: 'active', layerIndex: 0 });
+  });
+
+  it('never produces a lane for a camera/3D-camera/layer/active with 0 keys', () => {
+    // scene 1 ("stack") stripped of its one real active schedule — no
+    // camera, no transform.keys, and now no active schedule either.
+    const scene = structuredClone(sample.scenes[1]);
+    delete (scene.layers![1] as unknown as Record<string, unknown>).active;
+    const m: Manifest = { ...sample, scenes: [scene] };
     expect(keyframeLanes(m)).toEqual([]);
   });
 
@@ -171,6 +210,21 @@ describe('laneKeyMarkers', () => {
     expect(laneKeyMarkers(sample, { sceneIndex: 99, kind: 'camera' })).toEqual([]);
     expect(laneKeyMarkers(sample, { sceneIndex: 0, kind: 'layer', layerIndex: 99 })).toEqual([]);
   });
+
+  it("converts an 'active' lane's own step-schedule to absolute frames, offset by its scene's start (D-178/B-067)", () => {
+    // sample: scene 1 ("stack") starts at frame 120; active [{at:2.5},{at:4}]
+    // -> 75/120 frames -> absolute 195/240.
+    expect(laneKeyMarkers(sample, { sceneIndex: 1, kind: 'active', layerIndex: 1 })).toEqual([
+      { sceneIndex: 1, keyIndex: 0, frame: 195, kind: 'active' },
+      { sceneIndex: 1, keyIndex: 1, frame: 240, kind: 'active' },
+    ]);
+  });
+
+  it("an 'active' lane never picks up a sibling layer's schedule, or that same layer's own transform.keys", () => {
+    const m = withLayerKeys([{ at: 0, x: 0 }]); // scene 0, layer 0 — no active field
+    expect(laneKeyMarkers(m, { sceneIndex: 0, kind: 'active', layerIndex: 0 })).toEqual([]);
+    expect(laneKeyMarkers(sample, { sceneIndex: 1, kind: 'active', layerIndex: 0 })).toEqual([]); // layer 0 is the plain text layer
+  });
 });
 
 describe('selectionForLane', () => {
@@ -207,6 +261,17 @@ describe('selectionForLane', () => {
   it('is null for a lane whose scene/layerIndex no longer resolves', () => {
     expect(selectionForLane(sample, { sceneIndex: 99, kind: 'camera' })).toBeNull();
     expect(selectionForLane(sample, { sceneIndex: 0, kind: 'layer', layerIndex: 99 })).toBeNull();
+  });
+
+  it("resolves an 'active' lane to the SAME {kind: layer} selection a 'layer' lane on it would (D-178/B-067)", () => {
+    expect(selectionForLane(sample, { sceneIndex: 1, kind: 'active', layerIndex: 1 })).toEqual({
+      sceneIndex: 1,
+      target: { kind: 'layer', index: 1, id: undefined },
+    });
+  });
+
+  it('is null for an active lane whose layerIndex no longer resolves', () => {
+    expect(selectionForLane(sample, { sceneIndex: 1, kind: 'active', layerIndex: 99 })).toBeNull();
   });
 });
 
@@ -318,6 +383,16 @@ describe('laneKeyAtSeconds (Phase 5b — box-select + nudge, a nudge\'s own drag
   it('is null for a scene3d-camera lane on a scene with no scene3d at all', () => {
     expect(laneKeyAtSeconds(sample, { sceneIndex: 0, kind: 'scene3d-camera' }, 0)).toBeNull();
   });
+
+  it("reads an 'active' lane's own step-schedule entry at seconds, exactly (D-178/B-067)", () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 1, kind: 'active', layerIndex: 1 }, 0)).toBe(2.5);
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 1, kind: 'active', layerIndex: 1 }, 1)).toBe(4);
+  });
+
+  it('is null for an active lane with an out-of-range keyIndex or layerIndex', () => {
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 1, kind: 'active', layerIndex: 1 }, 99)).toBeNull();
+    expect(laneKeyAtSeconds(sample, { sceneIndex: 1, kind: 'active', layerIndex: 99 }, 0)).toBeNull();
+  });
 });
 
 describe('sameKeySelectionEntry / toggleKeySelectionEntry / unionKeySelectionEntries (Phase 5b — the key-selection model)', () => {
@@ -381,7 +456,7 @@ describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pur
   });
 
   it('keysInMarqueeRect finds a marker whose hit-box the rect fully contains', () => {
-    const lanes = keyframeLanes(sample); // [{sceneIndex:0,kind:'camera'}, {sceneIndex:2,kind:'scene3d-camera'}]
+    const lanes = keyframeLanes(sample); // [{sceneIndex:0,kind:'camera'}, {sceneIndex:1,kind:'active'}, {sceneIndex:2,kind:'scene3d-camera'}]
     const trackW = 450; // 1px/frame, so frame 0's marker centers at x = labelWidth
     const markerCenter = keyMarkerContentRect(0, 0, total, trackW, layout);
     const rect = { left: markerCenter.left - 5, top: markerCenter.top - 5, width: 20, height: 20 };
@@ -399,8 +474,8 @@ describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pur
     expect(hits).toEqual([]);
   });
 
-  it('keysInMarqueeRect scopes hits to the CORRECT row — a rect over row 0 never catches row 1\'s marker', () => {
-    const lanes = keyframeLanes(sample); // row 0: scene0 camera; row 1: scene2 3D camera
+  it('keysInMarqueeRect scopes hits to the CORRECT row — a rect over row 0 never catches a LATER row\'s marker', () => {
+    const lanes = keyframeLanes(sample); // row 0: scene0 camera; row 1: scene1 active; row 2: scene2 3D camera
     const trackW = 450;
     // scene 2's 3D camera key 0 is at absolute frame 300 (see laneKeyMarkers
     // tests above) — put a WIDE rect at that x position but only over row 0's
@@ -414,9 +489,9 @@ describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pur
   it('keysInMarqueeRect can select MULTIPLE keys across multiple rows in one rect', () => {
     const lanes = keyframeLanes(sample);
     const trackW = 450;
-    // a rect spanning the FULL track width and BOTH rows' vertical extent
-    // catches every key in the manifest (scene 0's 3 camera keys + scene
-    // 2's 2 3D-camera keys).
+    // a rect spanning the FULL track width and every row's vertical extent
+    // catches every key in the manifest (scene 0's 3 camera keys + scene 1's
+    // 2 active-schedule keys + scene 2's 2 3D-camera keys).
     const rect = {
       left: layout.labelWidth,
       top: layout.laneAreaTop,
@@ -424,7 +499,7 @@ describe('keyMarkerContentRect / keysInMarqueeRect (Phase 5b — box-select, pur
       height: layout.laneHeight * lanes.length,
     };
     const hits = keysInMarqueeRect(sample, lanes, rect, total, trackW, layout);
-    expect(hits).toHaveLength(5);
+    expect(hits).toHaveLength(7);
   });
 
   it('is empty for zero lanes', () => {

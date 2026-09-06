@@ -668,6 +668,53 @@ export function moveLayerTransformKeyAt(
   return setLayerTransformKeys(manifest, selection, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
 }
 
+/** One step of a `layers`/`layerstack` primitive's `active` schedule
+ *  (`schema.ts`'s `Active = number | {at,i}[]` — this is the array form's
+ *  own element shape; there is nothing to show on a timeline for the plain-
+ *  number form, which never changes over time). */
+export interface ActiveKey {
+  at: number;
+  i: number;
+}
+
+/** D-178/B-067 — the `active` step-schedule a selection's layer currently
+ *  carries, or `[]` for a selection that doesn't resolve to a layer, has no
+ *  `active` at all, or has the plain-number (non-schedule) form. The same
+ *  "reads as un-keyed rather than a crash" floor `layerTransformKeys` above
+ *  already holds — `keyframeVisibility.ts`'s `laneKeyMarkers`/
+ *  `laneKeyAtSeconds` read through this exactly the way they already read
+ *  through `layerTransformKeys` for `kind:'layer'` lanes. */
+export function layerActiveSchedule(manifest: Manifest, selection: Selection): ActiveKey[] {
+  const found = selectedLayer(manifest, selection);
+  const a = found?.raw.active;
+  return Array.isArray(a) ? (a as ActiveKey[]) : [];
+}
+
+/** The write half of `layerActiveSchedule` above — through the generic
+ *  `setLayerField` (unlike `transform.keys`, `active` is a top-level layer
+ *  field, not nested under a wrapper object, so there is no `setLayer*Field`
+ *  indirection to go through). An empty array deletes the field entirely,
+ *  matching `setLayerTransformKeys`'s own "an empty array and no field mean
+ *  the same thing" convention. */
+export function setLayerActiveSchedule(manifest: Manifest, selection: Selection, schedule: ActiveKey[]): Manifest {
+  return setLayerField(manifest, selection, 'active', schedule.length > 0 ? schedule : undefined);
+}
+
+/** The `layer.active` schedule's own `moveKeyAt` wrapper — same shape as
+ *  `moveLayerTransformKeyAt` above, retiming one step's `at` (its `i` target
+ *  index is untouched; `moveKeyAt` only ever writes the `at` field back). */
+export function moveLayerActiveKeyAt(
+  manifest: Manifest,
+  selection: Selection,
+  keyIndex: number,
+  newAtSeconds: number,
+): Manifest {
+  const scene = selectedScene(manifest, selection.sceneIndex);
+  if (!scene) return manifest;
+  const keys = layerActiveSchedule(manifest, selection);
+  return setLayerActiveSchedule(manifest, selection, moveKeyAt(keys, keyIndex, newAtSeconds, scene.dur));
+}
+
 /** The `scene.camera` (2D) wrapper around `moveKeyAt` — same shape as
  *  `moveLayerTransformKeyAt` above, for the camera's own key array instead
  *  of a layer's. No-op for a scene that doesn't exist or has no camera at
@@ -708,8 +755,8 @@ export function moveCamera3dKeyAt(
  *  other's own type declaration. */
 export interface KeyMoveTarget {
   sceneIndex: number;
-  kind: 'camera' | 'scene3d-camera' | 'layer';
-  /** Only meaningful for `kind: 'layer'` — the index into `scene.layers[]`. */
+  kind: 'camera' | 'scene3d-camera' | 'layer' | 'active';
+  /** Only meaningful for `kind: 'layer'`/`'active'` — the index into `scene.layers[]`. */
   layerIndex?: number;
   /** The key's own index into ITS array, captured once at drag-start from
    *  the STABLE manifest — never re-derived mid-gesture (same discipline
@@ -800,6 +847,10 @@ export function moveKeysByDelta(manifest: Manifest, targets: KeyMoveTarget[], de
       const selection: Selection = { sceneIndex, target: { kind: 'layer', index: layerIndex } };
       const keys = layerTransformKeys(next, selection);
       next = setLayerTransformKeys(next, selection, moveKeysAt(keys, group, deltaSeconds, scene.dur));
+    } else if (kind === 'active' && layerIndex !== undefined) {
+      const selection: Selection = { sceneIndex, target: { kind: 'layer', index: layerIndex } };
+      const keys = layerActiveSchedule(next, selection);
+      next = setLayerActiveSchedule(next, selection, moveKeysAt(keys, group, deltaSeconds, scene.dur));
     }
   }
   return next;
@@ -1248,6 +1299,62 @@ export function addLayer(
     manifest: next,
     selection: { sceneIndex, target: { kind: 'layer', index: scene.layers.length - 1, id } },
   };
+}
+
+/** A short, random scene id — `genLayerId`'s own convention (short + random,
+ *  not a `crypto` id: nothing here needs that property), NOT reused as the
+ *  same function since a layer id and a scene id are unrelated identity
+ *  spaces this file otherwise never conflates. */
+function genSceneId(): string {
+  return `scene-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * D-179 (owner, live: "we need a way to create multiple scene in the same
+ * one… we should be able to create a scene and edit it") — appends a new,
+ * minimal-but-valid scene (`{id, dur: 4}`, no camera/layers of its own) to
+ * `manifest.scenes`, either at the very END (default) or right after
+ * `afterSceneIndex` when the caller has one (`LayerList.tsx`'s "+ Scene"
+ * button passes the scene the click happened nearest, so a new scene lands
+ * next to what the owner is looking at rather than always at the bottom of
+ * a long list). Mirrors `addLayer`'s own shape exactly: returns the new
+ * `Manifest` AND the `Selection` pointing at what was just added, so the
+ * caller selects it immediately — the Inspector then shows its `dur`/`bg`/
+ * `grain`/`vignette`/`transition` fields with no second click, the SAME
+ * "here is your new thing, edit it" floor `addLayer`'s own doc comment
+ * already established.
+ *
+ * A short, RANDOM id, not a blank one or a counted "Scene 2"/"Scene 3" —
+ * `scene.id` is `z.string()` with no `.min(1)`, so an empty string would
+ * parse, but every reader of this schema already treats `id` as the
+ * scene's own display identity (`KeyframeTimeline.tsx`'s `laneLabel`,
+ * `LayerList.tsx`'s own row, `sceneIndexAtFrame`'s callers) — shipping one
+ * indistinguishable from every other blank scene the moment a manifest has
+ * two would be a real regression. A counter-based name was considered and
+ * rejected: it drifts the instant a scene is reordered or deleted, and
+ * nothing in this file tracks a running count today (this package has no
+ * scene-delete or scene-reorder op yet either — out of THIS pass's own
+ * scope, the owner only asked to CREATE and edit).
+ *
+ * **Renaming a scene's `id` stays out of Inspector scope**, unchanged by
+ * this function — `propCatalog.ts`'s own `SCENE_FIELDS` doc comment already
+ * calls this out as deliberate ("a rename here needs to be a deliberate,
+ * separate operation"); the raw-JSON textarea remains the only way to
+ * rename one, exactly as it already was for every hand-authored scene.
+ *
+ * No out-of-range floor needed the way `addLayer`'s `sceneIndex` guard is:
+ * an out-of-range `afterSceneIndex` (stale/undefined) simply falls back to
+ * appending at the end — there is no "selection doesn't resolve" failure
+ * mode here the way there is for a layer insert into an ALREADY-existing
+ * scene, since this function creates its own target from nothing.
+ */
+export function addScene(manifest: Manifest, afterSceneIndex?: number): { manifest: Manifest; selection: Selection } {
+  const next = clone(manifest);
+  const scene: Scene = { id: genSceneId(), dur: 4 };
+  const insertAt =
+    afterSceneIndex !== undefined && next.scenes[afterSceneIndex] ? afterSceneIndex + 1 : next.scenes.length;
+  next.scenes.splice(insertAt, 0, scene);
+  return { manifest: next, selection: { sceneIndex: insertAt, target: { kind: 'scene' } } };
 }
 
 /**

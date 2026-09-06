@@ -940,3 +940,13 @@ status: fixed (2026-09-06, D-176) · severity: medium (cosmetic but actively mis
 - **cause:** `recomputeBoxes` (measures each selection's real `[data-motion-box]` DOM and sets the drawn outline state) only re-ran on a `selections` change or the player's own `frameupdate`/`scalechange` events — never on `onTransientChange`, which is what a drag actually calls on every `pointermove`.
 - **fix:** `onPointerMove`'s move/resize branches now call `requestAnimationFrame(recomputeBoxes)` right after `onTransientChange(...)` — one frame's grace for the re-render to land, then re-measure. `recomputeBoxes` added to the housing effect's dependency array.
 - **verification:** live, in `app/motion-harness.html` — dragged the `emphasis` layer's resize handle from 520×130 down to ~108×15; the drawn outline shrank in sync, matching the Inspector's own W/H fields at every point checked.
+
+## B-067 — The Inspector's `layers`/`layerstack` "Active index" field silently destroyed a real `active` step-schedule
+status: fixed (2026-09-06, D-178) · severity: high (data loss with no warning — a single click into the wrong field and a save wipes out real keyframe data) · area: `packages/motion/src/propCatalog.ts`
+- **found:** 2026-09-06, owner live, on a real project manifest — "any way to expose these layer as well as you can see some things are off is there anyway i can fix it?"
+- **repro:** select a `layers`/`layerstack` layer whose `active` field is a real `[{at,i}]` step-schedule (not a plain number); scroll the Inspector.
+- **expected:** exactly one editor for the `active` key.
+- **actual:** TWO — `timingFields`'s correct generic `active: {kind:'json'}` (labelled "Active (index or schedule)", under TIMING) AND a per-primitive `active: {kind:'number'}` override (labelled "Active index", under SOURCE) — both bound to the same manifest key. Typing into the number field overwrites the WHOLE array with a plain number, silently destroying the schedule.
+- **cause:** `PRIMITIVE_FIELDS.layers`/`PRIMITIVE_FIELDS.layerstack` each declared their own `active` entry, unaware `timingFields` (concatenated onto every primitive's own list by `fieldsForPrimitive`) already covers the same key correctly for both shapes `Active` (`schema.ts`) allows.
+- **fix:** deleted the destructive per-primitive override from both `PRIMITIVE_FIELDS.layers` and `PRIMITIVE_FIELDS.layerstack` — the generic `timingFields` json field is now the only editor.
+- **verification:** live, in `app/motion-harness.html` — selecting the `layers` layer now shows exactly one "Active (index or schedule)" field, correctly populated with `[{"at":2.5,"i":2},{"at":4,"i":0}]`; no SOURCE section, no second number field.

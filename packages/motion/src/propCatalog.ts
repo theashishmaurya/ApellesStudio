@@ -60,7 +60,13 @@ export interface FieldSpec {
   group: 'source' | 'layout' | 'fill' | 'timing' | 'content';
 }
 
-/** every layer (any `use:`) gets these — generic adapter's `at`/`dur`/`active` */
+/** every layer (any `use:`) gets these — generic adapter's `at`/`dur`/`active`.
+ *  `active` is THE ONE editor for that key (D-178/B-067) — `layers`/
+ *  `layerstack` used to ALSO carry their own `kind:'number'` override of the
+ *  same key, which silently destroyed a `[{at,i}]` step-schedule the moment
+ *  it was touched (a plain number overwrites the whole array). Removed from
+ *  both, not fixed in place, since this `json` field already handles both
+ *  shapes `Active` (`schema.ts`) allows. */
 const timingFields: FieldSpec[] = [
   { key: 'at', label: 'Start (s)', kind: 'number', group: 'timing' },
   { key: 'dur', label: 'Duration (s)', kind: 'number', group: 'timing' },
@@ -124,7 +130,6 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
   layers: [
     { key: 'items', label: 'Items', kind: 'json', group: 'content' },
     { key: 'stagger', label: 'Stagger', kind: 'number', group: 'timing' },
-    { key: 'active', label: 'Active index', kind: 'number', group: 'source' },
     { key: 'callout', label: 'Callout', kind: 'string', group: 'content' },
     { key: 'x', label: 'X', kind: 'number', group: 'layout' },
     { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
@@ -158,7 +163,6 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'gap', label: 'Gap', kind: 'number', group: 'layout' },
     { key: 'size', label: 'Size', kind: 'vec', components: ['W', 'H'], group: 'layout' },
     { key: 'position', label: 'Position', kind: 'vec', components: ['X', 'Y', 'Z'], group: 'layout' },
-    { key: 'active', label: 'Active index', kind: 'number', group: 'source' },
     { key: 'lift', label: 'Lift', kind: 'number', group: 'layout' },
   ],
 };

@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **`+ Add scene` in `LayerList` (D-179).** New `manifestEdit.ts`
+  `addScene(manifest, afterSceneIndex?)` appends a minimal, schema-valid scene (a short random id,
+  `dur: 4`) either at the end or right after the currently-selected scene, selecting (and seeking
+  to) it immediately — `addLayer`'s own established shape. Multi-scene support was already
+  complete everywhere else (timeline, player, LayerList grouping); the only real gap was that
+  nothing could CREATE one. Live-verified: new scene inserted in the right place, Inspector
+  showed its real fields with no second click, total duration and every downstream reader
+  updated with zero changes of their own. `tsc` clean, `@chroma/motion` 419/419 (+7).
+
+- **2026-09-06** — **B-067: a destructive duplicate Inspector field, AND the `layers` primitive's
+  `active` step-schedule exposed on the Keyframe timeline (D-178).** `propCatalog.ts` had TWO
+  competing editors for `layers`/`layerstack`'s `active` key — a correct generic JSON field and a
+  destructive `kind:'number'` override that silently overwrote a real `[{at,i}]` schedule the
+  moment it was touched. Deleted the destructive one. Separately: that same schedule had NO
+  Keyframe-timeline row at all (unlike Camera) — new `'active'` lane kind threaded through
+  `keyframeVisibility.ts`/`manifestEdit.ts`/`KeyframeTimeline.tsx`, parallel to (never merged
+  with) the existing `transform.keys`-driven `'layer'` lane, so a layer with both kinds of keys
+  gets two clearly-labelled adjacent rows. Live-verified both fixes, including a real end-to-end
+  drag-to-retime of an `active` key through the actual UI. `tsc` clean, `@chroma/motion` 412/412
+  (+24).
+
 - **2026-09-06** — **`LayerList` drag-to-reorder + real per-layer thumbnails (D-177).** New
   `manifestEdit.ts` `reorderLayers(manifest, sceneIndex, kind, fromIndex, toIndex)` — a pure,
   field-preserving array move within one scene's `layers[]` or `scene3d.children[]` (never across

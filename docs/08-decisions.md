@@ -15582,3 +15582,188 @@ shipped to file a bug against).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-178 — B-067: the `layers` primitive's `active` step-schedule was invisible to the Keyframe timeline, AND the Inspector carried a destructive duplicate field for the same key
+
+**Context.** Owner, live, pointing at the "stack" scene's `layers` card-stack in
+a real project (`projects/.../New.chroma/motion/manifest.json` — its `active:
+[{at:2.5,i:2},{at:4,i:0}]` schedule controls WHICH card glows/pops forward and
+when): "any way to expose these layer as well as you can see some things are
+off is there anyway i can fix it? from here?" Read `Layers.tsx`, `registry.ts`,
+`schema.ts`, `keyframeVisibility.ts`, `KeyframeTimeline.tsx` and
+`propCatalog.ts` before touching anything — two real, independent gaps
+surfaced, not one:
+
+### 1 — B-067: the Inspector carried TWO competing editors for the same `active` key, one of them destructive
+
+`propCatalog.ts`'s `fieldsForPrimitive` concatenates `timingFields` (every
+layer's shared fields — `at`/`dur`/`active`, the last already correctly
+`kind:'json'`, labelled "Active (index or schedule)") with each primitive's
+OWN `PRIMITIVE_FIELDS` entry. `layers` and `layerstack` BOTH additionally
+declared their own `active: {kind:'number', label:'Active index',
+group:'source'}` — the SAME manifest key, a SECOND field, rendered right next
+to the first. Typing a plain index into that number field calls
+`setLayerField(manifest, selection, 'active', <number>)`, which overwrites
+the WHOLE key — silently destroying a real `[{at,i}]` step-schedule the
+instant it was touched. Undetectable from a screenshot alone (the screenshot
+that prompted this only showed the `SOURCE` section's "Active index (default)"
+row — the correct JSON field lives further down under `TIMING`, out of frame)
+— found by reading `propCatalog.ts` directly, not by eyeballing the UI.
+
+**Fix.** Deleted the `active` entry from `PRIMITIVE_FIELDS.layers` and
+`PRIMITIVE_FIELDS.layerstack` — not "fixed in place," since `timingFields`'s
+own `kind:'json'` field already correctly represents BOTH shapes `Active`
+(`schema.ts`) allows and needs no primitive-specific override at all. One
+editor, matching the manifest's own actual schema.
+
+**Verified live**, in `app/motion-harness.html`: selecting the `layers` layer
+now shows exactly ONE "Active (index or schedule)" field (`TIMING` group),
+correctly populated with `[{"at":2.5,"i":2},{"at":4,"i":0}]` — no `SOURCE`
+section, no second number field, confirming the destructive one is gone.
+
+**Filed as B-067** (`docs/BUGS.md`) — status `fixed`, filed and closed in the
+same pass.
+
+### 2 — The `active` schedule had no Keyframe-timeline row at all — the actual "expose these layers" ask
+
+**Root cause.** `keyframeVisibility.ts`'s `keyframeLanes` only ever produced a
+`'layer'` lane from a layer's `transform.keys` (a completely separate,
+generic per-layer x/y/scale/rotation animation system, `layerKeyCount`) — a
+`layers`/`layerstack` primitive's OWN `active: [{at,i}]` schedule was never
+read by it at all. Confirmed live: the "stack" scene's `layers` card-stack has
+a real 2-step schedule, yet the Keyframes panel showed only `hook · Camera`
+and `space · 3D Camera` — completely absent, with no way to see, drag-retime,
+or box-select those switches short of the raw JSON textarea (part 1, above).
+
+**Fix — a new lane kind, `'active'`, parallel to (never merged with)
+`'layer'`.** A layer can have `transform.keys`, an `active` schedule, both, or
+neither — two independent key arrays with independent `keyIndex` spaces, so
+two independent lanes, pushed adjacent (`'layer'` lane immediately followed by
+that SAME layer's `'active'` lane, when both exist) rather than one merged
+row. Threaded through every layer this session's own `'layer'` kind already
+touches:
+- `keyframeVisibility.ts`: `layerActiveKeyCount` (mirrors `layerKeyCount`,
+  `>0`-length-array only — the plain-number form of `active` has nothing to
+  show on a timeline, matching `layerActiveSchedule`'s own floor);
+  `keyframeLanes` pushes an `'active'` lane right after a layer's `'layer'`
+  lane; `laneKeyMarkers`/`laneKeyAtSeconds` read through the new
+  `manifestEdit.ts` export `layerActiveSchedule`; `selectionForLane` resolves
+  an `'active'` lane to the SAME `{kind:'layer'}` selection a `'layer'` lane on
+  it would (one underlying layer, not two selectable things).
+- `manifestEdit.ts`: `layerActiveSchedule`/`setLayerActiveSchedule` (the
+  `layerTransformKeys`/`setLayerTransformKeys` pair's exact shape, minus the
+  `transform` wrapper indirection — `active` is a top-level layer field, so
+  this goes straight through the existing generic `setLayerField`);
+  `moveLayerActiveKeyAt` (the `moveLayerTransformKeyAt` shape, for a single
+  drag); `KeyMoveTarget.kind` gains `'active'` and `moveKeysByDelta` gains its
+  dispatch branch, so a marquee/nudge spanning an `'active'` lane and any
+  other lane (including that SAME layer's own `'layer'` lane) works with zero
+  new code in the multi-key path — it was already generic over `kind`.
+- `KeyframeTimeline.tsx`: `laneLabel` appends `' · Active'` only for `kind:
+  'active'` (so a layer with BOTH kinds of lane never shows two
+  identically-labelled rows); `labelForLaneKind` gains an undo-label case;
+  the marker diamond's accent-vs-neutral color split now treats `'active'`
+  the same as `'layer'` (both are layer-owned keys, camera keys stay neutral).
+
+**Verified live**, in `app/motion-harness.html` (whose own persisted state
+happens to carry this exact layer with BOTH a `transform.keys` fade-in AND
+the `active` schedule, from earlier sessions — an unplanned but genuinely
+useful live check of the "two lanes on one layer, correctly disambiguated"
+case): the Keyframes panel now shows `stack · layers` (the pre-existing
+`transform.keys` row, unaffected) directly followed by a NEW `stack · layers
+· Active` row with two real diamond markers at the schedule's own absolute
+positions. Dragged the first marker left — the Inspector's "Active (index or
+schedule)" field live-updated to `[{"at":0.966...,"i":2},{"at":4,"i":0}]`
+(the `at` retimed, `i` untouched) and the toolbar correctly flipped to
+"Scene manifest · unsaved," confirming the write path (`onCommit` →
+`moveKeysByDelta` → `'active'` branch) round-trips end-to-end through the
+real UI, not just its own unit tests.
+
+`npx tsc --noEmit -p packages/motion` clean. `npx tsc --noEmit -p app` — 64
+errors, unchanged baseline (confirmed by comparing a throwaway worktree at
+this pass's own starting commit against the working tree — an earlier `wc -l`
+count of 143 was a self-inflicted false alarm: that counts every line of
+multi-line type-detail output, not error count; `grep -c "error TS"` reads 64
+in both). `npx tsc --noEmit -p packages/motion-engine` — 2 errors, unchanged.
+`npm test --workspace @chroma/motion` — **412/412** (was 388 right after
+D-177's merge; +24, split across `keyframeVisibility.test.ts`
+(`layerActiveKeyCount`, `keyframeLanes`'s new both-lanes-adjacent case,
+`laneKeyMarkers`/`selectionForLane`/`laneKeyAtSeconds`'s new `'active'`
+cases) and `manifestEdit.test.ts` (`layerActiveSchedule`/
+`setLayerActiveSchedule`, `moveLayerActiveKeyAt`, `moveKeysByDelta`'s two new
+`'active'` cases)).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: `git log --oneline -1` shows `379cb6a` (D-177, the just-merged
+fork) — **D-178**/**B-067** are free.
+
+---
+
+## D-179 — "create multiple scenes… create a scene and edit it" — a `+ Add scene` affordance in `LayerList`
+
+**Context.** Owner, live, mid-turn while D-178 was still in progress: "We need
+a way to create multiple scene in the same one meaning we should be able to
+create a schene and edit it, and how we have time line showned in source,
+these schene should be alos available as well." Multiple scenes were already
+fully supported by the manifest/engine/timeline (the sample project already
+has three: `hook`/`stack`/`space`, each with its own Keyframe-timeline
+tracks) — the actual gap, confirmed by grep, was that NOTHING in this package
+could CREATE one: no `addScene` in `manifestEdit.ts`, no button anywhere. A
+new scene was only ever reachable by hand-editing the raw JSON textarea.
+
+**Fix.** `manifestEdit.ts`'s `addScene(manifest, afterSceneIndex?)` — mirrors
+`addLayer`'s own established shape exactly: returns `{manifest, selection}`
+so the caller selects (and, via `MotionTab.tsx`'s existing `onSelect`, seeks
+to) the new scene immediately, the same "here is your new thing, edit it, no
+second click" floor `addLayer`'s own doc comment set. Appends a minimal,
+schema-valid scene (`{id, dur: 4}`, no camera/layers of its own — the
+schema's own required minimum) at the very END by default, or right AFTER
+`afterSceneIndex` when given — `LayerList.tsx`'s new `+ Add scene` button
+(bottom of the scene list, gated on `onCommit` the same "no write capability
+wired ⇒ don't show a button that would silently do nothing" convention every
+other mutating gesture in this file already follows) passes the CURRENTLY
+selected scene, so a new scene lands next to what the owner is looking at
+rather than always at the bottom of a long list.
+
+**The id is short + random (`genLayerId`'s own convention), not blank or a
+counter.** `scene.id` is `z.string()` with no `.min(1)`, so an empty string
+would parse — but every reader of this schema already treats `id` as the
+scene's own display identity (`KeyframeTimeline.tsx`'s `laneLabel`,
+`LayerList.tsx`'s own row, `sceneIndexAtFrame`'s callers), so a blank one
+would be a real regression the moment a manifest has two. A counter-based
+name ("Scene 2") was considered and rejected: it drifts the instant a scene
+is reordered or deleted, and this package has no scene-delete/scene-reorder
+op yet either (out of THIS pass's own scope — the owner only asked to CREATE
+and edit). **Renaming a scene's `id` stays out of Inspector scope**,
+unchanged by this pass — `propCatalog.ts`'s own `SCENE_FIELDS` doc comment
+already calls this out as deliberate; the raw-JSON textarea remains the only
+way to rename one.
+
+**Verified live**, in `app/motion-harness.html`: with the `layers` layer (in
+`stack`) selected, clicked `+ Add scene` — a new `scene-a3k9xt` row appeared
+in `LayerList` immediately AFTER `stack` and BEFORE `space` (confirming
+insert-after-selection, not always-append), the Inspector immediately showed
+its real `SCENE_FIELDS` (`Background`/`Grain`/`Vignette`/`Duration
+(s)`=4/`Transition in`), the player seeked to `0:10` (exactly `stack`'s own
+end, where the new scene now starts), and the total duration grew from
+`0:15` to `0:19` — every downstream reader (`KeyframeTimeline`'s ruler,
+`LayerList`'s own scene grouping, the player) picked up the new scene with
+zero changes of their own, confirming multi-scene support really was already
+complete everywhere except scene creation itself.
+
+`npx tsc --noEmit -p packages/motion` clean; `app` (64) and `motion-engine`
+(2) baselines unchanged. `npm test --workspace @chroma/motion` — **419/419**
+(was 412 after D-178's own tests; +7 `addScene` tests: append-at-end,
+id-freshness/non-collision, insert-after-index, insert-after-the-last-scene
+equals append, out-of-range-index falls back to append, existing scenes'
+content untouched byte-for-byte, and a no-mutation check).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: still `379cb6a` (D-177/D-178 land together in this same commit,
+D-178 authored first in this pass) — **D-179** is free, no separate
+`B`-number (a missing capability, not a defect in existing behavior).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn

@@ -97,9 +97,10 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import { Plus } from 'lucide-react';
 import type { Manifest, Layer } from '@chroma/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
-import { reorderLayers } from './manifestEdit';
+import { reorderLayers, addScene } from './manifestEdit';
 import { LayerThumbnail } from './LayerThumbnail';
 
 /**
@@ -536,6 +537,29 @@ export function LayerList({
           )}
         </div>
       ))}
+      {/* D-179 (owner, live: "we need a way to create multiple scene…
+         create a scene and edit it") — appends a new, minimal-but-valid
+         scene via `addScene` right after the CURRENTLY selected one (so it
+         lands where the owner is looking, not always at the bottom of a
+         long list), falling back to the very end when nothing is selected.
+         Gated on `onCommit` the same way every other mutating gesture in
+         this file already is (D-160's "no onCommit ⇒ read-only navigator"
+         floor) — a caller with no write capability wired simply never sees
+         this button, rather than seeing one that silently does nothing. */}
+      {onCommit && (
+        <button
+          type="button"
+          onClick={() => {
+            const { manifest: next, selection } = addScene(manifest, selections[0]?.sceneIndex);
+            onCommit(next, 'Add scene');
+            onSelect(selection);
+          }}
+          className="shrink-0 h-6 flex items-center justify-center gap-1 rounded-md border border-dashed border-border-color text-text-secondary hover:text-text-primary hover:border-accent hover:bg-hover-color transition-colors"
+        >
+          <Plus size={12} />
+          Add scene
+        </button>
+      )}
     </div>
   );
 }

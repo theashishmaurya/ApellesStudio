@@ -39,6 +39,10 @@ import {
   distributeSelections,
   sceneIndexAtFrame,
   layerVisibleFrameRange,
+  layerActiveSchedule,
+  setLayerActiveSchedule,
+  moveLayerActiveKeyAt,
+  addScene,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
@@ -511,6 +515,80 @@ describe('layerTransformKeys / setLayerTransformKeys (D-159, Phase 4)', () => {
   });
 });
 
+describe('layerActiveSchedule / setLayerActiveSchedule (D-178/B-067)', () => {
+  // sample scene 1 "stack", layer 1 (the "layers" primitive) — the manifest's
+  // own real active: [{at:2.5,i:2},{at:4,i:0}] step-schedule.
+  const layersSel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+  const textSel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+
+  it('reads [] for a layer with no active field at all', () => {
+    expect(layerActiveSchedule(sample, textSel)).toEqual([]);
+  });
+
+  it('reads [] for the plain-number (non-schedule) form — nothing to show/move on a timeline', () => {
+    const m = structuredClone(sample);
+    (m.scenes[0].layers![0] as unknown as Record<string, unknown>).active = 2;
+    expect(layerActiveSchedule(m, textSel)).toEqual([]);
+  });
+
+  it("reads back sample's own real step-schedule", () => {
+    expect(layerActiveSchedule(sample, layersSel)).toEqual([{ at: 2.5, i: 2 }, { at: 4, i: 0 }]);
+  });
+
+  it('writes a non-empty schedule through setLayerField', () => {
+    const next = setLayerActiveSchedule(sample, layersSel, [{ at: 1, i: 1 }]);
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 1, i: 1 }]);
+  });
+
+  it('an empty array DELETES the active field entirely', () => {
+    const next = setLayerActiveSchedule(sample, layersSel, []);
+    expect(layerActiveSchedule(next, layersSel)).toEqual([]);
+    expect(selectedLayer(next, layersSel)?.raw.active).toBeUndefined();
+  });
+
+  it('never disturbs the layer\'s OTHER fields (items, callout, x, y, …)', () => {
+    const next = setLayerActiveSchedule(sample, layersSel, [{ at: 1, i: 0 }]);
+    const raw = selectedLayer(next, layersSel)?.raw;
+    expect(raw?.items).toEqual(['tools', 'system prompt', 'retrieved context', 'your question']);
+    expect(raw?.callout).toBe('re-sent on every call');
+  });
+
+  it('is a no-op for a selection that does not resolve to a layer', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 99 } };
+    expect(setLayerActiveSchedule(sample, sel, [{ at: 0, i: 1 }])).toBe(sample);
+    expect(layerActiveSchedule(sample, sel)).toEqual([]);
+  });
+});
+
+describe('moveLayerActiveKeyAt (D-178/B-067)', () => {
+  const layersSel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } }; // "stack", dur 6
+
+  it("retimes sample's own real active-schedule entry, leaving its target index untouched", () => {
+    const next = moveLayerActiveKeyAt(sample, layersSel, 0, 1);
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 1, i: 2 }, { at: 4, i: 0 }]);
+  });
+
+  it("clamps to the scene's own duration when dragged past the end", () => {
+    const next = moveLayerActiveKeyAt(sample, layersSel, 1, 999);
+    expect(layerActiveSchedule(next, layersSel)).toContainEqual({ at: 6, i: 0 });
+  });
+
+  it('reorders past a neighbor, same as the generic core', () => {
+    const next = moveLayerActiveKeyAt(sample, layersSel, 1, 1); // drag the i:0 step before the i:2 step
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 1, i: 0 }, { at: 2.5, i: 2 }]);
+  });
+
+  it('is a no-op for a selection with no scene (out of range)', () => {
+    const badSel: Selection = { sceneIndex: 99, target: { kind: 'layer', index: 1 } };
+    expect(moveLayerActiveKeyAt(sample, badSel, 0, 1)).toBe(sample);
+  });
+
+  it('is a no-op for an out-of-range keyIndex', () => {
+    const next = moveLayerActiveKeyAt(sample, layersSel, 99, 1);
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 2.5, i: 2 }, { at: 4, i: 0 }]);
+  });
+});
+
 describe('moveKeyAt (Phase 5b — drag a key along time, the generic core)', () => {
   it('moves the key at `index` to the new `at`, leaving the others untouched', () => {
     const keys = [{ at: 0 }, { at: 1 }, { at: 2 }];
@@ -852,6 +930,32 @@ describe('moveKeysByDelta (Phase 5b — box-select + nudge, the multi-lane write
     );
     expect(selectedCamera2d(next, 0)).toContainEqual({ at: 1, zoom: 1 });
     expect(selectedCamera3d(next, 2)?.[0].at).toBe(1);
+  });
+
+  it("nudges an 'active'-schedule key (D-178/B-067), same as any other lane kind", () => {
+    const next = moveKeysByDelta(
+      sample,
+      [{ sceneIndex: 1, kind: 'active', layerIndex: 1, keyIndex: 0, baseAtSeconds: 2.5 }],
+      0.5,
+    );
+    const layersSel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 3, i: 2 }, { at: 4, i: 0 }]);
+  });
+
+  it("spans a 'layer' (transform.keys) lane AND that SAME layer's own 'active' lane in one call, independently", () => {
+    const m = structuredClone(sample);
+    (m.scenes[1].layers![1] as unknown as Record<string, unknown>).transform = { keys: [{ at: 0, x: 0 }] };
+    const next = moveKeysByDelta(
+      m,
+      [
+        { sceneIndex: 1, kind: 'layer', layerIndex: 1, keyIndex: 0, baseAtSeconds: 0 },
+        { sceneIndex: 1, kind: 'active', layerIndex: 1, keyIndex: 0, baseAtSeconds: 2.5 },
+      ],
+      1,
+    );
+    const layersSel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } };
+    expect(layerTransformKeys(next, layersSel)).toEqual([{ at: 1, x: 0 }]);
+    expect(layerActiveSchedule(next, layersSel)).toEqual([{ at: 3.5, i: 2 }, { at: 4, i: 0 }]);
   });
 });
 
@@ -1478,5 +1582,66 @@ describe('reorderLayers (D-177 — drag-to-reorder, LayerList.tsx)', () => {
       { sceneIndex: 0, target: { kind: 'layer', index: 1, id: 'a' } },
       { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'b' } },
     ]);
+  });
+});
+
+describe('addScene (D-179 — owner, live: "we need a way to create multiple scene… create a scene and edit it")', () => {
+  it('appends a minimal, schema-valid scene at the end by default', () => {
+    const before = sample;
+    const { manifest, selection } = addScene(before);
+    expect(manifest.scenes).toHaveLength(before.scenes.length + 1);
+    const added = manifest.scenes[manifest.scenes.length - 1];
+    expect(added.dur).toBe(4);
+    expect(typeof added.id).toBe('string');
+    expect(added.id.length).toBeGreaterThan(0);
+    expect(added.layers).toBeUndefined();
+    expect(added.camera).toBeUndefined();
+    expect(added.scene3d).toBeUndefined();
+    expect(selection).toEqual({ sceneIndex: manifest.scenes.length - 1, target: { kind: 'scene' } });
+  });
+
+  it('generates a fresh, non-empty, non-colliding id every call', () => {
+    const { manifest: m1 } = addScene(sample);
+    const { manifest: m2 } = addScene(sample);
+    const id1 = m1.scenes[m1.scenes.length - 1].id;
+    const id2 = m2.scenes[m2.scenes.length - 1].id;
+    expect(id1).not.toBe(id2);
+    expect(sample.scenes.some((s) => s.id === id1)).toBe(false);
+  });
+
+  it('inserts right AFTER afterSceneIndex when given, not at the end', () => {
+    const { manifest, selection } = addScene(sample, 0);
+    expect(manifest.scenes).toHaveLength(sample.scenes.length + 1);
+    expect(manifest.scenes[0].id).toBe(sample.scenes[0].id); // scene before the insert is untouched
+    expect(manifest.scenes[1].id).not.toBe(sample.scenes[1].id); // the new scene now sits here
+    expect(manifest.scenes[2].id).toBe(sample.scenes[1].id); // the old scene 1 shifted down by one
+    expect(selection).toEqual({ sceneIndex: 1, target: { kind: 'scene' } });
+  });
+
+  it('inserting after the LAST scene is the same as appending at the end', () => {
+    const lastIndex = sample.scenes.length - 1;
+    const { manifest, selection } = addScene(sample, lastIndex);
+    expect(manifest.scenes).toHaveLength(sample.scenes.length + 1);
+    expect(selection).toEqual({ sceneIndex: lastIndex + 1, target: { kind: 'scene' } });
+  });
+
+  it('an out-of-range afterSceneIndex falls back to appending at the end, never throws', () => {
+    const { manifest, selection } = addScene(sample, 99);
+    expect(manifest.scenes).toHaveLength(sample.scenes.length + 1);
+    expect(selection).toEqual({ sceneIndex: sample.scenes.length, target: { kind: 'scene' } });
+  });
+
+  it('leaves every existing scene\'s OWN content byte-for-byte untouched', () => {
+    const { manifest } = addScene(sample, 0);
+    expect(manifest.scenes[0]).toEqual(sample.scenes[0]);
+    expect(manifest.scenes[2]).toEqual(sample.scenes[1]);
+    expect(manifest.scenes[3]).toEqual(sample.scenes[2]);
+    expect(manifest.title).toBe(sample.title);
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    addScene(sample);
+    expect(JSON.stringify(sample)).toBe(snapshot);
   });
 });

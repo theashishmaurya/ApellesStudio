@@ -27,7 +27,7 @@
 import type { Manifest, Layer, Scene } from '@chroma/motion-engine/src/engine/schema';
 import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
-import { layerTransformKeys } from './manifestEdit';
+import { layerTransformKeys, layerActiveSchedule } from './manifestEdit';
 import { rectsIntersect, type RectLike } from './canvasGeometry';
 
 /** A layer is `.passthrough()` (`schema.ts`) — `transform` isn't statically
@@ -38,6 +38,17 @@ export function layerKeyCount(layer: Layer): number {
   const raw = layer as unknown as Record<string, unknown>;
   const transform = raw.transform as Record<string, unknown> | undefined;
   return Array.isArray(transform?.keys) ? transform.keys.length : 0;
+}
+
+/** D-178/B-067 — a layer's own `active` STEP-SCHEDULE key count (the
+ *  `[{at,i}]` array form only; a plain-number `active` has nothing to show
+ *  on a timeline, matching `layerActiveSchedule`'s own floor). Distinct from
+ *  `layerKeyCount` above (that one counts `transform.keys` — an unrelated
+ *  animation system a layer can ALSO have at the same time, hence the two
+ *  separate lane kinds rather than merging their counts). */
+export function layerActiveKeyCount(layer: Layer): number {
+  const raw = layer as unknown as Record<string, unknown>;
+  return Array.isArray(raw.active) ? raw.active.length : 0;
 }
 
 /** `scene.camera`'s own key count — `0` for a camera-less scene, matching
@@ -80,7 +91,7 @@ export interface KeyMarker {
   sceneIndex: number;
   keyIndex: number;
   frame: number;
-  kind: 'camera' | 'scene3d-camera' | 'layer';
+  kind: 'camera' | 'scene3d-camera' | 'layer' | 'active';
 }
 
 function keySecondsToAbsoluteFrame(manifest: Manifest, sceneIndex: number, atSeconds: number): number {
@@ -100,8 +111,8 @@ function keySecondsToAbsoluteFrame(manifest: Manifest, sceneIndex: number, atSec
  */
 export interface KeyframeLane {
   sceneIndex: number;
-  kind: 'camera' | 'scene3d-camera' | 'layer';
-  /** Only set for `kind: 'layer'` — the index into `scene.layers[]`. */
+  kind: 'camera' | 'scene3d-camera' | 'layer' | 'active';
+  /** Only set for `kind: 'layer'`/`'active'` — the index into `scene.layers[]`. */
   layerIndex?: number;
 }
 
@@ -134,6 +145,16 @@ export function laneKey(lane: KeyframeLane): string {
  * Deterministic — two calls against the same manifest always return the
  * same array (tests rely on this, same convention as the old
  * `cameraKeyMarkers`).
+ *
+ * **D-178/B-067 adds a SECOND lane kind per layer, `'active'`** — a
+ * `layers`/`layerstack` primitive's own `active: [{at,i}]` step-schedule,
+ * completely unrelated to `transform.keys` (a layer can have either, both,
+ * or neither) and previously invisible to this timeline entirely: neither
+ * `keyframeLanes` nor the Inspector had any way to show or retime it (only
+ * a raw JSON textarea could touch it at all). Pushed right after that same
+ * layer's `'layer'` lane (if it has one) so both of one layer's own
+ * keyframe rows stay adjacent — never merged into one row, since they are
+ * two independent key ARRAYS with independent `keyIndex` spaces.
  */
 export function keyframeLanes(manifest: Manifest): KeyframeLane[] {
   const lanes: KeyframeLane[] = [];
@@ -141,6 +162,7 @@ export function keyframeLanes(manifest: Manifest): KeyframeLane[] {
     if (cameraKeyCount(scene) > 0) lanes.push({ sceneIndex, kind: 'camera' });
     scene.layers?.forEach((layer, layerIndex) => {
       if (layerKeyCount(layer) > 0) lanes.push({ sceneIndex, kind: 'layer', layerIndex });
+      if (layerActiveKeyCount(layer) > 0) lanes.push({ sceneIndex, kind: 'active', layerIndex });
     });
     if (scene3dCameraKeyCount(scene) > 0) lanes.push({ sceneIndex, kind: 'scene3d-camera' });
   });
@@ -178,6 +200,10 @@ export function laneKeyMarkers(manifest: Manifest, lane: KeyframeLane): KeyMarke
     const selection: Selection = { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex } };
     return toMarkers(layerTransformKeys(manifest, selection), 'layer');
   }
+  if (lane.kind === 'active' && lane.layerIndex !== undefined) {
+    const selection: Selection = { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex } };
+    return toMarkers(layerActiveSchedule(manifest, selection), 'active');
+  }
   return [];
 }
 
@@ -197,7 +223,10 @@ export function selectionForLane(manifest: Manifest, lane: KeyframeLane): Select
   if (!scene) return null;
   if (lane.kind === 'camera') return { sceneIndex: lane.sceneIndex, target: { kind: 'camera' } };
   if (lane.kind === 'scene3d-camera') return { sceneIndex: lane.sceneIndex, target: { kind: 'scene3d-camera' } };
-  if (lane.kind === 'layer' && lane.layerIndex !== undefined) {
+  // 'active' selects the SAME underlying layer a 'layer' (transform.keys)
+  // lane on it would — both are just different keyframe arrays belonging to
+  // one layer, not two different selectable things (D-178/B-067).
+  if ((lane.kind === 'layer' || lane.kind === 'active') && lane.layerIndex !== undefined) {
     const layer = scene.layers?.[lane.layerIndex];
     if (!layer) return null;
     return { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex, id: layer.id } };
@@ -228,6 +257,10 @@ export function laneKeyAtSeconds(manifest: Manifest, lane: KeyframeLane, keyInde
   if (lane.kind === 'layer' && lane.layerIndex !== undefined) {
     const selection: Selection = { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex } };
     return layerTransformKeys(manifest, selection)[keyIndex]?.at ?? null;
+  }
+  if (lane.kind === 'active' && lane.layerIndex !== undefined) {
+    const selection: Selection = { sceneIndex: lane.sceneIndex, target: { kind: 'layer', index: lane.layerIndex } };
+    return layerActiveSchedule(manifest, selection)[keyIndex]?.at ?? null;
   }
   return null;
 }
