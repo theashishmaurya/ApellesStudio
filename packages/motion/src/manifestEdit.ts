@@ -64,6 +64,34 @@ export function selectedLayer(manifest: Manifest, selection: Selection): { use: 
   return null;
 }
 
+/** The absolute `[start, end)` frame range a `{kind:'layer'}` or
+ *  `{kind:'scene3d-child'}` selection is actually visible for — `at`
+ *  (scene-relative seconds, `0` when unset) converted to an absolute frame
+ *  via `sceneStartFrame`; `dur` bounds the end when set, otherwise the
+ *  layer shows through the rest of the scene (matching `registry.ts`'s own
+ *  `at`/`dur` → `start`/`dur` prop conversion, which the primitive itself
+ *  then applies — a layer with no `dur` gets no upper bound there either).
+ *  `null` for a selection this doesn't apply to (`scene`/`camera`/
+ *  `scene3d-camera` have no `at`/`dur` of their own) or one that no longer
+ *  resolves. Used by `MotionTab.tsx`'s `onSelect` (D-176) to decide whether
+ *  selecting a layer should seek to where it actually starts, or leave the
+ *  playhead alone because the layer is already visible right now. */
+export function layerVisibleFrameRange(manifest: Manifest, selection: Selection): { start: number; end: number } | null {
+  const found = selectedLayer(manifest, selection);
+  if (!found) return null;
+  const scene = selectedScene(manifest, selection.sceneIndex);
+  if (!scene) return null;
+  const fps = manifest.fps;
+  const atSeconds = typeof found.raw.at === 'number' ? found.raw.at : 0;
+  const start = sceneStartFrame(manifest, selection.sceneIndex) + Math.round(atSeconds * fps);
+  const durSeconds = typeof found.raw.dur === 'number' ? found.raw.dur : undefined;
+  const end =
+    durSeconds !== undefined
+      ? start + Math.round(durSeconds * fps)
+      : sceneStartFrame(manifest, selection.sceneIndex) + sceneDurationFrames(manifest, selection.sceneIndex);
+  return { start, end };
+}
+
 export function selectedCamera2d(manifest: Manifest, sceneIndex: number): Cam2dKey[] | null {
   return selectedScene(manifest, sceneIndex)?.camera ?? null;
 }

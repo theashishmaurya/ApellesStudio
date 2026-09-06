@@ -37,6 +37,7 @@ import {
   alignSelections,
   distributeSelections,
   sceneIndexAtFrame,
+  layerVisibleFrameRange,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
@@ -1307,5 +1308,39 @@ describe('sceneIndexAtFrame', () => {
 
   it('clamps a negative frame to the first scene', () => {
     expect(sceneIndexAtFrame(sample, -5)).toBe(0);
+  });
+});
+
+describe('layerVisibleFrameRange', () => {
+  // sample: hook (start=0, dur=4s=120fr) has text at=0.2 (no dur), emphasis
+  // at=1.8/dur=2; stack (start=120, dur=6s=180fr) has layers at=0.4 (no dur);
+  // space (start=300) has a particleflow scene3d-child at=1.5/dur=2.5.
+  it('returns [start, start+dur] when the layer has a dur', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } }; // emphasis
+    expect(layerVisibleFrameRange(sample, sel)).toEqual({ start: 54, end: 114 });
+  });
+
+  it('ends at the scene end when the layer has no dur', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } }; // text, at=0.2
+    expect(layerVisibleFrameRange(sample, sel)).toEqual({ start: 6, end: 120 });
+  });
+
+  it('accounts for the scene not starting at frame 0', () => {
+    const sel: Selection = { sceneIndex: 1, target: { kind: 'layer', index: 1 } }; // layers, at=0.4
+    expect(layerVisibleFrameRange(sample, sel)).toEqual({ start: 132, end: 300 });
+  });
+
+  it('works for a scene3d-child, same as a 2D layer', () => {
+    const sel: Selection = { sceneIndex: 2, target: { kind: 'scene3d-child', index: 1 } }; // particleflow at=1.5/dur=2.5
+    expect(layerVisibleFrameRange(sample, sel)).toEqual({ start: 345, end: 420 });
+  });
+
+  it('returns null for a selection with no at/dur of its own', () => {
+    expect(layerVisibleFrameRange(sample, { sceneIndex: 0, target: { kind: 'scene' } })).toBeNull();
+    expect(layerVisibleFrameRange(sample, { sceneIndex: 0, target: { kind: 'camera' } })).toBeNull();
+  });
+
+  it('returns null for an unresolvable selection', () => {
+    expect(layerVisibleFrameRange(sample, { sceneIndex: 0, target: { kind: 'layer', index: 99 } })).toBeNull();
   });
 });

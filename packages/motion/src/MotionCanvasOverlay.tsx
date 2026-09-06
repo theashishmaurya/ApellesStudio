@@ -540,6 +540,24 @@ export function MotionCanvasOverlay({
         const s = nextSize(drag, e);
         onTransientChange(setLayerSize(manifest, drag.selection, s.w, s.h));
       }
+      // D-176 — `onTransientChange` re-renders `<Player inputProps>` with
+      // the new (in-flight) manifest, which really does move/resize the
+      // primitive's own real DOM element — but `box`/`multiBoxes` (this
+      // component's own drawn outline) is a snapshot in React state that
+      // was never told to look again: `recomputeBoxes` only re-runs on a
+      // `selections` change or a `frameupdate`/`scalechange` player event
+      // (this file's own earlier comment: "no rAF loop needed" — true for
+      // those triggers, NOT for a transient-manifest-driven DOM change,
+      // which is neither). Net effect before this fix: the outline stayed
+      // frozen at its PRE-drag size/position for the whole gesture while
+      // the actual content visibly moved/resized underneath it — exactly
+      // what the owner saw and reported. One `requestAnimationFrame` per
+      // pointermove (not a continuous loop) gives the just-triggered
+      // re-render one paint to land, then re-measures the NOW-current DOM
+      // — the same one-shot-per-gesture-step cost this file already pays
+      // for a marquee's own per-frame `setMarqueeRect` call, not a new
+      // class of overhead.
+      requestAnimationFrame(recomputeBoxes);
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -612,7 +630,7 @@ export function MotionCanvasOverlay({
       container.removeEventListener('pointermove', onPointerMove);
       container.removeEventListener('pointerup', onPointerUp);
     };
-  }, [containerRef, playerRef, manifest, selections, onSelect, onSelectionChange, onTransientChange, onCommit]);
+  }, [containerRef, playerRef, manifest, selections, onSelect, onSelectionChange, onTransientChange, onCommit, recomputeBoxes]);
 
   const selectedUse =
     manifest && selections.length === 1 && selections[0].target.kind === 'layer'

@@ -81,7 +81,7 @@ import { LayerList, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
-import { addLayer, snapEmphasisToRect, resolveSelections, sceneIndexAtFrame } from './manifestEdit';
+import { addLayer, snapEmphasisToRect, resolveSelections, sceneIndexAtFrame, layerVisibleFrameRange } from './manifestEdit';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
@@ -237,7 +237,30 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
     setSelections([s]);
     if (!m.manifest) return;
     const currentFrame = playerRef.current?.getCurrentFrame();
-    const currentScene = currentFrame === undefined ? null : sceneIndexAtFrame(m.manifest, currentFrame);
+    if (currentFrame === undefined) return;
+
+    // D-176 — a layer/scene3d-child target seeks to where it ACTUALLY
+    // starts (`layerVisibleFrameRange`, `manifestEdit.ts`), but only when
+    // the current frame isn't already somewhere inside its own visible
+    // window. A canvas click (D-172/B-064's own case) is always already
+    // inside that window — you cannot click something that isn't
+    // currently rendering — so this can never re-introduce B-064's own
+    // regression; a `LayerList` click on a layer that hasn't started yet,
+    // or one in a scene you weren't looking at, now jumps to that layer's
+    // OWN `at`, not just the scene's start, so the thing you just selected
+    // actually appears instead of leaving a selection outline drawn over
+    // nothing (the exact confusion reported live).
+    const range = layerVisibleFrameRange(m.manifest, s);
+    if (range) {
+      if (currentFrame < range.start || currentFrame >= range.end) {
+        playerRef.current?.seekTo(range.start);
+      }
+      return;
+    }
+
+    // Scene/camera/scene3d-camera targets have no `at`/`dur` of their own
+    // — same scene-boundary check B-064 already established.
+    const currentScene = sceneIndexAtFrame(m.manifest, currentFrame);
     if (currentScene !== s.sceneIndex) {
       playerRef.current?.seekTo(sceneStartFrame(m.manifest, s.sceneIndex));
     }

@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-06** — **B-066: the selection outline froze during a move/resize drag; selecting a
+  layer now seeks to its own start (D-176).** `recomputeBoxes` only re-measured on a `selections`
+  change or a Remotion `frameupdate`/`scalechange` event — never on `onTransientChange` during a
+  drag, so the drawn outline stayed at its pre-drag size while the real content visibly
+  moved/resized underneath it. Fixed with one `requestAnimationFrame(recomputeBoxes)` per
+  pointermove. Also: new `manifestEdit.ts` export `layerVisibleFrameRange` (6 tests) lets
+  `onSelect` seek to a layer's own `at` when the current frame falls outside its visible window —
+  a `LayerList` click on a not-yet-visible layer now actually shows it, without reintroducing
+  B-064's fixed regression. Live-verified in the harness both ways. `tsc` clean, `@chroma/motion`
+  373/373 (+6).
+
 - **2026-09-06** — **Keyframe timeline's zoom now matches the Edit tab's own (D-175).** Real
   `lucide-react` `ZoomIn`/`ZoomOut` icons and a percentage readout (was raw text `−`/`+` and
   `70px/s`), plus ctrl+scroll-wheel zoom (a plain native `wheel` listener, matching

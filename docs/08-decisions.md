@@ -15318,3 +15318,87 @@ match to an existing convention, not a bug fix).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+---
+
+## D-176 — B-066: the selection outline never re-measured during a move/resize drag; selecting a layer now seeks to where it actually starts
+
+**Context.** Owner, live, two related reports: (1) shrinking a layer via its own resize handle
+left the drawn selection outline at its ORIGINAL size while the real content visibly shrunk
+underneath it ("the slector does not follow realtime"); (2) selecting a layer via `LayerList`
+whose own `at` hadn't been reached yet left a selection outline floating over nothing — asking
+that a layer click seek to where it actually starts.
+
+### 1 — B-066: the outline froze during a move/resize drag
+
+**Root cause, found by reading `MotionCanvasOverlay.tsx`'s own re-measure triggers.**
+`recomputeBoxes` (the function that measures each selected layer's real `[data-motion-box]`
+descendants and sets the drawn `box`/`multiBoxes` state) only ever re-runs on three things: a
+`selections` change, the player's own `frameupdate` event, and its `scalechange` event. A
+move or resize drag calls `onTransientChange(...)` on every `pointermove` — which really does
+re-render `<Player inputProps>` with the in-flight manifest, moving/resizing the primitive's
+own real DOM element — but NONE of the three existing triggers fire from that: `selections`
+doesn't change mid-drag, and neither Remotion event fires from a manifest-prop change that
+doesn't touch the playhead or the player's own fit-scale. Net effect: the outline stayed frozen
+at whatever it measured BEFORE the drag started, for the whole gesture, while the actual
+content visibly moved/resized underneath it — exactly what was reported.
+
+**Fix.** `onPointerMove`'s move and resize branches now call
+`requestAnimationFrame(recomputeBoxes)` right after `onTransientChange(...)` — one frame's grace
+for the just-triggered re-render to land, then re-measure the NOW-current DOM. One `rAF` per
+pointermove, not a continuous loop; the effect housing these listeners gains `recomputeBoxes` in
+its own dependency array (its identity only changes with `containerRef`/`selections`, both
+already deps, so this adds no new re-subscription trigger, only lint/scope correctness).
+
+**Verified live**, in `app/motion-harness.html`: selected the `emphasis` layer, dragged its
+bottom-right resize handle to shrink it substantially — the drawn outline visibly shrank in sync
+(confirmed against the Inspector's own `Box` W/H fields, which read the same final size the
+outline was drawn at), where before this fix the outline would have stayed at its original
+520×130 footprint for the whole gesture.
+
+**Filed as B-066** (`docs/BUGS.md`) — status `fixed`, filed and closed in the same pass.
+
+### 2 — Selecting a layer seeks to where it actually starts, not just to the scene's start
+
+**The gap D-173/B-064 left, by design, now closed the rest of the way.** B-064 (D-173) fixed
+`onSelect` unconditionally resetting the playhead to a scene's START frame on every selection —
+correct for a canvas click (the layer selected is, by construction, already visible, so the
+current frame is already somewhere inside its own window) but it left LayerList selection with
+no way to actually SEE a layer whose own `at` hasn't been reached yet within the CURRENT scene:
+clicking it left a selection outline drawn over nothing, since the primitive itself doesn't
+render before its own `at`.
+
+**Fix.** New `manifestEdit.ts` export `layerVisibleFrameRange(manifest, selection)` — the
+absolute `[start, end)` frame range a `{kind:'layer'}`/`{kind:'scene3d-child'}` selection is
+actually visible for: `at` (scene-relative seconds, defaulting to `0`) converted to an absolute
+frame via `sceneStartFrame`; `end` bounded by `dur` when set, or the scene's own end when it
+isn't (matching `registry.ts`'s own `at`/`dur` → `start`/`dur` prop conversion — a layer with no
+`dur` gets no upper bound there either, so this function doesn't invent one). `null` for a
+selection this doesn't apply to (`scene`/`camera`/`scene3d-camera` have no `at`/`dur` of their
+own) or one that no longer resolves. 6 new tests: a layer with a `dur`, one without (ends at the
+scene's own end), a scene starting after frame 0 (the range is still correctly offset), a
+`scene3d-child` (same treatment as a 2D layer), and both `null` cases.
+
+`onSelect` (`MotionTab.tsx`) now calls this first: if it resolves to a real range, seek to
+`range.start` ONLY when the current frame is outside `[start, end)` — a canvas click is always
+already inside that range (you cannot click something that isn't currently rendering), so this
+can never reintroduce B-064's own fixed regression; a `LayerList` click on a layer that hasn't
+started yet (in the current scene OR a different one) now jumps to that layer's OWN `at`, not
+merely the scene's start, so the thing just selected actually appears. A selection with no
+resolvable range (scene/camera/scene3d-camera) falls back to the EXISTING scene-boundary check
+B-064 already established, unchanged.
+
+**Verified live**, in `app/motion-harness.html`: from a fresh `0:00` load, selecting the
+`emphasis` layer (`at: 1.8`, `hook` scene, which itself starts at `0`) seeked the player to
+`0:01`/`0:15` (the display's own second-granularity rounding of frame 54 = 1.8s) — the layer's
+own start, not the scene's.
+
+`npx tsc --noEmit -p packages/motion` clean. `npx tsc --noEmit -p app` — 64 errors, unchanged
+baseline. `npm test --workspace @chroma/motion` — **373/373** (was 367; +6, all
+`layerVisibleFrameRange`).
+
+**Numbering.** Checked against `main`'s own tip immediately before writing this entry: `git log
+--oneline -1` shows `ece1593` (D-175) — **D-176**/**B-066** are free.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
