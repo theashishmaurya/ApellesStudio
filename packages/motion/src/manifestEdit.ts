@@ -1222,6 +1222,95 @@ export function addLayer(
   };
 }
 
+/**
+ * D-176 (owner, live: "cant resufle layers") — pure array-move reorder
+ * WITHIN one scene's `layers[]` (`kind: 'layer'`) or one scene's
+ * `scene3d.children[]` (`kind: 'scene3d-child'`) — `LayerList.tsx`'s new
+ * drag-to-reorder gesture is the only caller. Reordering ACROSS scenes is
+ * explicitly out of scope (not asked for, and would raise real questions
+ * about camera/timing this op doesn't need to answer) — there is no
+ * `sceneIndex` parameter to move INTO, only the one scene both `fromIndex`/
+ * `toIndex` are read against. Reordering BETWEEN a scene's `layers` and its
+ * `scene3d.children` is also out of scope — they're two structurally
+ * different arrays (`TwoD` vs `ThreeD`'s own render paths, B-065) — `kind`
+ * picks exactly one array, never bridges them.
+ *
+ * A real array move (`splice` out, `splice` in), never a field-by-field
+ * copy of the moved layer — every field (`id`, `transform`, and whatever
+ * per-primitive props `layer.passthrough()` doesn't statically type)
+ * survives untouched *by construction*, not because this function
+ * remembered to copy it.
+ *
+ * No-op (the SAME `Manifest` reference back, not a fresh clone) when:
+ *  - the scene doesn't exist, or has no array of the requested `kind`
+ *    (no `layers` at all, or no `scene3d` at all)
+ *  - `fromIndex` or `toIndex` is out of range for that array
+ *  - `fromIndex === toIndex` (nothing would move)
+ * — the same "genuinely nothing changed ⇒ hand back the identical
+ * reference" convention every no-op branch elsewhere in this file already
+ * holds (`m.commit`/`MotionTab.tsx`'s dirty-check and undo-history rely on
+ * reference equality to recognize a no-op commit, exactly as they already
+ * do for every other function here).
+ *
+ * **Out-of-range clamps to nothing, unlike `moveKeyAt`'s own boundary
+ * clamping.** A deliberately different choice from that function's
+ * "clamp, never block" philosophy: `moveKeyAt` clamps a *continuous* time
+ * value into `[0, dur]`, where every value in that range is a meaningful
+ * position to land on. An array INDEX has no equivalent continuous
+ * meaning — "drop past the end of the array" doesn't have one obviously
+ * correct clamped target (the last slot? appended past it, which is
+ * already what "last slot" means for an array this size?) — and the task
+ * this function serves (a drag that computes a drop index from pointer
+ * position, `LayerList.tsx`) can only ever produce an in-range index in
+ * the first place, since it derives `toIndex` from the ACTUAL rows on
+ * screen. So an out-of-range `toIndex` reaching this function at all can
+ * only mean a stale/racing caller, and "do nothing" is the honest response
+ * to that, not a guess at which end to clamp to.
+ *
+ * **Selection survival is NOT this function's job.** It does not touch
+ * `Selection`/undo at all — a caller re-resolves any live selection
+ * against the COMMITTED manifest via the EXISTING `resolveSelection`/
+ * `resolveSelections` (D-158), exactly as it already does after every
+ * other manifest-shape-changing op (`addLayer`). A selection captured by
+ * `id` resolves to the layer's NEW index automatically (`resolveSelection`
+ * searches the scene's array for a matching `id` and corrects `index`);
+ * a selection captured by bare `index` (no `id` — a hand-written manifest)
+ * does not follow the move, which is `resolveSelection`'s own pre-existing,
+ * documented, non-breaking limitation for id-less layers, not a new gap
+ * this function introduces.
+ */
+export function reorderLayers(
+  manifest: Manifest,
+  sceneIndex: number,
+  kind: 'layer' | 'scene3d-child',
+  fromIndex: number,
+  toIndex: number,
+): Manifest {
+  const scene = manifest.scenes[sceneIndex];
+  if (!scene) return manifest;
+  const list = kind === 'layer' ? scene.layers : scene.scene3d?.children;
+  if (!list) return manifest;
+  if (
+    fromIndex < 0 ||
+    fromIndex >= list.length ||
+    toIndex < 0 ||
+    toIndex >= list.length ||
+    fromIndex === toIndex
+  ) {
+    return manifest;
+  }
+
+  const nextList = [...list];
+  const [moved] = nextList.splice(fromIndex, 1);
+  nextList.splice(toIndex, 0, moved);
+
+  const next = clone(manifest);
+  const nScene = next.scenes[sceneIndex];
+  if (kind === 'layer') nScene.layers = nextList;
+  else nScene.scene3d!.children = nextList;
+  return next;
+}
+
 /** parses a `kind:'json'` field's textarea content back into a value.
  *  `null` on invalid JSON — the caller keeps the last-good manifest and
  *  surfaces the parse error next to the field, same "never blink the

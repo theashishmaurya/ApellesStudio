@@ -29,6 +29,7 @@ import {
   moveKeysAt,
   moveKeysByDelta,
   parseJsonField,
+  reorderLayers,
   resolveSelection,
   resolveSelections,
   moveLayersByDelta,
@@ -1307,5 +1308,140 @@ describe('sceneIndexAtFrame', () => {
 
   it('clamps a negative frame to the first scene', () => {
     expect(sceneIndexAtFrame(sample, -5)).toBe(0);
+  });
+});
+
+describe('reorderLayers (D-176 — drag-to-reorder, LayerList.tsx)', () => {
+  /** A 3-`layers` scene, distinct from `sample`'s own 2-layer scenes — needed
+   *  to tell "moved to last" apart from "swapped with its only neighbor,"
+   *  and to give "move the first item to last (and vice versa)" a real
+   *  middle item that must NOT move. */
+  function threeLayerManifest(): Manifest {
+    const m = structuredClone(sample);
+    m.scenes[0].layers = [
+      { use: 'text', text: 'first', id: 'a', x: 1, y: 1 },
+      { use: 'text', text: 'second', id: 'b', x: 2, y: 2 },
+      { use: 'text', text: 'third', id: 'c', x: 3, y: 3 },
+    ];
+    return m;
+  }
+
+  it('is a pure array move — every field of the moved layer survives untouched', () => {
+    // scene 0 "hook": [text, emphasis] — move the emphasis layer (index 1,
+    // with several of its own fields: preset/at/dur/box) to the front.
+    const before = selectedLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 1 } });
+    const next = reorderLayers(sample, 0, 'layer', 1, 0);
+    expect(next.scenes[0].layers![0]).toEqual(before?.raw);
+    // the displaced layer (the original text layer) is still fully intact,
+    // just shifted down — not dropped, not field-stripped.
+    expect(next.scenes[0].layers![1]).toEqual(sample.scenes[0].layers![0]);
+    // original untouched (immutability)
+    expect(sample.scenes[0].layers![0].use).toBe('text');
+  });
+
+  it('reordering to the SAME index is a no-op — the identical manifest reference back', () => {
+    const next = reorderLayers(sample, 0, 'layer', 1, 1);
+    expect(next).toBe(sample);
+  });
+
+  it('an out-of-range fromIndex does nothing rather than throwing or corrupting the array', () => {
+    const next = reorderLayers(sample, 0, 'layer', 99, 0);
+    expect(next).toBe(sample);
+    expect(next.scenes[0].layers).toHaveLength(2);
+  });
+
+  it('an out-of-range toIndex does nothing rather than throwing or corrupting the array', () => {
+    const next = reorderLayers(sample, 0, 'layer', 0, 99);
+    expect(next).toBe(sample);
+    expect(next.scenes[0].layers).toHaveLength(2);
+  });
+
+  it('a negative index does nothing rather than throwing or corrupting the array', () => {
+    expect(reorderLayers(sample, 0, 'layer', -1, 0)).toBe(sample);
+    expect(reorderLayers(sample, 0, 'layer', 0, -1)).toBe(sample);
+  });
+
+  it('moves the first layer to the last position, leaving the middle one in place relative to the others', () => {
+    const m = threeLayerManifest();
+    const next = reorderLayers(m, 0, 'layer', 0, 2);
+    expect(next.scenes[0].layers!.map((l) => l.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('moves the last layer to the first position', () => {
+    const m = threeLayerManifest();
+    const next = reorderLayers(m, 0, 'layer', 2, 0);
+    expect(next.scenes[0].layers!.map((l) => l.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('moves a middle layer past a neighbor by one slot', () => {
+    const m = threeLayerManifest();
+    const next = reorderLayers(m, 0, 'layer', 1, 2);
+    expect(next.scenes[0].layers!.map((l) => l.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('is a no-op for a scene with no `layers` array at all', () => {
+    // scene 2 "space" has scene3d but no top-level `layers`.
+    const next = reorderLayers(sample, 2, 'layer', 0, 1);
+    expect(next).toBe(sample);
+  });
+
+  it('is a no-op for a scene with no `scene3d` at all', () => {
+    // scene 0 "hook" has no scene3d.
+    const next = reorderLayers(sample, 0, 'scene3d-child', 0, 1);
+    expect(next).toBe(sample);
+  });
+
+  it('is a no-op for an out-of-range scene index', () => {
+    const next = reorderLayers(sample, 99, 'layer', 0, 1);
+    expect(next).toBe(sample);
+  });
+
+  it('reorders scene3d.children the same way it reorders 2D layers', () => {
+    // scene 2 "space": children = [particleflow "stream", particleflow "converge"]
+    const next = reorderLayers(sample, 2, 'scene3d-child', 0, 1);
+    expect(next.scenes[2].scene3d!.children.map((c) => c.preset)).toEqual(['converge', 'stream']);
+    // untouched original
+    expect(sample.scenes[2].scene3d!.children.map((c) => c.preset)).toEqual(['stream', 'converge']);
+  });
+
+  it('never touches a DIFFERENT scene\'s layers, or bridges `layers` and `scene3d.children`', () => {
+    const next = reorderLayers(sample, 0, 'layer', 0, 1);
+    // scene 1 and scene 2 are byte-for-byte identical (reference-equal even,
+    // since `clone()` is a structuredClone of the whole manifest but nothing
+    // downstream mutates scenes it doesn't touch) — the important assertion
+    // is VALUE equality, not sharing scene 0's own change.
+    expect(next.scenes[1]).toEqual(sample.scenes[1]);
+    expect(next.scenes[2]).toEqual(sample.scenes[2]);
+  });
+
+  it('a moved layer whose id is tracked by a live Selection still resolves to it afterward (resolveSelection, D-158)', () => {
+    const m = threeLayerManifest();
+    // The selection was made while "first" (id: 'a') sat at index 0.
+    const live: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'a' } };
+
+    // Drag "first" to the very end.
+    const next = reorderLayers(m, 0, 'layer', 0, 2);
+    expect(next.scenes[0].layers!.map((l) => l.id)).toEqual(['b', 'c', 'a']);
+
+    // Without id-based resolution this would silently resolve to whatever
+    // now sits at index 0 ('b') instead of the layer the selection actually
+    // names — the exact regression this test guards against.
+    const resolved = resolveSelection(next, live);
+    expect(resolved).toEqual({ sceneIndex: 0, target: { kind: 'layer', index: 2, id: 'a' } });
+    expect(selectedLayer(next, resolved!)?.raw.text).toBe('first');
+  });
+
+  it('a multi-selection (resolveSelections) tracks every moved id-carrying layer after a reorder', () => {
+    const m = threeLayerManifest();
+    const live: Selection[] = [
+      { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'a' } },
+      { sceneIndex: 0, target: { kind: 'layer', index: 1, id: 'b' } },
+    ];
+    // Move "second" (b) to the front — a becomes index 1, b becomes index 0.
+    const next = reorderLayers(m, 0, 'layer', 1, 0);
+    expect(resolveSelections(next, live)).toEqual([
+      { sceneIndex: 0, target: { kind: 'layer', index: 1, id: 'a' } },
+      { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'b' } },
+    ]);
   });
 });

@@ -429,7 +429,9 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             </div>
             <div className="flex-1 min-h-0">
               {sidebarTab === 'layers'
-                ? m.manifest && <LayerList manifest={m.manifest} selections={selections} onSelect={onSelect} />
+                ? m.manifest && (
+                    <LayerList manifest={m.manifest} selections={selections} onSelect={onSelect} onCommit={m.commit} />
+                  )
                 : <CatalogPanel targetSceneId={targetSceneId} onAdd={onCatalogAdd} />}
             </div>
           </div>
