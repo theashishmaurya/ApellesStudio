@@ -843,8 +843,14 @@ impl ClipTransform {
     fn effective_size(&self, natural: (f64, f64), canvas: (u32, u32)) -> (f64, f64) {
         let scale = self.scale.max(0.0);
         let (cw, ch) = canvas;
-        let w = self.box_width.map(|bw| bw * cw as f64).unwrap_or(natural.0 * scale);
-        let h = self.box_height.map(|bh| bh * ch as f64).unwrap_or(natural.1 * scale);
+        let w = self
+            .box_width
+            .map(|bw| bw * cw as f64)
+            .unwrap_or(natural.0 * scale);
+        let h = self
+            .box_height
+            .map(|bh| bh * ch as f64)
+            .unwrap_or(natural.1 * scale);
         (w, h)
     }
 }
@@ -932,12 +938,8 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
         // keyframe data — there is nothing to interpolate FROM, and
         // inventing a value would silently turn an un-overridden clip into
         // an overridden one.
-        box_width: base
-            .box_width
-            .map(|bw| f64_or("box_width", bw)),
-        box_height: base
-            .box_height
-            .map(|bh| f64_or("box_height", bh)),
+        box_width: base.box_width.map(|bw| f64_or("box_width", bw)),
+        box_height: base.box_height.map(|bh| f64_or("box_height", bh)),
         rotation: f64_or("rotation", base.rotation),
         // D-132 — crop keyframes go through the same D-034 engine as every
         // other field here, which is the whole reason the crop insets are
@@ -1439,12 +1441,24 @@ mod composite_tests {
         let mut canvas = flat(20, 10, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
         // full canvas width, half its height -> 20x5, centered at (0,2.5)-(20,7.5)
-        let t = ClipTransform { box_width: Some(1.0), box_height: Some(0.5), ..identity_transform() };
+        let t = ClipTransform {
+            box_width: Some(1.0),
+            box_height: Some(0.5),
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(10, 5), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(10, 0), Rgba([0, 0, 0, 255]), "outside the half-height box");
-        assert_eq!(*canvas.get_pixel(10, 9), Rgba([0, 0, 0, 255]), "outside the half-height box");
+        assert_eq!(
+            *canvas.get_pixel(10, 0),
+            Rgba([0, 0, 0, 255]),
+            "outside the half-height box"
+        );
+        assert_eq!(
+            *canvas.get_pixel(10, 9),
+            Rgba([0, 0, 0, 255]),
+            "outside the half-height box"
+        );
     }
 
     /// An axis with no override still falls back to exactly the pre-D-186
@@ -1456,10 +1470,22 @@ mod composite_tests {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
         // width forced to the full canvas; height keeps scale's 1x4 = 4px.
-        let t = ClipTransform { box_width: Some(1.0), scale: 1.0, ..identity_transform() };
+        let t = ClipTransform {
+            box_width: Some(1.0),
+            scale: 1.0,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(10, 9), Rgba([255, 0, 0, 255]), "18x4 box, y in [8,12)");
-        assert_eq!(*canvas.get_pixel(10, 5), Rgba([0, 0, 0, 255]), "above the 4px-tall box");
+        assert_eq!(
+            *canvas.get_pixel(10, 9),
+            Rgba([255, 0, 0, 255]),
+            "18x4 box, y in [8,12)"
+        );
+        assert_eq!(
+            *canvas.get_pixel(10, 5),
+            Rgba([0, 0, 0, 255]),
+            "above the 4px-tall box"
+        );
     }
 
     /// D-186/B-053-style safety: a `box_width`/`box_height` override must
@@ -1469,9 +1495,15 @@ mod composite_tests {
     /// always-safe rule rather than a canvas-aware exact check.
     #[test]
     fn a_clip_with_a_box_size_override_is_never_identity() {
-        let t = ClipTransform { box_width: Some(1.0), ..identity_transform() };
+        let t = ClipTransform {
+            box_width: Some(1.0),
+            ..identity_transform()
+        };
         assert!(!t.is_identity());
-        let t = ClipTransform { box_height: Some(1.0), ..identity_transform() };
+        let t = ClipTransform {
+            box_height: Some(1.0),
+            ..identity_transform()
+        };
         assert!(!t.is_identity());
     }
 
