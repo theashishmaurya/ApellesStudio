@@ -1053,7 +1053,7 @@ def editor_export_fcpxml(
 ) -> str:
     """Export the open project's ENTIRE multi-track timeline as a real,
     standard **FCPXML 1.7** document — the Final Cut Pro X XML Interchange
-    Format DaVinci Resolve and Final Cut Pro both import natively (D-195).
+    Format DaVinci Resolve and Final Cut Pro both import natively (D-196).
     Unlike `editor_export`, this produces no picture/audio at all — a text
     file describing the EDIT itself, so the same cuts/composite/trims can be
     finished in another NLE instead of (or in addition to) Chroma's own
@@ -1061,7 +1061,7 @@ def editor_export_fcpxml(
 
     Verified against Apple's own real, published FCPXML 1.7 DTD (a real DTD
     validator, not a guess at the XML shape) — see
-    `packages/editor/src/timelineInterchange.ts`'s own header doc and D-195
+    `packages/editor/src/timelineInterchange.ts`'s own header doc and D-196
     in `docs/08-decisions.md` for the full field-mapping table. Real, honest
     scope, not a stub:
 
@@ -1098,7 +1098,7 @@ def editor_export_fcpxml(
     convention `editor_export` already uses. `fps` defaults to the
     timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
     Premiere-targeted sibling interchange format) — a precise, scoped,
-    not-yet-built follow-up, see D-195."""
+    not-yet-built follow-up, see D-196."""
     import json
 
     args: dict = {"outPath": out_path, "width": width, "height": height}

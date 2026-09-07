@@ -3,7 +3,7 @@
 // @chroma/editor — unit tests for `timelineInterchange.ts`: the rational-time
 // helpers, and `buildFcpxml`'s real Timeline -> FCPXML compiler.
 //
-// Verification bar (D-195, matching this session's own `timelineExport.
+// Verification bar (D-196, matching this session's own `timelineExport.
 // ffmpeg.test.ts` precedent that a string-only test can miss real
 // invalidity): every fixture below is checked for real XML well-formedness
 // via the real `DOMParser` the `jsdom` vitest environment provides globally

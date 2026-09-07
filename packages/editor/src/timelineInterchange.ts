@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure timeline → FCPXML interchange compiler (D-195), the
+ * @chroma/editor — pure timeline → FCPXML interchange compiler (D-196), the
  * Edit tab's "move this edit to another NLE" export.
  *
  * What it is: takes the SAME `Timeline` model `timelineExport.ts` compiles to
@@ -10,7 +10,7 @@
  * (`useEditorControl.ts`'s `editor_export_fcpxml` op) writes the returned
  * string to disk.
  *
- * What it does NOT do (see D-195 for the full field-mapping table and why):
+ * What it does NOT do (see D-196 for the full field-mapping table and why):
  *   - Does not emit XMEML/FCP7 XML (the Premiere-targeted sibling format) —
  *     scoped out this pass as a precise, separately-researched follow-up, not
  *     attempted here.
@@ -23,7 +23,7 @@
  *     (as opposed to a named third-party filter plugin, which declares its
  *     own parameter names) could not be confirmed from the DTD or any
  *     available spec material without guessing — see this module's own
- *     `KNOWN GAPS` block below and D-195.
+ *     `KNOWN GAPS` block below and D-196.
  *   - Does not export `Track.duck_from`/`duck_db`/`duck_attack_ms`/
  *     `duck_release_ms` (dynamic audio ducking automation) — FCPXML has no
  *     static equivalent (audio volume automation is explicitly outside what
@@ -42,7 +42,7 @@
  *     scaled/cropped/PIP one; every such approximation is reported in the
  *     returned `warnings` array rather than silently applied.
  *
- * Spec grounding (D-195): every element/attribute this module emits was
+ * Spec grounding (D-196): every element/attribute this module emits was
  * checked against Apple's own published FCPXML v1.7 DTD (the newest version
  * Apple ever released in machine-checkable DTD form — later versions are
  * documented in prose only), a verbatim copy of which lives at
@@ -326,9 +326,9 @@ function formatKey(rate: Rational, width: number, height: number): string {
 }
 
 /**
- * Compile `timeline` to a real, standard FCPXML 1.7 document (D-195). See
+ * Compile `timeline` to a real, standard FCPXML 1.7 document (D-196). See
  * this module's own header doc for the full, precise scope (what maps, what
- * doesn't) and `docs/08-decisions.md`'s D-195 entry for the field-mapping
+ * doesn't) and `docs/08-decisions.md`'s D-196 entry for the field-mapping
  * table this implements.
  */
 export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): FcpxmlExportResult {
@@ -384,7 +384,7 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
     .filter(({ track }) => track.kind === 'video' && !track.hidden);
   const audioTracks = timeline.tracks.map((track, index) => ({ track, index })).filter(({ track }) => track.kind === 'audio');
 
-  // Lane assignment (D-195): FCPXML's own rule (DTD comment on `ao_attrs`) is
+  // Lane assignment (D-196): FCPXML's own rule (DTD comment on `ao_attrs`) is
   // "positive lane = anchored ABOVE its parent, higher = more foreground."
   // Chroma's own compositing contract (`chroma_timeline::edit::
   // composite_video_frame`, mirrored by `timelineExport.ts`'s own doc) is

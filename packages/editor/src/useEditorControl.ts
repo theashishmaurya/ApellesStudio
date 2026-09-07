@@ -575,10 +575,10 @@ export function useEditorControl(): void {
         };
       },
 
-      // ---- interchange export (D-195) — timelineInterchange.ts compiles the
+      // ---- interchange export (D-196) — timelineInterchange.ts compiles the
       // Timeline to a real FCPXML 1.7 document; chroma_write_text_file just
       // writes the string to disk. See timelineInterchange.ts's own header
-      // doc for the full, precise scope (what maps, what doesn't) and D-195
+      // doc for the full, precise scope (what maps, what doesn't) and D-196
       // in docs/08-decisions.md for the field-mapping table. -----------------
       editor_export_fcpxml: async (a) => {
         const tl = useEditorTimelineStore.getState().timeline;

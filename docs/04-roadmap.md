@@ -1100,7 +1100,7 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
-- **XMEML/FCP7 XML interchange export (Premiere)** — D-195 shipped the
+- **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
   FCPXML 1.7 half of "move a Chroma edit to another NLE" (DaVinci
   Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at
   its shape by analogy — it's a genuinely different element vocabulary

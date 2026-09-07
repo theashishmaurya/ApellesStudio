@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-07** — **Timeline interchange export (D-195): a real, DTD-verified
+- **2026-09-07** — **Timeline interchange export (D-196): a real, DTD-verified
   FCPXML 1.7 exporter** so a Chroma edit can move to DaVinci Resolve/Final Cut
   Pro. New pure compiler `packages/editor/src/timelineInterchange.ts` (mirrors
   `timelineExport.ts`'s own "same Timeline model, different output format"
@@ -17,7 +17,7 @@ One or two lines per session. Detail lives in the decision it references.
   surfaces as a warning rather than a silent drop. Verified against Apple's
   own real FCPXML 1.7 DTD (`__fixtures__/fcpxml-1.7.dtd`) via `xmllint
   --dtdvalid`, not just string-compared. XMEML/Premiere scoped as a precise,
-  separate follow-up, not attempted this pass — see D-195 for the full
+  separate follow-up, not attempted this pass — see D-196 for the full
   field-mapping table and why.
 
 - **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/

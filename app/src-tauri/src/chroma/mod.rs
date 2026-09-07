@@ -52,7 +52,7 @@
 //! - `sidecar`  — spawn + supervise the `ai/` and `ai-media/` FastAPI sidecars,
 //!   kill them on exit (D-028; second sidecar D-189, N-sidecar supervisor D-190)
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"
-//!   primitive (D-195), used by the Edit-tab FCPXML interchange exporter
+//!   primitive (D-196), used by the Edit-tab FCPXML interchange exporter
 //!   (`packages/editor/src/timelineInterchange.ts` builds the XML string;
 //!   this just writes it — no XML/interchange knowledge lives here, mirroring
 //!   `ffmpeg_run`'s own "the caller owns the content" split)
