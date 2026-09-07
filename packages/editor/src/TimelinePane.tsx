@@ -2193,6 +2193,17 @@ export function TimelinePane() {
   // per-tick handler in this file applies here just as strictly: the
   // `setClipDragPreview` call is gated to only actually dispatch when the
   // resolved landing genuinely changed, not on every pixel of movement.
+  //
+  // D-197 audited this against roadmap item 21.3 ("does the drag re-render
+  // through React state every pointer-move frame?") and the answer is no, for
+  // every gesture in this pane: a clip drag writes only this local
+  // `clipDragPreview`/`insertPreview` state (both change-gated), a marquee
+  // writes only local `marquee`, a trim goes through the library's own resize
+  // and reaches `applyOp` in `onActionResizeEndCb` — i.e. on resize END — and
+  // `TransformOverlay`'s canvas gesture keeps a local `draft`. The ONE and
+  // only `applyOp` for a clip drag is in `onDndDragEnd` below, so exactly one
+  // undo entry (`useHistoryStore.push`) and one debounced `chroma_timeline_set`
+  // are produced per gesture. Do not move a store write into this handler.
   /** D-117 — a dnd-kit clip drag has no `over` at all once the pointer is
    *  past the last `TrackDropZone` (or above the first, or between two) —
    *  `TrackDropZone` only ever mounts one instance per EXISTING track

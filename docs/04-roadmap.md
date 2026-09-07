@@ -989,19 +989,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        drag/scrub/zoom/keyframe editing) both bail out on "existing memoization
        could not be preserved," meaning manual memoization is fighting the compiler
        there specifically.
-    3. **`TimelinePane.tsx`'s drag-gesture performance** — unverified either way:
-       does its drag code already bypass React state during the gesture itself
-       (direct `style.transform` mutation via refs, committing to
-       `useEditorTimelineStore`'s real `applyOp` only on pointer-up), or does it
-       re-render through React state every pointer-move frame? The standard
-       technique for near-native drag feel inside a webview is the former. **Any
-       fix here must preserve the existing contract exactly**: the store's
-       post-gesture state (and therefore what `get_timeline`/every other MCP tool
-       observes) must be byte-identical to today's behavior — only the
-       INTERMEDIATE frames during an active drag may skip a React commit, never
-       the final one.
-    Dispatched (2026-09-07, Opus, worktree-isolated) — in progress as of this
-    writing.
+    3. ~~**`TimelinePane.tsx`'s drag-gesture performance** — unverified either
+       way: does its drag code already bypass React state during the gesture
+       itself, or does it re-render through React state every pointer-move
+       frame?~~ — **verified (D-197, 2026-09-07): it already defers**, for every
+       gesture in the pane. `onDndDragMove` writes only local, change-gated
+       `clipDragPreview`/`insertPreview` state (a drag that doesn't change the
+       resolved landing produces zero re-renders); `applyOp` is called exactly
+       once, in `onDndDragEnd`. A trim reaches `applyOp` only in
+       `onActionResizeEndCb` (resize END); a marquee commits `setSelection` on
+       pointerup; `TransformOverlay` keeps a local `draft` and commits one
+       `set_clip_transform` on release. **No change made** — the direct-DOM
+       `style.transform` technique would buy nothing here and would mean pulling
+       `@dnd-kit`'s own `DragOverlay` out of the drag's real machinery. See
+       D-197 Part 3.
+    Done (D-197) — all three root-caused; 1 and 2 fixed, 3 verified as already
+    correct. Remaining open: the rest of the React Compiler bailout list
+    (`docs/notes/react-compiler-coverage.md` marks what is fixed vs. still open).
 22. **`editor_export` mixes real audio, and the Edit tab gets a real Export button/
     dialog/queue** — done, 2026-09-07 (**D-197**, **D-198**). Closes the "v1 scope:
     video-only, a documented follow-up" gap D-183 explicitly left open (see that
