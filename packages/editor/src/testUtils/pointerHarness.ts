@@ -274,7 +274,7 @@ export function installResizeObserverStub(): () => void {
   };
 }
 
-/** What an installed object-URL stub gives a test back (D-216). */
+/** What an installed object-URL stub gives a test back (D-217). */
 export interface ObjectUrlStub {
   /** The `Blob` a given `blob:` URL was minted from, or `undefined` if that
    *  URL was never created here or has since been revoked. */
@@ -286,7 +286,7 @@ export interface ObjectUrlStub {
 }
 
 /** jsdom implements neither `URL.createObjectURL` nor `URL.revokeObjectURL`
- *  (confirmed against the installed jsdom, not assumed), and since D-216
+ *  (confirmed against the installed jsdom, not assumed), and since D-217
  *  `PreviewPane` shows every preview frame through one — the backend hands it
  *  the JPEG's raw bytes now, not a `data:` URL.
  *

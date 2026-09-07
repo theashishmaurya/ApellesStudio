@@ -55,7 +55,7 @@ const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 24;
 
-/** Whatever `chroma_timeline_frame` answers with — since D-216 that is the
+/** Whatever `chroma_timeline_frame` answers with — since D-217 that is the
  *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
  *  frame just has to arrive so the preview surface (and with it the transform
  *  overlay) mounts at all. */
@@ -210,7 +210,7 @@ beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(CANVAS_W, CANVAS_H);
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
-  // D-216 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
+  // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
   // frame through one now.
   objectUrls = installObjectUrlStub();
   console_ = captureConsole();

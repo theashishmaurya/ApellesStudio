@@ -1115,7 +1115,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   composited by `chroma::edit`'s own CPU compositor, which upstream RapidRAW
   does not have.
 
-- **2026-09-08** — **Preview compositor + frame IPC payload (D-216)** · **zero
+- **2026-09-08** — **Preview compositor + frame IPC payload (D-217)** · **zero
   upstream-file edits.** Everything is inside Chroma-owned code:
   `app/src-tauri/src/chroma/edit.rs` (`blend_layer_sampled`, the
   `timeline_frame` → `timeline_frame_image` + `encode_preview_jpeg` split, and

@@ -35,14 +35,14 @@
  * rather than a tighter per-frame coupling. No audio during scrub (paused) —
  * only real Play produces sound, per D-049 scope.
  *
- * Frame payload (D-216): `chroma_timeline_frame` answers with the JPEG's raw
+ * Frame payload (D-217): `chroma_timeline_frame` answers with the JPEG's raw
  * bytes (an `ArrayBuffer`), not a `data:image/jpeg;base64,…` string, and this
  * file wraps them in a `Blob` object URL — see `PREVIEW_MIME` and `frameUrl`.
  * Base64 turned out NOT to be where playback's time went (0.01 ms/frame in
  * Rust, measured); the real cost was the CPU compositor, fixed in `edit.rs` in
  * the same pass. The binary payload stayed because it is strictly cheaper on
  * this side too — no hundreds-of-KB string to parse and base64-decode per
- * displayed frame — not because it was the bottleneck. See D-216.
+ * displayed frame — not because it was the bottleneck. See D-217.
  *
  * Playback-start cost (D-125): pressing Play used to cost several seconds of
  * dead air. Three things here contributed, all fixed: play and scrub asked for
@@ -119,13 +119,13 @@ import { useCompositionSize } from './useCompositionSize';
 const PREVIEW_LONG_EDGE = 960;
 
 /**
- * The wire format `chroma_timeline_frame` answers in (D-216).
+ * The wire format `chroma_timeline_frame` answers in (D-217).
  *
  * It hands back the JPEG's raw bytes as an `ArrayBuffer` — a `tauri::ipc::
  * Response`, which Tauri's IPC delivers as `application/octet-stream` — rather
- * than the `data:image/jpeg;base64,…` string it returned until D-216. Rust
+ * than the `data:image/jpeg;base64,…` string it returned until D-217. Rust
  * knows the format; the bytes do not carry it, so the `Blob` this side has to
- * be told, and that is the one place the two ends have to agree. See D-216 for
+ * be told, and that is the one place the two ends have to agree. See D-217 for
  * why the blank/out-of-range frame is a 1×1 JPEG now rather than a PNG: it is
  * this constant that a second format would have broken.
  */
@@ -167,7 +167,7 @@ export function PreviewPane() {
 
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
   const [decodeErr, setDecodeErr] = useState<string | null>(null);
-  // D-216 — the object URL `frameSrc` currently points at. An object URL lives
+  // D-217 — the object URL `frameSrc` currently points at. An object URL lives
   // until it is revoked, and playback mints one per displayed frame, so the
   // previous one is released as the next replaces it (and the last one on
   // unmount, below). Revoking the OLD url right after handing React the NEW one
@@ -245,7 +245,7 @@ export function PreviewPane() {
   useCanvasClipPick(surfaceEl, compSize);
 
   /** Put one freshly-fetched frame's bytes on screen, releasing the previous
-   *  frame's object URL (D-216 — see `frameUrl`'s own note). */
+   *  frame's object URL (D-217 — see `frameUrl`'s own note). */
   const showFrame = useCallback((bytes: ArrayBuffer) => {
     const url = URL.createObjectURL(new Blob([bytes], { type: PREVIEW_MIME }));
     const previous = frameUrl.current;

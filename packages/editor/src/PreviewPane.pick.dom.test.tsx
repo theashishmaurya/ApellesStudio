@@ -62,7 +62,7 @@ const CANVAS_H = 500;
 /** A 1×1 transparent GIF — `PreviewPane` only renders its overlay stack once
  *  `chroma_timeline_frame` has produced SOME frame; nothing here inspects the
  *  pixels (that is the Rust compositor's own concern). */
-/** Whatever `chroma_timeline_frame` answers with — since D-216 that is the
+/** Whatever `chroma_timeline_frame` answers with — since D-217 that is the
  *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
  *  frame just has to arrive for the preview surface to mount. */
 const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
@@ -201,7 +201,7 @@ async function mountWith(
 
 beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(CANVAS_W, CANVAS_H);
-  // D-216 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
+  // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
   // frame through one now.
   objectUrls = installObjectUrlStub();
   restoreResizeObserver = installResizeObserverStub();

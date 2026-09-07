@@ -5,7 +5,7 @@
 //!   project's **active** [`Timeline`] (D-041 was single-video-track and
 //!   singular; D-045 made a project hold several independently-editable named
 //!   timelines, one active), list/create/switch timelines, and decode one
-//!   timeline frame to **raw JPEG bytes** for the preview pane (D-216 — it was
+//!   timeline frame to **raw JPEG bytes** for the preview pane (D-217 — it was
 //!   a `data:image/jpeg;base64,…` string until then).
 //! What it does: `chroma_timeline_get` returns the active timeline (building a
 //!   fresh one from the project's shots the first time — probing each source
@@ -594,7 +594,7 @@ pub fn chroma_timeline_link_clips(
 const PREVIEW_JPEG_QUALITY: u8 = 80;
 
 /// Encode one preview picture to JPEG bytes — the only place the preview's wire
-/// format is chosen (D-216).
+/// format is chosen (D-217).
 fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
     let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
     img.to_rgb8()
@@ -609,7 +609,7 @@ fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
 /// A 1×1 black JPEG — returned for a timeline position past the end (or before
 /// the start), so the preview `<img>` clears instead of erroring.
 ///
-/// **Black JPEG, not the 1×1 transparent PNG this used to be (D-216).** The
+/// **Black JPEG, not the 1×1 transparent PNG this used to be (D-217).** The
 /// preview payload is raw bytes now and the frontend wraps them in one `Blob`
 /// of one fixed MIME type; a second image format on the same channel would mean
 /// either byte-sniffing on the JS side or an outright wrong `Content-Type`. At
@@ -652,11 +652,11 @@ fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
 /// Out-of-range / nothing visible → a 1×1 black JPEG ([`blank_frame_jpeg`]);
 /// a decode / probe failure → `Err`.
 ///
-/// **Raw bytes over IPC, not a `data:image/jpeg;base64,…` string (D-216).**
+/// **Raw bytes over IPC, not a `data:image/jpeg;base64,…` string (D-217).**
 /// Base64 on this path cost a second full pass over the picture plus ~33% more
 /// bytes to JSON-escape, ship, parse and decode again in the webview, for every
 /// displayed frame during playback. `tauri::ipc::Response` hands the frontend
-/// an `ArrayBuffer` instead; see D-216 for the measured split.
+/// an `ArrayBuffer` instead; see D-217 for the measured split.
 ///
 /// **Runs off the Tauri main thread** (D-125). A plain `#[tauri::command] fn`
 /// is `ExecutionContext::Blocking` — Tauri runs it on the main thread, so every
@@ -682,7 +682,7 @@ pub async fn chroma_timeline_frame(
 /// command can hand it to `spawn_blocking` and so tests can call it directly
 /// without a tokio runtime.
 ///
-/// Two phases, deliberately separable so they can be timed apart (D-216):
+/// Two phases, deliberately separable so they can be timed apart (D-217):
 /// [`timeline_frame_image`] produces the picture (decode + composite),
 /// [`encode_preview_jpeg`] turns it into the wire payload.
 pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec<u8>, String> {
@@ -696,7 +696,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec
 /// picture for timeline position `pos`, or `None` when nothing is visible there
 /// (which [`timeline_frame`] turns into [`blank_frame_jpeg`]).
 ///
-/// Split out of `timeline_frame` by D-216 so the two halves can be timed
+/// Split out of `timeline_frame` by D-217 so the two halves can be timed
 /// independently — the whole point of that decision was to find out which half
 /// the preview's per-frame cost actually lives in, and a monolithic function
 /// cannot answer that. See `preview_throughput_tests`.
@@ -1345,7 +1345,7 @@ fn composite_layer_onto(
     let (raw_w, raw_h) = t.effective_size(natural, canvas.dimensions());
     let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
 
-    // D-216 — the magnified / 1:1 case goes straight onto the canvas instead of
+    // D-217 — the magnified / 1:1 case goes straight onto the canvas instead of
     // through a full-size intermediate buffer. This is the preview's single
     // dominant cost: measured on the owner's own reel (two 2940×1670 layers in
     // a 1080×1920 canvas at the 960 px preview cap), `image::imageops::resize`
@@ -1431,7 +1431,7 @@ fn composite_layer_onto(
 
 /// Paint a layer onto `canvas` at `dest_size`, scaling it by direct bilinear
 /// sampling and touching **only the canvas pixels it can actually cover**
-/// (D-216).
+/// (D-217).
 ///
 /// What it is: the enlarge-and-blend inner loop of [`composite_layer_onto`]'s
 /// no-rotation, ratio-≥-1 fast path — crop mask, scale, opacity and
@@ -1941,10 +1941,10 @@ mod composite_tests {
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
     }
 
-    /// **D-216's safety claim, checked.** The sampled fast path must produce
+    /// **D-217's safety claim, checked.** The sampled fast path must produce
     /// the same picture as the resize-then-overlay path it replaced — that is
     /// the whole argument for it being an optimisation rather than a change of
-    /// look. The reference is the pre-D-216 algorithm written out inline, so
+    /// look. The reference is the pre-D-217 algorithm written out inline, so
     /// this stays a real comparison even as the fast path evolves.
     ///
     /// ±1 per channel, not exact: the two accumulate in a different order (one
@@ -2075,7 +2075,7 @@ mod composite_tests {
     }
 
     /// A layer scaled up and pushed entirely off the canvas paints nothing —
-    /// and, since D-216, costs nothing either: the old path resized the whole
+    /// and, since D-217, costs nothing either: the old path resized the whole
     /// (arbitrarily large) footprint first and let `overlay` discard all of it.
     #[test]
     fn a_layer_entirely_off_canvas_paints_nothing() {
@@ -2724,7 +2724,7 @@ mod preview_text_tests {
         tmp
     }
 
-    /// `timeline_frame`'s raw JPEG bytes (D-216), decoded back to real pixels —
+    /// `timeline_frame`'s raw JPEG bytes (D-217), decoded back to real pixels —
     /// the same bytes the preview `<img>` shows via its `Blob` URL.
     fn decode_preview(jpeg: &[u8]) -> image::RgbaImage {
         image::load_from_memory(jpeg).expect("decode jpeg").to_rgba8()
@@ -2865,7 +2865,7 @@ mod preview_throughput_tests {
     /// single-shared-decode-pipe respawn storm lived.
     ///
     /// `comp` sets the project's output size (`None` = whatever the source is,
-    /// which takes `composite_video_frame`'s cheapest path). D-216's phase
+    /// which takes `composite_video_frame`'s cheapest path). D-217's phase
     /// breakdown passes the owner's real 1080×1920 portrait composition,
     /// because a comp size that differs from the source resolution is exactly
     /// what makes every layer pay a CPU resize per frame.
@@ -3020,7 +3020,7 @@ mod preview_throughput_tests {
         assert_eq!(super::decode_pipe::open_pipe_count(), 0);
     }
 
-    /// **D-216's profile.** Where a preview frame's time actually goes, phase
+    /// **D-217's profile.** Where a preview frame's time actually goes, phase
     /// by phase, on a project shaped like the owner's own laggy one: two video
     /// layers of real 2940×1670 footage composited into a 1080×1920 portrait
     /// canvas at the live `PREVIEW_LONG_EDGE`.
@@ -3030,7 +3030,7 @@ mod preview_throughput_tests {
     /// answer it. It prints the split rather than asserting a wall-clock
     /// budget for the two cheap phases — those are microseconds and a
     /// millisecond assertion on them would be noise — but it *does* assert the
-    /// one structural invariant D-216 bought: the payload the frontend gets is
+    /// one structural invariant D-217 bought: the payload the frontend gets is
     /// the JPEG itself, not a ~4/3-inflated base64 transcription of it.
     ///
     /// Run it with the numbers visible:
@@ -3068,7 +3068,7 @@ mod preview_throughput_tests {
             t_jpeg += t1.elapsed().as_micros();
             n_jpeg = jpeg.len();
 
-            // The pre-D-216 payload, measured on the same picture in the same
+            // The pre-D-217 payload, measured on the same picture in the same
             // run so the comparison is like-for-like rather than across builds.
             let t2 = Instant::now();
             let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
@@ -3080,7 +3080,7 @@ mod preview_throughput_tests {
         eprintln!(
             "preview frame phases @ {LONG_EDGE}px long edge, 2 layers → 1080×1920 comp, \
              {FRAMES} frames:\n  decode+composite {:.2} ms/frame\n  jpeg encode      {:.2} ms/frame\
-             \n  base64 encode    {:.2} ms/frame  (removed by D-216)\n  \
+             \n  base64 encode    {:.2} ms/frame  (removed by D-217)\n  \
              payload {} KB raw vs {} KB as a data URL (+{:.0}%)",
             t_image as f64 / n as f64 / 1000.0,
             t_jpeg as f64 / n as f64 / 1000.0,

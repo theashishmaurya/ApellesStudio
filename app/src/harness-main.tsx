@@ -154,7 +154,7 @@ const HARNESS_PROJECT_KEY = '/harness/fake.chroma';
  *  `timeline_frame` code path (see `docs/notes/preview-canvas-boundary.md`),
  *  not something this browser-only page can produce without a real backend.
  *
- *  Kept as the base64 source text but handed over as raw BYTES (D-216): the
+ *  Kept as the base64 source text but handed over as raw BYTES (D-217): the
  *  real command answers with a `tauri::ipc::Response`, which reaches the
  *  frontend as an `ArrayBuffer`, and `PreviewPane` wraps that in a `Blob`
  *  object URL. A harness that still returned a `data:` URL would no longer be

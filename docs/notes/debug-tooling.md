@@ -54,9 +54,9 @@ several rounds of the owner's own screenshots before an agent could even confirm
    (same Tauri-command-registration and `mcp/server.py` territory — parallel
    dispatch would just conflict).
 
-5. **Preview frame-timing readout** — scoped, not started (found needed by D-216,
+5. **Preview frame-timing readout** — scoped, not started (found needed by D-217,
    2026-09-08). "Report the last N frame-to-frame intervals `PreviewPane` actually
-   painted", as a debug op + MCP tool. D-216 fixed the Edit-tab preview's dominant
+   painted", as a debug op + MCP tool. D-217 fixed the Edit-tab preview's dominant
    per-frame cost (42.7 → 14.0 ms) and could measure that precisely in Rust, but
    **could not measure the thing the owner actually reported** — perceived playback
    smoothness — because there is no way to see webview-side paint timing. Two

@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **The Edit-tab preview's real bottleneck, profiled then
-  fixed (D-216, roadmap 25).** The standing theory — base64 in
+  fixed (D-217, roadmap 25).** The standing theory — base64 in
   `chroma_timeline_frame`'s `data:` URL — was measured and is **wrong**:
   0.01 ms of a 42.7 ms frame. 87% of it was decode + composite, and inside
   that, `image::imageops::resize` at 16-19 ms *per layer*, enlarging each layer

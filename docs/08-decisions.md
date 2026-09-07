@@ -19018,7 +19018,7 @@ compiles to a byte-identical argv to before D-211.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
-## D-216 — The Edit-tab preview's per-frame cost: the CPU compositor, not base64 — plus a binary IPC payload
+## D-217 — The Edit-tab preview's per-frame cost: the CPU compositor, not base64 — plus a binary IPC payload
 
 **Numbered 216, not 214** — two other worktree agents were landing decisions the
 same night; the gap is deliberate, to make a duplicate number impossible rather
@@ -19116,7 +19116,7 @@ URL after a repaint, so a leak here fails a test rather than growing quietly.
 
 **Verified.**
 - `the_sampled_fast_path_matches_resize_then_overlay` composites the same layer
-  both ways — the fast path, and the pre-D-216 mask→resize→opacity→overlay
+  both ways — the fast path, and the pre-D-217 mask→resize→opacity→overlay
   algorithm written out inline as the reference — and asserts every channel of
   every pixel agrees within ±1. Four cases: magnified and offset; magnified,
   cropped and half-opaque; magnified far enough to hang off the canvas; and one

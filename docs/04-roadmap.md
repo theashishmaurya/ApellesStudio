@@ -1194,7 +1194,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         per render at 50 keys (26.9×), 99.9 µs → 2.6 µs at 200 (38.6×),
         identical results. Fixed here because D-209 added a third caller to that
         same path and must not add to the cost.
-      - ✅ **Profiled and fixed, D-216 (2026-09-08) — and the standing theory
+      - ✅ **Profiled and fixed, D-217 (2026-09-08) — and the standing theory
         above was WRONG, which is why it is left in place above rather than
         quietly rewritten.** base64 was never the cost. Measured on the owner's
         own `perf-comparison-reel-v3` (two 2940×1670 layers, 1080×1920 canvas,
@@ -1216,12 +1216,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         decode + composite **37.3 → 8.7 ms** (4.3×), whole frame **42.7 →
         14.0 ms** (3.05×) — a ~23 fps ceiling to ~71 fps, from under the
         timeline's frame budget to twice inside it. Pixel-equivalent to the path
-        it replaced within ±1 per channel, asserted against the pre-D-216
+        it replaced within ±1 per channel, asserted against the pre-D-217
         algorithm written out inline, including one case at the reel's exact
         geometry and settings (worst measured difference: 1). The IPC payload
         went binary in the same pass (`tauri::ipc::Response` → `ArrayBuffer` →
         `Blob` object URL) — strictly cheaper on the webview side, but recorded
-        honestly in D-216 as *not* the bottleneck.
+        honestly in D-217 as *not* the bottleneck.
       - ⬜ **Still open — JPEG encode is now the largest Rust-side phase**, 5.3
         of the remaining 14.0 ms (38%). `image`'s own encoder on a 540×960 RGB
         buffer. Worth a look only if the preview needs to be faster still;
@@ -1232,7 +1232,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         requested while the current frame is in flight or painting. With the
         Rust side now at ~14 ms a lookahead is worth less than it was, but it
         would still remove one paint's worth of dead time per frame. Not built
-        in D-216 because it cannot be verified without live webview-side
+        in D-217 because it cannot be verified without live webview-side
         instrumentation (see below), and a lookahead that races a fast scrub
         direction-change into view would be a real regression: it needs a
         request token so a stale in-flight frame is dropped, not painted.
@@ -1246,7 +1246,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         solve that first (e.g. keep one pipe per (track, scale) pair, or accept
         the respawn only on a *sustained* play rather than every toggle), not
         just change the constant.
-      - **What D-216 DID confirm live**, in a second dev instance running the
+      - **What D-217 DID confirm live**, in a second dev instance running the
         worktree build against the owner's own `perf-comparison-reel-v3`: the
         Edit tab renders correctly end to end through both changes — the binary
         `ArrayBuffer` → `Blob` payload and the new sampled compositor — at
@@ -1255,7 +1255,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         magnified layer correctly overhangs the canvas edges with legible
         detail. That frame is exactly `blend_layer_sampled`'s path on real
         footage. No errors in the dev log from the frame path.
-      - ⬜ **Still open — no live end-to-end LATENCY number.** D-216's figures
+      - ⬜ **Still open — no live end-to-end LATENCY number.** D-217's figures
         are the real code path on the real footage but they are Rust-side. Two
         things block a live measurement, both worth knowing before anyone tries
         again: (1) a second Chroma instance cannot run alongside the owner's at

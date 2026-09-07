@@ -78,7 +78,7 @@ const backend = vi.hoisted(() => {
      *  returned. */
     framesFetched: [] as number[],
     /** The frame payload for a given persisted state. A real backend returns
-     *  the raw JPEG bytes of composited pixels (D-216); this returns bytes
+     *  the raw JPEG bytes of composited pixels (D-217); this returns bytes
      *  spelling out the persisted `position_y`, which is the same thing for
      *  this test's purpose: "does the picture on screen reflect the edit."
      *  `PreviewPane` wraps whatever comes back in a `Blob` object URL, so the
@@ -187,7 +187,7 @@ function setPositionY(positionY: number): void {
 }
 
 /** What the preview `<img>` is actually showing, as the bytes the backend
- *  handed over — resolved through the object-URL stub, since since D-216 the
+ *  handed over — resolved through the object-URL stub, since since D-217 the
  *  `src` itself is an opaque `blob:` URL rather than the payload inline. */
 async function previewFrameContent(
   objectUrls: ObjectUrlStub,
@@ -215,7 +215,7 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
     close: () => void;
   }> {
     const restoreResizeObserver = installResizeObserverStub();
-    // D-216 — jsdom has no `URL.createObjectURL`, and `PreviewPane` now shows
+    // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` now shows
     // every frame through one.
     const objectUrls = installObjectUrlStub();
     backend.reset();
@@ -269,7 +269,7 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
       expect(backend.framesFetched.length).toBeGreaterThan(framesBeforeEdit);
       expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0.25');
 
-      // D-216 — one object URL per displayed frame would be a real leak if
+      // D-217 — one object URL per displayed frame would be a real leak if
       // the previous one were not revoked. Only the frame on screen is live.
       expect(objectUrls.live()).toHaveLength(1);
     } finally {
