@@ -46,7 +46,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore } from '@chroma/bridge';
 
-import { useEditorTimelineStore } from './timelineStore';
+import { useEditorTimelineStore, type Selection } from './timelineStore';
 import {
   timelineDuration,
   FADE_PRESETS,
@@ -55,6 +55,7 @@ import {
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_TITLE_SECONDS,
   fadePresetName,
+  gapAt,
   isTextClip,
   newTextClipFields,
   newTextLayer,
@@ -107,6 +108,52 @@ function resolveClip(
   const c = tr.clips[clip];
   if (!c) return { error: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
   return { track, clip, tr, c };
+}
+
+/** D-216 — one resolved `editor_set_selection` entry: the `{track, id}` pair
+ *  the store's `selection` actually holds, plus the clip's index, its name and
+ *  its track's flags, all reported straight back to the caller. */
+interface ResolvedSelectionClip {
+  track: number;
+  clip: number;
+  id: string;
+  name: string;
+  trackLocked: boolean;
+  trackHidden: boolean;
+}
+
+/** D-216 — resolve ONE `editor_set_selection` entry against the live timeline.
+ *
+ *  Accepts EITHER the `clip` INDEX every other mutating `editor_*` op takes
+ *  (via [`resolveClip`], so the "no clip N on track M (0..K)" error shape is
+ *  identical) or the `clipId` `editor_get_state` reports back. The two halves
+ *  of this surface genuinely speak different dialects — reads hand out ids,
+ *  writes take indices — and forcing a caller to convert would cost an
+ *  `editor_get_timeline` round trip to answer a question it already had the
+ *  answer to. `clipId` wins when both are given, since it is the more
+ *  specific of the two (an index is only meaningful against a particular
+ *  moment of the track's Vec order; an id survives a reorder — D-054).
+ *
+ *  Resolving at all is the point: a selection of a clip that does not exist
+ *  would be stored happily, return `ok`, and render nothing — the same silent
+ *  no-op class of bug B-053 was. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- one entry of the untyped `chroma://request` args array, same as every op handler's own `a`
+function resolveSelectionEntry(tl: Timeline, entry: any): ResolvedSelectionClip | { error: string } {
+  const track = Math.round(Number(entry?.track));
+  const tr = tl.tracks[track];
+  if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+  const flags = { trackLocked: !!tr.locked, trackHidden: !!tr.hidden };
+  if (entry?.clipId !== undefined && entry?.clipId !== null) {
+    const id = String(entry.clipId);
+    const clip = tr.clips.findIndex((c) => c.id === id);
+    if (clip < 0) {
+      return { error: `no clip with id "${id}" on track ${track} — ids come from editor_get_timeline / editor_get_state` };
+    }
+    return { track, clip, id, name: tr.clips[clip].name, ...flags };
+  }
+  const found = resolveClip(tl, entry?.track, entry?.clip);
+  if ('error' in found) return found;
+  return { track: found.track, clip: found.clip, id: found.c.id, name: found.c.name, ...flags };
 }
 
 /** Resolve the media file the D-189 analysis ops should look at, from any of
@@ -293,7 +340,7 @@ function noTimeline(): { error: string } {
 export function useEditorControl(): void {
   useEffect(() => {
     const OPS: Record<string, (args: any) => any> = {
-      // ---- read/seek ------------------------------------------------------
+      // ---- read / seek / selection ----------------------------------------
       editor_get_state: () => {
         const s = useEditorTimelineStore.getState();
         return {
@@ -315,6 +362,7 @@ export function useEditorControl(): void {
           // of Edit-tab state NOTHING outside the webview could observe, so a
           // selection bug could only be caught by eyeballing the window — which
           // is precisely how the WKWebView half of B-085 shipped as "fixed".
+          // D-216 — `editor_set_selection` is the write half of this pair.
           selection: s.selection,
           selectedGap: s.selectedGap,
         };
@@ -336,6 +384,118 @@ export function useEditorControl(): void {
       editor_set_playing: (a) => {
         useEditorTimelineStore.getState().setPlaying(!!a?.playing);
         return { ok: true, playing: useEditorTimelineStore.getState().playing };
+      },
+
+      // D-216 (roadmap item 26) — the WRITE half of `editor_get_state`'s
+      // `selection`/`selectedGap`, which were readable and not writable, so
+      // nothing outside a human's mouse could put a clip into the state where
+      // `TransformOverlay` even mounts. That left the entire on-canvas
+      // transform surface agent-undrivable and agent-unverifiable, which is
+      // exactly how D-209/B-093 had to ship with its pointer tier unchecked.
+      //
+      // **Deliberately NOT an `EditOp`, and deliberately not undoable** — see
+      // D-216. `selection`/`selectedGap` are fields of the STORE, not of
+      // `Timeline`, so D-051's whole-`Timeline` undo snapshots have never
+      // carried selection and nothing here persists to `project.json`. Every
+      // GUI selection path (`TimelinePane`'s clip click, its marquee, its
+      // empty-area gap click, `useCanvasClipPick`'s rule 6) calls the same two
+      // plain store actions and pushes nothing onto the shared history, so an
+      // MCP selection that WAS undoable would behave differently from the
+      // identical human click AND would sit between the user and their last
+      // real edit on the next cmd-Z.
+      //
+      // Drives the SAME `setSelection`/`setSelectedGap` pair, in the same
+      // order those paths call them — not a parallel selection path.
+      editor_set_selection: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+
+        const clipsArg = a?.clips;
+        const gapArg = a?.gap;
+        const hasClips = clipsArg !== undefined && clipsArg !== null;
+        const hasGap = gapArg !== undefined && gapArg !== null;
+        // D-105 — a clip selection and a gap selection are mutually exclusive
+        // in the store itself (each setter clears the other), so asking for
+        // both is a caller error with no meaningful answer, not something to
+        // silently resolve by picking one.
+        if (hasClips && hasGap) {
+          return { error: 'clips and gap are mutually exclusive (D-105) — pass one or the other, not both' };
+        }
+        if (!hasClips && !hasGap) {
+          return {
+            error:
+              'pass clips (an array of {track, clip} or {track, clipId}; [] clears everything) or gap ({track, frame})',
+          };
+        }
+
+        const { setSelection, setSelectedGap } = useEditorTimelineStore.getState();
+
+        if (hasGap) {
+          const track = Math.round(Number(gapArg?.track));
+          const tr = tl.tracks[track];
+          if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+          const frame = Math.round(Number(gapArg?.frame));
+          if (!Number.isFinite(frame)) return { error: 'gap.frame must be a finite timeline frame' };
+          // The SAME `gapAt` test `TimelinePane`'s own empty-area click makes
+          // before it selects a gap, and the same one `remove_gap`'s reducer
+          // makes before it closes one — so this op can never produce a gap
+          // selection the GUI could not have produced, or one `editor_remove_gap`
+          // would then refuse as a no-op.
+          const gap = gapAt(tr, frame, timelineFps(tl));
+          if (!gap) {
+            return {
+              error: `frame ${frame} on track ${track} is not inside a real, closeable gap (a gap needs a clip after it — trailing empty space past the last clip is not one)`,
+            };
+          }
+          setSelection([]);
+          setSelectedGap({ track, frame });
+          const after = useEditorTimelineStore.getState();
+          return {
+            ok: true,
+            selection: after.selection,
+            selectedGap: after.selectedGap,
+            // The gap's real bounds, so a caller can hand `gapStart` straight
+            // to `editor_remove_gap` (or measure what closing it would shift)
+            // without a second round trip.
+            gapStart: gap.gapStart,
+            gapEnd: gap.gapEnd,
+            singleClipSelected: false,
+          };
+        }
+
+        if (!Array.isArray(clipsArg)) {
+          return { error: 'clips must be an array of {track, clip} or {track, clipId} ([] clears the selection)' };
+        }
+        const resolved: ResolvedSelectionClip[] = [];
+        for (const entry of clipsArg) {
+          const hit = resolveSelectionEntry(tl, entry);
+          if ('error' in hit) return hit;
+          // A repeated clip is meaningless in a selection — the GUI's own
+          // cmd-click toggle can never produce one — so it is dropped rather
+          // than failing the whole call, and the read-back below shows the
+          // caller exactly what it got.
+          if (!resolved.some((r) => r.track === hit.track && r.id === hit.id)) resolved.push(hit);
+        }
+
+        const next: Selection[] = resolved.map((r) => ({ track: r.track, id: r.id }));
+        setSelectedGap(null);
+        setSelection(next);
+
+        const after = useEditorTimelineStore.getState();
+        return {
+          ok: true,
+          selection: after.selection,
+          selectedGap: after.selectedGap,
+          clips: resolved,
+          // The one derived fact this op exists to make reachable: the
+          // on-canvas transform box (`TransformOverlay`) and the Inspector's
+          // clip form both draw only for a selection of EXACTLY one clip —
+          // the Phase-1 multi-select fallback both already apply. A caller
+          // driving/verifying the canvas surface needs this to be true; a
+          // clip whose track is `trackLocked` still gets the box but no
+          // draggable corner handles.
+          singleClipSelected: after.selection.length === 1,
+        };
       },
 
       // ---- media pool -------------------------------------------------------

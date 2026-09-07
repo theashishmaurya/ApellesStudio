@@ -74,6 +74,7 @@ zero.**
 > | `get_timeline` | Read-only. Every track and clip, with the `index` mutating tools address a clip by and the `id` that survives a reorder. Reports fades + ducking. |
 > | `editor_get_state` | Read-only. Project-open + WHICH project (`openProject`, B-083)/load-status/playhead/playing/has-timeline, plus the current `selection` (`[{track, id}]`) and `selectedGap` (2026-09-07, B-085 follow-up — selection was previously invisible to everything outside the webview, so a selection bug could only be caught by eyeballing the window). |
 > | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
+> | `editor_set_selection` (D-216, 2026-09-08) | The WRITE half of `editor_get_state`'s `selection`/`selectedGap` — `clips=[{track, clip}]` or `[{track, clipId}]` (an array, so the GUI's real D-107 multi-select is reachable; `[]` clears), or `gap={track, frame}`, the two mutually exclusive exactly as in the store (D-105). **Why it matters, given that every editing tool already takes an explicit `track`/`clip` and needs no selection:** the Edit tab has surfaces that exist only FOR a selection — `TransformOverlay`'s on-canvas box and corner handles, and the Inspector's clip form, both gated on EXACTLY ONE clip being selected — and until this op nothing but a human's mouse could reach them, which is why every on-canvas fix (D-136, D-204, B-085, B-092, D-209) had to be verified by the owner clicking, or not at all. Pair it with `debug_screenshot` to actually see the box land. Validates every entry against the live timeline (a bad index or unknown id is a real error, never a stored selection of nothing) and a gap with the same `gapAt` the GUI's own empty-area click uses. **Not undoable** — see below. |
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
 > | `editor_remove_media` (2026-09-07, roadmap item 23) | Remove one or more items from the media pool by id — the pool's only correction mechanism today (no re-probe/expiry yet). Wraps the same `chroma_media_remove` the GUI's Sources panel already used; a clip on the timeline still referencing a removed item keeps playing/exporting fine (`Clip.source_path` is an independent copy, never re-read from the pool), only its `media_id` back-link goes stale — reported back in `stillReferencedBy`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
@@ -93,6 +94,17 @@ zero.**
 > Every mutating tool goes through `useEditorTimelineStore.applyOp` (or the
 > equivalent real store action), so an agent's edit lands on the same undo stack
 > a human's does — D-140's rule, restated in `mcp-architecture.md`.
+>
+> **`editor_set_selection` is the one tool that deliberately pushes nothing onto
+> that stack** (D-216), and it is not an exception to D-140 so much as outside
+> its subject: `selection`/`selectedGap` are fields of the STORE, not of
+> `Timeline`, so D-051's whole-`Timeline` undo snapshots have never carried
+> selection, nothing persists it to `project.json`, and every GUI selection path
+> (`TimelinePane`'s clip click, its marquee, its gap click, `useCanvasClipPick`)
+> pushes nothing either. An MCP selection that WAS undoable would behave
+> differently from the identical human click and would sit between the user and
+> their last real edit on the next cmd-Z. It drives the same two store actions
+> those paths call, which is the half of D-140 that does apply.
 
 **Net effect: an agent can now drive essentially the whole Edit tab** — import
 media, assemble a track from raw footage (cut gaps/retakes by only placing the
@@ -144,9 +156,14 @@ Motion scene manifest today, despite the whole `/animate` skill workflow (in the
 agent authoring exactly this kind of manifest. This is arguably the highest-value
 gap to close, if/when this is picked up — it's the one place "an agent driving
 this app" and "the manifest-authoring workflow this app is *for*" directly meet.
-D-081's new `LayerList`/`Selection` (Motion tab, tonight) has no MCP surface
-either, but selection is a pure UI-navigation concept — the manifest
-get/save/render triad is the real, load-bearing gap.
+D-081's new `LayerList`/`Selection` (Motion tab) has no MCP surface either. That
+was dismissed here as "a pure UI-navigation concept"; **D-216 is the correction
+to that reasoning for the Edit tab**, and the same caveat applies to Motion:
+selection stops being pure navigation the moment a surface renders ONLY for a
+selection (the Edit tab's on-canvas transform box did, and was unreachable for
+it). Worth re-checking against Motion's own selection-gated UI when this is
+picked up — the manifest get/save/render triad is still the bigger, more
+load-bearing gap.
 
 ## Gap: Media / Sources pool — 2 of 6 tools (D-183 added import; `_remove` closed 2026-09-07)
 

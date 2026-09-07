@@ -1226,8 +1226,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         but it is per playback frame. Deliberately not touched inside D-209's
         bug fix — that hook is the delicate B-085/B-092 surface and deserves its
         own pass.
-26. **`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
-    not WRITABLE, so the whole on-canvas surface is agent-unreachable.** Found
+26. ~~**`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
+    not WRITABLE, so the whole on-canvas surface is agent-unreachable.**~~
+    **BUILT 2026-09-08 (D-216).** Found
     2026-09-08 while trying to live-verify D-209/B-093: `editor_get_state`
     reports `selection` (a list of `{track, id}`) and `selectedGap`, but no op
     sets either, so nothing outside a human's mouse can put a clip into the
@@ -1243,6 +1244,35 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `editor_set_playhead` exactly. Needs its own `D-NNN` (does it validate that
     the track/id exists? does it clear `selectedGap` the way every other
     selection path does — D-105 says yes?).
+    - **What shipped (D-216).** One `editor_set_selection` op driving the
+      store's existing `setSelection`/`setSelectedGap` (no new store action, no
+      `EditOp`), one `@mcp.tool()` wrapper, no Rust change. Both open questions
+      answered yes: every entry is resolved against the live timeline through
+      the same `resolveClip` every other op uses (a bad track/clip index or an
+      unknown id is a real error, not a stored selection of nothing), and a gap
+      is validated with the same `gapAt` `TimelinePane`'s own empty-area click
+      and `remove_gap`'s reducer both use. Went one step past the sketch above:
+      `clips` is an ARRAY, so the GUI's real D-107 multi-select is reachable
+      too, and each entry takes a `clip` index OR a `clipId`. The undo-stack
+      question is the substance of D-216 — **not** undoable, because selection
+      is not part of `Timeline`, so D-051's whole-`Timeline` snapshots have
+      never carried it and a human's own click pushes nothing either.
+    - **Verified, and how far.** 17 new real-DOM cases
+      (`PreviewPane.selection.dom.test.tsx`) drive the real op through the real
+      `chroma://request`/`chroma://response` pair and assert the READ-side
+      consequence — `TransformOverlay`'s box + four corner handles actually
+      mounting, unmounting on clear, absent for a multi-clip selection,
+      handle-less on a locked track — plus zero pushes onto the shared undo
+      stack. `npm test --workspace @chroma/editor` 703/703; `tsc` clean.
+      **And live, end to end** — a second isolated instance (vite 1436,
+      `CHROMA_CONTROL_PORT=19802`), a real clip, `debug_screenshot` before and
+      after each step and the PNGs actually looked at: no box → call the op →
+      box + four handles tight around the picture and the real Inspector form
+      → drive a transform and watch the box jump and the composited picture
+      land inside it → clear and watch it all disappear → select a gap and
+      watch the GUI's own "Close Gap" action appear. Only the POINTER tier (a
+      real mouse drag on a handle) is still unreached, for the unrelated
+      screen-recording/Accessibility reason. Full transcript in D-216.
     - **No canvas/preview zoom control** — the timeline already has one (the
       `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
       own viewer zoom control, top-left of the timeline viewer.
