@@ -16,6 +16,16 @@ One or two lines per session. Detail lives in the decision it references.
   timeline store when switching PROJECTS (D-195's multi-TIMELINE-within-one-
   project switching is unaffected) — worked around this session by not
   switching projects mid-build.
+- **2026-09-07** — **Fixed B-084: `editor_import_media` never populated
+  `useMediaPoolStore.items` for a path already known to the Rust-side
+  manifest** (e.g. seeded by `new_project`'s own `media_paths`), leaving
+  `editor_add_clip` permanently unable to find it — mirrors `main.tsx`'s own
+  established "added came back empty, refresh anyway" fallback. Also filed
+  (not fixed) **B-085** (on-canvas clip selection for resize doesn't work,
+  timeline-click-first only — owner-reported) and **B-086** (`CanvasBoundary`
+  goes stale after a `set_project_settings` write made from outside
+  `CanvasSettingsPopover`'s own Apply button, e.g. the MCP tool — display-only,
+  self-heals on the next timeline edit).
 - **2026-09-07** — **"Multiple timelines" live-verified working; B-080 filed.**
   Extended the D-142 browser harness to mount `TimelineSwitcher` against a real
   multi-timeline fake backend and drove it with real Chromium pointer events:

@@ -290,9 +290,27 @@ export function useEditorControl(): void {
         }
         const result = await useMediaPoolStore.getState().importPaths(paths as string[], a?.folder);
         if (!result.ok) return { error: result.error ?? 'import failed' };
+        // B-073/B-082's own root mechanism: `chroma_media_import`'s Rust side
+        // reports `added: []` for a path already in the pool's DISK manifest
+        // (e.g. seeded by `new_project`'s own `media_paths`, which never goes
+        // through this store's `importPaths` at all) — but `useMediaPoolStore
+        // .items` (this store, populated ONLY by `importPaths` appending its
+        // own `added` or by an explicit `refresh()`) stays EMPTY for that item
+        // regardless, since nothing ever appended it. `editor_add_clip`'s own
+        // lookup reads `items`, so it fails with "no pool item matching" for
+        // a path this very tool just reported success for. Mirrors the same
+        // "added came back empty, refresh anyway" fallback `main.tsx`'s own
+        // `onMotionRendered` already uses for the identical symptom.
+        let added = result.added ?? [];
+        if (added.length === 0) {
+          await useMediaPoolStore.getState().refresh();
+          const items = useMediaPoolStore.getState().items;
+          const pathSet = new Set(paths as string[]);
+          added = items.filter((m) => pathSet.has(m.sourcePath));
+        }
         return {
           ok: true,
-          added: (result.added ?? []).map((m) => ({
+          added: added.map((m) => ({
             id: m.id,
             sourcePath: m.sourcePath,
             name: m.name,
