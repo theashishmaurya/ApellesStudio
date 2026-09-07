@@ -862,6 +862,10 @@ def editor_set_clip_transform(
     position_x: float | None = None,
     position_y: float | None = None,
     scale: float | None = None,
+    box_width: float | None = None,
+    box_height: float | None = None,
+    clear_box_width: bool = False,
+    clear_box_height: bool = False,
     rotation: float | None = None,
     crop_left: float | None = None,
     crop_top: float | None = None,
@@ -870,9 +874,6 @@ def editor_set_clip_transform(
 ) -> str:
     """Set a clip's BASE (unkeyframed) compositing transform — e.g. to place
     it in one half of a stacked before/after comparison layout.
-    `position_x`/`position_y`/`scale` are fractions of the OUTPUT
-    composition (0,0 = top-left), not pixels or the clip's own source
-    footprint. `crop_*` are fractions of the clip trimmed off each edge
     (0..1), applied before `scale`. Omitted fields keep the clip's current
     value — this tool reads the clip back first, it never silently resets a
     field you didn't mention.
@@ -884,7 +885,27 @@ def editor_set_clip_transform(
     NOT alone produce an exact-height box like a full-width/half-canvas
     slot. Call `editor_get_capabilities` once before your first use of this
     tool for the full explanation and the crop-then-scale recipe for hitting
-    an exact target box."""
+    an exact target box.
+
+    `box_width`/`box_height` (D-193) are an INDEPENDENT-AXIS override —
+    a fraction of the OUTPUT composition, same convention as
+    `position_x`/`position_y` — that replaces `scale`'s natural-footprint
+    sizing for that axis, making the crop-then-scale recipe above
+    unnecessary for the common case. `scale` alone can only ever produce a
+    box with the clip's own SOURCE aspect ratio (B-074's own finding,
+    generalised past just fixing `editor_export`); `box_width`/`box_height`
+    are how you place a clip into an arbitrary, differently-shaped region —
+    e.g. `box_width=1.0, box_height=0.5` fills the full canvas width at
+    exactly half its height, regardless of the clip's own resolution.
+    Setting only one axis leaves the other on `scale`'s formula. Omit both
+    to leave whatever override already exists (or its absence) untouched;
+    pass `clear_box_width=True` / `clear_box_height=True` to explicitly
+    remove a previously-set override and go back to `scale`-derived sizing
+    on that axis (a bare `float | None` can't distinguish "not mentioned"
+    from "clear it", since `None` is already this tool's own "not
+    mentioned" convention for every other field — these two flags are the
+    escape hatch for the one field pair where "explicitly go back to
+    scale" is itself a real, distinct thing you might want to say)."""
     import json
 
     args: dict = {"track": track, "clip": clip}
@@ -901,6 +922,14 @@ def editor_set_clip_transform(
     ):
         if val is not None:
             args[key] = val
+    if clear_box_width:
+        args["box_width"] = None
+    elif box_width is not None:
+        args["box_width"] = box_width
+    if clear_box_height:
+        args["box_height"] = None
+    elif box_height is not None:
+        args["box_height"] = box_height
     return json.dumps(_op("editor_set_clip_transform", **args), indent=2, default=str)
 
 
