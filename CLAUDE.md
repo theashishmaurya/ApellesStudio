@@ -243,12 +243,18 @@ next one, not for the repo), and cite it in the resulting `D-NNN`.
 
 - Small, focused, one concern each.
 - Message says *what changed and why*, references the `D-NNN` / `B-NNN` / roadmap phase.
-- **Author, as of 2026-09-08 (owner):** `Ashish Maurya <ashish.1999vns@gmail.com>`, no
-  `Co-Authored-By` trailer. Set explicitly per commit (`git commit --author="Ashish Maurya
-  <ashish.1999vns@gmail.com>"`) rather than by editing git config — this repo's own rules
-  never touch git config. Commits before this date carry the old
-  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailer and a mix of author
-  emails; left as history, not rewritten, unless the owner asks for that specifically.
+- **Author, as of 2026-09-08 (owner):** `Ashish Maurya <ashish.1999vns@gmail.com>`. Set
+  explicitly per commit (`git commit --author="Ashish Maurya <ashish.1999vns@gmail.com>"`)
+  rather than by editing git config — this repo's own rules never touch git config.
+  **History was rewritten** on 2026-09-08 (`git filter-repo --email-callback`, full backup
+  bundle taken first) at the owner's explicit request, once it was safe to do (all
+  worktrees clear) — every commit, past and future, now shows this one author email; there
+  is no longer a pre/post split to track here.
+  **Co-Authored-By trailer:** whether one is appended is dictated by the Claude Code
+  session's own attribution policy at commit time, not a fixed repo convention — that
+  policy has changed mid-project at least once already. Match whatever the current session
+  is instructed to append; don't assume the trailer's presence or absence from what an
+  earlier commit in this history happens to carry.
 - Branch off `main` for anything non-trivial. `main` stays buildable.
 
 ## Verification
