@@ -43,6 +43,20 @@ One or two lines per session. Detail lives in the decision it references.
   (`@chroma/editor` 499/499, `@chroma/motion` 441/441, `@chroma/bridge`
   5/5 — that package gained a test setup for this).
 
+- **2026-09-07** — **Fixed B-085: you can now click a clip's own picture in
+  the Edit-tab preview to select it** (D-204). D-136's transform handles were
+  reachable only by selecting in the timeline first — nothing in the preview
+  listened for a press on the picture at all. New `canvasPick.ts` derives every
+  visible layer's on-canvas rect frontend-side (no new backend command needed;
+  the note's own open question had assumed otherwise) by mirroring the Rust
+  compositor's layer resolution and paint order, and reusing the exact box math
+  `TransformOverlay` draws with. The obvious z-ordered hit-layer version is
+  wrong and was caught live in a real browser — a full-frame clip's own
+  transform box is full-bleed and swallows every press — so the shipped
+  `useCanvasClipPick` decides per press in the capture phase instead. Verified
+  pure + jsdom + real-Chromium (canvas-only selection, then a real corner drag
+  really resizing). `npm test --workspace @chroma/editor` 534/534 (was 495).
+
 - **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
   intermittently fails outright for a large-but-not-huge payload, instead
   of the graceful size-limit truncation the same size class usually gets —

@@ -91,7 +91,7 @@ describe('project-open signal (B-034 / D-112)', () => {
 // are `true`, so the switch was invisible to it. These assert that the input
 // carries the project's identity and that a changed identity really does drop
 // everything belonging to the outgoing project.
-describe('switching projects (B-083 / D-202)', () => {
+describe('switching projects (B-083 / D-203)', () => {
   /** `chroma_timeline_get`/`_list` answering for whichever project is "open"
    *  in the fake backend right now — the real commands both read through the
    *  Rust-side active project, so switching projects changes what they return

@@ -11,9 +11,13 @@
  * (`useEditorTimelineStore.selection`, D-107/D-118) — nothing when
  * `selection.length !== 1`, the same Phase-1 multi-select fallback every
  * other single-clip-only consumer in this tab already applies
- * (`EditorInspectorPanel.tsx`). Clicking on the picture to select is
- * deliberately deferred (see the note's own Phase 1 section) — this
- * component only ever REFLECTS the timeline-side selection, never sets it.
+ * (`EditorInspectorPanel.tsx`). **This component only ever REFLECTS a
+ * selection, never sets it** — still true after D-204: clicking the picture
+ * to select is now built (B-085), but it lives in `useCanvasClipPick.ts`, a
+ * capture-phase listener on the shared surface. That hook explicitly stands
+ * aside for a press on the already-selected clip's own picture, and for any
+ * press on a `data-transform-handle` corner, so every drag below behaves
+ * exactly as it did before.
  *
  * **The box's geometry is composition-fraction space (D-136), not screen
  * pixels or canvas pixels.** `chroma_timeline_clip_geometry` (Rust,
@@ -48,7 +52,8 @@
  *
  * Not in Phase 1 (see the note): rotation, non-uniform scale (via on-canvas
  * DRAGGING — see D-193's own note on this component below), crop, anchor
- * point, click-to-select, snapping/guides, marquee, multi-clip transform.
+ * point, snapping/guides, marquee, multi-clip transform. (Click-to-select was
+ * on this list until D-204 — see above.)
  *
  * **D-193 — independent `box_width`/`box_height` (the Inspector's new
  * Width/Height/ratio-lock control) render correctly here (the STATIC box,
@@ -74,6 +79,7 @@ import {
   clipBoxFraction,
   dragCornerScale,
   dragReposition,
+  resolvedBoxSize,
   screenToFraction,
 } from './transformGeometry';
 
@@ -244,10 +250,10 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   const box = draft
     ? clipBoxFraction({ width: geometry.naturalWidth, height: geometry.naturalHeight }, position, scale)
     : clipBoxFraction(
-        {
-          width: clip.box_width ?? geometry.naturalWidth * committedScale,
-          height: clip.box_height ?? geometry.naturalHeight * committedScale,
-        },
+        resolvedBoxSize({ width: geometry.naturalWidth, height: geometry.naturalHeight }, committedScale, {
+          width: clip.box_width,
+          height: clip.box_height,
+        }),
         position,
         1,
       );
@@ -288,6 +294,13 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
             return (
               <div
                 key={corner}
+                // D-204 — marks this as a real corner-grab target, so canvas
+                // click-to-select never steals a resize gesture (a handle's
+                // hit area deliberately overhangs the box by
+                // `HANDLE_HIT_SLOP` and so can sit over another clip's
+                // picture). Same `closest()`-on-a-marker convention
+                // `TimelinePane`'s D-100 clear-selection branch uses.
+                data-transform-handle
                 className="absolute pointer-events-auto flex items-center justify-center"
                 style={{
                   width: hit,

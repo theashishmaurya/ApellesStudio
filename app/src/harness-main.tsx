@@ -29,6 +29,12 @@
  * flip StrictMode, or just read `window.__chromaHarness.timeline` to confirm
  * state. Use `packages/editor/src/testUtils/pointerHarness.ts`'s own
  * `firePointerEvent`/`dragPointer`-equivalent event construction directly via
+ * **D-204 (B-085) — `'preview'` mode now covers canvas click-to-select too.**
+ * `chroma_timeline_clip_geometry`'s stub resolves its real arguments instead
+ * of returning one fixed answer, and `setClipNatural` lets a CDP session give
+ * each layer its own footprint — without which "topmost layer wins" and
+ * "fall through to the layer below" cannot be told apart on screen at all.
+ *
  * `evaluate_script` (that module isn't bundled into this page — it's a
  * vitest-side utility — but its documented event-construction shape,
  * `new PointerEvent(type, {bubbles:true, cancelable:true, ...})`, is exactly
@@ -156,6 +162,25 @@ const STUB_FRAME =
  *  trips into the boundary overlay resizing. */
 const harnessSettings: { width: number | null; height: number | null } = { width: 1920, height: 1080 };
 
+/** The natural footprint `chroma_timeline_clip_geometry` reports for a clip
+ *  whose source has no explicit entry in `harnessClipNatural` below — a 16:9
+ *  clip at half the frame's own width. Big enough to see and drag, small
+ *  enough that `TransformOverlay`'s handles clear the player chrome on a
+ *  normal-size harness window. This was the ONLY answer that command gave
+ *  before D-204. */
+const DEFAULT_NATURAL = { naturalWidth: 0.5, naturalHeight: 0.28125 };
+
+/** D-204 — per-source natural footprints, keyed by `Clip.source_path`.
+ *
+ *  Canvas click-to-select (`CanvasPickLayer`) hit-tests against EVERY visible
+ *  layer's own box, so verifying "topmost wins" / "fall through to the layer
+ *  below" needs different layers to actually have different boxes — which the
+ *  one fixed response this stub used to give (it ignored its arguments
+ *  entirely) could never produce. Empty by default, so every pre-D-204
+ *  consumer of this file sees exactly the old behaviour; a CDP session sets
+ *  entries via `window.__chromaHarness.setClipNatural(...)`. */
+const harnessClipNatural = new Map<string, { naturalWidth: number; naturalHeight: number }>();
+
 function installInvokeStub(): void {
   const handlers: Record<string, (args: unknown) => unknown> = {
     chroma_clip_thumbnails: () => [],
@@ -197,15 +222,21 @@ function installInvokeStub(): void {
     // `harnessSettings` a `CanvasSettingsPopover` save round-trips through,
     // rather than two harnesses disagreeing about what this command returns.
     chroma_timeline_frame: () => STUB_FRAME,
-    chroma_timeline_clip_geometry: () => ({
-      compWidth: harnessSettings.width ?? 1920,
-      compHeight: harnessSettings.height ?? 1080,
-      // A 16:9 clip at half the frame's own footprint — big enough to see
-      // and drag, small enough that `TransformOverlay`'s handles clear the
-      // player chrome on a normal-size harness window.
-      naturalWidth: 0.5,
-      naturalHeight: 0.28125,
-    }),
+    // D-204 — now resolves its ARGUMENTS (the real command takes track/clip
+    // indices) against the active timeline, so a per-source override in
+    // `harnessClipNatural` can give two layers genuinely different boxes.
+    // Falls back to `DEFAULT_NATURAL` for anything unlisted, which is exactly
+    // what this stub returned unconditionally before.
+    chroma_timeline_clip_geometry: (args) => {
+      const { track, clip } = args as { track: number; clip: number };
+      const active = fakeProject.timelines.get(fakeProject.activeId);
+      const sourcePath = active?.tracks?.[track]?.clips?.[clip]?.source_path ?? '';
+      return {
+        compWidth: harnessSettings.width ?? 1920,
+        compHeight: harnessSettings.height ?? 1080,
+        ...(harnessClipNatural.get(sourcePath) ?? DEFAULT_NATURAL),
+      };
+    },
     chroma_timeline_composition_size: () => ({
       compWidth: harnessSettings.width ?? 1920,
       compHeight: harnessSettings.height ?? 1080,
@@ -363,6 +394,12 @@ render();
   },
   get settings() {
     return { ...harnessSettings };
+  },
+  /** D-204 — give one source its own natural footprint (see
+   *  `harnessClipNatural`). Pass `null` to drop back to `DEFAULT_NATURAL`. */
+  setClipNatural(sourcePath: string, natural: { naturalWidth: number; naturalHeight: number } | null) {
+    if (natural) harnessClipNatural.set(sourcePath, natural);
+    else harnessClipNatural.delete(sourcePath);
   },
   get timeline() {
     return useEditorTimelineStore.getState().timeline;

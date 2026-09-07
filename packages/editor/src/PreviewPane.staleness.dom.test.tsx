@@ -193,7 +193,7 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
     actSync(() => {
       useEditorTimelineStore.setState({
         timeline: buildFixture(),
-        projectOpen: true,
+        openProjectKey: 'test-project',
         status: 'ready',
         error: null,
         playhead: 0,

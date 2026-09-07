@@ -194,7 +194,7 @@ describe('concurrent load ordering', () => {
 // manifest is a per-project sidecar, so the tab kept editing the outgoing
 // project's manifest — and a save would have written it into the incoming
 // project's own sidecar.
-describe('switching projects (B-083 / D-202)', () => {
+describe('switching projects (B-083 / D-203)', () => {
   it('opening a DIFFERENT project re-reads THAT project’s manifest', async () => {
     const manifestA = { scenes: [{ kind: 'text', text: 'A' }] };
     const manifestB = { scenes: [{ kind: 'text', text: 'B' }] };

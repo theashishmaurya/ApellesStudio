@@ -30,6 +30,7 @@ remain exactly as scoped below — plans, not code. Precisely:
 | **0a — composition-space units** | **Built.** The timeline has a real composition space (`ProjectSettings.width`/`height`, or the first clip's probed resolution as fallback); `composite_video_frame`'s canvas is that composition, not the top layer's decode; `Clip::position_x`/`position_y` are normalised fractions of it. Existing pixel-valued positions are migrated via a real schema-minor gate on `chroma.project` (`1.1`, `Timeline::normalise_legacy_positions`), not silently reinterpreted in place. **B-043 closed.** See D-136 in `docs/08-decisions.md` for the full reasoning, including why this could only ever be a stated reinterpretation of the old values, not a recoverable conversion. |
 | 0b — one undo entry per drag | **Built**, as part of Phase 1: `TransformOverlay.tsx` keeps drag state local and uncommitted, applying exactly one `set_clip_transform` on pointer-up — the `RelightPuckLayer` pattern this section anticipated. |
 | **1 — select / move / corner-scale handles** | **Built.** `packages/editor/src/TransformOverlay.tsx`, a DOM overlay sibling of `PreviewPane`'s `<img>`. Content-box math extracted into `@chroma/player`'s new `useContentBox` (the original `useImageRenderSize.ts` stays in place, still owning every Colorist-tab call site — migrating those is separate, deliberately deferred work). Reads the existing `selection`, writes the existing `set_clip_transform` op. Box/drag/corner-scale math lives in `packages/editor/src/transformGeometry.ts`, pure and unit-tested (16 tests) since this package's vitest has no DOM. A new `chroma_timeline_clip_geometry` Tauri command supplies the one thing the frontend can't derive itself — a clip's own source footprint against the composition. |
+| **1b — click the picture to select** | **Built 2026-09-07 (D-204)**, fixing B-085 — the one thing that kept Phase 1's handles reachable only from the timeline. `useCanvasClipPick.ts` (a capture-phase decision on the preview surface, not a z-ordered hit layer — see Open Question 3 for why that distinction is the whole problem) + `canvasPick.ts` (pure hit-testing that mirrors `resolve_visible_video_layers_at`). No backend change needed; Open Question 3's own premise that one was required turned out to be wrong. |
 | 2 — rotation, anchor point, non-uniform scale | Rotation, anchor point: not built. **Non-uniform scale: built, Inspector-only, 2026-09-07 (D-193, `docs/notes/independent-clip-size.md`)** — `Clip.box_width`/`box_height`, an independent-axis box-size override with its own Width/Height/ratio-lock Inspector control, correctly rendered by the Rust live-preview compositor and the export compiler. Deliberately NOT extended to on-canvas DRAGGING here: `TransformOverlay.tsx`'s corner handles stay uniform-only by design (this note's own original Phase 1 scope), and committing a corner drag explicitly re-uniforms the box (clears the override) rather than silently only-partially respecting it — see D-193's own decision entry for the full "why." A future pass could add non-uniform on-canvas handles on top of this same persisted field; not attempted this pass. |
 | **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **Phase 1's overlay substrate now exists**, but crop still has no edge handles or Resolve-style mode toggle of its own — its bounding box happens to be unaffected by crop (`composite_layer_onto` crops a layer's pixels in place without shrinking its footprint), so Phase 1's box is correct for a cropped clip by accident, not because crop has any on-canvas affordance yet. |
 | 4 — keyframes | Crop keyframes work exactly as the other five fields' do (explicit "Add key"). The auto-keyframe-on-drag question is still open — Phase 1's overlay writes the static/base transform, same as the Inspector's numeric fields always have. |
@@ -247,7 +248,9 @@ the `Clip` model can already express.
   (D-039's one-way dependency rule), and `@chroma/player` already owns the viewport all
   three tabs are meant to share. The `<img>` is `object-contain`, so the picture's real
   on-screen rect is not the element's rect.
-- **Which clip?** Reuse the existing selection — `useEditorTimelineStore.selection`, the
+- **Which clip?** (D-204 note: still true — canvas click-to-select sets that same
+  selection rather than introducing a second one.) Reuse the existing selection —
+  `useEditorTimelineStore.selection`, the
   same `Selection[]` the Inspector reads (D-107/D-118). The overlay draws a box for the
   one selected clip when `selection.length === 1`, and nothing otherwise (the same Phase-1
   multi-select fallback `EditorInspectorPanel` already applies). **Clicking on the picture
@@ -266,7 +269,8 @@ the `Clip` model can already express.
   (`@chroma/ui`), never literal colours; handle size / hit-slop / minimum scale as named
   constants in the component, per the house no-magic-numbers rule.
 - **Not in Phase 1:** rotation, non-uniform scale, crop, anchor point, click-to-select,
-  snapping/guides, marquee, multi-clip transform.
+  snapping/guides, marquee, multi-clip transform. (Click-to-select has since been built
+  on top of Phase 1, unchanged — D-204, 2026-09-07; see Open Question 3.)
 
 ### Phase 2 — rotation, and the anchor-point question
 
@@ -335,8 +339,22 @@ story, and the overlay should be read as editing the base transform.
    schema-minor gate on `project.json`, plus Phase 1's actual on-canvas handles.
 2. **Proportional-by-default (Resolve) vs free-with-Shift-to-constrain (Premiere).**
    Phase 1 can only do proportional; the question is whether Phase 2 keeps that default.
-3. **Click-on-picture to select** — genuinely useful, but it needs the backend to report
-   per-layer rects. Worth doing, but as its own slice, not smuggled into Phase 1.
+3. ~~**Click-on-picture to select** — genuinely useful, but it needs the backend to report
+   per-layer rects. Worth doing, but as its own slice, not smuggled into Phase 1.~~
+   **Built 2026-09-07 (D-204), as its own slice, fixing B-085** — the owner hit the gap
+   live ("not able to click on a clip in canvas to resize it, need to click from
+   timeline"). **The premise above was wrong**: no backend report was needed.
+   `chroma_timeline_clip_geometry` already gives a clip's natural footprint as a
+   composition fraction and every placement field on `Clip` is already normalised
+   (D-136/D-193), which is exactly why `TransformOverlay` can draw its box today — so the
+   frontend can derive every visible layer's rect itself (`canvasPick.ts`, mirroring
+   `Timeline::resolve_visible_video_layers_at`'s own filtering and topmost-first order).
+   The real difficulty turned out to be elsewhere: a z-ordered hit layer under the
+   overlay **cannot work**, because a full-frame clip's own transform box is full-bleed
+   and swallows every press once selected. `useCanvasClipPick.ts` decides per press in
+   the capture phase instead. Still not built, deliberately: select-and-move in ONE
+   gesture (click, then drag, works today), modifier-extend selection on the canvas, and
+   a hover cursor/highlight.
 4. **Does the Colorist tab get the same overlay?** It has its own, older on-canvas stack
    (Konva + react-image-crop). Unifying them is a real question and a real cost; this note
    deliberately scopes the Edit tab only.

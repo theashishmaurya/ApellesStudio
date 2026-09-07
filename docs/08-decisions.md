@@ -18032,5 +18032,82 @@ axis (drop, never mis-write) but does not close it, and B-080 now records that;
 (c) `editor_get_state` reports `openProject`, so "which project does the Edit tab
 think it's on" is answerable in one call.
 
+## D-204 — Canvas click-to-select (B-085): derive every layer's rect in the frontend, and decide per press in the CAPTURE phase rather than by z-order
+
+**Context.** D-136 built real on-canvas transform handles for the Edit tab's
+preview, but they could only ever be *reached* from the timeline:
+`TransformOverlay` reflects `useEditorTimelineStore.selection` and never sets
+it, and nothing else in `PreviewPane`'s surface listened for a press on the
+picture at all. The owner hit that live — "not able to click on a clip in
+canvas to resize it, need to click from timeline" (B-085). Every reference
+NLE's program monitor selects the clip you click on.
+`docs/notes/on-canvas-transform.md`'s Open Question 3 had parked this on the
+assumption that it "needs the backend to report per-layer rects."
+
+**Decision 1 — no new backend surface; derive the rects in the frontend.**
+That assumption was wrong. `chroma_timeline_clip_geometry` already reports a
+clip's natural footprint as a fraction of the composition, and
+`position_x`/`position_y`/`scale`/`box_width`/`box_height` are already
+normalised fractions on `Clip` post-D-136/D-193 — which is precisely why
+`TransformOverlay` can draw its box today without any per-layer report. So the
+frontend has everything it needs; the only new work is asking that same probe
+for *every* visible layer instead of just the selected one
+(`useClipGeometries`). The alternative — a new Rust command returning laid-out
+rects for the frame — would have duplicated geometry that already exists on
+both sides, and added a round trip to a gesture that must feel instant.
+
+Two rules keep the derivation honest rather than re-invented:
+`canvasPick.ts`'s `visibleVideoLayersAt` is a one-to-one mirror of Rust's
+`Timeline::resolve_visible_video_layers_at` (video tracks only, `hidden`
+excluded, gap excluded, **track-index-ascending is topmost-first** because
+`composite_video_frame` decodes in that order and paints in reverse); and the
+box a layer is tested against comes from the *same* `clipBoxFraction(
+resolvedBoxSize(...))` call `TransformOverlay` draws with —
+`resolvedBoxSize`/`fractionBoxContains` were extracted into
+`transformGeometry.ts` for exactly that, so a click cannot select a clip whose
+handles then appear somewhere else.
+
+**Decision 2 — a capture-phase listener, not a z-ordered hit layer.** The
+obvious implementation is a full-bleed `pointer-events-auto` div under
+`TransformOverlay` in z-order: the handles keep first claim, everything else
+falls through to the picker. It was built that way first, passed every unit
+and jsdom test, and is **wrong** — real-browser hit-testing showed it live. A
+full-frame clip's own transform box is itself full-bleed, so the moment such a
+clip was selected its box swallowed every press and nothing on the canvas
+could be picked again. No z-order fixes that: the two elements genuinely
+overlap, and which should win depends on *what is under the pointer*, not on
+where the elements sit.
+
+`useCanvasClipPick` therefore listens for `pointerdown` on the shared surface
+in the **capture** phase and decides before `TransformOverlay`'s bubble-phase
+handlers see anything: a press on a `data-transform-handle` corner is never a
+selection (a corner grab is unambiguous, and its hit area deliberately
+overhangs the box, so it can sit over another clip); a press on the
+already-selected clip's own picture is D-136's move drag and is left alone; a
+press with nothing under it but inside the overlay is left alone; anything
+else selects the topmost hit layer (or clears, on empty canvas) and
+`stopPropagation()`s so the press cannot also start a drag of the selection it
+just replaced. It is a behaviour, so it is a hook, not a fifth overlay
+component.
+
+**Selection is the timeline's, unchanged.** This drives the same
+`setSelection`/`setSelectedGap` (D-107/D-118/D-105) the timeline does — no
+parallel canvas-side selection — which is why the Inspector, the handles and
+every keyboard op behave identically however a clip was picked. Empty canvas
+clears both, mirroring `TimelinePane`'s own D-100 rule ("clicking outside does
+not make it undeselected"). Modifier-extend and select-and-move-in-one-gesture
+are deliberately out (see the hook's own doc and the phased note): neither
+Premiere's nor Resolve's program monitor multi-selects on the picture, and a
+gesture handoff between two components is real complexity for something that
+already works as click-then-drag.
+
+**Verified** at all three tiers this repo distinguishes: pure (`canvasPick.test.ts`,
+`transformGeometry.test.ts`), jsdom with real `PointerEvent`s
+(`PreviewPane.pick.dom.test.tsx`, 12 scenarios, StrictMode, zero console
+errors), and real Chromium with real layout and real `elementFromPoint`
+hit-testing through `app/harness.html?mode=preview` — including the
+full-bleed-box case above and a real corner-handle resize committing
+`scale` 0.25 → 0.482 after a canvas-only selection. See B-085 for the numbers.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

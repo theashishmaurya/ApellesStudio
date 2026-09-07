@@ -1,5 +1,5 @@
 // @chroma/bridge — unit tests for the media pool's project-identity input
-// (B-083 / D-202).
+// (B-083 / D-203).
 //
 // The pool is per-project state that nothing ever invalidated on a project
 // *switch*: `SourcesPanel` fired the only `refresh()` from its own effect,
@@ -49,7 +49,7 @@ beforeEach(() => {
   installBackend();
 });
 
-describe('the open project is the pool’s one input (B-083 / D-202)', () => {
+describe('the open project is the pool’s one input (B-083 / D-203)', () => {
   it('opening a project reads that project’s pool', async () => {
     useMediaPoolStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
