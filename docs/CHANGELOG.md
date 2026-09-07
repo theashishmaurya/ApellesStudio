@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Independent per-axis clip sizing (D-186): `Clip.box_width`/
+  `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
+  end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into
+  an arbitrary, independently-sized box (not just a uniform `scale` of its own
+  natural aspect) at every layer: the persisted `Clip` model, the Rust live-preview
+  compositor (`composite_layer_onto`'s new `effective_size`), the `timelineExport.ts`
+  ffmpeg compiler (`box_height` now takes priority over `fitOverrides`), a real
+  Inspector control (Width/Height in px + a lock/unlock toggle, `Scale` kept as a
+  separate "reset to uniform" affordance), and `editor_set_clip_transform`'s MCP
+  surface. Unlike `scale`, `box_width`/`box_height` are a canvas fraction in BOTH
+  engines — zero Rust/TS export-parity gap for the new fields, closing that gap
+  rather than inheriting it. Honest remaining gaps, both documented in D-186 and
+  `docs/04-roadmap.md` item 18: not wired into the clip-keyframe GUI button yet
+  (engine supports it via `editor_set_clip_keyframes` directly), and no visible
+  canvas-boundary overlay/project-settings UI exists yet (a separate, related but
+  NOT-the-same-root-cause gap, checked explicitly against this work). Rust: 128+33
+  tests, clippy clean. `@chroma/editor` 333/333, `tsc` clean. Not live-verified
+  against a running app this pass (no instance available in this worktree).
 - **2026-09-07** — **`editor_export freeze_overrides` (D-188) + B-077 filed.** Owner's own
   confirmed creative call for the reel — the sped-up AFTER clip finishes while BEFORE keeps
   playing — needed a real capability that didn't exist: holding a clip's last frame for the

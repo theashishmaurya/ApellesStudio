@@ -16692,3 +16692,142 @@ this is additive, one new directory, nothing existing touched.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-186 — Independent per-axis clip sizing: `Clip.box_width`/`box_height` + Inspector Width/Height/ratio-lock (`docs/notes/independent-clip-size.md`)
+
+D-184/B-074 fixed the export-only symptom of a real structural gap, and explicitly
+scoped the fuller fix out for separate dispatch: `scale` is a SINGLE uniform
+multiplier of a clip's own natural (source) footprint, so no clip could ever be
+placed into an arbitrary, independently-sized box — a full-width/half-height
+stacked layout is mathematically impossible for ANY canvas size, at any `scale`,
+because that box's aspect ratio necessarily differs from the clip's own. The
+owner asked for the real fix: a persisted model, a live-preview-correct Rust
+compositor, an updated export compiler, an actual GUI control (pointing at a
+reference app's Width/Height/X/Y/Rotate-with-a-padlock Advanced-transform panel),
+and an MCP surface — not another export-time-only parameter.
+
+**Real options considered for the persisted-model shape:**
+1. Reinterpret `scale` as two numbers (`scale_x`/`scale_y`, both multipliers of
+   the clip's own natural/source footprint — the Rust engine's existing unit).
+   Rejected on reflection mid-implementation: this unit still depends on the
+   clip's own SOURCE resolution to place correctly, which the pure, no-I/O
+   `timelineExport.ts` cannot probe (B-074/D-184's own documented gap) — so
+   this shape would have INHERITED that Rust/TS parity gap for the new fields
+   too, not just for legacy `scale`. Also less legible: "half the clip's own
+   native size" is a less useful mental model here than "half the canvas."
+2. **Chosen: `box_width`/`box_height`, a fraction of the OUTPUT COMPOSITION's
+   own width/height** — the SAME per-axis convention `position_x`/`position_y`
+   already use (D-136), not a multiplier of the clip's source resolution at
+   all. Both engines already know the output canvas's own pixel size (a render
+   parameter on both sides) — so a canvas-fraction box needs NO source-resolution
+   probing anywhere, closing the parity gap entirely for this new pair of
+   fields rather than inheriting it. `None`/absent on either axis (every
+   pre-D-186 clip) falls back to exactly the pre-D-186 `natural * scale`
+   formula — zero behavior change for anything that predates this.
+3. `scale` itself is NOT reinterpreted or removed — it stays exactly what it
+   was (a real, still-useful "native size, scaled uniformly" picture-in-picture
+   default), with its own pre-existing, NOT reopened, Rust/TS parity gap
+   (`scale`'s meaning depends on the clip's source resolution, which
+   `timelineExport.ts` still cannot probe — B-074/D-184's own call, upheld
+   here rather than re-litigated). `box_width`/`box_height` are additive.
+
+**The lock is UI-only, ephemeral state — a deliberate judgment call, not an
+oversight.** The reference UI's padlock toggles whether editing Width also
+moves Height (and vice versa) to preserve the ratio currently on screen.
+Once a real `box_width`/`box_height` PAIR is stored, "was the lock on when I
+typed this" carries no independent information a future session needs back —
+the two numbers already fully describe the box. Persisting it would be a
+second, parallel source of truth for something the data itself already
+determines (was it uniform when last touched, yes or no — trivially
+computable, `box_width == null && box_height == null` means "never touched,
+still uniform-via-scale"). `ClipInspectorPanel.tsx`'s local `useState`
+(reset per clip selection via a `key={clip.id}` `EditorInspectorPanel.tsx`
+now mounts it with) is the whole implementation.
+
+**Full chain built:**
+- **Persisted model** — `chroma_timeline::Clip::box_width`/`box_height`
+  (`Option<f64>`, additive, `skip_serializing_if`, zero migration) + the TS
+  mirror on `Clip`. `set_clip_transform`'s two new fields are REQUIRED
+  `number | null` (not optional) — the same "an optional field could
+  silently reset on a caller that forgot it" discipline D-132 already
+  established for crop; `null` is the real, deliberate "no override" value
+  (mirrors `Track.duck_from`'s own null-clears convention), never confused
+  with "not mentioned."
+- **Rust live-preview parity** — `chroma::edit::ClipTransform` carries the
+  resolved (static-or-keyframed) mirror; `composite_layer_onto`'s new
+  `effective_size` method applies the override per axis in CANVAS pixels,
+  falling back to `natural * scale` otherwise. `is_identity` is deliberately
+  conservative (an override present at all is never "identity") since
+  proving it a true no-op needs canvas context that method doesn't have —
+  always safe, never wrong, same discipline the crop fields already use.
+- **Export parity** — `timelineExport.ts`'s `buildClipFilterChain`: `box_width`
+  always overrides the width expression (mirrors `position_x`'s convention,
+  canvas-fraction, no ambiguity to resolve); `box_height`, when set, takes
+  PRIORITY over `fitOverrides` entirely (an explicit persisted height is a
+  more specific signal than an export-time-only fit/stretch default, and once
+  both axes are known there is nothing left for ffmpeg's `-2` to compute).
+  `fitOverrides` (B-074/D-184) is unchanged, not deprecated — still exactly
+  right for a clip that only sets `scale`.
+- **GUI** — `ClipInspectorPanel.tsx` gets Width/Height (px, converted via the
+  project's known composition size — `chroma_timeline_clip_geometry`,
+  extracted into a new shared `useClipGeometry.ts` hook so `TransformOverlay.
+  tsx`'s own private copy of that fetch isn't duplicated a second time) with a
+  lock/unlock toggle between them: locked keeps both moving together in the
+  ratio currently on screen; unlocked lets them move independently, freezing
+  whichever axis wasn't just edited at its current resolved value so it never
+  silently drifts. `Scale` remains a separate, always-available "reset to
+  simple uniform mode" control (clears both overrides back to `null`).
+  `TransformOverlay.tsx` (the on-canvas drag handles, D-136) is corrected for
+  consistency: the STATIC box now reflects a real `box_width`/`box_height`
+  when set (previously would have silently rendered the wrong, uniform-only
+  shape); dragging a corner handle stays Phase-1 uniform-only BY DESIGN
+  (unchanged scope) and, on release, explicitly clears any override back to
+  `null` rather than leaving a stale one — documented, not silent.
+- **MCP** — `editor_set_clip_transform` (`useEditorControl.ts` + `mcp/
+  server.py`) accepts `box_width`/`box_height` alongside the existing `scale`
+  (kept working exactly as before). The Python tool adds two explicit
+  `clear_box_width`/`clear_box_height` booleans, since that tool's own
+  established convention treats an omitted (`None`) argument as "leave the
+  clip's current value alone" — a bare `float | None` can't distinguish "not
+  mentioned" from "clear it" the way the real op's `null` can.
+
+**Honest, precisely-scoped remaining gap (not silently dropped — see
+`docs/04-roadmap.md` item 18, checked and reconciled against this work):**
+the Edit-tab preview draws NO visible boundary for the output composition
+itself (no letterbox/frame showing where the canvas edges are), and there is
+no GUI to change `ProjectSettings.width`/`height` after project creation.
+Checked directly against this pass — NOT the same root cause, and not a
+blocker for it: D-186's own math is built against the composition size that
+already exists server-side (D-038) via the same `chroma_timeline_clip_geometry`
+command this pass's Inspector already calls, so the Width/Height numbers
+shown/written are correct regardless. What's missing is purely presentational
+(a new `PreviewPane.tsx` overlay, a new project-settings surface) — real,
+separately-scoped follow-up work, not built here.
+
+Not wired into the clip-keyframe GUI flow: `EditorInspectorPanel.tsx`'s
+"Keyframe clip" button does not snapshot `box_width`/`box_height` into a
+keyframe (only the original nine fields) — so independent sizing cannot yet
+be animated over time through that one button, though the underlying engine
+supports it (`box_width`/`box_height` are resolved through the same D-034
+keyframe interpolator as every other field, reachable today only via
+`editor_set_clip_keyframes` directly). A real, narrow, documented gap, not
+an oversight.
+
+**Verified.** Rust: `cargo test -p chroma-timeline` 128/128, `cargo test --lib
+edit::` in `app/src-tauri` 33/33 (5 new), `cargo clippy` clean (both crates,
+`-D warnings`), `cargo fmt --check` clean on every line this pass touched
+(pre-existing, unrelated fmt drift elsewhere in `edit.rs`/`lib.rs` — confirmed
+present on `main` before this branch — deliberately left alone rather than
+folded into this feature's diff). TS: `npx tsc --noEmit -p packages/editor`
+clean, `npm test --workspace @chroma/editor` 333/333 (includes the real-ffmpeg
+execution suite, D-187/D-188's own `timelineExport.ffmpeg.test.ts`, confirming
+this pass's export changes compose correctly with `source_fps`/`freezeOverrides`
+rather than just string-matching). Live-verified: none of it — no running Chroma
+app instance was available in this worktree to click through the actual
+Inspector UI or drive a real render end-to-end; every layer above is
+compile/type/unit-test verified only. This is the one honest gap in
+verification depth for this pass, not a scope cut — flagged explicitly rather
+than claimed as "done."
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

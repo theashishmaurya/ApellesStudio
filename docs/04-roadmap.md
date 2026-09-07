@@ -186,7 +186,11 @@ restarted once each is done.
   side panel** (D-118 — was a third pane nested inside the timeline's own
   split, capped at the timeline row's height; now a sibling of the
   preview+timeline column, spanning the tab, with its own tab-local opener
-  button). No multi-track or transcript cut yet.
+  button). **A clip's compositing box can now be sized independently per axis**
+  (D-186 — Width/Height fields in pixels with a ratio-lock toggle, alongside the
+  existing uniform `Scale`; persisted as `Clip.box_width`/`box_height`, a
+  canvas-fraction override with no Rust/TS export-parity gap, unlike `scale`
+  itself). No multi-track or transcript cut yet.
 - **Motion** — MVP (D-047): a `@remotion/player` live preview of
   `packages/motion-engine/`'s `Video` composition + a JSON-in manifest editor
   (validated against the engine's own `zod` schema — a visual editor is
@@ -891,19 +895,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     frame boundary) instead of composited/stacked with BEFORE at all: *"in the UI
     also we have no visual 9:16 ratio for the working canvas we want that — we
     should be able to change the canvas and it should be in the preview."* Two real
-    gaps, likely the same underlying cause: (1) nothing in the live preview draws
-    the actual OUTPUT COMPOSITION's own frame/aspect boundary (the thing
-    `position_x`/`position_y`/`scale` are fractions OF, per D-136) so a human has no
-    visual reference for where clips will actually land; (2) there's no project/canvas
-    settings control to CHOOSE that aspect ratio (9:16, 16:9, 1:1, custom) at all —
-    `editor_export`'s `width`/`height` are export-call parameters today, not a
-    project-level setting the GUI reads back for its own preview. Directly related to
-    (and likely overlapping code with) the live-preview/export compositing-parity work
-    already dispatched this same session (D-184's own noted preview/export divergence,
-    the independent-width/height ratio-lock effort) — whoever picks this up should
-    check that work's outcome first rather than duplicating the preview-compositor
-    investigation. Not started; folded into the in-flight ratio-lock subagent's scope
-    as a same-session heads-up, final ownership TBD depending on where that work lands.
+    gaps: (1) nothing in the live preview draws the actual OUTPUT COMPOSITION's own
+    frame/aspect boundary (the thing `position_x`/`position_y`/`scale` are fractions
+    OF, per D-136) so a human has no visual reference for where clips will actually
+    land; (2) there's no project/canvas settings control to CHOOSE that aspect ratio
+    (9:16, 16:9, 1:1, custom) at all — `editor_export`'s `width`/`height` are
+    export-call parameters today, not a project-level setting the GUI reads back for
+    its own preview.
+    **Checked against the D-186 independent-width/height ratio-lock work (now landed)
+    — NOT the same root cause, and not a hard prerequisite for it, but a real,
+    related gap D-186 does not close.** D-186's Inspector Width/Height fields
+    correctly read the composition's REAL pixel size via the existing
+    `chroma_timeline_clip_geometry` command (`ProjectSettings.width`/`height`, D-038 —
+    the backend concept behind "the composition" already exists and is what D-186's
+    math is built against), so the NUMBERS D-186 shows/writes are correct regardless
+    of this item. What's still missing is purely presentational/UI: (1) needs a new
+    `PreviewPane.tsx` overlay component drawing the composition's own boundary (a
+    letterbox/pillarbox frame), independent of any single clip's transform — a
+    sibling to `TransformOverlay.tsx`, not a change to it; (2) needs a real Edit-tab
+    settings surface to read/write `ProjectSettings.width`/`height` after project
+    creation (today's likely-only entry point), which is unrelated to `Clip`-level
+    fields entirely. Neither touches `Clip.box_width`/`box_height`/`scale` or the
+    Rust/TS export parity story D-186's own decision entry covers. Not started —
+    real, separately-scoped follow-up work, ownership open.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
