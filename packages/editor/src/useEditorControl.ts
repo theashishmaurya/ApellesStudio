@@ -335,6 +335,41 @@ export function useEditorControl(): void {
         };
       },
 
+      // Roadmap item 23 (2026-09-07) — the minimal fix for "the media pool
+      // has no way to recover a stuck/wrong item": wrap the SAME
+      // `chroma_media_remove`/`removeMedia` path `SourcesPanel.tsx`'s own
+      // delete UI already uses, not new removal logic. Reports which
+      // requested ids are still referenced (via `Clip.media_id`) by a clip
+      // on the ACTIVE timeline before removing them, since that is the one
+      // honest thing worth telling a caller: `chroma_media_remove` does not
+      // touch clips at all (see its own Rust doc), and a `Clip`'s
+      // `source_path` is an independent copy resolved at drop time, never
+      // re-read from the pool afterward — so a referenced clip does NOT go
+      // offline, error, or get cascade-removed. Only its `media_id`
+      // back-link goes stale (harmless: nothing re-resolves a clip through
+      // it at playback/render time, only legacy shot-grade migration does).
+      editor_remove_media: async (a) => {
+        const ids: unknown = a?.ids;
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
+          return { error: 'ids must be a non-empty array of media-pool item ids' };
+        }
+        const idSet = new Set(ids as string[]);
+        const tl = useEditorTimelineStore.getState().timeline;
+        const stillReferencedBy: { track: number; clip: number; clipId: string; mediaId: string }[] = [];
+        if (tl) {
+          tl.tracks.forEach((tr, trackIdx) => {
+            tr.clips.forEach((c, clipIdx) => {
+              if (c.media_id && idSet.has(c.media_id)) {
+                stillReferencedBy.push({ track: trackIdx, clip: clipIdx, clipId: c.id, mediaId: c.media_id });
+              }
+            });
+          });
+        }
+        const result = await useMediaPoolStore.getState().removeMedia(ids as string[]);
+        if (!result.ok) return { error: result.error ?? 'remove failed' };
+        return { ok: true, removed: ids, stillReferencedBy };
+      },
+
       // ---- clip placement / trim / ripple-delete --------------------------
       // D-182/D-183 — this trio (`add_clip`+`split`+`remove`+`remove_gap`) is
       // ALL the "cut a gap out of a recording" surface needs: place a

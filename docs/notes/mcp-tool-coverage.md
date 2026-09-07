@@ -68,6 +68,7 @@ zero.**
 > | `editor_get_state` | Read-only. Project-open/load-status/playhead/playing/has-timeline. |
 > | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
+> | `editor_remove_media` (2026-09-07, roadmap item 23) | Remove one or more items from the media pool by id — the pool's only correction mechanism today (no re-probe/expiry yet). Wraps the same `chroma_media_remove` the GUI's Sources panel already used; a clip on the timeline still referencing a removed item keeps playing/exporting fine (`Clip.source_path` is an independent copy, never re-read from the pool), only its `media_id` back-link goes stale — reported back in `stillReferencedBy`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
 > | `editor_split_clip` / `editor_remove_clip` / `editor_remove_gap` / `editor_trim_clip` / `editor_move_clip` | The rest of the ripple-edit primitives — no new `EditOp` had to be invented for any of these; every one already existed in `packages/editor/src/timeline.ts`, only the MCP wrapper was missing. |
 > | `editor_slip_clip` (D-195) | Slip a clip's SOURCE window in place — `start_frame`/`duration` stay fixed, only `source_start` moves (clamped to the source's own bounds, lockstep with a linked A/V pair). A real, previously-missing `EditOp` (`slip`), not a wrapper around an existing one. |
@@ -138,22 +139,28 @@ D-081's new `LayerList`/`Selection` (Motion tab, tonight) has no MCP surface
 either, but selection is a pure UI-navigation concept — the manifest
 get/save/render triad is the real, load-bearing gap.
 
-## Gap: Media / Sources pool — 1 of 6 tools (D-183 added import only)
+## Gap: Media / Sources pool — 2 of 6 tools (D-183 added import; `_remove` closed 2026-09-07)
 
 `editor_import_media` (D-183) covers `chroma_media_import`'s job — importing
-absolute paths into the pool — but only that one; it exists because
-`editor_add_clip` needs a pool item to place, not as a sweep of this section.
-`chroma_media_list` / `_move` / `_remove` / `_create_folder` / `_folders` still
-have no MCP tool: an agent can't query what's already in the pool, organize it
-into folders, or remove items, independent of Colorist's own
-`list_shots`/`add_shots` (project-timeline-scoped, not pool-scoped — a real,
-different thing). This gap has a real, live-witnessed cost, not just a
-theoretical one: B-073 (`docs/BUGS.md`) is a media-pool item stuck with no
-`video` metadata after a transient probe failure, invisible to `editor_add_clip`
-and impossible to inspect or clear via MCP — the session that hit it had to
-read `project.json` by hand. `editor_get_capabilities` (D-191) documents this
-as a known landmine since it's the best available mitigation until a real
-`chroma_media_list`/`_remove` tool exists.
+absolute paths into the pool. `editor_remove_media` (roadmap item 23,
+2026-09-07) now covers `chroma_media_remove` too — the pool's only
+correction mechanism today: an agent can delete a stuck/wrong item (a probe
+that failed once, B-073/B-089) and re-import the same path for a fresh probe.
+There is still no re-probe-on-demand/expiry (item 23's real architectural gap
+remains open — this closes the tool-exposure gap only, not the underlying
+"why did this go stale" problem).
+
+`chroma_media_list` / `_move` / `_create_folder` / `_folders` still have no
+MCP tool: an agent can't query what's already in the pool or organize it into
+folders, independent of Colorist's own `list_shots`/`add_shots`
+(project-timeline-scoped, not pool-scoped — a real, different thing). This
+gap has a real, live-witnessed cost, not just a theoretical one: B-073
+(`docs/BUGS.md`) is a media-pool item stuck with no `video` metadata after a
+transient probe failure — as of `editor_remove_media` it can at least be
+cleared and re-imported via MCP, but it still cannot be *inspected* via MCP
+(no `chroma_media_list`) to confirm which item is the bad one before removing
+it; the session that hit it had to read `project.json` by hand.
+`editor_get_capabilities` (D-191) documents this as a known landmine.
 
 ## Gap: Audio playback — 0 tools, lowest priority
 
