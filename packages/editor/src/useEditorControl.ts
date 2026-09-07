@@ -438,6 +438,19 @@ export function useEditorControl(): void {
           const n = Number(v);
           return Number.isFinite(n) ? n : fallback;
         };
+        // D-186 — `box_width`/`box_height` are `number | null` on the real
+        // op (`null` = no override, an explicit, meaningful value — see
+        // that op's own doc), so they need their OWN reader rather than
+        // `num`'s "coerce or fall back to a number" contract: an explicit
+        // `null` in the args object clears the override, `undefined`
+        // (omitted) keeps the clip's current value, matching every other
+        // field's "only state what changes" convenience on this tool.
+        const numOrNull = (v: unknown, fallback: number | null): number | null => {
+          if (v === null) return null;
+          if (v === undefined) return fallback;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : fallback;
+        };
         const c = found.c;
         // Every field required by the real EditOp — read the clip's OWN
         // current values as defaults (same "only state what changes"
@@ -454,6 +467,8 @@ export function useEditorControl(): void {
           position_x: num(a?.position_x, c.position_x ?? 0),
           position_y: num(a?.position_y, c.position_y ?? 0),
           scale: num(a?.scale, c.scale ?? 1),
+          box_width: numOrNull(a?.box_width, c.box_width ?? null),
+          box_height: numOrNull(a?.box_height, c.box_height ?? null),
           rotation: num(a?.rotation, c.rotation ?? 0),
           crop_left: num(a?.crop_left, c.crop_left ?? 0),
           crop_top: num(a?.crop_top, c.crop_top ?? 0),
