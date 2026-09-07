@@ -35,11 +35,16 @@ function deferred<T>() {
 /** Let queued microtasks (and any zero-delay timers) drain. */
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** Two real project identity keys (B-083/D-202 — the store's one input is the
+ *  open project's key, a `.chroma` path in the real app). */
+const PROJECT_A = '/projects/a.chroma';
+const PROJECT_B = '/projects/b.chroma';
+
 beforeEach(() => {
   invokeMock.mockReset();
-  // Back to a clean generation; `setProjectOpen(false)` is the real reset
+  // Back to a clean generation; `setOpenProject(null)` is the real reset
   // path, so use it rather than poking state directly.
-  useEditorTimelineStore.getState().setProjectOpen(false);
+  useEditorTimelineStore.getState().setOpenProject(null);
   useEditorTimelineStore.setState({ timeline: null, status: 'idle', error: null });
 });
 
@@ -52,7 +57,7 @@ describe('project-open signal (B-034 / D-112)', () => {
     invokeMock.mockRejectedValue('parse project.json: EOF while parsing a value');
 
     const store = useEditorTimelineStore.getState();
-    store.setProjectOpen(true);
+    store.setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useEditorTimelineStore.getState().status).toBe('error'), {
       timeout: 5000,
     });
@@ -62,20 +67,118 @@ describe('project-open signal (B-034 / D-112)', () => {
     // well that a project is open. `EditorTab` renders its "No project open"
     // screen off `projectOpen` alone, so this failure can no longer produce
     // that message — it produces a real error with the real backend text.
-    expect(s.projectOpen).toBe(true);
+    expect(s.openProjectKey).toBe(PROJECT_A);
     expect(s.timeline).toBeNull();
     expect(s.error).toContain('EOF while parsing');
   });
 
-  it('closing the project is the one thing that clears projectOpen', () => {
-    useEditorTimelineStore.getState().setProjectOpen(true);
-    expect(useEditorTimelineStore.getState().projectOpen).toBe(true);
+  it('closing the project is the one thing that clears the open project', () => {
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_A);
+    expect(useEditorTimelineStore.getState().openProjectKey).toBe(PROJECT_A);
 
-    useEditorTimelineStore.getState().setProjectOpen(false);
+    useEditorTimelineStore.getState().setOpenProject(null);
     const s = useEditorTimelineStore.getState();
-    expect(s.projectOpen).toBe(false);
+    expect(s.openProjectKey).toBeNull();
     expect(s.status).toBe('idle');
     expect(s.timeline).toBeNull();
+  });
+});
+
+// B-083/D-202 — the live report: `open_project("A")` while project B was open
+// returned A's own real data, and `get_timeline` right afterwards still served
+// B's timeline, silently, for the rest of the session. The structural fault:
+// this store's one input was a boolean, and both sides of a project *switch*
+// are `true`, so the switch was invisible to it. These assert that the input
+// carries the project's identity and that a changed identity really does drop
+// everything belonging to the outgoing project.
+describe('switching projects (B-083 / D-202)', () => {
+  /** `chroma_timeline_get`/`_list` answering for whichever project is "open"
+   *  in the fake backend right now — the real commands both read through the
+   *  Rust-side active project, so switching projects changes what they return
+   *  without any argument changing. */
+  let backendProject = 'A';
+  function installBackend() {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'chroma_timeline_get') return Promise.resolve(timelineNamed(backendProject));
+      if (cmd === 'chroma_timeline_list') {
+        return Promise.resolve([
+          { id: `id-${backendProject}`, name: backendProject, duration: 100, active: true },
+        ]);
+      }
+      return Promise.resolve(undefined);
+    });
+  }
+
+  async function openA() {
+    backendProject = 'A';
+    installBackend();
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useEditorTimelineStore.getState().status).toBe('ready'));
+  }
+
+  it('opening a DIFFERENT project loads THAT project’s timeline', async () => {
+    await openA();
+    expect(useEditorTimelineStore.getState().timeline?.name).toBe('A');
+
+    backendProject = 'B';
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_B);
+    await vi.waitFor(() => expect(useEditorTimelineStore.getState().timeline?.name).toBe('B'));
+
+    const s = useEditorTimelineStore.getState();
+    expect(s.openProjectKey).toBe(PROJECT_B);
+    expect(s.status).toBe('ready');
+    // the switcher's tab strip is per-project too — it must not still list A's
+    await vi.waitFor(() => expect(useEditorTimelineStore.getState().timelines).toEqual([
+      { id: 'id-B', name: 'B', duration: 100, active: true },
+    ]));
+  });
+
+  it('never serves the outgoing project’s timeline while the new one loads', async () => {
+    await openA();
+    useEditorTimelineStore.setState({ playhead: 42, selection: [{ track: 0, id: 'a-clip' }] });
+
+    backendProject = 'B';
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_B);
+
+    // Synchronously, before any fetch can have resolved: A's state is gone
+    // rather than left on screen (and readable by the MCP layer) under B's name.
+    const s = useEditorTimelineStore.getState();
+    expect(s.timeline).toBeNull();
+    expect(s.status).toBe('loading');
+    expect(s.playhead).toBe(0);
+    expect(s.selection).toEqual([]);
+    expect(s.timelines).toEqual([]);
+  });
+
+  it('re-opening the SAME project is a no-op, not a reload', async () => {
+    await openA();
+    // wait for the open's own `loadList()` too, so the baseline count below is
+    // taken once the open path has genuinely finished issuing calls
+    await vi.waitFor(() => expect(useEditorTimelineStore.getState().timelines).toHaveLength(1));
+    const callsBefore = invokeMock.mock.calls.length;
+
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_A);
+    await flush();
+
+    expect(invokeMock.mock.calls.length).toBe(callsBefore);
+    expect(useEditorTimelineStore.getState().timeline?.name).toBe('A');
+  });
+
+  it('a debounced save still pending for the old project never writes into the new one', async () => {
+    // `_flushSave` reads `timeline` at FIRE time, and by the time this store
+    // hears about a switch the backend already points at the incoming project
+    // — so a surviving timer would have posted the OUTGOING project's timeline
+    // into the incoming one. (Losing that last <400ms edit is B-080's own
+    // race, tracked separately; writing it into the wrong project is not.)
+    vi.useFakeTimers();
+    await openA();
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+
+    backendProject = 'B';
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_B);
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain('chroma_timeline_set');
   });
 });
 
@@ -88,10 +191,10 @@ describe('concurrent load ordering (B-034 / D-112)', () => {
     const fresh = deferred<Timeline>();
     invokeMock.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
 
-    // Set the flag directly rather than via `setProjectOpen`, so the retry
+    // Set the key directly rather than via `setOpenProject`, so the retry
     // ladder doesn't also consume mocked responses — this test is about the
     // ordering guarantee alone.
-    useEditorTimelineStore.setState({ projectOpen: true });
+    useEditorTimelineStore.setState({ openProjectKey: PROJECT_A });
     const store = useEditorTimelineStore.getState();
     const staleLoad = store.load();
     const freshLoad = store.load();
@@ -115,7 +218,7 @@ describe('concurrent load ordering (B-034 / D-112)', () => {
     const fresh = deferred<Timeline>();
     invokeMock.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
 
-    useEditorTimelineStore.setState({ projectOpen: true });
+    useEditorTimelineStore.setState({ openProjectKey: PROJECT_A });
     const store = useEditorTimelineStore.getState();
     const staleLoad = store.load();
     const freshLoad = store.load();
@@ -141,7 +244,7 @@ describe('recovery (B-034 / D-112)', () => {
       .mockRejectedValueOnce('no project open — open one in the Colorist tab')
       .mockResolvedValue(timelineNamed('recovered'));
 
-    useEditorTimelineStore.getState().setProjectOpen(true);
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_A);
 
     await vi.waitFor(() => expect(useEditorTimelineStore.getState().status).toBe('ready'), {
       timeout: 5000,
@@ -210,16 +313,16 @@ describe('selection (D-118)', () => {
   });
 
   it('closing the project resets both selection and selectedGap', () => {
-    // `setProjectOpen` is idempotent (guards on `get().projectOpen === open`,
-    // see its own doc) — it has to genuinely transition open→closed to hit
-    // the reset branch, so mark it open first rather than relying on the
-    // outer `beforeEach`'s already-closed default.
+    // `setOpenProject` is idempotent per key (guards on
+    // `get().openProjectKey === key`, see its own doc) — it has to genuinely
+    // transition open→closed to hit the reset branch, so mark it open first
+    // rather than relying on the outer `beforeEach`'s already-closed default.
     useEditorTimelineStore.setState({
-      projectOpen: true,
+      openProjectKey: PROJECT_A,
       selection: [{ track: 0, id: 'a' }],
       selectedGap: { track: 1, frame: 10 },
     });
-    useEditorTimelineStore.getState().setProjectOpen(false);
+    useEditorTimelineStore.getState().setOpenProject(null);
     const s = useEditorTimelineStore.getState();
     expect(s.selection).toEqual([]);
     expect(s.selectedGap).toBeNull();

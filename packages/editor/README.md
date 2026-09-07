@@ -16,7 +16,10 @@ dragging a pool item in from the shell's Sources panel.
   switching via `chroma_timeline_set_active`, plus inline "+ New" →
   `chroma_timeline_create`. No rename/delete UI (no backing commands).
 - `useEditorTimelineStore` — zustand store: `timeline`, `playhead`, `playing`,
-  `timelines` (D-046), `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
+  `timelines` (D-046), `openProjectKey` + `setOpenProject()` (B-034/D-112's
+  readiness signal, made the open project's *identity* rather than a boolean by
+  B-083/D-202 — a changed key is a real project switch and reloads everything),
+  `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
   `setPlayhead()`, `loadList()`/`createTimeline()`/`setActiveTimeline()`
   (D-046). Optimistic ops → debounced `chroma_timeline_set` →
   `chroma_timeline_get` refetch. Lives here for now; a `@chroma/bridge`

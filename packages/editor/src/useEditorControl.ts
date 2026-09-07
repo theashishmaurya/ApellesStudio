@@ -257,18 +257,36 @@ const opError = (result: any): string | null => result?.error ?? null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: a thrown value is `unknown` in practice
 const thrownMessage = (e: any): string => String(e?.message || e);
 
+/** Why a timeline op can't run right now, in the caller's terms.
+ *
+ *  B-083/D-202 — this was a fixed `{ error: 'no timeline — open a project
+ *  first' }` object, which is now also what an agent would see during the
+ *  brief reload a project *switch* triggers: telling it to open the project
+ *  it just opened. The store already distinguishes the three real cases
+ *  (`openProjectKey`/`status`), so say which one it is. */
+function noTimeline(): { error: string } {
+  const s = useEditorTimelineStore.getState();
+  if (s.openProjectKey === null) return { error: 'no timeline — open a project first' };
+  if (s.status === 'error') return { error: `the open project's timeline failed to load: ${s.error}` };
+  // A project IS open and the fetch isn't in a failed state, so the only thing
+  // between the caller and a timeline is the fetch itself still being in
+  // flight — which, for a caller that just switched projects, it briefly is.
+  return { error: 'the timeline is still loading (the project was just opened or switched) — retry' };
+}
+
 /** Mount once from `EditorTab.tsx`. No arguments — see this file's own
  *  module doc comment for why (both stores it reads are module-level). */
 export function useEditorControl(): void {
   useEffect(() => {
-    const noTimeline = { error: 'no timeline — open a project first' };
-
     const OPS: Record<string, (args: any) => any> = {
       // ---- read/seek ------------------------------------------------------
       editor_get_state: () => {
         const s = useEditorTimelineStore.getState();
         return {
-          projectOpen: s.projectOpen,
+          projectOpen: s.openProjectKey !== null,
+          // B-083 — *which* project the Edit tab believes is open, so a
+          // stale-state report like that one is answerable from one call.
+          openProject: s.openProjectKey,
           status: s.status,
           error: s.error,
           playhead: s.playhead,
@@ -279,7 +297,7 @@ export function useEditorControl(): void {
 
       editor_get_timeline: () => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         return timelineDto(tl);
       },
 
@@ -388,7 +406,7 @@ export function useEditorControl(): void {
 
       editor_split_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         const atFrame = Math.round(Number(a?.atFrame));
@@ -399,7 +417,7 @@ export function useEditorControl(): void {
 
       editor_remove_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: found.track, clip: found.clip });
@@ -408,7 +426,7 @@ export function useEditorControl(): void {
 
       editor_remove_gap: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const track = Math.round(Number(a?.track));
         const frame = Math.round(Number(a?.frame));
         if (!Number.isFinite(frame)) return { error: 'frame must be a finite number' };
@@ -418,7 +436,7 @@ export function useEditorControl(): void {
 
       editor_trim_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         const edge = a?.edge === 'start' ? 'trim_start' : a?.edge === 'end' ? 'trim_end' : null;
@@ -435,7 +453,7 @@ export function useEditorControl(): void {
       // `editor_trim_clip` uses.
       editor_slip_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         const delta = Math.round(Number(a?.delta));
@@ -453,7 +471,7 @@ export function useEditorControl(): void {
 
       editor_move_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.fromTrack, a?.clip);
         if ('error' in found) return found;
         const toTrack = a?.toTrack !== undefined ? Math.round(Number(a.toTrack)) : found.track;
@@ -482,7 +500,7 @@ export function useEditorControl(): void {
       // [source_start, source_start+duration) window.
       editor_swap_clip_media: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
@@ -526,7 +544,7 @@ export function useEditorControl(): void {
       // ---- compositing transform + keyframes (D-182's stacking + zoom) ----
       editor_set_clip_transform: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
@@ -576,7 +594,7 @@ export function useEditorControl(): void {
 
       editor_set_clip_keyframes: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
@@ -609,7 +627,7 @@ export function useEditorControl(): void {
       // in docs/08-decisions.md for the field-mapping table. -----------------
       editor_export_fcpxml: async (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
 
         const outPath = a?.outPath;
         if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
@@ -667,7 +685,7 @@ export function useEditorControl(): void {
       // ---- fade (D-147) + duck (D-149) — moved from useChromaControl.ts ---
       editor_set_clip_fade: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
         if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
@@ -706,7 +724,7 @@ export function useEditorControl(): void {
 
       editor_set_track_duck: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
+        if (!tl) return noTimeline();
         const track = Math.round(Number(a?.track));
         const tr = tl.tracks[track];
         if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };

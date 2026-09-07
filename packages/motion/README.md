@@ -43,9 +43,11 @@ per-row lane timeline).
 - `layerMeasure.ts` — the shared "measure a layer's real screen rect from its
   `data-motion-box` descendants" helper, used by the canvas overlay's
   selection outline, "snap to layer," and the marquee's hit-test.
-- `motionProjectStore.ts` — **readiness** (B-058/D-150): `projectOpen`, pushed in
-  from the composition root (`app/src/main.tsx`), plus where the manifest read
-  stands (`idle`/`loading`/`ready`/`error`). A store, not tab-local state,
+- `motionProjectStore.ts` — **readiness** (B-058/D-150): `openProjectPath` —
+  *which* project is open, pushed in from the composition root
+  (`app/src/Root.tsx`; B-083/D-202 made it the project's identity rather than a
+  boolean, so switching projects re-reads the incoming project's own manifest) —
+  plus where the manifest read stands (`idle`/`loading`/`ready`/`error`). A store, not tab-local state,
   because the signal comes from outside this package and the tab is mounted from
   boot. Nothing here infers "no project is open" from a failed read — that
   inference *was* B-058, and is what B-034/D-112 removed from the Edit tab before

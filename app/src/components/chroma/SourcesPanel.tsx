@@ -320,9 +320,21 @@ export function SourcesPanel() {
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // B-083/D-202 — the pool's own initial/after-a-switch fetch used to live
+  // here, keyed on the "a project is open" boolean, which never changes when
+  // one project is swapped for another (`open_project`/`new_project`), so it
+  // never re-read. It's the composition root's bridge now
+  // (`Root.tsx` → `useMediaPoolStore.setOpenProject`), like the Edit and
+  // Motion tabs' own. What's left here is the panel-local view state that is
+  // equally per-project: an active bin and a multi-selection from the OUTGOING
+  // project would otherwise filter the incoming project's pool down to
+  // nothing, or apply a "Delete N" to ids that are no longer in it.
+  const openProjectKey = useMediaPoolStore((s) => s.openProjectKey);
   useEffect(() => {
-    if (projectOpen) void refresh();
-  }, [projectOpen, refresh]);
+    setActiveFolder(null);
+    setSelecting(false);
+    setSelectedIds(new Set());
+  }, [openProjectKey]);
 
   const tree = useMemo(() => buildFolderTree(folders), [folders]);
 

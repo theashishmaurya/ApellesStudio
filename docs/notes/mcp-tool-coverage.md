@@ -65,7 +65,7 @@ zero.**
 > | Tool | What it does |
 > |---|---|
 > | `get_timeline` | Read-only. Every track and clip, with the `index` mutating tools address a clip by and the `id` that survives a reorder. Reports fades + ducking. |
-> | `editor_get_state` | Read-only. Project-open/load-status/playhead/playing/has-timeline. |
+> | `editor_get_state` | Read-only. Project-open + WHICH project (`openProject`, B-083)/load-status/playhead/playing/has-timeline. |
 > | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
