@@ -411,10 +411,15 @@ export function SourcesPanel() {
       toast.success('Added to grading');
     } catch (e) {
       toast.error(`Couldn't add to grading: ${String(e)}`);
-    } finally {
-      setAddingId(null);
-      void refresh();
     }
+      // D-201 — `try/catch` then the former `finally` body inline, not a
+      // `finally` clause: the React Compiler cannot lower `finally` at all, and
+      // ONE of them anywhere in a component/hook makes it skip auto-memoizing
+      // the whole thing. Exactly equivalent here — the `catch` swallows
+      // everything and neither block returns, so this tail is unconditionally
+      // reached on both paths. See `docs/notes/react-compiler-coverage.md`.
+    setAddingId(null);
+    void refresh();
   };
 
   if (!projectOpen) return null;

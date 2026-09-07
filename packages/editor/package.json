@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Editing tab (D-039 / D-041) — single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove, undo/redo (D-051).",
+  "description": "Chroma Editing tab (D-039 / D-041) \u2014 single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove, undo/redo (D-051).",
   "scripts": {
     "test": "vitest run"
   },
@@ -25,7 +25,10 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@types/babel__core": "^7.20.5",
     "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^29.1.1",
     "react-dom": "19.2.8",
     "vitest": "^3.2.4"

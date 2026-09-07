@@ -969,32 +969,48 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 21. **UI performance: real findings, not a hand-wavy "webviews are slow"** — owner,
     2026-09-07, after a real discussion about React 19/Tauri performance ceilings.
     Three concrete, evidence-based items, not guesswork:
-    1. **B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
+    1. ~~**B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
        intermittently fails at startup and silently falls back to the slower
-       `postMessage` bridge; observed live this session (88 occurrences in one of
-       three `npm run tauri:dev` launches, zero in the other two). Root cause
-       unknown — needs real investigation, not a guess.
-    2. **React Compiler bailout coverage** — `docs/notes/react-compiler-coverage.md`,
-       a real inventory of 55 unique bailouts across 45 files, extracted from real
-       dev-server logs, grouped by root cause with a fix direction per bucket. Two
-       files matter most for perceived speed: `TimelinePane.tsx` and
-       `TransformOverlay.tsx` (the highest-update-frequency surfaces in the app —
-       drag/scrub/zoom/keyframe editing) both bail out on "existing memoization
-       could not be preserved," meaning manual memoization is fighting the compiler
-       there specifically.
-    3. **`TimelinePane.tsx`'s drag-gesture performance** — unverified either way:
-       does its drag code already bypass React state during the gesture itself
-       (direct `style.transform` mutation via refs, committing to
-       `useEditorTimelineStore`'s real `applyOp` only on pointer-up), or does it
-       re-render through React state every pointer-move frame? The standard
-       technique for near-native drag feel inside a webview is the former. **Any
-       fix here must preserve the existing contract exactly**: the store's
-       post-gesture state (and therefore what `get_timeline`/every other MCP tool
-       observes) must be byte-identical to today's behavior — only the
-       INTERMEDIATE frames during an active drag may skip a React commit, never
-       the final one.
-    Dispatched (2026-09-07, Opus, worktree-isolated) — in progress as of this
-    writing.
+       `postMessage` bridge~~ — **root-caused and fixed (D-201, 2026-09-07)**,
+       and it was not an IPC bug at all: the warning burst fires once per IPC
+       call that is in flight when the page navigates, and the navigation was a
+       **Vite full page reload of the whole app**, triggered because
+       `app/src/main.tsx` held the `Root` component while exporting nothing,
+       making it an invalidating React Fast Refresh boundary that every edit
+       behind a `@chroma/*` barrel propagated to. `Root` now lives in
+       `app/src/Root.tsx` (exports only components); verified live that editing
+       `timeline.ts` / `timelineStore.ts` / the editor barrel now hot-updates
+       instead of full-reloading.
+    2. ~~**React Compiler bailout coverage** — a real inventory of 55 unique
+       bailouts across 45 files~~ — **the Edit-tab half is fixed (D-201,
+       2026-09-07)**: all 22 source files in `@chroma/editor` now compile with
+       ZERO bailouts (`TimelinePane`/`TransformOverlay`'s hand-written
+       memoization was fighting the compiler and costing them ALL
+       auto-memoization; `PreviewPane`, `Filmstrip`, `useEditorControl` and
+       `app`'s `SourcesPanel` cleared too), pinned by a real regression test
+       (`packages/editor/src/reactCompiler.test.ts`). `app/`'s modals/settings
+       `finally` bucket, `useAiMasking.ts`, `ImageCanvas.tsx` and
+       `packages/motion`'s own files are still open, each with its reason —
+       `docs/notes/react-compiler-coverage.md` marks fixed vs. open and
+       tabulates a per-item verdict for every "possibly a real bug" flag
+       (one turned out to be real: **B-084**).
+    3. ~~**`TimelinePane.tsx`'s drag-gesture performance** — unverified either
+       way: does its drag code already bypass React state during the gesture
+       itself, or does it re-render through React state every pointer-move
+       frame?~~ — **verified (D-201, 2026-09-07): it already defers**, for every
+       gesture in the pane. `onDndDragMove` writes only local, change-gated
+       `clipDragPreview`/`insertPreview` state (a drag that doesn't change the
+       resolved landing produces zero re-renders); `applyOp` is called exactly
+       once, in `onDndDragEnd`. A trim reaches `applyOp` only in
+       `onActionResizeEndCb` (resize END); a marquee commits `setSelection` on
+       pointerup; `TransformOverlay` keeps a local `draft` and commits one
+       `set_clip_transform` on release. **No change made** — the direct-DOM
+       `style.transform` technique would buy nothing here and would mean pulling
+       `@dnd-kit`'s own `DragOverlay` out of the drag's real machinery. See
+       D-201 Part 3.
+    Done (D-201) — all three root-caused; 1 and 2 fixed, 3 verified as already
+    correct. Remaining open: the rest of the React Compiler bailout list
+    (`docs/notes/react-compiler-coverage.md` marks what is fixed vs. still open).
 22. **`editor_export` mixes real audio, and the Edit tab gets a real Export button/
     dialog/queue** — done, 2026-09-07 (**D-197**, **D-198**). Closes the "v1 scope:
     video-only, a documented follow-up" gap D-183 explicitly left open (see that

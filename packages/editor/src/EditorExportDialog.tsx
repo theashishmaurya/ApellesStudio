@@ -27,7 +27,7 @@
  * no clip yet to derive it from (a brand-new, empty project). fps defaults
  * to the timeline's own rate (`timelineFps`).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { CheckCircle2, Download, Loader2, XCircle } from 'lucide-react';
@@ -141,16 +141,32 @@ export function EditorExportDialog() {
   // Re-derive sensible defaults every time the dialog opens (not on every
   // keystroke) — the same "reset only on open" convention Colorist's own
   // `ExportDialog.tsx` uses for the identical reason.
+  //
+  // D-201 — the "reset only on open" dependency array used to need a
+  // line-scoped suppression of the `exhaustive-deps` react-hooks rule, because
+  // the body reads `timeline` but must NOT re-run when it changes. A
+  // suppression of any react-hooks rule also switches the React Compiler off
+  // for the whole file (`docs/notes/react-compiler-coverage.md`), which
+  // `reactCompiler.test.ts` now fails on, so this uses the standard latest-ref
+  // shape instead: the ref is written in its own effect (never during render),
+  // and effects run in declaration order within a commit, so the reset effect
+  // below always reads the value from the same commit.
+  const timelineRef = useRef(timeline);
+  useEffect(() => {
+    timelineRef.current = timeline;
+  }, [timeline]);
+
   useEffect(() => {
     if (!open) return;
+    const tl = timelineRef.current;
     setOutPath(null);
     setSpeedOverrides({});
     setFitOverrides({});
     setFreezeOverrides({});
     setValidationError(null);
-    setFps(String(timelineFps(timeline)));
+    setFps(String(timelineFps(tl)));
     let cancelled = false;
-    fetchCompositionSize(timeline).then(({ width: w, height: h }) => {
+    fetchCompositionSize(tl).then(({ width: w, height: h }) => {
       if (!cancelled) {
         setWidth(String(w));
         setHeight(String(h));
@@ -159,7 +175,6 @@ export function EditorExportDialog() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on open, mirroring Colorist's ExportDialog
   }, [open]);
 
   const handleChoosePath = async () => {

@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **React Compiler bailout pass (D-201): `@chroma/editor` is now
+  bailout-free, and one real bug fell out of it.** All 22 source files in the
+  package compile with zero bailouts (`TimelinePane`/`TransformOverlay`'s
+  hand-written memoization was fighting the compiler and costing them ALL
+  auto-memoization; `PreviewPane`/`Filmstrip`/`useEditorControl`/`SourcesPanel`
+  cleared too), pinned by a new `reactCompiler.test.ts` guard. Investigating the
+  inventory's "possibly a real bug" flags found **B-087** (two components read
+  Zustand state with `getState()` during render, so Colorist's Paste button never
+  updates after a copy) — filed, not fixed. `TimelinePane`'s drag gesture was
+  audited and is already deferred to pointer-up; no change.
 - **2026-09-07** — **Fixed B-082: `new_project`'s auto-placed clips never got
   `source_fps`.** `append_media_clip`'s `..Default::default()` left it `None`
   despite the real probe sitting right above — the one other real `Clip`-
@@ -26,6 +36,14 @@ One or two lines per session. Detail lives in the decision it references.
   goes stale after a `set_project_settings` write made from outside
   `CanvasSettingsPopover`'s own Apply button, e.g. the MCP tool — display-only,
   self-heals on the next timeline edit).
+- **2026-09-07** — **B-081 root-caused and fixed — and it was never an IPC bug
+  (D-201).** The `IPC custom protocol failed` burst fires once per Tauri IPC call
+  in flight when the page navigates; the navigation was a **Vite full page reload
+  of the entire app**, caused by `app/src/main.tsx` holding the `Root` component
+  while exporting nothing (an invalidating React Fast Refresh boundary that every
+  edit behind a `@chroma/*` barrel propagated to). `Root` moved to its own
+  `app/src/Root.tsx`; verified live that editing `timeline.ts`/`timelineStore.ts`/
+  the editor barrel now hot-updates instead of reloading the whole app.
 - **2026-09-07** — **"Multiple timelines" live-verified working; B-080 filed.**
   Extended the D-142 browser harness to mount `TimelineSwitcher` against a real
   multi-timeline fake backend and drove it with real Chromium pointer events:

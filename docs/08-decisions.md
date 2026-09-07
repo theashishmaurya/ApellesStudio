@@ -17553,3 +17553,329 @@ touched formulas/identifiers against `rustfmt`'s output, not just line numbers.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-201 — Dev-mode iteration speed: fix the full-page-reload HMR boundary (root cause of B-081), clear the React Compiler bailouts on the hot Edit-tab surfaces, and pin the drag gesture's already-deferred commit
+
+Owner, 2026-09-07: *"make the whole dev [experience] faster, and prod will
+automatically be faster too."* Three evidence-based findings from that session
+(`docs/04-roadmap.md` item 21) were dispatched together; this entry covers what
+each turned out to be and what was actually done.
+
+### Part 1 — B-081's real root cause: an invalidating Fast Refresh boundary, not a Tauri IPC bug
+
+**Context.** B-081 recorded 88 occurrences of
+`IPC custom protocol failed, Tauri will now use the postMessage interface instead`
+in one of three `npm run tauri:dev` launches, zero in the other two, with the
+root cause listed as unknown and the suspicion aimed at Tauri's IPC transport
+(a WKWebView permission issue, a webview-readiness race, port reuse…).
+
+**What the evidence actually says.** Re-reading the three saved dev logs from
+that session — the ones the original entry was written from — the correlation
+is exact and total:
+
+| log | Tauri-webview `page reload`s | `IPC custom protocol failed` |
+|---|---|---|
+| `tauri-dev.log` | 0 | 0 |
+| `tauri-dev-2.log` | 3 (`src/main.tsx`) | 88 (51 + 17 + 20, one burst per reload) |
+| `tauri-dev-3.log` | 0 (its 12 reloads are all of `harness.html`, a plain Chrome page with no Tauri IPC at all) | 0 |
+
+and the surrounding lines in `tauri-dev-2.log` spell out the whole chain:
+
+```
+4:18:59 pm  hmr update /src/main.tsx, …/TimelinePane.tsx, …  (10 modules)
+4:18:59 pm  [console.error] You are calling ReactDOMClient.createRoot() on a
+            container that has already been passed to createRoot() before.
+4:18:59 pm  hmr invalidate /src/main.tsx  Could not Fast Refresh
+            ("true" export is incompatible)
+4:18:59 pm  page reload src/main.tsx
+4:19:00 pm  [console.warn] IPC custom protocol failed …          ×51
+4:19:01 pm  [TAURI] Couldn't find callback id 863394175. This might happen
+            when the app is reloaded while Rust is running an asynchronous
+            operation.                                            ×4
+```
+
+Reading `tauri-2.11.5/scripts/ipc-protocol.js` closes it: the warning is
+logged from the *rejection* handler of the `fetch()` to `ipc://localhost/<cmd>`
+— i.e. it fires once per IPC call that was **in flight when the page
+navigated**, because WKWebView cancels every pending custom-scheme task on
+navigation. The counts (51 / 17 / 20, not a constant) are "however many calls
+happened to be in flight at that instant," and the *following* second's
+`Couldn't find callback id` warnings are Tauri's own message for exactly this
+situation. `customProtocolIpcFailed` is a per-JS-context flag, so it is the
+*outgoing* document that flips to `postMessage` for its last few milliseconds;
+the freshly-loaded document gets a clean flag and the fast transport back.
+
+**So B-081 is not a Tauri bug and not a lasting transport downgrade.** It is a
+*symptom*, and the thing it was pointing at is far more expensive than the
+symptom: **every Vite HMR update that reached `app/src/main.tsx` full-reloaded
+the entire app.**
+
+**Why the reload happened.** `@vitejs/plugin-react` treats a module as a React
+Fast Refresh boundary only when *all* of its exports are components; its
+runtime check (`validateRefreshBoundaryAndEnqueueUpdate`,
+`refresh-runtime.js`) additionally requires that there be **at least one**
+export — a module with none fails with `hasExports === false`, which is what
+prints the odd-looking `("true" export is incompatible)` message. `main.tsx`
+declared the `Root` component (so the plugin made it a boundary candidate and
+injected `import.meta.hot.accept`) while exporting *nothing* (it is the entry
+module). Every update that reached it therefore: re-executed the module (hence
+the duplicate `createRoot()` error), failed validation, invalidated, and asked
+Vite for a full page reload.
+
+And updates reached it constantly, because **no `@chroma/*` barrel is a
+refresh boundary either** — `packages/editor/src/index.ts` and friends
+deliberately re-export stores, plain functions and types alongside components,
+so Vite propagates an update straight through them to whatever imports the
+barrel. In practice that meant an edit to `timeline.ts`, `timelineStore.ts` or
+the barrel itself — three of the most-edited files in the Edit tab — reloaded
+the whole app: every module re-fetched, all app state lost, the project
+re-opened, and the B-081 warning burst on the way out.
+
+**Options considered.**
+1. **Chase the IPC transport itself** (entitlements, CSP, `devUrl`, a Tauri
+   upgrade). Rejected once the log correlation was exact — there is nothing
+   wrong with the transport; it is cancelled by a navigation, which is correct
+   behavior, and no Tauri-side config changes that.
+2. **Suppress/ignore the warning.** Rejected — it is a true signal, and
+   silencing it would have hidden the actual defect underneath it.
+3. **Move `Root` into its own module that exports only components — chosen.**
+   `app/src/Root.tsx` exports exactly one thing, the `Root` component, so it is
+   a valid Fast Refresh boundary and propagation stops there. `app/src/main.tsx`
+   keeps only bootstrap (`installFrontendLogBridge()`, `createRoot`, `render`)
+   and therefore contains no component at all, so the plugin never makes it a
+   boundary candidate in the first place. This is React's own documented
+   "only export components from a component file" rule and Vite's own
+   `#consistent-components-exports` guidance — the framework's canonical
+   pattern, not a workaround.
+
+**Verified live, before and after,** with a real Vite 8 dev server + a real
+Chromium page (a second dev server on port 1440 in the agent's worktree, so the
+owner's running `npm run tauri:dev` was never disturbed):
+
+- **before** — appending a comment to `packages/editor/src/timeline.ts` produced
+  `hmr update … /src/main.tsx …` → `hmr invalidate /src/main.tsx Could not Fast
+  Refresh ("true" export is incompatible)` → **`page reload src/main.tsx`**, plus
+  the same duplicate-`createRoot()` console error seen in the original session log.
+- **after** — the identical edit, and the same edit to `timelineStore.ts` and to
+  `packages/editor/src/index.ts`, each produced `hmr update … /src/Root.tsx …`
+  and **no `hmr invalidate` and no `page reload`** at all.
+
+**Not changed, deliberately.** `app/src/harness-main.tsx` and
+`app/src/motion-harness-main.tsx` (the D-142 / motion browser harnesses) still
+full-reload, and should: they own module-level fixture state that a hot update
+would leave half-stale, so a reload is the correct behavior for a test page —
+and unlike the app they import the `@chroma/*` barrels directly for non-component
+values, so making them boundaries would mean restructuring them for no real gain.
+
+**Residual honesty.** The before/after above is live-verified for the *cause*
+(the full page reload) in a real browser. The last link — "no reload ⇒ no
+`IPC custom protocol failed` burst" — rests on the three-log correlation and on
+reading Tauri's own `ipc-protocol.js`, not on a fresh `npm run tauri:dev`
+launch: the owner's dev server and the single-instance Tauri app were running
+on the main checkout throughout, and `tauri.conf.json`'s `devUrl` is pinned to
+`http://localhost:1420` while `tauri-plugin-single-instance` refuses a second
+app process, so a second real Tauri launch was not possible without killing the
+owner's. To confirm it directly next session: run `npm run tauri:dev`, edit
+`packages/editor/src/timeline.ts`, and check the dev-server console shows an
+`hmr update` (not a `page reload`) and logs zero IPC-fallback warnings.
+
+### Part 2 — React Compiler bailouts: delete the hand-written memoization the compiler can't preserve, and pin it with a test
+
+**Context.** `docs/notes/react-compiler-coverage.md` inventoried 55 unique
+bailouts across 45 files from real dev-server logs. A bailout is silent: the
+compiler logs a line, emits that file uncompiled, and the component quietly
+loses *all* auto-memoization. Two of the 45 are not low-stakes —
+`packages/editor/src/TimelinePane.tsx` and
+`packages/editor/src/TransformOverlay.tsx`, the two highest-update-frequency
+surfaces in the app (clip drag, trim, marquee, zoom, scrub; the on-canvas
+move/scale gesture) — and both bailed on *"Existing memoization could not be
+preserved."*
+
+**What the compiler actually objected to** (read out of its own diagnostics,
+not guessed — a small standalone reporter running the identical
+`reactCompilerPreset` `app/vite.config.mjs` uses, per file, printing the exact
+reason):
+
+- `TimelinePane`: **seven** hand-written arrays disagreed with the dependencies
+  the compiler inferred — `getActionRender` and `onClickAction` (`idxOf`,
+  `clipsOf`, `setSelection`, `setSelectedGap`), `onActionResizeEndCb` (`s2f`),
+  `linkCheck` (`idxOf`), `onDndDragMove` and `onDndDragEnd` (`dndBoundary`,
+  `inferNewTrackKind`, `trackIndexAfterMove`, `setSelection`). One disagreement
+  is enough to bail out the whole component.
+- `TransformOverlay`: `localPoint` (a dependency the compiler sees as mutated
+  later) and `commit` (*"memoized in source but not in compilation output"*).
+
+**Two things worth naming, because they change how this reads.** First, this is
+the *opposite* of what the hand-written arrays were for: B-024 added them
+specifically to stop `TimelinePane` re-rendering every clip on every drag tick,
+and by fighting the compiler they were causing exactly that outcome
+component-wide. Second, two of the seven were **memoizing nothing at all**:
+`onDndDragMove`/`onDndDragEnd` listed `idxOf`/`clipsOf` as dependencies, and
+those are plain arrows re-created on every render, so both callbacks already
+got a fresh identity on every render. Deleting them costs nothing and gains the
+whole component.
+
+**Options considered.**
+1. **Fix the dependency arrays to match what the compiler infers.** Rejected:
+   the inferred dependencies are things like `s2f`/`dndBoundary`/`idxOf` —
+   component-body arrows re-created every render — so listing them honestly
+   would make each memo recompute on every render anyway. It would satisfy the
+   compiler and memoize nothing.
+2. **Turn the offending helpers into `useCallback`s of their own so the arrays
+   become honest.** Rejected: that is more hand-written memoization to keep in
+   sync, in the file that just demonstrated how that goes wrong, for a result
+   the compiler produces for free and more accurately.
+3. **Delete the hand-written memoization and let the compiler do it — chosen.**
+   All seven in `TimelinePane` and both in `TransformOverlay` are now plain
+   functions. Both files verify as compiling with **zero** bailouts.
+   `getActionRender`'s `useCallback` went too: keeping it would have been
+   pointless, since the compiler memoizes it on inferred dependencies anyway
+   and its presence is what made the component ineligible in the first place.
+
+**The obvious risk, and what closes it.** "Trust the compiler" is only safe
+while the file actually compiles, and a bailout is silent — a future edit could
+reintroduce one and quietly undo B-024 all over again with nothing failing.
+So the guard is a real test: `packages/editor/src/reactCompiler.test.ts` runs
+the same preset over a whitelist of hot files and fails if any of them bails
+out. It was negative-tested (a `try {} finally {}` added to
+`TransformOverlay.cancelDrag` makes it fail; removing it makes it pass), not
+just written and assumed. `@babel/core` and `@vitejs/plugin-react` are declared
+as `devDependencies` of `@chroma/editor` for it — both already in the tree as
+`app`'s own build toolchain, test-only here, no new third-party code.
+
+**Verification.** `npm test --workspace @chroma/editor` 411/411 (was 409 — the
+2 new guard tests; every pre-existing test, including the real-DOM/real-
+PointerEvent `TimelinePane.marquee.dom.test.tsx` D-142 suite, unchanged and
+passing). `npx tsc --noEmit -p packages/editor` clean.
+
+### Part 2b — the rest of the bailout pass: `@chroma/editor` is now bailout-free, and what was deliberately left
+
+Beyond the two hot files in Part 2a, the pass worked outward by real cost, not
+by list order — Edit-tab surfaces first, one-off modals last (and, in the end,
+not at all).
+
+**Also cleared**, each with the equivalence argument written into the code next
+to the change:
+- `packages/editor/src/PreviewPane.tsx` — `finally` clauses became plain tails
+  after their `try/catch` (the `catch` swallows and neither block returns, so
+  the tail is unconditionally reached), and `fetchFrame`'s tail-recursive
+  self-call became a `while` drain loop (the recursion ran synchronously right
+  after clearing `inFlight`/`pending`, with no `await` between, so nothing could
+  interleave — and nothing awaits `fetchFrame`). Worth recording: the second
+  bailout was *masked* by the first, and a named function expression — the
+  obvious first fix for the self-reference — trips an internal compiler error.
+- `packages/editor/src/Filmstrip.tsx` — its `react-hooks/exhaustive-deps`
+  suppression was load-bearing (the effect must key on the SNAPPED window, not
+  the window object's identity), so it became the standard
+  latest-ref-written-in-an-effect shape, which needs no suppression. Behind it
+  sat a **real Rules-of-React violation**: `lastGood.current` read in the render
+  body. Removed by never overwriting good tiles with an empty response —
+  identical on-screen behaviour, one piece of state, no ref.
+- `packages/editor/src/useEditorControl.ts` — its suppression was simply
+  **stale** (the hook takes no arguments and its one effect closes over nothing
+  but module-level values, so `[]` was always honest); then three value blocks
+  inside a `try/catch` hoisted verbatim into module-scope helpers.
+- `app/src/components/chroma/SourcesPanel.tsx` — same plain-tail `finally`
+  rewrite.
+
+Every one of the package's source files now compiles clean, so the guard test
+was widened from a hot-file whitelist to **the whole package**, reading the
+directory at run time so a newly-added file is covered the day it lands. That
+paid for itself immediately: rebasing onto `main` picked up three files two
+sibling branches had landed in the meantime (`CanvasSettingsPopover.tsx`,
+`EditorExportDialog.tsx`, `useCompositionSize.ts`), the guard failed on all
+three, and each was cleared the same way — a `finally` clause turned into a
+plain tail, and two `exhaustive-deps` suppressions replaced (one by the
+latest-ref shape, one by referencing the deliberate refetch token in the body so
+the array is honest). Without the guard those three would have silently
+re-opened the bucket this pass just closed.
+
+**Deliberately left, and why** (the full list, with reasoning, is in
+`docs/notes/react-compiler-coverage.md`):
+- `packages/motion/src/useMotionManifest.ts` was **attempted and reverted**. Its
+  `finally` clauses and `??`/`?.` value blocks rewrite cleanly, but underneath
+  them the per-scene render `for` loop is itself a value block inside the `try`.
+  Clearing that means lifting the scene-render loop out into its own function —
+  a real change to the Motion render path — and stopping short leaves the file
+  still bailing out: all of the churn, none of the benefit. Reverted rather than
+  left half-done.
+- `app/`'s modals / settings / presets / tethering / AI-masking `finally`
+  bucket — mechanical, but the inventory's own "low-stakes" half, and not worth
+  spending the pass's remaining time on ahead of anything else.
+- `app/src/hooks/useAiMasking.ts` (10 distinct bailouts — a rewrite, not a
+  touch-up) and `app/src/components/panel/editor/ImageCanvas.tsx` (`this`
+  syntax in fork code that needs reading first).
+
+**One real bug found and filed, not fixed: B-084.** The inventory flagged
+`App.tsx`/`EditorView.tsx`'s *"Hooks may not be referenced as normal values"* as
+possibly a real Rules-of-Hooks bug. It is: both read `store.getState()` in the
+render body, so render output depends on state they never subscribe to — the
+visible symptom being Colorist's Paste button staying disabled after a copy
+until something unrelated re-renders. Filed with the exact two-line fix rather
+than applied, because it is Colorist-tab UI in the vendored fork and wants its
+own live check plus an engine-notes divergence entry — the same discipline
+B-079/B-080 used. Every other "possibly a real bug" item in the inventory was
+also checked individually; three were false alarms (Filmstrip's
+`performSafeScroll` self-recursion, `useProductivityActions`'s
+compiler-generated `err_1` name, `TetheringPanel`'s captured `i++`), one is a
+second real Rules-of-React violation left unfixed for the same fork-code reason
+(`app/.../Filmstrip.tsx`'s render-phase ref write), and one — `ParticleFlow` —
+turned out NOT to share a root cause with Filmstrip as the inventory guessed.
+The per-item verdicts are tabulated in the coverage note.
+
+**Verification.** `npm test --workspace @chroma/editor` **494/494** after
+rebasing onto `main` (463 pre-existing + 31 new per-file compiler guards; the
+pass started from 409 before two sibling branches landed). `npx tsc --noEmit -p
+packages/editor` clean. `npx tsc --noEmit -p app`: 64 errors before and after —
+the pre-existing baseline, zero new. Confirmed against a **real dev server**,
+not just the standalone reporter: a fresh `vite` boot with the app loaded logs
+115 `[react-compiler] bailout` lines and **zero** of them name any
+`packages/editor` file or `app/src/components/chroma/SourcesPanel.tsx` — and
+zero `page reload` lines.
+
+### Part 3 — `TimelinePane`'s drag gesture: already deferred to pointer-up; nothing changed
+
+Roadmap item 21.3 asked, explicitly unverified either way: does a clip drag
+bypass React state during the gesture and commit only on pointer-up, or does it
+re-render through the store every pointer-move frame? **It already defers.**
+Traced, not assumed:
+
+- **Clip drag (the only move mechanism since D-100, same-track and cross-track
+  alike).** `onDndDragMove` fires on every pointer-move tick and writes *only*
+  two pieces of local component state, `clipDragPreview` and `insertPreview` —
+  and both writes are change-gated (`setClipDragPreview` returns the previous
+  object verbatim unless the resolved landing frame/track/ripple actually
+  changed), so a drag that moves many pixels without changing where the clip
+  would land produces **zero** re-renders. `applyOp` is called exactly once,
+  in `onDndDragEnd`.
+- **Trim.** The timeline library owns the in-flight resize; `onActionResizeEndCb`
+  — resize *end* — is the only thing that reaches `applyOp`.
+- **Marquee (D-137).** Per-tick writes are the local `marquee` band rect;
+  `setSelection` lands once, on `pointerup`.
+- **On-canvas transform (D-136, `TransformOverlay`).** A local `draft`
+  per pointermove; one `set_clip_transform` `applyOp` on release. Its own
+  module doc already states this as the Phase-0b contract.
+
+That matters because `timelineStore.applyOp` pushes one `useHistoryStore` entry
+and schedules one debounced `chroma_timeline_set` per call — a per-frame
+`applyOp` would flood the undo stack and the IPC channel, which is precisely
+the outcome the existing design avoids.
+
+**So no change was made here, deliberately.** The item's own hard constraint
+("the store's post-gesture state, and therefore what every `editor_*` MCP tool
+observes and what lands on the undo stack, must be byte-identical") is already
+satisfied by construction, and the direct-DOM `style.transform` technique it
+proposed would buy nothing: the intermediate frames it would eliminate are
+already gated away, and applying it would mean taking `@dnd-kit`'s own
+`DragOverlay` (which is what actually follows the cursor) out of the picture —
+a large, risky change to the drag's real machinery for no measured win. The
+only remaining per-tick *store* write in this pane is `setPlayhead` during a
+cursor scrub, which is transient playhead state (not a timeline edit, no undo
+entry, no save) that `PreviewPane` genuinely needs each frame.
+
+What is added instead is a comment on `onDndDragMove` recording this audit, so
+the next person to look does not have to re-derive it — and so nobody
+"optimizes" a store write into that handler.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

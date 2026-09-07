@@ -200,10 +200,19 @@ export function Filmstrip({
   visibleStartPx,
   visibleEndPx,
 }: FilmstripProps) {
-  const [thumbs, setThumbs] = useState<ClipThumb[] | null>(null);
   // Keeps the last good tiles on screen while a new window is in flight, so
   // a zoom or scroll never blanks the strip (D-124's own hard-won property).
-  const lastGood = useRef<ClipThumb[] | null>(null);
+  //
+  // D-201 — that used to be a separate `lastGood` ref that the render body
+  // read (`thumbs?.length ? thumbs : lastGood.current`). Reading a ref during
+  // render is a real Rules-of-React violation — render output must not depend
+  // on a value React does not track — and it is what the React Compiler's
+  // "Cannot access refs during render" bailout on this file was pointing at.
+  // Simply never overwriting good tiles with an empty result gets the exact
+  // same on-screen behaviour with one piece of state and no ref: an empty
+  // response leaves the previous tiles in place instead of being written and
+  // then filtered back out one line later.
+  const [thumbs, setThumbs] = useState<ClipThumb[] | null>(null);
 
   const window_ = useMemo(
     () =>
@@ -222,22 +231,38 @@ export function Filmstrip({
   // is that an unchanged window must not re-fire this effect.
   const windowKey = window_ ? cacheKey(sourcePath, window_) : '';
 
+  // D-201 — the effect below must fire on the SNAPPED window (`windowKey`),
+  // never on `window_`'s object identity, for the reason stated just above.
+  // That used to need a line-scoped suppression of the `exhaustive-deps`
+  // react-hooks lint rule — and a suppression of ANY react-hooks rule also
+  // switches the React Compiler off for the whole file, so
+  // `Filmstrip` (rendered once per clip, re-rendered on every timeline
+  // drag/zoom/scroll) was getting no auto-memoization at all. The standard
+  // "latest ref" shape gets the same behaviour with an honest dependency
+  // array and no suppression: this effect writes the ref (never during
+  // render, which would be its own Rules-of-React violation), and because
+  // effects run in declaration order within a commit, the fetch effect below
+  // always reads the value from the same commit.
+  const windowRef = useRef(window_);
+  useEffect(() => {
+    windowRef.current = window_;
+  }, [window_]);
+
   useEffect(() => {
     let cancelled = false;
-    if (!sourcePath || !window_) return;
-    getThumbs(sourcePath, window_).then((t) => {
+    const w = windowRef.current;
+    if (!sourcePath || !w) return;
+    getThumbs(sourcePath, w).then((t) => {
       if (cancelled) return;
-      if (t.length > 0) lastGood.current = t;
-      setThumbs(t);
+      if (t.length > 0) setThumbs(t);
     });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourcePath, windowKey]);
 
   const pxPerSec = durationSecs > 0 ? width / durationSecs : 0;
-  const shown = thumbs && thumbs.length > 0 ? thumbs : lastGood.current;
+  const shown = thumbs;
 
   const tiles = useMemo(() => {
     if (!shown || pxPerSec <= 0) return [];
