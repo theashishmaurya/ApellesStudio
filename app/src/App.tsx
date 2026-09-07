@@ -56,6 +56,7 @@ import { useExternalEditSession } from './hooks/useExternalEditSession';
 import { useChromaControl } from './hooks/useChromaControl';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
+import { useDebugScreenshot } from './hooks/useDebugScreenshot';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
@@ -171,6 +172,9 @@ function App() {
   // D-051: bridge useEditorStore's grade history into @chroma/history (shell
   // global undo/redo) — single mount, same rationale as the two above.
   useColoristHistoryBridge();
+  // D-210: Cmd/Ctrl+Shift+D screenshots the webview to a PNG — the human half
+  // of the same capture the MCP `debug_screenshot` tool takes.
+  useDebugScreenshot();
 
   const { multiSelectedPaths } = useLibraryStore(
     useShallow((state) => ({

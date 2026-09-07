@@ -38,6 +38,11 @@
 //! - `relight`  — interactive depth-driven light-puck relight: parse the "Relight"
 //!                grade layer + resolve its depth source (D-046)
 //! - `control`  — in-app HTTP control server bridging MCP ⇄ the frontend (D-020)
+//! - `debug_capture` — in-process WKWebView screenshot + PNG pixel probe
+//!   (D-210): the app photographs its own webview via
+//!   `-[WKWebView takeSnapshotWithConfiguration:completionHandler:]`, which
+//!   needs no macOS Screen Recording permission (it is not screen capture),
+//!   so an agent can actually SEE the UI it just changed
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
 //!   used by the Edit-tab timeline exporter (`packages/editor/src/
@@ -60,6 +65,7 @@
 pub mod audio;
 pub mod commands;
 pub mod control;
+pub mod debug_capture;
 pub mod decode_pipe;
 pub mod depth;
 pub mod edit;

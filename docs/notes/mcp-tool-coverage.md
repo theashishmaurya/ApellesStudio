@@ -169,6 +169,23 @@ control. Lower value for an agent than the above (an agent driving edits doesn't
 obviously need to literally press play), but genuinely zero coverage; noted for
 completeness rather than urgency.
 
+## Debug / UI verification — CLOSED, 2 tools (D-210, 2026-09-08)
+
+`debug_screenshot`, `debug_sample_pixel`. Not a *product* capability like
+everything above — an agent-tooling one, and the reason it belongs in this doc
+is that its absence was silently taxing every other entry here: an agent could
+drive the whole Colorist and Edit surface through MCP but could not **look** at
+the result, because macOS's Screen Recording permission blocks `screencapture`
+for this process. `debug_screenshot` makes the window's WKWebView photograph
+itself (no such permission involved — it is not screen capture); the workflow is
+*call it → `Read` the returned path → actually see the UI*. `debug_sample_pixel`
+reads one pixel's RGBA out of a saved shot, for a colour/alignment claim.
+
+These two are the first ops answered by the control server **itself** in Rust
+(`native_op` in `control.rs`) rather than forwarded to a frontend `OPS` entry —
+see `docs/notes/debug-screenshot-tool.md` for why, and for the real limits
+(webview only, device pixels, macOS only).
+
 ## When shipping something new (going forward)
 
 Before calling a new capability "done," check: does this need an MCP tool, and if

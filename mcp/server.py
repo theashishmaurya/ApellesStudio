@@ -12,12 +12,18 @@ There is no grade/mask logic here and none in the control server — it all live
 in one place, the frontend store. Adding a capability = one entry in the
 frontend `OPS` registry + one tool here.
 
+The one exception is the `debug_*` pair (D-210): those ops are answered by the
+control server itself, in Rust, with no frontend round trip — a screenshot is a
+picture of the webview, not a fact about the store, and the moment it is most
+worth having is when the frontend is too wedged to answer.
+
 Requires: the Chroma app running (the control server binds on start).
 Base URL: http://127.0.0.1:${CHROMA_CONTROL_PORT:-19788}
 """
 
 from __future__ import annotations
 
+import builtins  # this module defines a tool named `open`, shadowing the builtin
 import json
 import os
 from typing import Any
@@ -2114,6 +2120,107 @@ def export(
         },
         indent=2,
         default=str,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# debug — actually look at the app's screen (D-210)
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def debug_screenshot(
+    out_path: str | None = None,
+    window: str | None = None,
+    inline: bool = False,
+) -> list:
+    """Take a REAL screenshot of the running Chroma app's window and save it as
+    a PNG. This is how you SEE the UI instead of inferring it from state.
+
+    THE WORKFLOW (this is the whole point of the tool):
+        1. call `debug_screenshot()`  ->  it returns {"path": "/abs/....png", ...}
+        2. call the `Read` tool on that exact path  ->  the image is rendered
+           into your context and you can actually look at it.
+    Steps 1 and 2 are separate on purpose: the path is cheap, the image is not.
+    Pass `inline=True` to skip step 2 and get the picture back in this call
+    instead — convenient, but a full-resolution window is a large image, so
+    prefer path + `Read` when you only need one look.
+
+    Use it to check the things state polling cannot answer: is the on-canvas
+    box where the picture actually is, does this panel overlap that one, is the
+    colour/contrast right, did the layout break at this window size. For a
+    before/after comparison, take one shot, make the change, take another, and
+    `Read` both — the filenames are timestamped so they sort in order.
+
+    Why this works when `screencapture` does not: macOS gates SYSTEM screen
+    capture behind the Screen Recording permission, which an agent process here
+    does not have. This is not screen capture — the app asks its own WKWebView
+    to render itself (`takeSnapshotWithConfiguration:`), in the process that
+    already owns it, so no permission is involved.
+
+    Args:
+        out_path: absolute destination. Default: a timestamped file under
+            $TMPDIR/chroma-debug-screenshots/ (never inside the repo).
+        window: Tauri window label. Default: the focused window, else "main".
+        inline: also return the image itself, not just its path.
+
+    LIMITS — read these before trusting a shot:
+      * WEBVIEW ONLY. The native title bar, native menus, a native file/save
+        dialog, and anything from another app are NOT in the image. If you
+        opened a native dialog, the screenshot shows the page behind it.
+      * The image is in real device pixels: `width`/`height` are CSS pixels x
+        `scaleFactor` (2 on a Retina display). Divide by `scaleFactor` to map a
+        screenshot coordinate back to a DOM coordinate.
+      * A minimised or hidden window is a hard error, not a blank image.
+      * macOS only.
+
+    Returns {path, label, width, height, scaleFactor, bytes}."""
+    import json
+
+    args: dict[str, Any] = {}
+    if out_path:
+        args["out_path"] = out_path
+    if window:
+        args["window"] = window
+    env = _op("debug_screenshot", **args)
+
+    res = env.get("result") or {}
+    out: list = []
+    if inline and env.get("ok") and res.get("path"):
+        try:
+            with builtins.open(res["path"], "rb") as fh:
+                out.append(Image(data=fh.read(), format="png").to_image_content())
+        except OSError as e:
+            res = {**res, "inlineError": f"saved, but could not be read back: {e}"}
+
+    out.append(
+        TextContent(
+            type="text",
+            text=json.dumps(
+                {"ok": env.get("ok"), "error": env.get("error"), **res},
+                indent=2,
+                default=str,
+            ),
+        )
+    )
+    return out
+
+
+@mcp.tool()
+def debug_sample_pixel(path: str, x: int, y: int) -> str:
+    """Read the exact RGBA of ONE pixel out of a screenshot `debug_screenshot`
+    saved. The numeric companion to looking at the image: use it to prove a
+    colour claim ("that swatch really is the accent token", "the box edge lands
+    on the picture edge, not 3px inside it") instead of eyeballing it.
+
+    Coordinates are IMAGE pixels, not CSS pixels — multiply a DOM coordinate by
+    the `scaleFactor` the screenshot returned (2 on a Retina display). Out of
+    bounds is an error naming the real image size, so a coordinate-space
+    mistake shows up immediately rather than as a wrong colour.
+
+    Returns {x, y, r, g, b, a, hex, imageWidth, imageHeight}."""
+    import json
+
+    return json.dumps(
+        _op("debug_sample_pixel", path=path, x=x, y=y), indent=2, default=str
     )
 
 

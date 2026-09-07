@@ -47,7 +47,10 @@ of eyeballing"); Chroma's is modelled on it.
    and force a **ranking**. "Which has the most natural skin?" ≫ "is the skin natural?"
 3. **Full-res crops, not the preview.** The agent inspects at 100%: a face crop
    (skin, noise, halo), a high-frequency edge (banding, matte halo, over-sharpen),
-   the darkest + brightest regions (crushed / blown detail). `screenshot(crop, zoom)`.
+   the darkest + brightest regions (crushed / blown detail). `screenshot(crop, zoom)`
+   (still a follow-up — the *canvas* at native res; not to be confused with
+   `debug_screenshot`, D-210, which photographs the app **window/UI** and is
+   shipped: `docs/notes/debug-screenshot-tool.md`).
 4. **Adversarial framing.** Prompt it to *find problems*: "List every artifact,
    cast, or issue. Assume the grade is flawed." Directly counters the agreeable default.
 5. **Diff-driven.** After each change, surface the delta — which scope values moved,

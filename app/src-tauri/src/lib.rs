@@ -2207,6 +2207,8 @@ pub fn run() {
             chroma::export::chroma_bake_lut,
             chroma::ffmpeg_run::chroma_run_ffmpeg,
             chroma::write_text_file::chroma_write_text_file,
+            chroma::debug_capture::chroma_debug_screenshot,
+            chroma::debug_capture::chroma_debug_sample_pixel,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::motion::chroma_motion_get_manifest,

@@ -96,6 +96,22 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 |---|---|---|
 | `export` | `kind` (prores\|h264\|cube), `path?`, `from_frame?`, `to_frame?`, `quality?` | resolved path + frame count + elapsed; `cube` warns when masked/local layers were dropped (3D LUT is global-only). Video export runs in the background — the tool polls to completion. Default `path` = beside the source as `<name>.graded.mov / .mp4 / .cube`. A local file the user asked for → no confirm-before-write, but the resolved path is always returned. |
 
+### Debug / UI verification  — *shipped 2026-09-08, D-210*
+*Not a grading surface: these look at **the app's own window**, so an agent can
+verify a UI/UX change (layout, overlap, alignment, a colour token) instead of
+inferring it from state. Distinct from the planned `screenshot` above, which is
+about the graded **canvas** at native res.*
+
+| Tool | Params | Returns |
+|---|---|---|
+| `debug_screenshot` | `out_path?`, `window?`, `inline?` | `{path, label, width, height, scaleFactor, bytes}` — a real PNG of the running window's WKWebView. The workflow is *take the shot → `Read` the returned path → look at it*; `inline` folds that into one call. Works without macOS Screen Recording permission because it is the webview rendering itself, not screen capture. Webview only (no native title bar/menus/dialogs); device pixels = CSS × `scaleFactor`. Default path: `$TMPDIR/chroma-debug-screenshots/<label>-<timestamp>.png` (`CHROMA_DEBUG_SHOTS_DIR` overrides). |
+| `debug_sample_pixel` | `path`, `x`, `y` | `{x, y, r, g, b, a, hex, imageWidth, imageHeight}` — the exact RGBA at one **image**-pixel coordinate of a saved shot, for proving a colour/alignment claim rather than eyeballing it. |
+
+Answered by the control server itself in Rust (`native_op`), not forwarded to
+the frontend — a screenshot is a picture of the webview, not a fact about the
+store, and it is most valuable exactly when the frontend is too wedged to
+answer. Full detail: `docs/notes/debug-screenshot-tool.md`.
+
 ### `grade.json` — the grade is code  — *shipped 2026-09-01, D-025*
 | Tool | Params | Returns |
 |---|---|---|

@@ -115,6 +115,32 @@ gphoto2 = { git = "https://github.com/CyberTimon/libgphoto2-rs", optional = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+# Chroma: the in-process WKWebView screenshot (D-209). All five are already in
+# the workspace lock as transitive deps of tauri/wry/muda/cpal — naming them
+# here adds a direct edge, not a new crate to the build. `objc2-*` (the
+# maintained successor to the `objc` 0.2 above, same `objc2` project as wry's
+# own bindings) gives the *typed*, selector-checked
+# `takeSnapshotWithConfiguration:completionHandler:` instead of a hand-rolled
+# `msg_send!` — see D-209 and docs/notes/debug-screenshot-tool.md.
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSBitmapImageRep",
+    "NSGraphics",
+    "NSImage",
+    "NSImageRep",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "NSData",
+    "NSDictionary",
+    "NSError",
+    "NSString",
+] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKSnapshotConfiguration",
+    "WKWebView",
+    "block2",
+    "objc2-app-kit",
+] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 ndk-context = "0.1"

@@ -39,6 +39,17 @@ One or two lines per session. Detail lives in the decision it references.
   the state where the transform box even mounts, which leaves the whole
   on-canvas surface agent-unverifiable. See D-209.
 
+- **2026-09-08** — **(D-210) An agent can now actually see the app.** New
+  `chroma_debug_screenshot` / `chroma_debug_sample_pixel` commands make the
+  running window's WKWebView photograph *itself*
+  (`takeSnapshotWithConfiguration:`), which — unlike `screencapture`,
+  `CGWindowListCreateImage` or ScreenCaptureKit — needs no macOS Screen
+  Recording permission, the wall that had blocked every live UI verification
+  this session. Exposed as MCP `debug_screenshot` (take a shot → `Read` the
+  path → look at it) + `debug_sample_pixel`, and to a human as
+  Cmd/Ctrl+Shift+D. Verified live against a real running window, not just
+  compiled. Notes: `docs/notes/debug-screenshot-tool.md`.
+
 - **2026-09-07** — **Fixed B-092 (D-205): canvas click-to-select was still
   completely dead in the real app after D-204 shipped it** ("still not able to
   select / unselect clips / video by clicking on the canvas... from timeline it

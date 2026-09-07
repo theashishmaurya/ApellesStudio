@@ -12,6 +12,15 @@ Architecture: `MCP server (Python) --HTTP--> control server (Rust, in-app) --Tau
 a parallel code path. That's what keeps MCP and the UI from ever diverging. Adding a
 new MCP capability = add one entry to the op registry in `useChromaControl`.
 
+**One documented exception, added 2026-09-08 (D-210):** `debug_screenshot` and
+`debug_sample_pixel` are answered by the control server *itself* in Rust
+(`native_op()` in `control.rs`), not forwarded. They are not a parallel path to
+any state — a screenshot is a picture of the webview, not a fact about the
+store — and the moment they matter most is when the frontend is too wedged to
+answer anything. `native_op()` returns `None` for every op it doesn't own, so
+it can never shadow a real frontend one. See
+`docs/notes/debug-screenshot-tool.md`.
+
 ---
 
 ## Part 1 — Rust control server  ·  `app/src-tauri/src/chroma/control.rs` (new)

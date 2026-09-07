@@ -1079,5 +1079,26 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   the Colorist "Paste" button stayed disabled after copying adjustments until
   something else happened to re-render `EditorView`. See `docs/BUGS.md` B-087.
 
+- **2026-09-08** — **Debug webview screenshot (D-210)** · new Chroma code only,
+  plus three one-to-two-line upstream-file edits. New: `src-tauri/src/chroma/
+  debug_capture.rs` (the `WKWebView takeSnapshot` capture + PNG pixel probe)
+  and `src/hooks/useDebugScreenshot.ts` (a Chroma addition, not an upstream
+  RapidRAW file — the Cmd/Ctrl+Shift+D affordance). Upstream-file edits, all
+  minimal: `src-tauri/src/chroma/mod.rs` (+`pub mod debug_capture;` and its
+  doc-list line — a Chroma-owned file anyway), `src-tauri/src/lib.rs` (+2
+  `generate_handler!` lines, `chroma_debug_screenshot` /
+  `chroma_debug_sample_pixel`), and `src/App.tsx` (+2: the import and the
+  `useDebugScreenshot()` call, mounted next to the existing
+  `useChromaControl()` / `useProjectAutosave()` / `useColoristHistoryBridge()`
+  block — the same pattern D-051 and the AgentActivityDock already use).
+  `src-tauri/Cargo.toml` gains four macOS-only dependency lines (`block2`,
+  `objc2-app-kit`, `objc2-foundation`, `objc2-web-kit`) — all already in the
+  workspace lock via tauri/wry/muda/cpal, so no new crate enters the build.
+  Deliberately NOT touched: `window_customizer.rs`, the one existing
+  ObjC-interop file (it uses `objc` 0.2 + raw `msg_send!`; new code uses the
+  typed `objc2` stack instead — see D-210 — and churning working upstream code
+  to unify the two was not worth it). `chroma/control.rs`'s new `native_op()`
+  is in a Chroma-owned file.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
