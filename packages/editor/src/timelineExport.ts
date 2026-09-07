@@ -393,12 +393,40 @@ function buildClipFilterChain(
   const steps: string[] = [];
   let src = `[${inputIdx}:v]`;
 
+  // B-098 — the four crop insets are now keyframe-or-static, mirroring
+  // `scaleExpr`'s own shape exactly: identity (no filter step) when the clip
+  // has neither a static crop nor any crop keyframe, so an uncropped clip
+  // compiles byte-identically to before this fix. Unlike `scale`/`crop`'s
+  // sibling filters, ffmpeg's `crop` filter has no `eval=init`/`eval=frame`
+  // toggle at all — confirmed empirically (a two-colour `hstack` source
+  // cropped with an animated `x` expression genuinely switches which half
+  // shows at the exact frame the expression crosses over) that its `w`/`h`/
+  // `x`/`y` expressions are simply always evaluated per frame, with no
+  // B-090-style trap to route around here.
   const cl = clip.crop_left ?? 0;
   const ct = clip.crop_top ?? 0;
   const cr = clip.crop_right ?? 0;
   const cb = clip.crop_bottom ?? 0;
-  if (cl !== 0 || ct !== 0 || cr !== 0 || cb !== 0) {
-    steps.push(`${src}crop=iw*(1-${cl}-${cr}):ih*(1-${ct}-${cb}):iw*${cl}:ih*${ct}[c${label}]`);
+  const hasCropKeyframes = (['crop_left', 'crop_top', 'crop_right', 'crop_bottom'] as const).some((p) =>
+    hasKeyframesFor(clip, p),
+  );
+  if (cl !== 0 || ct !== 0 || cr !== 0 || cb !== 0 || hasCropKeyframes) {
+    const insetExpr = (param: 'crop_left' | 'crop_top' | 'crop_right' | 'crop_bottom', staticValue: number): string =>
+      hasKeyframesFor(clip, param)
+        ? keyframeExprAt(rebaseKeyframesToClipInput(clip), param, staticValue, clipFps)
+        : String(staticValue);
+    const clExpr = insetExpr('crop_left', cl);
+    const ctExpr = insetExpr('crop_top', ct);
+    const crExpr = insetExpr('crop_right', cr);
+    const cbExpr = insetExpr('crop_bottom', cb);
+    // B-075/B-090's own single-quoting requirement: a keyframed expression is
+    // full of bare commas/colons ffmpeg's filtergraph syntax would otherwise
+    // split on. A plain static value is just a bare number with no special
+    // characters, so quoting it too is harmless.
+    steps.push(
+      `${src}crop=w='iw*(1-(${clExpr})-(${crExpr}))':h='ih*(1-(${ctExpr})-(${cbExpr}))':` +
+        `x='iw*(${clExpr})':y='ih*(${ctExpr})'[c${label}]`,
+    );
     src = `[c${label}]`;
   }
 

@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **B-098 fixed: `editor_export` now animates keyframed crop
+  insets too.** The last of the nine keyframeable transform properties to
+  reach the export compiler — all nine now animate identically in the
+  preview and the export. Corrected this bug's own original fix guidance
+  along the way: it assumed `crop` needed the same `eval=frame` flag `scale`
+  does (B-090's trap), but checked empirically instead of assumed, `crop`
+  has no `eval` option at all — its `w`/`h`/`x`/`y` are simply always
+  evaluated per frame. One new real-ffmpeg pixel test.
 - **2026-09-08** — **The Edit-tab preview's real bottleneck, profiled then
   fixed (D-217, roadmap 25).** The standing theory — base64 in
   `chroma_timeline_frame`'s `data:` URL — was measured and is **wrong**:

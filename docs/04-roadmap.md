@@ -765,8 +765,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       resolver could not actually interpolate per-property keyframes; it
       held them into a step function). **B-095 fixed (D-215, 2026-09-08)** —
       the ffmpeg export compiler now honours `opacity`/`rotation`, static and
-      keyframed, matching the preview; the crop insets' own still-open piece
-      of the same shape is B-098.
+      keyframed, matching the preview. **B-098 fixed too (2026-09-08)** — the
+      crop insets' own piece of the same shape; all nine keyframeable
+      properties now animate identically in the preview and the export.
       **The ON-CANVAS half is now built too (D-209, 2026-09-08), fixing
       B-093** — which turned out not to be an open design question so much as
       a live defect the moment canvas click-to-select started working

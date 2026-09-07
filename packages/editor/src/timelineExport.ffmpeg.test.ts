@@ -403,6 +403,43 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execut
     const [, gLate] = pixelAt(out, 1.9, 100, 100);
     expect(gLate).toBeGreaterThan(100); // fully faded in, well past the 1s ramp
   });
+
+  it('B-098: a keyframed `crop_left` actually animates the crop on export, not just the live preview', () => {
+    // A blue marker in the leftmost quarter of an otherwise green frame.
+    // `crop_left` 0 -> 0.3 across the clip: at 0 the marker is fully inside
+    // the kept region and visible (scale: 1, no other transform, so the
+    // whole box is exactly the source, unscaled); once `crop_left` passes
+    // 0.25 the marker is entirely outside the kept region and the crop's own
+    // remaining-region math takes over — asserted here as "the marker is
+    // gone", not as a specific replacement colour, since exactly what
+    // stretches into view depends only on the crop geometry, not this fix.
+    const marked = join(dir, 'crop-marked.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=green:size=200x200:duration=1:rate=24',
+      '-vf', 'drawbox=x=0:y=0:w=50:h=200:color=blue@1:t=fill',
+      '-pix_fmt', 'yuv420p', marked,
+    ]);
+    const c = clip('crop1', {
+      source_path: marked,
+      source_fps: 24,
+      duration: 24,
+      chroma_keyframes: [
+        { frame: 0, params: { crop_left: 0 } },
+        { frame: 23, params: { crop_left: 0.3 } },
+      ],
+    });
+    const tl = timeline([track('video', [c])]);
+    const out = join(dir, 'out-crop-kf.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 24, width: 200, height: 200 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    const [, , bEarly] = pixelAt(out, 0.05, 10, 100);
+    expect(bEarly).toBeGreaterThan(150); // marker visible, no crop yet
+
+    const [, , bLate] = pixelAt(out, 0.9, 10, 100);
+    expect(bLate).toBeLessThan(80); // cropped away by the keyframe's end
+  });
 });
 
 // D-197 — real audio mixing: gain, fade, duck, and multi-source mix, each

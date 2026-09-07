@@ -164,8 +164,12 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
+    // B-098 — quoted, named w=/h=/x=/y= params (was a positional, unquoted
+    // string) so a keyframed inset's expression survives the filtergraph
+    // parser, the same fix B-075/B-090 already made for position/scale.
+    // Byte-identical MEANING for this static-only case, different syntax.
     expect(filterComplex).toContain(
-      "[0:v]crop=iw*(1-0.1-0.05):ih*(1-0-0):iw*0.1:ih*0[cv0];[cv0]scale=w='1080*(0.5)':h=-2[v0]",
+      "[0:v]crop=w='iw*(1-(0.1)-(0.05))':h='ih*(1-(0)-(0))':x='iw*(0.1)':y='ih*(0)'[cv0];[cv0]scale=w='1080*(0.5)':h=-2[v0]",
     );
   });
 
