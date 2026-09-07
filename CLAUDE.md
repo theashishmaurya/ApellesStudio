@@ -158,6 +158,13 @@ in `app/`, which runs `app/`'s vite via `beforeDevCommand`). Or `cd app && npm r
 `npm run tauri:build` for a release build. A `cargo clean` is **not** needed — the
 workspace `target/` is fresh at the repo root.
 
+## Subagent dispatch — model choice
+
+For a tough task — a large/cross-cutting feature build, or hard debugging (root-causing
+a bug that isn't a quick, obvious fix) — dispatch the subagent on **Opus**, not the
+default model. Use judgment on what counts as "tough"; a small, well-bounded fix or a
+routine mechanical task doesn't need it.
+
 ## Code
 
 - Rust: match the surrounding style in `app/src-tauri`. `cargo fmt`, `cargo clippy`
