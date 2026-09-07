@@ -811,6 +811,57 @@ def editor_trim_clip(track: int, clip: int, edge: str, delta: int) -> str:
 
 
 @mcp.tool()
+def editor_slip_clip(track: int, clip: int, delta: int) -> str:
+    """Slip a clip's SOURCE window WITHOUT moving it on the timeline: unlike
+    `editor_trim_clip`, `start_frame` and `duration` both stay exactly fixed
+    — only which part of the source media plays changes. `delta` shifts
+    `source_start` by that many TIMELINE frames (positive = later source
+    material, negative = earlier), clamped to the source's own `[0,
+    source_len)` bounds.
+
+    A clip that is part of an A/V link group slips in lockstep with the rest
+    of the group (same reason `editor_trim_clip` does) — unlink it in the
+    GUI's Unlink button first for an independent slip of just one half."""
+    import json
+
+    return json.dumps(_op("editor_slip_clip", track=track, clip=clip, delta=delta), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_swap_clip_media(
+    track: int,
+    clip: int,
+    media_id: str | None = None,
+    source_path: str | None = None,
+) -> str:
+    """Replace a clip's underlying source media in place — pass either
+    `media_id` or `source_path` to identify the NEW already-imported
+    (`editor_import_media`) pool item. Everything else about the clip is
+    preserved exactly: `start_frame`, its full compositing transform
+    (position/scale/box size/rotation/crop/opacity), keyframes, fades, and
+    its A/V link group (the swap does NOT propagate to a linked clip — the
+    two halves no longer necessarily share anything once one's file is
+    replaced).
+
+    If the new source is SHORTER than the clip's current source window,
+    `source_start` is kept exactly where it was (if it still fits) and
+    `duration` is shrunk to fit what remains — the clip's timeline footprint
+    can shrink as a result (never `start_frame` itself), rather than this
+    call being refused. `source_fps` is always re-read from the NEW source's
+    own real probed rate, never carried over from the old one — before
+    calling this on a clip whose length matters, consider whether you also
+    want to re-trim/re-check it afterward with `get_timeline`."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if media_id is not None:
+        args["mediaId"] = media_id
+    if source_path is not None:
+        args["sourcePath"] = source_path
+    return json.dumps(_op("editor_swap_clip_media", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_move_clip(
     from_track: int,
     clip: int,

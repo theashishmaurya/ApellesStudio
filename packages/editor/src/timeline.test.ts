@@ -67,6 +67,10 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'trim_end', track: 0, clip: 1, delta: -5 }, before)).toBe('Trim "B-roll 1" (end)');
   });
 
+  it('names the clip for slip (D-195)', () => {
+    expect(labelForOp({ kind: 'slip', track: 0, clip: 1, delta: 5 }, before)).toBe('Slip "B-roll 1"');
+  });
+
   it('names the clip for split and remove', () => {
     expect(labelForOp({ kind: 'split', track: 0, clip: 0, atFrame: 50 }, before)).toBe('Split "Intro"');
     expect(labelForOp({ kind: 'remove', track: 0, clip: 0 }, before)).toBe('Remove "Intro"');
@@ -339,6 +343,79 @@ describe('trim_end (D-058)', () => {
     const before = tl([clip('a', 'A', { start_frame: 0, duration: 50, source_len: 500 })]);
     const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 200 });
     expect(after.tracks[0].clips[0].duration).toBe(250);
+  });
+});
+
+describe('slip (D-195)', () => {
+  it('moves source_start only — start_frame and duration are both untouched', () => {
+    const before = tl([clip('a', 'A', { start_frame: 10, source_start: 20, duration: 50, source_len: 100 })]);
+    const after = applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: 10 });
+    const a = after.tracks[0].clips[0];
+    expect(a.start_frame).toBe(10); // unchanged — the whole point of a slip
+    expect(a.duration).toBe(50); // unchanged too
+    expect(a.source_start).toBe(30); // moved by delta
+  });
+
+  it('slips backward (negative delta) into earlier source material', () => {
+    const before = tl([clip('a', 'A', { start_frame: 10, source_start: 20, duration: 50, source_len: 100 })]);
+    const after = applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: -15 });
+    expect(after.tracks[0].clips[0].source_start).toBe(5);
+  });
+
+  it('clamps at the source\'s tail — source_start+duration can never exceed source_len', () => {
+    // window [50,70) of a 100-frame source, 30 frames of room to the end —
+    // asking to slip forward by 100 must stop exactly at the source's tail.
+    const before = tl([clip('a', 'A', { start_frame: 0, source_start: 50, duration: 20, source_len: 100 })]);
+    const after = applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: 100 });
+    const a = after.tracks[0].clips[0];
+    expect(a.source_start).toBe(80); // 100 - duration(20), the last legal position
+    expect(a.duration).toBe(20); // still untouched
+  });
+
+  it('clamps at the source\'s head — source_start can never go below 0', () => {
+    const before = tl([clip('a', 'A', { start_frame: 0, source_start: 10, duration: 50, source_len: 100 })]);
+    const after = applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: -100 });
+    expect(after.tracks[0].clips[0].source_start).toBe(0);
+  });
+
+  it('is a real no-op (same reference) once already pinned at the bound it was asked to move past', () => {
+    // Already sitting at the last legal source_start for its own duration —
+    // asking to slip further forward has nowhere left to go.
+    const before = tl([clip('a', 'A', { start_frame: 0, source_start: 80, duration: 20, source_len: 100 })]);
+    expect(applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: 10 })).toBe(before);
+  });
+
+  it('is a no-op (same reference) when the clip index is out of range', () => {
+    const before = tl(backToBack());
+    expect(applyOp(before, { kind: 'slip', track: 0, clip: 99, delta: 5 })).toBe(before);
+  });
+
+  it('is refused on a locked track', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: backToBack(), locked: true }],
+    };
+    expect(applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: 5 })).toBe(before);
+  });
+
+  it('mirrors clampedTrimStartDelta\'s source-frame conversion for a mixed native-fps clip', () => {
+    // 48fps source on a 24fps timeline: 10 TIMELINE frames of slip must
+    // consume 20 SOURCE frames (10 * 48/24), same ratio B-077 pins for trim.
+    const before = tl([
+      clip('fast', 'Fast (48fps)', {
+        start_frame: 0,
+        source_start: 40,
+        duration: 40,
+        source_len: 200,
+        source_fps: 48,
+      }),
+    ]);
+    const after = applyOp(before, { kind: 'slip', track: 0, clip: 0, delta: 10 });
+    const c = after.tracks[0].clips[0];
+    expect(c.source_start).toBe(60); // 40 + 20 source frames
+    expect(c.start_frame).toBe(0);
+    expect(c.duration).toBe(40);
   });
 });
 
@@ -1078,6 +1155,181 @@ describe('fadePresetName / FADE_PRESETS (D-147)', () => {
   });
 });
 
+describe('swap_media (D-195)', () => {
+  /** A clip with a real transform/keyframes/fade/link set, so "everything
+   *  else is preserved" has something non-default to actually check. */
+  function richClip(overrides: Partial<Clip> = {}): Clip {
+    return clip('a', 'A', {
+      start_frame: 40,
+      source_start: 10,
+      duration: 50,
+      source_len: 100,
+      source_fps: 30,
+      link_group: 'g1',
+      opacity: 0.8,
+      position_x: 0.25,
+      position_y: 0.1,
+      scale: 1.4,
+      box_width: 0.5,
+      box_height: null,
+      rotation: 5,
+      crop_left: 0.1,
+      crop_top: 0,
+      crop_right: 0,
+      crop_bottom: 0.05,
+      chroma_keyframes: [{ frame: 10, params: { scale: 1.5 } }],
+      fade_in_frames: 8,
+      fade_out_frames: 12,
+      ...overrides,
+    });
+  }
+
+  it('replaces source_path/media_id/source_len/source_fps, preserving every other field, when the new source is at least as long', () => {
+    const before = tl([richClip()]);
+    const after = applyOp(before, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'media-2',
+      source_path: '/media/replacement.mov',
+      source_len: 500,
+      source_fps: 60,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.media_id).toBe('media-2');
+    expect(c.source_path).toBe('/media/replacement.mov');
+    expect(c.source_len).toBe(500);
+    expect(c.source_fps).toBe(60); // the NEW source's own rate, not the old 30
+    // everything else preserved exactly
+    expect(c.start_frame).toBe(40);
+    expect(c.source_start).toBe(10);
+    expect(c.duration).toBe(50);
+    expect(c.link_group).toBe('g1');
+    expect(c.opacity).toBe(0.8);
+    expect(c.position_x).toBe(0.25);
+    expect(c.position_y).toBe(0.1);
+    expect(c.scale).toBe(1.4);
+    expect(c.box_width).toBe(0.5);
+    expect(c.box_height).toBeNull();
+    expect(c.rotation).toBe(5);
+    expect(c.crop_left).toBe(0.1);
+    expect(c.crop_bottom).toBe(0.05);
+    expect(c.chroma_keyframes).toEqual([{ frame: 10, params: { scale: 1.5 } }]);
+    expect(c.fade_in_frames).toBe(8);
+    expect(c.fade_out_frames).toBe(12);
+  });
+
+  it('re-clamps source_start/duration when the new source is SHORTER than the current window — preserves source_start, shrinks duration', () => {
+    // current window [10, 60) needs source_len >= 60; the new source is only
+    // 45 frames long, so source_start (10) still fits but duration must
+    // shrink to what remains (45 - 10 = 35).
+    const before = tl([richClip({ source_start: 10, duration: 50, source_len: 100 })]);
+    const after = applyOp(before, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'short',
+      source_path: '/media/short.mov',
+      source_len: 45,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.source_start).toBe(10); // preserved — still fits
+    expect(c.duration).toBe(35); // shrunk to fit (45 - 10)
+    expect(c.start_frame).toBe(40); // the timeline position never moves
+  });
+
+  it('pins source_start back to the new source\'s own last frame when even source_start no longer fits', () => {
+    // current source_start is 10, but the new source is only 5 frames long —
+    // source_start itself has to move, not just duration.
+    const before = tl([richClip({ source_start: 10, duration: 50, source_len: 100 })]);
+    const after = applyOp(before, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'tiny',
+      source_path: '/media/tiny.mov',
+      source_len: 5,
+    });
+    const c = after.tracks[0].clips[0];
+    expect(c.source_start).toBe(4); // ceiling - 1
+    expect(c.duration).toBe(1); // floored at 1 frame minimum
+  });
+
+  it('clears source_fps to undefined when the new source was never probed, rather than keeping the old rate', () => {
+    const before = tl([richClip({ source_fps: 30 })]);
+    const after = applyOp(before, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'unprobed',
+      source_path: '/media/unprobed.mov',
+      source_len: 200,
+      // source_fps omitted — the caller couldn't probe the new file's rate
+    });
+    expect(after.tracks[0].clips[0].source_fps).toBeUndefined();
+  });
+
+  it('does NOT propagate to a linked clip — only the named clip is touched', () => {
+    const before = linkedPair();
+    const after = applyOp(before, {
+      kind: 'swap_media',
+      track: 0,
+      clip: 0,
+      media_id: 'new-video',
+      source_path: '/media/new-video.mov',
+      source_len: 300,
+      source_fps: 25,
+    });
+    expect(after.tracks[0].clips[0].source_path).toBe('/media/new-video.mov');
+    expect(after.tracks[1].clips[0].source_path).toBe(before.tracks[1].clips[0].source_path); // untouched
+    // the link survives the swap — swap_media never touches link_group
+    expect(after.tracks[0].clips[0].link_group).toBe('g1');
+    expect(after.tracks[1].clips[0].link_group).toBe('g1');
+  });
+
+  it('is a no-op (same reference) when the clip index is out of range', () => {
+    const before = tl(backToBack());
+    expect(
+      applyOp(before, {
+        kind: 'swap_media',
+        track: 0,
+        clip: 99,
+        media_id: 'x',
+        source_path: '/x.mov',
+        source_len: 10,
+      }),
+    ).toBe(before);
+  });
+
+  it('is refused on a locked track', () => {
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: backToBack(), locked: true }],
+    };
+    expect(
+      applyOp(before, {
+        kind: 'swap_media',
+        track: 0,
+        clip: 0,
+        media_id: 'x',
+        source_path: '/x.mov',
+        source_len: 10,
+      }),
+    ).toBe(before);
+  });
+
+  it('labels the history entry with the clip name', () => {
+    const before = tl(backToBack());
+    expect(
+      labelForOp(
+        { kind: 'swap_media', track: 0, clip: 1, media_id: 'x', source_path: '/x.mov', source_len: 10 },
+        before,
+      ),
+    ).toBe('Swap media on "B-roll 1"');
+  });
+});
+
 describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::TimelineError::TrackLocked', () => {
   function lockedTl(): Timeline {
     return { id: 't1', name: 'Timeline', tracks: [{ kind: 'video', clips: backToBack(), locked: true }] };
@@ -1701,6 +1953,36 @@ describe('link-aware edit ops (D-129)', () => {
     t.tracks[1].clips[0].source_len = 10000;
     t.tracks[1].clips.push(clip('neighbour', 'N', { start_frame: 120, duration: 50 }));
     expect(applyOp(t, { kind: 'trim_end', track: 0, clip: 0, delta: 200 })).toBe(t);
+  });
+
+  it('slips both halves in lockstep, from either side (D-195 — the exact "unlink, slip one half" escape hatch unlink\'s own doc names)', () => {
+    const t = linkedPair();
+    t.tracks[0].clips[0].source_len = 10000;
+    t.tracks[1].clips[0].source_len = 10000;
+    const fromVideo = applyOp(t, { kind: 'slip', track: 0, clip: 0, delta: 15 });
+    expect(startOf(fromVideo, 0, 'v')).toBe(0); // start_frame never moves for a slip
+    expect(fromVideo.tracks[0].clips.find((c) => c.id === 'v')!.source_start).toBe(15);
+    expect(fromVideo.tracks[1].clips.find((c) => c.id === 'a')!.source_start).toBe(15);
+
+    const fromAudio = applyOp(t, { kind: 'slip', track: 1, clip: 0, delta: -5 });
+    expect(fromAudio.tracks[1].clips.find((c) => c.id === 'a')!.source_start).toBe(0);
+    expect(fromAudio.tracks[0].clips.find((c) => c.id === 'v')!.source_start).toBe(0);
+  });
+
+  it('rejects a slip that would clamp differently on the two halves', () => {
+    const t = linkedPair();
+    // Give the video half plenty of room but pin the audio half already at
+    // its tail — the same on-screen delta clamps to 0 on one half and a
+    // real move on the other, so the whole op must be rejected.
+    t.tracks[0].clips[0].source_len = 10000;
+    t.tracks[1].clips[0].source_start = t.tracks[1].clips[0].source_len - t.tracks[1].clips[0].duration;
+    expect(applyOp(t, { kind: 'slip', track: 0, clip: 0, delta: 50 })).toBe(t);
+  });
+
+  it('refuses a slip when the linked half sits on a locked track', () => {
+    const t = linkedPair();
+    t.tracks[1].locked = true;
+    expect(applyOp(t, { kind: 'slip', track: 0, clip: 0, delta: 10 })).toBe(t);
   });
 
   it('splits both halves at the same frame, leaving two intact pairs', () => {

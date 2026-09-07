@@ -408,6 +408,28 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track };
       },
 
+      // D-195 — Task 1 (docs/notes/timeline-editing-feature-gap-analysis.md
+      // item 1): slip the clip's source window without moving it on the
+      // timeline. `delta` is the same TIMELINE-frame-delta convention
+      // `editor_trim_clip` uses.
+      editor_slip_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline;
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const delta = Math.round(Number(a?.delta));
+        if (!Number.isFinite(delta)) return { error: 'delta must be a finite number of frames' };
+        useEditorTimelineStore.getState().applyOp({ kind: 'slip', track: found.track, clip: found.clip, delta });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          sourceStart: after?.source_start ?? found.c.source_start,
+          duration: after?.duration ?? found.c.duration,
+        };
+      },
+
       editor_move_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline;
@@ -425,6 +447,51 @@ export function useEditorControl(): void {
           ripple: !!a?.ripple,
         });
         return { ok: true, fromTrack: found.track, toTrack };
+      },
+
+      // D-195 — Task 2 (docs/notes/timeline-editing-feature-gap-analysis.md
+      // item 2): replace a clip's underlying source media in place, keeping
+      // start_frame/transform/keyframes/fades/link_group exactly as they
+      // were. Resolves the NEW media the same way `editor_add_clip` resolves
+      // a dropped one (mediaId or sourcePath, looked up in the pool, real
+      // frame count required) — the pure `swap_media` `EditOp` itself has no
+      // access to the media pool store, so this is where that lookup has to
+      // happen; see the op's own doc in `timeline.ts` for the re-clamp
+      // policy when the new source is shorter than the clip's current
+      // [source_start, source_start+duration) window.
+      editor_swap_clip_media: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline;
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const items = useMediaPoolStore.getState().items;
+        const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
+        if (!media) return { error: `no pool item matching mediaId/sourcePath — call editor_import_media first` };
+        const frames = media.video?.frameCount;
+        if (!frames || frames <= 0) return { error: `${media.name} has no known frame count (offline, or not a probeable video)` };
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'swap_media',
+          track: found.track,
+          clip: found.clip,
+          media_id: media.id,
+          source_path: media.sourcePath,
+          source_len: frames,
+          source_fps: media.video?.fps ?? undefined,
+        });
+
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          sourcePath: after?.source_path ?? media.sourcePath,
+          sourceStart: after?.source_start ?? 0,
+          duration: after?.duration ?? 0,
+          sourceLen: after?.source_len ?? frames,
+          sourceFps: after?.source_fps ?? null,
+        };
       },
 
       // ---- tracks ----------------------------------------------------------

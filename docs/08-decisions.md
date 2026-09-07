@@ -16960,3 +16960,89 @@ or changed).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-195 — Two real, confirmed-missing `EditOp`s: `slip` and `swap_media` (`docs/notes/timeline-editing-feature-gap-analysis.md` items 1–2)
+
+The gap-analysis note (2026-09-07, same session) flagged two primitives the Edit
+tab's model genuinely had no way to express: slip editing (change WHICH part of a
+clip's source plays, without moving it or resizing it) and media swapping (repoint
+a clip at different source media without losing its transform/keyframes/fades/
+link). Both closed here, in `packages/editor/src/timeline.ts`'s `applyOp` — no Rust
+changes; every real edit already goes through this pure TS reducer +
+`chroma_timeline_set` (confirmed by D-194's own audit, `applyOp` is the only
+reachable write path for a running app).
+
+**`slip` — deliberately mirrors `trim_start`/`trim_end`'s own shape rather than
+inventing a new one.** `delta` is a TIMELINE-frame delta (the same B-077
+UI-drag-against-pixels-per-frame convention those two ops already use), converted
+to the clip's own SOURCE frames before touching `source_start`; `clampedSlipDelta`
+is `clampedTrimStartDelta` minus its `prevEnd` neighbour term, since a slip never
+moves `start_frame` — there is no neighbour to collide with, only the source
+media's own `[0, source_len)` bound. A linked A/V pair slips in lockstep (reject
+the whole op rather than desync the pair), the identical discipline `trim_start`/
+`trim_end` already apply — and this was not a new design decision so much as
+following through on one already implied: `unlink`'s own doc comment, written
+before this pass existed, already names "unlink, slip one half" as the intended
+escape hatch for an independent slip of just one half of a link.
+
+**`swap_media` — the real judgment call is what happens when the new source is
+SHORTER than the clip's current `[source_start, source_start+duration)` window.**
+Real options considered:
+1. Refuse the op outright (a no-op) unless the caller pre-computes a
+   `source_start`/`duration` that already fits the new source. Rejected: it pushes
+   arithmetic the op itself is in the best position to do onto every caller, for a
+   case (swapping in shorter replacement footage — a proxy, a re-export, a trimmed
+   re-take of the same shot) that is not exotic.
+2. **Chosen: preserve `source_start` first, shrink `duration` second, never grow
+   either past what the new source actually has.** `source_start` stays exactly
+   where it was whenever the new source is still long enough to contain it (the
+   common case — same or longer replacement footage — is a pure preserve, zero
+   re-clamping at all); only pinned back to the new source's own last frame when it
+   isn't. `duration` is then clamped down to whatever remains from that
+   `source_start`, floored at 1 frame. The clip's TIMELINE FOOTPRINT can shrink as
+   a result — `start_frame` itself never moves, so this can open a trailing gap
+   after it, exactly the same shape `trim_end` shortening a clip already produces
+   today. Chosen over refusing outright because it makes the common case (equal-or-
+   longer replacement) frictionless and still leaves the rarer shorter-replacement
+   case in a well-defined, non-destructive state (nothing overlaps, nothing goes
+   negative) rather than an error the caller has to work around by hand.
+
+`source_fps` is ALWAYS overwritten from the new source's own real probed rate
+(including to `undefined` if the new source was never probed) — never carried over
+from the old clip. This is deliberately the same fix-class as B-075/B-077/D-194:
+after a swap, the old `source_fps` describes a file this clip no longer points at,
+and silently keeping it would reintroduce exactly the wrong-duration bug those
+fixed, just at a new write path.
+
+**`swap_media` does NOT lock-step with `link_group`**, the one place its design
+diverges from `slip`/`trim_start`/`trim_end`/`split`. Those four lock-step because
+both halves of a link share the SAME underlying recording and must stay in sync
+with it; a media swap replaces the file outright, so the two halves no longer
+necessarily share anything once one is swapped. Only the one named clip is
+touched; its own `link_group` value is preserved unchanged (the link itself
+survives), just no longer propagated to.
+
+Both ops resolve their needed media-pool facts (`source_len`, `source_fps`) in
+`useEditorControl.ts` — the same `editor_add_clip` lookup pattern (`media_id`/
+`source_path` dual-accept, a real probed frame count required) — since the pure
+`timeline.ts` reducer has no access to the media pool store. New MCP tools:
+`editor_slip_clip(track, clip, delta)`, `editor_swap_clip_media(track, clip,
+media_id?, source_path?)`.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test --workspace
+@chroma/editor` — **377/377** (was 357; 20 new tests: `slip`'s own describe block
+including source/head/tail clamping, a mixed-native-fps case mirroring B-077's own
+conversion, and lock/out-of-range no-ops; `swap_media`'s own describe block
+covering the full-preserve path, both re-clamp sub-cases, the `source_fps`-cleared-
+when-unprobed case, non-propagation across a link, and lock/out-of-range no-ops;
+plus lockstep-slip and reject-differently-clamped-lockstep-slip cases added to the
+existing D-129 link-aware-ops suite). `python3 -m py_compile mcp/server.py` clean.
+A full `mcp.server.mcpserver` module import could not be verified in this worktree
+— confirmed via `git stash` that this specific import already fails identically on
+`main` before this change (this worktree's installed `mcp` package is v1.26.0, a
+different package than whatever `mcp>=2.0` custom SDK the real dev/runtime
+environment has `mcp.server.mcpserver` from) — a pre-existing environment gap, not
+a regression introduced here.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

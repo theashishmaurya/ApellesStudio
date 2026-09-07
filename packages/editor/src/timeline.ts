@@ -997,6 +997,22 @@ function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number, fps: 
   return clampInt(c.duration + deltaSource, 1, maxDur);
 }
 
+/** The clamped slip delta the `slip` `EditOp` (D-195) would really apply —
+ *  same TIMELINE-frame convention as `clampedTrimStartDelta`/
+ *  `clampedTrimEndDuration` above (the UI drag is computed against the
+ *  project's own pixels-per-frame). A slip moves `source_start` inside its
+ *  OWN `[0, source_len - duration]` window — `duration` is fixed (the whole
+ *  point of a slip), so unlike `clampedTrimStartDelta` there is no `prevEnd`
+ *  neighbour term to fold in: `start_frame` never moves, so there's nothing
+ *  for it to collide with. Caller guarantees `clipIdx` is in range. */
+function clampedSlipDelta(tr: Track, clipIdx: number, delta: number, fps: number): number {
+  const c = tr.clips[clipIdx];
+  const maxSourceStart = Math.max(c.source_len - c.duration, 0);
+  const lowerBound = sourceFramesToTimeline(c, -c.source_start, fps);
+  const upperBound = sourceFramesToTimeline(c, maxSourceStart - c.source_start, fps);
+  return clampInt(delta, lowerBound, upperBound);
+}
+
 /** First unlocked audio track with room for `[startFrame, startFrame +
  *  duration)` (both timeline frames — B-077, unlike `Clip.duration` this is
  *  already a footprint on the timeline, e.g. `sourceFramesToTimeline`'s
@@ -1047,6 +1063,26 @@ export type EditOp =
   | { kind: 'reorder'; track: number; from: number; to: number }
   | { kind: 'trim_start'; track: number; clip: number; delta: number }
   | { kind: 'trim_end'; track: number; clip: number; delta: number }
+  /** D-195 — Task 1, `docs/notes/timeline-editing-feature-gap-analysis.md`
+   *  item 1: slip a clip's SOURCE window in place — `start_frame` and
+   *  `duration` are BOTH left untouched, only `source_start` moves. This is
+   *  exactly what distinguishes a slip from `trim_start`/`trim_end` (which
+   *  each change one of those two fixed fields instead). `delta` is a
+   *  TIMELINE-frame delta, same UI-drag convention as `trim_start`/
+   *  `trim_end`'s own `delta` (B-077) — converted to `c`'s own SOURCE frames
+   *  before touching `source_start`. Clamped so the clip's `[source_start,
+   *  source_start+duration)` window stays inside `[0, source_len)` — mirrors
+   *  `trim_start`/`trim_end`'s own `source_len` bound (see
+   *  `clampedSlipDelta`), just without their "can't collide with a neighbour"
+   *  term, since `start_frame` never moves here — there is no neighbour to
+   *  collide with.
+   *
+   *  D-129 — a linked A/V pair slips in lockstep (same reject-the-whole-op-
+   *  rather-than-desync discipline `trim_start`/`trim_end` already use) — see
+   *  `unlink`'s own doc, which already names this exact escape hatch: "the
+   *  escape hatch for an L-cut — unlink, slip one half." Unlink first for an
+   *  independent slip of just one half. */
+  | { kind: 'slip'; track: number; clip: number; delta: number }
   | { kind: 'split'; track: number; clip: number; atFrame: number }
   | { kind: 'remove'; track: number; clip: number }
   /** D-105 — select an empty stretch of track (not a clip) and delete IT:
@@ -1284,6 +1320,54 @@ export type EditOp =
       fade_out_frames: number;
       fade_in_curve?: FadeCurve;
       fade_out_curve?: FadeCurve;
+    }
+  /** D-195 — Task 2, `docs/notes/timeline-editing-feature-gap-analysis.md`
+   *  item 2: replace a clip's underlying source media (`source_path`/
+   *  `media_id`) IN PLACE — every other field (`start_frame`, the full
+   *  compositing transform, `chroma_keyframes`, the fade fields,
+   *  `link_group`) is preserved exactly. Before this op the only way to
+   *  change a clip's source was remove-and-re-add, which loses all of those.
+   *
+   *  `source_len`/`source_fps` are the NEW source's own real probed values,
+   *  resolved by the caller (`useEditorControl.ts`'s `editor_swap_clip_media`,
+   *  the same media-pool lookup `editor_add_clip` already does) — this pure
+   *  reducer has no access to the media pool store itself, so it cannot probe
+   *  anything on its own. `source_fps` absent means the new source was never
+   *  successfully probed (mirrors `Clip.source_fps`'s own doc) — this ALWAYS
+   *  overwrites the clip's previous `source_fps`, it never keeps the old
+   *  clip's rate, because after a swap the old rate describes a file this
+   *  clip no longer points at (exactly the B-075/B-077 class of silent
+   *  wrongness this closes off at the write path).
+   *
+   *  **Re-clamping when the new source is SHORTER than the clip's current
+   *  `[source_start, source_start+duration)` window — a real judgment call,
+   *  documented in D-195:** `source_start` is preserved exactly whenever it
+   *  still fits inside the new source; only pinned back to the new source's
+   *  own last frame when it doesn't. `duration` is then shrunk (never grown)
+   *  to whatever remains of the new source from that `source_start` — the
+   *  clip's own TIMELINE FOOTPRINT can shrink as a result (`start_frame`
+   *  never moves, so this can open a gap after it, same as `trim_end`
+   *  shortening a clip already can) rather than the whole op being refused,
+   *  so a caller isn't forced to pre-compute a duration that happens to
+   *  already fit before a swap is even possible. The common case — the new
+   *  file is at least as long as what the window needed — is a pure
+   *  preserve, no re-clamping at all.
+   *
+   *  **Does NOT lock-step with the clip's `link_group`**, unlike
+   *  `trim_start`/`trim_end`/`slip`/`split` — their lockstep exists because
+   *  both members share the SAME underlying recording and must stay in sync
+   *  with it. A media swap replaces the file outright; the two halves of a
+   *  link no longer necessarily share anything at all, so only the ONE named
+   *  clip is touched. Refused (no-op) if its own track is locked, same as
+   *  every other per-clip op. */
+  | {
+      kind: 'swap_media';
+      track: number;
+      clip: number;
+      media_id: string | null;
+      source_path: string;
+      source_len: number;
+      source_fps?: number;
     };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
@@ -1305,6 +1389,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Trim ${clipLabel(before, op.track, op.clip)} (start)`;
     case 'trim_end':
       return `Trim ${clipLabel(before, op.track, op.clip)} (end)`;
+    case 'slip':
+      return `Slip ${clipLabel(before, op.track, op.clip)}`;
     case 'split':
       return `Split ${clipLabel(before, op.track, op.clip)}`;
     case 'remove':
@@ -1345,6 +1431,8 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Adjust ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_keyframes':
       return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
+    case 'swap_media':
+      return `Swap media on ${clipLabel(before, op.track, op.clip)}`;
     default:
       return 'Edit timeline';
   }
@@ -1617,6 +1705,33 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.fade_out_curve = op.fade_out_curve ?? DEFAULT_FADE_CURVE;
     return next;
   }
+  if (op.kind === 'swap_media') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    // D-195 — preserve `source_start` exactly whenever the new source is
+    // long enough to still contain it; only pinned back to the new source's
+    // own last frame when it isn't. `duration` is then shrunk (never grown)
+    // to fit what remains — see the op's own doc for the full re-clamp
+    // policy and why this shape (preserve first, shrink duration second)
+    // was chosen over refusing the swap outright.
+    const ceiling = Math.max(op.source_len, 0);
+    const clampedStart = clampInt(nc.source_start, 0, Math.max(ceiling - 1, 0));
+    const clampedDuration = clampInt(nc.duration, 1, Math.max(ceiling - clampedStart, 1));
+    nc.media_id = op.media_id;
+    nc.source_path = op.source_path;
+    nc.source_len = op.source_len;
+    // Always overwritten, including to `undefined` — an un-probed new
+    // source's rate is unknown, not "same as the old file's," see the op's
+    // own doc.
+    nc.source_fps = op.source_fps;
+    nc.source_start = clampedStart;
+    nc.duration = clampedDuration;
+    return next;
+  }
   if (op.kind === 'move') {
     // Mirrors `Timeline::move_clip(from_track, from_idx, to_track,
     // to_start_frame)` field-for-field, including its error order (negative
@@ -1748,9 +1863,9 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   const tr = tl.tracks[op.track];
   if (!tr) return tl;
   // D-089 — single choke point for the remaining per-clip ops
-  // (reorder/trim_start/trim_end/split/remove), mirroring Rust's own single
-  // `track_mut` check (`TimelineError::TrackLocked`) rather than repeating
-  // the guard in each `case` below.
+  // (reorder/trim_start/trim_end/slip/split/remove), mirroring Rust's own
+  // single `track_mut` check (`TimelineError::TrackLocked`) rather than
+  // repeating the guard in each `case` below.
   if (tr.locked) return tl;
 
   switch (op.kind) {
@@ -1877,6 +1992,39 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const next = clone(tl);
       const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
       for (const [ti, ci] of targets) next.tracks[ti].clips[ci].duration += applied;
+      return next;
+    }
+    case 'slip': {
+      // D-195 — mirrors `trim_start`'s own structure exactly, minus the
+      // `start_frame` write: `d` (a TIMELINE-frame delta, B-077 convention)
+      // is clamped by `clampedSlipDelta` against the source media's own
+      // bounds only (no neighbour term — `start_frame` never moves for a
+      // slip), then converted per-member to that member's own SOURCE frames
+      // before touching `source_start`.
+      const c = tr.clips[op.clip];
+      if (!c) return tl;
+      const d = clampedSlipDelta(tr, op.clip, op.delta, fps);
+      if (d === 0) return tl;
+      // D-129 — same lockstep-or-reject discipline as trim_start/trim_end:
+      // a linked pair's two source windows must both be able to absorb the
+      // exact same on-screen delta, or the whole op is rejected — see
+      // `unlink`'s own doc ("the escape hatch for an L-cut — unlink, slip
+      // one half").
+      const link = linkTargets(tl, op.track, op.clip);
+      if (link) {
+        for (const [ti, ci] of link.members) {
+          if (ti === op.track && ci === op.clip) continue;
+          const ot = tl.tracks[ti];
+          if (ot.locked) return tl;
+          if (clampedSlipDelta(ot, ci, op.delta, fps) !== d) return tl;
+        }
+      }
+      const next = clone(tl);
+      const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
+      for (const [ti, ci] of targets) {
+        const nc = next.tracks[ti].clips[ci];
+        nc.source_start += timelineFramesToSource(nc, d, fps);
+      }
       return next;
     }
     case 'split': {

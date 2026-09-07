@@ -6,7 +6,15 @@
     <title>Chroma — isolated pointer-gesture harness (D-142)</title>
   </head>
   <body>
-    <div id="harness-status" style="position: fixed; top: 0; left: 0; z-index: 9999; font: 12px monospace; color: #0f0; background: #000; padding: 4px 8px;">
+    <!-- D-195, Task 3: docked top-RIGHT, not top-left — `TimelineSwitcher`
+         (mounted at the very top of #root, D-195) is a left-anchored strip
+         (`w-1/2`, starting at x=0), and this fixed/z-index:9999 overlay
+         previously sat directly on top of it at top-left, silently eating
+         every real pointer click on its tabs (a CDP click resolves to
+         document coordinates and hits whatever paints on top — this badge
+         has no click handler, so the click landed on nothing). Top-right
+         has nothing else docked there. -->
+    <div id="harness-status" style="position: fixed; top: 0; right: 0; z-index: 9999; font: 12px monospace; color: #0f0; background: #000; padding: 4px 8px;">
       loading…
     </div>
     <div id="root"></div>
