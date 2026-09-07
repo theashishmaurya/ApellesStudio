@@ -54,6 +54,20 @@ several rounds of the owner's own screenshots before an agent could even confirm
    (same Tauri-command-registration and `mcp/server.py` territory — parallel
    dispatch would just conflict).
 
+5. **Preview frame-timing readout** — scoped, not started (found needed by D-216,
+   2026-09-08). "Report the last N frame-to-frame intervals `PreviewPane` actually
+   painted", as a debug op + MCP tool. D-216 fixed the Edit-tab preview's dominant
+   per-frame cost (42.7 → 14.0 ms) and could measure that precisely in Rust, but
+   **could not measure the thing the owner actually reported** — perceived playback
+   smoothness — because there is no way to see webview-side paint timing. Two
+   blockers found while trying, both worth knowing: a second app instance needs the
+   `identifier` overridden (`tauri-plugin-single-instance`), and a **background**
+   window's `requestAnimationFrame` is throttled to a stop, so the play loop does
+   not tick at all in a non-frontmost instance. A frame-interval readout sidesteps
+   both: the app measures itself and an agent reads the numbers. Same
+   registration/naming convention as the screenshot tool, same
+   `#[cfg(debug_assertions)]` gate as everything else here.
+
 ## Two different levels — don't conflate them
 
 - **Component level** (a single component in isolation, e.g. `PreviewPane`/

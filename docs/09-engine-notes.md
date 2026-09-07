@@ -1115,5 +1115,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   composited by `chroma::edit`'s own CPU compositor, which upstream RapidRAW
   does not have.
 
+- **2026-09-08** — **Preview compositor + frame IPC payload (D-216)** · **zero
+  upstream-file edits.** Everything is inside Chroma-owned code:
+  `app/src-tauri/src/chroma/edit.rs` (`blend_layer_sampled`, the
+  `timeline_frame` → `timeline_frame_image` + `encode_preview_jpeg` split, and
+  `chroma_timeline_frame` now returning `tauri::ipc::Response` instead of a
+  `String`), plus `packages/editor/*`. `app/src-tauri/src/chroma/project.rs`'s
+  own test was updated for the new return type — also a Chroma file. **No
+  `lib.rs` change at all:** the command's `generate_handler!` entry is
+  unchanged, since the macro does not name the return type. `app/src/
+  harness-main.tsx` (the Chroma-owned browser harness, see the 2026-09-08
+  D-210 entry above) had its `chroma_timeline_frame` stub switched to raw
+  bytes to keep modelling the real backend. No new dependency, so `Cargo.toml`
+  and the lock are untouched.
+
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

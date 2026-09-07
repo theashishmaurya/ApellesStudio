@@ -43,6 +43,7 @@ import {
   captureConsole,
   createInvokeStub,
   firePointerEvent,
+  installObjectUrlStub,
   installPointerCaptureStub,
   installResizeObserverStub,
   mount,
@@ -61,7 +62,10 @@ const CANVAS_H = 500;
 /** A 1×1 transparent GIF — `PreviewPane` only renders its overlay stack once
  *  `chroma_timeline_frame` has produced SOME frame; nothing here inspects the
  *  pixels (that is the Rust compositor's own concern). */
-const STUB_FRAME = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+/** Whatever `chroma_timeline_frame` answers with — since D-216 that is the
+ *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
+ *  frame just has to arrive for the preview surface to mount. */
+const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 
 /** Per-clip natural footprints, keyed by the clip index the geometry command
  *  is actually called with, per track. `1/1` is "this source exactly fills
@@ -89,7 +93,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     chroma_timeline_frame: () =>
       frameDelayMs === 0
         ? STUB_FRAME
-        : new Promise<string>((resolve) => setTimeout(() => resolve(STUB_FRAME), frameDelayMs)),
+        : new Promise<ArrayBuffer>((resolve) => setTimeout(() => resolve(STUB_FRAME), frameDelayMs)),
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
@@ -151,6 +155,7 @@ function selection(): { track: number; id: string }[] {
 }
 
 let restoreOffsets: () => void;
+let objectUrls: ReturnType<typeof installObjectUrlStub>;
 let restoreResizeObserver: () => void;
 let restorePointerCapture: () => void;
 let mounted: MountedComponent | null = null;
@@ -196,6 +201,9 @@ async function mountWith(
 
 beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(CANVAS_W, CANVAS_H);
+  // D-216 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
+  // frame through one now.
+  objectUrls = installObjectUrlStub();
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
   console_ = captureConsole();
@@ -212,6 +220,7 @@ afterEach(() => {
   mounted = null;
   restorePointerCapture();
   restoreResizeObserver();
+  objectUrls.restore();
   restoreOffsets();
   expect(errors).toEqual([]);
 });

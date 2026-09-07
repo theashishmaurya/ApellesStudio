@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **The Edit-tab preview's real bottleneck, profiled then
+  fixed (D-216, roadmap 25).** The standing theory — base64 in
+  `chroma_timeline_frame`'s `data:` URL — was measured and is **wrong**:
+  0.01 ms of a 42.7 ms frame. 87% of it was decode + composite, and inside
+  that, `image::imageops::resize` at 16-19 ms *per layer*, enlarging each layer
+  to its whole on-canvas footprint so `overlay` could throw two thirds of it
+  away. `blend_layer_sampled` now samples an unrotated, magnified layer
+  straight onto the canvas over the visible rect only: **42.7 → 14.0 ms/frame**
+  (~23 → ~71 fps) on the owner's own reel, pixel-equivalent within ±1 per
+  channel against the path it replaced. The IPC payload went binary
+  (`ArrayBuffer` + `Blob` object URL) in the same pass — cheaper on the webview
+  side, but recorded as not having been the bottleneck.
+
 - **2026-09-08** — **Text/title clips in the Edit tab** (roadmap 24,
   D-211/D-212/D-213): `Clip::text` as a real clip variant on an ordinary video
   track (so placement/trim/split/keyframes/fades are all the existing ops), an

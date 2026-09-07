@@ -1194,19 +1194,85 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         per render at 50 keys (26.9×), 99.9 µs → 2.6 µs at 200 (38.6×),
         identical results. Fixed here because D-209 added a third caller to that
         same path and must not add to the cost.
-      - ⬜ **Still open, and almost certainly the dominant cost:**
-        `PreviewPane`'s playback loop fetches ONE server-rendered frame at a
-        time (an `inFlight` gate), and `chroma_timeline_frame` returns it as a
-        `data:image/jpeg;base64,…` STRING. Every displayed frame therefore costs
-        a Rust decode + composite + JPEG encode + base64 encode + IPC + a
-        hundreds-of-KB JS string allocation + a base64/JPEG decode in the
-        webview, serialized. Playback can never be smoother than that round
-        trip, whatever the frontend does. 31.7 µs of interpolation was never
-        going to explain "lagging like hell"; this is where to look. Worth
-        scoping properly (a binary/`Uint8Array` IPC payload or a shared-memory
-        surface instead of base64; a small decoded-frame lookahead so the next
-        request is in flight while the current one paints; a lower
-        `PREVIEW_LONG_EDGE` while `playing`).
+      - ✅ **Profiled and fixed, D-216 (2026-09-08) — and the standing theory
+        above was WRONG, which is why it is left in place above rather than
+        quietly rewritten.** base64 was never the cost. Measured on the owner's
+        own `perf-comparison-reel-v3` (two 2940×1670 layers, 1080×1920 canvas,
+        ~50 keyframes each, 47.6 fps) through the real code path
+        (`preview_frame_phase_breakdown` in `chroma::edit`'s
+        `preview_throughput_tests`), per displayed frame at the live 960 px cap:
+        decode + composite **37.3 ms**, JPEG encode **5.3 ms**, base64 encode
+        **0.01 ms** (0.02% — three orders of magnitude off mattering), payload
+        34 KB raw vs 46 KB as a data URL. 42.7 ms/frame against a 21 ms budget.
+        Going one level deeper: the ffmpeg decode is **0.24-0.6 ms per layer**;
+        `image::imageops::resize` inside `composite_layer_onto` is **16-19 ms
+        per layer** — the compositor enlarged each layer to its whole on-canvas
+        footprint (1470×835 at `scale` 1, 1911×1086 at the reel's keyframed
+        1.3) and let `overlay` discard the ~two thirds that miss a 540×960
+        canvas. **Fixed** by `blend_layer_sampled`: for an unrotated, magnified
+        or 1:1 layer, sample straight onto the canvas over the visible rect
+        only, crop mask + scale + opacity + blend fused into one pass bounded by
+        the canvas. Result on the same test, same machine, same footage:
+        decode + composite **37.3 → 8.7 ms** (4.3×), whole frame **42.7 →
+        14.0 ms** (3.05×) — a ~23 fps ceiling to ~71 fps, from under the
+        timeline's frame budget to twice inside it. Pixel-equivalent to the path
+        it replaced within ±1 per channel, asserted against the pre-D-216
+        algorithm written out inline, including one case at the reel's exact
+        geometry and settings (worst measured difference: 1). The IPC payload
+        went binary in the same pass (`tauri::ipc::Response` → `ArrayBuffer` →
+        `Blob` object URL) — strictly cheaper on the webview side, but recorded
+        honestly in D-216 as *not* the bottleneck.
+      - ⬜ **Still open — JPEG encode is now the largest Rust-side phase**, 5.3
+        of the remaining 14.0 ms (38%). `image`'s own encoder on a 540×960 RGB
+        buffer. Worth a look only if the preview needs to be faster still;
+        options are a faster encoder (a new dependency, so a `D-NNN`) or
+        encoding at a lower quality while `playing`.
+      - ⬜ **Still open — a frame-fetch lookahead.** `PreviewPane`'s playback
+        loop is still strictly serialized by its `inFlight` gate: nothing is
+        requested while the current frame is in flight or painting. With the
+        Rust side now at ~14 ms a lookahead is worth less than it was, but it
+        would still remove one paint's worth of dead time per frame. Not built
+        in D-216 because it cannot be verified without live webview-side
+        instrumentation (see below), and a lookahead that races a fast scrub
+        direction-change into view would be a real regression: it needs a
+        request token so a stale in-flight frame is dropped, not painted.
+      - ⬜ **Still open — a lower `PREVIEW_LONG_EDGE` while `playing`.**
+        Cheaper at every stage. **But read D-125 first: this is a trap.** Play
+        and scrub asking for *different* long edges changes the ffmpeg scaler
+        arguments, which respawns every decode pipe and keyframe-seeks it on
+        every single Play/Pause toggle — a measured 550-650 ms of dead air each
+        time for two to three 4K HEVC layers, and a real part of the original
+        "clicking Play takes seconds" report. Anyone picking this up has to
+        solve that first (e.g. keep one pipe per (track, scale) pair, or accept
+        the respawn only on a *sustained* play rather than every toggle), not
+        just change the constant.
+      - **What D-216 DID confirm live**, in a second dev instance running the
+        worktree build against the owner's own `perf-comparison-reel-v3`: the
+        Edit tab renders correctly end to end through both changes — the binary
+        `ArrayBuffer` → `Blob` payload and the new sampled compositor — at
+        frame 0 (both layers stacked in the 1080×1920 portrait canvas) and at
+        frame 60, mid-keyframe, where `scale` has animated past 1 and the
+        magnified layer correctly overhangs the canvas edges with legible
+        detail. That frame is exactly `blend_layer_sampled`'s path on real
+        footage. No errors in the dev log from the frame path.
+      - ⬜ **Still open — no live end-to-end LATENCY number.** D-216's figures
+        are the real code path on the real footage but they are Rust-side. Two
+        things block a live measurement, both worth knowing before anyone tries
+        again: (1) a second Chroma instance cannot run alongside the owner's at
+        all without overriding the app `identifier`
+        (`tauri-plugin-single-instance`) — `npx tauri dev --config
+        '{"identifier":"…","build":{"devUrl":"http://localhost:1431",
+        "beforeDevCommand":"npm run dev -- --port 1431 --strictPort"}}'` plus
+        `CHROMA_CONTROL_PORT` is the whole recipe, no committed file changes;
+        (2) that instance sits BEHIND the owner's window, and a background
+        window's `requestAnimationFrame` is throttled to a stop by the webview,
+        so `PreviewPane`'s play loop does not tick at all and the playhead
+        never advances — playback simply cannot be observed from a non-frontmost
+        instance. Even frontmost, the webview has no console an agent can read.
+        The missing piece is a debug op — "report the last N frame-to-frame
+        intervals the preview actually painted" — which would make this whole
+        class of fix live-verifiable; it belongs in
+        `docs/notes/debug-tooling.md`'s scope.
       - ⬜ **Still open:** `useCanvasClipPick` removes and re-adds its
         capture-phase `pointerdown` listener on every render, because its
         `layers` dependency is a fresh array each time. Cheap per occurrence,

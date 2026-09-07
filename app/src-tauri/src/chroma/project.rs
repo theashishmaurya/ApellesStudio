@@ -1592,11 +1592,21 @@ mod tests {
         // `edit::timeline_frame` is `chroma_timeline_frame`'s whole body —
         // the command itself is now just a `spawn_blocking` wrapper (D-125),
         // so calling it here needs no tokio runtime.
+        // D-216: raw JPEG bytes now, not a base64 data URL — so "is a real
+        // frame" is checked against the JPEG SOI marker and the decoded size,
+        // and "is the blank frame" against its 1×1 dimensions.
         let jpeg = super::super::edit::timeline_frame(0, None).unwrap();
-        assert!(jpeg.starts_with("data:image/jpeg;base64,"));
-        let blank = super::super::edit::timeline_frame(dur_b as u64, None).unwrap();
+        assert_eq!(&jpeg[..2], &[0xFF, 0xD8], "a JPEG");
+        let real = image::load_from_memory(&jpeg).expect("decode preview jpeg");
         assert!(
-            blank.starts_with("data:image/png;base64,"),
+            real.width() > 1 && real.height() > 1,
+            "a real frame, not the blank one"
+        );
+        let blank = super::super::edit::timeline_frame(dur_b as u64, None).unwrap();
+        let blank = image::load_from_memory(&blank).expect("decode blank jpeg");
+        assert_eq!(
+            (blank.width(), blank.height()),
+            (1, 1),
             "blank frame past the end"
         );
 

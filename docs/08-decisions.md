@@ -19017,3 +19017,124 @@ compiles to a byte-identical argv to before D-211.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-216 — The Edit-tab preview's per-frame cost: the CPU compositor, not base64 — plus a binary IPC payload
+
+**Numbered 216, not 214** — two other worktree agents were landing decisions the
+same night; the gap is deliberate, to make a duplicate number impossible rather
+than merely unlikely.
+
+**Context.** Roadmap item 25's top entry: "its working now but lagging a lot,
+the frame and the video is lagging like hell" (owner, 2026-09-08), on a real
+project — `perf-comparison-reel-v3`, two stacked 2940×1670 screen recordings in
+a 1080×1920 portrait canvas, ~50 keyframes per clip animating `scale` 0.35 →
+1.3 and `position_x` up to ±0.3, at 47.6 fps. The standing theory (D-209, and
+this repo's own roadmap text) was that `chroma_timeline_frame` returning a
+`data:image/jpeg;base64,…` **string** was the dominant cost: a base64 encode
+plus ~33% inflation plus a JSON-escaped multi-hundred-KB string per displayed
+frame. It had never been measured.
+
+**Measured first.** `timeline_frame` was split into its two real phases
+(`timeline_frame_image` = decode + composite, `encode_preview_jpeg` = the wire
+payload) so they could be timed apart, and `preview_frame_phase_breakdown`
+(`preview_throughput_tests`) times them on a project shaped exactly like the
+owner's, against the owner's own footage. On this machine, per displayed frame
+at the live 960 px preview cap:
+
+| phase | before |
+| --- | --- |
+| decode + composite | **37.3 ms** |
+| JPEG encode | 5.3 ms |
+| base64 encode | **0.01 ms** |
+| payload | 34 KB raw / 46 KB as a data URL |
+
+**So the theory was wrong.** Base64 is 0.02% of a preview frame — three orders
+of magnitude away from mattering. The frame cost 42.7 ms against a 21 ms budget
+at 47.6 fps, and 87% of it was decode + composite. Instrumenting that phase in
+turn: the ffmpeg decode is **0.24-0.6 ms per layer**; `image::imageops::resize`
+inside `composite_layer_onto` is **16-19 ms per layer**.
+
+**The real bug, then.** `composite_layer_onto` enlarged each decoded layer to
+its full on-canvas footprint and let `image::imageops::overlay` clip the result:
+960×544 decoded → resized to 1470×835 at `scale == 1` (2.07 M px at the reel's
+keyframed 1.3) → overlaid onto a 540×960 canvas, which keeps about a third of
+it. The work scaled with the layer's *zoom*, not with what the canvas can show,
+so the harder the owner zoomed in, the more pixels were computed and thrown
+away. It also upsampled: 960 decoded px stretched to 1470 and then shown 540 at
+a time is *less* real detail than decoding once and sampling.
+
+**Options.** (a) Decode each layer at its natural canvas footprint instead of
+the preview long edge, so `scale == 1` needs no resize. Removes the pointless
+upscale but makes the keyframed `scale > 1` case *worse*, and the reel spends
+its expensive frames exactly there. (b) A faster resize crate
+(`fast_image_resize`). A new dependency for a problem whose real shape is
+"computing pixels nobody sees", and it would still compute them. (c) **Chosen:
+don't compute them.** Sample the layer straight onto the canvas over the
+visible rectangle only — `blend_layer_sampled`, with crop mask, scale, opacity
+and source-over blend fused into one pass whose cost is bounded by the canvas.
+(d) Lower `PREVIEW_LONG_EDGE` while playing. Rejected for now, and it is a trap:
+D-125 measured 550-650 ms of dead air per Play/Pause from exactly that, because
+a different long edge changes the ffmpeg scaler args and respawns every decode
+pipe. Left on the roadmap with that constraint written down.
+
+**Where the fast path applies, and why that is not a compromise.** Only when
+the layer is **magnified or 1:1** and unrotated. At a ratio ≥ 1 `Triangle`'s
+support collapses to the same two taps per axis a bilinear fetch uses, so the
+sampler is not an approximation of the old path — it is the same arithmetic,
+evaluated only where it lands. Genuine **minification** keeps `resize`, whose
+widening support is real area filtering a naive bilinear sample would alias
+against, and whose output buffer is smaller than its input anyway. Rotation
+keeps the general path, which needs a whole rotated buffer.
+
+**Result, same test, same machine, same footage:** decode + composite **37.3 ms
+→ 8.7 ms** (4.3×); whole frame **42.7 ms → 14.0 ms** (3.05×), i.e. a ~23 fps
+ceiling to ~71 fps, from under the 47.6 fps timeline's frame budget to twice
+inside it. JPEG encode is now the largest remaining Rust-side phase at 5.3 ms
+(38%) — logged on the roadmap, not chased here.
+
+**The IPC payload changed anyway.** `chroma_timeline_frame` returns
+`tauri::ipc::Response::new(Vec<u8>)` — raw JPEG bytes, delivered to the webview
+as an `ArrayBuffer` — and `PreviewPane` wraps them in a `Blob` object URL.
+**Not** because base64 was the bottleneck (it measurably was not, and the
+roadmap and this entry both say so), but because the binary payload is strictly
+cheaper on the *webview* side too, where the cost is not the encode but a
+46 KB JSON-escaped string to parse and base64-decode per displayed frame, and
+because keeping a demonstrably wasteful wire format after measuring it would be
+the kind of thing this repo's own rules exist to prevent. It is a small,
+one-way, zero-downside change on a path that was being opened anyway.
+
+**Its one visible consequence:** the out-of-range / nothing-visible frame is a
+1×1 black **JPEG** now, not the 1×1 transparent PNG it was. One channel, one
+`Blob` MIME type; a second format would have meant byte-sniffing in JS or an
+outright wrong `Content-Type`. At 1×1 inside an `object-contain` `<img>` the
+two are equally invisible.
+
+**Object URLs are revoked.** Playback mints one per displayed frame; `frameUrl`
+holds the live one, the previous is revoked as the next replaces it, and the
+last on unmount. `PreviewPane.staleness.dom.test.tsx` asserts exactly one live
+URL after a repaint, so a leak here fails a test rather than growing quietly.
+
+**Verified.**
+- `the_sampled_fast_path_matches_resize_then_overlay` composites the same layer
+  both ways — the fast path, and the pre-D-216 mask→resize→opacity→overlay
+  algorithm written out inline as the reference — and asserts every channel of
+  every pixel agrees within ±1. Four cases: magnified and offset; magnified,
+  cropped and half-opaque; magnified far enough to hang off the canvas; and one
+  at the reel's own shape and settings (240×136 layer, 135×240 canvas, `scale`
+  1.3, `position_x` 0.3, `crop_left`/`crop_right` 0.052212) over
+  high-frequency pseudo-random detail, where the worst per-channel difference
+  measured is **1**.
+- `a_layer_entirely_off_canvas_paints_nothing`.
+- All 40 `composite_tests` (38 pre-existing, unchanged) and both
+  `preview_throughput_tests` regression guards still pass; the 3-layer B-040
+  guard improved 23-31 → 21 ms/frame.
+- 686 `@chroma/editor` tests, `tsc --noEmit` clean, `cargo fmt`/`clippy` clean.
+
+**Not verified live end to end.** The measurements above are the real code path
+on the real footage, but they are Rust-side; a live instance in this worktree
+could not be instrumented for webview-side paint latency without adding a new
+debug op, which was out of scope. What the live run did confirm is in
+`docs/04-roadmap.md` item 25.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
