@@ -54,8 +54,13 @@ import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
 import { useEditorControl } from './useEditorControl';
 
-const INSPECTOR_DEFAULT_WIDTH = 280;
-const INSPECTOR_MIN_WIDTH = 220;
+// D-205 — widened from 280/220: every Transform and Crop row now carries its
+// own keyframe nav + stopwatch diamond + reset (four `icon-xs` buttons, 96px)
+// alongside its label and number field, which no longer fits the old default
+// without the field itself being squeezed. Still fully user-resizable, and
+// the max is unchanged.
+const INSPECTOR_DEFAULT_WIDTH = 320;
+const INSPECTOR_MIN_WIDTH = 264;
 const INSPECTOR_MAX_WIDTH = 420;
 
 export function EditorTab() {

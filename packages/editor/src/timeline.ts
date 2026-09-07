@@ -176,6 +176,47 @@ export interface Clip {
   fade_out_curve?: FadeCurve;
 }
 
+/** The nine scalar `Clip` fields that are BOTH independently keyframeable
+ *  (`chroma_keyframes[].params` names them verbatim — `chroma::edit::
+ *  resolve_clip_transform` reads each one out by exactly this string) and
+ *  independently resettable from the Inspector (D-205).
+ *
+ *  `box_width`/`box_height` are deliberately NOT here even though the Rust
+ *  resolver can interpolate them: they are a nullable, *paired* override
+ *  fronted by a ratio lock (D-193), so neither "keyframe just this one axis"
+ *  nor "reset just this one axis" is a well-defined single-field action —
+ *  clearing them is what `Scale`'s own field already does. See D-205. */
+export type ClipTransformParam =
+  | 'opacity'
+  | 'position_x'
+  | 'position_y'
+  | 'scale'
+  | 'rotation'
+  | 'crop_left'
+  | 'crop_top'
+  | 'crop_right'
+  | 'crop_bottom';
+
+/** Each keyframeable transform field's rest value — the ONE source of truth
+ *  for the `?? 1` / `?? 0` fallbacks scattered through the Inspector and for
+ *  D-205's per-property reset button, and matching `chroma_timeline::Clip`'s
+ *  own server-side defaults exactly (that type moved off `#[derive(Default)]`
+ *  precisely so `opacity`/`scale` could default to `1.0` rather than `0.0` —
+ *  see `Clip.opacity`'s doc above). A reset that disagreed with these would
+ *  write a value the backend would then treat as a real, non-default
+ *  override. */
+export const CLIP_TRANSFORM_DEFAULTS: Readonly<Record<ClipTransformParam, number>> = {
+  opacity: 1,
+  position_x: 0,
+  position_y: 0,
+  scale: 1,
+  rotation: 0,
+  crop_left: 0,
+  crop_top: 0,
+  crop_right: 0,
+  crop_bottom: 0,
+};
+
 /** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147) — mirrors
  *  `chroma_timeline::FadeCurve`. `P0 = (0,0)` and `P3 = (1,1)` are implicit;
  *  `x` is normalised progress through the fade window, `y` the multiplier at

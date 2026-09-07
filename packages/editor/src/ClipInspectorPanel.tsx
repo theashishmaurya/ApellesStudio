@@ -69,9 +69,26 @@
  * this component with) — see D-193's decision entry for why: once a real
  * width/height pair is stored, "was it locked when I typed this" carries
  * no independent information a future session needs back.
+ *
+ * **D-205 — per-property keyframing and per-property reset.** Every Transform
+ * and Crop row is now one `PropertyRow`, carrying (left to right) its label,
+ * its number field, a `<`/`>` pair that walks the playhead to that property's
+ * OWN previous/next keyframe, a diamond that toggles keyframing for that one
+ * property (After Effects' stopwatch: filled = animated, hollow = static),
+ * and a `RotateCcw` reset to that field's default — the same icon and
+ * meaning Colorist's `ControlsPanel` already uses for its own reset actions,
+ * reused rather than invented. The value shown is the property's value AT THE
+ * PLAYHEAD (`EditorInspectorPanel` resolves it through `paramValueAt`), not
+ * its static field, so an animated property reads what the preview is really
+ * showing; editing it while animated keys that new value at the playhead.
+ *
+ * Width/Height (D-193) deliberately get NO diamond and NO reset: they are a
+ * nullable, ratio-locked *pair*, so neither action is a well-defined
+ * single-field operation, and `Scale`'s own field already is the "clear the
+ * override" affordance. See `ClipTransformParam`'s doc and D-205.
  */
 import { useState } from 'react';
-import { Diamond, Lock, Unlock, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
 import {
   Button,
   Input,
@@ -82,7 +99,7 @@ import {
   SelectValue,
 } from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-import { FADE_PRESETS, fadePresetName, type Clip, type FadeCurve } from './timeline';
+import { FADE_PRESETS, fadePresetName, type Clip, type ClipTransformParam, type FadeCurve } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 import type { ClipGeometry } from './useClipGeometry';
 
@@ -131,6 +148,140 @@ const CUSTOM_CURVE = 'custom';
 
 const row = 'flex items-center justify-between gap-2';
 const numInput = 'h-7 w-20 text-right';
+/** D-205 — a property row's field shares its line with four icon buttons, so
+ *  it runs one step narrower than the Size/Fade rows' `numInput`. */
+const propInput = 'h-7 w-16 text-right';
+
+/** D-205 — one keyframeable property's live state, as this pure-presentation
+ *  panel needs it. `EditorInspectorPanel` derives every field (see its own
+ *  `paramStates`); nothing here reads `clip.chroma_keyframes` directly.
+ *
+ *  `value` is the property's value AT THE PLAYHEAD — the interpolated one for
+ *  an animated property, the static field otherwise — because a field showing
+ *  a static number while the preview renders an interpolated one is a panel
+ *  that lies about the picture. */
+export interface PropertyState {
+  value: number;
+  /** Any keyframe at all names this property (the filled diamond). */
+  animated: boolean;
+  /** …and one of them sits exactly at the playhead. */
+  keyedHere: boolean;
+  /** The nearest key strictly before / after the playhead, or `null` when
+   *  there is none in that direction (the `<` / `>` buttons' disabled state).
+   *  Timeline frames, ready to hand straight to `setPlayhead`. */
+  prevFrame: number | null;
+  nextFrame: number | null;
+}
+
+/** One Transform/Crop row: label, value field, that property's own keyframe
+ *  nav + stopwatch diamond, and its own reset (D-205). Local to this file —
+ *  it is this panel's row layout, not a shared component. */
+function PropertyRow({
+  label,
+  param,
+  state,
+  step,
+  min,
+  max,
+  disabled,
+  onChange,
+  onKeyframeToggle,
+  onKeyframeNav,
+  onReset,
+}: {
+  label: string;
+  param: ClipTransformParam;
+  state: PropertyState;
+  step: number;
+  min?: number;
+  max?: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+  onKeyframeToggle: (param: ClipTransformParam) => void;
+  onKeyframeNav: (param: ClipTransformParam, dir: -1 | 1) => void;
+  onReset: (param: ClipTransformParam) => void;
+}) {
+  return (
+    <div className={row}>
+      {/* The label still really labels the input (clicking it focuses the
+          field) — which is why the buttons live OUTSIDE this element: a
+          <label> wrapping them would make every icon click also hit the
+          input. */}
+      <label className="flex min-w-0 flex-1 items-center justify-between gap-2">
+        <span className="text-text-secondary truncate">{label}</span>
+        <Input
+          type="number"
+          step={step}
+          min={min}
+          max={max}
+          disabled={disabled}
+          className={propInput}
+          value={state.value}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+      </label>
+      <div className="flex shrink-0 items-center">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          disabled={disabled || state.prevFrame === null}
+          onClick={() => onKeyframeNav(param, -1)}
+          title={`Go to the previous ${label} keyframe`}
+          aria-label={`Previous ${label} keyframe`}
+        >
+          <ChevronLeft size={12} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          disabled={disabled}
+          // Animated AND a key right here reads at full strength; animated
+          // but between keys is dimmed. That is the whole reason `<`/`>`
+          // mean anything — without it there is no way to tell, from the
+          // row, whether the playhead is sitting on one of this property's
+          // keys or between two of them.
+          className={
+            state.animated ? (state.keyedHere ? 'text-accent' : 'text-accent/50') : 'text-text-secondary'
+          }
+          onClick={() => onKeyframeToggle(param)}
+          title={
+            state.animated
+              ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
+                (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
+              : `Animate ${label} (keyframes it at the playhead)`
+          }
+          aria-label={`Toggle ${label} keyframes`}
+          aria-pressed={state.animated}
+        >
+          {/* Filled = this property is animated, hollow = static — the same
+              Diamond-plus-fill convention `RelightPanel.tsx` and this
+              panel's own Keyframes section already use. */}
+          <Diamond size={11} fill={state.animated ? 'currentColor' : 'none'} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          disabled={disabled || state.nextFrame === null}
+          onClick={() => onKeyframeNav(param, 1)}
+          title={`Go to the next ${label} keyframe`}
+          aria-label={`Next ${label} keyframe`}
+        >
+          <ChevronRight size={12} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          disabled={disabled}
+          onClick={() => onReset(param)}
+          title={`Reset ${label} to its default`}
+          aria-label={`Reset ${label}`}
+        >
+          <RotateCcw size={11} />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** D-132 — the four crop rows, in Resolve's own Left/Right/Top/Bottom order
  *  (its Crop palette's own control order, not alphabetical), each a
@@ -138,7 +289,7 @@ const numInput = 'h-7 w-20 text-right';
  *  finest crop anyone nudges by hand; `min`/`max` bound the input, and
  *  `applyOp` clamps again on the way into the timeline for the values a
  *  keyboard can still type past them. */
-const CROP_FIELDS: Array<{ key: 'crop_left' | 'crop_right' | 'crop_top' | 'crop_bottom'; label: string }> = [
+const CROP_FIELDS: Array<{ key: ClipTransformParam; label: string }> = [
   { key: 'crop_left', label: 'Left' },
   { key: 'crop_right', label: 'Right' },
   { key: 'crop_top', label: 'Top' },
@@ -146,14 +297,42 @@ const CROP_FIELDS: Array<{ key: 'crop_left' | 'crop_right' | 'crop_top' | 'crop_
 ];
 const CROP_STEP = 0.01;
 
+/** D-205 — the Transform section's five keyframeable rows, in the order they
+ *  render. Only the numbers differ per field; the keyframe/reset behaviour is
+ *  identical and lives in `PropertyRow`.
+ *
+ *  `position_x`/`position_y` step by `CROP_STEP` because D-136 made them
+ *  normalised fractions of the composition (B-043's fix), not absolute
+ *  pixels — `1` used to be a 1px nudge and is now a whole frame-width jump,
+ *  so a percent of the frame is the right increment, the same unit and step
+ *  the crop insets use. */
+const TRANSFORM_FIELDS: Array<{
+  param: ClipTransformParam;
+  label: string;
+  step: number;
+  min?: number;
+  max?: number;
+}> = [
+  { param: 'opacity', label: 'Opacity', step: 0.05, min: 0, max: 1 },
+  { param: 'position_x', label: 'Position X', step: CROP_STEP },
+  { param: 'position_y', label: 'Position Y', step: CROP_STEP },
+  { param: 'scale', label: 'Scale', step: 0.05, min: 0 },
+  { param: 'rotation', label: 'Rotation', step: 1 },
+];
+
 export function ClipInspectorPanel({
   clip,
   trackLocked,
   geometry,
   clipKeyframes,
   keyedHere,
+  paramStates,
   onTransformChange,
   onFadeChange,
+  onParamChange,
+  onKeyframeToggle,
+  onKeyframeNav,
+  onResetParam,
   onUpsertKeyframe,
   onRemoveKeyframeHere,
   onClearKeyframes,
@@ -169,8 +348,20 @@ export function ClipInspectorPanel({
   geometry: ClipGeometry | null;
   clipKeyframes: ClipKeyframe[];
   keyedHere: boolean;
+  /** D-205 — every keyframeable property's live state, derived by
+   *  `EditorInspectorPanel`. Complete by construction (`Record`, not
+   *  `Partial`), so a row can never be rendered without one. */
+  paramStates: Record<ClipTransformParam, PropertyState>;
   onTransformChange: (patch: TransformPatch) => void;
   onFadeChange: (patch: FadePatch) => void;
+  /** D-205 — edit ONE property's value. Distinct from `onTransformChange`
+   *  because an animated property's edit must land on its keyframe at the
+   *  playhead, not (only) on its static field — the caller decides, this
+   *  panel just says which property changed to what. */
+  onParamChange: (param: ClipTransformParam, value: number) => void;
+  onKeyframeToggle: (param: ClipTransformParam) => void;
+  onKeyframeNav: (param: ClipTransformParam, dir: -1 | 1) => void;
+  onResetParam: (param: ClipTransformParam) => void;
   onUpsertKeyframe: () => void;
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
@@ -240,68 +431,45 @@ export function ClipInspectorPanel({
         )}
 
         <InspectorSection label="Transform">
-          <label className={row}>
-            <span className="text-text-secondary">Opacity</span>
-            <Input
-              type="number"
-              step={0.05}
-              min={0}
-              max={1}
+          {/* D-205 — the five transform properties, each its own independently
+              keyframeable/resettable row. `TRANSFORM_FIELDS` carries only the
+              per-field numbers (label/step/bounds); everything behavioural is
+              identical across rows and lives in `PropertyRow`.
+
+              Every row — `Scale` included — routes its edit through the one
+              `onParamChange`. `Scale`'s extra D-193 duty (clearing an
+              independent Width/Height override) belongs to the caller, not
+              here: only the caller knows whether the property is currently
+              animated, and an edit to an animated `Scale` has to land on its
+              keyframe. Special-casing it in this file instead made typing in
+              `Scale` silently not key at all while animated — caught by
+              `EditorInspectorPanel.keyframes.dom.test.tsx`. */}
+          {TRANSFORM_FIELDS.map(({ param, label, step, min, max }) => (
+            <PropertyRow
+              key={param}
+              label={label}
+              param={param}
+              state={paramStates[param]}
+              step={step}
+              min={min}
+              max={max}
               disabled={trackLocked}
-              className={numInput}
-              value={clip.opacity ?? 1}
-              onChange={(e) => onTransformChange({ opacity: Number(e.target.value) })}
+              onChange={(v) => onParamChange(param, v)}
+              onKeyframeToggle={onKeyframeToggle}
+              onKeyframeNav={onKeyframeNav}
+              onReset={onResetParam}
             />
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Position X</span>
-            <Input
-              type="number"
-              // D-136 — `position_x`/`position_y` are normalised fractions of
-              // the composition now (B-043 fix), not absolute pixels; `1`
-              // used to be a 1px nudge and is now a full frame-width jump.
-              // `0.01` matches the crop insets' own step below, the same
-              // stored unit.
-              step={CROP_STEP}
-              disabled={trackLocked}
-              className={numInput}
-              value={clip.position_x ?? 0}
-              onChange={(e) => onTransformChange({ position_x: Number(e.target.value) })}
-            />
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Position Y</span>
-            <Input
-              type="number"
-              step={CROP_STEP}
-              disabled={trackLocked}
-              className={numInput}
-              value={clip.position_y ?? 0}
-              onChange={(e) => onTransformChange({ position_y: Number(e.target.value) })}
-            />
-          </label>
-          <label className={row}>
-            <span className="text-text-secondary">Scale</span>
-            <Input
-              type="number"
-              step={0.05}
-              min={0}
-              disabled={trackLocked}
-              className={numInput}
-              value={clip.scale ?? 1}
-              // D-193 — always resets to simple uniform mode: an independent
-              // Width/Height override (below) is explicitly CLEARED, not
-              // left stale, so this field stays a real "go back to plain
-              // scale" affordance rather than one that silently does
-              // nothing once an override exists.
-              onChange={(e) => onTransformChange({ scale: Number(e.target.value), box_width: null, box_height: null })}
-            />
-          </label>
+          ))}
 
           {/* D-193 — independent Width/Height, in pixels of the project's
               own known composition (`geometry`), with a ratio-lock toggle.
               See this file's own module doc for the full "why" this exists
-              alongside `Scale` rather than replacing it. */}
+              alongside `Scale` rather than replacing it.
+
+              D-205 moved these BELOW Rotation (they used to sit between Scale
+              and Rotation) so the five per-property-keyframeable rows stay
+              contiguous and this ratio-locked, deliberately un-keyframeable
+              pair reads as the separate thing it is. */}
           <label className={row}>
             <span className="text-text-secondary">Width</span>
             <Input
@@ -343,17 +511,6 @@ export function ClipInspectorPanel({
             </p>
           )}
 
-          <label className={row}>
-            <span className="text-text-secondary">Rotation</span>
-            <Input
-              type="number"
-              step={1}
-              disabled={trackLocked}
-              className={numInput}
-              value={clip.rotation ?? 0}
-              onChange={(e) => onTransformChange({ rotation: Number(e.target.value) })}
-            />
-          </label>
         </InspectorSection>
 
         {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3: the concept
@@ -367,20 +524,24 @@ export function ClipInspectorPanel({
             0–100, and a display-only unit conversion is a rounding-bug
             surface for no real gain at this size. */}
         <InspectorSection label="Crop">
+          {/* D-205 — the same `PropertyRow` the Transform section uses: each
+              inset is independently keyframeable and independently
+              resettable, exactly like every other transform field. */}
           {CROP_FIELDS.map(({ key, label }) => (
-            <label className={row} key={key}>
-              <span className="text-text-secondary">{label}</span>
-              <Input
-                type="number"
-                step={CROP_STEP}
-                min={0}
-                max={1}
-                disabled={trackLocked}
-                className={numInput}
-                value={clip[key] ?? 0}
-                onChange={(e) => onTransformChange({ [key]: Number(e.target.value) })}
-              />
-            </label>
+            <PropertyRow
+              key={key}
+              label={label}
+              param={key}
+              state={paramStates[key]}
+              step={CROP_STEP}
+              min={0}
+              max={1}
+              disabled={trackLocked}
+              onChange={(v) => onParamChange(key, v)}
+              onKeyframeToggle={onKeyframeToggle}
+              onKeyframeNav={onKeyframeNav}
+              onReset={onResetParam}
+            />
           ))}
         </InspectorSection>
 
@@ -461,7 +622,27 @@ export function ClipInspectorPanel({
             keyframes (Diamond icon, `keyedHere` highlight, add/update/
             delete-here/clear-all) — see `clipKeyframes.ts`'s doc for why
             this is a small local mirror rather than a cross-package import
-            of `app/src/utils/maskKeyframes.ts`. */}
+            of `app/src/utils/maskKeyframes.ts`.
+
+            **D-205 — KEPT, deliberately, not left as redundant UI.** The
+            per-property diamonds above subsume "which properties are
+            animated", so this section stops being the only keyframe control
+            and becomes what it is actually good at: whole-clip batch actions
+            that have no single-property equivalent.
+            - "Key all properties" is a real batch shortcut — nine diamond
+              clicks in one, and the standard NLE "pin everything as it is
+              right now, then animate from here" gesture. It is no longer
+              confusing the way it was as the ONLY control, because its
+              effect is now fully visible in the nine diamonds it lights up.
+              It MERGES now (D-205's `mergeClipKeyframeParams`) rather than
+              replacing the frame's whole entry, so it can never clobber a
+              key a single property's diamond already put there.
+            - Delete-here / Clear-all are pure housekeeping over the raw
+              array, which matters precisely because MCP agents
+              (`editor_set_clip_keyframes`) and older sessions can leave
+              keyframe data no per-property control would fully explain.
+            The label says "all properties" rather than "clip" so it can't be
+            misread as "the one thing that turns keyframing on." */}
         <InspectorSection label="Keyframes">
           <div className="flex items-center gap-2 text-[11px] text-text-secondary select-none">
             <Button
@@ -470,10 +651,10 @@ export function ClipInspectorPanel({
               disabled={trackLocked}
               className={`gap-1 px-1.5 ${keyedHere ? 'text-accent' : 'text-text-primary'}`}
               onClick={onUpsertKeyframe}
-              title={keyedHere ? 'Update this clip keyframe' : 'Keyframe this clip at the current frame'}
+              title="Keyframe every transform and crop property at the current frame"
             >
               <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
-              {clipKeyframes.length === 0 ? 'Keyframe clip' : keyedHere ? 'Update key' : 'Add key'}
+              Key all properties
             </Button>
             {clipKeyframes.length > 0 && (
               <>
@@ -486,7 +667,7 @@ export function ClipInspectorPanel({
                     size="icon-xs"
                     disabled={trackLocked}
                     onClick={onRemoveKeyframeHere}
-                    title="Delete the keyframe at this frame"
+                    title="Delete every property's keyframe at this frame"
                   >
                     <X size={12} />
                   </Button>

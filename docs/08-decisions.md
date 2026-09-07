@@ -18111,3 +18111,116 @@ full-bleed-box case above and a real corner-handle resize committing
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-205 — Per-property keyframes and per-property reset in the Edit tab's Inspector (and B-092: the live preview didn't actually support them)
+
+**Context.** The Inspector's Transform/Crop rows were a plain label + number
+field, and keyframing was a single whole-clip button: `doUpsertKeyframe`
+wrote all nine fields (`opacity`, `position_x/y`, `scale`, `rotation`, the
+four crop insets) into ONE `params` object at the playhead, via an
+`upsertClipKeyframe` that REPLACED that frame's whole entry. There was no way
+to animate one property, no way to see which properties were animated, no way
+to walk one property's keys, and no way to reset one field. The owner asked
+for the industry-standard shape (After Effects/Premiere): a per-property
+stopwatch diamond plus `<`/`>` key nav plus a per-property reset.
+
+**The data model already allowed it; two of the three consumers already
+honoured it; the third did not.** `ClipKeyframe.params` is a loose
+`Record<string, unknown>`, so a key naming only `{scale: 1.2}` is
+representable, and `timelineExport.ts`'s `keyframeExprAt` already filtered
+keys by `hasOwnProperty(param)` before interpolating — per-property correct
+by construction. The Rust live preview did NOT: `resolve_clip_transform`
+called `chroma::keyframes::interpolate`, which brackets by frame across
+*every* key and then applies the mask module's documented "a field present in
+only one of the two bracketing keys is held from that key" rule. Right for
+mask geometry (one gesture writes a whole field set); wrong the moment
+different params are keyed at different frames — a `scale` keyed at 0 and 100
+with an unrelated `opacity` key at 50 became a *step function* instead of a
+ramp. Filed as **B-092**, proven with a failing test before any GUI was
+built, fixed here.
+
+**Options considered.**
+1. *Build the GUI on the export path's semantics and leave Rust alone.* Fast,
+   and wrong: the preview would disagree with the export for exactly the
+   authoring shape this feature creates — the B-088 failure mode ("a preview
+   that lies is worse than no feature").
+2. *Change `chroma::keyframes::interpolate` itself.* One resolver, but it
+   would silently change mask/relight keyframe behaviour, whose union-and-hold
+   rule is documented and tested (D-034) and is not a bug there.
+3. **Chosen: a second, per-param entry point.** `interpolate_param(keyframes,
+   frame, name)` filters to the keys naming `name`, then brackets — the same
+   filter-then-interpolate order `keyframeExprAt` already used, so preview and
+   export now agree by construction. `interpolate` is untouched and stays the
+   mask path's resolver. `resolve_clip_transform_unfaded` resolves each field
+   through it. Byte-identical to before for any clip whose keys all carry the
+   same params, i.e. every pre-D-205 whole-clip key.
+
+**Writes merge, they don't replace.** `mergeClipKeyframeParams` updates only
+the named fields inside whatever entry sits at that frame; `upsertClipKeyframe`
+(wholesale replace) is deleted, not kept alongside — with independent writers
+it can only ever destroy another property's key at the same frame, including
+under the whole-clip button.
+
+**The authoring semantics are After Effects', deliberately.** Stopwatch ON
+keys the property's *current* value at the playhead, so a single key holds
+flat everywhere in both renderers and no pixel changes. Stopwatch OFF drops
+that property's keys and bakes the value it had at the playhead into its
+static field (skipped when they already agree, which keeps the common case to
+one op/one undo step). While a property is animated, editing its number field
+keys the new value at the playhead rather than writing the static field —
+without that, typing in the box would silently do nothing, since the keyframe
+is what the renderer reads. That also forces the field to *display* the
+interpolated value at the playhead, which is why `clipKeyframes.ts` now
+interpolates at all (an exact mirror of `interpolate_param`, including
+`rotation`'s shortest arc) after previously documenting that it never would —
+a panel showing a static number the preview isn't using is a panel that lies.
+
+**Reset is non-destructive.** It writes the field's default (from the new
+`CLIP_TRANSFORM_DEFAULTS` in `timeline.ts` — one source of truth, matching
+`chroma_timeline::Clip`'s own server-side defaults, replacing nine scattered
+`?? 1`/`?? 0` fallbacks) and, when the property is animated, ALSO keys that
+default at the playhead so the reset is visible instead of masked. It never
+deletes an animation. `RotateCcw` is the icon, reused from Colorist's
+`ControlsPanel` rather than invented.
+
+**The whole-clip "Keyframes" section is KEPT, not removed** — the real call
+the brief asked for. With per-property diamonds present it is no longer the
+only keyframe control and no longer confusing: "Key all properties" (relabelled
+from "Keyframe clip") is a batch shortcut for nine clicks and the standard
+"pin everything as it is, then animate from here" gesture, and its effect is
+now fully visible in the nine diamonds it lights up. It merges rather than
+replaces, and it keys each property's value *at the playhead* rather than its
+static field. Delete-here and Clear-all stay because they are whole-array
+housekeeping with no per-property equivalent, which matters precisely because
+MCP agents (`editor_set_clip_keyframes`) can leave keyframe data the
+per-property controls would not fully explain.
+
+**`box_width`/`box_height` get no diamond and no reset.** The Rust resolver
+can interpolate them, but they are a nullable, ratio-locked *pair* (D-193), so
+neither "keyframe one axis" nor "reset one axis" is a well-defined
+single-field action — and `Scale`'s own field already is the "clear the
+override" affordance. They moved below Rotation so the five per-property rows
+stay contiguous. The Inspector's default/min width grew 280→320 / 220→264 to
+fit four `icon-xs` buttons per row.
+
+**Known, NOT fixed here: the export ignores `opacity` and `rotation`
+entirely** and animates only `position_x`/`position_y`/`scale` — a
+pre-existing gap this feature makes easier to hit, filed as **B-093**. The
+per-property UI does not create it and does not paper over it.
+
+**Verified.** Rust: `chroma::keyframes` per-param tests (including one pinning
+that the union resolver really does still differ, and one proving the two
+agree for complete keys), plus `chroma::edit`'s
+`each_param_interpolates_across_only_its_own_keyframes` and a real
+resolve-then-composite **pixel** test sampled inside the diverging bracket —
+both confirmed failing against the pre-fix resolver. TS: `clipKeyframes.test.ts`
+(34) and a new real-DOM `EditorInspectorPanel.keyframes.dom.test.tsx` (12)
+driving the owner's own verification script through the real components and
+the real store; that test caught a real bug in this change (Scale's row
+bypassed the keyframe path). **No live GUI run** — the app's
+`tauri-plugin-single-instance` lock and the main checkout's running dev server
+make a second isolated instance a config fork, not a launch; said plainly
+rather than implied.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
