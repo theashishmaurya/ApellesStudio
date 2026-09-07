@@ -130,6 +130,10 @@ interface ClipChain {
    *  already accounts for `speedOverrides` shrinking it (see below). */
   startSec: number;
   endSec: number;
+  /** B-075 — this clip's own real frame rate (`clip.source_fps ?? opts.fps`),
+   *  resolved once per clip so keyframe timing uses the same rate the
+   *  `-ss`/`-t`/`endSec` math above it already does. */
+  clipFps: number;
 }
 
 /** One clip's `crop`/`setpts`/`scale` chain, ending in `[label]` — factored
@@ -231,12 +235,25 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   for (const { track } of paintOrder) {
     for (const clip of track.clips) {
       const speed = opts.speedOverrides?.[clip.id] ?? 1;
+      // B-075 — `source_start`/`duration` (and a keyframe's `frame`) are
+      // documented as SOURCE frames, i.e. at the CLIP's own native rate —
+      // only `start_frame` is a TIMELINE frame, at the project/export rate
+      // (`opts.fps`). Converting source frames to seconds with `opts.fps`
+      // instead of the source's own rate silently produces the wrong
+      // duration/timing for any clip whose native fps differs from the
+      // export's — exactly two real screen recordings at two different
+      // native frame rates, composited together, will do. Falls back to
+      // `opts.fps` only for a clip with no known `source_fps` (created
+      // before this field existed, or from an unprobed source) — the
+      // pre-B-075 behavior, better than nothing but only actually correct
+      // when the source happens to share the project's own rate.
+      const clipFps = clip.source_fps ?? opts.fps;
 
       inputs.push(
         '-ss',
-        String(clip.source_start / opts.fps),
+        String(clip.source_start / clipFps),
         '-t',
-        String(clip.duration / opts.fps),
+        String(clip.duration / clipFps),
         '-i',
         clip.source_path,
       );
@@ -244,14 +261,17 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       const label = `v${inputIdx}`;
       filterSteps.push(buildClipFilterChain(clip, inputIdx, label, opts));
 
-      // The clip's own on-timeline window, at the OUTPUT frame rate. When
-      // sped up, `setpts=PTS/speed` compresses playback into `duration /
-      // speed` output frames — the `enable=between()` gate below must
-      // shrink to match, or the clip would appear to freeze/hold its last
-      // frame for the un-shrunk remainder of its original window.
+      // `start_frame` is a TIMELINE frame (project/export rate) — `opts.fps`
+      // is correct here. `duration` is a SOURCE frame count — `clipFps` is
+      // correct here, same reasoning as the `-ss`/`-t` conversion above.
+      // When sped up, `setpts=PTS/speed` compresses playback into
+      // `duration / speed` (source seconds) worth of OUTPUT time — the
+      // `enable=between()` gate below must shrink to match, or the clip
+      // would appear to freeze/hold its last frame for the un-shrunk
+      // remainder of its original window.
       const startSec = clip.start_frame / opts.fps;
-      const endSec = startSec + clip.duration / speed / opts.fps;
-      chains.push({ label, clip, startSec, endSec });
+      const endSec = startSec + clip.duration / speed / clipFps;
+      chains.push({ label, clip, startSec, endSec, clipFps });
 
       inputIdx++;
     }
@@ -263,14 +283,41 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   let lastLabel = 'base';
   chains.forEach((chain, i) => {
     const outLabel = i === chains.length - 1 ? 'outv' : `ov${i}`;
-    const xExpr = positionExpr(chain.clip, 'position_x', opts.fps);
-    const yExpr = positionExpr(chain.clip, 'position_y', opts.fps);
+    // B-075 — a keyframe's `frame` is source-frame-absolute (this clip's own
+    // native rate), not `opts.fps` — same reasoning as above.
+    const xExpr = positionExpr(chain.clip, 'position_x', chain.clipFps);
+    const yExpr = positionExpr(chain.clip, 'position_y', chain.clipFps);
+    // B-075 — ffmpeg's filtergraph syntax splits filter/option text on bare
+    // `,`/`:` OUTSIDE quotes; a keyframed `if(between(t,a,b),...)` expression
+    // is FULL of exactly those characters. `enable=` was already correctly
+    // single-quoted; `x=`/`y=` were not, which — invisibly, since no unit
+    // test here ever actually invokes ffmpeg, only string-compares the argv
+    // — broke every real export of a clip with more than a trivial
+    // one-keyframe position/scale animation (`ffmpeg`: "No option name near
+    // 'if(lt(t'"). A plain static value (no keyframes) is just a bare number
+    // with no special characters, so quoting it too is harmless.
     filterSteps.push(
-      `[${lastLabel}][${chain.label}]overlay=x=${xExpr}*W:y=${yExpr}*H:` +
+      `[${lastLabel}][${chain.label}]overlay=x='${xExpr}*W':y='${yExpr}*H':` +
         `enable='between(t,${chain.startSec},${chain.endSec})'[${outLabel}]`,
     );
     lastLabel = outLabel;
   });
+
+  // B-076 — `color=...[base]` (the black backdrop every clip overlays onto)
+  // is an ffmpeg `lavfi` source with NO duration of its own — unlike a real
+  // decoded video input, it never reaches EOF by itself. Every real clip's
+  // own `-t` bounds ITS input, but nothing bounded the OUTPUT overall, so
+  // the exported file's length was governed by the base layer alone: i.e.
+  // never. Confirmed live: a real export ran for 10+ minutes of continuous
+  // encoding (8.6MB and climbing for what should have been a few-second,
+  // few-KB clip) before being killed by hand — this was true of every
+  // export this whole module ever produced, immediately masked until now by
+  // B-075's filtergraph parse error making every real run fail before it
+  // could ever start rendering. `-t <furthest clip end>` on the OUTPUT
+  // (after `-map`) is the standard, simplest fix — bounded by the real
+  // content instead of an synthetic source that has no natural end. `0` for
+  // an empty timeline (no clips at all) rather than an unbounded run.
+  const totalDurationSec = chains.reduce((max, c) => Math.max(max, c.endSec), 0);
 
   return [
     ...inputs,
@@ -280,6 +327,8 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     `[${lastLabel}]`,
     '-r',
     String(opts.fps),
+    '-t',
+    String(totalDurationSec),
     outPath,
   ];
 }

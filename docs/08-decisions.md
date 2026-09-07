@@ -16310,3 +16310,80 @@ documenting the exact distortion bug, +2 for the new `fitOverrides` behavior).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-187 — `editor_export` was fundamentally broken for real content: wrong fps unit, invalid ffmpeg syntax for any keyframed clip, and an unbounded render (B-075/B-076)
+
+Continuing the same reel's first-ever real `editor_export` use (D-184 fixed the
+aspect-ratio bug the SAME session found first): getting one real export to actually
+finish surfaced three MORE real, previously-invisible defects, all only reachable by
+actually invoking ffmpeg — every one of `timelineExport.test.ts`'s existing 21 tests
+only ever string-compared the generated argv, never ran it.
+
+**B-075, part 1 — invalid ffmpeg syntax for any keyframed clip.** `overlay=x=$
+{xExpr}*W:y=${yExpr}*H:enable=...` quoted `enable=` correctly but not `x=`/`y=`; a
+keyframed expression is full of the exact `,`/`:` characters ffmpeg's filtergraph
+parser treats as separators outside quotes. Fixed by quoting `x=`/`y=` too — harmless
+for a plain unkeyframed number, correct for a keyframed expression.
+
+**B-075, part 2 — a real, silent fps unit bug.** `crates/chroma-timeline`'s own Clip
+doc is explicit: `source_start`/`duration` are in SOURCE frames (the clip's own
+native rate); `start_frame` is a TIMELINE frame (the project/export rate). The
+exporter divided ALL of them by `opts.fps` uniformly — correct only when a clip's
+native rate happens to equal the export rate. Two real screen recordings at two
+different native rates (47.6fps, 44.1fps), exported at a third (e.g. 30fps), each
+computed a completely wrong `-t`/keyframe timing. **Fix:** a new `Clip.source_fps`
+(and `DraggedMedia.fps` for the GUI drag-drop path), populated from the media pool's
+own probed `MediaItem.video.fps` at both real clip-creation sites (`editor_add_clip`,
+`SourcesPanel.tsx`'s drag payload) — `timelineExport.ts` now uses
+`clip.source_fps ?? opts.fps` for every SOURCE-frame conversion, leaving
+`start_frame`'s `opts.fps` conversion alone (a genuinely different unit). Considered
+threading fps as an export-time-only parameter (`speedOverrides`'s own pattern) —
+rejected: unlike B-074's aspect-fit choice, this isn't a creative option a caller
+picks per export, it's a fact about the SOURCE MEDIA ITSELF that's true regardless of
+how it's exported, so it belongs on the `Clip`/pool item, not a per-export override.
+
+**B-076 — no export could ever finish on its own.** `color=black:size=WxH:rate=FPS
+[base]` (the backdrop every clip composites onto) is an unbounded `lavfi` source —
+it never reaches EOF the way a real decoded file does. Nothing capped the OUTPUT
+overall, so an export's real length was governed by the one layer with no natural
+end: literally forever, for every export this module could ever have produced, since
+it was written. Confirmed live: a real render sat at ~470% CPU for 10+ minutes,
+output file already 8.6MB and climbing, for what should have been a few-second clip,
+before being killed by hand. B-075's parse error had made every real attempt fail
+BEFORE rendering ever started, completely masking this until that bug was fixed —
+one bug hiding a second, worse one. **Fix:** `-t <furthest clip's real end>` on the
+output, computed as `max(chain.endSec)` across every composited clip (`0` for an
+empty timeline).
+
+**Also filed, not fixed here:** owner's own follow-up, live — the Edit-tab timeline
+UI has no visual marker for this same "real render end" boundary a human could see
+before exporting. Tracked as roadmap item 17 (`docs/04-roadmap.md`, "Next" queue).
+
+**Testing gap closed, not just the three bugs.** Owner, live: "can we hook up real
+ffmpeg tests as well so we can run things know, full regression tests?" New
+`timelineExport.ffmpeg.test.ts` — generates real tiny synthetic source clips (ffmpeg
+`lavfi testsrc`, two different native frame rates) in a temp dir, actually invokes
+ffmpeg with the REAL generated argv, and asserts on the REAL output via `ffprobe`
+(duration, successful completion). Skips itself (not a failure) when `ffmpeg`/
+`ffprobe` aren't on `PATH`, so a missing binary can't break an otherwise-green run.
+This is the file that should have caught all three bugs above; it now stands
+alongside the pure string-matching suite as a permanent regression net, matching
+this repo's own established "Determinism" testing rule (a real render, actually
+executed and checked) rather than only ever asserting on an intermediate
+representation of one.
+
+**Numbering note:** two other worktree branches in flight the same session
+(`worktree-agent-ae86fcfc2f4cd3e2a`, `worktree-agent-aa391abb4db6bdd27`) independently
+claimed `D-185`/`D-186` against a stale pre-D-184 `main` snapshot — a real
+cross-branch collision to resolve at merge time (both already flagged it themselves).
+This entry uses `D-187` on `main`'s actual current tip to leave room rather than
+compound the collision further.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test --workspace
+@chroma/editor` — **324/324** (was 303 before this session's `timelineExport.test.ts`
+additions + the new `timelineExport.ffmpeg.test.ts`). The real-ffmpeg suite: 3/3,
+each completing in under a second, where the equivalent real command previously
+either failed outright (B-075) or ran unbounded (B-076).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

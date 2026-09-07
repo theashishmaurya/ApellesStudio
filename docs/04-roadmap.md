@@ -874,6 +874,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - **6. Lower-urgency, mutually independent** — multi-select, delete/duplicate,
       multi-manifest per project (D-046's deliberate one-per-project limit; wait
       for a real need), and **B-059**'s camera easing, which is nearly free.
+17. **Show the export's real start/end bound in the Edit-tab timeline UI** — owner,
+    2026-09-07, live, after B-076 (D-187): `editor_export` renders the WHOLE
+    timeline only up to the furthest clip's own end (`-t <that>` — the `color=[base]`
+    backdrop has no natural end of its own, so before B-076 an export literally never
+    stopped on its own). That real boundary — "this is where the render will actually
+    end" — isn't shown anywhere in `TimelinePane.tsx` today; a human editing has no
+    visual cue for it (an agent calling `editor_get_timeline` can compute it from
+    `trackDuration`/`timelineDuration`, but the GUI shows nothing). Add a real
+    start/end marker (at minimum the end — start is always 0 today, nothing trims the
+    front of the whole timeline yet) to the timeline ruler, matching how a reference
+    NLE marks its own sequence out-point. Not started.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

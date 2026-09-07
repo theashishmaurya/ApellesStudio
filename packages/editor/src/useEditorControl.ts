@@ -273,6 +273,7 @@ export function useEditorControl(): void {
           source_start: sourceStart,
           duration,
           source_len: frames,
+          source_fps: media.video?.fps ?? undefined,
         };
 
         useEditorTimelineStore.getState().applyOp({

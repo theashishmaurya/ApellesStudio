@@ -74,6 +74,18 @@ export interface Clip {
   source_start: number;
   duration: number;
   source_len: number;
+  /** B-075/D-186 — the SOURCE media's own real frame rate, at the moment
+   *  this clip was created from a probed media-pool item (`editor_add_clip`
+   *  sets it from `MediaItem.video.fps`). `source_start`/`duration` (and a
+   *  keyframe's `frame`) are documented as being in **source frames** — this
+   *  is what actually converts them to real seconds. Absent on a clip
+   *  created before this field existed, or one whose source was never
+   *  successfully probed (`timelineExport.ts` falls back to the export's own
+   *  `opts.fps`, which is only correct when the source happens to share the
+   *  project's fps — the same silent-wrongness this field exists to close
+   *  for the common case of mixed-fps source footage, e.g. two screen
+   *  recordings at two different native frame rates composited together). */
+  source_fps?: number;
   /** Timeline-absolute start frame (D-054/D-058) — see the module doc. */
   start_frame: number;
   /** Compositing transform (D-086/D-088, Phase 1/2 of the full-NLE P0
@@ -318,6 +330,13 @@ export interface DraggedMedia {
    *  ("`DraggedMedia`/`MediaItem` carry NO real audio-vs-video signal today
    *  … without a real backend model change"). */
   hasAudio?: boolean | null;
+  /** B-075/D-186 — the source's own real frame rate (`MediaItem.video.fps`),
+   *  threaded onto the built `Clip` as `source_fps` — see that field's own
+   *  doc for why. `null`/absent for a pool item probed before this field
+   *  existed; the built clip simply has no `source_fps` either, same
+   *  conservative "unknown, don't invent a number" reading `hasAudio` above
+   *  already uses. */
+  fps?: number | null;
 }
 
 /** Every `Clip` field except `start_frame` — a dropped clip doesn't know its
@@ -371,6 +390,7 @@ export function linkedClipsFromDraggedMedia(
     source_start: 0,
     duration: frames,
     source_len: frames,
+    source_fps: media.fps ?? undefined,
   };
   const video: NewClipFields = { id: `${media.id}-${stamp}`, link_group: linkGroup, ...common };
   if (!linkGroup) return { video, audio: null };

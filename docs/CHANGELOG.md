@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **`editor_export` fixed for real content (B-075/B-076, D-187) + real ffmpeg
+  regression tests.** The reel's first real export attempt found every render was actually
+  broken three ways: an unquoted keyframe expression made ffmpeg reject the filtergraph
+  outright for any clip with more than a trivial animation; `duration`/`source_start`/keyframe
+  `frame` were divided by the export's fps instead of the CLIP's own native fps (silently wrong
+  timing whenever a source's real frame rate differs from the export's — exactly two screen
+  recordings at two different rates); and the `color=[base]` backdrop has no duration of its
+  own, so nothing ever capped the output — every export before this ran forever until killed by
+  hand. Fixed all three (`Clip.source_fps`, quoted `x=`/`y=`, `-t <furthest clip end>`). New
+  `timelineExport.ffmpeg.test.ts` actually invokes real ffmpeg and checks real output via
+  `ffprobe` — the existing suite only ever string-compared generated argv, which is exactly how
+  all three shipped invisibly. `@chroma/editor` 324/324.
 - **2026-09-07** — **D-183's Edit-tab MCP server committed** (was sitting unit-verified but
   uncommitted since 2026-09-07 morning): `useEditorControl.ts`, `timelineExport.ts` (pure
   ffmpeg-argv compiler), `chroma_run_ffmpeg`, 62-tool `mcp/server.py`. Its first-ever real use

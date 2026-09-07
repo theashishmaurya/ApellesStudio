@@ -147,11 +147,13 @@ describe('buildExportFfmpegArgs', () => {
       '-i',
       '/media/c1.mov',
       '-filter_complex',
-      "[0:v]scale=1080*1:-2[v0];color=black:size=1080x1920:rate=30[base];[base][v0]overlay=x=0*W:y=0*H:enable='between(t,0,8)'[outv]",
+      "[0:v]scale=1080*1:-2[v0];color=black:size=1080x1920:rate=30[base];[base][v0]overlay=x='0*W':y='0*H':enable='between(t,0,8)'[outv]",
       '-map',
       '[outv]',
       '-r',
       '30',
+      '-t',
+      '8',
       '/out.mp4',
     ]);
   });
@@ -205,6 +207,68 @@ describe('buildExportFfmpegArgs', () => {
     expect(filterComplex).toContain('scale=1080*1:1920*1'); // b: stretch override
   });
 
+  it('B-075: uses a clip\'s own source_fps (not opts.fps) to convert source_start/duration to real seconds for -ss/-t', () => {
+    // A clip whose native rate (24fps) differs from the export rate (opts30 = 30fps).
+    const c = clip('c1', { source_fps: 24, source_start: 48, duration: 240 });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args[args.indexOf('-ss') + 1]).toBe(String(48 / 24)); // 2s, not 48/30
+    expect(args[args.indexOf('-t') + 1]).toBe(String(240 / 24)); // 10s, not 240/30
+  });
+
+  it('B-075: falls back to opts.fps when a clip has no known source_fps (pre-B-075 clip, or unprobed source)', () => {
+    const c = clip('c1', { source_start: 60, duration: 300 }); // no source_fps set
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args[args.indexOf('-ss') + 1]).toBe(String(60 / opts30.fps));
+    expect(args[args.indexOf('-t') + 1]).toBe(String(300 / opts30.fps));
+  });
+
+  it('B-075: a keyframe\'s frame number is interpreted at the clip\'s own source_fps, not opts.fps', () => {
+    const kfs: ExportKeyframe[] = [
+      { frame: 0, params: { position_x: 0 } },
+      { frame: 24, params: { position_x: 1 } }, // 1 real second at 24fps
+    ];
+    const c = clip('c1', { source_fps: 24, chroma_keyframes: kfs });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30); // export at 30fps
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    // At the clip's real 24fps, frame 24 is t=1 — NOT t=24/30=0.8 (what the
+    // pre-B-075 code would have produced by dividing by opts.fps instead).
+    expect(filterComplex).toContain('between(t,0,1)');
+    expect(filterComplex).not.toContain('between(t,0,0.8)');
+  });
+
+  it('B-075: an on-timeline enable() window uses the clip\'s own source_fps for duration, but opts.fps for start_frame (a TIMELINE frame, a different unit)', () => {
+    const c = clip('c1', { source_fps: 24, start_frame: 30, duration: 48 }); // start_frame is a TIMELINE frame (opts30=30fps -> 1s); duration is 48 SOURCE frames at 24fps -> 2s
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("enable='between(t,1,3)'"); // starts at 1s (timeline), runs 2s (source) -> ends at 3s
+  });
+
+  it('B-076: caps the output with -t at the furthest clip end — the color=[base] backdrop has no duration of its own and would otherwise never reach EOF', () => {
+    const a = clip('a', { duration: 240 }); // 8s at opts30 (30fps)
+    const b = clip('b', { duration: 150, start_frame: 60 }); // starts at 2s, runs 5s -> ends at 7s
+    const tl = timeline([track('video', [a]), track('video', [b])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args[args.length - 1]).toBe('/out.mp4');
+    expect(args[args.length - 2]).toBe('8'); // the LONGER of the two clips' real ends, not either alone
+    expect(args[args.length - 3]).toBe('-t');
+  });
+
+  it('B-076: an empty timeline (no clips at all) gets -t 0, not an unbounded run', () => {
+    const tl = timeline([track('video', [])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args[args.indexOf('-t', args.indexOf('-filter_complex')) + 1]).toBe('0');
+  });
+
   it('omits the crop filter node entirely when all four crop fractions are zero', () => {
     const tl = timeline([track('video', [clip('c1')])]);
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
@@ -244,7 +308,7 @@ describe('buildExportFfmpegArgs', () => {
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
     const expectedX = keyframeExprAt(kfs, 'position_x', 0, opts30.fps);
-    expect(filterComplex).toContain(`x=${expectedX}*W`);
+    expect(filterComplex).toContain(`x='${expectedX}*W'`);
   });
 
   it('re-bases chroma_keyframes (source-frame-absolute) to the clip input stream before interpolating', () => {
@@ -263,7 +327,7 @@ describe('buildExportFfmpegArgs', () => {
       { frame: 30, params: { position_x: 1 } },
     ];
     const expectedX = keyframeExprAt(rebased, 'position_x', 0, opts30.fps);
-    expect(filterComplex).toContain(`x=${expectedX}*W`);
+    expect(filterComplex).toContain(`x='${expectedX}*W'`);
   });
 
   it('excludes every clip on a hidden video track', () => {
