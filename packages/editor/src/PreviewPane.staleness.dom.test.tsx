@@ -115,6 +115,15 @@ const backend = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: backend.invoke }));
 
+// B-086 — `useCompositionSize` (used by `PreviewPane`) now calls the real
+// `@tauri-apps/api/event` `listen()`, which reaches for
+// `window.__TAURI_INTERNALS__` outside jsdom's provided globals. This suite
+// doesn't test that broadcast (see `useCompositionSize`'s own doc/live
+// verification for that) — just needs it to not throw.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
+
 // Imported after the mock is declared (vi.mock is hoisted, so order does not
 // actually matter — keeping it textually first documents the requirement).
 import { useEditorTimelineStore } from './timelineStore';

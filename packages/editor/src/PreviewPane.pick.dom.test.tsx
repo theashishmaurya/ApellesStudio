@@ -89,6 +89,15 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
+// B-086 — `useCompositionSize` (used by `PreviewPane`) now calls the real
+// `@tauri-apps/api/event` `listen()`, which reaches for
+// `window.__TAURI_INTERNALS__` outside jsdom's provided globals. This suite
+// doesn't test that broadcast (see `useCompositionSize`'s own doc/live
+// verification for that) — just needs it to not throw.
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
+
 import { useEditorTimelineStore } from './timelineStore';
 import { PreviewPane } from './PreviewPane';
 import type { Clip, Timeline, Track } from './timeline';
