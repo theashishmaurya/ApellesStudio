@@ -521,7 +521,12 @@ the first time that answer is actually exercised rather than written down.
    today — a custom curve set via MCP round-trips correctly through the GUI and renders correctly
    — but there is no draggable-handle widget, so a human cannot author one from the app. That is a
    real, self-contained UI investment (a small SVG curve editor with two handles), deferred with
-   the model already shaped for it, not blocked by it.
+   the model already shaped for it, not blocked by it. **Note the distinct gap that is now
+   closed:** the missing *duration* affordance — the on-timeline fade handle every reference NLE
+   has, which §7's `set_clip_fade` was always the primitive for ("exactly what a future
+   draggable-handle editor manipulates," §5d) — shipped as **D-207**, so a fade's LENGTH is now
+   authorable by dragging on the clip. What remains deferred here is only the widget for authoring
+   a custom curve SHAPE.
 2. **Not seen in the assembled app.** This sandbox cannot launch the Tauri window — the same
    disclosed constraint every entry since D-125 carries. Every claim here is `cargo test` /
    `vitest` evidence and type-checking, not a demonstration. Specifically unverified by eye: that a

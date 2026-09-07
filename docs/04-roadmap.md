@@ -1228,6 +1228,15 @@ flag itself).
   (`audio::FadeEnvelope`). Inspector section with the four presets, and
   the first two Edit-tab MCP tools (`get_timeline`, `set_clip_fade`). Scoping for the
   whole surface: `docs/notes/audio-fade-duck-crossfade-plan.md`.
+  - ~~**On-timeline fade handles**~~ — **done, D-207 (2026-09-07).** Owner, by
+    screenshot of a reference NLE: the fade "rubber band" and its draggable
+    corner handle, "very common." D-147 shipped the model, both consumers, the
+    op, the MCP tool and the Inspector's numeric field but left the timeline
+    itself with no fade affordance at all — a fade could only be authored by
+    typing a frame count. Every clip now draws both ramps at their real curve
+    shape with a draggable handle at each, committing the same
+    `set_clip_fade` op on pointer-up. `clipFade.ts` (pure) +
+    `ClipFadeOverlay.tsx`.
   - **Custom-curve UI — deferred, not blocked.** The model, evaluator, wire format
     and MCP surface all take arbitrary control points today (an MCP-authored custom
     curve round-trips through the GUI and renders correctly, and the panel reports
