@@ -931,6 +931,18 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     update, and it deserves its own real-output verification, not a rushed addition
     to an unrelated GUI fix. Proposed shape in B-079's own `docs/BUGS.md` entry. Not
     started.
+20. **Timeline-editing feature gaps vs. a comparable competitor** — owner, 2026-09-07,
+    pointed at a competitor's own docs for comparison. Full writeup:
+    `docs/notes/timeline-editing-feature-gap-analysis.md`. Real, confirmed-missing
+    primitives: slip editing, media swapping, blur as a keyframeable param, audio
+    volume keyframes within a clip, markers (point & range), nested timelines
+    (compound clips), a Timeline Index panel (transcript/caption text-navigation —
+    the underlying data now exists via D-189/D-190, just merged), canvas guides
+    (grid/safe-zone overlays, broader than the plain canvas-boundary work in item 18),
+    frame capture (export the current composite as a still). Needs live verification,
+    not confirmed either way: whether "multiple timelines" already works (the data
+    model and a GUI "+" tab control both look like they support it, untested this
+    session). Not started as a build — that note is the comparison, not a build plan.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
