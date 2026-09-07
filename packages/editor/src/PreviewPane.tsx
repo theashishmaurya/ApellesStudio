@@ -53,6 +53,15 @@
  * `<Player>`'s `surface` slot already accepts any ReactNode. No prop drilling
  * needed: it reads the same `useEditorTimelineStore` selection this file
  * does, independently.
+ *
+ * Canvas/composition boundary + settings (D-199,
+ * `docs/notes/preview-canvas-boundary.md`): `<CanvasBoundary>` is a THIRD
+ * sibling in that same stack — always drawn (selection-independent, unlike
+ * `TransformOverlay`), under it in z-order. `<CanvasSettingsPopover>` sits in
+ * the toolbar next to the Inspector toggle; `compSizeVersion` is bumped on a
+ * successful save so `useCompositionSize` refetches immediately rather than
+ * waiting for an unrelated timeline edit (that hook is keyed on `timeline`'s
+ * identity, which a settings write never touches).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -63,6 +72,9 @@ import { Player } from '@chroma/player';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
+import { CanvasBoundary } from './CanvasBoundary';
+import { CanvasSettingsPopover } from './CanvasSettingsPopover';
+import { useCompositionSize } from './useCompositionSize';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -154,6 +166,13 @@ export function PreviewPane() {
   const fps = timelineFps(timeline);
   const duration = timelineDuration(timeline);
   const lastFrame = Math.max(0, duration - 1);
+
+  // D-199 — the canvas/composition boundary overlay's size, selection-
+  // independent (unlike `TransformOverlay`'s per-clip `useClipGeometry`).
+  // `compSizeVersion` forces a refetch right after a `CanvasSettingsPopover`
+  // save, which changes `ProjectSettings` without touching `timeline` at all.
+  const [compSizeVersion, setCompSizeVersion] = useState(0);
+  const compSize = useCompositionSize(!!timeline, compSizeVersion);
 
   const fetchFrame = useCallback(async (frame: number, longEdge: number) => {
     if (inFlight.current) {
@@ -314,7 +333,14 @@ export function PreviewPane() {
     // without an explicit one this would show through to black/transparent
     // outside the player's own content on displays with a different aspect
     // ratio than the video.
-    <div ref={fullscreenRef} className="flex min-h-0 flex-1 flex-col bg-bg-primary">
+    <div ref={fullscreenRef} className="relative flex min-h-0 flex-1 flex-col bg-bg-primary">
+      {/* D-199 — the canvas-size popover's own trigger button is
+          self-positioned (`absolute top-2 right-10`, see that component's
+          doc) against this div's own `relative`, the same pattern
+          `EditorTab.tsx`'s Inspector toggle uses against ITS `relative`
+          wrapper one level up. Rendered here (not `EditorTab.tsx`) because
+          only this component owns `compSizeVersion`/`useCompositionSize`. */}
+      <CanvasSettingsPopover onSaved={() => setCompSizeVersion((v) => v + 1)} />
       <Player
         title="Timeline"
         muted={muted}
@@ -341,6 +367,7 @@ export function PreviewPane() {
           ) : frameSrc ? (
             <div ref={surfaceRef} className="relative flex h-full w-full items-center justify-center">
               <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
+              <CanvasBoundary containerRef={surfaceRef} size={compSize} />
               <TransformOverlay containerRef={surfaceRef} />
             </div>
           ) : timeline ? (

@@ -95,6 +95,38 @@ use chroma_types::Rational;
 // in the timeline model should not have to know which crate the type came from.
 pub use chroma_types::fade::{self, FadeCurve, fade_gain};
 
+/// B-079 — mirrors `@chroma/editor/timeline.ts`'s `DEFAULT_FPS`: the project
+/// timebase assumed when [`Timeline::rate`] is unset (or malformed — zero or
+/// negative `num`/`den`). Every pre-D-045 timeline, and every `Timeline`
+/// built directly (a test, [`Timeline::from_shots`]) with no explicit rate,
+/// has silently meant this number on both sides of the app since D-041; the
+/// constant just gives the fact a name instead of leaving `24.0` (or `24`)
+/// spelled out separately at each of the two implementations.
+pub const DEFAULT_FPS: f64 = 24.0;
+
+/// B-079/B-077 — `source_frames` (a quantity in a clip's own **source**
+/// frames — `Clip::duration`/`source_start`) converted to **timeline**
+/// frames at the project's `fps`, via `source_fps` (falling back to `fps`
+/// itself — a 1:1 ratio — when absent or non-positive: the same
+/// conservative "don't invent a number" reading `Clip::source_fps`'s own doc
+/// already commits to). Exact mirror of `@chroma/editor/timeline.ts`'s
+/// `sourceFramesToTimeline` — same formula, same `round()` — so this crate's
+/// live playback/preview path and the TS GUI/MCP edit-model path can never
+/// resolve a mixed-native-fps clip's real timeline footprint differently.
+pub fn source_frames_to_timeline(source_fps: Option<f64>, source_frames: i64, fps: f64) -> i64 {
+    let src_fps = source_fps.filter(|f| *f > 0.0).unwrap_or(fps);
+    ((source_frames as f64 * fps) / src_fps).round() as i64
+}
+
+/// The reverse of [`source_frames_to_timeline`] — how many of a clip's own
+/// native **source** frames a span of `timeline_frames` timeline frames
+/// corresponds to. Mirrors `@chroma/editor/timeline.ts`'s
+/// `timelineFramesToSource`.
+pub fn timeline_frames_to_source(source_fps: Option<f64>, timeline_frames: i64, fps: f64) -> i64 {
+    let src_fps = source_fps.filter(|f| *f > 0.0).unwrap_or(fps);
+    ((timeline_frames as f64 * src_fps) / fps).round() as i64
+}
+
 /// The whole edit — every track, top to bottom.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Timeline {
@@ -335,23 +367,30 @@ fn legacy_missing_start() -> i64 {
 /// SOURCE frames only equals `start_frame`'s TIMELINE frames when a clip's
 /// native rate happens to equal the project's — true for ordinary same-fps
 /// footage, false the moment two sources at two different native rates share
-/// one timeline. `source_fps` (below) is the fact that closes that gap, but
-/// **this crate's own frame-resolution methods do not consume it yet**
-/// (`Clip::end_frame`, `Track::clip_at`/`clip_spans_from`/`duration`, and
-/// every editing op in `impl Timeline`/`impl Track` still add `start_frame`
-/// and `duration` directly, exactly the B-077 conflation) — B-077's real fix
-/// landed in `@chroma/editor`'s `timeline.ts`, the layer that actually
-/// mutates a live timeline (every edit, GUI or MCP, goes through
-/// `applyOp`+`chroma_timeline_set`; this crate's own `trim_start`/`trim_end`/
-/// `split`/`move_clip` are unreachable from the running app today — see
-/// B-079). The field is declared here so it **persists** through a
+/// one timeline. `source_fps` (below) is the fact that closes that gap.
+///
+/// **B-079 — fixed.** This crate's own LIVE frame-resolution methods
+/// (`Clip::end_frame_at`, `Track::clip_at`/`clip_spans_from`/`duration`, and
+/// by extension `Timeline::duration`/`resolve_video_clip_at`/
+/// `resolve_visible_video_layers_at`) now convert through `source_fps` via
+/// [`source_frames_to_timeline`]/[`timeline_frames_to_source`] before
+/// combining a `start_frame`-space position with a `duration`/`source_start`-
+/// space quantity — the same "convert at every consumption site" fix B-077/
+/// D-194 already gave `@chroma/editor`'s `timeline.ts`, chosen again here for
+/// the identical reasoning (see D-194 in `docs/08-decisions.md`, and the new
+/// D-NNN this fix adds). **The plain, fps-naive `Clip::end_frame`/
+/// `Track::gap_at`(without an `fps` arg) pairing is deliberately UNCHANGED**
+/// and stays that way: this crate's own `trim_start`/`trim_end`/`split`/
+/// `move_clip` editing ops are confirmed unreachable from the running app
+/// (every real edit, GUI or MCP, goes through `@chroma/editor`'s `applyOp` +
+/// `chroma_timeline_set` instead) — see `Clip::end_frame`'s own doc for the
+/// exact boundary. The field is declared here so it **persists** through a
 /// `chroma_timeline_set`/`_get` round trip (Tauri's IPC deserializes a
 /// command's JSON argument straight into this struct — an undeclared field
 /// would be silently dropped, re-breaking B-075/B-077 on the very first save)
 /// and is available to Rust code that DOES already need it
-/// (`chroma::edit`/`chroma::audio`'s real-time playback/decode path — B-079
-/// tracks bringing that path's own `end_frame`-style arithmetic up to the
-/// same standard).
+/// (`chroma::edit`/`chroma::audio`'s real-time playback/decode path — now
+/// fixed to use it, see this doc's own "B-079 — fixed" section above).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     /// Stable id — survives reorder / trim; a `split` gives the new half a
@@ -738,15 +777,37 @@ impl Clip {
         self.source_len.max(0)
     }
 
-    /// The exclusive upper bound of this clip's occupied timeline range.
+    /// The exclusive upper bound of this clip's occupied timeline range —
+    /// **fps-naive**: plain `start_frame + duration`, correct only when this
+    /// clip's native rate equals the project's (`source_fps` absent, or
+    /// equal to the timeline's own `fps`) — the B-077/B-079 conflation.
     ///
-    /// `pub` (D-130): `chroma::audio` needs a clip's out-point to know where a
-    /// source must stop contributing to the mix, and `chroma::edit` needs it to
-    /// report that out-point. Both would otherwise re-spell
-    /// `start_frame + duration` at the call site, which is exactly the
-    /// arithmetic this type exists to own.
+    /// **Kept only for this crate's own `trim_start`/`trim_end`/`split`/
+    /// `move_clip`/`remove_gap` editing ops** (D-130's original reason: both
+    /// would otherwise re-spell `start_frame + duration` at the call site),
+    /// **confirmed unreachable from the running app** (B-079 — every real
+    /// edit, GUI or MCP, goes through `@chroma/editor`'s `applyOp` +
+    /// `chroma_timeline_set` instead, never these ops directly). Changing
+    /// dead code's arithmetic would be unverifiable churn, so it stays
+    /// exactly as it always has.
+    ///
+    /// **Every LIVE consumer must use [`Self::end_frame_at`] instead** —
+    /// `chroma::edit`'s compositor/preview-decode path and `chroma::audio`'s
+    /// mixer both do, as of B-079's fix.
     pub fn end_frame(&self) -> i64 {
         self.start_frame + self.duration
+    }
+
+    /// B-079 — the fps-aware equivalent of [`Self::end_frame`]: converts
+    /// `duration` (this clip's own SOURCE frames) into TIMELINE frames via
+    /// [`source_frames_to_timeline`] before adding it to `start_frame`,
+    /// exactly `@chroma/editor/timeline.ts`'s `endFrame` (B-077/D-194).
+    /// Identical to `end_frame()` whenever `source_fps` is absent or equals
+    /// `fps` — every existing same-native-fps project computes the same
+    /// number either way, so this is a strict widening, not a behavior
+    /// change for the common case.
+    pub fn end_frame_at(&self, fps: f64) -> i64 {
+        self.start_frame + source_frames_to_timeline(self.source_fps, self.duration, fps)
     }
 
     /// D-147 — this clip's fade multiplier `frames_into_clip` frames after its
@@ -1040,9 +1101,26 @@ impl Timeline {
         }
     }
 
+    /// B-079 — the project's own timebase, in frames/second:
+    /// `rate.num/rate.den` when both are positive, else [`DEFAULT_FPS`].
+    /// Exact mirror of `@chroma/editor/timeline.ts`'s `timelineFps` — the one
+    /// place a Rust-side consumer that needs a clip's real (fps-converted)
+    /// timeline footprint gets the project's own rate from.
+    pub fn fps(&self) -> f64 {
+        match &self.rate {
+            Some(r) if r.num > 0 && r.den > 0 => r.num as f64 / r.den as f64,
+            _ => DEFAULT_FPS,
+        }
+    }
+
     /// Total timeline length in frames — the longest track.
     pub fn duration(&self) -> i64 {
-        self.tracks.iter().map(Track::duration).max().unwrap_or(0)
+        let fps = self.fps();
+        self.tracks
+            .iter()
+            .map(|t| t.duration(fps))
+            .max()
+            .unwrap_or(0)
     }
 
     /// Resolve timeline position `pos` under **opaque, top-track-wins**
@@ -1066,11 +1144,12 @@ impl Timeline {
     /// caller report/log which track actually won, though nothing in this
     /// crate needs it for the resolution itself.
     pub fn resolve_video_clip_at(&self, pos: i64) -> Option<(usize, &Clip, i64)> {
+        let fps = self.fps();
         self.tracks
             .iter()
             .enumerate()
             .filter(|(_, t)| t.kind == TrackKind::Video)
-            .find_map(|(i, t)| t.clip_at(pos).map(|(c, sf)| (i, c, sf)))
+            .find_map(|(i, t)| t.clip_at(pos, fps).map(|(c, sf)| (i, c, sf)))
     }
 
     /// D-082 (Phase B3) — the multi-layer generalization of
@@ -1090,11 +1169,12 @@ impl Timeline {
     /// "gap = nothing here, not an error" contract every other resolver in
     /// this crate already has.
     pub fn resolve_visible_video_layers_at(&self, pos: i64) -> Vec<(usize, &Clip, i64)> {
+        let fps = self.fps();
         self.tracks
             .iter()
             .enumerate()
             .filter(|(_, t)| t.kind == TrackKind::Video && !t.hidden)
-            .filter_map(|(i, t)| t.clip_at(pos).map(|(c, sf)| (i, c, sf)))
+            .filter_map(|(i, t)| t.clip_at(pos, fps).map(|(c, sf)| (i, c, sf)))
             .collect()
     }
 
@@ -1949,8 +2029,19 @@ impl Track {
     /// Length of this track in frames — the furthest clip end, since clips
     /// may now (D-054) leave a trailing gap before the track's nominal end,
     /// and there's nothing to render past the last clip either way.
-    pub fn duration(&self) -> i64 {
-        self.clips.iter().map(Clip::end_frame).max().unwrap_or(0)
+    ///
+    /// B-079 — `fps` is the project's own [`Timeline::fps`]: a clip's real
+    /// timeline footprint depends on its own `source_fps` against that rate
+    /// ([`Clip::end_frame_at`]), not the fps-naive [`Clip::end_frame`] this
+    /// used before the fix (identical result whenever every clip's native
+    /// rate matches the project's — the common case — so this is a strict
+    /// widening).
+    pub fn duration(&self, fps: f64) -> i64 {
+        self.clips
+            .iter()
+            .map(|c| c.end_frame_at(fps))
+            .max()
+            .unwrap_or(0)
     }
 
     /// The clip covering `timeline_frame` and the matching **source** frame
@@ -1958,14 +2049,34 @@ impl Track {
     /// or (D-054) lands inside a gap between clips — the same "nothing here"
     /// result for all three, which is what every caller (the preview decode
     /// path) already treats identically.
-    pub fn clip_at(&self, timeline_frame: i64) -> Option<(&Clip, i64)> {
+    ///
+    /// B-079 — `fps` (the project's own [`Timeline::fps`]) makes both halves
+    /// of this fps-aware: the boundary check uses [`Clip::end_frame_at`], and
+    /// the returned source frame converts the TIMELINE-frame offset into the
+    /// clip's own SOURCE frames via [`timeline_frames_to_source`], instead of
+    /// the pre-fix `source_start + (timeline_frame - start_frame)` raw
+    /// addition (only correct when a clip's native rate equals the
+    /// project's). Every real call site (`chroma::edit`'s video decode,
+    /// `chroma::audio`'s audio-clip lookup) already has a `Timeline` in
+    /// scope to read `fps` from.
+    pub fn clip_at(&self, timeline_frame: i64, fps: f64) -> Option<(&Clip, i64)> {
         if timeline_frame < 0 {
             return None;
         }
         self.clips
             .iter()
-            .find(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame())
-            .map(|c| (c, c.source_start + (timeline_frame - c.start_frame)))
+            .find(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame_at(fps))
+            .map(|c| {
+                (
+                    c,
+                    c.source_start
+                        + timeline_frames_to_source(
+                            c.source_fps,
+                            timeline_frame - c.start_frame,
+                            fps,
+                        ),
+                )
+            })
     }
 
     /// D-149 — the `[start, end)` timeline-frame spans this track's clips
@@ -1992,11 +2103,17 @@ impl Track {
     /// is bookkeeping only) — same discipline [`Self::clip_at`] and
     /// [`Self::gap_at`] already follow. Zero-or-negative-length clips are
     /// skipped: they cover no frame, so they trigger nothing.
-    pub fn clip_spans_from(&self, from_frame: i64) -> Vec<(i64, i64)> {
+    ///
+    /// B-079 — `fps` (the project's own [`Timeline::fps`]) routes the end
+    /// bound through [`Clip::end_frame_at`] rather than the fps-naive
+    /// [`Clip::end_frame`]: a duck trigger span for a mixed-native-fps clip
+    /// used to end at the wrong timeline frame, early or late depending on
+    /// whether its native rate is faster or slower than the project's.
+    pub fn clip_spans_from(&self, from_frame: i64, fps: f64) -> Vec<(i64, i64)> {
         let mut spans: Vec<(i64, i64)> = self
             .clips
             .iter()
-            .map(|c| (c.start_frame.max(from_frame), c.end_frame()))
+            .map(|c| (c.start_frame.max(from_frame), c.end_frame_at(fps)))
             .filter(|(s, e)| e > s)
             .collect();
         spans.sort_unstable();
@@ -2022,7 +2139,18 @@ impl Track {
     /// Vec order is bookkeeping only) — this is correct regardless of
     /// storage order, same discipline `clip_at` already follows.
     pub fn gap_at(&self, timeline_frame: i64) -> Option<(i64, i64)> {
-        if timeline_frame < 0 || self.clip_at(timeline_frame).is_some() {
+        // B-079 — deliberately fps-naive, paired with the plain
+        // `Clip::end_frame` this function already uses below (not
+        // `self.clip_at`, which takes an `fps` argument as of B-079's fix):
+        // `remove_gap` (this method's only caller) is one of this crate's
+        // confirmed-unreachable-from-the-running-app editing ops, so it stays
+        // exactly as it always has rather than inventing an `fps` value
+        // nothing real can supply it. See `Clip::end_frame`'s own doc.
+        let in_a_clip = self
+            .clips
+            .iter()
+            .any(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame());
+        if timeline_frame < 0 || in_a_clip {
             return None;
         }
         let gap_start = self
@@ -2207,31 +2335,31 @@ mod tests {
         let t = Timeline::from_shots(&shots());
         let tr = &t.tracks[0];
         assert_eq!(
-            tr.clip_at(0).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(0, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("A", 0))
         );
         assert_eq!(
-            tr.clip_at(99).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(99, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("A", 99))
         );
         assert_eq!(
-            tr.clip_at(100).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(100, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("B", 0))
         );
         assert_eq!(
-            tr.clip_at(149).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(149, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("B", 49))
         );
         assert_eq!(
-            tr.clip_at(150).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(150, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("C", 0))
         );
         assert_eq!(
-            tr.clip_at(349).map(|(c, f)| (c.name.as_str(), f)),
+            tr.clip_at(349, 24.0).map(|(c, f)| (c.name.as_str(), f)),
             Some(("C", 199))
         );
-        assert!(tr.clip_at(350).is_none());
-        assert!(tr.clip_at(-1).is_none());
+        assert!(tr.clip_at(350, 24.0).is_none());
+        assert!(tr.clip_at(-1, 24.0).is_none());
     }
 
     /// D-054: a query landing inside a gap between two clips returns `None`,
@@ -2265,11 +2393,17 @@ mod tests {
             ..Default::default()
         });
         let tr = &t.tracks[0];
-        assert_eq!(tr.clip_at(49).map(|(c, _)| c.name.as_str()), Some("A"));
-        assert!(tr.clip_at(50).is_none(), "right at the gap's start");
-        assert!(tr.clip_at(75).is_none(), "middle of the gap");
-        assert!(tr.clip_at(99).is_none(), "right before the gap ends");
-        assert_eq!(tr.clip_at(100).map(|(c, _)| c.name.as_str()), Some("B"));
+        assert_eq!(
+            tr.clip_at(49, 24.0).map(|(c, _)| c.name.as_str()),
+            Some("A")
+        );
+        assert!(tr.clip_at(50, 24.0).is_none(), "right at the gap's start");
+        assert!(tr.clip_at(75, 24.0).is_none(), "middle of the gap");
+        assert!(tr.clip_at(99, 24.0).is_none(), "right before the gap ends");
+        assert_eq!(
+            tr.clip_at(100, 24.0).map(|(c, _)| c.name.as_str()),
+            Some("B")
+        );
         assert_eq!(
             t.duration(),
             150,
@@ -2308,7 +2442,7 @@ mod tests {
     fn clip_spans_from_returns_sorted_spans_regardless_of_vec_order() {
         let tr = track_with_clips(&[(0, 50), (100, 50), (200, 25)]);
         assert_eq!(
-            tr.clip_spans_from(0),
+            tr.clip_spans_from(0, 24.0),
             vec![(0, 50), (100, 150), (200, 225)],
             "sorted by position, not by Vec order"
         );
@@ -2322,12 +2456,12 @@ mod tests {
     fn clip_spans_from_merges_abutting_clips_but_not_gapped_ones() {
         let abutting = track_with_clips(&[(0, 50), (50, 50), (100, 50)]);
         assert_eq!(
-            abutting.clip_spans_from(0),
+            abutting.clip_spans_from(0, 24.0),
             vec![(0, 150)],
             "three back-to-back clips are one continuous stretch of sound"
         );
         let gapped = track_with_clips(&[(0, 50), (60, 50)]);
-        assert_eq!(gapped.clip_spans_from(0), vec![(0, 50), (60, 110)]);
+        assert_eq!(gapped.clip_spans_from(0, 24.0), vec![(0, 50), (60, 110)]);
     }
 
     #[test]
@@ -2336,18 +2470,18 @@ mod tests {
         // Mid-clip: the span reaching back before the playhead is truncated,
         // which is what tells the envelope "already triggered when Play was
         // pressed" rather than "triggers at frame 25".
-        assert_eq!(tr.clip_spans_from(25), vec![(25, 50), (100, 150)]);
+        assert_eq!(tr.clip_spans_from(25, 24.0), vec![(25, 50), (100, 150)]);
         // Entirely past the first clip: it contributes nothing.
-        assert_eq!(tr.clip_spans_from(60), vec![(100, 150)]);
+        assert_eq!(tr.clip_spans_from(60, 24.0), vec![(100, 150)]);
         // Past everything.
-        assert_eq!(tr.clip_spans_from(500), Vec::new());
+        assert_eq!(tr.clip_spans_from(500, 24.0), Vec::new());
     }
 
     #[test]
     fn clip_spans_from_ignores_zero_length_clips_and_an_empty_track() {
-        assert_eq!(track_with_clips(&[]).clip_spans_from(0), Vec::new());
+        assert_eq!(track_with_clips(&[]).clip_spans_from(0, 24.0), Vec::new());
         assert_eq!(
-            track_with_clips(&[(0, 0), (10, 20)]).clip_spans_from(0),
+            track_with_clips(&[(0, 0), (10, 20)]).clip_spans_from(0, 24.0),
             vec![(10, 30)],
             "a clip covering no frame triggers nothing"
         );
@@ -2414,9 +2548,12 @@ mod tests {
         assert_eq!(before, after, "no clip moved in time");
         // clip_at results are therefore unchanged too
         let tr = &t.tracks[0];
-        assert_eq!(tr.clip_at(0).map(|(c, _)| c.name.clone()), Some("A".into()));
         assert_eq!(
-            tr.clip_at(150).map(|(c, _)| c.name.clone()),
+            tr.clip_at(0, 24.0).map(|(c, _)| c.name.clone()),
+            Some("A".into())
+        );
+        assert_eq!(
+            tr.clip_at(150, 24.0).map(|(c, _)| c.name.clone()),
             Some("C".into())
         );
         assert_eq!(t.reorder(0, 5, 0), Err(TimelineError::BadIndex(5)));
@@ -2459,7 +2596,7 @@ mod tests {
             "end frame unaffected by a head trim"
         );
         assert!(
-            t.tracks[0].clip_at(110).is_none(),
+            t.tracks[0].clip_at(110, 24.0).is_none(),
             "the new gap between A's end (100) and B's new start (120)"
         );
     }
@@ -2583,7 +2720,7 @@ mod tests {
         // would have collapsed this to 300; flagged in D-054).
         assert_eq!(t.duration(), 350);
         assert!(
-            t.tracks[0].clip_at(120).is_none(),
+            t.tracks[0].clip_at(120, 24.0).is_none(),
             "B's old slot [100,150) is now a gap"
         );
         assert_eq!(t.remove(0, 9), Err(TimelineError::NoSuchClip(9, 0)));
@@ -2605,9 +2742,9 @@ mod tests {
             .collect();
         assert_eq!(names_and_starts, vec![("A".into(), 0), ("C".into(), 100)]);
         assert_eq!(t.duration(), 300, "the whole gap's 50 frames are gone");
-        assert!(t.tracks[0].clip_at(50).is_some(), "A untouched");
+        assert!(t.tracks[0].clip_at(50, 24.0).is_some(), "A untouched");
         assert!(
-            t.tracks[0].clip_at(120).is_some(),
+            t.tracks[0].clip_at(120, 24.0).is_some(),
             "what used to be inside the gap is now inside C, shifted left"
         );
     }
@@ -2794,7 +2931,7 @@ mod tests {
             "still 3 clips, just repositioned"
         );
         assert!(
-            t.tracks[0].clip_at(0).is_none(),
+            t.tracks[0].clip_at(0, 24.0).is_none(),
             "A's old slot is now a gap"
         );
         let a = t.tracks[0].clips.iter().find(|c| c.name == "A").unwrap();
@@ -3021,7 +3158,9 @@ mod tests {
     fn resolve_video_clip_at_matches_single_track_behavior() {
         let t = Timeline::from_shots(&shots());
         for pos in [0i64, 99, 100, 149, 150, 349, 350, -1] {
-            let via_track = t.tracks[0].clip_at(pos).map(|(c, sf)| (c.name.clone(), sf));
+            let via_track = t.tracks[0]
+                .clip_at(pos, 24.0)
+                .map(|(c, sf)| (c.name.clone(), sf));
             let via_resolve = t
                 .resolve_video_clip_at(pos)
                 .map(|(idx, c, sf)| (idx, c.name.clone(), sf));
@@ -4190,5 +4329,137 @@ mod tests {
         assert_eq!(t.tracks[0].clips[0].link_group, None);
         assert_eq!(t.tracks[1].clips[0].link_group, None);
         assert!(t.link_group_members(&group).is_empty());
+    }
+
+    // ----------------------------------------------------------------- //
+    // B-079 — mixed native-fps clips on the LIVE playback path
+    // (`Track::clip_at`/`clip_spans_from`/`duration`, `Clip::end_frame_at`).
+    // Same repro numbers/style as `@chroma/editor/timeline.test.ts`'s own
+    // "B-077 — mixed native-fps clips" block (B-077/D-194): a clip at
+    // 48fps on a 24fps timeline — every 1 timeline frame is 2 of the
+    // clip's own source frames, and every 1 source frame is 0.5 timeline
+    // frames — chosen for exact, non-rounded expected numbers.
+    // ----------------------------------------------------------------- //
+    mod b079_mixed_native_fps {
+        use super::*;
+
+        fn mixed_fps_clip(id: &str, start_frame: i64, duration_source_frames: i64) -> Clip {
+            Clip {
+                id: id.into(),
+                name: id.into(),
+                source_path: format!("/{id}.mp4"),
+                source_start: 0,
+                duration: duration_source_frames,
+                source_len: duration_source_frames,
+                source_fps: Some(48.0),
+                start_frame,
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn end_frame_at_converts_source_duration_through_source_fps() {
+            // 96 source frames at 48fps = 2s = 48 timeline frames at 24fps.
+            let c = mixed_fps_clip("a", 0, 96);
+            assert_eq!(c.end_frame_at(24.0), 48);
+            // The plain, fps-naive accessor is UNCHANGED (dead-ops-only) —
+            // it must still add the two numbers raw, on purpose.
+            assert_eq!(c.end_frame(), 96);
+        }
+
+        #[test]
+        fn end_frame_at_is_the_identity_when_source_fps_equals_the_timeline_fps() {
+            let mut c = mixed_fps_clip("a", 10, 100);
+            c.source_fps = Some(24.0);
+            assert_eq!(c.end_frame_at(24.0), c.end_frame());
+        }
+
+        #[test]
+        fn end_frame_at_falls_back_to_a_1to1_ratio_when_source_fps_is_absent() {
+            let mut c = mixed_fps_clip("a", 10, 100);
+            c.source_fps = None;
+            assert_eq!(c.end_frame_at(24.0), c.end_frame());
+        }
+
+        #[test]
+        fn track_clip_at_resolves_the_correct_source_frame_for_a_48fps_clip_on_a_24fps_timeline() {
+            let tr = Track {
+                kind: TrackKind::Video,
+                clips: vec![mixed_fps_clip("a", 0, 96)],
+                ..Default::default()
+            };
+            // 10 timeline frames in = 20 of the clip's own 48fps source frames.
+            assert_eq!(
+                tr.clip_at(10, 24.0).map(|(c, sf)| (c.name.as_str(), sf)),
+                Some(("a", 20))
+            );
+            // Still covers the position right up to (but not past) its
+            // fps-converted 48-timeline-frame end.
+            assert!(tr.clip_at(47, 24.0).is_some());
+            assert!(
+                tr.clip_at(48, 24.0).is_none(),
+                "past the fps-converted end — the pre-fix plain end_frame() \
+                 (96) would have wrongly kept this clip \"active\" until \
+                 timeline frame 96"
+            );
+        }
+
+        #[test]
+        fn track_duration_uses_the_fps_converted_end_not_the_raw_source_frame_count() {
+            let tr = Track {
+                kind: TrackKind::Video,
+                clips: vec![mixed_fps_clip("a", 0, 96)],
+                ..Default::default()
+            };
+            assert_eq!(
+                tr.duration(24.0),
+                48,
+                "96 native-fps source frames at 48fps is 48 timeline frames at 24fps"
+            );
+        }
+
+        #[test]
+        fn clip_spans_from_reports_the_fps_converted_span() {
+            let tr = Track {
+                kind: TrackKind::Video,
+                clips: vec![mixed_fps_clip("a", 10, 96)],
+                ..Default::default()
+            };
+            assert_eq!(tr.clip_spans_from(0, 24.0), vec![(10, 58)]);
+        }
+
+        #[test]
+        fn timeline_fps_reads_the_rate_field_and_falls_back_to_default() {
+            let mut t = Timeline::default();
+            assert_eq!(t.fps(), DEFAULT_FPS, "no rate set — the project default");
+            t.rate = Some(chroma_types::Rational { num: 30, den: 1 });
+            assert_eq!(t.fps(), 30.0);
+            t.rate = Some(chroma_types::Rational { num: 0, den: 1 });
+            assert_eq!(
+                t.fps(),
+                DEFAULT_FPS,
+                "a malformed rate (zero num) falls back rather than dividing by/into zero"
+            );
+        }
+
+        #[test]
+        fn resolve_visible_video_layers_at_resolves_a_mixed_fps_layer_at_the_correct_source_frame()
+        {
+            let mut t = Timeline {
+                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                ..Default::default()
+            };
+            t.tracks.push(Track {
+                kind: TrackKind::Video,
+                clips: vec![mixed_fps_clip("a", 0, 96)],
+                ..Default::default()
+            });
+            let layers = t.resolve_visible_video_layers_at(10);
+            assert_eq!(layers.len(), 1);
+            assert_eq!(
+                layers[0].2, 20,
+                "same fps-converted source frame clip_at gives directly"
+            );
+        }
     }
 }

@@ -22,6 +22,15 @@ export { EditorTab } from './EditorTab';
  *  pointer-gesture check) without reaching past this package's public API to
  *  do it. */
 export { TimelinePane } from './TimelinePane';
+/** D-199 — the same D-142 precedent as `TimelinePane` above, extended to the
+ *  preview pane: `app/harness.html`'s isolated browser harness mounts this
+ *  to drive real-layout/real-paint checks of the canvas-boundary overlay and
+ *  on-canvas transform handles (server-composited pixels themselves are
+ *  proven separately, through the real Rust `timeline_frame` code path — see
+ *  `docs/notes/preview-canvas-boundary.md` — the harness's job is the React
+ *  layer: does the returned frame render, does the boundary land in the
+ *  right place, does dragging commit). */
+export { PreviewPane } from './PreviewPane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';

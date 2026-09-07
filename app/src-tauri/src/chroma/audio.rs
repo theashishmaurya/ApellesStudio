@@ -130,6 +130,11 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     };
 
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
+    // B-079 — the active timeline's own rate, for every `end_frame_at(fps)`
+    // out-point below (fps-naive `end_frame()` before this fix). A cheap
+    // extra manifest read (see `timeline_fps`'s own doc) rather than
+    // widening `resolve_video_position`/`resolve_audio_track_positions`.
+    let fps = super::edit::timeline_fps()?;
 
     if let Some((track_index, clip, source_frame, info)) =
         super::edit::resolve_video_position(start_frame)?
@@ -157,8 +162,11 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         } else if info.has_audio {
             // How much of this clip is still ahead of the playhead, in the
             // clip's own frame space — the out-point past which this source
-            // must fall silent (B-048).
-            let remaining_frames = (clip.end_frame() - start_frame as i64).max(0) as u64;
+            // must fall silent (B-048). B-079 — `end_frame_at(fps)`, not the
+            // fps-naive `end_frame()`: a mixed-native-fps clip's real
+            // out-point depends on its own `source_fps` against the
+            // timeline's rate.
+            let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
             sources.push(AudioSourceSpec {
                 path: PathBuf::from(&clip.source_path),
                 start_secs: info.frame_to_secs(source_frame),
@@ -186,18 +194,22 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         }
     }
 
-    for (track_index, clip, info, gain) in super::edit::resolve_audio_track_positions(start_frame)?
+    for (track_index, clip, source_frame, info, gain) in
+        super::edit::resolve_audio_track_positions(start_frame)?
     {
-        // Where in the clip the playhead is, and how much of it is still
-        // ahead — the same two derivations the embedded-audio baseline above
-        // makes, now made once here for an audio-track clip too rather than
-        // inside the resolver (D-147; see `resolve_audio_track_positions`).
+        // B-079 — `source_frame` is now `resolve_audio_track_positions`'s own
+        // fps-correct `Track::clip_at` result (passed through, no longer
+        // discarded), not a second, fps-naive `clip.source_start +
+        // elapsed_frames` re-derivation at this call site — that
+        // re-derivation, applied to a mixed-native-fps clip, was the bug.
+        // `elapsed_frames` stays a plain TIMELINE-frame difference (both
+        // operands already share that unit) — only `fade_for_clip` below
+        // still needs it.
         let elapsed_frames = start_frame as i64 - clip.start_frame;
-        let source_frame = clip.source_start + elapsed_frames;
-        let remaining_frames = (clip.end_frame() - start_frame as i64).max(0) as u64;
+        let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
         sources.push(AudioSourceSpec {
             path: PathBuf::from(&clip.source_path),
-            start_secs: info.frame_to_secs(source_frame.max(0) as u64),
+            start_secs: info.frame_to_secs(source_frame),
             duration_secs: Some(info.frame_to_secs(remaining_frames)),
             gain,
             // D-147 — an audio clip's fade is a gain fade, the direct

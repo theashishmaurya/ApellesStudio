@@ -1077,14 +1077,62 @@ status: fixed (2026-09-07, D-194) · severity: high (every displayed clip/timeli
 - **verification:** `npm test --workspace @chroma/editor` — 335/335 (was 324; 11 new tests in a `B-077 — mixed native-fps clips` block, pinning the exact live repro numbers and a clean 48fps-on-24fps ratio for `add_clip`/`move` ripple, `computeInsertion`/`gapAt`/`clipAt`, and `trim_start`/`trim_end`/`split`). `npx tsc --noEmit -p packages/editor` clean. `cargo test -p chroma-timeline` 129/129 (128 pre-existing + 1 new, pinning `source_fps`'s serde round trip).
 
 ## B-079 — The live Rust playback/preview engine (`Track::clip_at`, `clip_spans_from`, `Track::duration`, and `chroma::audio.rs`'s inline position math) has the SAME `duration`/`start_frame` unit conflation as B-075/B-077 — found during that audit, not fixed
-status: open · severity: medium-high (a mixed-native-fps clip's actual video scrub/preview frame, audio decode length, duck-envelope timing, and the timeline-switcher's displayed duration are all wrong TODAY, independently of B-077's GUI-edit-model fix — this is a real, reachable defect on the live playback path, not a hypothetical) · area: `crates/chroma-timeline/src/lib.rs` (`Track::clip_at`, `Track::clip_spans_from`, `Track::duration`, `Clip::end_frame`), `app/src-tauri/src/chroma/edit.rs` (`chroma_timeline_frame`/`timeline_frame`, `resolve_track_duck`), `app/src-tauri/src/chroma/audio.rs` (`chroma_audio_play`)
+status: fixed (2026-09-07, D-200) · severity: medium-high (a mixed-native-fps clip's actual video scrub/preview frame, audio decode length, duck-envelope timing, and the timeline-switcher's displayed duration were all wrong, independently of B-077's GUI-edit-model fix — a real, reachable defect on the live playback path, not a hypothetical — plausibly the root cause, or a contributing cause, of the SAME session's separately-reported "live preview shows the AFTER clip full-bleed instead of stacked with BEFORE" — see D-199/`docs/notes/preview-canvas-boundary.md`) · area: `crates/chroma-timeline/src/lib.rs` (`Track::clip_at`, `Track::clip_spans_from`, `Track::duration`, `Clip::end_frame`), `app/src-tauri/src/chroma/edit.rs` (`chroma_timeline_frame`/`timeline_frame`, `resolve_track_duck`, `resolve_audio_track_positions`), `app/src-tauri/src/chroma/audio.rs` (`chroma_audio_play`)
 - **found:** 2026-09-07, live, during the B-077 audit — checking "does the live Rust preview/scrubbing path need the same fix" (as instructed) surfaced that it does, and that the defect is broader than just the preview: `Track::clip_at(&self, timeline_frame: i64) -> Option<(&Clip, i64)>` computes `(c, c.source_start + (timeline_frame - c.start_frame))` — the identical B-075/B-077 conflation, with no `source_fps` conversion — and is used by BOTH `chroma_timeline_frame`'s video-preview decode path (`resolve_visible_video_layers_at`/`resolve_video_clip_at`) AND `chroma::audio.rs`'s own audio-clip-at-playhead lookup (`chroma_audio_play`, line ~288). `Track::clip_spans_from` (the duck-envelope trigger boundaries) and `Track::duration` (the `chroma_timeline_list`/`TimelineSummary` display the timeline switcher shows) both call `Clip::end_frame()` — same plain `start_frame + duration` addition. `chroma::audio.rs` additionally REIMPLEMENTS the same math inline twice more (`chroma_audio_play`'s embedded-audio and audio-track branches: `source_frame = clip.source_start + elapsed_frames`, `remaining_frames = clip.end_frame() - start_frame`) rather than going through `Track::clip_at`.
 - **repro:** play/scrub a timeline with a clip whose `source_fps` differs from the project's; the decoded video frame, the audio actually heard, its fade/duck timing, and the switcher's displayed duration for that timeline are all computed from the unconverted, wrong `source_frame`/`remaining_frames`.
 - **expected:** the same fps-aware conversion B-077 gave the GUI/MCP edit model (`source_fps ?? timeline_fps`) applied to every one of these Rust-side position lookups.
 - **cause:** this Rust crate's own frame-resolution methods predate `source_fps` entirely (it didn't exist until B-075) and were never revisited once it did — B-077's audit found them but they are OUT OF SCOPE for that pass: unlike the Rust crate's `trim_start`/`trim_end`/`split`/`move_clip` (confirmed dead code — every real edit, GUI or MCP, goes through `@chroma/editor`'s `applyOp` + `chroma_timeline_set`, never these Rust ops directly), `clip_at`/`clip_spans_from`/`Track::duration` ARE on the live path, so this is a real bug, not a documentation nit — it is being filed rather than fixed in the same pass because fixing it correctly means threading a new `timeline_fps: f64` parameter through methods with ~30 existing Rust unit-test call sites, touches the real-time audio mixer's actual sound output (a much higher-stakes surface to change under the same pass as an unrelated GUI fix), and deserves its own focused verification (a real audio/video output diff, not just unit assertions) rather than a rushed addition here.
-- **fix:** not yet — proposed shape: add `Clip::end_frame_at(&self, timeline_fps: f64) -> i64` (fps-aware, using the now-present `source_fps` field B-077 added to the struct) alongside the existing plain `end_frame()` (kept for the confirmed-dead ops, documented as such), thread a `Timeline::fps(&self) -> f64` (mirroring `timeline.ts`'s `timelineFps`) into `Track::clip_at`/`clip_spans_from`/`duration`, update their ~30 test call sites (mechanical — pass `24.0` for every existing same-rate fixture, identical results), and replace `chroma::audio.rs`'s two inline reimplementations with calls to the fixed `Track::clip_at` rather than a third copy of the formula.
-- **a TS mirror found in the same audit, deliberately left matching this bug, not fixed independently:** `packages/editor/src/clipKeyframes.ts::clipSourceFrame` (used live by `EditorInspectorPanel.tsx` to know which `chroma_keyframes` frame the current playhead corresponds to, for the Inspector's keyframe add/update UI) computes `source_start + (playhead - start_frame)` — its own doc says outright it "mirrors `Track::clip_at`'s ... the same value `resolve_clip_transform` receives." Fixing ONLY this TS copy (straightforward — `packages/editor` already has `sourceFramesToTimeline`/`timelineFramesToSource` from B-077) would make the Inspector show/store a keyframe at the CORRECT source frame while Rust's still-wrong `resolve_clip_transform` (fed by this bug's own `Track::clip_at`) interpolates it at a DIFFERENT, wrong frame during actual playback — a new authoring/playback mismatch, worse than the current state where both sides at least agree (wrongly). **`clipSourceFrame` must be fixed in the SAME change as this bug's Rust half, never before it** — noted here so a future fix doesn't "helpfully" patch the TS side alone.
-- **roadmap:** tracked in `docs/04-roadmap.md`'s "Next" queue as a follow-up to this session's B-077 work.
+- **fix (D-200):** added `Timeline::fps(&self) -> f64` (mirrors `timeline.ts`'s
+  `timelineFps` — `rate.num/rate.den` when both positive, else a new
+  `DEFAULT_FPS: f64 = 24.0`) and `source_frames_to_timeline`/
+  `timeline_frames_to_source` (mirror `sourceFramesToTimeline`/
+  `timelineFramesToSource` exactly — same formula, same rounding). Added
+  `Clip::end_frame_at(&self, fps: f64) -> i64` alongside the existing plain
+  `end_frame()` (kept, unchanged, re-documented as "for this crate's own
+  confirmed-dead editing ops only"). `Track::duration`/`clip_at`/`clip_spans_from`
+  all gained an `fps: f64` parameter and route through the new fps-aware
+  arithmetic; `Timeline::duration`/`resolve_video_clip_at`/
+  `resolve_visible_video_layers_at` compute `self.fps()` once and thread it
+  through, with unchanged PUBLIC signatures. `Track::gap_at` (the dead
+  `remove_gap` op's own lookup) is deliberately left fps-naive, paired with the
+  unchanged `end_frame()`. `resolve_audio_track_positions` now returns the
+  SOURCE FRAME `Track::clip_at` already resolves correctly instead of discarding
+  it — its caller, `chroma_audio_play`, used to silently RE-DERIVE it with a
+  second, fps-naive `clip.source_start + elapsed_frames` formula, which is
+  deleted in favor of the resolver's own (now correct) value. Both
+  `remaining_frames` computations in `chroma_audio_play` (embedded-video-audio
+  and audio-track) now use `end_frame_at(fps)`, `fps` from a new
+  `chroma::edit::timeline_fps()` helper. `resolve_track_duck`'s
+  `clip_spans_from` call is fps-corrected too. One incidental call-site fix:
+  `crates/chroma-project/src/manifest.rs`'s `append_media_clip` (Colorist's "add
+  to grading" convenience) needed `Track::duration`'s new `fps` argument.
+- **a TS mirror, fixed in the SAME change as instructed by this entry's own prior
+  note:** `packages/editor/src/clipKeyframes.ts::clipSourceFrame` now takes a
+  `fps: number` parameter and converts via `timelineFramesToSource` (B-077),
+  exactly mirroring `Track::clip_at`'s now-fixed formula — fixed together with
+  the Rust half specifically to avoid the authoring/playback desync this entry
+  warned a TS-only fix would cause. `EditorInspectorPanel.tsx` (the only caller)
+  passes `timelineFps(timeline)`.
+- **verification:** `cargo test -p chroma-timeline` 137/137 (129 pre-existing + 8
+  new, a `b079_mixed_native_fps` test module — `end_frame_at` conversion/
+  identity/fallback, `Track::clip_at`/`duration`/`clip_spans_from` at a clean
+  48fps-on-24fps ratio, `Timeline::fps`'s rate-field/malformed/default cases,
+  `resolve_visible_video_layers_at` resolving a mixed-fps layer end to end).
+  `cargo test -p RapidRAW --lib` 146/146, `cargo test -p chroma-project` 52/52 —
+  every existing fixture in both suites is same-native-fps, where the fix is a
+  strict identity, so no existing expected number changed. `cargo clippy -p
+  chroma-timeline -p RapidRAW --all-targets -D warnings` clean; `chroma-project`
+  has 15 PRE-EXISTING clippy errors (confirmed via `git stash` present in
+  identical count/location on `main`, none touching the one line this pass's
+  `append_media_clip` fix changed) — left alone, not folded into this fix's
+  diff. `cargo fmt --check` confirmed clean on every line this pass added or
+  changed (pre-existing, unrelated drift elsewhere in the same files, confirmed
+  present on `main` before this branch, deliberately
+  left alone — same discipline D-193's own verification note used).
+  `packages/editor`: `clipKeyframes.test.ts`'s new "B-079 — mixed native-fps
+  clips" block (3 tests) + the whole suite at 360/360, `tsc` clean. See D-200
+  for the complete design writeup.
+- **roadmap:** `docs/04-roadmap.md` item 19, closed.
 
 ## B-080 — Switching or creating a timeline while an edit's debounced save is still pending silently drops that edit — never reaches disk, never reachable again in memory either
 

@@ -889,8 +889,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     start/end marker (at minimum the end — start is always 0 today, nothing trims the
     front of the whole timeline yet) to the timeline ruler, matching how a reference
     NLE marks its own sequence out-point. Not started.
-18. **No visible output-canvas/aspect-ratio frame in the Edit-tab preview, and no way
-    to set it from the UI** — owner, 2026-09-07, live, after seeing the reel's own
+18. ✅ **No visible output-canvas/aspect-ratio frame in the Edit-tab preview, and no way
+    to set it from the UI** — done, **D-199** (`docs/notes/preview-canvas-boundary.md`).
+    `CanvasBoundary.tsx` (a selection-independent third sibling in `PreviewPane.tsx`'s
+    overlay stack) + `CanvasSettingsPopover.tsx` (reads/writes `ProjectSettings.width`/
+    `height` via a new `chroma_project_get_settings` alongside the existing
+    `chroma_project_set_settings`). Root-caused first, not assumed: the actual
+    compositor was verified correct (a real two-track red/blue stacking test through
+    the unmodified `timeline_frame` production path) — the report's real causes were
+    (1) **B-079** (same session, fixed in D-200 — a mixed-native-fps clip could drop
+    out of the live composite entirely) and (2) this item's own gap, no boundary/
+    settings surface to notice or diagnose either. Live-verified in a real Chromium
+    tab (D-142 harness, extended to mount `PreviewPane`): boundary renders, settings
+    popover's full round trip works, aspect ratio genuinely reshapes on save.
+    Drag-to-rearrange (uniform move/resize, D-136) verified still working alongside
+    the new overlay, unmodified. Owner, 2026-09-07, live, after seeing the reel's own
     live preview render the AFTER clip full-bleed (native aspect, no visible 9:16
     frame boundary) instead of composited/stacked with BEFORE at all: *"in the UI
     also we have no visual 9:16 ratio for the working canvas we want that — we
@@ -916,21 +929,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     settings surface to read/write `ProjectSettings.width`/`height` after project
     creation (today's likely-only entry point), which is unrelated to `Clip`-level
     fields entirely. Neither touches `Clip.box_width`/`box_height`/`scale` or the
-    Rust/TS export parity story D-193's own decision entry covers. Not started —
-    real, separately-scoped follow-up work, ownership open.
-19. **B-079 — bring `crates/chroma-timeline`'s live playback/preview/audio-decode
+    Rust/TS export parity story D-193's own decision entry covers. **Done — see the
+    ✅ line above.**
+19. ✅ **B-079 — bring `crates/chroma-timeline`'s live playback/preview/audio-decode
     methods up to the same fps-aware standard B-077/D-194 gave the GUI/MCP edit
-    model.** `Track::clip_at` (the video-preview decode AND audio-clip-at-playhead
+    model.** Done, **D-200** (same session as item 18, found to be a real,
+    well-evidenced contributing cause of that item's own "AFTER full-bleed" report).
+    `Track::clip_at` (the video-preview decode AND audio-clip-at-playhead
     lookup), `clip_spans_from` (duck-envelope triggers), `Track::duration` (the
     timeline-switcher display), and two inline reimplementations in
     `chroma::audio.rs` all still add `start_frame`/`pos` to `duration`/`source_start`
     with no `source_fps` conversion — found live during the B-077 audit, confirmed
     reachable (unlike the crate's own `trim_start`/`trim_end`/`split`/`move_clip`,
-    which are dead code today), deliberately not fixed in the same pass: real stakes
-    (the live audio mixer's actual output), ~30 existing Rust unit-test call sites to
-    update, and it deserves its own real-output verification, not a rushed addition
-    to an unrelated GUI fix. Proposed shape in B-079's own `docs/BUGS.md` entry. Not
-    started.
+    which are dead code today). Fixed the same way B-077/D-194 fixed the TS side:
+    `Timeline::fps()` + `source_frames_to_timeline`/`timeline_frames_to_source`,
+    threaded into `Track::duration`/`clip_at`/`clip_spans_from` and every real
+    caller; `packages/editor/src/clipKeyframes.ts::clipSourceFrame` fixed in the
+    SAME change per its own doc comment. `cargo test -p chroma-timeline` 137/137
+    (+8), `cargo test -p RapidRAW --lib` 146/146, `cargo test -p chroma-project`
+    52/52, clippy/fmt clean on touched code. See `docs/BUGS.md`'s B-079 entry and D-200.
 20. **Timeline-editing feature gaps vs. a comparable competitor** — owner, 2026-09-07,
     pointed at a competitor's own docs for comparison. Full writeup:
     `docs/notes/timeline-editing-feature-gap-analysis.md`. ~~Slip editing~~ and

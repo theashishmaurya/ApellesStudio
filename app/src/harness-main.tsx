@@ -66,8 +66,24 @@
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { TimelinePane, TimelineSwitcher, timelineDuration, useEditorTimelineStore, type EditOp, type Timeline } from '@chroma/editor';
+import {
+  PreviewPane,
+  TimelinePane,
+  TimelineSwitcher,
+  timelineDuration,
+  useEditorTimelineStore,
+  type EditOp,
+  type Timeline,
+} from '@chroma/editor';
 import '../src/styles.css';
+
+/** D-199 — which component this page mounts, switchable at runtime via
+ *  `window.__chromaHarness.setMode(...)` or the `?mode=preview` query param
+ *  at load. Defaults to `'timeline'` — every existing consumer of this file
+ *  (D-142's own history) expects `TimelinePane`; `'preview'` is the new,
+ *  additive mode for the canvas-boundary/transform-overlay/drag checks (see
+ *  `docs/notes/preview-canvas-boundary.md`). */
+type HarnessMode = 'timeline' | 'preview';
 
 function setStatus(text: string): void {
   const el = document.getElementById('harness-status');
@@ -118,6 +134,22 @@ let fakeProject: FakeProject = makeFakeProject();
  *  `testUtils/pointerHarness.ts`'s own `createInvokeStub` contract (kept in
  *  sync by hand; this file can't import that vitest-side module directly
  *  since it isn't part of this app's own dependency graph). */
+/** A tiny (16×9, solid mid-gray) JPEG data URL — stands in for a real
+ *  `chroma_timeline_frame` server-composited frame. The harness's job is the
+ *  REACT layer around that frame (does it render, does the boundary/overlay
+ *  land where the geometry says it should, does a drag commit) — the actual
+ *  composited PIXELS are a Rust concern, proven separately through the real
+ *  `timeline_frame` code path (see `docs/notes/preview-canvas-boundary.md`),
+ *  not something this browser-only page can produce without a real backend. */
+const STUB_FRAME =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAJABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+
+/** D-199 — the composition/canvas size a `CanvasSettingsPopover` save writes
+ *  and `useCompositionSize` reads back; a real, if trivial, in-memory model
+ *  (not a fixed constant) so the harness can actually verify a save round
+ *  trips into the boundary overlay resizing. */
+const harnessSettings: { width: number | null; height: number | null } = { width: 1920, height: 1080 };
+
 function installInvokeStub(): void {
   const handlers: Record<string, (args: unknown) => unknown> = {
     chroma_clip_thumbnails: () => [],
@@ -153,17 +185,41 @@ function installInvokeStub(): void {
       if (!fakeProject.timelines.has(id)) throw new Error(`harness: no timeline with id ${id}`);
       fakeProject.activeId = id;
     },
-    // D-198 — `EditorExportDialog`'s own composition-size default fetch
-    // (`chroma_timeline_clip_geometry`, D-193's existing command) and its
-    // "Add to queue" -> `chroma_run_ffmpeg` path, both now reachable from
-    // `TimelinePane`'s own toolbar. A real fixed size (matching this
-    // fixture's own clips' notional aspect) is enough for the dialog to
-    // show real defaults instead of erroring; `chroma_run_ffmpeg` reports a
-    // real-looking success/failure DTO — this harness never actually spawns
-    // ffmpeg, and doesn't need to for a dialog/queue-state pointer-gesture
-    // check (queue transitions are unit-tested for real in
-    // `exportQueueStore.test.ts`; this is for SEEING the dialog/queue).
-    chroma_timeline_clip_geometry: () => ({ compWidth: 1080, compHeight: 1920, naturalWidth: 1, naturalHeight: 1 }),
+    // D-199 — PreviewPane's own decode/geometry/audio/settings commands.
+    // `chroma_timeline_clip_geometry` is also `EditorExportDialog`'s (D-198)
+    // composition-size default fetch — one definition, backed by the same
+    // `harnessSettings` a `CanvasSettingsPopover` save round-trips through,
+    // rather than two harnesses disagreeing about what this command returns.
+    chroma_timeline_frame: () => STUB_FRAME,
+    chroma_timeline_clip_geometry: () => ({
+      compWidth: harnessSettings.width ?? 1920,
+      compHeight: harnessSettings.height ?? 1080,
+      // A 16:9 clip at half the frame's own footprint — big enough to see
+      // and drag, small enough that `TransformOverlay`'s handles clear the
+      // player chrome on a normal-size harness window.
+      naturalWidth: 0.5,
+      naturalHeight: 0.28125,
+    }),
+    chroma_timeline_composition_size: () => ({
+      compWidth: harnessSettings.width ?? 1920,
+      compHeight: harnessSettings.height ?? 1080,
+    }),
+    chroma_project_get_settings: () => ({ width: harnessSettings.width, height: harnessSettings.height }),
+    chroma_project_set_settings: (args) => {
+      const patch = (args as { partial?: { width?: number | null; height?: number | null } })?.partial ?? {};
+      if ('width' in patch) harnessSettings.width = patch.width ?? null;
+      if ('height' in patch) harnessSettings.height = patch.height ?? null;
+      return { ...harnessSettings };
+    },
+    chroma_audio_play: () => undefined,
+    chroma_audio_stop: () => undefined,
+    chroma_audio_set_volume: () => undefined,
+    // D-198 — `EditorExportDialog`'s "Add to queue" -> `chroma_run_ffmpeg`
+    // path, reachable from `TimelinePane`'s own toolbar. A real-looking
+    // success/failure DTO — this harness never actually spawns ffmpeg, and
+    // doesn't need to for a dialog/queue-state pointer-gesture check (queue
+    // transitions are unit-tested for real in `exportQueueStore.test.ts`;
+    // this is for SEEING the dialog/queue).
     chroma_run_ffmpeg: () => ({ ok: true, stdout_tail: '', stderr_tail: '' }),
     'plugin:dialog|save': () => '/tmp/harness-export.mp4',
   };
@@ -231,18 +287,40 @@ function seed(timeline: Timeline): void {
   });
 }
 
+/** D-199 — select clip `id` on `track` (`TransformOverlay`/`CanvasBoundary`
+ *  only draw once something real is on screen to measure against; a fresh
+ *  `seed()` clears selection). No-arg call clears the selection back out. */
+function select(track?: number, id?: string): void {
+  useEditorTimelineStore.setState({
+    selection: track !== undefined && id !== undefined ? [{ track, id }] : [],
+  });
+}
+
 let strict = true;
+let mode: HarnessMode =
+  new URLSearchParams(window.location.search).get('mode') === 'preview' ? 'preview' : 'timeline';
 let root: ReturnType<typeof createRoot> | null = null;
 
 function render(): void {
   const container = document.getElementById('root')!;
   if (!root) root = createRoot(container);
-  // D-195, Task 3 — `TimelineSwitcher` above `TimelinePane`, the same stacking
-  // `EditorTab.tsx` uses, so the tab strip's real click-through behavior
-  // (switch/create) is exercised against the same store the pane reads.
-  const el = React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
+  // D-199 — `PreviewPane` renders inside a `flex-1` column with no
+  // ambient height of its own (it expects a flex ancestor, exactly what
+  // `EditorTab.tsx` gives it) — `#root` needs an explicit height for
+  // `useContentBox`'s `ResizeObserver` math to have anything to measure.
+  container.style.height = mode === 'preview' ? '100vh' : '';
+  container.style.display = mode === 'preview' ? 'flex' : '';
+  // D-195, Task 3 — in 'timeline' mode, `TimelineSwitcher` renders above
+  // `TimelinePane`, the same stacking `EditorTab.tsx` uses, so the tab
+  // strip's real click-through behavior (switch/create) is exercised
+  // against the same store the pane reads. 'preview' mode mounts
+  // `PreviewPane` alone — the switcher isn't part of what that mode checks.
+  const el =
+    mode === 'preview'
+      ? React.createElement(PreviewPane)
+      : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
   root.render(strict ? React.createElement(React.StrictMode, null, el) : el);
-  setStatus(`mounted (strictMode=${strict}) — window.__chromaHarness`);
+  setStatus(`mounted mode=${mode} (strictMode=${strict}) — window.__chromaHarness`);
 }
 
 installInvokeStub();
@@ -264,7 +342,18 @@ render();
 // the same `new PointerEvent(...)` calls directly in `evaluate_script`).
 (window as unknown as { __chromaHarness: unknown }).__chromaHarness = {
   seed,
+  select,
   defaultFixture,
+  setMode(next: HarnessMode) {
+    mode = next;
+    render();
+  },
+  get mode() {
+    return mode;
+  },
+  get settings() {
+    return { ...harnessSettings };
+  },
   get timeline() {
     return useEditorTimelineStore.getState().timeline;
   },

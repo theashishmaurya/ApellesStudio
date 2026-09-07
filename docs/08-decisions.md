@@ -17378,6 +17378,178 @@ unaffected (73 pre-existing, unrelated errors in Colorist panels/i18n typing —
 touching `harness-main.tsx`/`EditorTab`/`TimelinePane`/`EditorExportDialog`, confirmed
 by name). `npm test --workspace @chroma/editor` — 408/408 (was 357 at session start;
 +51 across both D-197 and D-198).
+## D-199 — Live-preview canvas boundary overlay + an Edit-tab canvas-size surface, and the "AFTER full-bleed" report's real root cause
+
+**Context** (full writeup: `docs/notes/preview-canvas-boundary.md`; closes
+`docs/04-roadmap.md` item 18): building a real two-clip stacked comparison video
+(the `chroma-comparison-reel` workflow), the exported file composited correctly —
+both clips stacked, letterboxed — but the LIVE PREVIEW showed the AFTER clip
+full-bleed at its own native aspect, no visible BEFORE, no visible frame/boundary
+for the output composition at all. Already partly captured live in roadmap item 18
+(owner's own quote there) before this pass.
+
+**Root-cause investigation, not assumed.** Read `chroma::edit`'s compositor
+(`chroma_timeline_frame` → `resolve_visible_video_layers_at` →
+`composite_video_frame` → `composite_layer_onto`) end to end — a real, already
+heavily unit-tested (~30 tests) multi-layer alpha-over compositor, canvas-sized to
+the project's own composition (D-136/B-043), paint-ordered correctly (D-088).
+**Verified directly**: built two synthetic solid-color clips via `ffmpeg`, drove
+the actual unmodified `timeline_frame` production function through a throwaway
+test with the exact reported stacking (`position_y`/`box_width`/`box_height` on
+two video tracks), decoded the result, and looked at it — a clean top/bottom
+split, no bleed, no missing layer. **No compositor defect found or reproduced.**
+
+**Choice — two real, independent, already-in-subsystem causes, both closed here,
+rather than one narrow patch:**
+1. **B-079** (this session's own filed bug, fixed in D-200, same session): the
+   exact function `chroma_timeline_frame` uses to resolve which clip/source-frame
+   is at a position (`Track::clip_at`) had the B-075/B-077 fps-unit conflation.
+   For a clip whose native fps is lower than the project's, this can make
+   `clip_at` report "nothing here" before the clip's real intended end, silently
+   dropping that track from the composite — visually indistinguishable from "this
+   clip was never stacked." This session's own B-077 audit already confirmed the
+   comparison-reel project used real screen recordings at different native rates.
+   Not certain to be the exact mechanism (the original clips are gone to
+   re-test), but real, reachable, in the right subsystem.
+2. **No persistent visual reference for the output frame, confirmed real**: a
+   project built entirely in the Edit tab never visits Colorist's
+   `ProjectSettingsModal` (the only existing `ProjectSettings.width`/`height`
+   surface, D-038) — a human has no way to see what the composition actually is,
+   or notice a clip's transform isn't producing the framing intended.
+
+**The fix:**
+- `packages/editor/src/CanvasBoundary.tsx` — a THIRD sibling in `PreviewPane.tsx`'s
+  overlay stack (`<img>` / `CanvasBoundary` / `TransformOverlay`, in that z-order),
+  selection-independent (unlike `TransformOverlay`), using the same
+  `useContentBox` letterbox math against a NEW size source that needs no clip
+  selected.
+- `packages/editor/src/useCompositionSize.ts` + new Rust command
+  `chroma_timeline_composition_size` (`chroma::edit`) — thin wrapper reusing the
+  existing D-136 `composition_size` resolver, reusing `ClipGeometry`'s DTO shape
+  (`naturalWidth`/`naturalHeight` fixed at `1.0`, undefined without a clip) rather
+  than inventing a second, near-identical type.
+- `packages/editor/src/CanvasSettingsPopover.tsx` — a small popover (not a full
+  `Dialog`) in `PreviewPane.tsx`'s toolbar, next to the D-118 Inspector toggle.
+  Read/write `ProjectSettings.width`/`height` via the existing
+  `chroma_project_set_settings` and a new, symmetric `chroma_project_get_settings`
+  (`chroma::project`) — needed because `packages/editor` cannot import the
+  Colorist tab's `ProjectSettingsModal.tsx` (it reads `app/src`'s own
+  `useSessionStore`, unreachable across D-039's one-way `app -> packages`
+  dependency direction) and has no store of its own to read current values from.
+  **Considered and rejected**: exposing the Colorist modal to the Edit tab
+  (blocked by the dependency direction) and lifting its state into a shared
+  package (a real, bigger refactor with no other driver tonight — scoped out,
+  not silently skipped).
+
+**Drag-to-rearrange — verified working, not modified.** The task's own
+"gap or not" question: `TransformOverlay.tsx` (D-136) already handles uniform
+move/resize; the boundary renders under it (`z-20` vs. `z-30`) so the handles stay
+grabbable. Verified LIVE: extended the D-142 isolated browser harness
+(`app/harness.html`, `?mode=preview`) to mount `PreviewPane` with stubbed
+`chroma_timeline_*`/`chroma_project_*`/`chroma_audio_*` commands, then drove real
+`PointerEvent`s via `evaluate_script` in a real Chromium tab (chrome-devtools MCP):
+selected a clip, dragged its body and a corner handle, confirmed real
+`set_clip_transform` commits (`position_x`/`position_y`, `scale` changed on the
+store's actual clip) with the boundary and transform overlay both rendering
+correctly together. Also drove the settings popover's full round trip live in the
+same harness (open → fetch → pick a preset → Apply → the boundary's rect AND
+aspect ratio updated immediately, 16:9 → 9:16 confirmed visually).
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean (new files included).
+`npx tsc --noEmit -p app` — the SAME 64 pre-existing errors as `main`
+(confirmed via `git stash`/re-check — zero new errors from `harness-main.tsx`'s
+extension). `npm test --workspace @chroma/editor` 360/360 (was 357 on `main`; +3
+from D-200's `clipKeyframes.test.ts` B-079 block — this pass added no new editor
+unit tests of its own, relying on the harness's live verification instead, per
+the task's own emphasis on real visual checking over more unit coverage for a
+rendering/layout concern). `cargo test`/`clippy`/`fmt --check` — see D-200
+(touches the same two Rust files). Live-verified in a real Chromium tab as
+described above — the honest layer this pass leans on hardest, since the actual
+composited PIXELS were already separately proven via the real `timeline_frame`
+production code path (see `docs/notes/preview-canvas-boundary.md`), not the full
+Tauri/WKWebView app (not practical to build from scratch in this isolated
+worktree — disclosed, not glossed over).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-200 — B-079: bring `chroma::edit`/`chroma::audio`'s live playback path up to the same fps-aware standard B-077/D-194 already gave the GUI/MCP edit model
+
+**Context**: `docs/BUGS.md`'s B-079 (filed during the B-077 audit, same session) —
+`Track::clip_at` (feeds BOTH `chroma_timeline_frame`'s video-preview decode path
+and `chroma::audio`'s audio-clip-at-playhead lookup), `Track::clip_spans_from`
+(duck-envelope triggers), `Track::duration` (timeline-switcher display), and two
+inline re-derivations in `chroma::audio.rs` all added a clip's SOURCE-frame
+`duration`/`source_start` directly to its TIMELINE-frame `start_frame`/`pos`, no
+`source_fps` conversion — the identical B-075/B-077 conflation, on the one part of
+the codebase that IS live/reachable (unlike this crate's own `trim_start`/
+`trim_end`/`split`/`move_clip`, confirmed dead code — every real edit goes through
+`@chroma/editor`'s `applyOp` + `chroma_timeline_set` instead).
+
+**Choice: identical shape to D-194 — "convert at every consumption site," not
+"conform duration to timeline frames at creation."** Not re-litigated in full here
+(see D-194 for the complete reasoning — the source-ceiling/trim-clamp argument,
+the `editor_add_clip` MCP contract argument, and the rounding-compounds argument
+all apply unchanged to the Rust side). What's new here is Rust doesn't yet have
+`timelineFps`'s own equivalent at all: added `Timeline::fps(&self) -> f64`
+(mirrors `@chroma/editor/timeline.ts`'s `timelineFps` exactly — `rate.num/rate.den`
+when both positive, else a new `DEFAULT_FPS: f64 = 24.0` constant) and
+`source_frames_to_timeline`/`timeline_frames_to_source` (mirror
+`sourceFramesToTimeline`/`timelineFramesToSource` — same formula, same
+`round()`), so the Rust live-playback path and the TS GUI/MCP path can never
+resolve a mixed-native-fps clip's real footprint differently.
+
+**The fix.** `Clip::end_frame_at(&self, fps: f64) -> i64` — the fps-aware sibling
+of the existing plain `Clip::end_frame()`, which is **deliberately kept
+unchanged** and re-documented as "for this crate's own confirmed-dead editing ops
+only." `Track::duration`/`clip_at`/`clip_spans_from` all gained an `fps: f64`
+parameter and now route through `end_frame_at`/the conversion functions;
+`Timeline::duration`/`resolve_video_clip_at`/`resolve_visible_video_layers_at`
+compute `self.fps()` once and thread it through (their own public signatures are
+unchanged — an internal-only widening). `Track::gap_at` (the dead `remove_gap`
+op's own lookup) is UNCHANGED, deliberately paired with the plain `end_frame()` it
+already used — inventing an `fps` value for confirmed-dead code would be
+unverifiable churn.
+
+`app/src-tauri/src/chroma/edit.rs`: `resolve_audio_track_positions` now returns
+the SOURCE FRAME `Track::clip_at` already resolves correctly, instead of
+discarding it (`let Some((clip, _source_frame))`, pre-fix) — its caller
+(`chroma_audio_play`) used to silently RE-DERIVE it with a second, fps-naive
+`clip.source_start + elapsed_frames` formula, which was the actual bug for the
+audio-track path. `resolve_track_duck` and the new `timeline_fps()` helper
+(a thin `resolve_timeline(false)?.fps()`, since `chroma::audio` needs the rate for
+its own `end_frame_at` calls but has no other reason to touch the timeline
+directly) round out every consumption site B-079's own entry named.
+`app/src-tauri/src/chroma/audio.rs`: both `remaining_frames` computations
+(embedded-video-audio and audio-track) now use `end_frame_at(fps)`; the
+audio-track loop's own duplicate `source_frame` re-derivation is deleted entirely
+in favor of the resolver's own (now correct) value — `elapsed_frames` (a plain
+TIMELINE-frame difference, never conflated) is untouched, still needed by
+`fade_for_clip`. `crates/chroma-project/src/manifest.rs`'s `append_media_clip`
+(Colorist's "add to grading" convenience) needed one call-site fix
+(`Track::duration` gained its `fps` parameter) — reads `Timeline::fps()` before
+the mutable borrow, same pattern as everywhere else.
+
+**Verified.** `cargo test -p chroma-timeline` — **137/137** (129 pre-existing + 8
+new, a `b079_mixed_native_fps` module pinning `end_frame_at`'s conversion/identity/
+fallback cases, `Track::clip_at`/`duration`/`clip_spans_from` at a clean 48fps-on-
+24fps ratio for exact numbers, `Timeline::fps`'s rate-field/malformed-rate/default
+cases, and `resolve_visible_video_layers_at` resolving a mixed-fps layer's correct
+source frame end to end). `cargo test -p RapidRAW --lib` and `cargo test -p
+chroma-project` both pass in full (146 and 52 respectively) — no existing test's
+expected numbers changed (every fixture in both suites is same-native-fps, where
+the fix is the identity). `cargo clippy -p chroma-timeline --all-targets -D
+warnings` and `cargo clippy -p RapidRAW --lib -D warnings` both clean.
+`cargo clippy -p chroma-project --all-targets -D warnings` shows 15 PRE-EXISTING
+errors, confirmed (via `git stash`) present in identical count/location on `main`
+before this branch, none touching the one line this pass's `append_media_clip`
+fix added or changed — left alone rather than folded into this fix's diff, same
+"don't absorb unrelated debt into an atomic commit" discipline as the fmt note
+below. `cargo fmt --check`: confirmed (via `rustfmt` diffed against `main`'s own
+pre-fix files) that every touched file already carried unrelated pre-existing
+drift on `main` before this branch, same as D-193's own note — every line THIS
+pass added or changed is individually fmt-clean, verified by content-matching the
+touched formulas/identifiers against `rustfmt`'s output, not just line numbers.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

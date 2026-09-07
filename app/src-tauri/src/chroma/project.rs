@@ -611,6 +611,23 @@ pub fn chroma_project_set_settings(
     Ok(manifest.settings)
 }
 
+/// D-199 (canvas-boundary preview overlay) — the loaded (or given) project's
+/// current [`ProjectSettings`], with no mutation. Reads-only symmetric
+/// counterpart to [`chroma_project_set_settings`]: `app/src`'s Colorist
+/// `ProjectSettingsModal` gets its current values from `useSessionStore`'s
+/// own already-loaded manifest state (it never needed a fresh read), but
+/// `packages/editor` (the Edit tab) has no such store — a project-settings
+/// surface reachable from that tab needs a real, explicit way to fetch the
+/// CURRENT values before showing an editable form for them.
+#[tauri::command]
+pub fn chroma_project_get_settings(path: Option<String>) -> Result<ProjectSettings, String> {
+    let dir = path
+        .map(PathBuf::from)
+        .or_else(|| state::current_project().map(|p| p.path))
+        .ok_or("no project loaded — open or create one first")?;
+    Ok(load_manifest(&dir)?.settings)
+}
+
 // --------------------------------------------------------------------------- //
 // media pool tauri commands (D-044)
 // --------------------------------------------------------------------------- //

@@ -38,7 +38,7 @@
  */
 import { clearClipKeyframes, clipSourceFrame, removeClipKeyframe, upsertClipKeyframe } from './clipKeyframes';
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
-import { DEFAULT_FADE_CURVE, findClip } from './timeline';
+import { DEFAULT_FADE_CURVE, findClip, timelineFps } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 
@@ -59,8 +59,9 @@ export function EditorInspectorPanel() {
   const selectedTrackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
 
   // Keyframes are interpolated against the clip's own SOURCE frame, not the
-  // absolute timeline position — see `clipKeyframes.ts`'s doc.
-  const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead) : 0;
+  // absolute timeline position — see `clipKeyframes.ts`'s doc. B-079 —
+  // fps-aware as of this pass, so this needs the project's own rate.
+  const clipKfSourceFrame = selectedClip ? clipSourceFrame(selectedClip, playhead, timelineFps(timeline)) : 0;
   const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
   const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
 

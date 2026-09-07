@@ -766,12 +766,15 @@ pub fn append_media_clip(
     let has_audio = probed.as_ref().is_some_and(|i| i.has_audio);
 
     let tl = &mut manifest.timelines[timeline_idx];
+    // B-079 — `Track::duration` is fps-aware now; `Timeline::fps` before the
+    // mutable borrow below, same as every other live consumer.
+    let fps = tl.fps();
     let track_idx = tl
         .tracks
         .iter()
         .position(|t| t.kind == TrackKind::Video)
         .unwrap_or_else(|| tl.add_track(TrackKind::Video));
-    let start_frame = tl.tracks[track_idx].duration();
+    let start_frame = tl.tracks[track_idx].duration(fps);
     // `None` for a silent (or unprobeable) source — that clip keeps D-050's
     // embedded-audio playback and gains no audio half, exactly as before.
     let link_group = has_audio.then(|| format!("lg-{}", uuid::Uuid::new_v4()));

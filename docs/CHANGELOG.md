@@ -59,6 +59,24 @@ One or two lines per session. Detail lives in the decision it references.
   `ffprobe`/`volumedetect`-verified ffmpeg execution (gain drop, fade ramp, duck
   engage/release, two-source mix all measured, not just argv-matched); the
   dialog/queue live-tested in a real Chromium tab via the D-142 harness.
+- **2026-09-07** — **Live-preview canvas boundary + Edit-tab canvas-size popover
+  (D-199), and B-079 fixed (D-200).** Root-caused the "live preview shows the AFTER
+  clip full-bleed instead of stacked with BEFORE, no visible output frame" report
+  (roadmap item 18): the Rust multi-track compositor itself is correct (verified
+  with a real two-clip red/blue stacking test through the actual `timeline_frame`
+  production path) — the real causes were B-079 (a mixed-native-fps clip's
+  `Track::clip_at` could drop it out of the live composite entirely; now fixed,
+  same fps-aware shape B-077/D-194 already gave the TS side) and the genuine
+  absence of any canvas-boundary/settings surface to notice or diagnose it. Added
+  `CanvasBoundary.tsx` (a selection-independent overlay, always shows the real
+  output frame) and `CanvasSettingsPopover.tsx` (view/edit `ProjectSettings.width`/
+  `height` from the Edit tab, previously reachable only from Colorist's shot-strip
+  gear). Drag-to-rearrange (D-136) verified still working alongside the new
+  overlay. Extended the D-142 isolated browser harness to mount `PreviewPane`
+  (`?mode=preview`) and live-verified all of the above with real `PointerEvent`s in
+  a real Chromium tab. Rust: `chroma-timeline` 137/137 (+8), `RapidRAW` 146/146,
+  `chroma-project` 52/52, clippy/fmt clean on touched code. `@chroma/editor` 360/360 (+3), `tsc`
+  clean both packages. See D-199/D-200 and `docs/notes/preview-canvas-boundary.md`.
 - **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/
   `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
   end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into

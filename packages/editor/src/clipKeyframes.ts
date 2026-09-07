@@ -16,6 +16,8 @@
  * reasoning `resolve_clip_transform` already documents).
  */
 
+import { timelineFramesToSource } from './timeline';
+
 export interface ClipKeyframe {
   frame: number;
   params: Record<string, unknown>;
@@ -52,22 +54,27 @@ export function clearClipKeyframes(): ClipKeyframe[] | undefined {
 
 /** The clip's own SOURCE frame at the given timeline `playhead` frame —
  *  keyframes are interpolated against this (mirrors `Track::clip_at`'s
- *  `source_start + (frame - start_frame)`, the same value `resolve_clip_
- *  transform` receives as `source_frame`), NOT the absolute timeline
- *  position. Clamped to the clip's own source window since the playhead may
- *  sit outside the clip when nothing is actually selected there.
+ *  `source_start + timeline_frames_to_source(...)`, the same value
+ *  `resolve_clip_transform` receives as `source_frame`), NOT the absolute
+ *  timeline position. Clamped to the clip's own source window since the
+ *  playhead may sit outside the clip when nothing is actually selected there.
  *
- *  **B-079 — deliberately NOT fps-corrected, unlike the rest of `@chroma/
- *  editor` post-B-077.** This intentionally mirrors `Track::clip_at`'s
- *  CURRENT (still-wrong-for-mixed-fps) Rust formula byte for byte: Rust's
- *  `resolve_clip_transform` is what actually interpolates a keyframe at
- *  playback/render time, fed by that same unconverted `Track::clip_at`. If
- *  this function alone were made fps-aware, the Inspector would show/store a
- *  keyframe at the CORRECT source frame while playback kept applying it at
- *  Rust's wrong one — a new authoring/playback mismatch, worse than today's
- *  "both sides agree, wrongly." Fix this in the SAME change as B-079's Rust
- *  half, never before it — see that bug's own entry in `docs/BUGS.md`. */
-export function clipSourceFrame(clip: { source_start: number; start_frame: number; source_len: number }, playhead: number): number {
-  const raw = clip.source_start + (playhead - clip.start_frame);
+ *  **B-079 — now fps-corrected, in the SAME change as `Track::clip_at`'s own
+ *  Rust fix**, per that bug's own entry in `docs/BUGS.md` (fixing this TS
+ *  half alone, before Rust's, would have desynced authoring from playback —
+ *  see the entry for why). `fps` is the project's own `timelineFps(tl)`;
+ *  `timelineFramesToSource` (B-077) converts the TIMELINE-frame offset
+ *  `playhead - clip.start_frame` into the clip's own SOURCE frames via
+ *  `clip.source_fps` (falling back to `fps` — a 1:1 ratio — when absent),
+ *  exactly mirroring `Track::clip_at`'s now-fixed formula. Identical to the
+ *  pre-fix plain subtraction whenever `source_fps` is absent or equals
+ *  `fps` — every same-native-fps clip computes the same source frame either
+ *  way. */
+export function clipSourceFrame(
+  clip: { source_start: number; start_frame: number; source_len: number; source_fps?: number },
+  playhead: number,
+  fps: number,
+): number {
+  const raw = clip.source_start + timelineFramesToSource(clip, playhead - clip.start_frame, fps);
   return Math.max(0, Math.min(clip.source_len - 1, raw));
 }

@@ -241,15 +241,15 @@ pub(crate) fn resolve_video_position(
 }
 
 /// Resolve every genuine `TrackKind::Audio` clip on the active timeline that
-/// overlaps `pos` to `(the clip, its probed VideoInfo, that track's gain)` —
-/// the Phase C (D-056) counterpart to [`resolve_video_position`]'s single
-/// video-track lookup, feeding `chroma::audio`'s mixer the extra sources to sum
-/// in alongside the baseline video-embedded audio. Uses
-/// [`chroma_timeline::Track::clip_at`] exactly like the video path — a track
-/// with nothing covering `pos` (a gap, or an empty track) contributes nothing,
-/// silently, the same "not an error" contract `resolve_video_position` already
-/// has. A clip whose source turns out to have no audio stream is skipped the
-/// same way.
+/// overlaps `pos` to `(the track index, the clip, its resolved SOURCE frame,
+/// its probed VideoInfo, that track's gain)` — the Phase C (D-056) counterpart
+/// of [`resolve_video_position`]'s single video-track lookup, feeding
+/// `chroma::audio`'s mixer the extra sources to sum in alongside the baseline
+/// video-embedded audio. Uses [`chroma_timeline::Track::clip_at`] exactly
+/// like the video path — a track with nothing covering `pos` (a gap, or an
+/// empty track) contributes nothing, silently, the same "not an error"
+/// contract `resolve_video_position` already has. A clip whose source turns
+/// out to have no audio stream is skipped the same way.
 ///
 /// **D-147 — this returns the `Clip` + `VideoInfo` rather than D-057's
 /// original `(path, start_secs, duration_secs, gain)` tuple**, and that is a
@@ -262,10 +262,10 @@ pub(crate) fn resolve_video_position(
 /// one-way: `chroma::audio` knows about `chroma::edit`, not the reverse, so
 /// the mixer's own `FadeEnvelope` type stays in the mixer.
 ///
-/// The clip's **out-point** (B-048) is the caller's `clip.end_frame() - pos`:
-/// `chroma::audio` streams each source until it runs out, so it has to be told
-/// where the clip actually ends or it keeps playing the rest of the file
-/// underneath whatever the timeline cut to next.
+/// The clip's **out-point** (B-048) is the caller's `clip.end_frame_at(fps) -
+/// pos`: `chroma::audio` streams each source until it runs out, so it has to
+/// be told where the clip actually ends or it keeps playing the rest of the
+/// file underneath whatever the timeline cut to next.
 ///
 /// **D-149 — the track's own index comes back too**, as the first element. The
 /// mixer needs it to look up that track's ducking configuration, and the index
@@ -274,10 +274,23 @@ pub(crate) fn resolve_video_position(
 /// getting it subtly wrong the first time an empty audio track sits between
 /// two populated ones. It is the *timeline* index, not the position within the
 /// filtered audio-only subset — the same index `Track::duck_from` stores.
-pub(crate) fn resolve_audio_track_positions(
-    pos: u64,
-) -> Result<Vec<(usize, Clip, VideoInfo, f32)>, String> {
+///
+/// **B-079 — the resolved SOURCE frame is now returned too**, rather than
+/// discarded (`let Some((clip, _source_frame))`, pre-fix). `Track::clip_at`
+/// already computes this correctly, fps-converted via `Clip::source_fps` —
+/// the caller (`chroma_audio_play`) used to silently re-derive it with a
+/// second, fps-naive `clip.source_start + elapsed_frames` formula instead of
+/// reusing this one, which is exactly the bug. Returning it removes that
+/// duplicate (and previously wrong) arithmetic at the call site.
+///
+/// `(track index, clip, resolved source frame, probed VideoInfo, track gain)`
+/// — named here (clippy's `type_complexity`) once B-079's fix added the
+/// source-frame element on top of D-147/D-149's existing four.
+pub(crate) type AudioTrackPosition = (usize, Clip, u64, VideoInfo, f32);
+
+pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPosition>, String> {
     let timeline = resolve_timeline(false)?;
+    let fps = timeline.fps();
     let mut out = Vec::new();
     for (track_index, track) in timeline
         .tracks
@@ -285,7 +298,7 @@ pub(crate) fn resolve_audio_track_positions(
         .enumerate()
         .filter(|(_, t)| t.kind == TrackKind::Audio)
     {
-        let Some((clip, _source_frame)) = track.clip_at(pos as i64) else {
+        let Some((clip, source_frame)) = track.clip_at(pos as i64, fps) else {
             continue;
         };
         if clip.source_path.is_empty() {
@@ -295,9 +308,26 @@ pub(crate) fn resolve_audio_track_positions(
         if !info.has_audio {
             continue;
         }
-        out.push((track_index, clip.clone(), info, track.gain));
+        out.push((
+            track_index,
+            clip.clone(),
+            source_frame.max(0) as u64,
+            info,
+            track.gain,
+        ));
     }
     Ok(out)
+}
+
+/// B-079 — the active timeline's own timebase ([`chroma_timeline::Timeline::fps`]),
+/// for `chroma::audio`'s fps-aware per-clip out-point arithmetic
+/// (`chroma_audio_play`'s `end_frame_at(fps)` calls) — the one thing that
+/// module needs from the timeline beyond what [`resolve_video_position`]/
+/// [`resolve_audio_track_positions`] already hand it. A thin, cheap
+/// (no media probing) re-read of the manifest rather than widening either of
+/// those signatures for a single extra `f64`.
+pub(crate) fn timeline_fps() -> Result<f64, String> {
+    Ok(resolve_timeline(false)?.fps())
 }
 
 /// D-149 — one track's ducking configuration resolved against the active
@@ -335,11 +365,14 @@ pub(crate) fn resolve_track_duck(
     let Some(trigger) = timeline.tracks.get(from) else {
         return Ok(None);
     };
+    // B-079 — `clip_spans_from` is fps-aware now: a mixed-native-fps trigger
+    // clip's duck-envelope span used to end at the wrong timeline frame.
+    let fps = timeline.fps();
     Ok(Some((
         track.duck_db,
         track.duck_attack_ms,
         track.duck_release_ms,
-        trigger.clip_spans_from(pos as i64),
+        trigger.clip_spans_from(pos as i64, fps),
     )))
 }
 
@@ -759,6 +792,45 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
         comp_height: comp_h,
         natural_width: info.resolution.width as f64 / comp_w as f64,
         natural_height: info.resolution.height as f64 / comp_h as f64,
+    })
+}
+
+/// D-199 (canvas-boundary preview overlay) — the composition's own pixel size
+/// ([`composition_size`]), with NO clip selection required.
+///
+/// [`ClipGeometry`]/[`chroma_timeline_clip_geometry`] already reports
+/// `comp_width`/`comp_height`, but only as a side effect of resolving ONE
+/// selected clip's box — `TransformOverlay.tsx` (the on-canvas transform
+/// handles) has always had this for free because it never needs the frame
+/// size without a clip also selected. A boundary overlay that must render
+/// with NOTHING selected (so a human can see the real output frame before
+/// touching anything) needs the composition size on its own — this is that,
+/// a thin wrapper with no clip-probing at all.
+#[tauri::command]
+pub async fn chroma_timeline_composition_size() -> Result<ClipGeometry, String> {
+    tokio::task::spawn_blocking(composition_size_only)
+        .await
+        .map_err(|e| format!("composition size task: {e}"))?
+}
+
+/// The synchronous body of [`chroma_timeline_composition_size`] — same
+/// `spawn_blocking` split as [`timeline_frame`]/[`clip_geometry`]: this can
+/// end up probing a clip too (`composition_size`'s no-explicit-settings
+/// fallback), which is real disk I/O, so it stays off the async runtime's
+/// caller and off Tauri's main thread the same way.
+///
+/// Reuses [`ClipGeometry`]'s shape with `natural_width`/`natural_height`
+/// fixed at `1.0` (undefined without a clip — see that struct's own doc for
+/// what they mean) rather than inventing a second, near-identical DTO the
+/// frontend would need a second type for.
+fn composition_size_only() -> Result<ClipGeometry, String> {
+    let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    let (comp_w, comp_h) = composition_size(&settings, &timeline)?;
+    Ok(ClipGeometry {
+        comp_width: comp_w,
+        comp_height: comp_h,
+        natural_width: 1.0,
+        natural_height: 1.0,
     })
 }
 

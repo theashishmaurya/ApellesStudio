@@ -57,16 +57,40 @@ describe('clipSourceFrame', () => {
   it('maps the timeline playhead into the clip\'s own source-frame space', () => {
     // clip starts at timeline frame 100, sourced from source_start 20
     const clip = { source_start: 20, start_frame: 100, source_len: 1000 };
-    expect(clipSourceFrame(clip, 150)).toBe(70); // 20 + (150 - 100)
+    expect(clipSourceFrame(clip, 150, 24)).toBe(70); // 20 + (150 - 100)
   });
 
   it('clamps to 0 when the playhead sits before the clip', () => {
     const clip = { source_start: 20, start_frame: 100, source_len: 1000 };
-    expect(clipSourceFrame(clip, 0)).toBe(0);
+    expect(clipSourceFrame(clip, 0, 24)).toBe(0);
   });
 
   it('clamps to source_len - 1 when the playhead sits past the clip', () => {
     const clip = { source_start: 0, start_frame: 0, source_len: 50 };
-    expect(clipSourceFrame(clip, 10000)).toBe(49);
+    expect(clipSourceFrame(clip, 10000, 24)).toBe(49);
+  });
+
+  // B-079 — a clip whose native rate differs from the project's must convert
+  // the TIMELINE-frame offset into the clip's own SOURCE frames via
+  // `source_fps`, exactly like `Track::clip_at`'s now-fixed Rust formula
+  // (fixed in the SAME change per that bug's own doc comment above, and per
+  // `docs/BUGS.md`'s B-079 entry — this function must never be fixed alone).
+  describe('B-079 — mixed native-fps clips', () => {
+    it('converts the timeline-frame offset through source_fps, not a 1:1 subtraction', () => {
+      // A 48fps clip on a 24fps timeline: every 1 timeline frame the
+      // playhead advances is 2 of the clip's own source frames.
+      const clip = { source_start: 0, start_frame: 0, source_len: 1000, source_fps: 48 };
+      expect(clipSourceFrame(clip, 10, 24)).toBe(20); // 0 + (10 timeline frames * 48/24)
+    });
+
+    it('is the identity conversion when source_fps equals the timeline fps', () => {
+      const clip = { source_start: 20, start_frame: 100, source_len: 1000, source_fps: 24 };
+      expect(clipSourceFrame(clip, 150, 24)).toBe(70);
+    });
+
+    it('falls back to a 1:1 ratio when source_fps is absent (pre-B-075 clip)', () => {
+      const clip = { source_start: 20, start_frame: 100, source_len: 1000 };
+      expect(clipSourceFrame(clip, 150, 24)).toBe(70);
+    });
   });
 });
