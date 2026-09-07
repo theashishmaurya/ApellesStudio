@@ -112,6 +112,24 @@ export interface Clip {
   position_x?: number;
   position_y?: number;
   scale?: number;
+  /** Independent per-axis box-size override (D-186,
+   *  `docs/notes/independent-clip-size.md`) — mirrors `chroma_timeline::
+   *  Clip::box_width`/`box_height`. A fraction of the OUTPUT COMPOSITION's
+   *  own width/height, the SAME per-axis convention `position_x`/
+   *  `position_y` already use — NOT a multiplier of the clip's own source
+   *  resolution the way `scale` is. `null`/absent on either axis (every
+   *  pre-D-186 clip, and the default for a freshly-added one) means "derive
+   *  this axis from `scale`'s own natural-footprint formula instead," the
+   *  byte-identical-to-pre-D-186 fallback both the Rust compositor
+   *  (`chroma::edit::composite_layer_onto`) and `timelineExport.ts`'s
+   *  `buildClipFilterChain` apply.
+   *
+   *  `null` as well as `undefined` for the same reason `Track.duck_from`'s
+   *  own doc gives: `set_clip_transform` writes an explicit `null` to CLEAR
+   *  an override back to "derive from scale", so a value that was once set
+   *  and later cleared round-trips as a real `null`, not a missing key. */
+  box_width?: number | null;
+  box_height?: number | null;
   rotation?: number;
   /** Crop (D-132) — mirrors `chroma_timeline::Clip::crop_left`/`crop_top`/
    *  `crop_right`/`crop_bottom`. Four **normalised (0–1) edge insets** into
@@ -1095,7 +1113,16 @@ export type EditOp =
    *  and a real ordering question between them for no gain. The fields are
    *  **required**, not optional-with-fallback, precisely because this op
    *  replaces the full set — an optional crop field would silently reset a
-   *  clip's crop to zero on any caller that forgot it. */
+   *  clip's crop to zero on any caller that forgot it.
+   *
+   *  **D-186 — `box_width`/`box_height` are required `number | null` too,
+   *  same convention `Track.set_track_duck`'s `duckFrom` already uses: an
+   *  explicit `null` means "no override, derive this axis from `scale`"
+   *  (the pre-D-186 behavior), a number is a real independent-axis
+   *  override. Required rather than optional for the exact reason above —
+   *  an omittable field could silently clear a clip's override on a caller
+   *  that forgot to restate it, since `undefined` is not a legal value on a
+   *  required field, only `null` (a real, deliberate choice) is. */
   | {
       kind: 'set_clip_transform';
       track: number;
@@ -1104,6 +1131,8 @@ export type EditOp =
       position_x: number;
       position_y: number;
       scale: number;
+      box_width: number | null;
+      box_height: number | null;
       rotation: number;
       crop_left: number;
       crop_top: number;
@@ -1415,6 +1444,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.position_x = op.position_x;
     nc.position_y = op.position_y;
     nc.scale = op.scale;
+    // D-186 — written verbatim, `null` included: that's the explicit
+    // "clear this axis's override" value, mirroring `duck_from`'s own
+    // null-clears convention. No clamp — same "the model stores what the
+    // UI wrote, the consumer decides what it means" rule `scale` itself
+    // already follows (unlike crop, which IS clamped here).
+    nc.box_width = op.box_width;
+    nc.box_height = op.box_height;
     nc.rotation = op.rotation;
     // D-132 — clamped here, on the way in, so a value out of the 0–1 inset
     // range can never reach `project.json`. The Rust compositor clamps again

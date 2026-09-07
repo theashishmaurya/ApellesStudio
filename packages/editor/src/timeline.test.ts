@@ -106,7 +106,7 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'move_track', from: 0, to: 1 }, before)).toBe('Reorder track 1');
     expect(
       labelForOp(
-        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP },
+        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP, ...NO_BOX_OVERRIDE },
         before,
       ),
     ).toBe('Adjust "Intro"');
@@ -810,8 +810,13 @@ describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () =>
  *  something else (a label, a lock refusal) doesn't have to restate them. */
 const NO_CROP = { crop_left: 0, crop_top: 0, crop_right: 0, crop_bottom: 0 } as const;
 
+/** D-186 — the two independent-axis box-size overrides `set_clip_transform`
+ *  now also requires, at "no override" (`null`, see the op's own doc for
+ *  why `null` and not omission). Same one-liner convenience `NO_CROP` gives. */
+const NO_BOX_OVERRIDE = { box_width: null, box_height: null } as const;
+
 describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
-  it('set_clip_transform writes all nine transform fields together (D-088/D-132)', () => {
+  it('set_clip_transform writes all eleven transform fields together (D-088/D-132/D-186)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, {
       kind: 'set_clip_transform',
@@ -821,6 +826,8 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       position_x: 10,
       position_y: -20,
       scale: 1.5,
+      box_width: 0.6,
+      box_height: 0.25,
       rotation: 90,
       crop_left: 0.1,
       crop_top: 0.2,
@@ -832,11 +839,48 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
     expect(c.position_x).toBe(10);
     expect(c.position_y).toBe(-20);
     expect(c.scale).toBe(1.5);
+    expect(c.box_width).toBe(0.6);
+    expect(c.box_height).toBe(0.25);
     expect(c.rotation).toBe(90);
     expect(c.crop_left).toBe(0.1);
     expect(c.crop_top).toBe(0.2);
     expect(c.crop_right).toBe(0.3);
     expect(c.crop_bottom).toBe(0.4);
+  });
+
+  /** D-186 — an explicit `null` on either axis clears a previously-set
+   *  override back to "derive from `scale`", and does so independently per
+   *  axis (setting `box_width` doesn't force `box_height` to also change). */
+  it('set_clip_transform clears a box-size override with an explicit null, independently per axis', () => {
+    const before = tl(backToBack());
+    const withOverride = applyOp(before, {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 1,
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      box_width: 0.6,
+      box_height: 0.25,
+      rotation: 0,
+      ...NO_CROP,
+    });
+    const cleared = applyOp(withOverride, {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 1,
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      box_width: null,
+      box_height: 0.25,
+      rotation: 0,
+      ...NO_CROP,
+    });
+    expect(cleared.tracks[0].clips[0].box_width).toBeNull();
+    expect(cleared.tracks[0].clips[0].box_height).toBe(0.25);
   });
 
   /** D-132 — the op clamps its crop insets into 0–1 on the way in (mirroring
@@ -853,6 +897,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       position_x: 0,
       position_y: 0,
       scale: 1,
+      ...NO_BOX_OVERRIDE,
       rotation: 0,
       crop_left: -0.5,
       crop_top: 4,
@@ -882,6 +927,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       position_x: 0,
       position_y: 0,
       scale: 1,
+      ...NO_BOX_OVERRIDE,
       rotation: 0,
       ...NO_CROP,
     });
@@ -892,7 +938,18 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
   it('set_clip_transform is a no-op for an out-of-range clip', () => {
     const before = tl(backToBack());
     expect(
-      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 99, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP }),
+      applyOp(before, {
+        kind: 'set_clip_transform',
+        track: 0,
+        clip: 99,
+        opacity: 1,
+        position_x: 0,
+        position_y: 0,
+        scale: 1,
+        ...NO_BOX_OVERRIDE,
+        rotation: 0,
+        ...NO_CROP,
+      }),
     ).toBe(before);
   });
 
@@ -1051,7 +1108,18 @@ describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::Time
   it('set_clip_transform is refused on a locked track', () => {
     const before = lockedTl();
     expect(
-      applyOp(before, { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 0.5, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP }),
+      applyOp(before, {
+        kind: 'set_clip_transform',
+        track: 0,
+        clip: 0,
+        opacity: 0.5,
+        position_x: 0,
+        position_y: 0,
+        scale: 1,
+        ...NO_BOX_OVERRIDE,
+        rotation: 0,
+        ...NO_CROP,
+      }),
     ).toBe(before);
   });
 
