@@ -1215,7 +1215,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         own pass.
 26. ~~**`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
     not WRITABLE, so the whole on-canvas surface is agent-unreachable.**~~
-    **BUILT 2026-09-08 (D-214).** Found
+    **BUILT 2026-09-08 (D-216).** Found
     2026-09-08 while trying to live-verify D-209/B-093: `editor_get_state`
     reports `selection` (a list of `{track, id}`) and `selectedGap`, but no op
     sets either, so nothing outside a human's mouse can put a clip into the
@@ -1231,7 +1231,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `editor_set_playhead` exactly. Needs its own `D-NNN` (does it validate that
     the track/id exists? does it clear `selectedGap` the way every other
     selection path does — D-105 says yes?).
-    - **What shipped (D-214).** One `editor_set_selection` op driving the
+    - **What shipped (D-216).** One `editor_set_selection` op driving the
       store's existing `setSelection`/`setSelectedGap` (no new store action, no
       `EditOp`), one `@mcp.tool()` wrapper, no Rust change. Both open questions
       answered yes: every entry is resolved against the live timeline through
@@ -1241,7 +1241,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       and `remove_gap`'s reducer both use. Went one step past the sketch above:
       `clips` is an ARRAY, so the GUI's real D-107 multi-select is reachable
       too, and each entry takes a `clip` index OR a `clipId`. The undo-stack
-      question is the substance of D-214 — **not** undoable, because selection
+      question is the substance of D-216 — **not** undoable, because selection
       is not part of `Timeline`, so D-051's whole-`Timeline` snapshots have
       never carried it and a human's own click pushes nothing either.
     - **Verified, and how far.** 17 new real-DOM cases
@@ -1259,7 +1259,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       land inside it → clear and watch it all disappear → select a gap and
       watch the GUI's own "Close Gap" action appear. Only the POINTER tier (a
       real mouse drag on a handle) is still unreached, for the unrelated
-      screen-recording/Accessibility reason. Full transcript in D-214.
+      screen-recording/Accessibility reason. Full transcript in D-216.
     - **No canvas/preview zoom control** — the timeline already has one (the
       `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
       own viewer zoom control, top-left of the timeline viewer.

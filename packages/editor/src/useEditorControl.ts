@@ -109,7 +109,7 @@ function resolveClip(
   return { track, clip, tr, c };
 }
 
-/** D-214 — one resolved `editor_set_selection` entry: the `{track, id}` pair
+/** D-216 — one resolved `editor_set_selection` entry: the `{track, id}` pair
  *  the store's `selection` actually holds, plus the clip's index, its name and
  *  its track's flags, all reported straight back to the caller. */
 interface ResolvedSelectionClip {
@@ -121,7 +121,7 @@ interface ResolvedSelectionClip {
   trackHidden: boolean;
 }
 
-/** D-214 — resolve ONE `editor_set_selection` entry against the live timeline.
+/** D-216 — resolve ONE `editor_set_selection` entry against the live timeline.
  *
  *  Accepts EITHER the `clip` INDEX every other mutating `editor_*` op takes
  *  (via [`resolveClip`], so the "no clip N on track M (0..K)" error shape is
@@ -361,7 +361,7 @@ export function useEditorControl(): void {
           // of Edit-tab state NOTHING outside the webview could observe, so a
           // selection bug could only be caught by eyeballing the window — which
           // is precisely how the WKWebView half of B-085 shipped as "fixed".
-          // D-214 — `editor_set_selection` is the write half of this pair.
+          // D-216 — `editor_set_selection` is the write half of this pair.
           selection: s.selection,
           selectedGap: s.selectedGap,
         };
@@ -385,7 +385,7 @@ export function useEditorControl(): void {
         return { ok: true, playing: useEditorTimelineStore.getState().playing };
       },
 
-      // D-214 (roadmap item 26) — the WRITE half of `editor_get_state`'s
+      // D-216 (roadmap item 26) — the WRITE half of `editor_get_state`'s
       // `selection`/`selectedGap`, which were readable and not writable, so
       // nothing outside a human's mouse could put a clip into the state where
       // `TransformOverlay` even mounts. That left the entire on-canvas
@@ -393,7 +393,7 @@ export function useEditorControl(): void {
       // exactly how D-209/B-093 had to ship with its pointer tier unchecked.
       //
       // **Deliberately NOT an `EditOp`, and deliberately not undoable** — see
-      // D-214. `selection`/`selectedGap` are fields of the STORE, not of
+      // D-216. `selection`/`selectedGap` are fields of the STORE, not of
       // `Timeline`, so D-051's whole-`Timeline` undo snapshots have never
       // carried selection and nothing here persists to `project.json`. Every
       // GUI selection path (`TimelinePane`'s clip click, its marquee, its

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @chroma/editor — permanent real-DOM coverage for `editor_set_selection`
- * (D-214, roadmap item 26): the MCP op that gives an agent the one thing it
+ * (D-216, roadmap item 26): the MCP op that gives an agent the one thing it
  * could not do before, PUT A CLIP IN THE SELECTED STATE.
  *
  * **Why this file exists, and why it asserts on the DOM rather than on the
@@ -24,7 +24,7 @@
  * proves is that the op resolves/validates a selection correctly and that the
  * real component tree responds by mounting the transform surface — not that a
  * real WKWebView paints it where a human would see it. That last tier is the
- * live one, recorded in D-214.
+ * live one, recorded in D-216.
  *
  * Geometry matches the sibling suites (2:1 container and composition, so no
  * letterboxing); nothing here asserts on pixel positions — only on what is
@@ -412,7 +412,7 @@ describe('editor_set_selection — gap selection (D-105)', () => {
   });
 });
 
-describe('editor_set_selection — it is UI state, not a document edit (D-214)', () => {
+describe('editor_set_selection — it is UI state, not a document edit (D-216)', () => {
   it('pushes nothing onto the shared undo stack and never persists the timeline', async () => {
     const { useHistoryStore } = await import('@chroma/history');
     await mountHarness();

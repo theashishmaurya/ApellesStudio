@@ -600,7 +600,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "Phase 2 — see docs/notes/text-title-clips.md."
         ),
         "selection_gated_surfaces": (
-            "D-214: you do NOT need a selection to edit anything — every "
+            "D-216: you do NOT need a selection to edit anything — every "
             "mutating editor_* tool takes an explicit track/clip. But the "
             "Edit tab has two surfaces that render ONLY for a selection of "
             "EXACTLY ONE clip: the on-canvas transform box and its four "
@@ -784,7 +784,7 @@ def editor_set_selection(
     gap: dict | None = None,
 ) -> str:
     """Set what the Edit tab has SELECTED — the write half of
-    `editor_get_state`'s `selection`/`selectedGap` (D-214, roadmap item 26).
+    `editor_get_state`'s `selection`/`selectedGap` (D-216, roadmap item 26).
     Until this existed, selection was readable and not writable, so nothing
     but a human's mouse click could put a clip into the selected state.
 
@@ -830,7 +830,7 @@ def editor_set_selection(
     gap's real `gapStart`/`gapEnd` bounds, so you can hand `gapStart` straight
     to `editor_remove_gap`.
 
-    **Not undoable, by design** (D-214): selection is UI state, not document
+    **Not undoable, by design** (D-216): selection is UI state, not document
     content — it is not part of the `Timeline` that gets persisted, so the
     undo stack has never carried it and neither does this. A human's click
     pushes nothing either; this behaves identically. Re-select with another

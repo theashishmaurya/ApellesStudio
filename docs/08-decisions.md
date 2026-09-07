@@ -19018,7 +19018,7 @@ compiles to a byte-identical argv to before D-211.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
-## D-214 — `editor_set_selection`: selection is writable over MCP, and it is UI state, not an undoable edit
+## D-216 — `editor_set_selection`: selection is writable over MCP, and it is UI state, not an undoable edit
 
 **Context.** Roadmap item 26, filed by D-209's own verification pass.
 `editor_get_state` has reported the Edit tab's `selection` (`[{track, id}]`)
@@ -19128,7 +19128,7 @@ and conclude the transform is broken.
   again on `clips=[]`; nothing drawn for a two-clip selection (the Phase-1
   exactly-one rule, asserted rather than assumed); the box but zero handles on
   a locked track; a gap selection superseding a clip selection and unmounting
-  the box; every validation refusal; and — the D-214 decision itself, as a test
+  the box; every validation refusal; and — the D-216 decision itself, as a test
   — that three selection calls push **zero** entries onto `@chroma/history`'s
   `undoStack` and leave the `Timeline` byte-identical.
 - `npm test --workspace @chroma/editor` **703/703** (was 686).

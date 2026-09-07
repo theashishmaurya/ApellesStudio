@@ -45,7 +45,7 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 
 The table below is the **Colorist** surface (grading, masks, relight, scopes,
 export). The Edit tab's own 30 `editor_*` tools — read/seek/**selection**
-(D-214), media import/removal, clip placement/split/trim/slip/swap/move/remove,
+(D-216), media import/removal, clip placement/split/trim/slip/swap/move/remove,
 gap removal, text/title clips (D-211), track management, transform +
 keyframes, multi-track export, FCPXML interchange, and 4 media-understanding
 tools from D-189 (listed at the end of this table) — are documented with their
