@@ -1,6 +1,6 @@
 // @chroma/editor — unit tests for `clipKeyframes.ts` (D-090): the clip
 // transform keyframe CRUD used by the Inspector's transform rows, plus
-// D-208's per-property helpers.
+// D-208's per-property helpers and D-209's on-canvas box resolution.
 import { describe, expect, it } from 'vitest';
 import {
   adjacentParamKeyframeFrame,
@@ -13,6 +13,7 @@ import {
   paramValueAt,
   removeClipKeyframe,
   removeClipKeyframeParam,
+  resolveClipBoxTransform,
   type ClipKeyframe,
 } from './clipKeyframes';
 
@@ -247,5 +248,133 @@ describe('clipTimelineFrame (D-208)', () => {
   it('is a plain offset when source_fps is absent', () => {
     const clip = { source_start: 20, start_frame: 100 };
     expect(clipTimelineFrame(clip, 70, 24)).toBe(150);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-209 / B-093 — the on-canvas box's transform
+// --------------------------------------------------------------------------- //
+
+describe('resolveClipBoxTransform (D-209)', () => {
+  it('is the static transform for a clip with no keyframes at all', () => {
+    const t = resolveClipBoxTransform({ position_x: 0.25, scale: 0.5 }, 42);
+    expect(t).toEqual({ position_x: 0.25, position_y: 0, scale: 0.5, box_width: null, box_height: null });
+  });
+
+  it('fills every field with the engine defaults for a bare clip', () => {
+    expect(resolveClipBoxTransform({}, 0)).toEqual({
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      box_width: null,
+      box_height: null,
+    });
+  });
+
+  it('B-093 — a keyframe OVERRIDES the static field, which is what the box was missing', () => {
+    // The exact shape of the owner's own `perf-comparison-reel-v3.chroma`
+    // track-0 clip: at the head of the clip the picture is full-frame and
+    // centred, while the STATIC fields say a third-size box two thirds of the
+    // canvas to the left. That disagreement is what the bug screenshots were
+    // of — the box drawn from the static fields, the picture from these.
+    const clip = {
+      position_x: -0.6679127110558514,
+      scale: 0.37641393662181566,
+      chroma_keyframes: [
+        { frame: 0, params: { position_x: 0, position_y: 0.13021, scale: 1 } },
+        { frame: 17, params: { position_x: 0, position_y: 0.13021, scale: 1 } },
+        { frame: 18, params: { position_x: -0.01662, position_y: 0.12428, scale: 1.01662 } },
+      ],
+    };
+    const t = resolveClipBoxTransform(clip, 0);
+    expect(t.position_x).toBe(0);
+    expect(t.position_y).toBe(0.13021);
+    expect(t.scale).toBe(1);
+    expect(t.position_x).not.toBeCloseTo(clip.position_x);
+    expect(t.scale).not.toBeCloseTo(clip.scale);
+  });
+
+  it('falls back per-field to the static value for a field no keyframe names', () => {
+    const t = resolveClipBoxTransform({ position_y: 0.3, chroma_keyframes: [{ frame: 0, params: { scale: 2 } }] }, 0);
+    expect(t.scale).toBe(2);
+    expect(t.position_y).toBe(0.3);
+  });
+
+  it('resolves each property over only its OWN keys (D-208/B-094), never bracketing across all of them', () => {
+    // The `opacity` key at frame 50 names no geometry. Under the pre-D-208
+    // frame-bracketing rule it would have frozen `scale` at 1 for the whole
+    // first half; per-property it ramps straight through.
+    const t = resolveClipBoxTransform(
+      {
+        chroma_keyframes: [
+          { frame: 0, params: { scale: 1 } },
+          { frame: 50, params: { opacity: 0.5 } },
+          { frame: 100, params: { scale: 2 } },
+        ],
+      },
+      25,
+    );
+    expect(t.scale).toBe(1.25);
+  });
+
+  it('leaves box_width null on a clip with no static override, whatever the keyframes say (D-193)', () => {
+    const t = resolveClipBoxTransform({ chroma_keyframes: [{ frame: 0, params: { box_width: 0.8 } }] }, 0);
+    expect(t.box_width).toBeNull();
+  });
+
+  it('keyframes an override that DOES exist statically, on top of it', () => {
+    const t = resolveClipBoxTransform({ box_width: 0.5, chroma_keyframes: [{ frame: 0, params: { box_width: 0.8 } }] }, 0);
+    expect(t.box_width).toBe(0.8);
+  });
+
+  it('is evaluated at the SOURCE frame, so one clip resolves differently along its own length', () => {
+    const clip = {
+      chroma_keyframes: [
+        { frame: 0, params: { scale: 1 } },
+        { frame: 100, params: { scale: 2 } },
+      ],
+    };
+    expect(resolveClipBoxTransform(clip, 0).scale).toBe(1);
+    expect(resolveClipBoxTransform(clip, 50).scale).toBe(1.5);
+    expect(resolveClipBoxTransform(clip, 100).scale).toBe(2);
+  });
+});
+
+// The per-param index (D-209) is a pure memoization of reads that already have
+// tests above; these are the properties a cache can break that those cannot
+// see — that a DIFFERENT array with the same shape is not served a stale
+// answer, and that an unsorted stored list is still read in frame order.
+describe('the per-param index (D-209)', () => {
+  it('does not serve one keyframe array’s answer for another', () => {
+    const a: ClipKeyframe[] = [
+      { frame: 0, params: { scale: 1 } },
+      { frame: 100, params: { scale: 2 } },
+    ];
+    const b: ClipKeyframe[] = [
+      { frame: 0, params: { scale: 5 } },
+      { frame: 100, params: { scale: 6 } },
+    ];
+    expect(paramValueAt(a, 'scale', 50, 0)).toBe(1.5);
+    expect(paramValueAt(b, 'scale', 50, 0)).toBe(5.5);
+    expect(paramValueAt(a, 'scale', 50, 0)).toBe(1.5);
+  });
+
+  it('reads a stored list that is not already frame-sorted in frame order', () => {
+    const kfs: ClipKeyframe[] = [
+      { frame: 100, params: { scale: 2 } },
+      { frame: 0, params: { scale: 1 } },
+      { frame: 50, params: { scale: 1.5 } },
+    ];
+    expect(paramValueAt(kfs, 'scale', 25, 0)).toBe(1.25);
+    expect(paramKeyframeFrames(kfs, 'scale')).toEqual([0, 50, 100]);
+    expect(adjacentParamKeyframeFrame(kfs, 'scale', 25, -1)).toBe(0);
+    expect(adjacentParamKeyframeFrame(kfs, 'scale', 25, 1)).toBe(50);
+  });
+
+  it('answers for a param no key names without inventing one', () => {
+    const kfs: ClipKeyframe[] = [{ frame: 0, params: { scale: 1 } }];
+    expect(hasParamKeyframes(kfs, 'rotation')).toBe(false);
+    expect(paramKeyframeFrames(kfs, 'rotation')).toEqual([]);
+    expect(paramValueAt(kfs, 'rotation', 0, 42)).toBe(42);
   });
 });

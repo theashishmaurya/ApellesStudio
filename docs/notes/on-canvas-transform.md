@@ -33,7 +33,7 @@ remain exactly as scoped below — plans, not code. Precisely:
 | **1b — click the picture to select** | **Built 2026-09-07 (D-204)**, fixing B-085 — the one thing that kept Phase 1's handles reachable only from the timeline. `useCanvasClipPick.ts` (a capture-phase decision on the preview surface, not a z-ordered hit layer — see Open Question 3 for why that distinction is the whole problem) + `canvasPick.ts` (pure hit-testing that mirrors `resolve_visible_video_layers_at`). No backend change needed; Open Question 3's own premise that one was required turned out to be wrong. |
 | 2 — rotation, anchor point, non-uniform scale | Rotation, anchor point: not built. **Non-uniform scale: built, Inspector-only, 2026-09-07 (D-193, `docs/notes/independent-clip-size.md`)** — `Clip.box_width`/`box_height`, an independent-axis box-size override with its own Width/Height/ratio-lock Inspector control, correctly rendered by the Rust live-preview compositor and the export compiler. Deliberately NOT extended to on-canvas DRAGGING here: `TransformOverlay.tsx`'s corner handles stay uniform-only by design (this note's own original Phase 1 scope), and committing a corner drag explicitly re-uniforms the box (clears the override) rather than silently only-partially respecting it — see D-193's own decision entry for the full "why." A future pass could add non-uniform on-canvas handles on top of this same persisted field; not attempted this pass. |
 | **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **Phase 1's overlay substrate now exists**, but crop still has no edge handles or Resolve-style mode toggle of its own — its bounding box happens to be unaffected by crop (`composite_layer_onto` crops a layer's pixels in place without shrinking its footprint), so Phase 1's box is correct for a cropped clip by accident, not because crop has any on-canvas affordance yet. |
-| 4 — keyframes | Crop keyframes work exactly as the other five fields' do (explicit "Add key"). The auto-keyframe-on-drag question is still open — Phase 1's overlay writes the static/base transform, same as the Inspector's numeric fields always have. |
+| **4 — keyframes** | **Built. Inspector half 2026-09-08 (D-208), on-canvas half the same day (D-209, fixing B-093).** Every transform/crop property has its own stopwatch diamond, `<`/`>` key nav and reset in the Inspector, and its number field shows/edits the value at the playhead. On canvas, the box DRAWS from the clip's interpolated transform at the playhead (`clipKeyframes.ts`'s `resolveClipBoxTransform`, five `paramValueAt` calls — the same interpolator the Inspector uses, not a second one) and a drag auto-keys **per property**: a dragged property that is already animated gets a keyframe merged in at the playhead, one that is not gets the ordinary static write. D-204's hit rect resolves the same way, so click-to-select still lands on the picture. |
 
 Also fixed on the way through D-132, because crop would have been invisible without it:
 **B-053** — the single-layer preview path skipped compositing unconditionally, so a lone
@@ -320,11 +320,34 @@ What actually shipped, and where it differs from the sketch above:
 
 ### Phase 4 — keyframes
 
-The overlay writes static fields today. Making a drag *set a keyframe* when the clip is
-already keyframed (rather than silently overwriting the static base value under an
-animation) is the same "auto-keyframe" question every NLE answers, and it deserves its own
-decision. Until then, the existing explicit "Add key" button in the Inspector is the whole
-story, and the overlay should be read as editing the base transform.
+**Answered and built, 2026-09-08 — D-208 (Inspector) and D-209 (on canvas, fixing
+B-093).** The paragraph that stood here ("the overlay writes static fields today… the
+auto-keyframe question deserves its own decision") described a deliberate deferral that
+turned out to be a live defect the moment canvas click-to-select worked (B-085/B-092) and
+a human reached these handles on a real keyframed clip: the overlay was not only *writing*
+the static base, it was *drawing* from it, so on an animated clip the box sat nowhere near
+the picture, and the drag's write was one the compositor could never show.
+
+Both halves are now resolved, and both give the same answer on both surfaces:
+
+- **The value shown** — the box (and D-204's hit rect) is built from `clipKeyframes.ts`'s
+  `resolveClipBoxTransform`, evaluated at the clip's own source frame under the playhead.
+  That function is five calls to `paramValueAt`, the per-property interpolator D-208
+  already built and the Inspector's own number fields already use — the frontend's single
+  mirror of `chroma::keyframes::interpolate_param`, not a second one written for the
+  canvas.
+- **The value written** — a drag auto-keys, **per property**. Each dragged property that
+  already has keyframes gets one merged into the entry at the playhead's source frame;
+  each one that does not gets the ordinary static `set_clip_transform`. Per property
+  rather than per clip because since D-208 that is what the renderer itself does: a move
+  drag on a clip whose `position_x` is keyed but whose `position_y` is not must key the
+  first and statically write the second, or one axis of the gesture silently does nothing.
+  Exactly one key per gesture — the drag stays in local state and commits once on
+  pointer-up (Phase 0b), which D-209 also had to make true under StrictMode.
+
+See D-209 for the options weighed on each half (including why a backend
+`clip_transform_at` command and a standalone frontend mirror were both rejected), and
+B-093 for the failure it fixes.
 
 ---
 

@@ -35,6 +35,25 @@
  *    filter to the keys naming this param, linear between the bracketing
  *    two, hold outside, shortest-arc for `rotation` — and is authoring-side
  *    only; the render path still resolves its own values in Rust.
+ *
+ * **D-209 (B-093) — this is now the ONE place any Edit-tab surface asks
+ * "where is this clip right now?"** The on-canvas transform box
+ * (`TransformOverlay.tsx`) and its hit rect (`canvasPick.ts`) used to read
+ * the clip's STATIC `position_x`/`position_y`/`scale` and so drew themselves
+ * nowhere near an animated clip's picture; both now go through
+ * [`resolveClipBoxTransform`] below, which is built on the same
+ * [`paramValueAt`] the Inspector already trusts rather than a second
+ * interpolator with its own semantics. There is exactly one interpolation
+ * implementation in this package, and it mirrors exactly one Rust function.
+ *
+ * **Cost, since these callers run on the preview's hottest surfaces** (the
+ * Inspector re-renders on every playhead tick, and so does the overlay now):
+ * every per-param read below goes through [`paramTrackIndex`], which pays the
+ * filter+sort ONCE per `chroma_keyframes` array identity and caches it in a
+ * `WeakMap`. Before D-209 each of the Inspector's nine properties re-filtered,
+ * re-mapped and re-sorted the whole key list three times per render — 27
+ * sorts and ~27 throwaway arrays per frame of playback on a 50-key clip. See
+ * D-209 for the measurement.
  */
 
 import { type ClipTransformParam, sourceFramesToTimeline, timelineFramesToSource } from './timeline';
@@ -42,6 +61,78 @@ import { type ClipTransformParam, sourceFramesToTimeline, timelineFramesToSource
 export interface ClipKeyframe {
   frame: number;
   params: Record<string, unknown>;
+}
+
+// --------------------------------------------------------------------------- //
+// The per-param index — D-209
+// --------------------------------------------------------------------------- //
+
+/** One param's keys, frame-ascending: the shape every per-param read in this
+ *  module wants, and the one place the filter/map/sort is paid for. */
+interface ParamTrack {
+  /** The param's keys, frame-ascending. */
+  keys: ReadonlyArray<{ frame: number; value: number }>;
+  /** Every stored value coerced to a finite number. When false, every read
+   *  falls back to the caller's static value rather than propagating `NaN` —
+   *  the same all-or-nothing rule `paramValueAt` applied before D-209, hoisted
+   *  to index-build time so it is not an O(n) scan on every read. */
+  finite: boolean;
+}
+
+const EMPTY_TRACK: ParamTrack = { keys: [], finite: true };
+
+/**
+ * Every param's own frame-sorted key track, built once per `chroma_keyframes`
+ * ARRAY IDENTITY and cached against it.
+ *
+ * Identity is the right cache key here because nothing ever mutates a stored
+ * keyframe array in place: every writer in this module returns a NEW array
+ * (`mergeClipKeyframeParams`, `removeClipKeyframeParam`, …), `applyOp` clones
+ * the timeline before applying an op, and a reload from the backend produces
+ * fresh arrays wholesale. So a cache hit means "the very same array", never
+ * "an array that used to look like this". A `WeakMap` keeps the entry alive
+ * exactly as long as the array is reachable and no longer.
+ */
+const paramTrackCache = new WeakMap<ClipKeyframe[], Map<string, ParamTrack>>();
+
+function paramTrackIndex(existing: ClipKeyframe[]): Map<string, ParamTrack> {
+  const cached = paramTrackCache.get(existing);
+  if (cached) return cached;
+
+  const building = new Map<string, { keys: Array<{ frame: number; value: number }>; finite: boolean }>();
+  for (const k of existing) {
+    if (!k || typeof k.params !== 'object' || k.params === null) continue;
+    // `Object.keys` rather than a `hasOwnProperty` loop: same answer for the
+    // JSON-shaped objects this array ever holds (own + enumerable), and it is
+    // the read the rest of the module already makes.
+    for (const name of Object.keys(k.params)) {
+      let track = building.get(name);
+      if (!track) {
+        track = { keys: [], finite: true };
+        building.set(name, track);
+      }
+      const value = Number(k.params[name]);
+      if (!Number.isFinite(value)) track.finite = false;
+      track.keys.push({ frame: k.frame, value });
+    }
+  }
+  const index = new Map<string, ParamTrack>();
+  for (const [name, track] of building) {
+    track.keys.sort((a, b) => a.frame - b.frame);
+    index.set(name, track);
+  }
+  paramTrackCache.set(existing, index);
+  return index;
+}
+
+/** [`ParamTrack`] for one param name. Takes a plain `string` rather than
+ *  `ClipTransformParam` because `box_width`/`box_height` are keyframeable in
+ *  the Rust resolver too (D-193) without being independently *keyable* from
+ *  the Inspector, so they are deliberately not in that union — see
+ *  `ClipTransformParam`'s own doc. */
+function paramTrack(existing: ClipKeyframe[] | undefined, param: string): ParamTrack {
+  if (!existing || existing.length === 0) return EMPTY_TRACK;
+  return paramTrackIndex(existing).get(param) ?? EMPTY_TRACK;
 }
 
 /** Write `params` into the keyframe at `frame`, returning a NEW frame-sorted
@@ -73,15 +164,12 @@ export function mergeClipKeyframeParams(
  *  diamond can never claim a property is animated that the renderers do not
  *  actually animate. */
 export function hasParamKeyframes(existing: ClipKeyframe[] | undefined, param: ClipTransformParam): boolean {
-  return (existing ?? []).some((k) => Object.prototype.hasOwnProperty.call(k.params, param));
+  return paramTrack(existing, param).keys.length > 0;
 }
 
 /** Every frame at which `param` itself is keyed, ascending. */
 export function paramKeyframeFrames(existing: ClipKeyframe[] | undefined, param: ClipTransformParam): number[] {
-  return (existing ?? [])
-    .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
-    .map((k) => k.frame)
-    .sort((a, b) => a - b);
+  return paramTrack(existing, param).keys.map((k) => k.frame);
 }
 
 /** The nearest frame strictly before (`dir === -1`) or after (`dir === 1`)
@@ -94,10 +182,15 @@ export function adjacentParamKeyframeFrame(
   frame: number,
   dir: -1 | 1,
 ): number | null {
-  const frames = paramKeyframeFrames(existing, param);
-  const hits = dir < 0 ? frames.filter((f) => f < frame) : frames.filter((f) => f > frame);
-  if (hits.length === 0) return null;
-  return dir < 0 ? hits[hits.length - 1] : hits[0];
+  // Scans the already-sorted track (D-209) and stops at the first hit — no
+  // intermediate array, since this runs 18 times per Inspector render.
+  const keys = paramTrack(existing, param).keys;
+  if (dir < 0) {
+    for (let i = keys.length - 1; i >= 0; i--) if (keys[i].frame < frame) return keys[i].frame;
+    return null;
+  }
+  for (let i = 0; i < keys.length; i++) if (keys[i].frame > frame) return keys[i].frame;
+  return null;
 }
 
 /** Remove `param` from EVERY keyframe entry, dropping any entry left with no
@@ -139,11 +232,21 @@ export function paramValueAt(
   frame: number,
   staticValue: number,
 ): number {
-  const keyed = (existing ?? [])
-    .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
-    .map((k) => ({ frame: k.frame, value: Number(k.params[param]) }))
-    .sort((a, b) => a.frame - b.frame);
-  if (keyed.length === 0 || keyed.some((k) => !Number.isFinite(k.value))) return staticValue;
+  return namedParamValueAt(existing, param, frame, staticValue);
+}
+
+/** [`paramValueAt`] for any param NAME, including the two
+ *  (`box_width`/`box_height`) that the Rust resolver interpolates but that
+ *  are deliberately outside `ClipTransformParam` — see [`paramTrack`]. */
+function namedParamValueAt(
+  existing: ClipKeyframe[] | undefined,
+  param: string,
+  frame: number,
+  staticValue: number,
+): number {
+  const track = paramTrack(existing, param);
+  const keyed = track.keys;
+  if (keyed.length === 0 || !track.finite) return staticValue;
 
   const f = Math.round(frame);
   if (f <= keyed[0].frame) return keyed[0].value;
@@ -167,6 +270,77 @@ export function paramValueAt(
  *  renderer resolved rather than one that differs in float dust. */
 function round6(v: number): number {
   return Math.round(v * 1_000_000) / 1_000_000;
+}
+
+// --------------------------------------------------------------------------- //
+// The on-canvas box's transform — D-209 / B-093
+// --------------------------------------------------------------------------- //
+
+/** Exactly the fields a clip's on-canvas BOUNDING BOX is a function of, all
+ *  resolved — no `undefined` left for a caller to guess a default for.
+ *
+ *  Deliberately five fields and not the resolver's full eleven: nothing that
+ *  draws or hit-tests this box reads the other six. `opacity` does not move a
+ *  box (a fully faded clip still has one and is still selectable, exactly as
+ *  in the timeline); the four crop insets do not either — `composite_layer_
+ *  onto` crops a layer's pixels IN PLACE and keeps its footprint (D-132), which
+ *  is why `canvasPick.ts`'s own doc already records crop as correctly ignored;
+ *  and `rotation` has no on-canvas affordance at all (Phase 2, unbuilt) and
+ *  would need an oriented box rather than this axis-aligned one. Resolving
+ *  them anyway would be six interpolations per render, on the preview's
+ *  hottest surface, for values nobody reads. */
+export interface ResolvedClipBoxTransform {
+  position_x: number;
+  position_y: number;
+  scale: number;
+  box_width: number | null;
+  box_height: number | null;
+}
+
+/**
+ * Where `clip`'s picture actually IS at its own `sourceFrame` (NOT a timeline
+ * frame — use [`clipSourceFrame`] to convert) — the frontend's mirror of
+ * `chroma::edit::resolve_clip_transform`'s geometry fields, for the surfaces
+ * that have to draw or hit-test the clip's box.
+ *
+ * **This is the fix for B-093.** `TransformOverlay` and `canvasPick` used to
+ * read `clip.position_x`/`position_y`/`scale` — the STATIC base — while the
+ * compositor resolves those same fields through the keyframes first. On any
+ * animated clip that is not where the picture is (on the owner's own
+ * 50-keyframe clip, two thirds of the canvas away), so the box was drawn, and
+ * the click was tested, somewhere the picture is not.
+ *
+ * Each field goes through [`paramValueAt`]'s own per-property interpolation —
+ * the same call the Inspector's number fields make, and the exact mirror of
+ * `interpolate_param` the Rust resolver uses per field (D-208/B-094). One
+ * interpolator in this package, not a second one for the canvas.
+ *
+ * `box_width`/`box_height` stay `null` for a clip with no STATIC override,
+ * whatever the keyframes say, exactly as Rust does (`base.box_width.map(...)`,
+ * D-193): there is nothing to interpolate from, and inventing a value would
+ * silently turn an un-overridden clip into an overridden one.
+ */
+export function resolveClipBoxTransform(
+  clip: {
+    position_x?: number;
+    position_y?: number;
+    scale?: number;
+    box_width?: number | null;
+    box_height?: number | null;
+    chroma_keyframes?: ClipKeyframe[];
+  },
+  sourceFrame: number,
+): ResolvedClipBoxTransform {
+  const kfs = clip.chroma_keyframes;
+  const staticBoxWidth = clip.box_width ?? null;
+  const staticBoxHeight = clip.box_height ?? null;
+  return {
+    position_x: namedParamValueAt(kfs, 'position_x', sourceFrame, clip.position_x ?? 0),
+    position_y: namedParamValueAt(kfs, 'position_y', sourceFrame, clip.position_y ?? 0),
+    scale: namedParamValueAt(kfs, 'scale', sourceFrame, clip.scale ?? 1),
+    box_width: staticBoxWidth === null ? null : namedParamValueAt(kfs, 'box_width', sourceFrame, staticBoxWidth),
+    box_height: staticBoxHeight === null ? null : namedParamValueAt(kfs, 'box_height', sourceFrame, staticBoxHeight),
+  };
 }
 
 /** Remove the keyframe at `frame`. Returns `undefined` when none remain (so

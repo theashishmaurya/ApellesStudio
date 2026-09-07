@@ -557,6 +557,21 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "zoom at their own moment with zero interaction — there is no "
             "track-level or whole-timeline keyframe concept."
         ),
+        "a_keyframe_overrides_the_static_field_per_property": (
+            "PER PROPERTY, a keyframe wins over the value "
+            "editor_set_clip_transform writes, at EVERY frame — the static "
+            "field is only ever a fallback for a property no keyframe names "
+            "(D-208: the resolver brackets each property over only its own "
+            "keys). So editor_set_clip_transform(scale=...) on a clip whose "
+            "keyframes name `scale` is a real, persisted write that changes "
+            "no rendered frame, while the same call's `position_y` on the "
+            "same clip DOES take effect if no key names position_y. To move "
+            "an animated property, write a keyframe for it "
+            "(editor_set_clip_keyframes) instead — which is exactly what the "
+            "GUI's on-canvas drag and its Inspector number fields now do "
+            "(B-093/D-209, D-208). Verify with editor_get_state: compare the "
+            "clip's static field against its chroma_keyframes params."
+        ),
     },
     "export": {
         "v1_scope": (
@@ -679,6 +694,7 @@ def editor_get_capabilities() -> str:
     vs. export (a stacking/picture-in-picture primitive, not a "fill this
     exact box" primitive — plus the recipe for landing a clip in an exact
     half-canvas slot anyway), track paint order, why keyframes are per-clip,
+    why a keyframe silently beats `editor_set_clip_transform` per property,
     export's real v1 scope (video only), and known rough edges worth testing
     for before trusting a real edit (a stuck media-pool entry, a one-time
     flake right after an app restart, a macOS screen-recording filename trap
@@ -999,6 +1015,14 @@ def editor_set_clip_transform(
     value — this tool reads the clip back first, it never silently resets a
     field you didn't mention.
 
+    **BASE means "the fallback for a property no keyframe names."** Per
+    property, a keyframe overrides this value at every frame (D-208), so on
+    an animated clip a field you set here can be a real, persisted write that
+    changes no rendered frame. Check `chroma_keyframes` in
+    `editor_get_state` first; to move a property that IS keyed, write a
+    keyframe for it with `editor_set_clip_keyframes` instead — the same thing
+    the GUI's on-canvas drag does (B-093/D-209).
+
     `scale` is a stacking/picture-in-picture primitive: it ties the
     overlay's width to the canvas, but its HEIGHT follows the CLIP'S OWN
     aspect ratio in the live preview (there is no 'stretch' option here —
@@ -1068,7 +1092,13 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
     opacity/position_x/position_y/scale/rotation/crop_left/crop_top/
     crop_right/crop_bottom>: <number>}}`. Values are piecewise-linearly
     interpolated between keyframes, held constant before the first and after
-    the last."""
+    the last.
+
+    Interpolation is PER PROPERTY (D-208): each param is resolved over only
+    the keys that name it, so an entry naming a `params` SUBSET animates just
+    those and leaves the rest alone rather than freezing them. A property
+    with at least one key ignores its static `editor_set_clip_transform`
+    value entirely — see `editor_get_capabilities`."""
     import json
 
     return json.dumps(_op("editor_set_clip_keyframes", track=track, clip=clip, keyframes=keyframes), indent=2, default=str)

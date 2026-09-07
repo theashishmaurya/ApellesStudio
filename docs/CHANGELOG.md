@@ -11,6 +11,34 @@ One or two lines per session. Detail lives in the decision it references.
   Inspector column and `MotionTab.tsx`'s equivalent split already use, not a
   new one.
 
+- **2026-09-08** — **Fixed B-093 (D-209): on a keyframed clip the on-canvas
+  transform box was drawn from the clip's STATIC transform, so it sat nowhere
+  near the picture, and dragging it wrote a value the compositor can never
+  show** (owner, live, with screenshots on the real ~50-keyframe
+  `perf-comparison-reel-v3.chroma` — "the handles are entirely to the side of
+  the visible picture", "i made it small but no clip follows that only the
+  box"). Pre-existing since D-136 and invisible until B-085/B-092 made canvas
+  click-to-select actually work. The box and D-204's hit rect now read
+  `clipKeyframes.ts`'s new `resolveClipBoxTransform` at the clip's own source
+  frame — five calls to D-208's existing `paramValueAt`, deliberately **not** a
+  second interpolator — and a drag auto-keys **per property**, the same answer
+  D-208 gave the Inspector's number fields, through the same helpers. Also
+  fixed a `setState`-in-render commit the new DOM drag coverage exposed (a
+  StrictMode double-commit is two keyframes, not one idempotent static write).
+  **Perf, per the new top-priority rule:** the per-property keyframe reads are
+  now indexed once per keyframe-array identity instead of re-sorting the list
+  27 times per Inspector render — measured 31.7 µs → 1.2 µs at 50 keys (26.9×).
+  That is not what "lagging like hell" is, though: D-209 records the real
+  target (every preview frame crosses IPC as a base64 JPEG string, one at a
+  time) in roadmap item 25. 23 new tests, 632/632. Live-run in a second
+  isolated Tauri instance on the owner's real 50-keyframe project (loads,
+  scrubs, no console error or panic; zero React-Compiler bailouts in
+  `packages/editor/src` in the real vite build) but **not** verified at the
+  pointer tier — and the reason is its own new roadmap item 26: there is no
+  `editor_set_selection` op, so nothing but a human's mouse can put a clip into
+  the state where the transform box even mounts, which leaves the whole
+  on-canvas surface agent-unverifiable. See D-209.
+
 - **2026-09-07** — **Fixed B-092 (D-205): canvas click-to-select was still
   completely dead in the real app after D-204 shipped it** ("still not able to
   select / unselect clips / video by clicking on the canvas... from timeline it
