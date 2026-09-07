@@ -476,6 +476,44 @@ pub struct Clip {
     /// render every existing clip as a single point.
     #[serde(default = "default_scale")]
     pub scale: f64,
+    /// Independent per-axis box-size override (D-186,
+    /// `docs/notes/independent-clip-size.md`) — a fraction of the OUTPUT
+    /// COMPOSITION's own width, the SAME per-axis convention `position_x`
+    /// already uses (D-136), not a multiplier of the layer's natural
+    /// footprint the way `scale` is. `None` (every pre-D-186 clip, and any
+    /// clip this crate builds without setting it) means "derive this axis
+    /// from `scale`'s own natural-footprint formula instead" — the
+    /// byte-identical-to-pre-D-186 fallback; see `chroma::edit::
+    /// composite_layer_onto`'s own doc for exactly where that fallback is
+    /// applied.
+    ///
+    /// **Why a second pair of fields rather than reinterpreting `scale`
+    /// as two numbers:** `scale`'s meaning (a multiplier of the clip's own
+    /// SOURCE resolution mapped into composition space) is exactly what
+    /// makes a plain picture-in-picture bubble "the clip's own native
+    /// size, scaled" with zero extra data — genuinely the more useful
+    /// default for that case, and every existing project already depends
+    /// on it meaning that. `box_width`/`box_height` are for the OTHER real
+    /// case this model could not express at all before D-186: an
+    /// arbitrary, independently-sized box (e.g. exactly half a 9:16
+    /// canvas's width, full height) that has nothing to do with the
+    /// clip's own source resolution. Two concepts, not one field
+    /// overloaded to mean either depending on how many numbers you passed.
+    ///
+    /// **Why this, unlike `scale`, has NO Rust/TS-export parity gap
+    /// (D-186):** both engines already know the OUTPUT canvas's own pixel
+    /// size (it's a render parameter on both sides), so a canvas-fraction
+    /// box needs no source-resolution probing anywhere — `scale` needs the
+    /// clip's SOURCE resolution to place it correctly (`chroma::edit`'s
+    /// live-preview compositor probes it; `timelineExport.ts`'s pure,
+    /// no-I/O ffmpeg-argv compiler cannot, which is exactly B-074/D-184's
+    /// own documented gap, kept as-is for `scale`, not reopened here).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_width: Option<f64>,
+    /// Fraction of the OUTPUT COMPOSITION's own height — see `box_width`'s
+    /// doc for the full reasoning, identical per-axis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub box_height: Option<f64>,
     /// Degrees, clockwise. `#[serde(default)]` is correct (`0.0` = upright).
     #[serde(default)]
     pub rotation: f64,
@@ -638,6 +676,8 @@ impl Default for Clip {
             position_x: 0.0,
             position_y: 0.0,
             scale: default_scale(),
+            box_width: None,
+            box_height: None,
             rotation: 0.0,
             crop_left: 0.0,
             crop_top: 0.0,

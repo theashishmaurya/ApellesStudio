@@ -778,6 +778,15 @@ struct ClipTransform {
     position_x: f64,
     position_y: f64,
     scale: f64,
+    /// D-186 — resolved (static-or-keyframed) mirror of `Clip::box_width`/
+    /// `box_height`: `Some` overrides `scale`'s natural-footprint box-size
+    /// computation entirely for that axis (a fraction of the CANVAS, not
+    /// the layer's own source), `None` means "no override, this axis is
+    /// governed by `scale` as before D-186" — see [`Self::effective_size`]
+    /// (the point of use) and `Clip::box_width`'s own doc for the full
+    /// reasoning.
+    box_width: Option<f64>,
+    box_height: Option<f64>,
     rotation: f64,
     /// D-132 — normalised (0.0–1.0) edge insets into the layer's own source
     /// frame, resolved for this frame exactly like every field above (static
@@ -807,11 +816,36 @@ impl ClipTransform {
             && self.position_x == 0.0
             && self.position_y == 0.0
             && self.scale == 1.0
+            // D-186 — conservative on purpose: proving a `box_width`/
+            // `box_height` override happens to equal what `scale == 1.0`
+            // would have produced anyway needs the canvas size, which this
+            // method doesn't have. Treating "an override is present at
+            // all" as "not identity" is always SAFE (worst case, an
+            // override that happens to be a no-op still takes the real
+            // compositor path instead of the fast one) and never wrong —
+            // the same discipline `crop_left`'s own exact-comparison note
+            // above already explains for this method.
+            && self.box_width.is_none()
+            && self.box_height.is_none()
             && self.rotation == 0.0
             && self.crop_left <= 0.0
             && self.crop_top <= 0.0
             && self.crop_right <= 0.0
             && self.crop_bottom <= 0.0
+    }
+
+    /// This layer's placement box size, in `canvas`-pixel space (D-186).
+    /// `box_width`/`box_height`, when set, are a fraction of `canvas`
+    /// directly — bypassing `natural`/`scale` entirely for that axis, which
+    /// is what gives this override zero Rust/TS-export parity gap (see
+    /// `Clip::box_width`'s own doc). An axis with no override falls back to
+    /// exactly the pre-D-186 formula: `natural.{0,1} * scale`.
+    fn effective_size(&self, natural: (f64, f64), canvas: (u32, u32)) -> (f64, f64) {
+        let scale = self.scale.max(0.0);
+        let (cw, ch) = canvas;
+        let w = self.box_width.map(|bw| bw * cw as f64).unwrap_or(natural.0 * scale);
+        let h = self.box_height.map(|bh| bh * ch as f64).unwrap_or(natural.1 * scale);
+        (w, h)
     }
 }
 
@@ -861,6 +895,8 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
         position_x: clip.position_x,
         position_y: clip.position_y,
         scale: clip.scale,
+        box_width: clip.box_width,
+        box_height: clip.box_height,
         rotation: clip.rotation,
         crop_left: clip.crop_left,
         crop_top: clip.crop_top,
@@ -889,6 +925,19 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
         position_x: f64_or("position_x", base.position_x),
         position_y: f64_or("position_y", base.position_y),
         scale: f64_or("scale", base.scale),
+        // D-186 — an override is itself independently keyframeable via its
+        // own "box_width"/"box_height" params key (mirrors every field
+        // above); a clip with NO override (`base.box_width`/`box_height`
+        // both `None`) always stays `None` here too, regardless of the
+        // keyframe data — there is nothing to interpolate FROM, and
+        // inventing a value would silently turn an un-overridden clip into
+        // an overridden one.
+        box_width: base
+            .box_width
+            .map(|bw| f64_or("box_width", bw)),
+        box_height: base
+            .box_height
+            .map(|bh| f64_or("box_height", bh)),
         rotation: f64_or("rotation", base.rotation),
         // D-132 — crop keyframes go through the same D-034 engine as every
         // other field here, which is the whole reason the crop insets are
@@ -1068,11 +1117,11 @@ fn composite_layer_onto(
         return; // cropped away entirely — nothing to paint
     };
     let cropped = (cx0, cy0, cx1, cy1) != (0, 0, lw, lh);
-    let scale = t.scale.max(0.0);
-    let (sw, sh) = (
-        (natural.0 * scale).round().max(1.0) as u32,
-        (natural.1 * scale).round().max(1.0) as u32,
-    );
+    // D-186 — `box_width`/`box_height` (canvas-fraction, when set) override
+    // `natural * scale` per axis independently; see `ClipTransform::
+    // effective_size`'s own doc for the full "why".
+    let (raw_w, raw_h) = t.effective_size(natural, canvas.dimensions());
+    let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
     // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
     // buffer, no per-pixel pass — so an uncropped clip (every clip in every
     // existing project) costs exactly what it did before.
@@ -1149,6 +1198,8 @@ mod composite_tests {
             position_x: 0.0,
             position_y: 0.0,
             scale: 1.0,
+            box_width: None,
+            box_height: None,
             rotation: 0.0,
             crop_left: 0.0,
             crop_top: 0.0,
@@ -1371,6 +1422,93 @@ mod composite_tests {
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
+
+    // ---------------------------------------------------------------- //
+    // D-186 — independent per-axis `box_width`/`box_height`
+    // (`docs/notes/independent-clip-size.md`).
+    // ---------------------------------------------------------------- //
+
+    /// `box_width`/`box_height` size the box as a fraction of the CANVAS,
+    /// independently per axis — the exact "full width, half height" layout
+    /// a single uniform `scale` could never produce (B-074's own finding,
+    /// generalised past export-only `fit`/`stretch` into a real persisted
+    /// field).
+    #[test]
+    fn composite_layer_onto_respects_independent_box_width_and_box_height() {
+        let mut canvas = flat(20, 10, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        // full canvas width, half its height -> 20x5, centered at (0,2.5)-(20,7.5)
+        let t = ClipTransform { box_width: Some(1.0), box_height: Some(0.5), ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        assert_eq!(*canvas.get_pixel(10, 5), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(10, 0), Rgba([0, 0, 0, 255]), "outside the half-height box");
+        assert_eq!(*canvas.get_pixel(10, 9), Rgba([0, 0, 0, 255]), "outside the half-height box");
+    }
+
+    /// An axis with no override still falls back to exactly the pre-D-186
+    /// `natural * scale` formula — `box_width`/`box_height` are additive,
+    /// they never change what an existing clip (or a clip that only sets
+    /// one of the two axes) already renders.
+    #[test]
+    fn box_size_override_on_one_axis_leaves_the_other_on_the_scale_formula() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        // width forced to the full canvas; height keeps scale's 1x4 = 4px.
+        let t = ClipTransform { box_width: Some(1.0), scale: 1.0, ..identity_transform() };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        assert_eq!(*canvas.get_pixel(10, 9), Rgba([255, 0, 0, 255]), "18x4 box, y in [8,12)");
+        assert_eq!(*canvas.get_pixel(10, 5), Rgba([0, 0, 0, 255]), "above the 4px-tall box");
+    }
+
+    /// D-186/B-053-style safety: a `box_width`/`box_height` override must
+    /// not be treated as an identity transform just because it happens to
+    /// visually coincide with `scale == 1.0` — see `ClipTransform::
+    /// is_identity`'s own doc for why this is a deliberately conservative,
+    /// always-safe rule rather than a canvas-aware exact check.
+    #[test]
+    fn a_clip_with_a_box_size_override_is_never_identity() {
+        let t = ClipTransform { box_width: Some(1.0), ..identity_transform() };
+        assert!(!t.is_identity());
+        let t = ClipTransform { box_height: Some(1.0), ..identity_transform() };
+        assert!(!t.is_identity());
+    }
+
+    /// D-186 — resolving a clip with NO `box_width`/`box_height` override
+    /// must never invent one from keyframe data, even when the clip is
+    /// otherwise keyframed (here, `opacity`) — there is nothing to
+    /// interpolate FROM for an axis the clip never set.
+    #[test]
+    fn resolve_clip_transform_leaves_box_size_none_without_an_override() {
+        let clip = Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "opacity": 0.0 } },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+        let t = resolve_clip_transform(&clip, 50);
+        assert_eq!(t.box_width, None);
+        assert_eq!(t.box_height, None);
+    }
+
+    /// D-186 — once a clip HAS an override, that override is itself
+    /// keyframeable via its own `box_width`/`box_height` params key, same
+    /// as every other transform field.
+    #[test]
+    fn resolve_clip_transform_resolves_a_keyframed_box_width() {
+        let clip = Clip {
+            box_width: Some(0.5), // static fallback before/after the keys
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "box_width": 0.2 } },
+                { "frame": 100, "params": { "box_width": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+        assert_eq!(resolve_clip_transform(&clip, 0).box_width, Some(0.2));
+        assert!((resolve_clip_transform(&clip, 50).box_width.unwrap() - 0.6).abs() < 0.01);
+        assert_eq!(resolve_clip_transform(&clip, 100).box_width, Some(1.0));
     }
 
     // ---------------------------------------------------------------- //
