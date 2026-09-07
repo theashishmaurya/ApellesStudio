@@ -330,6 +330,28 @@ fn legacy_missing_start() -> i64 {
 /// bookkeeping order only (see `Timeline::reorder`'s doc); every op that
 /// needs "the clip before/after this one in time" scans by `start_frame`,
 /// never by Vec index.
+///
+/// **B-077/`source_fps`.** `source_start`/`duration` being in a clip's own
+/// SOURCE frames only equals `start_frame`'s TIMELINE frames when a clip's
+/// native rate happens to equal the project's — true for ordinary same-fps
+/// footage, false the moment two sources at two different native rates share
+/// one timeline. `source_fps` (below) is the fact that closes that gap, but
+/// **this crate's own frame-resolution methods do not consume it yet**
+/// (`Clip::end_frame`, `Track::clip_at`/`clip_spans_from`/`duration`, and
+/// every editing op in `impl Timeline`/`impl Track` still add `start_frame`
+/// and `duration` directly, exactly the B-077 conflation) — B-077's real fix
+/// landed in `@chroma/editor`'s `timeline.ts`, the layer that actually
+/// mutates a live timeline (every edit, GUI or MCP, goes through
+/// `applyOp`+`chroma_timeline_set`; this crate's own `trim_start`/`trim_end`/
+/// `split`/`move_clip` are unreachable from the running app today — see
+/// B-078). The field is declared here so it **persists** through a
+/// `chroma_timeline_set`/`_get` round trip (Tauri's IPC deserializes a
+/// command's JSON argument straight into this struct — an undeclared field
+/// would be silently dropped, re-breaking B-075/B-077 on the very first save)
+/// and is available to Rust code that DOES already need it
+/// (`chroma::edit`/`chroma::audio`'s real-time playback/decode path — B-078
+/// tracks bringing that path's own `end_frame`-style arithmetic up to the
+/// same standard).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Clip {
     /// Stable id — survives reorder / trim; a `split` gives the new half a
@@ -391,6 +413,16 @@ pub struct Clip {
     /// Total frame count of the source media — the ceiling for trims / extends.
     #[serde(default)]
     pub source_len: i64,
+    /// B-077/B-075 — the source media's own real frame rate, populated by
+    /// `@chroma/editor`'s `editor_add_clip`/`linkedClipsFromDraggedMedia` from
+    /// the probed media pool item's `video.fps` at the moment this clip was
+    /// created. `None` for a clip built before this field existed, or one
+    /// whose source was never successfully probed — the conservative "don't
+    /// invent a number" reading `chroma_keyframes` and the transform fields
+    /// above already use. See the `Clip` doc's own "B-077/`source_fps`"
+    /// section for exactly what this field does and does NOT fix by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fps: Option<f64>,
     /// Timeline-absolute start frame (D-054). The `#[serde(default = ...)]`
     /// here is a **migration sentinel**, not a real default: legacy JSON with
     /// no `start_frame` key deserializes to `i64::MIN`, which
@@ -671,6 +703,7 @@ impl Default for Clip {
             source_start: 0,
             duration: 0,
             source_len: 0,
+            source_fps: None,
             start_frame: 0,
             opacity: default_opacity(),
             position_x: 0.0,
@@ -2067,6 +2100,34 @@ mod tests {
         assert_eq!(back.tracks[0].clips[2].source_len, 200);
         assert_eq!(back.tracks[0].clips[2].start_frame, 150);
         assert_eq!(back.duration(), 350);
+    }
+
+    /// B-077 — `source_fps` must survive a real `chroma_timeline_set`/`_get`
+    /// round trip (Tauri deserializes a command's JSON argument straight into
+    /// `Timeline`/`Clip` — an undeclared field is silently dropped by serde's
+    /// default "ignore unknown keys" behavior, which would have re-broken
+    /// B-075/B-077 on the very first save after this pass: `@chroma/editor`
+    /// sets `source_fps` at clip-creation time, but every edit afterwards
+    /// goes through `chroma_timeline_set` before the next `chroma_timeline_
+    /// get` — if the field vanished there, the fix would only ever hold for
+    /// the single in-memory session before the first save/reload). Also
+    /// confirms `None` (absent — a pre-B-075 clip, or one whose source was
+    /// never probed) round-trips as an absent JSON key, not a literal `null`.
+    #[test]
+    fn source_fps_round_trips_through_serde() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[0].source_fps = Some(44.128089105464674);
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(
+            json.contains("44.128089105464674"),
+            "source_fps must actually be serialized, not skipped: {json}"
+        );
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tracks[0].clips[0].source_fps, Some(44.128089105464674));
+        // The clip after it never had `source_fps` set — stays `None`, and
+        // (unlike `start_frame`'s migration sentinel) is never even written
+        // to the JSON in the first place (`skip_serializing_if`).
+        assert_eq!(back.tracks[0].clips[1].source_fps, None);
     }
 
     #[test]

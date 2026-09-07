@@ -203,6 +203,14 @@ function timelineDto(tl: Timeline) {
         duration: c.duration,
         sourceStart: c.source_start,
         sourceLen: c.source_len,
+        // B-077 — `duration`/`sourceStart` are in the clip's OWN native
+        // frames, `startFrame` is a TIMELINE frame (`chroma-timeline::Clip`'s
+        // own doc) — the exact distinction that silently displayed a 47.86s
+        // clip's real length as 88s before this fix. A caller computing this
+        // clip's real length/end needs `sourceFps` (falls back to the
+        // timeline's own rate — `durationFrames` above — when absent: a
+        // clip probed before this field existed, or genuinely same-rate).
+        sourceFps: c.source_fps ?? null,
         linkGroup: c.link_group ?? null,
         opacity: c.opacity ?? 1,
         positionX: c.position_x ?? 0,

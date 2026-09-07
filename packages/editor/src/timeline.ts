@@ -226,9 +226,49 @@ export function fadePresetName(c: FadeCurve | undefined | null): string | null {
   return hit ? hit.name : null;
 }
 
-/** A clip's exclusive timeline end frame — `chroma-timeline::Clip::end_frame`. */
-export function endFrame(c: Clip): number {
-  return c.start_frame + c.duration;
+/** B-077 — `c.duration`/`c.source_start` (and any other quantity measured in
+ *  `c`'s own **source frames**, per the module doc on `Clip`) converted to
+ *  **timeline frames** at the project's own `fps` (`timelineFps(tl)`), using
+ *  `c.source_fps` (B-075/D-186) to know the real ratio. Falls back to `fps`
+ *  itself when `source_fps` is absent/zero (a clip probed before that field
+ *  existed, or one that's genuinely native-rate == project-rate) — the ratio
+ *  is `1` either way, so this is the exact identity every call site already
+ *  had before B-077, never a behavior change for the common same-fps case.
+ *
+ *  Every function in this file that combines a `start_frame`-space position
+ *  with a `duration`/`source_start`-space quantity (`endFrame`, gap/insertion/
+ *  ripple math, the trim clamps below) must go through this rather than add
+ *  the two directly — that direct addition, done in exactly `endFrame` and
+ *  nowhere else at first, was B-077 itself: correct only when a clip's own
+ *  native rate happens to equal the project's, which a real mixed-native-fps
+ *  timeline (two screen recordings at two different rates) breaks live. */
+export function sourceFramesToTimeline(c: Pick<Clip, 'source_fps'>, sourceFrames: number, fps: number): number {
+  const srcFps = c.source_fps && c.source_fps > 0 ? c.source_fps : fps;
+  return Math.round((sourceFrames * fps) / srcFps);
+}
+
+/** The reverse of [`sourceFramesToTimeline`] — how many of `c`'s own native
+ *  **source** frames a span of `timelineFrames` timeline frames corresponds
+ *  to. Used where a TIMELINE-frame delta (a UI drag, always computed against
+ *  the project's own pixels-per-frame) must be applied to a SOURCE-frame
+ *  field (`source_start`, and — per the `Clip` doc — `duration` itself). */
+export function timelineFramesToSource(c: Pick<Clip, 'source_fps'>, timelineFrames: number, fps: number): number {
+  const srcFps = c.source_fps && c.source_fps > 0 ? c.source_fps : fps;
+  return Math.round((timelineFrames * srcFps) / fps);
+}
+
+/** A clip's exclusive timeline end frame — `chroma-timeline::Clip::end_frame`,
+ *  fps-corrected (B-077): `chroma-timeline`'s own `Clip` doc is explicit that
+ *  `duration` is in **source** frames while `start_frame` is a **timeline**
+ *  frame, so the two can only be added after `duration` is converted via
+ *  `sourceFramesToTimeline` — plain `start_frame + duration` (this function's
+ *  entire pre-B-077 body) is only correct when `c.source_fps` equals `fps`.
+ *  `fps` is the project's own `timelineFps(tl)` — every caller either already
+ *  has a `Timeline` to read that from, or (for a bare `Track`) is handed it by
+ *  ITS caller, all the way up to the one place `Timeline`/`fps` are both in
+ *  scope at once. */
+export function endFrame(c: Clip, fps: number): number {
+  return c.start_frame + sourceFramesToTimeline(c, c.duration, fps);
 }
 
 export interface Track {
@@ -427,14 +467,16 @@ export function timelineFps(tl: Timeline | null): number {
 
 /** Length of `tr` in frames — the furthest clip end, mirroring
  *  `chroma-timeline::Track::duration` (D-054): clips may leave a trailing
- *  gap, so this is a max over `endFrame`, not a sum of durations. */
-export function trackDuration(tr: Track): number {
-  return tr.clips.reduce((max, c) => Math.max(max, endFrame(c)), 0);
+ *  gap, so this is a max over `endFrame`, not a sum of durations. `fps` —
+ *  B-077 — is the project's own `timelineFps(tl)`, needed by `endFrame`. */
+export function trackDuration(tr: Track, fps: number): number {
+  return tr.clips.reduce((max, c) => Math.max(max, endFrame(c, fps)), 0);
 }
 
 export function timelineDuration(tl: Timeline | null): number {
   if (!tl || tl.tracks.length === 0) return 0;
-  return Math.max(0, ...tl.tracks.map(trackDuration));
+  const fps = timelineFps(tl);
+  return Math.max(0, ...tl.tracks.map((tr) => trackDuration(tr, fps)));
 }
 
 /** First video track index, or 0. */
@@ -478,22 +520,32 @@ export function videoTrackIndex(tl: Timeline): number {
  *  after it if its second — so the clip's own full body becomes a real,
  *  unambiguous insertion target instead of a dead zone. `null` is now only
  *  a drop in a genuinely empty region too far from anything to mean
- *  anything specific — the caller falls back to plain append there. */
+ *  anything specific — the caller falls back to plain append there.
+ *
+ *  `incoming` is the clip actually being placed (its `duration`/`source_fps`,
+ *  B-077) rather than a bare frame count: every real caller already has the
+ *  full clip (a Sources-panel drop, or an existing clip being repositioned),
+ *  and its `duration` is in ITS OWN native source frames per the `Clip` doc
+ *  — converting it to timeline frames needs `source_fps`, which a bare
+ *  number can't carry. `fps` is the project's own `timelineFps(tl)`. */
 export function computeInsertion(
   tr: Track,
   frame: number,
-  duration: number,
+  incoming: Pick<Clip, 'duration' | 'source_fps'>,
   snapFrames: number,
+  fps: number,
 ): { startFrame: number; ripple: boolean } | null {
   const clips = tr.clips;
   if (clips.length === 0) return { startFrame: Math.max(0, frame), ripple: false };
 
-  const fitsNoOverlap = (pos: number) => !clips.some((c) => pos < endFrame(c) && pos + duration > c.start_frame);
+  const duration = sourceFramesToTimeline(incoming, incoming.duration, fps);
+  const fitsNoOverlap = (pos: number) =>
+    !clips.some((c) => pos < endFrame(c, fps) && pos + duration > c.start_frame);
 
   const edges = new Set<number>([0]);
   for (const c of clips) {
     edges.add(c.start_frame);
-    edges.add(endFrame(c));
+    edges.add(endFrame(c, fps));
   }
   let snapped: number | null = null;
   let bestDist = snapFrames + 1;
@@ -512,10 +564,10 @@ export function computeInsertion(
 
   if (fitsNoOverlap(frame)) return { startFrame: Math.max(0, frame), ripple: false };
 
-  const covering = clips.find((c) => frame >= c.start_frame && frame < endFrame(c));
+  const covering = clips.find((c) => frame >= c.start_frame && frame < endFrame(c, fps));
   if (covering) {
-    const mid = covering.start_frame + covering.duration / 2;
-    const pos = frame < mid ? covering.start_frame : endFrame(covering);
+    const mid = covering.start_frame + sourceFramesToTimeline(covering, covering.duration, fps) / 2;
+    const pos = frame < mid ? covering.start_frame : endFrame(covering, fps);
     return fitsNoOverlap(pos) ? { startFrame: pos, ripple: false } : { startFrame: pos, ripple: true };
   }
 
@@ -543,14 +595,15 @@ export function computeInsertion(
 export function resolveClipLanding(
   dest: Track,
   movingClipId: string,
-  duration: number,
+  moving: Pick<Clip, 'duration' | 'source_fps'>,
   intendedFrame: number,
   snapFrames: number,
+  fps: number,
 ): { startFrame: number; ripple: boolean } {
   const withoutSelf: Track = { ...dest, clips: dest.clips.filter((c) => c.id !== movingClipId) };
-  const insertion = computeInsertion(withoutSelf, Math.max(0, intendedFrame), duration, snapFrames);
+  const insertion = computeInsertion(withoutSelf, Math.max(0, intendedFrame), moving, snapFrames, fps);
   if (insertion) return insertion;
-  return { startFrame: nextAppendFrame(withoutSelf), ripple: false };
+  return { startFrame: nextAppendFrame(withoutSelf, fps), ripple: false };
 }
 
 /** D-105 — the exclusive `[gapStart, gapEnd)` bounds of the REAL, closeable
@@ -559,11 +612,11 @@ export function resolveClipLanding(
  *  one" cases: `frame` is inside a clip, or it's trailing empty space past
  *  the last clip — nothing after it to ripple, so not a real gap). Clips are
  *  walked by value, never assumed to be in position order (D-054). */
-export function gapAt(tr: Track, frame: number): { gapStart: number; gapEnd: number } | null {
-  if (frame < 0 || clipAt(tr, frame)) return null;
+export function gapAt(tr: Track, frame: number, fps: number): { gapStart: number; gapEnd: number } | null {
+  if (frame < 0 || clipAt(tr, frame, fps)) return null;
   let gapStart = 0;
   for (const c of tr.clips) {
-    const e = endFrame(c);
+    const e = endFrame(c, fps);
     if (e <= frame && e > gapStart) gapStart = e;
   }
   let gapEnd: number | null = null;
@@ -578,8 +631,8 @@ export function gapAt(tr: Track, frame: number): { gapStart: number; gapEnd: num
  *  `backfill_legacy_positions` reconstructs for a legacy back-to-back track,
  *  but computed directly rather than relying on that migration path (see
  *  D-058 — that reliance was the drag-and-drop bug). */
-export function nextAppendFrame(tr: Track): number {
-  return trackDuration(tr);
+export function nextAppendFrame(tr: Track, fps: number): number {
+  return trackDuration(tr, fps);
 }
 
 /** The clip with `id` on `track`, by id (not position) — the lookup both
@@ -596,12 +649,23 @@ export function findClip(tl: Timeline | null, track: number, id: string): { clip
 /** The clip covering `frame` (by its real `start_frame`, D-054/D-058 — Vec
  *  order is bookkeeping only, never assumed to match position order) and
  *  the source frame inside it. Mirrors `chroma-timeline::Track::clip_at`. */
-export function clipAt(tr: Track, frame: number): { clip: Clip; index: number; sourceFrame: number } | null {
+export function clipAt(
+  tr: Track,
+  frame: number,
+  fps: number,
+): { clip: Clip; index: number; sourceFrame: number } | null {
   if (frame < 0) return null;
   for (let i = 0; i < tr.clips.length; i++) {
     const c = tr.clips[i];
-    if (frame >= c.start_frame && frame < endFrame(c)) {
-      return { clip: c, index: i, sourceFrame: c.source_start + (frame - c.start_frame) };
+    if (frame >= c.start_frame && frame < endFrame(c, fps)) {
+      // B-077 — `frame - c.start_frame` is a TIMELINE-frame offset into the
+      // clip; converting it to c's own SOURCE frames (what `source_start`
+      // is in) needs `timelineFramesToSource`, not a direct add.
+      return {
+        clip: c,
+        index: i,
+        sourceFrame: c.source_start + timelineFramesToSource(c, frame - c.start_frame, fps),
+      };
     }
   }
   return null;
@@ -680,11 +744,16 @@ function pruneIfEmptyTrack(tracks: Track[], trackIdx: number): void {
  *  (owner, 2026-09-04: "for sync when i select on is should see all the sync
  *  selected") reuses the same predicate to find which OTHER clips a
  *  selection's own sync-locked tracks are really linked to. */
-function findStraddlingSyncLockedTrack(tracks: Track[], editedTrack: number, threshold: number): number | null {
+function findStraddlingSyncLockedTrack(
+  tracks: Track[],
+  editedTrack: number,
+  threshold: number,
+  fps: number,
+): number | null {
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) continue;
-    if (t.clips.some((c) => c.start_frame < threshold && endFrame(c) > threshold)) return i;
+    if (t.clips.some((c) => c.start_frame < threshold && endFrame(c, fps) > threshold)) return i;
   }
   return null;
 }
@@ -703,12 +772,17 @@ function findStraddlingSyncLockedTrack(tracks: Track[], editedTrack: number, thr
  *  (would BLOCK the ripple, B-033). Both read as "this clip is really tied
  *  to the selection via sync-lock" — the caller renders one shared secondary
  *  highlight for the whole set, distinct from the primary selection ring. */
-function collectSyncLinkedClips(tracks: Track[], editedTrack: number, threshold: number): Set<string> {
+function collectSyncLinkedClips(
+  tracks: Track[],
+  editedTrack: number,
+  threshold: number,
+  fps: number,
+): Set<string> {
   const linked = new Set<string>();
   tracks.forEach((t, i) => {
     if (i === editedTrack || !(t.sync_locked ?? DEFAULT_SYNC_LOCKED) || t.locked) return;
     for (const c of t.clips) {
-      if (c.start_frame >= threshold || (c.start_frame < threshold && endFrame(c) > threshold)) {
+      if (c.start_frame >= threshold || (c.start_frame < threshold && endFrame(c, fps) > threshold)) {
         linked.add(c.id);
       }
     }
@@ -718,11 +792,12 @@ function collectSyncLinkedClips(tracks: Track[], editedTrack: number, threshold:
 
 export function syncLinkedClipIds(tl: Timeline, selection: { track: number; id: string }[]): Set<string> {
   const linked = new Set<string>();
+  const fps = timelineFps(tl);
   for (const sel of selection) {
     const track = tl.tracks[sel.track];
     const clip = track?.clips.find((c) => c.id === sel.id);
     if (!clip) continue;
-    for (const id of collectSyncLinkedClips(tl.tracks, sel.track, clip.start_frame)) linked.add(id);
+    for (const id of collectSyncLinkedClips(tl.tracks, sel.track, clip.start_frame, fps)) linked.add(id);
   }
   return linked;
 }
@@ -738,7 +813,7 @@ export function syncLinkedClipIds(tl: Timeline, selection: { track: number; id: 
  *  D-111's selection-time highlight; D-112 is a concurrent, unrelated
  *  fork's own number — checked before claiming this one). */
 export function syncLinkedClipIdsAtPosition(tl: Timeline, track: number, thresholdFrame: number): Set<string> {
-  return collectSyncLinkedClips(tl.tracks, track, thresholdFrame);
+  return collectSyncLinkedClips(tl.tracks, track, thresholdFrame, timelineFps(tl));
 }
 
 /** Propagate a ripple already applied to `editedTrack` (index into
@@ -868,22 +943,43 @@ function startAfterRipple(startFrame: number, rippled: boolean, threshold: numbe
 /** The clamped head-trim delta `trim_start` would really apply — mirrors
  *  `chroma-timeline::clamped_trim_start_delta`, extracted for the same D-129
  *  reason (asking every link-group member for its own clamp before mutating).
- *  Caller guarantees `clipIdx` is in range. */
-function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number): number {
+ *  Caller guarantees `clipIdx` is in range.
+ *
+ *  B-077 — `delta`/the return value are **timeline** frames (the UI drag is
+ *  always computed against the project's own pixels-per-frame, and this is
+ *  what gets added straight onto `start_frame`); the two source-frame bounds
+ *  (`source_start`'s own `[0, source_len)` window) are converted to timeline
+ *  frames via `sourceFramesToTimeline` before clamping against them, so `d`
+ *  stays a single, consistent unit throughout. The caller (`applyOp`'s
+ *  `trim_start` case) is responsible for converting the returned timeline
+ *  delta back to `c`'s own source frames before touching `source_start`/
+ *  `duration` (`timelineFramesToSource`) — this function never touches
+ *  either field itself. */
+function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number, fps: number): number {
   const c = tr.clips[clipIdx];
   const ceiling = Math.max(c.source_len, 0);
   const prevEnd = tr.clips.reduce((max, other, i) => {
     if (i === clipIdx) return max;
-    const oe = endFrame(other);
+    const oe = endFrame(other, fps);
     return oe <= c.start_frame ? Math.max(max, oe) : max;
   }, 0);
-  const d = clampInt(delta, -c.source_start, Math.max(ceiling - 1, 0) - c.source_start);
+  const lowerBound = sourceFramesToTimeline(c, -c.source_start, fps);
+  const upperBound = sourceFramesToTimeline(c, Math.max(ceiling - 1, 0) - c.source_start, fps);
+  const d = clampInt(delta, lowerBound, upperBound);
   return Math.max(d, prevEnd - c.start_frame);
 }
 
 /** The clamped new `duration` `trim_end` would really apply — mirrors
- *  `chroma-timeline::clamped_trim_end_duration`. */
-function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number): number {
+ *  `chroma-timeline::clamped_trim_end_duration`. Returns a new `duration`
+ *  (source frames, per the `Clip` doc — the caller applies it to that field
+ *  directly, unlike `clampedTrimStartDelta` above). `delta` is a TIMELINE
+ *  frame delta (B-077, same UI-drag convention as `trim_start`'s), converted
+ *  to `c`'s own source frames before it ever touches `duration`; the
+ *  following-clip position bound (naturally a timeline-frame quantity —
+ *  `nextStart - c.start_frame`) is converted the same way before being
+ *  compared against the source-frame media-length bound, so `Math.min` never
+ *  compares two different units again. */
+function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number, fps: number): number {
   const c = tr.clips[clipIdx];
   const ceiling = Math.max(c.source_len, 0);
   const maxDurSource = Math.max(ceiling - c.source_start, 1);
@@ -892,21 +988,27 @@ function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number): numb
     if (i === clipIdx || other.start_frame < c.start_frame) continue;
     if (nextStart === null || other.start_frame < nextStart) nextStart = other.start_frame;
   }
-  const maxDurPosition = nextStart === null ? Infinity : Math.max(nextStart - c.start_frame, 1);
-  const maxDur = Math.max(Math.min(maxDurSource, maxDurPosition), 1);
-  return clampInt(c.duration + delta, 1, maxDur);
+  const maxDurPositionSource =
+    nextStart === null
+      ? Infinity
+      : Math.max(timelineFramesToSource(c, Math.max(nextStart - c.start_frame, 1), fps), 1);
+  const maxDur = Math.max(Math.min(maxDurSource, maxDurPositionSource), 1);
+  const deltaSource = timelineFramesToSource(c, delta, fps);
+  return clampInt(c.duration + deltaSource, 1, maxDur);
 }
 
 /** First unlocked audio track with room for `[startFrame, startFrame +
- *  duration)`, or `null` — mirrors
- *  `chroma-timeline::Timeline::audio_track_with_room`. */
+ *  duration)` (both timeline frames — B-077, unlike `Clip.duration` this is
+ *  already a footprint on the timeline, e.g. `sourceFramesToTimeline`'s
+ *  output) — mirrors `chroma-timeline::Timeline::audio_track_with_room`. */
 export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number | null {
   const end = startFrame + duration;
+  const fps = timelineFps(tl);
   const i = tl.tracks.findIndex(
     (t) =>
       t.kind === 'audio' &&
       !t.locked &&
-      !t.clips.some((c) => startFrame < endFrame(c) && end > c.start_frame),
+      !t.clips.some((c) => startFrame < endFrame(c, fps) && end > c.start_frame),
   );
   return i >= 0 ? i : null;
 }
@@ -918,7 +1020,9 @@ export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: n
  *  track-creation path (D-095/D-096/D-117's one real mechanism). A fresh
  *  track is empty, so the returned index is always genuinely free — which is
  *  what makes "a dropped clip's audio half always lands somewhere valid" a
- *  guarantee with no failure branch. */
+ *  guarantee with no failure branch. `duration` is a TIMELINE-frame footprint
+ *  (B-077 — see [`audioTrackWithRoom`]'s own doc), not the audio clip's raw
+ *  `.duration` field. */
 export function ensureAudioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number {
   const existing = audioTrackWithRoom(tl, startFrame, duration);
   if (existing !== null) return existing;
@@ -1260,6 +1364,12 @@ function clamp01(v: number): number {
 }
 
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
+  // B-077 — the project's own timeline-frame rate, needed by every op below
+  // that combines a `start_frame`-space position with a `duration`/
+  // `source_start`-space (source-frame) quantity. Computed once, from the
+  // ORIGINAL `tl` (never mutated by any op below), matching `timelineFps`'s
+  // own "fixed for a given timeline" contract.
+  const fps = timelineFps(tl);
   if (op.kind === 'add_clip') {
     const next = clone(tl);
     if (next.tracks.length === 0)
@@ -1279,8 +1389,12 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         // tracks) if a sync-locked track has a clip straddling the
         // insertion point; never auto-split. See the doc on
         // `findStraddlingSyncLockedTrack` for why.
-        if (findStraddlingSyncLockedTrack(tl.tracks, trackIdx, startFrame) !== null) return tl;
-        const dur = op.clip.duration;
+        if (findStraddlingSyncLockedTrack(tl.tracks, trackIdx, startFrame, fps) !== null) return tl;
+        // B-077 — the ripple shifts every clip at/after `startFrame` by the
+        // NEW clip's own TIMELINE-frame footprint, not its raw (source-frame)
+        // `.duration` — those only coincide when the new clip's own native
+        // rate happens to equal the project's.
+        const dur = sourceFramesToTimeline(op.clip, op.clip.duration, fps);
         shiftClipsAtOrAfter(track, startFrame, dur);
         // D-106 — sync-locked tracks ripple too, same shift.
         propagateSyncLockRipple(next.tracks, trackIdx, startFrame, dur);
@@ -1290,7 +1404,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // "after everything already on this track," computed here (the only
       // place that has both the target track's real contents and the new
       // clip at once), never left for the clip to arrive without one.
-      startFrame = nextAppendFrame(track);
+      startFrame = nextAppendFrame(track, fps);
     }
     const clip: Clip = { ...op.clip, start_frame: startFrame };
     const defaultAt = track.clips.filter((c) => c.start_frame < startFrame).length;
@@ -1304,7 +1418,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // it genuinely can't fit is a new track appended. Never fails — a fresh
     // track is always free — so there is no half-applied outcome here.
     if (op.linkedAudio) {
-      const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, op.linkedAudio.duration);
+      const linkedDurTimeline = sourceFramesToTimeline(op.linkedAudio, op.linkedAudio.duration, fps);
+      const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, linkedDurTimeline);
       const audioTrack = next.tracks[audioTrackIdx];
       const audioClip: Clip = { ...op.linkedAudio, start_frame: startFrame };
       const audioAt = audioTrack.clips.filter((c) => c.start_frame < startFrame).length;
@@ -1517,7 +1632,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // (gaining one dropped onto it).
     if (src.locked || dest.locked) return tl;
     if (op.fromTrack === op.toTrack && op.startFrame === c.start_frame) return tl; // genuine no-op
-    const newEnd = op.startFrame + c.duration;
+    // B-077 — `c.duration` is `c`'s own SOURCE frames; its real footprint on
+    // THIS timeline (what `newEnd` needs to compare against other clips'
+    // `start_frame`-space positions) is the converted, timeline-frame value.
+    const movingDurTimeline = sourceFramesToTimeline(c, c.duration, fps);
+    const newEnd = op.startFrame + movingDurTimeline;
     // D-104 — overlap is rejected for EVERY move now, same-track or
     // cross-track alike (reverses D-096's cross-track allowance, see this
     // op's own doc comment for why). `i === op.clip` excludes the clip's own
@@ -1525,7 +1644,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // a no-op filter for cross-track since the clip isn't in `dest.clips` yet.
     const overlaps = dest.clips.some((other, i) => {
       if (op.fromTrack === op.toTrack && i === op.clip) return false;
-      return op.startFrame < endFrame(other) && newEnd > other.start_frame;
+      return op.startFrame < endFrame(other, fps) && newEnd > other.start_frame;
     });
     // D-104 — ripple only ever shifts clips starting AT/AFTER the landing
     // point (the real, edge-aligned case `resolveClipLanding` always
@@ -1538,13 +1657,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // leave a silently still-overlapping result.
     const straddles = dest.clips.some((other, i) => {
       if (op.fromTrack === op.toTrack && i === op.clip) return false;
-      return other.start_frame < op.startFrame && endFrame(other) > op.startFrame;
+      return other.start_frame < op.startFrame && endFrame(other, fps) > op.startFrame;
     });
     // B-033 — same reject-on-straddle now also covers every OTHER
     // sync-locked track this move's ripple would touch, checked against
     // the ORIGINAL tracks before any mutation.
     const syncLockBlocked =
-      overlaps && op.ripple && findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame) !== null;
+      overlaps && op.ripple && findStraddlingSyncLockedTrack(tl.tracks, op.toTrack, op.startFrame, fps) !== null;
     if (overlaps && (!op.ripple || straddles || syncLockBlocked)) return tl;
 
     // D-129 — every other member of this clip's A/V link group moves by the
@@ -1575,13 +1694,16 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         // and the real shift below can never disagree.
         const rippled =
           rippleFires && (ti === op.toTrack || ((ot.sync_locked ?? DEFAULT_SYNC_LOCKED) && !ot.locked));
-        const sibEnd = target + sib.duration;
+        // B-077 — `sib`/`o` are each converted through THEIR OWN `source_fps`:
+        // a link group's two members (e.g. an A/V pair) share a source file
+        // in the overwhelmingly common case, but nothing here assumes it.
+        const sibEnd = target + sourceFramesToTimeline(sib, sib.duration, fps);
         const clash = ot.clips.some((o, i) => {
           // Other members of the same group shift by the same delta from a
           // non-overlapping start, so they can never collide with each other.
           if (i === ci || link.members.some(([mt, mc]) => mt === ti && mc === i)) return false;
-          const os = startAfterRipple(o.start_frame, rippled, op.startFrame, c.duration);
-          return target < os + o.duration && sibEnd > os;
+          const os = startAfterRipple(o.start_frame, rippled, op.startFrame, movingDurTimeline);
+          return target < os + sourceFramesToTimeline(o, o.duration, fps) && sibEnd > os;
         });
         if (clash) return tl;
       }
@@ -1593,15 +1715,16 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (overlaps && op.ripple) {
       // D-104 — mirrors `add_clip`'s own ripple contract: everything on the
       // destination track at/after the landing point shifts later by this
-      // clip's own duration to make room, rather than overlapping it.
-      shiftClipsAtOrAfter(next.tracks[op.toTrack], op.startFrame, moved.duration);
+      // clip's own TIMELINE-frame footprint (B-077 — not its raw `.duration`)
+      // to make room, rather than overlapping it.
+      shiftClipsAtOrAfter(next.tracks[op.toTrack], op.startFrame, movingDurTimeline);
     }
     moved.start_frame = op.startFrame;
     destClips.push(moved);
     // D-106 — propagate to every OTHER sync-locked track, same shift, only
     // when this move's own ripple actually fired.
     if (overlaps && op.ripple) {
-      propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, moved.duration);
+      propagateSyncLockRipple(next.tracks, op.toTrack, op.startFrame, movingDurTimeline);
     }
     // D-129 — place each linked sibling at the target computed (and fully
     // validated) above, resolved by its stable id rather than the index it
@@ -1666,12 +1789,12 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // find the real gap `frame` is inside (`gapAt`), reject as a no-op if
       // there isn't one, otherwise shift every clip at/after the gap's end
       // earlier by its width.
-      const gap = gapAt(tr, op.frame);
+      const gap = gapAt(tr, op.frame, fps);
       if (!gap) return tl;
       const shift = gap.gapEnd - gap.gapStart;
       // B-033 — reject upfront if a sync-locked track has a straddling
       // clip, checked against the ORIGINAL (pre-clone) tracks.
-      if (findStraddlingSyncLockedTrack(tl.tracks, op.track, gap.gapEnd) !== null) return tl;
+      if (findStraddlingSyncLockedTrack(tl.tracks, op.track, gap.gapEnd, fps) !== null) return tl;
       const next = clone(tl);
       shiftClipsAtOrAfter(next.tracks[op.track], gap.gapEnd, -shift);
       // D-106 — every OTHER sync-locked track ripples too, unconditionally
@@ -1685,32 +1808,46 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // Mirrors `chroma-timeline::Timeline::trim_start` field-for-field: the
       // clip's *end* stays fixed — `source_start` and `start_frame` shift by
       // the same clamped delta, `duration` shrinks by it.
+      //
+      // B-077 — `op.delta` is a TIMELINE-frame delta (the UI drag, computed
+      // against the project's own pixels-per-frame — see `clampedTrimStart
+      // Delta`'s own doc). `start_frame` shifts by exactly `d` (already
+      // timeline-native); `source_start`/`duration` shift by `d`'s SOURCE-
+      // frame equivalent, per-clip (`timelineFramesToSource`) since a linked
+      // pair's two members may in principle have different `source_fps`.
       const c = tr.clips[op.clip];
       if (!c) return tl;
-      const d = clampedTrimStartDelta(tr, op.clip, op.delta);
-      if (c.duration - d < 1) return tl;
+      const d = clampedTrimStartDelta(tr, op.clip, op.delta, fps);
+      const dSource = timelineFramesToSource(c, d, fps);
+      if (c.duration - dSource < 1) return tl;
       // D-129 — a linked clip trims in lockstep with every other member of
       // its group; if any member would clamp to a DIFFERENT delta (its own
       // source runs out first, a neighbour blocks it) the whole op is
       // rejected rather than leaving the halves out of sync. Unlink first for
       // a deliberate L-cut — that's what unlink is for, in both references.
-      // Mirrors `chroma-timeline::Timeline::trim_start`.
+      // Mirrors `chroma-timeline::Timeline::trim_start`. Compared in TIMELINE
+      // frames (`d`, the amount the user actually dragged) — every member
+      // must be able to absorb the SAME on-screen delta, converted to ITS
+      // OWN source frames.
       const link = linkTargets(tl, op.track, op.clip);
       if (link) {
         for (const [ti, ci] of link.members) {
           if (ti === op.track && ci === op.clip) continue;
           const ot = tl.tracks[ti];
           if (ot.locked) return tl;
-          if (clampedTrimStartDelta(ot, ci, op.delta) !== d || ot.clips[ci].duration - d < 1) return tl;
+          const oc = ot.clips[ci];
+          const oDeltaSource = timelineFramesToSource(oc, d, fps);
+          if (clampedTrimStartDelta(ot, ci, op.delta, fps) !== d || oc.duration - oDeltaSource < 1) return tl;
         }
       }
       const next = clone(tl);
       const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
       for (const [ti, ci] of targets) {
         const nc = next.tracks[ti].clips[ci];
-        nc.source_start += d;
+        const ncDeltaSource = timelineFramesToSource(nc, d, fps);
+        nc.source_start += ncDeltaSource;
         nc.start_frame += d;
-        nc.duration -= d;
+        nc.duration -= ncDeltaSource;
       }
       return next;
     }
@@ -1718,10 +1855,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // Mirrors `chroma-timeline::Timeline::trim_end`: `start_frame` stays
       // fixed, only `duration` changes, clamped by both the source media's
       // remaining length and the nearest following clip's `start_frame` (no
-      // overlap with it).
+      // overlap with it). `clampedTrimEndDuration` already converts `op.delta`
+      // (a TIMELINE-frame delta, B-077) to `c`'s own source frames — `applied`
+      // below is a `duration` (source-frame) delta throughout, needing no
+      // further conversion.
       const c = tr.clips[op.clip];
       if (!c) return tl;
-      const newDur = clampedTrimEndDuration(tr, op.clip, op.delta);
+      const newDur = clampedTrimEndDuration(tr, op.clip, op.delta, fps);
       if (newDur === c.duration) return tl;
       const applied = newDur - c.duration;
       // D-129 — same lockstep-or-reject contract as `trim_start` above.
@@ -1731,7 +1871,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
           if (ti === op.track && ci === op.clip) continue;
           const ot = tl.tracks[ti];
           if (ot.locked) return tl;
-          if (clampedTrimEndDuration(ot, ci, op.delta) - ot.clips[ci].duration !== applied) return tl;
+          if (clampedTrimEndDuration(ot, ci, op.delta, fps) - ot.clips[ci].duration !== applied) return tl;
         }
       }
       const next = clone(tl);
@@ -1744,10 +1884,15 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // right half its own `start_frame` (the D-058 bug: this used to copy
       // the left half's `start_frame` unchanged, leaving both halves
       // claiming the same timeline position).
+      // B-077 — `offset`/`off` below are TIMELINE-frame offsets (`op.atFrame`
+      // is a timeline position, e.g. the playhead); compared against each
+      // clip's own TIMELINE-frame footprint, not its raw (source-frame)
+      // `.duration`. The actual `source_start`/`duration` split further down
+      // converts that timeline offset to each clip's own source frames.
       const c = tr.clips[op.clip];
       if (!c) return tl;
       const offset = op.atFrame - c.start_frame;
-      if (offset <= 0 || offset >= c.duration) return tl;
+      if (offset <= 0 || offset >= sourceFramesToTimeline(c, c.duration, fps)) return tl;
       // D-129 — a razor through one member of a link group cuts every member
       // at the same frame ("clicking a linked clip with the Razor Tool cuts
       // both tracks at once"), producing two INTACT pairs: left halves keep
@@ -1763,7 +1908,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
           if (ot.locked) return tl;
           const o = ot.clips[ci];
           const off = op.atFrame - o.start_frame;
-          if (off <= 0 || off >= o.duration) return tl;
+          if (off <= 0 || off >= sourceFramesToTimeline(o, o.duration, fps)) return tl;
         }
       }
       const rightGroup = link ? `${link.group}·${op.atFrame}` : null;
@@ -1777,15 +1922,19 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
         const clips = next.tracks[ti].clips;
         const left = clips[ci];
         const off = op.atFrame - left.start_frame;
+        // B-077 — `off` is a TIMELINE-frame offset; `source_start`/`duration`
+        // (source frames) split at ITS source-frame equivalent, `offSource`,
+        // not `off` itself. `start_frame` uses the raw timeline `off`.
+        const offSource = timelineFramesToSource(left, off, fps);
         const right: Clip = {
           ...left,
           id: `${left.id}·${op.atFrame}`,
           link_group: rightGroup,
           start_frame: left.start_frame + off,
-          source_start: left.source_start + off,
-          duration: left.duration - off,
+          source_start: left.source_start + offSource,
+          duration: left.duration - offSource,
         };
-        left.duration = off;
+        left.duration = offSource;
         clips.splice(ci + 1, 0, right);
       }
       return next;

@@ -32,6 +32,19 @@ One or two lines per session. Detail lives in the decision it references.
   directly to its TIMELINE-frame `start_frame` with no fps conversion — wrong displayed
   duration/gaps for any mixed-native-fps clip (does not affect `editor_export`'s actual
   output, which already converts correctly per B-075). `@chroma/editor` 328/328.
+- **2026-09-07** — **B-077/D-194: the same B-075 fps-unit bug, everywhere else in the Edit tab.**
+  B-075 fixed `editor_export`'s `duration`/`source_start` fps mix-up but only there; the GUI
+  itself had the identical bug — a 2113-frame screen recording at 44.13fps showed 00:01:28:00
+  (88s) on the transport bar instead of its real 47.86s. Fixed the one real choke point
+  (`endFrame`) and threaded the project's `fps` through everything that calls it in
+  `timeline.ts`/`TimelinePane.tsx`/`marquee.ts` — gap detection, insertion/ripple math, the trim
+  clamps, filmstrip/waveform widths. Also closed a real persistence gap: `Clip.source_fps` didn't
+  exist on the Rust struct, so it silently vanished on every `chroma_timeline_set`/`_get` round
+  trip (added, additive, no other Rust change needed). Filed (not fixed) B-079: the live Rust
+  playback/audio-decode/duck engine has the same conflation on a reachable path — a real
+  follow-up, scoped and documented, not silently skipped. `@chroma/editor` 335/335 (+11),
+  `chroma-timeline` 129/129 (+1). See D-194 for why "convert at every consumption site" (matching
+  B-075) was chosen over normalizing `duration` to timeline-frame units at clip creation.
 - **2026-09-07** — **`editor_export` fixed for real content (B-075/B-076, D-187) + real ffmpeg
   regression tests.** The reel's first real export attempt found every render was actually
   broken three ways: an unquoted keyframe expression made ffmpeg reject the filtergraph

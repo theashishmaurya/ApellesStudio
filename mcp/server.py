@@ -329,13 +329,23 @@ def get_timeline() -> str:
     Returns {id, name, durationFrames, tracks: [{index, kind: "video"|"audio",
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
-    sourceLen, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
+    sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
     fadeOutCurve, fadeInCurveName, fadeOutCurveName}]}]}.
 
     All positions and durations are in FRAMES, not seconds — the unit every
     Edit-tab number is in. `index` is what set_clip_fade and set_track_duck
     address; `id` is the stable identity that survives a reorder, for re-finding
     a clip after an edit. `duckFrom` is null on a track that is not ducked.
+
+    B-077 — `startFrame` (and `durationFrames`) are TIMELINE frames (this
+    timeline's own rate); `duration`/`sourceStart`/`sourceLen` are a CLIP'S
+    OWN native frames, which only match the timeline's rate when `sourceFps`
+    equals it. A clip's real length in seconds is `duration / (sourceFps or
+    the timeline's own rate)`, NOT `duration / durationFrames`'s implied rate
+    — dividing a clip's native frame count by the wrong rate is exactly the
+    bug that once showed a 47.86s clip as 88s. `sourceFps` is null for a clip
+    probed before this field existed, or genuinely same-rate as the timeline.
+
     Read-only, cheap, no side effects."""
     import json
 

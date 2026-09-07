@@ -16828,6 +16828,135 @@ Inspector UI or drive a real render end-to-end; every layer above is
 compile/type/unit-test verified only. This is the one honest gap in
 verification depth for this pass, not a scope cut — flagged explicitly rather
 than claimed as "done."
+## D-194 — B-077's fix stays "convert at every consumption site," not "conform duration to timeline frames at creation" — and closes a real persistence gap B-075 left open
+
+Same root cause as B-075/D-187 (a clip's `duration`/`source_start` are in its own
+SOURCE frames, `start_frame` is a TIMELINE frame — genuinely different units whenever
+a clip's native rate differs from the project's), found live again the same session in
+the GUI itself, not just `editor_export`: a 2113-frame screen recording at
+44.128089105464674fps (real length 47.86s) on a timeline whose `rate` was never set
+(`DEFAULT_FPS = 24`) showed **00:01:28:00** on the transport bar — exactly `2113 / 24`,
+nothing to do with the clip's real length. B-075 fixed this ONE place it was found
+(`timelineExport.ts`); this pass is the real audit "everywhere else" B-075's own bug
+entry flagged as still open.
+
+**The design question: where does the fps conversion happen?**
+
+- **(a) Convert at every consumption site.** `duration`/`source_start` stay
+  source-native everywhere, at rest; every place that needs a clip's real timeline
+  footprint (`endFrame`, gap/insertion/ripple math, the trim clamps) converts via
+  `source_fps ?? timelineFps` — exactly what B-075 already did in `timelineExport.ts`.
+- **(b) Normalize once at clip-creation time.** Convert a clip's native frame count
+  into timeline-frame units immediately (`editor_add_clip`/`linkedClipsFromDraggedMedia`),
+  so `duration` and `start_frame` are ALWAYS the same unit thereafter — real NLEs
+  "conform" mixed-fps footage to the sequence rate this way, and no consumer needs to
+  know about per-clip fps at all.
+
+**Chose (a).** (b) looks cleaner on paper but does not hold up once you trace what
+`duration`/`source_start` actually mean elsewhere in this codebase, checked live before
+picking a side rather than assumed:
+
+1. **It's not a clean redefinition — it's TWO different fields moving in opposite
+   directions.** `source_len` (the ceiling every trim is clamped against) is
+   necessarily source-native — it's the real decoded media's frame count, which
+   doesn't change meaning just because we redefine `duration`. Under (b), every trim
+   clamp (`clamped_trim_start_delta`/`clamped_trim_end_duration`, both langs) would
+   need to convert `duration` back to source frames to compare against `source_len`
+   anyway — the exact same conversion (a) needs, just moved one level down and now
+   also needed on the WRITE path, not only reads.
+2. **It doesn't even remove the fps-awareness from the trim ops.** `trim_start`'s own
+   delta (a UI drag, always timeline-native) is applied to THREE fields today —
+   `source_start`, `start_frame`, `duration` — assuming they're the same unit (the
+   original conflation, not just in `endFrame`). Under (a), `start_frame`/`duration`
+   share the timeline-native delta unchanged, and only `source_start` needs converting.
+   Under (b), `start_frame`/`duration` share it too (both timeline-native at rest now),
+   and `source_start` STILL needs converting — no fewer conversions, just relocated.
+3. **It's a real behavior/contract change** MCP already depends on: `editor_add_clip`'s
+   `sourceStart`/`duration` args are validated against the PROBED NATIVE frame count
+   (`sourceStart + duration <= frames`) — a documented, already-shipped external
+   contract. Redefining what `Clip.duration` means at rest would mean either breaking
+   that contract or adding a second silent conversion at the MCP boundary too —
+   real surface, not free.
+4. **Rounding compounds on every edit, not once.** (b) requires rounding `duration` to
+   the nearest timeline frame at creation, and again at every trim/split thereafter
+   (each one re-derives a source-frame quantity from a rounded timeline one) — a
+   genuine accumulating drift real NLEs solve with a rational-arithmetic timebase, a
+   much bigger change than a bug fix pass justifies. (a) rounds only at the point of
+   actually needing a timeline-frame number (display, gap math, ripple amounts) —
+   `duration`/`source_start` themselves never move except by an edit that already
+   intends to change them.
+
+(a) matches what B-075 already shipped and keeps `chroma-timeline::Clip`'s own
+long-standing doc ("`source_start`/`duration` are in source frames") true without a
+redefinition — a real design each new consumer can be checked against, not a special
+case invented for this bug.
+
+**The fix (`packages/editor/src/timeline.ts`, `TimelinePane.tsx`, `marquee.ts`):**
+`endFrame(c, fps)` (now takes the project's own `timelineFps`, was `endFrame(c)`) converts
+`c.duration` through `c.source_fps ?? fps` before adding it to `start_frame` — the one
+place the raw addition happened, and the choke-point most of the rest of the file
+already routed through. `fps` threads into every function that called it (or built a
+raw `frame + duration` sum itself): `trackDuration`, `timelineDuration`,
+`computeInsertion`/`resolveClipLanding` (now take the actual clip, not a bare duration
+number, since converting needs `source_fps`), `nextAppendFrame`, `gapAt`, `clipAt`,
+`findStraddlingSyncLockedTrack`, `collectSyncLinkedClips`, `syncLinkedClipIds[AtPosition]`,
+the two trim clamps, and `applyOp`'s `add_clip`/`move`/`trim_start`/`trim_end`/`split`/
+`remove_gap` cases. `trim_start`/`split` needed a real split, not just a fps parameter:
+the UI's own delta/offset is a TIMELINE-frame quantity (the drag distance), applied to
+`start_frame` unconverted but to `source_start`/`duration` via its SOURCE-frame
+equivalent (`timelineFramesToSource`) — the pre-fix code applied the SAME raw delta to
+all three, correct only when `source_fps == fps`. `TimelinePane.tsx`'s filmstrip/
+waveform/drag-overlay `durationSecs`/`startSecs` props switched from `/ fps` to
+`/ (clip.source_fps ?? fps)` — the same B-075 pattern, now applied to the GUI's own
+rendering, not just export.
+
+**A real gap closed that B-075 left open: `source_fps` didn't survive a save.**
+`chroma_timeline_set(timeline: Timeline)` is a plain `#[tauri::command]` — Tauri
+deserializes the JSON argument straight into `chroma-timeline::Timeline`/`Clip`, and
+that struct had NO `source_fps` field. Serde's default behavior silently drops unknown
+JSON keys rather than erroring, so `source_fps` — set correctly in memory by
+`editor_add_clip`/`linkedClipsFromDraggedMedia` — vanished the moment a `chroma_
+timeline_set` → `chroma_timeline_get` round trip happened (any save/reload, or simply
+opening the project again). B-075's own fix would have silently stopped working after
+the FIRST save of any session. Added `Clip.source_fps: Option<f64>` to the Rust struct
+(`crates/chroma-timeline/src/lib.rs`, `#[serde(default, skip_serializing_if =
+"Option::is_none")]`, mirroring the TS field exactly) plus `impl Default for Clip` —
+purely additive, every existing `Clip { ..Default::default() }` construction site (the
+whole crate) needed no change. A new `source_fps_round_trips_through_serde` test pins
+this specifically (asserts the literal fps value survives serialize→deserialize, and
+that an absent one stays absent, not a literal `null`).
+
+**Filed, not fixed here: B-079 — the live Rust playback/preview engine has the SAME
+conflation, unrelated to the (dead, unreachable) Rust trim/move ops B-075/B-077 didn't
+need to touch.** `Track::clip_at` (used by BOTH `chroma_timeline_frame`'s video preview
+decode AND `chroma::audio`'s audio-clip-at-playhead lookup), `Track::clip_spans_from`
+(duck-envelope triggers), `Track::duration` (the `TimelineSummary`/timeline-switcher
+display), and two inline reimplementations of the same `source_start + (pos -
+start_frame)` arithmetic in `chroma::audio.rs` (`chroma_audio_play`'s embedded-audio and
+audio-track paths) all still add `start_frame`/`pos` directly to `duration`/
+`source_start` with no `source_fps` conversion — a mixed-fps clip's actual video
+scrub position, audio decode length, and duck timing are wrong TODAY, independently of
+this pass's TS fix. This is a real, live, reachable defect, not a hypothetical — see
+B-079 in `docs/BUGS.md` for the full scope and why it's a separately-tracked follow-up
+rather than folded into this one: it requires threading `timeline_fps: f64` through
+several methods with ~30 existing unit-test call sites, touches the real-time audio
+mixer, and is genuinely orthogonal to the GUI/MCP edit-model bug this pass fixes (the
+Rust crate's own `trim_start`/`trim_end`/`split`/`move_clip` — the ops B-075/B-077's
+scope might have implied needed the same fix — are confirmed UNREACHABLE from the
+running app: every real edit, GUI or MCP alike, goes through `@chroma/editor`'s
+`applyOp` + `chroma_timeline_set`, never these Rust methods directly, except
+`chroma_timeline_move_clip`, which is registered but never invoked by the frontend).
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test --workspace
+@chroma/editor` — **335/335** (was 324; 11 new tests in a dedicated `B-077 — mixed
+native-fps clips` block, pinning the exact live repro numbers — 2113 frames @
+44.128089105464674fps on a 24fps timeline — plus `add_clip`/`move` ripple, `computeInsertion`/
+`gapAt`/`clipAt`, and `trim_start`/`trim_end`/`split` all under a clean 48fps-on-24fps
+mixed ratio for exact, non-rounded expected numbers). `cargo test -p chroma-timeline` —
+129/129 (128 pre-existing + 1 new `source_fps_round_trips_through_serde`), `cargo clippy
+-p chroma-timeline --all-targets` clean, `cargo fmt -p chroma-timeline -- --check` shows
+only pre-existing, unrelated drift (verified none of it touches a line this pass added
+or changed).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

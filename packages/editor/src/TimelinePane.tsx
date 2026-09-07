@@ -267,6 +267,7 @@ import {
   linkedClipIds,
   linkedClipsFromDraggedMedia,
   resolveClipLanding,
+  sourceFramesToTimeline,
   syncLinkedClipIds,
   syncLinkedClipIdsAtPosition,
   timelineFps,
@@ -381,7 +382,13 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
     const actions: TimelineAction[] = track.clips.map((clip, i) => ({
       id: clip.id || `t${ti}-clip-${i}`,
       start: clip.start_frame / fps,
-      end: endFrame(clip) / fps,
+      // B-077 — `endFrame` now converts `clip.duration` (source frames, per
+      // the `Clip` doc) through its own `source_fps` before adding it to
+      // `start_frame` (timeline frames) — this used to add them directly,
+      // which is exactly the bug that displayed a 47.86s screen recording as
+      // 88s in a 24fps project (`duration / fps` with no fps conversion at
+      // all, `2113 / 24`, nothing to do with the clip's real length).
+      end: endFrame(clip, fps) / fps,
       effectId: EFFECT_ID,
       // D-100 — `movable: false`: the library's own native move-drag
       // (`interact.js`, `enableDragging` in its bundled source — confirmed
@@ -1096,6 +1103,9 @@ export function TimelinePane() {
     toTrack: number;
     clipId: string;
     startFrame: number;
+    /** B-077 — a TIMELINE-frame footprint (`sourceFramesToTimeline`), not the
+     *  dragged clip's raw `.duration` (source frames) — this is a ripple
+     *  shift AMOUNT applied to `start_frame`-space positions. */
     duration: number;
     ripple: boolean;
   } | null>(null);
@@ -1109,6 +1119,14 @@ export function TimelinePane() {
   // — the exact delta `shiftClipsAtOrAfter` would apply for real on drop —
   // so what's previewed during the drag matches what actually happens
   // when it's released, not an approximation of it.
+  //
+  // B-077 — both `clipDragPreview.duration` and each ghost's own `duration`
+  // below are TIMELINE-frame footprints (`sourceFramesToTimeline`), not the
+  // clips' raw (source-frame) `.duration` fields: `shiftedStart` is a
+  // `start_frame`-space position (needs a timeline-frame shift, matching the
+  // real `shiftClipsAtOrAfter` ripple this previews) and the render below
+  // divides `duration` by the project's own `fps` for its pixel width — both
+  // wrong for a `.duration` still in the dragged/ghost clip's own native rate.
   const dragSyncGhosts = useMemo(() => {
     if (!timeline || !clipDragPreview || !clipDragPreview.ripple) return [];
     const linkedIds = syncLinkedClipIdsAtPosition(timeline, clipDragPreview.toTrack, clipDragPreview.startFrame);
@@ -1118,12 +1136,17 @@ export function TimelinePane() {
       if (ti === clipDragPreview.toTrack) return; // same-track shift already IS the placeholder's own landing
       for (const c of t.clips) {
         if (linkedIds.has(c.id)) {
-          ghosts.push({ id: c.id, track: ti, shiftedStart: c.start_frame + clipDragPreview.duration, duration: c.duration });
+          ghosts.push({
+            id: c.id,
+            track: ti,
+            shiftedStart: c.start_frame + clipDragPreview.duration,
+            duration: sourceFramesToTimeline(c, c.duration, fps),
+          });
         }
       }
     });
     return ghosts;
-  }, [timeline, clipDragPreview, tracks]);
+  }, [timeline, clipDragPreview, tracks, fps]);
 
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -1454,7 +1477,7 @@ export function TimelinePane() {
     const edges = new Set<number>([0]);
     for (const c of track.clips) {
       edges.add(c.start_frame);
-      edges.add(endFrame(c));
+      edges.add(endFrame(c, fps));
     }
     let best: number | null = null;
     let bestDist = snapFrames + 1;
@@ -1466,10 +1489,13 @@ export function TimelinePane() {
       }
     });
     if (best !== null) return best;
-    const covering = track.clips.find((c) => frame >= c.start_frame && frame < endFrame(c));
+    const covering = track.clips.find((c) => frame >= c.start_frame && frame < endFrame(c, fps));
     if (covering) {
-      const mid = covering.start_frame + covering.duration / 2;
-      return frame < mid ? covering.start_frame : endFrame(covering);
+      // B-077 — `covering.duration` is source frames; its real midpoint on
+      // THIS timeline needs the same source_fps→timelineFps conversion
+      // `endFrame` itself does, not a raw halving of the source-frame count.
+      const mid = covering.start_frame + (endFrame(covering, fps) - covering.start_frame) / 2;
+      return frame < mid ? covering.start_frame : endFrame(covering, fps);
     }
     return null;
   };
@@ -1614,7 +1640,7 @@ export function TimelinePane() {
     // back to the pre-D-095 plain append, same as no `rect`/track at all.
     const insertion =
       rect && trackData
-        ? computeInsertion(trackData, xToFrame(e, rect), clip.duration, Math.round((INSERT_SNAP_PX / pxPerSec) * fps))
+        ? computeInsertion(trackData, xToFrame(e, rect), clip, Math.round((INSERT_SNAP_PX / pxPerSec) * fps), fps)
         : null;
     if (insertion) {
       applyOp({
@@ -1730,8 +1756,8 @@ export function TimelinePane() {
                   owner screenshotted against Palmier Pro's timeline). */}
               <Filmstrip
                 sourcePath={clip.source_path}
-                startSecs={clip.source_start / fps}
-                durationSecs={clip.duration / fps}
+                startSecs={clip.source_start / (clip.source_fps ?? fps)}
+                durationSecs={clip.duration / (clip.source_fps ?? fps)}
                 width={pxWidth}
                 height={ROW_HEIGHT}
                 visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
@@ -1744,8 +1770,8 @@ export function TimelinePane() {
               <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
                 <Waveform
                   sourcePath={clip.source_path}
-                  startSecs={clip.source_start / fps}
-                  durationSecs={clip.duration / fps}
+                  startSecs={clip.source_start / (clip.source_fps ?? fps)}
+                  durationSecs={clip.duration / (clip.source_fps ?? fps)}
                   width={pxWidth}
                   height={ROW_HEIGHT * 0.4}
                 />
@@ -1764,8 +1790,8 @@ export function TimelinePane() {
           {clip && track?.kind === 'audio' && (
             <Waveform
               sourcePath={clip.source_path}
-              startSecs={clip.source_start / fps}
-              durationSecs={clip.duration / fps}
+              startSecs={clip.source_start / (clip.source_fps ?? fps)}
+              durationSecs={clip.duration / (clip.source_fps ?? fps)}
               width={pxWidth}
               height={ROW_HEIGHT}
             />
@@ -1884,7 +1910,7 @@ export function TimelinePane() {
         const delta = s2f(start) - c.start_frame;
         if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
       } else {
-        const delta = s2f(end) - endFrame(c);
+        const delta = s2f(end) - endFrame(c, fps);
         if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
       }
     },
@@ -2015,7 +2041,7 @@ export function TimelinePane() {
     if (i < 0) return;
     const clip = clipsOf(primary.track)[i];
     const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
-    const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, clip.start_frame, snapFrames);
+    const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, clip.start_frame, snapFrames, fps);
     applyOp({ kind: 'move', fromTrack: primary.track, toTrack, clip: i, startFrame, ripple });
     setSelection([{ track: toTrack, id: primary.id }]);
   };
@@ -2204,7 +2230,7 @@ export function TimelinePane() {
       const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
       const intendedFrame = clip.start_frame + deltaFrames;
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
-      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, intendedFrame, snapFrames);
+      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
       setClipDragPreview((prev) => {
         if (
           prev &&
@@ -2216,7 +2242,9 @@ export function TimelinePane() {
         ) {
           return prev; // no real change — same discipline as onDragOver's setDragOver
         }
-        return { fromTrack, toTrack, clipId, startFrame, duration: clip.duration, ripple };
+        // B-077 — a TIMELINE-frame footprint, not `clip.duration`'s raw
+        // (source-frame) value — see `dragSyncGhosts`'s own doc for why.
+        return { fromTrack, toTrack, clipId, startFrame, duration: sourceFramesToTimeline(clip, clip.duration, fps), ripple };
       });
     },
     [idxOf, clipsOf, pxPerSec, fps, tracks, scrollTop],
@@ -2303,7 +2331,7 @@ export function TimelinePane() {
       const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
       const intendedFrame = clip.start_frame + deltaFrames;
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
-      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip.duration, intendedFrame, snapFrames);
+      const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
       applyOp({ kind: 'move', fromTrack, toTrack, clip: i, startFrame, ripple });
       // A drag also selects the clip it moved — same-track or cross-track —
       // matching normal NLE expectations (dragging a clip is also picking
@@ -2365,7 +2393,7 @@ export function TimelinePane() {
   const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
   const MAX_OVERLAY_PX = 320;
   const dragOverlayWidth = dragOverlayClip
-    ? Math.max(60, Math.min(MAX_OVERLAY_PX, (dragOverlayClip.duration / fps) * pxPerSec))
+    ? Math.max(60, Math.min(MAX_OVERLAY_PX, (dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)) * pxPerSec))
     : 0;
 
   // B-069 fix: these two cases used to `return` early, ABOVE several
@@ -2723,7 +2751,7 @@ export function TimelinePane() {
                 const trackIdx = Math.floor(y / ROW_HEIGHT);
                 if (trackIdx >= 0 && trackIdx < tracks.length) {
                   const frame = Math.round(((e.clientX - rect.left + scrollLeft - START_LEFT_PX) / pxPerSec) * fps);
-                  const gap = gapAt(tracks[trackIdx], frame);
+                  const gap = gapAt(tracks[trackIdx], frame, fps);
                   if (gap) {
                     setSelection([]);
                     setSelectedGap({ track: trackIdx, frame });
@@ -2808,7 +2836,7 @@ export function TimelinePane() {
             {selectedGap &&
               (() => {
                 const t = tracks[selectedGap.track];
-                const gap = t && gapAt(t, selectedGap.frame);
+                const gap = t && gapAt(t, selectedGap.frame, fps);
                 if (!gap) return null;
                 return (
                   <div
@@ -2915,16 +2943,16 @@ export function TimelinePane() {
               <>
                 <Filmstrip
                   sourcePath={dragOverlayClip.source_path}
-                  startSecs={dragOverlayClip.source_start / fps}
-                  durationSecs={dragOverlayClip.duration / fps}
+                  startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
+                  durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
                   width={dragOverlayWidth}
                   height={ROW_HEIGHT}
                 />
                 <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
                   <Waveform
                     sourcePath={dragOverlayClip.source_path}
-                    startSecs={dragOverlayClip.source_start / fps}
-                    durationSecs={dragOverlayClip.duration / fps}
+                    startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
+                    durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
                     width={dragOverlayWidth}
                     height={ROW_HEIGHT * 0.4}
                   />
@@ -2936,8 +2964,8 @@ export function TimelinePane() {
             {dragOverlayTrack?.kind === 'audio' && (
               <Waveform
                 sourcePath={dragOverlayClip.source_path}
-                startSecs={dragOverlayClip.source_start / fps}
-                durationSecs={dragOverlayClip.duration / fps}
+                startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
+                durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
                 width={dragOverlayWidth}
                 height={ROW_HEIGHT}
               />

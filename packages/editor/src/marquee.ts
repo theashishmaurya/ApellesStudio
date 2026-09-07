@@ -46,7 +46,7 @@
  * `@xzdarcy/react-timeline-editor`'s bundled CSS, not guessed.
  */
 
-import { endFrame, type Timeline } from './timeline';
+import { endFrame, timelineFps, type Timeline } from './timeline';
 
 /** How far the pointer must travel before a press on empty timeline canvas
  *  becomes a marquee rather than a click. Deliberately the SAME number as the
@@ -185,11 +185,12 @@ function overlapsRow(index: number, rect: MarqueeRect): boolean {
  */
 export function clipsInMarquee(tl: Timeline | null, rect: MarqueeRect): Array<{ track: number; id: string }> {
   if (!tl) return [];
+  const fps = timelineFps(tl);
   const hits: Array<{ track: number; id: string }> = [];
   tl.tracks.forEach((track, ti) => {
     if (!overlapsRow(ti, rect)) return;
     for (const clip of track.clips) {
-      if (clip.start_frame < rect.frameEnd && endFrame(clip) > rect.frameStart) {
+      if (clip.start_frame < rect.frameEnd && endFrame(clip, fps) > rect.frameStart) {
         hits.push({ track: ti, id: clip.id });
       }
     }

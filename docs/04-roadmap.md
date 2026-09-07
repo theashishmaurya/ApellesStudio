@@ -918,6 +918,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     fields entirely. Neither touches `Clip.box_width`/`box_height`/`scale` or the
     Rust/TS export parity story D-193's own decision entry covers. Not started —
     real, separately-scoped follow-up work, ownership open.
+19. **B-079 — bring `crates/chroma-timeline`'s live playback/preview/audio-decode
+    methods up to the same fps-aware standard B-077/D-194 gave the GUI/MCP edit
+    model.** `Track::clip_at` (the video-preview decode AND audio-clip-at-playhead
+    lookup), `clip_spans_from` (duck-envelope triggers), `Track::duration` (the
+    timeline-switcher display), and two inline reimplementations in
+    `chroma::audio.rs` all still add `start_frame`/`pos` to `duration`/`source_start`
+    with no `source_fps` conversion — found live during the B-077 audit, confirmed
+    reachable (unlike the crate's own `trim_start`/`trim_end`/`split`/`move_clip`,
+    which are dead code today), deliberately not fixed in the same pass: real stakes
+    (the live audio mixer's actual output), ~30 existing Rust unit-test call sites to
+    update, and it deserves its own real-output verification, not a rushed addition
+    to an unrelated GUI fix. Proposed shape in B-079's own `docs/BUGS.md` entry. Not
+    started.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

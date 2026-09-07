@@ -9,6 +9,7 @@ import {
   applyOp,
   audioTrackWithRoom,
   checkLink,
+  clipAt,
   clipFromDraggedMedia,
   computeInsertion,
   endFrame,
@@ -24,6 +25,8 @@ import {
   resolveClipLanding,
   syncLinkedClipIds,
   syncLinkedClipIdsAtPosition,
+  timelineDuration,
+  trackDuration,
   type Clip,
   type Timeline,
   type Track,
@@ -132,7 +135,7 @@ describe('add_clip (D-058)', () => {
     });
     const added = after.tracks[0].clips[2];
     expect(added.start_frame).toBe(200);
-    expect(endFrame(added)).toBe(250);
+    expect(endFrame(added, 24)).toBe(250);
   });
 
   it('starts at 0 on an empty track', () => {
@@ -150,7 +153,7 @@ describe('add_clip (D-058)', () => {
 
   it('nextAppendFrame matches what add_clip actually computes', () => {
     const track: Track = { kind: 'video', clips: backToBack() };
-    expect(nextAppendFrame(track)).toBe(200);
+    expect(nextAppendFrame(track, 24)).toBe(200);
   });
 });
 
@@ -161,7 +164,7 @@ describe('add_clip (D-058)', () => {
 describe('computeInsertion (D-095)', () => {
   it('snaps to the boundary between two touching clips and reports a ripple', () => {
     const track: Track = { kind: 'video', clips: backToBack() }; // a:[0,100) b:[100,200)
-    const insertion = computeInsertion(track, 97, 30, 10); // dropped near frame 100, snap radius 10
+    const insertion = computeInsertion(track, 97, { duration: 30 }, 10, 24); // dropped near frame 100, snap radius 10
     expect(insertion).toEqual({ startFrame: 100, ripple: true });
   });
 
@@ -169,7 +172,7 @@ describe('computeInsertion (D-095)', () => {
     // a:[0,100) then open space — a 30-frame clip dropped right at a's end
     // fits with no need to move anything else.
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 })] };
-    const insertion = computeInsertion(track, 100, 30, 10);
+    const insertion = computeInsertion(track, 100, { duration: 30 }, 10, 24);
     expect(insertion).toEqual({ startFrame: 100, ripple: false });
   });
 
@@ -177,12 +180,12 @@ describe('computeInsertion (D-095)', () => {
     // a:[0,100) then a big gap, b:[500,600) — dropping at 250 (far from
     // either edge) with a 30-frame clip fits cleanly.
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 500 })] };
-    expect(computeInsertion(track, 250, 30, 10)).toEqual({ startFrame: 250, ripple: false });
+    expect(computeInsertion(track, 250, { duration: 30 }, 10, 24)).toEqual({ startFrame: 250, ripple: false });
   });
 
   it('snaps to 0 and ripples everything when dropped before the first clip', () => {
     const track: Track = { kind: 'video', clips: backToBack() };
-    expect(computeInsertion(track, 3, 20, 10)).toEqual({ startFrame: 0, ripple: true });
+    expect(computeInsertion(track, 3, { duration: 20 }, 10, 24)).toEqual({ startFrame: 0, ripple: true });
   });
 
   // D-100 — the real "does not work" bug: hovering over the MIDDLE of an
@@ -195,14 +198,14 @@ describe('computeInsertion (D-095)', () => {
   it('resolves a mid-clip drop to the covering clip\'s nearer edge — first half inserts before it', () => {
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
     // frame 20 is in A's first half (mid=50) — insert before A, rippling it forward.
-    expect(computeInsertion(track, 20, 30, 10)).toEqual({ startFrame: 0, ripple: true });
+    expect(computeInsertion(track, 20, { duration: 30 }, 10, 24)).toEqual({ startFrame: 0, ripple: true });
   });
 
   it('resolves a mid-clip drop to the covering clip\'s nearer edge — second half inserts after it', () => {
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
     // frame 80 is in A's second half — insert right after A; nothing else
     // on the track, so this is a clean append, no ripple needed.
-    expect(computeInsertion(track, 80, 30, 10)).toEqual({ startFrame: 100, ripple: false });
+    expect(computeInsertion(track, 80, { duration: 30 }, 10, 24)).toEqual({ startFrame: 100, ripple: false });
   });
 
   it('the whole-clip-body fallback covers the entire span of two touching clips, not just their shared seam', () => {
@@ -211,11 +214,11 @@ describe('computeInsertion (D-095)', () => {
     // of the exact 100-frame seam) must resolve to a real ripple insert.
     const track: Track = { kind: 'video', clips: backToBack() };
     // deep inside A (first half) -> insert before A, ripple both A and B forward.
-    expect(computeInsertion(track, 20, 15, 10)).toEqual({ startFrame: 0, ripple: true });
+    expect(computeInsertion(track, 20, { duration: 15 }, 10, 24)).toEqual({ startFrame: 0, ripple: true });
     // deep inside A (second half) -> insert after A / before B, ripple B forward.
-    expect(computeInsertion(track, 80, 15, 10)).toEqual({ startFrame: 100, ripple: true });
+    expect(computeInsertion(track, 80, { duration: 15 }, 10, 24)).toEqual({ startFrame: 100, ripple: true });
     // deep inside B (second half, far from the track's own open end) -> insert after B.
-    expect(computeInsertion(track, 180, 15, 10)).toEqual({ startFrame: 200, ripple: false });
+    expect(computeInsertion(track, 180, { duration: 15 }, 10, 24)).toEqual({ startFrame: 200, ripple: false });
   });
 
   it('still returns null for a drop in a genuinely empty region with no covering clip and no fitting gap', () => {
@@ -223,11 +226,11 @@ describe('computeInsertion (D-095)', () => {
     // the gap (not covering any clip) but a 30-frame clip there would
     // overlap b — genuinely ambiguous, out of this function's scope.
     const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 60, duration: 100 })] };
-    expect(computeInsertion(track, 55, 30, 3)).toBeNull();
+    expect(computeInsertion(track, 55, { duration: 30 }, 3, 24)).toBeNull();
   });
 
   it('always fits with no ripple on an empty track', () => {
-    expect(computeInsertion({ kind: 'video', clips: [] }, 42, 30, 10)).toEqual({ startFrame: 42, ripple: false });
+    expect(computeInsertion({ kind: 'video', clips: [] }, 42, { duration: 30 }, 10, 24)).toEqual({ startFrame: 42, ripple: false });
   });
 });
 
@@ -244,7 +247,7 @@ describe('add_clip ripple insert (D-095)', () => {
     const [a, c, b] = after.tracks[0].clips;
     expect(a.start_frame).toBe(0); // untouched — before the insertion point
     expect(c.start_frame).toBe(100); // the new clip lands exactly where dropped
-    expect(endFrame(c)).toBe(130);
+    expect(endFrame(c, 24)).toBe(130);
     expect(b.start_frame).toBe(130); // rippled forward by the new clip's 30 frames
   });
 
@@ -277,7 +280,7 @@ describe('trim_start (D-058)', () => {
     expect(b.start_frame).toBe(115); // moved right by delta
     expect(b.source_start).toBe(15);
     expect(b.duration).toBe(85);
-    expect(endFrame(b)).toBe(200); // end unchanged — this is the actual fix
+    expect(endFrame(b, 24)).toBe(200); // end unchanged — this is the actual fix
   });
 
   it('clamps so start_frame never moves before the preceding clip on the track', () => {
@@ -329,7 +332,7 @@ describe('trim_end (D-058)', () => {
     const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 1000 });
     const a = after.tracks[0].clips[0];
     expect(a.duration).toBe(100);
-    expect(endFrame(a)).toBe(100); // clamped right at b's start, not overlapping
+    expect(endFrame(a, 24)).toBe(100); // clamped right at b's start, not overlapping
   });
 
   it('can grow freely past where a removed/gapped neighbor used to be', () => {
@@ -350,7 +353,7 @@ describe('split (D-058)', () => {
     expect(right.duration).toBe(70);
     expect(right.source_start).toBe(30);
     // halves are exactly adjacent, no gap introduced by splitting itself
-    expect(endFrame(left)).toBe(right.start_frame);
+    expect(endFrame(left, 24)).toBe(right.start_frame);
   });
 });
 
@@ -417,22 +420,22 @@ describe('gapAt / remove_gap (D-105)', () => {
   it('finds the gap between two clips that do not touch', () => {
     const t: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0 }), clip('b', 'B', { start_frame: 150 })] };
     // a is [0,100), b starts at 150 — a real 50-frame gap at [100,150).
-    expect(gapAt(t, 120)).toEqual({ gapStart: 100, gapEnd: 150 });
+    expect(gapAt(t, 120, 24)).toEqual({ gapStart: 100, gapEnd: 150 });
   });
 
   it('returns null for a frame inside a clip', () => {
     const t: Track = { kind: 'video', clips: backToBack() };
-    expect(gapAt(t, 50)).toBeNull();
+    expect(gapAt(t, 50, 24)).toBeNull();
   });
 
   it('returns null for trailing empty space past the last clip — nothing after it to ripple', () => {
     const t: Track = { kind: 'video', clips: backToBack() }; // ends at 200
-    expect(gapAt(t, 500)).toBeNull();
+    expect(gapAt(t, 500, 24)).toBeNull();
   });
 
   it('finds a gap before the very first clip', () => {
     const t: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 200 })] };
-    expect(gapAt(t, 10)).toEqual({ gapStart: 0, gapEnd: 200 });
+    expect(gapAt(t, 10, 24)).toEqual({ gapStart: 0, gapEnd: 200 });
   });
 
   it('applyOp closes the gap and ripples every later clip earlier by its width', () => {
@@ -577,21 +580,21 @@ describe('resolveClipLanding (D-104)', () => {
   it('lands exactly where intended when that spot is genuinely open', () => {
     const dest: Track = { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 0, duration: 100 })] };
     // moving clip "m" (not on this track) to an open spot at 500
-    expect(resolveClipLanding(dest, 'm', 50, 500, SNAP)).toEqual({ startFrame: 500, ripple: false });
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, 500, SNAP, 24)).toEqual({ startFrame: 500, ripple: false });
   });
 
   it('excludes the clip\'s own current slot on the destination track — a same-track no-op drop stays put', () => {
     const dest: Track = { kind: 'video', clips: backToBack() }; // a:[0,100) b:[100,200)
     // "b" dropped back onto its own current position must not collide with itself
-    expect(resolveClipLanding(dest, 'b', 100, 100, SNAP)).toEqual({ startFrame: 100, ripple: false });
+    expect(resolveClipLanding(dest, 'b', { duration: 100 }, 100, SNAP, 24)).toEqual({ startFrame: 100, ripple: false });
   });
 
   it('landing directly on top of another clip snaps to the nearest open edge instead', () => {
     const dest: Track = { kind: 'video', clips: [clip('x', 'Existing', { start_frame: 100, duration: 100 })] }; // [100,200)
     // dropped right in the middle of x's span, closer to its start than its end
-    expect(resolveClipLanding(dest, 'm', 50, 130, SNAP)).toEqual({ startFrame: 100, ripple: true });
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, 130, SNAP, 24)).toEqual({ startFrame: 100, ripple: true });
     // dropped closer to x's end
-    expect(resolveClipLanding(dest, 'm', 50, 180, SNAP)).toEqual({ startFrame: 200, ripple: false });
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, 180, SNAP, 24)).toEqual({ startFrame: 200, ripple: false });
   });
 
   it('drops right on the seam between two touching clips ripple-insert there, not overlap', () => {
@@ -600,7 +603,7 @@ describe('resolveClipLanding (D-104)', () => {
     // has zero width — b starts exactly where a ends — so fitting the new
     // clip there necessarily means shifting b later, not landing in an
     // already-open spot.
-    expect(resolveClipLanding(dest, 'm', 30, 100, SNAP)).toEqual({ startFrame: 100, ripple: true });
+    expect(resolveClipLanding(dest, 'm', { duration: 30 }, 100, SNAP, 24)).toEqual({ startFrame: 100, ripple: true });
   });
 
   it('a genuinely ambiguous drop (in a gap, but too big to fit, too far to snap) falls back to appending after the last clip', () => {
@@ -616,18 +619,18 @@ describe('resolveClipLanding (D-104)', () => {
       kind: 'video',
       clips: [clip('a', 'A', { start_frame: 0, duration: 100 }), clip('c', 'C', { start_frame: 150, duration: 100 })],
     };
-    expect(computeInsertion(dest, 120, 50, SNAP)).toBeNull(); // confirms the premise, not just the wrapper's fallback
-    expect(resolveClipLanding(dest, 'm', 50, 120, SNAP)).toEqual({ startFrame: 250, ripple: false });
+    expect(computeInsertion(dest, 120, { duration: 50 }, SNAP, 24)).toBeNull(); // confirms the premise, not just the wrapper's fallback
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, 120, SNAP, 24)).toEqual({ startFrame: 250, ripple: false });
   });
 
   it('an empty destination track always lands exactly at the intended frame', () => {
     const dest: Track = { kind: 'video', clips: [] };
-    expect(resolveClipLanding(dest, 'm', 50, 42, SNAP)).toEqual({ startFrame: 42, ripple: false });
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, 42, SNAP, 24)).toEqual({ startFrame: 42, ripple: false });
   });
 
   it('clamps a negative intended frame to 0', () => {
     const dest: Track = { kind: 'video', clips: [] };
-    expect(resolveClipLanding(dest, 'm', 50, -20, SNAP)).toEqual({ startFrame: 0, ripple: false });
+    expect(resolveClipLanding(dest, 'm', { duration: 50 }, -20, SNAP, 24)).toEqual({ startFrame: 0, ripple: false });
   });
 });
 
@@ -1872,5 +1875,171 @@ describe('linkedClipIds (D-129)', () => {
 
   it('is empty for an unlinked selection', () => {
     expect(linkedClipIds(tl(backToBack()), [{ track: 0, id: 'a' }]).size).toBe(0);
+  });
+});
+
+// B-077 — `chroma-timeline::Clip`'s own doc is explicit that `source_start`/
+// `duration` are in the clip's own SOURCE frames while `start_frame` is a
+// TIMELINE frame (the project's own `timelineFps`) — genuinely two different
+// frame-rate spaces whenever a clip's native rate differs from the project's.
+// Every case below pins a mixed-fps scenario that the pre-fix code (plain
+// `start_frame + duration`, no `source_fps` conversion) got wrong — live
+// confirmed as a 47.86s clip displaying as 88s in a 24fps project
+// (2113 source frames / 24 project-fps = 88, nothing to do with the clip's
+// real ~47.86s length at its own 44.13fps).
+describe('B-077 — mixed native-fps clips (source_fps vs. timelineFps)', () => {
+  // A clean 2:1 ratio (48fps source on a 24fps timeline) keeps the expected
+  // numbers exact (no rounding) so a wrong-by-a-rounding-error result can't
+  // hide behind "close enough" — 100 source frames is exactly 50 timeline
+  // frames (100 / 48 = 2.0833s of real time = 50 frames at 24fps).
+  const fastClip = (overrides: Partial<Clip> = {}) =>
+    clip('fast', 'Fast (48fps)', { duration: 100, source_len: 100, source_fps: 48, ...overrides });
+
+  it('endFrame converts duration through source_fps, not the project fps directly', () => {
+    const c = fastClip({ start_frame: 0 });
+    // Pre-fix this was 0 + 100 = 100 — half again too long.
+    expect(endFrame(c, 24)).toBe(50);
+  });
+
+  it('pins the exact live repro: 2113 source frames @ 44.128089105464674fps on an (unset-rate) 24fps timeline', () => {
+    // The real numbers from the live bug report: a 2113-frame screen
+    // recording at 44.128089105464674fps (real duration 47.8867s) on a
+    // timeline whose `rate` was never set (DEFAULT_FPS = 24). The GUI
+    // transport bar showed 00:01:28:00 (88s) — exactly 2113 / 24 — before
+    // this fix; the correct timeline-frame length is round(47.8867 * 24).
+    const c = clip('rec', 'Screen recording', {
+      start_frame: 0,
+      duration: 2113,
+      source_len: 2113,
+      source_fps: 44.128089105464674,
+    });
+    const realSeconds = 2113 / 44.128089105464674;
+    expect(realSeconds).toBeCloseTo(47.883, 3);
+    expect(endFrame(c, 24)).toBe(Math.round(realSeconds * 24)); // 1149, not 2113
+    expect(endFrame(c, 24)).toBe(1149);
+  });
+
+  it('trackDuration / timelineDuration report the fps-corrected length, not the raw source-frame sum', () => {
+    const track: Track = { kind: 'video', clips: [fastClip({ start_frame: 0 })] };
+    expect(trackDuration(track, 24)).toBe(50);
+    const timeline = tl([fastClip({ start_frame: 0 })]);
+    expect(timelineDuration(timeline)).toBe(50);
+  });
+
+  it('a clip with no source_fps (pre-B-075, or same-rate) is unaffected — the identity path', () => {
+    const c = clip('same', 'Same-rate', { start_frame: 10, duration: 40 }); // no source_fps
+    expect(endFrame(c, 24)).toBe(50); // exactly the pre-B-077 formula
+  });
+
+  it('add_clip ripple shifts existing clips by the NEW clip\'s timeline footprint, not its raw duration', () => {
+    // a:[0,100) b:[100,200) on a 24fps timeline; inserting the 48fps
+    // `fastClip` (real timeline footprint 50 frames, not its raw duration
+    // of 100) at frame 100 with ripple must shift b by 50, not 100.
+    const before = tl(backToBack());
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: fastClip(),
+      startFrame: 100,
+      ripple: true,
+    });
+    const [a, inserted, b] = after.tracks[0].clips;
+    expect(a.start_frame).toBe(0);
+    expect(inserted.start_frame).toBe(100);
+    expect(endFrame(inserted, 24)).toBe(150); // 100 + 50, not 100 + 100
+    expect(b.start_frame).toBe(150); // rippled by 50 (the timeline footprint), not 100
+  });
+
+  it('computeInsertion sizes the incoming clip by its timeline footprint for overlap/edge checks', () => {
+    // a:[0,100) with nothing after it. Dropping the 48fps fastClip (real
+    // timeline footprint 50) at frame 100 must fit with NO ripple — it only
+    // reaches [100,150), nowhere near anything else — whereas treating its
+    // raw duration (100) as timeline frames would still fit here too, so
+    // this case additionally checks the edge list is built from converted
+    // (not raw) clip lengths via a snap check right at the real 150 boundary.
+    const track: Track = { kind: 'video', clips: [clip('a', 'A', { start_frame: 0, duration: 100 })] };
+    expect(computeInsertion(track, 100, fastClip(), 10, 24)).toEqual({ startFrame: 100, ripple: false });
+    // Snapping to the inserted clip's own real end (50), not a phantom edge
+    // at its raw-duration end (100) that only the unconverted formula would
+    // add: dropping a 20-frame clip at frame 53 (within the 10-frame snap
+    // radius of 50, nowhere near 100) must snap to 50.
+    const withFast: Track = { kind: 'video', clips: [fastClip({ start_frame: 0 })] };
+    expect(computeInsertion(withFast, 53, { duration: 20 }, 10, 24)).toEqual({ startFrame: 50, ripple: false });
+  });
+
+  it('gapAt/clipAt find a mixed-fps clip\'s real end, not its raw source-frame end', () => {
+    // fastClip at [0,50) (its real timeline footprint), then a REAL gap
+    // (a following clip at 200, so [50,200) is a real, closeable gap — not
+    // just trailing space, which `gapAt` deliberately treats as "no gap").
+    const track: Track = {
+      kind: 'video',
+      clips: [fastClip({ start_frame: 0 }), clip('after', 'After', { start_frame: 200, duration: 50 })],
+    };
+    // Frame 60 must read as inside the gap (past the clip's REAL end at 50)
+    // — the pre-fix formula would have placed the clip's end at 100, making
+    // 60 wrongly read as still inside it (gapAt returns null for a frame
+    // inside a clip, and its gapStart would have come out as 100, not 50).
+    expect(gapAt(track, 60, 24)).toEqual({ gapStart: 50, gapEnd: 200 });
+    expect(clipAt(track, 60, 24)).toBeNull();
+    expect(clipAt(track, 49, 24)?.clip.id).toBe('fast');
+  });
+
+  it('trim_start moves start_frame by the timeline delta but source_start/duration by the source-frame equivalent', () => {
+    // fastClip (48fps) at start_frame 100 on a 24fps timeline; trimming its
+    // head by 10 TIMELINE frames should move start_frame by 10 but consume
+    // 20 SOURCE frames off the front (10 timeline frames * 48/24 ratio),
+    // keeping the clip's real end fixed on the timeline.
+    const before = tl([fastClip({ start_frame: 100 })]);
+    const endBefore = endFrame(before.tracks[0].clips[0], 24);
+    const after = applyOp(before, { kind: 'trim_start', track: 0, clip: 0, delta: 10 });
+    const c = after.tracks[0].clips[0];
+    expect(c.start_frame).toBe(110); // moved by the raw TIMELINE delta
+    expect(c.source_start).toBe(20); // moved by the SOURCE-frame equivalent (10 * 48/24)
+    expect(c.duration).toBe(80); // shrunk by the same source-frame amount
+    expect(endFrame(c, 24)).toBe(endBefore); // the clip's real end on the timeline is unchanged
+  });
+
+  it('trim_end changes duration by the source-frame equivalent of a timeline-frame delta', () => {
+    // Extending fastClip's tail by 10 TIMELINE frames should grow `duration`
+    // by 20 SOURCE frames (10 * 48/24), extending its real end by exactly
+    // 10 timeline frames.
+    const before = tl([fastClip({ start_frame: 0, source_len: 1000 })]);
+    const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 10 });
+    const c = after.tracks[0].clips[0];
+    expect(c.duration).toBe(120); // 100 + 20 source frames
+    expect(endFrame(c, 24)).toBe(60); // 50 + 10 timeline frames
+  });
+
+  it('split divides source_start/duration by the source-frame equivalent of the timeline split offset', () => {
+    // fastClip at [0,50) in timeline frames; splitting at timeline frame 20
+    // (40% through its real length) must give the right half 40% of its
+    // SOURCE frames too (40 of 100), not 20 (a raw, unconverted offset).
+    const before = tl([fastClip({ start_frame: 0 })]);
+    const after = applyOp(before, { kind: 'split', track: 0, clip: 0, atFrame: 20 });
+    const [left, right] = after.tracks[0].clips;
+    expect(left.start_frame).toBe(0);
+    expect(left.duration).toBe(40); // 20 timeline frames * 48/24 source-frame ratio
+    expect(right.start_frame).toBe(20);
+    expect(right.source_start).toBe(40);
+    expect(right.duration).toBe(60); // 100 - 40
+    expect(endFrame(left, 24)).toBe(right.start_frame); // still exactly adjacent
+  });
+
+  it('move ripple shifts by the moving clip\'s timeline footprint, not its raw duration', () => {
+    // dest already has x:[100,200); dropping fastClip (real footprint 50)
+    // exactly on x's start with ripple must shift x by 50, not 100.
+    const before = tl([fastClip({ start_frame: 0 }), clip('x', 'X', { start_frame: 300, duration: 50 })]);
+    const after = applyOp(before, {
+      kind: 'move',
+      fromTrack: 0,
+      toTrack: 0,
+      clip: 0,
+      startFrame: 300,
+      ripple: true,
+    });
+    const moved = after.tracks[0].clips.find((c) => c.id === 'fast');
+    const x = after.tracks[0].clips.find((c) => c.id === 'x');
+    expect(moved?.start_frame).toBe(300);
+    expect(x?.start_frame).toBe(350); // rippled by 50 (the mover's real footprint), not 100
   });
 });

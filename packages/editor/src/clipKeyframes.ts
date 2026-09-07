@@ -55,7 +55,18 @@ export function clearClipKeyframes(): ClipKeyframe[] | undefined {
  *  `source_start + (frame - start_frame)`, the same value `resolve_clip_
  *  transform` receives as `source_frame`), NOT the absolute timeline
  *  position. Clamped to the clip's own source window since the playhead may
- *  sit outside the clip when nothing is actually selected there. */
+ *  sit outside the clip when nothing is actually selected there.
+ *
+ *  **B-078 — deliberately NOT fps-corrected, unlike the rest of `@chroma/
+ *  editor` post-B-077.** This intentionally mirrors `Track::clip_at`'s
+ *  CURRENT (still-wrong-for-mixed-fps) Rust formula byte for byte: Rust's
+ *  `resolve_clip_transform` is what actually interpolates a keyframe at
+ *  playback/render time, fed by that same unconverted `Track::clip_at`. If
+ *  this function alone were made fps-aware, the Inspector would show/store a
+ *  keyframe at the CORRECT source frame while playback kept applying it at
+ *  Rust's wrong one — a new authoring/playback mismatch, worse than today's
+ *  "both sides agree, wrongly." Fix this in the SAME change as B-078's Rust
+ *  half, never before it — see that bug's own entry in `docs/BUGS.md`. */
 export function clipSourceFrame(clip: { source_start: number; start_frame: number; source_len: number }, playhead: number): number {
   const raw = clip.source_start + (playhead - clip.start_frame);
   return Math.max(0, Math.min(clip.source_len - 1, raw));
