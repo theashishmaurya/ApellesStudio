@@ -36,6 +36,15 @@
 //!   - tracked AI sub-masks (`chromaTrackDir`, D-019) and keyframed shape
 //!     sub-masks are mutually exclusive: if both are present, **tracked wins**
 //!     and this module is a no-op for that sub-mask.
+//!
+//! **Two resolvers, deliberately (D-208).** [`interpolate`] above is the
+//! *mask/relight* resolver and keeps every rule in this list, including the
+//! "held from that key" one — those keys are written a whole field-set at a
+//! time, so a frame bracket is the right bracket. [`interpolate_param`]
+//! resolves **one named param at a time, over only the keys that define it**,
+//! for the Edit tab's per-property clip-transform keyframes (D-208), where
+//! different params really are keyed at different frames and the hold rule
+//! would turn a linear ramp into a step (B-094). See that function's own doc.
 
 use serde_json::{Map, Value};
 
@@ -134,6 +143,68 @@ pub fn interpolate(keyframes: &[Keyframe], frame: u64) -> Map<String, Value> {
         }
     }
     out
+}
+
+/// The interpolated value of ONE named param at `frame`, considering **only
+/// the keyframes that actually define that param** — the per-property
+/// counterpart to [`interpolate`], added by D-208 (B-094).
+///
+/// [`interpolate`] brackets by frame across *every* key and then falls back to
+/// the module's "a field present in only one of the two bracketing keys is
+/// held from that key" rule. That rule is right for mask geometry, where every
+/// key is written by one gesture and carries the same field set — but it is
+/// wrong the moment different params are keyed at different frames, which is
+/// exactly what per-property keyframing (D-208) produces: a `scale` keyed at 0
+/// and 100 with an unrelated `opacity` key at 50 would *hold* rather than ramp
+/// on both sides of frame 50, turning a linear zoom into a step.
+///
+/// This function instead filters first, then brackets — the same shape
+/// `packages/editor/src/timelineExport.ts`'s `keyframeExprAt` already used for
+/// export (it filters keys by `hasOwnProperty(param)` before building its
+/// piecewise-linear ffmpeg expression), so live preview and export now agree
+/// by construction.
+///
+/// `None` when no key defines `name` at all — the caller then uses its own
+/// static fallback for that param. Clamp/hold outside the param's own keyed
+/// range, exactly like [`interpolate`]; the same [`lerp_value`] does the
+/// actual blend, so `rotation`'s shortest-arc rule still applies.
+///
+/// [`interpolate`] is unchanged and still the mask/relight path's own
+/// resolver — this is deliberately a second entry point rather than a change
+/// of the shared one, because the union-and-hold rule is the *documented,
+/// tested* contract for those callers (see the module header) and is not a
+/// bug there.
+pub fn interpolate_param(keyframes: &[Keyframe], frame: u64, name: &str) -> Option<Value> {
+    let mut keyed = keyframes
+        .iter()
+        .filter(|k| k.params.contains_key(name))
+        .peekable();
+    let first = *keyed.peek()?;
+    if frame <= first.frame {
+        return first.params.get(name).cloned();
+    }
+
+    // Walk the param's own subsequence, keeping the last key at or before
+    // `frame` and the first one after it. `keyframes` is frame-sorted
+    // (`parse_keyframes`' postcondition), so the filtered view is too.
+    let mut lo = first;
+    for k in keyed {
+        if k.frame > frame {
+            let (Some(a), Some(b)) = (lo.params.get(name), k.params.get(name)) else {
+                return None;
+            };
+            let span = (k.frame - lo.frame) as f64;
+            let t = if span > 0.0 {
+                ((frame - lo.frame) as f64 / span).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            return Some(lerp_value(a, b, t, name));
+        }
+        lo = k;
+    }
+    // past the param's last key -> hold it
+    lo.params.get(name).cloned()
 }
 
 /// Interpolate one JSON value. `key` is the field name (only `"rotation"` gets
@@ -398,6 +469,99 @@ mod tests {
         assert_eq!(get(&interpolate(&k, 0), "centerX"), 0.0);
         assert_eq!(get(&interpolate(&k, 50), "centerX"), 25.0);
         assert_eq!(get(&interpolate(&k, 75), "centerX"), 62.5); // between 50->100
+    }
+
+    // --- D-208 / B-094: the per-param resolver -------------------------- //
+
+    fn param(keyframes: &[Keyframe], frame: u64, name: &str) -> Option<f64> {
+        interpolate_param(keyframes, frame, name).and_then(|v| v.as_f64())
+    }
+
+    /// The whole point: a param's own keys bracket it, and a key that does
+    /// not mention that param is invisible to it. `interpolate` would hold
+    /// on both sides of frame 50 here; this ramps straight through.
+    #[test]
+    fn per_param_ignores_keys_that_do_not_define_that_param() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "scale": 1.0 } },
+            { "frame": 50,  "params": { "opacity": 0.5 } },
+            { "frame": 100, "params": { "scale": 2.0 } },
+        ]));
+        assert_eq!(param(&k, 25, "scale"), Some(1.25));
+        assert_eq!(param(&k, 50, "scale"), Some(1.5));
+        assert_eq!(param(&k, 75, "scale"), Some(1.75));
+        // and the union-bracket resolver really does NOT do this — the
+        // divergence this function exists to close, pinned so it can't be
+        // "simplified" back into one shared resolver by accident.
+        assert_eq!(get(&interpolate(&k, 25), "scale"), 1.0);
+    }
+
+    /// A param defined by exactly one key is a constant everywhere, no matter
+    /// how many other keys surround it.
+    #[test]
+    fn per_param_single_key_holds_everywhere() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "scale": 1.0 } },
+            { "frame": 50,  "params": { "opacity": 0.5 } },
+            { "frame": 100, "params": { "scale": 2.0 } },
+        ]));
+        for f in [0u64, 25, 50, 75, 100, 999] {
+            assert_eq!(param(&k, f, "opacity"), Some(0.5), "frame {f}");
+        }
+    }
+
+    /// Clamp/hold outside the param's OWN keyed range (not the clip's).
+    #[test]
+    fn per_param_clamps_outside_its_own_range() {
+        let k = kfs(json!([
+            { "frame": 10, "params": { "scale": 1.0 } },
+            { "frame": 20, "params": { "scale": 3.0 } },
+        ]));
+        assert_eq!(param(&k, 0, "scale"), Some(1.0));
+        assert_eq!(param(&k, 10, "scale"), Some(1.0));
+        assert_eq!(param(&k, 15, "scale"), Some(2.0));
+        assert_eq!(param(&k, 20, "scale"), Some(3.0));
+        assert_eq!(param(&k, 999, "scale"), Some(3.0));
+    }
+
+    /// A param no key mentions is `None` — the caller's own static field wins.
+    #[test]
+    fn per_param_is_none_when_no_key_defines_it() {
+        let k = kfs(json!([{ "frame": 0, "params": { "scale": 1.0 } }]));
+        assert!(interpolate_param(&k, 0, "rotation").is_none());
+    }
+
+    /// `rotation`'s shortest-arc rule still applies — the per-param resolver
+    /// delegates the actual blend to the same `lerp_value`.
+    #[test]
+    fn per_param_keeps_the_rotation_shortest_arc() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "rotation": 350.0 } },
+            { "frame": 100, "params": { "rotation": 10.0 } },
+        ]));
+        let v = param(&k, 50, "rotation").unwrap();
+        assert!((v - 360.0).abs() < 1e-6 || v.abs() < 1e-6, "got {v}");
+    }
+
+    /// Backward compatibility: when every key carries every param (the
+    /// pre-D-208 whole-clip keyframe shape), the two resolvers agree exactly.
+    #[test]
+    fn per_param_matches_the_union_resolver_when_every_key_is_complete() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "scale": 1.0, "opacity": 0.0, "rotation": 0.0 } },
+            { "frame": 40,  "params": { "scale": 1.5, "opacity": 0.5, "rotation": 90.0 } },
+            { "frame": 100, "params": { "scale": 2.0, "opacity": 1.0, "rotation": 45.0 } },
+        ]));
+        for f in [0u64, 7, 40, 63, 100, 500] {
+            let union = interpolate(&k, f);
+            for name in ["scale", "opacity", "rotation"] {
+                assert_eq!(
+                    param(&k, f, name),
+                    Some(get(&union, name)),
+                    "{name} at frame {f}"
+                );
+            }
+        }
     }
 
     #[test]

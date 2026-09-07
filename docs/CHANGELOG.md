@@ -46,6 +46,24 @@ One or two lines per session. Detail lives in the decision it references.
   drag-derived fade exports at −41.2/−21.6/−38.5 dB head/mid/tail against a
   flat −21.1 dB unfaded. Not live-tested in a Tauri instance — see D-207.
 
+- **2026-09-08** — **Per-property keyframes and per-property reset in the Edit
+  tab's Inspector (D-208).** Every Transform/Crop row now has its own
+  After-Effects-style stopwatch diamond (filled = that one property is
+  animated), `<`/`>` nav over that property's own keys, and a `RotateCcw`
+  reset to its default — replacing the single whole-clip button that keyframed
+  all nine fields as one bang. Writes MERGE into the key at the playhead
+  instead of replacing it, editing an animated property keys the new value
+  (and the field now shows the interpolated value at the playhead rather than
+  a static number the preview isn't using), and "Key all properties" is kept
+  as an explicit batch shortcut. **Found and fixed B-094 on the way:** the
+  Rust live-preview resolver bracketed keyframes across *all* keys, so a
+  property whose key wasn't named in both bracketing entries was *held* rather
+  than interpolated — turning exactly the animation this feature authors into
+  a step function on screen while the export rendered it correctly. New
+  `keyframes::interpolate_param` fixes it; the mask/relight resolver is
+  untouched. **Filed B-095, not fixed:** the ffmpeg export compiler ignores
+  `opacity` and `rotation` entirely (static values included).
+
 - **2026-09-07** — **Fixed B-088 (D-202): the Edit tab's live preview never
   showed a clip's current position/crop/scale.** Root-caused to an ordering
   race, not the compositor: `chroma_timeline_frame` renders the project's

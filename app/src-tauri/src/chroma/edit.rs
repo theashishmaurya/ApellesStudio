@@ -994,9 +994,21 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
     if keyframes.is_empty() {
         return base;
     }
-    let interpolated = super::keyframes::interpolate(&keyframes, source_frame.max(0) as u64);
+    // D-208 (B-094) — resolve **one param at a time, over only the keys that
+    // define it** (`interpolate_param`), not by frame-bracketing across every
+    // key (`interpolate`). Per-property keyframing means a clip's keys really
+    // do carry different param subsets at different frames, and the shared
+    // mask resolver's "a field present in only one bracketing key is held
+    // from that key" rule turns such a param's linear ramp into a step. This
+    // is the same filter-then-interpolate order `timelineExport.ts`'s
+    // `keyframeExprAt` already used, so preview and export agree by
+    // construction. Byte-identical to the old call for any clip whose keys all
+    // carry the same params — i.e. every pre-D-208 whole-clip key.
+    let source_frame_u64 = source_frame.max(0) as u64;
     let f64_or = |key: &str, fallback: f64| {
-        interpolated.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback)
+        super::keyframes::interpolate_param(&keyframes, source_frame_u64, key)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(fallback)
     };
     ClipTransform {
         opacity: f64_or("opacity", base.opacity),
@@ -1323,6 +1335,128 @@ mod composite_tests {
         // before the first key -> held at the first key's value (0.0)
         let t0 = resolve_clip_transform(&clip, 0);
         assert_eq!(t0.opacity, 0.0);
+    }
+
+    /// **B-094 / D-208 — per-property keyframes really are independent.**
+    /// Three keys, each naming a DIFFERENT param subset: `scale` is keyed at
+    /// 0 and 100 only, `opacity` at 50 only. `scale` must ramp linearly
+    /// across the whole 0..100 span, completely unaffected by the unrelated
+    /// `opacity` key sitting in the middle of it — the exact contract
+    /// `timelineExport.ts`'s `keyframeExprAt` already had (it filters every
+    /// key by `hasOwnProperty(param)` before interpolating) and that this
+    /// live-preview path did NOT, because `keyframes::interpolate` brackets
+    /// by frame across ALL keys and then *holds* a param that only one side
+    /// of the bracket defines.
+    #[test]
+    fn each_param_interpolates_across_only_its_own_keyframes() {
+        let clip = Clip {
+            opacity: 1.0,
+            scale: 1.0,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0,   "params": { "scale": 1.0 } },
+                { "frame": 50,  "params": { "opacity": 0.5 } },
+                { "frame": 100, "params": { "scale": 2.0 } },
+            ])),
+            ..Default::default()
+        };
+        // scale ramps 1 -> 2 over 0..100, sampled either side of the
+        // unrelated opacity key. Pre-fix this was a step function: flat 1.0
+        // up to 50 (held from the low key), then flat 2.0 (held from the
+        // high key).
+        for (frame, want) in [(25u64, 1.25), (50, 1.5), (75, 1.75)] {
+            let t = resolve_clip_transform(&clip, frame as i64);
+            assert!(
+                (t.scale - want).abs() < 1e-6,
+                "scale at frame {frame}: expected {want}, got {}",
+                t.scale
+            );
+        }
+        // ...and opacity, keyed only once, holds flat at that one value
+        // everywhere rather than being dragged around by the scale keys.
+        for frame in [0i64, 25, 50, 75, 100] {
+            let t = resolve_clip_transform(&clip, frame);
+            assert!(
+                (t.opacity - 0.5).abs() < 1e-6,
+                "opacity at frame {frame}: expected 0.5, got {}",
+                t.opacity
+            );
+        }
+    }
+
+    /// **The preview PIXELS, not just the resolved struct.** The same
+    /// resolve-then-composite pair `composite_video_frame` runs per frame,
+    /// driven by the shape per-property keyframing actually produces: `scale`
+    /// keyed at 0 and 100, an unrelated `opacity` key at 50 sitting between
+    /// them. This is the B-088-shaped check the per-property GUI is built on
+    /// ("a preview that lies is worse than no feature").
+    ///
+    /// **Sampled at frame 25, deliberately** — the endpoints alone would pass
+    /// either way (both resolvers land exactly on a key there), and so would
+    /// a clip whose keys all named `scale`. Frame 25 is inside the bracket
+    /// whose upper key does NOT name `scale`, which is precisely where the
+    /// old union-bracket resolver *held* `scale` at 1.0 and painted a 4x4 box
+    /// instead of the 8x8 the animation calls for.
+    #[test]
+    fn the_preview_really_animates_one_keyed_property_and_holds_the_rest() {
+        let clip = Clip {
+            scale: 1.0,
+            position_x: 0.0,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0,   "params": { "scale": 1.0 } },
+                { "frame": 50,  "params": { "opacity": 1.0 } },
+                { "frame": 100, "params": { "scale": 5.0 } },
+            ])),
+            ..Default::default()
+        };
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        let paint = |frame: i64| {
+            let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+            let t = resolve_clip_transform(&clip, frame);
+            composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+            canvas
+        };
+
+        // Frame 0: scale 1 -> a 4x4 box centred in the 20x20 canvas.
+        let first = paint(0);
+        assert_eq!(*first.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
+        assert_eq!(*first.get_pixel(6, 6), Rgba([0, 0, 0, 255]));
+
+        // Frame 25: scale interpolates 1 -> 5 across 0..100, so 2.0 here ->
+        // an 8x8 box that now really covers (6,6). Held at 1.0 pre-fix, this
+        // pixel stayed black and the "zoom" never happened on screen.
+        let mid = paint(25);
+        assert_eq!(*mid.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
+        assert_eq!(
+            *mid.get_pixel(6, 6),
+            Rgba([255, 0, 0, 255]),
+            "scale must really animate between its own keys, across an unrelated key"
+        );
+
+        // Still centred throughout — `position_x` is keyed nowhere, so it
+        // stayed at its static 0.0 while `scale` animated past it.
+        for canvas in [&first, &mid] {
+            assert_eq!(*canvas.get_pixel(0, 10), Rgba([0, 0, 0, 255]));
+            assert_eq!(*canvas.get_pixel(19, 10), Rgba([0, 0, 0, 255]));
+        }
+    }
+
+    /// The other half of B-094: a param that NO key defines falls back to the
+    /// clip's own static field, rather than being invented from a neighbour.
+    #[test]
+    fn an_unkeyed_param_keeps_its_static_value_on_a_keyframed_clip() {
+        let clip = Clip {
+            rotation: 30.0,
+            position_x: 0.25,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0,   "params": { "scale": 1.0 } },
+                { "frame": 100, "params": { "scale": 2.0 } },
+            ])),
+            ..Default::default()
+        };
+        let t = resolve_clip_transform(&clip, 50);
+        assert_eq!(t.rotation, 30.0);
+        assert_eq!(t.position_x, 0.25);
+        assert!((t.scale - 1.5).abs() < 1e-6);
     }
 
     // --- D-147: clip fades in the compositor ----------------------------- //

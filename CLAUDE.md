@@ -132,6 +132,21 @@ in the same commit.
   `h-[Npx]` whenever you're building a new panel of this kind, and if an existing one was
   built fixed-width before this rule existed, that's a real, worthwhile fix when you're
   next in that file, not something to leave as-is out of inertia.
+- **Every feature is built for a human AND an AI, not one or the other** (owner,
+  2026-09-08, said once so it's standing). This app is AI-native by its own tagline
+  above — that means a real GUI affordance and a corresponding MCP tool/parameter both
+  exist for the same capability, always, not as a follow-up. Landing a GUI-only control
+  (a new Inspector field, a new drag gesture, a new panel) without the matching
+  `editor_*`/`set_*` MCP surface is half a feature; landing an MCP tool with no GUI is
+  the same gap from the other side. When you scope a new feature, scope both interfaces
+  in the same pass — the same op/store action underneath both, per this file's existing
+  "one source of truth" pattern (`grade.json` above; `Clip`/`Timeline` for the Edit tab).
+- **Priority order when they trade off: performance, then stability, then how fast we
+  ship.** (owner, 2026-09-08.) The UI has to feel snappy — a control that lags, a
+  preview that stutters, a panel that janks on resize, is a real defect, not
+  a nice-to-have polish pass. Never trade a snappy, correct UI for a quicker build; do
+  not take a shortcut to hit that speed either, unless the owner explicitly says to for
+  that specific case (this mirrors "no shortcuts" above, not a carve-out from it).
 
 ## Monorepo layout (D-039 / D-040)
 

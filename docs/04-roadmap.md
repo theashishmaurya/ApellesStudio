@@ -753,11 +753,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       Fixed on the way: **B-053** (the single-layer preview path discarded
       a lone clip's whole transform).
     - **Phase 4 — keyframe interaction** (does a drag set a key when the
-      clip is already keyframed?). Its own decision, still open. Crop
-      keyframes themselves work today via the existing explicit "Add key"
-      button, like every other transform field.
-    **Phases 0, 1 and 3 built; Phase 2 (rotation/non-uniform scale) and
-    Phase 4 (auto-keyframe-on-drag) remain scoped, not built.**
+      clip is already keyframed?). **Half-answered by D-208 (2026-09-08),
+      for the INSPECTOR only:** every Transform/Crop field now has its own
+      per-property stopwatch diamond + `<`/`>` key nav + reset, and typing
+      into an already-animated field keys that value at the playhead rather
+      than writing the static field (the standard NLE auto-keyframe-on-edit).
+      That settles the *semantics* question this phase was really about —
+      "an edit to an animated property lands on its keyframe" — and leaves
+      only the ON-CANVAS half open: whether a `TransformOverlay` drag should
+      do the same. Fixed on the way: **B-094** (the Rust live-preview
+      resolver could not actually interpolate per-property keyframes; it
+      held them into a step function). **B-095 filed, not fixed** — the
+      ffmpeg export compiler ignores `opacity`/`rotation` entirely, so those
+      two of the nine now-keyframeable properties animate in the preview but
+      not in an exported file.
+    **Phases 0, 1 and 3 built; Phase 2 (rotation/non-uniform scale) still
+    scoped, not built; Phase 4's Inspector half built (D-208), its
+    auto-keyframe-on-canvas-drag half still open.**
 15. ✅ **Video export honours the Colorist's geometry — crop / straighten /
     flip / 90° / lens warp (D-135, 2026-09-04).** **B-042 closed**;
     D-127's `unsupported_geometry` refusal is deleted. All four scoped
