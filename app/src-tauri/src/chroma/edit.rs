@@ -2727,7 +2727,9 @@ mod preview_text_tests {
     /// `timeline_frame`'s raw JPEG bytes (D-217), decoded back to real pixels —
     /// the same bytes the preview `<img>` shows via its `Blob` URL.
     fn decode_preview(jpeg: &[u8]) -> image::RgbaImage {
-        image::load_from_memory(jpeg).expect("decode jpeg").to_rgba8()
+        image::load_from_memory(jpeg)
+            .expect("decode jpeg")
+            .to_rgba8()
     }
 
     /// The whole point of D-211, checked through the real command: a title
