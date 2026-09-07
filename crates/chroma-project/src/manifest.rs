@@ -779,6 +779,14 @@ pub fn append_media_clip(
     // embedded-audio playback and gains no audio half, exactly as before.
     let link_group = has_audio.then(|| format!("lg-{}", uuid::Uuid::new_v4()));
 
+    // B-082 — `..Default::default()` left `source_fps` at `None` here, the
+    // one real `Clip`-construction site `probed: Option<VideoInfo>` was
+    // already sitting right above and simply never got read for it. Every
+    // fps-aware consumer (B-075/B-077/D-194's `source_fps ?? fps` pattern)
+    // then silently fell back to the TIMELINE's fps for a clip whose native
+    // rate differs — exactly the bug those passes fixed at every
+    // CONSUMPTION site, reappearing at this CREATION site.
+    let source_fps = probed.as_ref().map(|i| i.fps()).filter(|f| *f > 0.0);
     let clip = Clip {
         id: uuid::Uuid::new_v4().to_string(),
         shot_id: None,
@@ -790,6 +798,7 @@ pub fn append_media_clip(
         duration,
         source_len: frames.max(0),
         start_frame,
+        source_fps,
         ..Default::default()
     };
     tl.tracks[track_idx].clips.push(clip.clone());
@@ -2029,6 +2038,38 @@ mod tests {
         let reloaded = load_manifest(&dir).unwrap();
         assert_eq!(reloaded.settings.width, Some(176));
         assert_eq!(reloaded.settings.fps, Some(25.0));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip);
+    }
+
+    #[test]
+    fn new_project_seeds_source_fps_from_the_real_probe_b082() {
+        // B-082: `append_media_clip`'s `..Default::default()` silently left
+        // `source_fps` at `None` even though the probe sitting right above it
+        // already had the real rate — every fps-aware consumer then fell back
+        // to the timeline's own fps for a clip whose native rate differs.
+        // 25fps here vs. the project's default 24fps timeline is exactly that
+        // mismatch: pre-fix, a null `source_fps` and a false-agreement with
+        // 24fps would have been indistinguishable, so it has to differ.
+        let Some(clip) = make_test_clip("b082", 176, 144, "25", 1) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("b082_source_fps");
+        let (dir, manifest) =
+            new_project_in(&root, "b082", &[clip.to_string_lossy().to_string()]).unwrap();
+        let placed = &manifest.timelines[manifest.active_timeline].tracks[0].clips[0];
+        assert_eq!(
+            placed.source_fps,
+            Some(25.0),
+            "a freshly created clip must carry its own probed fps, not None"
+        );
+
+        // and it survives the save/reload round trip (B-078's own regression)
+        let reloaded = load_manifest(&dir).unwrap();
+        let reloaded_clip = &reloaded.timelines[reloaded.active_timeline].tracks[0].clips[0];
+        assert_eq!(reloaded_clip.source_fps, Some(25.0));
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&clip);

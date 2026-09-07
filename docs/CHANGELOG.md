@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-082: `new_project`'s auto-placed clips never got
+  `source_fps`.** `append_media_clip`'s `..Default::default()` left it `None`
+  despite the real probe sitting right above — the one other real `Clip`-
+  construction site the B-075/B-077/D-194/B-079 fps-unit work never audited.
+  Caught live rebuilding the comparison reel: a 47.6fps clip's timeline block
+  rendered at roughly 2x its real length. New regression test (a 25fps fixture,
+  deliberately off the 24fps default) covers both immediate and post-reload
+  state. `cargo test -p chroma-project` 53/53 (was 52). Also filed (not fixed)
+  **B-083**: `open_project`/`new_project` never refresh the Edit tab's own
+  timeline store when switching PROJECTS (D-195's multi-TIMELINE-within-one-
+  project switching is unaffected) — worked around this session by not
+  switching projects mid-build.
 - **2026-09-07** — **"Multiple timelines" live-verified working; B-080 filed.**
   Extended the D-142 browser harness to mount `TimelineSwitcher` against a real
   multi-timeline fake backend and drove it with real Chromium pointer events:
