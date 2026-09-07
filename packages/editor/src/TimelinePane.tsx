@@ -247,6 +247,7 @@ import {
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { Waveform } from './Waveform';
 import { Filmstrip } from './Filmstrip';
+import { EditorExportDialog } from './EditorExportDialog';
 import {
   niceTickIntervalSeconds,
   formatTimecode,
@@ -2604,6 +2605,14 @@ export function TimelinePane() {
               to keep both. */}
 
           <div className="ml-auto flex items-center gap-0.5">
+            {/* D-198 — the Edit tab's own Export button + dialog + queue,
+                the same "no Export affordance at all" gap the owner pointed
+                at a real screenshot to flag. Lives here, at the far right of
+                THIS toolbar (not clip-selection-dependent like Split/Remove
+                to its left), next to the zoom controls — the other
+                always-available, not-selection-scoped action on this
+                strip. */}
+            <EditorExportDialog />
             <Tooltip>
               <TooltipTrigger
                 render={
