@@ -501,11 +501,12 @@ pub struct MediaItemDto {
     pub thumb: Option<String>,
 }
 
-/// `true` if `path` is a readable video file right now — the same cheap check
-/// `shot_is_online` uses for shots.
+/// `true` if `path` is a readable video OR audio file right now (B-089 — the
+/// media POOL, unlike a Colorist `shot_is_online`'s own video-only check,
+/// also holds real SFX/music sources with no video track at all).
 pub fn media_item_is_online(path: &str) -> bool {
     let p = Path::new(path);
-    p.is_file() && video::is_video_file(p)
+    p.is_file() && video::is_media_file(p)
 }
 
 impl From<&MediaItem> for MediaItemDto {

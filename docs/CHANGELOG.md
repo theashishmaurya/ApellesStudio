@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-089: pure-audio media (no video stream at all)
+  could never be imported at all.** `video::probe`'s `-select_streams v:0`
+  legitimately returns zero streams for a real SFX/music file, but the code
+  treated that as a probe FAILURE — permanently `offline: true` for every
+  such file, so `editor_add_clip` refused them. Caught live adding real
+  downloaded SFX/music to the comparison reel. New `probe_audio_only`
+  fallback: real duration/audio facts, a nominal 24fps reference rate for
+  frame bookkeeping (mirrors `chroma-timeline`'s own `DEFAULT_FPS`
+  convention). `cargo test -p chroma-media` 99/99 (was 98).
 - **2026-09-07** — **React Compiler bailout pass (D-201): `@chroma/editor` is now
   bailout-free, and one real bug fell out of it.** All 22 source files in the
   package compile with zero bailouts (`TimelinePane`/`TransformOverlay`'s

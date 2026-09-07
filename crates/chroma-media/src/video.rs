@@ -99,12 +99,36 @@ pub const VIDEO_EXTENSIONS: &[&str] = &[
     "mov", "mp4", "m4v", "mkv", "webm", "avi", "mts", "m2ts", "mxf", "braw", "r3d",
 ];
 
+/// B-089's other half — a real, importable SFX/music source with NO video
+/// track at all (mp3/wav/flac/m4a/aac/ogg). Deliberately a SEPARATE list from
+/// [`VIDEO_EXTENSIONS`], not a merge into it: `is_video_file`'s other callers
+/// (`image_loader.rs`, `session.rs`, `formats.rs`) genuinely need the
+/// video-vs-not distinction for picking a decode path, and must keep
+/// reporting `false` for a pure-audio file. Only [`is_media_file`] — the
+/// media-POOL's own "is this importable at all" gate — needs the union.
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "flac", "m4a", "aac", "ogg"];
+
 pub fn is_video_file<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref()
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| VIDEO_EXTENSIONS.iter().any(|v| v.eq_ignore_ascii_case(e)))
         .unwrap_or(false)
+}
+
+/// B-089 — video OR audio: what the media pool's own "is this a real,
+/// importable source" gate (`chroma_project::media_item_is_online`,
+/// `probe_media_item`) should use instead of [`is_video_file`] alone, so a
+/// pure-audio SFX/music file is treated as a normal online pool item rather
+/// than permanently offline before `probe`/`probe_audio_only` ever runs.
+pub fn is_media_file<P: AsRef<Path>>(path: P) -> bool {
+    let path = path.as_ref();
+    is_video_file(path)
+        || path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| AUDIO_EXTENSIONS.iter().any(|a| a.eq_ignore_ascii_case(e)))
+            .unwrap_or(false)
 }
 
 pub(crate) fn ffprobe_bin() -> String {
@@ -147,11 +171,20 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
     }
 
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
-    let st = v
-        .get("streams")
-        .and_then(|s| s.get(0))
-        .ok_or_else(|| anyhow!("no video stream in {}", path.display()))?;
     let fmt = v.get("format");
+    // B-089 — `-select_streams v:0` legitimately returns an EMPTY `streams`
+    // array for a real, readable, pure-audio source (SFX/music with no video
+    // track at all) — this used to be treated as a probe FAILURE (`Err`),
+    // which `chroma_media_import`'s own caller then surfaces as `offline:
+    // true`, permanently blocking `editor_add_clip` from ever placing a
+    // genuine audio-only clip. `format.duration` is still populated even with
+    // zero matching streams (confirmed live against a real mp3), so an
+    // audio-only source is probed as a real, online item here instead of an
+    // error — see `probe_audio_only` below for the actual field-by-field
+    // reasoning.
+    let Some(st) = v.get("streams").and_then(|s| s.get(0)) else {
+        return probe_audio_only(path, fmt);
+    };
 
     let get = |k: &str| st.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
 
@@ -193,6 +226,49 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         color_primaries: get("color_primaries"),
         color_transfer: get("color_transfer"),
         color_space: get("color_space"),
+        has_audio,
+        audio_sample_rate,
+        audio_channels,
+    })
+}
+
+/// B-089 — a pure-audio source (no video stream at all) still returns a real
+/// [`VideoInfo`], not an error: `width`/`height` are genuinely `0` (there IS
+/// no frame), `fps_num`/`fps_den` are a NOMINAL `24/1` — not measured, since
+/// there is no frame rate to measure, but a real, fixed reference rate a
+/// `Clip.source_fps` can convert against exactly like any other clip (the
+/// same "every clip needs a frame-rate axis for `EditOp`/keyframe frame
+/// bookkeeping" contract `crates/chroma-timeline`'s own `DEFAULT_FPS = 24.0`
+/// already uses for a timeline with no clips to derive one from). `frame_count`
+/// is `duration_secs * 24` rounded — not a real frame boundary, just this
+/// nominal rate's own unit, exactly as precise as it needs to be for placing
+/// and trimming an audio clip on a 24fps-native timeline. `codec`/`pix_fmt`/
+/// `color_*` are empty (no picture to describe); `has_audio`/
+/// `audio_sample_rate`/`audio_channels` come from the same real
+/// [`probe_audio_stream`] every other source uses.
+fn probe_audio_only(path: &Path, fmt: Option<&serde_json::Value>) -> Result<VideoInfo> {
+    const NOMINAL_FPS: f64 = 24.0;
+    let duration_secs = fmt
+        .and_then(|f| f.get("duration"))
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let frame_count = (duration_secs * NOMINAL_FPS).round().max(0.0) as u64;
+    let (has_audio, audio_sample_rate, audio_channels) = probe_audio_stream(path);
+    if !has_audio {
+        return Err(anyhow!("no video or audio stream in {}", path.display()));
+    }
+    Ok(VideoInfo {
+        resolution: chroma_types::Resolution::new(0, 0),
+        fps_num: NOMINAL_FPS as u32,
+        fps_den: 1,
+        duration_secs,
+        frame_count,
+        codec: String::new(),
+        pix_fmt: String::new(),
+        color_primaries: String::new(),
+        color_transfer: String::new(),
+        color_space: String::new(),
         has_audio,
         audio_sample_rate,
         audio_channels,
@@ -655,6 +731,21 @@ mod tests {
         assert!(!is_video_file("x"));
     }
 
+    /// **B-089, the extension-gate half.** `is_media_file` must accept a real
+    /// audio-only source `is_video_file` alone always rejected — this is the
+    /// gate `media_item_is_online` uses, and probing an audio file never even
+    /// runs if this says no first. `is_video_file` itself must stay
+    /// unchanged: its OTHER callers (image/video decode-path branching)
+    /// genuinely need "audio doesn't count".
+    #[test]
+    fn is_media_file_accepts_audio_is_video_file_rejects_b089() {
+        assert!(is_media_file("sfx/click.mp3"));
+        assert!(is_media_file("music/bed.flac"));
+        assert!(is_media_file("a/b/C019.MOV"), "still accepts real video");
+        assert!(!is_media_file("x.png"), "an image is neither");
+        assert!(!is_video_file("sfx/click.mp3"), "is_video_file itself must stay video-only");
+    }
+
     #[test]
     fn rational_parse() {
         assert_eq!(parse_rational("30000/1001"), (30000, 1001));
@@ -768,5 +859,48 @@ mod tests {
             assert!(f.len() > 128, "a tile must be a real JPEG, got {} bytes", f.len());
             assert_eq!(&f[..3], &[0xFF, 0xD8, 0xFF], "tile must start with a JPEG SOI marker");
         }
+    }
+
+    /// **B-089, the regression test.** A real, pure-audio file (no video
+    /// stream at all — exactly an SFX/music source) must probe successfully,
+    /// not error out. Confirmed to fail against the pre-fix code with
+    /// `Err("no video stream in ...")`, live against a real downloaded mp3
+    /// this session, before this fix.
+    #[test]
+    fn probe_succeeds_on_a_real_audio_only_source_b089() {
+        let path = std::env::temp_dir().join(format!(
+            "chroma_probe_audio_only_b089_{}_{:?}.mp3",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let out = Command::new(ffmpeg_bin())
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("sine=frequency=440:duration=2")
+            .arg(&path)
+            .output();
+        let Ok(out) = out else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        if !out.status.success() {
+            eprintln!("skip: ffmpeg synth failed: {}", String::from_utf8_lossy(&out.stderr));
+            return;
+        }
+
+        let info = probe(&path).expect("a pure-audio source must probe successfully, not error");
+        assert_eq!(info.resolution.width, 0, "no video stream means no real width");
+        assert_eq!(info.resolution.height, 0);
+        assert!((info.duration_secs - 2.0).abs() < 0.1, "got {}", info.duration_secs);
+        assert_eq!(info.fps(), 24.0, "nominal reference rate for frame bookkeeping");
+        assert!(
+            (info.frame_count as i64 - 48).abs() <= 2,
+            "~2s at the nominal 24fps reference rate, got {}",
+            info.frame_count
+        );
+        assert!(info.has_audio, "a sine-wave source has a real audio stream");
+        assert!(info.audio_sample_rate > 0);
+
+        let _ = std::fs::remove_file(&path);
     }
 }

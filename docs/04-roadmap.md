@@ -1032,6 +1032,39 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `npm test --workspace @chroma/editor` 408/408 (was 357); real `ffprobe`/
     `volumedetect`-verified ffmpeg execution tests, not just argv string matches;
     the dialog/queue live-tested in a real Chromium tab via the D-142 harness.
+23. **The media pool has no way to recover a stuck/wrong item — a real architectural
+    gap, not a one-off bug** — owner, 2026-09-07, after hitting it TWICE live in one
+    session and being asked directly to fix the shape of the problem, not patch the
+    symptom again. `add_media`'s own dedup (`crates/chroma-project/src/manifest.rs`)
+    treats "already known by this exact source path" as permanent and final — there
+    is no expiry, no re-probe-on-demand, and (until today) no MCP-reachable way to
+    even remove an item, only the GUI's Sources panel has `removeMedia` →
+    `chroma_media_remove`. A pool entry whose probe failed once (transient race,
+    B-073; or — closed today — a probe function with a real bug, B-089) is wrong
+    for the rest of the project's life unless a human manually deletes and re-adds
+    it from the GUI. This is the SAME root shape as B-073 (open since this session's
+    early hours) and B-089 (`docs/BUGS.md`, fixed today) — two different SYMPTOMS of
+    one real gap: **the pool has no correction mechanism at all**, video-only or not.
+    Confirmed by re-deriving it live: this session hit a stuck-path variant of B-073
+    THREE times while adding real SFX/music (mp3/flac files, no video stream) —
+    every workaround was copying the file to a path Chroma had never seen, which
+    works but is not a fix, is not available to a GUI user, and leaves an
+    ever-growing trail of dead pool entries no one can see or clean up (the SAME
+    `docs/notes/mcp-tool-coverage.md` gap: "no `chroma_media_list`/`_remove` MCP
+    tool"). **The minimal real fix, not a new concept:** expose the command that
+    ALREADY EXISTS (`chroma_media_remove`, used correctly by the GUI's own Sources
+    panel today) as an `editor_remove_media` MCP tool — closing the gap with the
+    primitive that's already proven correct, rather than inventing a parallel
+    `reprobe` command that would duplicate remove-then-reimport's own effect. A
+    genuine "why did this happen twice" root cause worth naming too: `chroma-media`'s
+    own probing layer (`VideoInfo`, `is_video_file`, `video::probe`) was designed
+    video-first and had audio-track support (D-057/D-149) layered on top of it
+    without a pass back through the FOUNDATIONAL probe/pool layer to make it
+    format-agnostic — `is_media_file` (added today, B-089) is the first step of that
+    correction, used consistently now by both of the pool's own "is this online"
+    call sites; auditing for any OTHER place still assuming "pool item" means
+    "video" is worth a dedicated pass, not assumed done. Not started as a build —
+    this entry is the scope, not the implementation.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
