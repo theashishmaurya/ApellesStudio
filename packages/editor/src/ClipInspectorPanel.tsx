@@ -320,6 +320,15 @@ const TRANSFORM_FIELDS: Array<{
   { param: 'rotation', label: 'Rotation', step: 1 },
 ];
 
+/** D-211 follow-up — a TEXT clip's own `resolve_text_clip_transform` (Rust)
+ *  pins `scale`/`rotation`/crop/box size to their identity values regardless
+ *  of what's stored, and `editor_set_clip_transform` REFUSES a non-default
+ *  write to any of them — only `opacity`/`position_x`/`position_y` actually
+ *  do anything for a title. Filters `TRANSFORM_FIELDS` down to those three
+ *  for a text clip, rather than rendering rows that silently do nothing (or
+ *  worse, that a human edits and then can't work out why nothing moved). */
+const TEXT_CLIP_TRANSFORM_PARAMS = new Set<ClipTransformParam>(['opacity', 'position_x', 'position_y']);
+
 export function ClipInspectorPanel({
   clip,
   trackLocked,
@@ -378,6 +387,10 @@ export function ClipInspectorPanel({
   if (!clip) {
     return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
   }
+
+  const transformFields = clip.text
+    ? TRANSFORM_FIELDS.filter((f) => TEXT_CLIP_TRANSFORM_PARAMS.has(f.param))
+    : TRANSFORM_FIELDS;
 
   // D-193 — the box's CURRENT effective size, in composition fractions:
   // the override when the clip has one, else `scale`'s own natural-footprint
@@ -444,7 +457,7 @@ export function ClipInspectorPanel({
               keyframe. Special-casing it in this file instead made typing in
               `Scale` silently not key at all while animated — caught by
               `EditorInspectorPanel.keyframes.dom.test.tsx`. */}
-          {TRANSFORM_FIELDS.map(({ param, label, step, min, max }) => (
+          {transformFields.map(({ param, label, step, min, max }) => (
             <PropertyRow
               key={param}
               label={label}
@@ -469,48 +482,59 @@ export function ClipInspectorPanel({
               D-208 moved these BELOW Rotation (they used to sit between Scale
               and Rotation) so the five per-property-keyframeable rows stay
               contiguous and this ratio-locked, deliberately un-keyframeable
-              pair reads as the separate thing it is. */}
-          <label className={row}>
-            <span className="text-text-secondary">Width</span>
-            <Input
-              type="number"
-              step={1}
-              min={0}
-              disabled={trackLocked || !geometry}
-              className={numInput}
-              value={widthPx != null ? Math.round(widthPx) : ''}
-              onChange={(e) => handleWidthPxChange(Number(e.target.value))}
-            />
-          </label>
-          <div className="flex items-center justify-center py-0.5">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              disabled={trackLocked || !geometry}
-              onClick={() => setRatioLocked((v) => !v)}
-              title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
-            >
-              {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
-            </Button>
-          </div>
-          <label className={row}>
-            <span className="text-text-secondary">Height</span>
-            <Input
-              type="number"
-              step={1}
-              min={0}
-              disabled={trackLocked || !geometry}
-              className={numInput}
-              value={heightPx != null ? Math.round(heightPx) : ''}
-              onChange={(e) => handleHeightPxChange(Number(e.target.value))}
-            />
-          </label>
-          {!geometry && (
-            <p className="text-text-secondary/60 text-[10px] leading-snug">
-              Measuring source resolution…
-            </p>
-          )}
+              pair reads as the separate thing it is.
 
+              D-211 follow-up — a text clip has no box to size: Rust's
+              `resolve_text_clip_transform` pins `box_width`/`box_height` to
+              `None` regardless of what's stored, and a title's own size is
+              its Title section's `size` field (a font-size fraction), not a
+              bounding box. Hidden rather than shown-and-disabled, matching
+              how the Crop section below is hidden entirely rather than
+              rendered inert. */}
+          {!clip.text && (
+            <>
+              <label className={row}>
+                <span className="text-text-secondary">Width</span>
+                <Input
+                  type="number"
+                  step={1}
+                  min={0}
+                  disabled={trackLocked || !geometry}
+                  className={numInput}
+                  value={widthPx != null ? Math.round(widthPx) : ''}
+                  onChange={(e) => handleWidthPxChange(Number(e.target.value))}
+                />
+              </label>
+              <div className="flex items-center justify-center py-0.5">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={trackLocked || !geometry}
+                  onClick={() => setRatioLocked((v) => !v)}
+                  title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+                >
+                  {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                </Button>
+              </div>
+              <label className={row}>
+                <span className="text-text-secondary">Height</span>
+                <Input
+                  type="number"
+                  step={1}
+                  min={0}
+                  disabled={trackLocked || !geometry}
+                  className={numInput}
+                  value={heightPx != null ? Math.round(heightPx) : ''}
+                  onChange={(e) => handleHeightPxChange(Number(e.target.value))}
+                />
+              </label>
+              {!geometry && (
+                <p className="text-text-secondary/60 text-[10px] leading-snug">
+                  Measuring source resolution…
+                </p>
+              )}
+            </>
+          )}
         </InspectorSection>
 
         {/* D-132 — Crop, the Edit tab's first (D-127 Finding 3: the concept
@@ -522,28 +546,35 @@ export function ClipInspectorPanel({
             stored unit itself (a 0–1 fraction of the source), not a
             percentage: this panel already shows Opacity as 0–1 rather than
             0–100, and a display-only unit conversion is a rounding-bug
-            surface for no real gain at this size. */}
-        <InspectorSection label="Crop">
-          {/* D-208 — the same `PropertyRow` the Transform section uses: each
-              inset is independently keyframeable and independently
-              resettable, exactly like every other transform field. */}
-          {CROP_FIELDS.map(({ key, label }) => (
-            <PropertyRow
-              key={key}
-              label={label}
-              param={key}
-              state={paramStates[key]}
-              step={CROP_STEP}
-              min={0}
-              max={1}
-              disabled={trackLocked}
-              onChange={(v) => onParamChange(key, v)}
-              onKeyframeToggle={onKeyframeToggle}
-              onKeyframeNav={onKeyframeNav}
-              onReset={onResetParam}
-            />
-          ))}
-        </InspectorSection>
+            surface for no real gain at this size.
+
+            D-211 follow-up — hidden entirely for a text clip: `drawtext`
+            has no crop concept and `resolve_text_clip_transform` pins all
+            four insets to 0, so a rendered-but-inert Crop section would be
+            four rows that visibly do nothing when dragged. */}
+        {!clip.text && (
+          <InspectorSection label="Crop">
+            {/* D-208 — the same `PropertyRow` the Transform section uses: each
+                inset is independently keyframeable and independently
+                resettable, exactly like every other transform field. */}
+            {CROP_FIELDS.map(({ key, label }) => (
+              <PropertyRow
+                key={key}
+                label={label}
+                param={key}
+                state={paramStates[key]}
+                step={CROP_STEP}
+                min={0}
+                max={1}
+                disabled={trackLocked}
+                onChange={(v) => onParamChange(key, v)}
+                onKeyframeToggle={onKeyframeToggle}
+                onKeyframeNav={onKeyframeNav}
+                onReset={onResetParam}
+              />
+            ))}
+          </InspectorSection>
+        )}
 
         {/* D-147 — Fade in / out. Its own section rather than more Transform
             rows, for the same reason Crop got one: a fade is not part of a

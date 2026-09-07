@@ -1152,10 +1152,14 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `box_*` in both engines (`drawtext` cannot do them) — widening both sides
     means compiling a title to a rasterised PNG overlay input instead, which
     would also make the two engines share the rasteriser, and needs the export
-    compiler to stop being pure; (b) `ClipInspectorPanel.tsx` still SHOWS those
-    rows for a title, where they change no pixel — that file was owned by two
-    other concurrent efforts during this pass, so gating each row on
-    `clip.text == null` is a one-line-per-row follow-up; (c) on-canvas drag of
+    compiler to stop being pure; (b) ~~`ClipInspectorPanel.tsx` still SHOWS
+    those rows for a title, where they change no pixel~~ — **CLOSED,
+    2026-09-08.** Scale/Rotation/Width/Height/Crop are hidden entirely for a
+    text clip (not shown-and-disabled — matches how the Crop section itself
+    is hidden rather than rendered inert), leaving Opacity/Position X/
+    Position Y — the three fields `resolve_text_clip_transform` actually
+    honours. 3 new real-DOM tests (`ClipInspectorPanel.textGating.dom.test.tsx`).
+    (c) on-canvas drag of
     a title (`TransformOverlay.tsx`, off-limits the same way — the backend's
     `chroma_timeline_clip_geometry` already answers correctly for a text clip);
     (d) FCPXML interchange does not map a title yet; (e) ~~found live,

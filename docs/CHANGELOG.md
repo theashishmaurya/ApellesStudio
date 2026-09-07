@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Text/title clips (roadmap 24b): `ClipInspectorPanel`
+  hides Scale/Rotation/Width/Height/Crop for a text clip**, leaving Opacity/
+  Position X/Position Y — the three fields `resolve_text_clip_transform`
+  actually honours (the rest are pinned server-side and `editor_set_clip_
+  transform` refuses a non-default write to any of them). A known follow-up
+  left open from D-211's own pass (`ClipInspectorPanel.tsx` was owned by two
+  concurrent efforts at the time). 3 new real-DOM tests.
 - **2026-09-08** — **`editor_set_selection` (roadmap 26, D-216): the Edit tab's
   selection is finally WRITABLE over MCP, not just readable.** Closes the
   read/write asymmetry D-209 hit live — `TransformOverlay`'s on-canvas box and
