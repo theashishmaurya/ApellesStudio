@@ -36,6 +36,20 @@
  * `requestAnimationFrame` waits between events remain the one real,
  * non-negotiable rule — see that file's own module doc for why).
  *
+ * **D-195, Task 3 — extended to mount `TimelineSwitcher` too, for real
+ * multiple-timeline verification.** `installInvokeStub`'s handler map is now
+ * backed by a tiny in-memory multi-timeline "project" (`fakeProject`, below)
+ * rather than a single fixture object, so `chroma_timeline_list`/`_create`/
+ * `_set_active` behave like the real `chroma::edit` Rust commands they mirror
+ * (`chroma_timeline_create` appends+activates a fresh empty timeline;
+ * `chroma_timeline_set` always writes onto whichever is CURRENTLY active,
+ * exactly like the real command's own `manifest.timelines[manifest.
+ * active_timeline] = timeline`, not by matching the passed timeline's own
+ * `id`) — real enough to click the "+" tab, name a timeline, switch back and
+ * forth, and confirm each one's own clips persist independently rather than
+ * bleeding into the other. `window.__chromaHarness.project` exposes the raw
+ * backing store for a CDP session to inspect directly.
+ *
  * **What this file does NOT do.** It does not run in CI and does not
  * substitute for `TimelinePane.marquee.dom.test.tsx`'s own jsdom-tier
  * regression coverage (`packages/editor`, runs on every `npm test`). This is
@@ -52,7 +66,7 @@
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { TimelinePane, useEditorTimelineStore, type Timeline } from '@chroma/editor';
+import { TimelinePane, TimelineSwitcher, timelineDuration, useEditorTimelineStore, type EditOp, type Timeline } from '@chroma/editor';
 import '../src/styles.css';
 
 function setStatus(text: string): void {
@@ -60,12 +74,47 @@ function setStatus(text: string): void {
   if (el) el.textContent = text;
 }
 
+/** Mirrors `chroma::edit::TimelineSummary` (serde camelCase) — see
+ *  `packages/editor/src/timelineStore.ts`'s own TS mirror of the same Rust
+ *  type. Kept local rather than imported since only `TimelineSwitcher`'s
+ *  props need the shape; the store already exports it but this file
+ *  constructs raw invoke-response objects, not store state. */
+interface TimelineSummary {
+  id: string;
+  name: string;
+  duration: number;
+  active: boolean;
+}
+
+/** D-195, Task 3 — the tiny in-memory "project" `chroma_timeline_list`/
+ *  `_create`/`_set_active`/`_get`/`_set` all read and write, standing in for
+ *  `chroma::project`'s real `ProjectManifest.timelines`/`active_timeline`
+ *  (`app/src-tauri/src/chroma/edit.rs`). Real enough to exercise
+ *  `TimelineSwitcher`'s actual click-through behavior end to end: creating a
+ *  timeline appends+activates it (mirrors `chroma_timeline_create` exactly —
+ *  fresh id, empty `tracks`, immediately active), and `chroma_timeline_set`
+ *  always writes onto whichever timeline is CURRENTLY active (mirrors the
+ *  real command's `manifest.timelines[manifest.active_timeline] = timeline`
+ *  — by ACTIVE INDEX, never by matching the posted timeline's own `id`). */
+interface FakeProject {
+  timelines: Map<string, Timeline>;
+  order: string[];
+  activeId: string;
+}
+
+function makeFakeProject(): FakeProject {
+  const seedTl = defaultFixture();
+  return { timelines: new Map([[seedTl.id, seedTl]]), order: [seedTl.id], activeId: seedTl.id };
+}
+
+let fakeProject: FakeProject = makeFakeProject();
+
 /** A stand-in for `@tauri-apps/api/core`'s `invoke` — the real signature is
  *  `window.__TAURI_INTERNALS__.invoke(cmd, args)`, so this stubs exactly
  *  that global rather than the module (this page never runs inside Tauri,
- *  so there's no real one to conflict with). Every command `TimelinePane`
- *  (or its `Filmstrip`/`Waveform` children) can call is listed explicitly —
- *  an unlisted command rejects loudly, matching
+ *  so there's no real one to conflict with). Every command `TimelinePane`/
+ *  `TimelineSwitcher` (or their `Filmstrip`/`Waveform` children) can call is
+ *  listed explicitly — an unlisted command rejects loudly, matching
  *  `testUtils/pointerHarness.ts`'s own `createInvokeStub` contract (kept in
  *  sync by hand; this file can't import that vitest-side module directly
  *  since it isn't part of this app's own dependency graph). */
@@ -73,8 +122,37 @@ function installInvokeStub(): void {
   const handlers: Record<string, (args: unknown) => unknown> = {
     chroma_clip_thumbnails: () => [],
     chroma_audio_waveform: () => [],
-    chroma_timeline_set: () => undefined,
-    chroma_timeline_get: () => useEditorTimelineStore.getState().timeline,
+    chroma_timeline_get: () => {
+      const active = fakeProject.timelines.get(fakeProject.activeId);
+      if (!active) throw new Error(`harness: no active timeline "${fakeProject.activeId}"`);
+      return active;
+    },
+    chroma_timeline_set: (args) => {
+      const { timeline } = args as { timeline: Timeline };
+      // Real behavior (`chroma::edit::chroma_timeline_set`): always writes
+      // onto the ACTIVE index, regardless of `timeline.id` — a caller can
+      // never accidentally overwrite a different timeline by id collision.
+      fakeProject.timelines.set(fakeProject.activeId, timeline);
+    },
+    chroma_timeline_list: (): TimelineSummary[] =>
+      fakeProject.order.map((id) => {
+        const t = fakeProject.timelines.get(id)!;
+        return { id: t.id, name: t.name, duration: timelineDuration(t), active: id === fakeProject.activeId };
+      }),
+    chroma_timeline_create: (args): Timeline => {
+      const { name } = args as { name: string };
+      const id = `harness-tl-${Math.random().toString(36).slice(2, 8)}`;
+      const tl: Timeline = { id, name, tracks: [] };
+      fakeProject.timelines.set(id, tl);
+      fakeProject.order.push(id);
+      fakeProject.activeId = id;
+      return tl;
+    },
+    chroma_timeline_set_active: (args) => {
+      const { id } = args as { id: string };
+      if (!fakeProject.timelines.has(id)) throw new Error(`harness: no timeline with id ${id}`);
+      fakeProject.activeId = id;
+    },
   };
   (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: unknown) => {
@@ -120,7 +198,14 @@ function defaultFixture(): Timeline {
   };
 }
 
+/** Replace the CURRENT ACTIVE timeline's content — in both the fake backend
+ *  (so `TimelineSwitcher`'s list/switch calls stay consistent with whatever
+ *  was reseeded) and the store directly (so the change is visible with no
+ *  round trip, same as before this file grew a fake backend at all). Does
+ *  NOT touch `fakeProject.order`/`activeId` — reseeding the active timeline's
+ *  content is orthogonal to which timeline is active or how many exist. */
 function seed(timeline: Timeline): void {
+  fakeProject.timelines.set(fakeProject.activeId, timeline);
   useEditorTimelineStore.setState({
     timeline,
     projectOpen: true,
@@ -139,13 +224,23 @@ let root: ReturnType<typeof createRoot> | null = null;
 function render(): void {
   const container = document.getElementById('root')!;
   if (!root) root = createRoot(container);
-  const el = React.createElement(TimelinePane);
+  // D-195, Task 3 — `TimelineSwitcher` above `TimelinePane`, the same stacking
+  // `EditorTab.tsx` uses, so the tab strip's real click-through behavior
+  // (switch/create) is exercised against the same store the pane reads.
+  const el = React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
   root.render(strict ? React.createElement(React.StrictMode, null, el) : el);
   setStatus(`mounted (strictMode=${strict}) — window.__chromaHarness`);
 }
 
 installInvokeStub();
 seed(defaultFixture());
+// D-195, Task 3 — `TimelineSwitcher` fetches its own tab list via `loadList()`
+// on mount; `setProjectOpen(true)` is the same real signal `app/src/main.tsx`
+// sends on a real project open, and drives `load()` (`chroma_timeline_get`)
+// the same way. Both now resolve against `fakeProject`, not the `seed()` call
+// above alone — `seed()` still sets the store directly too so the pane paints
+// immediately on the very first render, before either async call resolves.
+useEditorTimelineStore.getState().setProjectOpen(true);
 render();
 
 // CDP-reachable control surface — see this file's own header for the
@@ -163,11 +258,35 @@ render();
   get selection() {
     return useEditorTimelineStore.getState().selection;
   },
+  get timelines() {
+    return useEditorTimelineStore.getState().timelines;
+  },
+  /** D-195, Task 3 — the raw fake-backend state (every timeline's own full
+   *  content + which id is active), for a CDP session to assert against
+   *  directly rather than only through what the store currently has loaded —
+   *  e.g. confirming an inactive timeline's clips are untouched after
+   *  editing a different, active one. */
+  get project() {
+    return { activeId: fakeProject.activeId, order: [...fakeProject.order], timelines: Object.fromEntries(fakeProject.timelines) };
+  },
+  /** D-195, Task 3 — apply a real `EditOp` to the CURRENTLY ACTIVE timeline
+   *  via the real store action (`useEditorTimelineStore.getState().applyOp`),
+   *  for a CDP session to build up real content on a freshly `createTimeline`
+   *  timeline (this harness mounts no Sources panel/drag source of its own)
+   *  and then verify it persists independently across a timeline switch. */
+  applyOp(op: EditOp) {
+    useEditorTimelineStore.getState().applyOp(op);
+  },
+  /** D-195, Task 3 — the whole store hook, for a CDP session to call any
+   *  action directly (`createTimeline`, `setActiveTimeline`, `_flushSave`,
+   *  etc.) without this file growing a bespoke wrapper for every one. */
+  store: useEditorTimelineStore,
   setStrictMode(next: boolean) {
     strict = next;
     render();
   },
   reset() {
-    seed(defaultFixture());
+    fakeProject = makeFakeProject();
+    seed(fakeProject.timelines.get(fakeProject.activeId)!);
   },
 };
