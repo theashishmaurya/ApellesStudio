@@ -38,19 +38,25 @@ import {
   actSync,
   captureConsole,
   createInvokeStub,
+  installObjectUrlStub,
   installPointerCaptureStub,
   installResizeObserverStub,
   mount,
   stubOffsetMetrics,
   waitFrames,
   type MountedComponent,
+  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
 
 const CANVAS_W = 1000;
 const CANVAS_H = 500;
 const FPS = 24;
 
-const STUB_FRAME = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+/** Whatever `chroma_timeline_frame` answers with — since D-217 that is the
+ *  JPEG's raw bytes, not a data URL. Nothing here inspects the picture; the
+ *  frame just has to arrive so the preview surface (and with it the transform
+ *  overlay) mounts at all. */
+const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 
 /** `1/1` — the source exactly fills the composition, same as the sibling
  *  suites. Nothing here depends on the resulting box size. */
@@ -171,6 +177,7 @@ function fixtureTimeline(tracks?: Track[]): Timeline {
 let restoreOffsets: () => void;
 let restoreResizeObserver: () => void;
 let restorePointerCapture: () => void;
+let objectUrls: ObjectUrlStub;
 let mounted: MountedComponent | null = null;
 let console_: ReturnType<typeof captureConsole>;
 
@@ -214,6 +221,9 @@ beforeEach(() => {
   restoreOffsets = stubOffsetMetrics(CANVAS_W, CANVAS_H);
   restoreResizeObserver = installResizeObserverStub();
   restorePointerCapture = installPointerCaptureStub();
+  // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` shows every
+  // frame through one now.
+  objectUrls = installObjectUrlStub();
   console_ = captureConsole();
   bus.emitted.length = 0;
 });
@@ -224,6 +234,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   bus.listeners.clear();
+  objectUrls.restore();
   restorePointerCapture();
   restoreResizeObserver();
   restoreOffsets();
