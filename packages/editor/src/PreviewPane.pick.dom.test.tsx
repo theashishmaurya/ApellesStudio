@@ -136,7 +136,7 @@ async function mountWith(timeline: Timeline, initialSelection: { track: number; 
   actSync(() =>
     useEditorTimelineStore.setState({
       timeline,
-      projectOpen: true,
+      openProjectKey: 'test-project',
       status: 'ready',
       error: null,
       playhead: 0,

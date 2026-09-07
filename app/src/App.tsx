@@ -95,7 +95,11 @@ const imageDragModifier: Modifier = ({ active, activatorEvent, activeNodeRect, t
 };
 
 function ImageDragOverlayNode({ activeItem }: { activeItem: { path: string; paths: string[] } }) {
-  const url = useProcessStore.getState().thumbnails[activeItem.path];
+  // B-087 — a real subscription, not a `getState()` read in the render body:
+  // a `getState()` read has no subscription, so a thumbnail that finishes
+  // loading DURING the drag never made this overlay pick it up. See
+  // `docs/BUGS.md` B-087 and `docs/09-engine-notes.md`.
+  const url = useProcessStore((s) => s.thumbnails[activeItem.path]);
   const count = activeItem.paths.length;
 
   return (

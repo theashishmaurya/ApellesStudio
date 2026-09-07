@@ -1065,5 +1065,19 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   the *absence* of a backend change is the point — the note's own open question
   had assumed a new per-layer-rect command was required, and it was not.
 
+- **2026-09-07** — **B-087: two `getState()`-in-render bugs fixed** ·
+  upstream-file edits (both pre-existing upstream files, no new modules):
+  `src/components/views/EditorView.tsx` (the `useEditorStore` selector's
+  `useShallow` object gains `copiedAdjustments: state.copiedAdjustments`, and
+  `isPasteDisabled` reads it from the destructured selector result instead of
+  `useEditorStore.getState().copiedAdjustments === null`) and `src/App.tsx`
+  (`ImageDragOverlayNode`'s `url` becomes `useProcessStore((s) =>
+  s.thumbnails[activeItem.path])` instead of a `.getState()` read). Both were a
+  real Rules-of-React violation flagged by D-201's React Compiler bailout audit
+  (`docs/notes/react-compiler-coverage.md`): a `getState()` read inside a render
+  body has no subscription, so a change to that field alone re-renders nothing —
+  the Colorist "Paste" button stayed disabled after copying adjustments until
+  something else happened to re-render `EditorView`. See `docs/BUGS.md` B-087.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
