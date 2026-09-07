@@ -1079,5 +1079,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   the Colorist "Paste" button stayed disabled after copying adjustments until
   something else happened to re-render `EditorView`. See `docs/BUGS.md` B-087.
 
+- **2026-09-08** — **Text/title clips (D-209/D-210/D-211)** · **zero
+  upstream-file edits.** The whole feature lands in Chroma-owned code: a new
+  `app/src-tauri/src/chroma/text.rs` (the font catalogue + `ab_glyph`
+  rasteriser), additions inside `app/src-tauri/src/chroma/edit.rs` (Chroma's
+  own module), `crates/chroma-timeline` and `packages/editor/*`. The upstream
+  footprint is the usual two lines and nothing else: `pub mod text;` in
+  `app/src-tauri/src/chroma/mod.rs` and one `chroma::text::chroma_text_fonts,`
+  entry in `lib.rs`'s `generate_handler!` — exactly the shape D-003 asks for.
+  `app/src-tauri/Cargo.toml` gains one dependency line (`ab_glyph`, already in
+  the workspace lock at that version as `imageproc`'s own dependency, so the
+  lock's only change is the new direct edge). No `image_processing.rs` edit, no
+  grade-path edit, no change to any upstream React component: a title is
+  composited by `chroma::edit`'s own CPU compositor, which upstream RapidRAW
+  does not have.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

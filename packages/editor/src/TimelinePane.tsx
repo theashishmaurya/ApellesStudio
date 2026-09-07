@@ -225,6 +225,10 @@ import {
   Lock,
   Scissors,
   Trash2,
+  // D-209 — the Add-title action's own icon. `Type` is the letterform icon
+  // both references use for a text/title generator, and nothing else in this
+  // toolbar has claimed it.
+  Type,
   // D-128 — the A/V-unlink action. Deliberately `Unlink`, not the `Unlink2`
   // below: that one is already the track header's sync-lock toggle, and
   // sync-lock and an A/V link are different relationships (see
@@ -278,6 +282,7 @@ import {
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_SYNC_LOCKED,
+  DEFAULT_TITLE_SECONDS,
   DEFAULT_TRACK_GAIN,
   checkLink,
   computeInsertion,
@@ -285,6 +290,8 @@ import {
   gapAt,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
+  newTextClipFields,
+  newTextLayer,
   resolveClipLanding,
   sourceFramesToTimeline,
   syncLinkedClipIds,
@@ -1783,7 +1790,26 @@ export function TimelinePane() {
             background: track?.kind === 'audio' ? 'rgba(120,170,110,0.55)' : 'rgba(90,120,180,0.55)',
           }}
         >
-          {clip && track?.kind === 'video' && (
+          {/* D-209 — a TEXT clip has no picture to filmstrip and no audio to
+              draw a waveform for; its content IS its visual. A tinted body
+              with the title's own text across it, which is what both
+              references show for a title/generator clip on the timeline.
+              Rendered BEFORE the media branch below, and that branch's own
+              `!clip.text` guard is what keeps `Filmstrip`/`Waveform` from
+              being handed an empty `sourcePath` (they'd no-op, but a decode
+              request for "" is a real IPC round trip per clip per zoom
+              level). */}
+          {clip?.text && (
+            <div
+              className="absolute inset-0 flex items-center justify-center overflow-hidden px-2"
+              style={{ background: 'rgba(150,120,190,0.55)' }}
+            >
+              <span className="truncate text-[11px] font-semibold tracking-wide text-button-text/90">
+                {clip.text.content || 'Title'}
+              </span>
+            </div>
+          )}
+          {clip && !clip.text && track?.kind === 'video' && (
             <>
               {/* D-119 — real filmstrip thumbnails, the clip's actual picture
                   content tiled across its full width/height, replacing the
@@ -2023,6 +2049,43 @@ export function TimelinePane() {
       if (at) applyOp({ kind: 'remove', track: at.track, clip: at.clip });
     }
     setSelection([]);
+  };
+
+  /** D-209 — add a text/title clip at the playhead, on the TOPMOST video
+   *  track, and select it so the Inspector's own Title section opens on it
+   *  ready to type into.
+   *
+   *  **Track 0, deliberately.** Track index order is compositing z-order in
+   *  this model (D-086, lower index = on top), so the topmost video track is
+   *  where a title composites over the picture — the same "drag it into the
+   *  timeline ABOVE your video tracks" placement Resolve's own titles feature
+   *  describes (`scratch/resolve-reference/`, "Incredible 2D and 3D Titles").
+   *  If there is no video track at all, `add_clip` creates one; `videoTrackIndex`
+   *  is what finds the topmost existing one.
+   *
+   *  Placed at the playhead with `ripple: false`, so it lands in whatever
+   *  space is there and simply doesn't place if that space is occupied —
+   *  never silently pushing the edit around, which is `add_clip`'s own
+   *  documented non-ripple contract. Adding a second title over the first is
+   *  then "move the playhead, or add a track," the same as for any clip.
+   *
+   *  Goes through the exact `newTextLayer` + `newTextClipFields` + `add_clip`
+   *  path `editor_add_text_clip` (MCP) uses — one implementation under both
+   *  interfaces, per CLAUDE.md's own "same op/store action underneath both". */
+  const doAddTitle = () => {
+    const tl = useEditorTimelineStore.getState().timeline;
+    if (!tl) return;
+    const layer = newTextLayer({ content: 'Title' });
+    // `newTextLayer` only fails on a caller-supplied value; this call site
+    // passes a literal, so the guard is a type narrow, not a real branch.
+    if ('error' in layer) return;
+    const track = Math.max(videoTrackIndex(tl), 0);
+    const clip = newTextClipFields(layer, Math.round(DEFAULT_TITLE_SECONDS * fps));
+    applyOp({ kind: 'add_clip', track, clip, startFrame: playhead });
+    const after = useEditorTimelineStore.getState().timeline;
+    if (after?.tracks[track]?.clips.some((c) => c.id === clip.id)) {
+      setSelection([{ track, id: clip.id }]);
+    }
   };
 
   /** D-128 — break the selected clip's A/V link so its halves can be edited
@@ -2559,6 +2622,27 @@ export function TimelinePane() {
               }
             />
             <TooltipContent>Split every selected clip at the playhead</TooltipContent>
+          </Tooltip>
+          {/* D-209 — the Edit tab's only affordance for creating a title.
+              In this toolbar rather than the Sources panel because a title
+              has no media-pool item behind it: it is generated, not
+              imported, so "add one to the timeline" is the whole gesture.
+              Not selection-dependent (like Export's own button below, and
+              unlike Split/Remove) — you add a title, you don't add one TO
+              something. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button variant="ghost" size="sm" onClick={doAddTitle} aria-label="Add title">
+                  <Type />
+                  Title
+                </Button>
+              }
+            />
+            <TooltipContent>
+              Add a text title at the playhead, on the topmost video track — edit its text, font, size
+              and colour in the Inspector
+            </TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger

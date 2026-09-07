@@ -67,6 +67,22 @@
 //! `ensure_audio_track_with_room` here plus `@chroma/editor`'s `add_clip`
 //! op — this crate still has no clip-*creation* op of its own.
 //!
+//! **Text / title clips (D-209, `docs/notes/text-title-clips.md`):**
+//! [`Clip::text`] — `Some(TextLayer)` makes a clip a **generated** layer whose
+//! picture is rasterised text rather than decoded from `source_path` (which
+//! stays empty on such a clip). It is a `Clip` *variant*, not a new
+//! [`TrackKind`]: a title in Resolve/Premiere is a generator clip placed on
+//! an ordinary video track above the picture ("drag it into the timeline
+//! above your video tracks" — Blackmagic's own Edit-page copy), and this
+//! crate's existing track-index z-order
+//! ([`Timeline::resolve_visible_video_layers_at`]) already IS that ordering
+//! — see D-209 for the full comparison of the two shapes. Every other field
+//! on `Clip` (`start_frame`, `duration`, the transform, `chroma_keyframes`,
+//! the fades) keeps its exact meaning; the consumers that render pixels
+//! (`chroma::edit`'s compositor, `@chroma/editor`'s ffmpeg export compiler)
+//! are what actually rasterise it, this crate only carries the values — the
+//! same division of labour every other compositing field here already has.
+//!
 //! **Per-clip crop (D-132, Phase 3 of `docs/notes/on-canvas-transform.md`):**
 //! `Clip::crop_left`/`crop_top`/`crop_right`/`crop_bottom` — four normalised
 //! (0.0–1.0) edge insets into the clip's own **source** frame, the Edit
@@ -332,6 +348,142 @@ pub enum TrackKind {
     #[default]
     Video,
     Audio,
+}
+
+/// D-209 — the font family key a [`TextLayer`] with no explicit `font`
+/// resolves to. A *key* into `chroma::text`'s own font catalogue
+/// (`app/src-tauri`), not a file path or a system family name: this crate is
+/// pure L2 and never touches the filesystem, so it can only carry the name of
+/// the choice, exactly as it carries `source_path` without ever opening it.
+pub const DEFAULT_TEXT_FONT: &str = "sans-bold";
+
+/// D-209 — default cap height, as a fraction of the COMPOSITION's own height.
+/// 0.12 is a real title size (roughly 130 px in a 1080p frame), not a
+/// placeholder.
+///
+/// **A fraction, not pixels**, for exactly the reason `Clip::position_x` is
+/// (B-043): the live compositor rasterises the preview at whatever
+/// `max_long_edge` the caller asked for (960 scrubbing / 640 playing) while
+/// the export renders at full composition resolution, so a pixel size would
+/// mean a different fraction of the picture in each. A fraction of the
+/// composition height is invariant under every render scale by construction.
+pub const DEFAULT_TEXT_SIZE: f64 = 0.12;
+
+/// D-209 — default fill colour, `#RRGGBB`. White: the only colour that reads
+/// on the widest range of footage, and what every reference NLE's own basic
+/// title generator starts at.
+pub const DEFAULT_TEXT_COLOR: &str = "#FFFFFF";
+
+fn default_text_font() -> String {
+    DEFAULT_TEXT_FONT.to_string()
+}
+
+fn default_text_size() -> f64 {
+    DEFAULT_TEXT_SIZE
+}
+
+fn default_text_color() -> String {
+    DEFAULT_TEXT_COLOR.to_string()
+}
+
+/// A generated **text/title layer** (D-209, `docs/notes/text-title-clips.md`)
+/// — what makes a [`Clip`] draw rasterised text instead of decoding
+/// `source_path`.
+///
+/// **Phase 1 is deliberately the "basic title generator", not the template
+/// library.** Resolve's own titles feature is two things: a basic text
+/// generator (type your text, set font/size/colour) and 100+ prebuilt Fusion
+/// animated title templates. This is the first one, and only that. What is
+/// deliberately NOT here, and why, is in `docs/notes/text-title-clips.md`'s
+/// "Deferred" section — the short list: multi-line text, a background/box,
+/// outline/stroke/shadow, per-character animation, and keyframeable
+/// `size`/`color`.
+///
+/// **Single-line only, enforced at the write path** (`@chroma/editor`'s
+/// `newTextLayer`/`set_text_clip` reject a `\n`). Not a shortcut: the live
+/// preview rasterises with `ab_glyph` and the export rasterises with ffmpeg's
+/// `drawtext`/libfreetype, and the ONE thing those two genuinely disagree
+/// about is inter-line layout (line height, per-line alignment). Restricting
+/// Phase 1 to the case where they provably agree is what makes "preview
+/// matches export" a fact rather than a hope — the exact discipline B-088/
+/// B-090/B-094 all established. See D-211.
+///
+/// **No `opacity` field.** A text layer's transparency is `Clip::opacity`,
+/// which is already keyframeable and already multiplied by the clip's fade —
+/// a second alpha here would be two sources of truth for one number.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextLayer {
+    /// The text to draw. Single line — see the type's own doc.
+    pub content: String,
+    /// A font-family **key** into `chroma::text`'s catalogue (`sans`,
+    /// `sans-bold`, `serif`, …), NOT a path or a system family name. The
+    /// catalogue is what maps a key to a real font FILE, and both renderers
+    /// read that same file: the live compositor loads it with `ab_glyph`, the
+    /// export passes the identical path to `drawtext`'s `fontfile=`. That
+    /// shared file is the whole reason preview and export produce the same
+    /// glyphs at all (D-210).
+    #[serde(default = "default_text_font")]
+    pub font: String,
+    /// Font size as a fraction of the COMPOSITION's height — see
+    /// [`DEFAULT_TEXT_SIZE`] for why a fraction rather than pixels.
+    #[serde(default = "default_text_size")]
+    pub size: f64,
+    /// Fill colour, `#RGB` or `#RRGGBB`. A string rather than a packed
+    /// integer or three floats because it is what both consumers actually
+    /// want: the GUI's colour input and ffmpeg's `fontcolor=` both speak hex,
+    /// and [`Self::rgb`] is the one place it is parsed for the Rust
+    /// rasteriser.
+    #[serde(default = "default_text_color")]
+    pub color: String,
+}
+
+impl Default for TextLayer {
+    /// Manual for the same reason [`Clip`]'s is: `size`'s meaningful default
+    /// is not `0.0` (which would render nothing) and `font`/`color`'s are not
+    /// the empty string. Mirrors the `#[serde(default = …)]` functions above
+    /// field for field.
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            font: default_text_font(),
+            size: default_text_size(),
+            color: default_text_color(),
+        }
+    }
+}
+
+impl TextLayer {
+    /// [`Self::color`] parsed to `(r, g, b)`, falling back to opaque white for
+    /// anything unparseable.
+    ///
+    /// **Falls back rather than erroring** — the same "the model stores what
+    /// the UI wrote, the consumer decides what it means" rule `Clip::opacity`
+    /// and the crop insets already follow (`chroma_timeline_set` stores
+    /// whatever it is handed, so every consumer has to degrade safely). A
+    /// title that renders white because its colour string was malformed is
+    /// visible and fixable; one that fails the whole frame decode is not.
+    ///
+    /// Accepts `#RGB` and `#RRGGBB`, with or without the leading `#`.
+    pub fn rgb(&self) -> (u8, u8, u8) {
+        parse_hex_rgb(&self.color).unwrap_or((255, 255, 255))
+    }
+}
+
+/// `#RGB` / `#RRGGBB` → `(r, g, b)`. `None` for anything else — see
+/// [`TextLayer::rgb`] for who decides what that means.
+fn parse_hex_rgb(s: &str) -> Option<(u8, u8, u8)> {
+    let hex = s.trim().strip_prefix('#').unwrap_or(s.trim());
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    match hex.len() {
+        3 => {
+            // `#abc` is `#aabbcc` — each nibble doubled, the standard CSS
+            // shorthand expansion (`0xa` → `0xaa`, i.e. `n * 17`).
+            let n = |i: usize| u8::from_str_radix(&hex[i..i + 1], 16).ok().map(|v| v * 17);
+            Some((n(0)?, n(1)?, n(2)?))
+        }
+        6 => Some((byte(0)?, byte(2)?, byte(4)?)),
+        _ => None,
+    }
 }
 
 /// Sentinel `start_frame` value observed only transiently, right after
@@ -712,6 +864,39 @@ pub struct Clip {
     /// `ease-in` fade-out is slow near silence, matching an `ease-in` fade-in.
     #[serde(default)]
     pub fade_out_curve: FadeCurve,
+
+    // --- Text / title layer (D-209) --------------------------------------- //
+    /// `Some` = this clip is a **generated text layer**, not a windowed
+    /// reference into a media file: its picture is rasterised from
+    /// [`TextLayer`] and its `source_path` is empty. `None` (every clip in
+    /// every pre-D-209 project, and every clip built from real media) is an
+    /// ordinary media clip, byte-identical to before this field existed.
+    ///
+    /// **A `Clip` variant rather than a `TrackKind::Text` (D-209).** Both
+    /// references put a title on an ordinary video track above the picture,
+    /// and the z-order that makes a title composite over the video is
+    /// [`Timeline::resolve_visible_video_layers_at`]'s existing track-index
+    /// order — already exactly right, with nothing to add. A new track kind
+    /// would have needed its own resolver, its own compositing-order rule,
+    /// its own audio/video split in every walk, and its own export pass, all
+    /// re-deriving what track index order already gives — and would have made
+    /// "a title on the same track as the shot it labels" unrepresentable,
+    /// which every reference NLE allows. See D-209 for the full comparison.
+    ///
+    /// `#[serde(default, skip_serializing_if = "Option::is_none")]` — a
+    /// pre-D-209 clip has no key and deserialises to `None`, no migration and
+    /// no sentinel needed, exactly `media_id`/`link_group`'s own precedent.
+    ///
+    /// **Which of this clip's other fields actually apply** is deliberately
+    /// narrower than for a media clip in Phase 1 — `opacity` (with its fade)
+    /// and `position_x`/`position_y` do, `scale`/`rotation`/`box_*`/the crop
+    /// insets do NOT, in EITHER renderer. See `docs/notes/text-title-clips.md`
+    /// §"What applies to a text clip" for why (short version: the export path
+    /// is `drawtext`, which can place and fade a text box but cannot scale,
+    /// rotate or crop one, and a preview that did what the export cannot is
+    /// the B-053 class of defect this repo keeps closing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<TextLayer>,
 }
 
 fn default_opacity() -> f64 {
@@ -767,11 +952,22 @@ impl Default for Clip {
             // derived one got exactly this class of thing wrong.
             fade_in_curve: FadeCurve::LINEAR,
             fade_out_curve: FadeCurve::LINEAR,
+            // D-209 — `None` is genuinely "an ordinary media clip", the only
+            // sane default, so this one needs no non-zero migration value.
+            text: None,
         }
     }
 }
 
 impl Clip {
+    /// D-209 — whether this clip is a generated [`TextLayer`] rather than a
+    /// windowed reference into a media file. The one predicate every consumer
+    /// branches on, so "is it a text clip" is asked one way everywhere rather
+    /// than as an `is_some()` at each site.
+    pub fn is_text(&self) -> bool {
+        self.text.is_some()
+    }
+
     /// The exclusive upper bound for `source_start + duration`.
     fn source_ceiling(&self) -> i64 {
         self.source_len.max(0)
@@ -4461,5 +4657,121 @@ mod tests {
                 "same fps-converted source frame clip_at gives directly"
             );
         }
+    }
+}
+
+/// D-209 — the text/title clip model. The rasterisation itself lives in
+/// `app/src-tauri`'s `chroma::text` (this crate renders nothing — see the
+/// module doc); what is testable *here* is the model: the migration default,
+/// the round trip, and the colour parse both renderers rely on.
+#[cfg(test)]
+mod text_layer_tests {
+    use super::*;
+
+    #[test]
+    fn a_pre_d209_clip_has_no_text_layer() {
+        // No `text` key at all — the pre-D-209 shape. Must deserialise to a
+        // plain media clip: not an error, and not an empty title.
+        let c: Clip = serde_json::from_str(
+            r#"{"id":"a","name":"A","source_path":"/a.mp4","source_start":0,"duration":10}"#,
+        )
+        .expect("legacy clip JSON should still deserialize");
+        assert!(!c.is_text());
+        assert!(c.text.is_none());
+    }
+
+    #[test]
+    fn a_media_clip_serialises_no_text_key_at_all() {
+        // `skip_serializing_if` — an ordinary clip's JSON stays what it was
+        // before this field existed, so no existing `project.json` grows a
+        // `"text": null` on its next save.
+        let json = serde_json::to_string(&Clip::default()).expect("serialize");
+        assert!(!json.contains("\"text\""), "unexpected text key in {json}");
+    }
+
+    #[test]
+    fn a_text_clip_round_trips_with_its_defaults() {
+        // Only `content` given — the other three come from the named serde
+        // defaults, which must be the real values, not their types' zeroes.
+        let c: Clip = serde_json::from_str(
+            r#"{"id":"t","name":"Title","source_path":"","source_start":0,"duration":48,
+                "text":{"content":"AFTER"}}"#,
+        )
+        .expect("text clip JSON should deserialize");
+        assert!(c.is_text());
+        let t = c.text.as_ref().expect("text layer");
+        assert_eq!(t.content, "AFTER");
+        assert_eq!(t.font, DEFAULT_TEXT_FONT);
+        assert_eq!(t.size, DEFAULT_TEXT_SIZE);
+        assert_eq!(t.color, DEFAULT_TEXT_COLOR);
+
+        let again: Clip =
+            serde_json::from_str(&serde_json::to_string(&c).expect("serialize")).expect("reparse");
+        assert_eq!(again.text, c.text);
+    }
+
+    #[test]
+    fn text_layer_default_is_not_the_types_zero_values() {
+        let t = TextLayer::default();
+        assert_eq!(t.font, DEFAULT_TEXT_FONT);
+        assert_eq!(t.size, DEFAULT_TEXT_SIZE);
+        assert_eq!(t.color, DEFAULT_TEXT_COLOR);
+        assert!(t.size > 0.0, "a zero-size title would render nothing");
+    }
+
+    #[test]
+    fn colour_parses_both_hex_forms_and_falls_back_on_junk() {
+        let with = |color: &str| {
+            TextLayer {
+                color: color.to_string(),
+                ..Default::default()
+            }
+            .rgb()
+        };
+        assert_eq!(with("#FF8800"), (255, 136, 0));
+        assert_eq!(with("ff8800"), (255, 136, 0), "the leading # is optional");
+        assert_eq!(
+            with("#f80"),
+            (255, 136, 0),
+            "3-digit shorthand expands per CSS"
+        );
+        assert_eq!(with("#FFFFFF"), (255, 255, 255));
+        assert_eq!(with("#000000"), (0, 0, 0));
+        // Unparseable → opaque white, never a panic and never an error: see
+        // `TextLayer::rgb`'s own doc for why the consumer degrades instead.
+        assert_eq!(with("rebeccapurple"), (255, 255, 255));
+        assert_eq!(with("#12345"), (255, 255, 255));
+        assert_eq!(with(""), (255, 255, 255));
+        assert_eq!(with("#gggggg"), (255, 255, 255));
+    }
+
+    #[test]
+    fn a_text_clip_occupies_real_timeline_space_like_any_other_clip() {
+        // The whole point of the Clip-variant shape (D-209): every existing
+        // position/resolution op works on a text clip with no new code here.
+        let mut tl = Timeline {
+            tracks: vec![Track {
+                kind: TrackKind::Video,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        tl.tracks[0].clips.push(Clip {
+            id: "t".into(),
+            name: "Title".into(),
+            duration: 48,
+            source_len: 48,
+            start_frame: 24,
+            text: Some(TextLayer {
+                content: "AFTER".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let layers = tl.resolve_visible_video_layers_at(30);
+        assert_eq!(layers.len(), 1, "a text clip is a real visible video layer");
+        assert!(layers[0].1.is_text());
+        assert_eq!(tl.duration(), 72, "24 + 48");
+        assert!(tl.resolve_visible_video_layers_at(100).is_empty());
     }
 }

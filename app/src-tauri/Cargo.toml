@@ -60,6 +60,13 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1.25", features = ["v4", "serde"] }
 walkdir = "2.5.0"
 imageproc = "0.27.0"
+# Chroma: text/title clip rasterisation (D-209/D-210, `chroma::text`). Already
+# in this workspace's tree as `imageproc`'s own dependency at exactly this
+# version — declaring it directly adds no new crate to the build, it just
+# lets `chroma::text` name the glyph-outlining API instead of going through
+# `imageproc::drawing::draw_text_mut` (which blends premultiplied, wrong for
+# the transparent layer the compositor needs). Apache-2.0/MIT.
+ab_glyph = "0.2.32"
 ort = { version = "=2.0.0-rc.10", features = ["ndarray", "load-dynamic"] }
 ndarray = "0.16"
 tauri-plugin-process = "2.3.1"

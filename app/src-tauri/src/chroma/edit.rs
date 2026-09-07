@@ -68,7 +68,7 @@ use chroma_timeline::{Clip, Timeline, TrackKind};
 
 use super::state;
 use super::video::VideoInfo;
-use super::{decode_pipe, project};
+use super::{decode_pipe, project, text};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache — moved out of this file into `chroma-media` (D-146,
@@ -646,10 +646,15 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
     }
+    // D-209 — a TEXT clip is a real visible layer with no `source_path` at
+    // all: its picture is generated, not decoded. So the "skip a clip with no
+    // source" filter (which exists to drop an empty/offline media clip) has
+    // to make an exception for it, or a title would resolve, be discarded
+    // here, and silently never appear.
     let layers: Vec<(usize, &Clip, i64)> = timeline
         .resolve_visible_video_layers_at(pos as i64)
         .into_iter()
-        .filter(|(_, c, _)| !c.source_path.is_empty())
+        .filter(|(_, c, _)| c.is_text() || !c.source_path.is_empty())
         .collect();
 
     // Release the decode pipe of any track that is no longer a visible layer
@@ -676,6 +681,10 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     // defect as B-043's position drift and would have made the transform
     // overlay draw a box in a place the picture disagrees with.
     let single_plain = match layers.as_slice() {
+        // D-209 — a lone TEXT clip never takes the plain-decode fast path:
+        // there is no source to decode, and its whole picture comes from the
+        // compositor's own rasterise-and-blend step.
+        [(_, clip, _)] if clip.is_text() => false,
         [(_, clip, source_frame)] => {
             let info = probe_cached(&PathBuf::from(&clip.source_path))?;
             resolve_clip_transform(clip, *source_frame).is_identity()
@@ -783,6 +792,19 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
         .get(track)
         .and_then(|t| t.clips.get(clip))
         .ok_or_else(|| format!("no clip {clip} on track {track}"))?;
+    // D-209 — a text clip's layer is generated at exactly the composition's
+    // size (see `composite_video_frame`), so its natural footprint IS the
+    // whole frame. Answered here rather than erroring "clip has no source",
+    // so the Inspector's own geometry fetch works for a title the same way it
+    // does for a media clip.
+    if c.is_text() {
+        return Ok(ClipGeometry {
+            comp_width: comp_w,
+            comp_height: comp_h,
+            natural_width: 1.0,
+            natural_height: 1.0,
+        });
+    }
     if c.source_path.is_empty() {
         return Err("clip has no source".to_string());
     }
@@ -963,6 +985,44 @@ fn resolve_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
     t
 }
 
+/// D-209 — [`resolve_clip_transform`] for a **text clip**: the same resolved
+/// (static-or-keyframed, fade-multiplied) `opacity`/`position_x`/`position_y`,
+/// with every other field pinned to its identity value.
+///
+/// **The pinning is the point, and it is not a shortcut.** The export half of
+/// this feature compiles a text clip to ffmpeg's `drawtext`, which can place a
+/// text box (`x`/`y` expressions), fade it (`alpha`), and nothing else — it
+/// cannot scale, rotate or crop one. If the live preview honoured `scale` and
+/// the export ignored it, the preview would be showing a picture the export
+/// cannot produce: precisely the class of defect B-053 (a lone clip's
+/// transform silently dropped in the preview), B-090 (a keyframed `scale`
+/// silently dropped in the export) and B-094 each closed. Making the preview
+/// deliberately match the narrower engine is what keeps "preview matches
+/// export" a fact for Phase 1. Widening BOTH sides — by compiling a text clip
+/// to a rasterised overlay input instead of `drawtext`, which then rides the
+/// identical `overlay` chain a video layer does and gets every transform for
+/// free — is the Phase 2 route, recorded in `docs/notes/text-title-clips.md`.
+///
+/// The GUI never offers those fields for a text clip and
+/// `editor_set_clip_transform` refuses a non-default value for one, so this
+/// is the third and last line of that defence, not the only one.
+fn resolve_text_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform {
+    let t = resolve_clip_transform(clip, source_frame);
+    ClipTransform {
+        opacity: t.opacity,
+        position_x: t.position_x,
+        position_y: t.position_y,
+        scale: 1.0,
+        box_width: None,
+        box_height: None,
+        rotation: 0.0,
+        crop_left: 0.0,
+        crop_top: 0.0,
+        crop_right: 0.0,
+        crop_bottom: 0.0,
+    }
+}
+
 /// [`resolve_clip_transform`] without D-147's fade multiply — the D-088/D-132
 /// static-or-keyframed resolution on its own. Split out purely so the fade can
 /// be applied at one place after every one of this function's three return
@@ -1073,7 +1133,13 @@ fn composite_video_frame(
     comp: (u32, u32),
 ) -> Result<DynamicImage, String> {
     struct Decoded {
-        img: image::RgbaImage,
+        /// `Arc` (D-209) purely so a **rasterised text layer** — which
+        /// `chroma::text` hands back from its own cache, shared with whatever
+        /// other frame is showing the same title — needs no per-frame clone
+        /// of a full canvas-sized buffer. A decoded video frame is owned
+        /// outright and just gets wrapped; the cost is one allocation per
+        /// layer per frame, against a memcpy of the whole buffer.
+        img: std::sync::Arc<image::RgbaImage>,
         transform: ClipTransform,
         /// This layer's full-frame footprint on the canvas at `scale == 1.0`,
         /// in canvas pixels — its source size mapped through the composition.
@@ -1092,6 +1158,21 @@ fn composite_video_frame(
 
     let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
     for (track, clip, source_frame) in layers {
+        // D-209 — a text clip's layer is GENERATED, not decoded: rasterise it
+        // at the canvas's own size (so `natural` is the canvas and no resize
+        // step runs) and let everything downstream — the paint order, the
+        // position offset, the opacity/fade multiply — treat it exactly like
+        // a decoded one. `resolve_text_clip_transform` is what keeps that
+        // "exactly like" honest by zeroing the fields the export path cannot
+        // reproduce; see its own doc.
+        if let Some(layer) = &clip.text {
+            decoded.push(Decoded {
+                img: text::render_text_layer(layer, canvas_w, canvas_h)?,
+                transform: resolve_text_clip_transform(clip, *source_frame),
+                natural: (canvas_w as f64, canvas_h as f64),
+            });
+            continue;
+        }
         let path = PathBuf::from(&clip.source_path);
         let info = probe_cached(&path)?;
         let frame = (*source_frame).max(0) as u64;
@@ -1110,7 +1191,7 @@ fn composite_video_frame(
         )
         .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
         decoded.push(Decoded {
-            img: img.to_rgba8(),
+            img: std::sync::Arc::new(img.to_rgba8()),
             transform: resolve_clip_transform(clip, *source_frame),
             // The layer's **source** size, not its decoded size — that is the
             // whole point: the decoded size follows the preview quality, the
@@ -2019,6 +2100,373 @@ mod composite_tests {
         // path either — the predicate has to agree with `crop_pixel_rect`.
         assert!(resolve_clip_transform(&Clip { crop_top: -0.2, ..Default::default() }, 0).is_identity());
     }
+
+    // ----------------------------------------------------------------- //
+    // D-209 — text/title clips
+    // ----------------------------------------------------------------- //
+
+    fn text_clip(content: &str) -> Clip {
+        Clip {
+            id: "t".into(),
+            name: "Title".into(),
+            duration: 48,
+            source_len: 48,
+            text: Some(chroma_timeline::TextLayer {
+                content: content.into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// The Phase 1 boundary, enforced at the compositor: a text clip's
+    /// opacity, fade and position are honoured; scale/rotation/crop/box are
+    /// pinned to identity because `drawtext` (the export path) cannot
+    /// reproduce them. See `resolve_text_clip_transform`'s own doc.
+    #[test]
+    fn a_text_clips_transform_keeps_position_and_opacity_and_drops_the_rest() {
+        let clip = Clip {
+            opacity: 0.4,
+            position_x: 0.25,
+            position_y: -0.1,
+            scale: 3.0,
+            rotation: 45.0,
+            crop_left: 0.3,
+            crop_bottom: 0.2,
+            box_width: Some(0.5),
+            box_height: Some(0.5),
+            ..text_clip("AFTER")
+        };
+        let t = resolve_text_clip_transform(&clip, 0);
+        assert_eq!(t.opacity, 0.4);
+        assert_eq!(t.position_x, 0.25);
+        assert_eq!(t.position_y, -0.1);
+        assert_eq!(t.scale, 1.0);
+        assert_eq!(t.rotation, 0.0);
+        assert_eq!(t.crop_left, 0.0);
+        assert_eq!(t.crop_bottom, 0.0);
+        assert_eq!(t.box_width, None);
+        assert_eq!(t.box_height, None);
+    }
+
+    /// A text clip's own keyframed position and its fade both still resolve —
+    /// the two things Phase 1 promises are animatable — through exactly the
+    /// same D-034 engine and D-147 multiply a media clip uses.
+    #[test]
+    fn a_text_clips_position_keyframes_and_fade_still_resolve() {
+        let clip = Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0,  "params": { "position_x": 0.0 } },
+                { "frame": 10, "params": { "position_x": 0.5 } },
+            ])),
+            fade_in_frames: 10,
+            ..text_clip("AFTER")
+        };
+        assert!((resolve_text_clip_transform(&clip, 5).position_x - 0.25).abs() < 1e-9);
+        assert!((resolve_text_clip_transform(&clip, 10).position_x - 0.5).abs() < 1e-9);
+        // Fade-in: half opacity halfway through a 10-frame linear ramp.
+        let faded = resolve_text_clip_transform(&clip, 5).opacity;
+        assert!((faded - 0.5).abs() < 1e-6, "fade multiplier was {faded}");
+        assert!((resolve_text_clip_transform(&clip, 0).opacity).abs() < 1e-9);
+    }
+
+    /// The lone-layer fast path decodes `source_path` — a text clip has none,
+    /// so it must never be eligible for it (it would be a decode of "").
+    #[test]
+    fn a_lone_text_clip_never_takes_the_plain_decode_fast_path() {
+        let clip = text_clip("AFTER");
+        // Its transform IS identity — which is exactly why the fast-path
+        // guard cannot be `is_identity()` alone for a text clip.
+        assert!(resolve_clip_transform(&clip, 0).is_identity());
+        assert!(clip.is_text());
+        assert!(clip.source_path.is_empty());
+    }
+
+    /// A text layer really does composite onto a frame: white text over a
+    /// black backdrop leaves lit pixels where the glyphs are and untouched
+    /// black everywhere else. The same alpha-over path a video layer takes —
+    /// `composite_layer_onto`, unchanged by D-209.
+    #[test]
+    fn a_rendered_text_layer_composites_over_the_frame_beneath_it() {
+        const W: u32 = 320;
+        const H: u32 = 180;
+        let mut canvas: image::RgbaImage = ImageBuffer::from_pixel(W, H, Rgba([0, 0, 0, 255]));
+        let layer = super::text::render_text_layer(
+            &chroma_timeline::TextLayer {
+                content: "III".into(),
+                ..Default::default()
+            },
+            W,
+            H,
+        )
+        .expect("rasterise");
+        composite_layer_onto(
+            &mut canvas,
+            &layer,
+            &identity_transform(),
+            (W as f64, H as f64),
+        );
+
+        let lit = canvas.pixels().filter(|p| p[0] > 200).count();
+        assert!(lit > 20, "expected real white glyph pixels, got {lit}");
+        // The corners are nowhere near centred text — still pure black.
+        for (x, y) in [(0, 0), (W - 1, 0), (0, H - 1), (W - 1, H - 1)] {
+            assert_eq!(canvas.get_pixel(x, y).0, [0, 0, 0, 255]);
+        }
+    }
+}
+
+/// D-209 — the text/title clip's **live-preview path, end to end**: a real
+/// `.chroma` project on disk, a real video source, and the actual
+/// [`timeline_frame`] command the preview pane calls over IPC — resolve the
+/// visible layers, rasterise the title, composite, JPEG-encode — with the
+/// returned data-URL decoded back to pixels and checked.
+///
+/// Kept out of the pure `composite_tests` module above for the same reason
+/// `preview_throughput_tests` is: it needs real `ffmpeg` on PATH and writes
+/// real files. Skipped (not failed) without ffmpeg, matching the posture
+/// `packages/editor/src/timelineExportText.ffmpeg.test.ts` takes on the
+/// export side — the two files together are what make "the preview matches
+/// the export" a checked claim rather than an assertion.
+#[cfg(test)]
+mod preview_text_tests {
+    use base64::Engine as _;
+    use chroma_timeline::{Clip, TextLayer, Timeline, Track, TrackKind};
+
+    const W: u32 = 320;
+    const H: u32 = 180;
+
+    use super::super::PROJECT_STATE_LOCK;
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// A flat black clip, so any lit pixel in the composited frame is the
+    /// title and nothing else.
+    fn black_clip(path: &std::path::Path) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=black:size={W}x{H}:rate=24:duration=2"),
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(ok.success(), "generating the black fixture clip failed");
+    }
+
+    /// A project with a title on track 0 (topmost = drawn last, over
+    /// everything) and the black source on track 1 — exactly the layout the
+    /// Add-title button and `editor_add_text_clip` both produce.
+    fn open_title_project(video: &std::path::Path) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("Titles.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let title = Clip {
+            id: "title".into(),
+            name: "AFTER".into(),
+            duration: 48,
+            source_len: 48,
+            start_frame: 0,
+            text: Some(TextLayer {
+                content: "AFTER".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let under = Clip {
+            id: "under".into(),
+            name: "under".into(),
+            source_path: video.to_string_lossy().into_owned(),
+            source_start: 0,
+            duration: 48,
+            source_len: 48,
+            start_frame: 0,
+            ..Default::default()
+        };
+
+        // An explicit composition size, so `composition_size` never has to
+        // fall back to probing a clip — the title has no source to probe.
+        let settings = super::project::ProjectSettings {
+            width: Some(W),
+            height: Some(H),
+            ..Default::default()
+        };
+
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "Titles".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings,
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "Titles".into(),
+                rate: None,
+                tracks: vec![
+                    Track {
+                        kind: TrackKind::Video,
+                        clips: vec![title],
+                        ..Default::default()
+                    },
+                    Track {
+                        kind: TrackKind::Video,
+                        clips: vec![under],
+                        ..Default::default()
+                    },
+                ],
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "Titles".into(),
+        }));
+        tmp
+    }
+
+    /// `timeline_frame`'s `data:image/jpeg;base64,…` return value, decoded
+    /// back to real pixels — the same bytes the preview `<img>` would show.
+    fn decode_preview(data_url: &str) -> image::RgbaImage {
+        let b64 = data_url
+            .strip_prefix("data:image/jpeg;base64,")
+            .expect("a jpeg data URL");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .expect("base64");
+        image::load_from_memory(&bytes).expect("decode jpeg").to_rgba8()
+    }
+
+    /// The whole point of D-209, checked through the real command: a title
+    /// clip's text is actually painted into the preview frame, over the video
+    /// beneath it, and nowhere it shouldn't be.
+    #[test]
+    fn a_title_clip_really_renders_text_into_the_preview_frame() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        // Held for the whole body — see `PROJECT_STATE_LOCK`. `unwrap_or_else`
+        // on the poison rather than `expect`: a panic in the sibling test must
+        // not turn into a second, misleading failure here.
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let video = tmp.path().join("black.mp4");
+        black_clip(&video);
+        let _project = open_title_project(&video);
+        super::decode_pipe::reset();
+
+        let frame = decode_preview(&super::timeline_frame(12, Some(W)).expect("preview frame"));
+        assert_eq!(frame.dimensions(), (W, H));
+
+        // Real, bright glyph pixels — and the ink's bounding box centred, the
+        // same rule `chroma::text`'s own rasteriser test and the export's
+        // pixel test both check against.
+        let (mut x0, mut y0, mut x1, mut y1, mut lit) = (W, H, 0u32, 0u32, 0usize);
+        for (x, y, p) in frame.enumerate_pixels() {
+            if p[0] > 180 && p[1] > 180 && p[2] > 180 {
+                lit += 1;
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+        assert!(lit > 50, "expected real white glyph pixels in the preview, got {lit}");
+        let cx = (x0 + x1) as f64 / 2.0;
+        let cy = (y0 + y1) as f64 / 2.0;
+        // Printed (visible under `--nocapture`) so a preview/export parity
+        // check can be read as real numbers, not only as a shared tolerance —
+        // the export side's equivalent is
+        // `timelineExportText.ffmpeg.test.ts`'s own ink measurement.
+        eprintln!(
+            "preview ink=[{x0},{y0}..{x1},{y1}] w={} h={} centre=({cx:.1}, {cy:.1}) lit={lit}",
+            x1 - x0,
+            y1 - y0
+        );
+        assert!((cx - W as f64 / 2.0).abs() <= 4.0, "title not centred, cx={cx}");
+        assert!((cy - H as f64 / 2.0).abs() <= 4.0, "title not centred, cy={cy}");
+
+        // The corners are black video, untouched by the title. JPEG at q80 is
+        // lossy, so this is "still dark", not "exactly 0".
+        for (x, y) in [(2, 2), (W - 3, 2), (2, H - 3), (W - 3, H - 3)] {
+            let p = frame.get_pixel(x, y);
+            assert!(p[0] < 60, "corner ({x},{y}) should still be the black clip, got {p:?}");
+        }
+    }
+
+    /// `position_x`/`position_y` really move the title in the preview — the
+    /// half of the transform Phase 1 supports, through the same
+    /// `composite_layer_onto` offset a video layer uses.
+    #[test]
+    fn a_titles_position_offset_really_moves_it_in_the_preview() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        // Held for the whole body — see `PROJECT_STATE_LOCK`. `unwrap_or_else`
+        // on the poison rather than `expect`: a panic in the sibling test must
+        // not turn into a second, misleading failure here.
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let video = tmp.path().join("black.mp4");
+        black_clip(&video);
+        let project = open_title_project(&video);
+        super::decode_pipe::reset();
+
+        let centre_x = |frame: &image::RgbaImage| -> f64 {
+            let (mut x0, mut x1) = (W, 0u32);
+            for (x, _, p) in frame.enumerate_pixels() {
+                if p[0] > 180 && p[1] > 180 && p[2] > 180 {
+                    x0 = x0.min(x);
+                    x1 = x1.max(x + 1);
+                }
+            }
+            assert!(x1 > x0, "no ink found");
+            (x0 + x1) as f64 / 2.0
+        };
+
+        let centred = centre_x(&decode_preview(
+            &super::timeline_frame(12, Some(W)).expect("frame"),
+        ));
+
+        // Shift the title a quarter of the frame to the right and re-render
+        // through the same command.
+        let mut tl = super::resolve_timeline(false).expect("timeline");
+        tl.tracks[0].clips[0].position_x = 0.25;
+        super::chroma_timeline_set(tl).expect("persist");
+        let _ = &project; // keep the project dir alive for the second render
+        let shifted = centre_x(&decode_preview(
+            &super::timeline_frame(12, Some(W)).expect("frame"),
+        ));
+
+        let moved = shifted - centred;
+        assert!(
+            (moved - 0.25 * W as f64).abs() <= 4.0,
+            "expected the title to move ~{}px right, it moved {moved}px",
+            0.25 * W as f64
+        );
+    }
 }
 
 /// Real-file preview-throughput regression coverage for D-125 / B-040 — kept
@@ -2116,6 +2564,12 @@ mod preview_throughput_tests {
             eprintln!("skip: set CHROMA_TEST_VIDEO");
             return;
         };
+        // Held for the whole body — see `PROJECT_STATE_LOCK`. These two tests
+        // were already sharing process-global project state with each other
+        // and, as of D-209, with `preview_text_tests` too.
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _project = open_multi_track_project(&vid, 3);
         super::decode_pipe::reset();
 
@@ -2152,6 +2606,12 @@ mod preview_throughput_tests {
             eprintln!("skip: set CHROMA_TEST_VIDEO");
             return;
         };
+        // Held for the whole body — see `PROJECT_STATE_LOCK`. These two tests
+        // were already sharing process-global project state with each other
+        // and, as of D-209, with `preview_text_tests` too.
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _project = open_multi_track_project(&vid, 3);
         super::decode_pipe::reset();
 

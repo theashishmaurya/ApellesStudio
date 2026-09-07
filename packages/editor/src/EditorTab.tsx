@@ -49,6 +49,7 @@ import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
+import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
@@ -193,7 +194,22 @@ export function EditorTab() {
             maxSize={INSPECTOR_MAX_WIDTH}
             className="shrink-0 h-full border-l border-border-color bg-surface overflow-hidden"
           >
-            <EditorInspectorPanel />
+            {/* D-209 — a TEXT clip's own Title section (content/font/size/
+                colour) stacks ABOVE the geometry Inspector rather than being
+                folded into it: different fields, a different write op
+                (`set_text_clip`), and only ever relevant for one kind of
+                clip. Stacking is also what keeps the shared half genuinely
+                shared — a title's Opacity and Position rows, with their
+                D-208 keyframe diamonds, are `ClipInspectorPanel`'s existing
+                rows rendered underneath, not a second copy. Renders `null`
+                for any other selection, so it costs nothing when no title is
+                selected. */}
+            <div className="flex h-full flex-col min-h-0">
+              <TextClipInspectorPanel />
+              <div className="flex-1 min-h-0">
+                <EditorInspectorPanel />
+              </div>
+            </div>
           </ResizablePanel>
         </>
       )}

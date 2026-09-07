@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Text/title clips in the Edit tab** (roadmap 24,
+  D-209/D-210/D-211): `Clip::text` as a real clip variant on an ordinary video
+  track (so placement/trim/split/keyframes/fades are all the existing ops), an
+  `ab_glyph` rasteriser feeding the live compositor, an ffmpeg `drawtext`
+  export path spliced into the overlay chain at the clip's own z-order, plus a
+  timeline **Title** button, an Inspector Title section and
+  `editor_add_text_clip`/`editor_set_text_clip`/`editor_text_fonts`. Both
+  engines read the same font file; pixel-measuring the two found (and fixed) a
+  real ~11 % size mismatch between `ab_glyph`'s em-based scale and FreeType's
+  ascender+descender one, and caught an escaping bug that rendered no text at
+  all while exiting 0. Phase 1 is the basic title generator — single-line, no
+  scale/rotation/crop — with the deferred list in
+  `docs/notes/text-title-clips.md`.
+
 - **2026-09-08** — **Fixed B-096: the Edit tab's preview/timeline split
   wasn't actually resizable**, a fixed `h-[46%]` flex row despite CLAUDE.md's
   own standing rule for exactly this class of pane. Wrapped in a nested
