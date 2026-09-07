@@ -916,10 +916,17 @@ def editor_add_text_clip(
     track type — the same shape Resolve and Premiere use. Track index order
     is compositing z-order (lower index = on top), so put the title on a
     LOWER track index than the footage you want it to sit over: `track=0`
-    with the video on track 1 is the normal case. `editor_add_track` first if
-    you need a spare track above your footage. Every ordinary clip tool then
-    works on it unchanged — `editor_move_clip`, `editor_trim_clip`,
-    `editor_split_clip`, `editor_remove_clip`, `editor_set_clip_fade`.
+    with the video on track 1 is the normal case when building a timeline
+    from empty. **Adding a title to a project that already has footage on
+    track 0 (the normal real-world case) is different: `editor_add_track`
+    only ever APPENDS at the highest index, i.e. the BOTTOM of the stack —
+    it does NOT put the new track above your existing footage.** Call
+    `editor_add_track`, then `editor_move_track` to move that new (now
+    highest-index) track down to index 0 (or wherever above your footage you
+    want it) BEFORE adding the title clip to it — see `editor_move_track`'s
+    own docstring. Every ordinary clip tool then works on the title unchanged
+    — `editor_move_clip`, `editor_trim_clip`, `editor_split_clip`,
+    `editor_remove_clip`, `editor_set_clip_fade`.
 
     `content` is a SINGLE line — multi-line titles are not supported yet and
     a `\\n` is refused rather than silently flattened. Add a second title
@@ -1108,10 +1115,50 @@ def editor_move_clip(
 @mcp.tool()
 def editor_add_track(track_kind: str = "video") -> str:
     """Add a new, empty track to the timeline. `track_kind` is "video" or
-    "audio". Returns the new track's index."""
+    "audio". Returns the new track's index.
+
+    **This always APPENDS at the highest index — the BOTTOM of the
+    compositing stack** (track index order is z-order, lower index paints on
+    top, D-086). There is no `at_index`/insertion-position parameter: adding
+    always appends, moving is `editor_move_track`, a separate explicit call
+    — see that tool's docstring, and read it before adding a track you want
+    to end up ABOVE existing footage (e.g. for a title/overlay)."""
     import json
 
     return json.dumps(_op("editor_add_track", trackKind=track_kind), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_move_track(from_index: int, to_index: int) -> str:
+    """Reorder the track LIST itself — move the track currently at
+    `from_index` so it ends up at `to_index`, shifting every track between
+    the two by one to close the gap (exactly `Vec::remove(from)` then
+    `insert(to, _)` — the identical primitive the GUI's own drag-to-reorder
+    track headers already use, `chroma_timeline::Timeline::move_track`).
+
+    **Track index order IS compositing z-order — lower index paints on
+    top (D-086).** `editor_add_track` only ever appends at the highest index
+    (the bottom of the stack), so this is the tool that gets a newly-added
+    track compositing ABOVE existing footage: the normal real-world sequence
+    for adding a title/overlay to a project that already has content is
+    `editor_add_track()` (lands at, say, index 2 on a 2-track project) then
+    `editor_move_track(from_index=2, to_index=0)` to bring it to the top,
+    BEFORE placing a clip on it — see `editor_add_text_clip`'s own docstring
+    for the full recipe.
+
+    Both indices must name an EXISTING track (refused with an error
+    otherwise, not a silent no-op) — this only reorders, it never creates or
+    deletes a track. `from_index == to_index` is accepted and is a real
+    no-op. Every clip on the moved track keeps its own position/trim/
+    keyframes/fades exactly as they were — only its track's position in the
+    list (hence its z-order) changes. Any clip selection the human GUI
+    currently holds is remapped to follow its track through the reorder, the
+    same way the GUI's own drag does, so an agent-driven reorder can never
+    leave the human's on-screen selection silently pointing at the wrong
+    track."""
+    import json
+
+    return json.dumps(_op("editor_move_track", **{"from": from_index, "to": to_index}), indent=2, default=str)
 
 
 @mcp.tool()
