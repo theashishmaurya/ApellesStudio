@@ -560,11 +560,24 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
     },
     "export": {
         "v1_scope": (
-            "editor_export is VIDEO ONLY. Audio tracks (gain / ducking / "
-            "fades) are readable via get_timeline and settable via "
-            "editor_set_clip_fade / editor_set_track_duck, but are NOT mixed "
-            "into editor_export's output file — a silent video, by design, "
-            "not a bug. A documented follow-up, not yet built."
+            "D-197: editor_export now mixes real audio too, automatically — "
+            "no new parameter needed. Every visible audio-track clip (its "
+            "own track's gain, D-057; ducking, D-149; fade in/out, D-147) "
+            "PLUS a video clip's own embedded audio (when its source is "
+            "known to have one and it is not A/V-linked to a separate audio "
+            "clip, D-129) mix down to one real output audio stream, matching "
+            "the exact semantics the live preview's own audio mixer already "
+            "implements — set gain/duck/fade via editor_set_track_gain / "
+            "editor_set_track_duck / editor_set_clip_fade as usual and the "
+            "NEXT editor_export call just includes them. The one thing this "
+            "compiler cannot determine itself (it never probes a file) is "
+            "whether a VIDEO clip's source actually HAS an audio stream at "
+            "all — resolved automatically from the media pool's own probed "
+            "info, so a clip whose source was never probed for audio (e.g. "
+            "one added before that metadata existed) conservatively "
+            "contributes no embedded audio rather than risk a broken export; "
+            "re-import via editor_import_media to (re)probe it if embedded "
+            "audio is missing from an export that should have it."
         ),
         "speed_overrides": (
             "speed_overrides is export-time ONLY — it does not touch the "
@@ -1077,9 +1090,15 @@ def editor_export(
     past the overall total runtime is unaffected (no-op, never a
     negative-duration hold).
 
-    v1 scope: video only — audio tracks (gain/ducking/fades) are not mixed
-    into the export yet, a documented follow-up, not an oversight. Blocks
-    until ffmpeg finishes; there is no progress reporting yet."""
+    D-197: real audio now mixes into the output automatically — every
+    visible audio-track clip (gain/D-057, ducking/D-149, fade/D-147) plus a
+    video clip's own embedded audio (unless A/V-linked, D-129, or its
+    source isn't known to have audio), summed and soft-limited. No new
+    parameter needed; read `editor_get_capabilities`'s `export.v1_scope`
+    entry for the one real caveat (an unprobed video source's embedded audio
+    conservatively defaults to silent). Blocks until ffmpeg finishes; there
+    is no progress reporting yet — use the Edit tab's own Export dialog
+    (D-198) for a real queued/backgrounded multi-export GUI flow instead."""
     import json
 
     args: dict = {"outPath": out_path, "width": width, "height": height}

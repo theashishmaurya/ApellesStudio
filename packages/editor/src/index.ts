@@ -25,6 +25,13 @@ export { TimelinePane } from './TimelinePane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
+/** D-198 — the Edit tab's own Export button/dialog/queue. Exported
+ *  alongside `TimelinePane` (which already renders it in its own toolbar)
+ *  for the same D-142 harness-mounting reason `TimelinePane` itself is —
+ *  and for any future call site that wants the button standalone. */
+export { EditorExportDialog } from './EditorExportDialog';
+export { useExportQueueStore } from './exportQueueStore';
+export type { ExportJob, ExportJobStatus } from './exportQueueStore';
 /** D-189 — media understanding (transcript + "what changed on screen"), cached
  *  by source path. Exported because the results are Edit-tab data a future
  *  panel will read, not just something the `editor_*` control ops consume. */

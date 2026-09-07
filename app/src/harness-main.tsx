@@ -153,6 +153,19 @@ function installInvokeStub(): void {
       if (!fakeProject.timelines.has(id)) throw new Error(`harness: no timeline with id ${id}`);
       fakeProject.activeId = id;
     },
+    // D-198 — `EditorExportDialog`'s own composition-size default fetch
+    // (`chroma_timeline_clip_geometry`, D-193's existing command) and its
+    // "Add to queue" -> `chroma_run_ffmpeg` path, both now reachable from
+    // `TimelinePane`'s own toolbar. A real fixed size (matching this
+    // fixture's own clips' notional aspect) is enough for the dialog to
+    // show real defaults instead of erroring; `chroma_run_ffmpeg` reports a
+    // real-looking success/failure DTO — this harness never actually spawns
+    // ffmpeg, and doesn't need to for a dialog/queue-state pointer-gesture
+    // check (queue transitions are unit-tested for real in
+    // `exportQueueStore.test.ts`; this is for SEEING the dialog/queue).
+    chroma_timeline_clip_geometry: () => ({ compWidth: 1080, compHeight: 1920, naturalWidth: 1, naturalHeight: 1 }),
+    chroma_run_ffmpeg: () => ({ ok: true, stdout_tail: '', stderr_tail: '' }),
+    'plugin:dialog|save': () => '/tmp/harness-export.mp4',
   };
   (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: unknown) => {

@@ -976,9 +976,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        observes) must be byte-identical to today's behavior — only the
        INTERMEDIATE frames during an active drag may skip a React commit, never
        the final one.
-    Not started. Real dispatch candidate — the IPC investigation especially is
-    genuinely hard debugging (per this repo's own `CLAUDE.md` rule, route that to
-    Opus).
+    Dispatched (2026-09-07, Opus, worktree-isolated) — in progress as of this
+    writing.
+22. **`editor_export` mixes real audio, and the Edit tab gets a real Export button/
+    dialog/queue** — done, 2026-09-07 (**D-197**, **D-198**). Closes the "v1 scope:
+    video-only, a documented follow-up" gap D-183 explicitly left open (see that
+    entry's own updated note) — found live via the owner's own workaround (a
+    stacked before/after reel needing SFX, hand-rolled outside the app via a
+    separate manual ffmpeg pass). `editor_export` now replicates the LIVE playback
+    mixer's exact semantics in the ffmpeg filtergraph: gain (D-057), one-pole
+    ducking (D-149, exact via ffmpeg's own `exp()`), and cubic-bezier fades (D-147,
+    sampled — ffmpeg has no bezier solver), plus a video clip's own embedded audio
+    when known to have one and not A/V-linked (D-129). `docs/notes/audio-export-
+    mixing.md` has the full filter-graph detail. Also: `TimelinePane.tsx`'s own
+    toolbar gets a real Export button (`EditorExportDialog.tsx`) with per-clip
+    `speedOverrides`/`fitOverrides`/`freezeOverrides` rows and a real SEQUENTIAL
+    export queue (`exportQueueStore.ts`, D-198) — wired through the SAME
+    `compileEditorExportArgs`/`runEditorExport` the MCP tool now also calls
+    (`editorExport.ts`), not a parallel implementation. `docs/notes/export-dialog-
+    queue.md` has the full design + the honest gaps (no cancel, no reordering, no
+    real concurrent worker pool this pass — sequential only, stated plainly).
+    `npm test --workspace @chroma/editor` 408/408 (was 357); real `ffprobe`/
+    `volumedetect`-verified ffmpeg execution tests, not just argv string matches;
+    the dialog/queue live-tested in a real Chromium tab via the D-142 harness.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

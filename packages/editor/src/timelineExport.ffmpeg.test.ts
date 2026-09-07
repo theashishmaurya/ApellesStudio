@@ -18,7 +18,7 @@
 // this module has no other dependency on them, so a missing binary shouldn't
 // break an otherwise-green CI run; the pure `timelineExport.test.ts` suite
 // still exercises the compiler's own logic either way.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,6 +66,47 @@ function ffprobeDurationSecs(path: string): number {
     path,
   ]).toString().trim();
   return Number(out);
+}
+
+/** Whether `path` has a real decodeable audio stream at all — `ffprobe`'s
+ *  own, real answer, not an assumption. */
+function hasAudioStream(path: string): boolean {
+  const out = execFileSync('ffprobe', [
+    '-v', 'error',
+    '-select_streams', 'a',
+    '-show_entries', 'stream=codec_type',
+    '-of', 'csv=p=0',
+    path,
+  ]).toString().trim();
+  return out.includes('audio');
+}
+
+/** `ffmpeg -af volumedetect`'s own real `mean_volume`/`max_volume`, in dB —
+ *  parsed from stderr (volumedetect writes to stderr, has no other output
+ *  mode). `startSecs`/`durSecs` sub-segment the INPUT via `-ss`/`-t` first,
+ *  so a caller can compare "the first second" against "the middle second"
+ *  of one exported file without a second export. B-075/B-076 taught this
+ *  session the hard way that a string match on the compiled argv proves
+ *  nothing about whether the audio that landed in the file is actually
+ *  right — this is the real, sample-level check those bugs needed. */
+function volumeStats(path: string, startSecs?: number, durSecs?: number): { mean: number; max: number } {
+  // NOT `-v error` — `volumedetect` logs its `mean_volume`/`max_volume`
+  // lines at ffmpeg's INFO level, which `-v error` (used everywhere else in
+  // this file, where only success/failure matters) silently swallows along
+  // with everything this function actually needs to parse.
+  const args: string[] = [];
+  if (startSecs !== undefined) args.push('-ss', String(startSecs));
+  if (durSecs !== undefined) args.push('-t', String(durSecs));
+  args.push('-i', path, '-af', 'volumedetect', '-f', 'null', '-');
+  // `volumedetect` writes exclusively to stderr — `spawnSync` (not
+  // `execFileSync`) is what actually exposes it, since `execFileSync`'s
+  // return value on success is stdout only.
+  const res = spawnSync('ffmpeg', args, { encoding: 'utf8' });
+  const out = `${res.stderr ?? ''}${res.stdout ?? ''}`;
+  const mean = /mean_volume:\s*(-?[\d.]+)\s*dB/.exec(out);
+  const max = /max_volume:\s*(-?[\d.]+)\s*dB/.exec(out);
+  if (!mean || !max) throw new Error(`volumedetect produced no readable output for ${path}:\n${out}`);
+  return { mean: Number(mean[1]), max: Number(max[1]) };
 }
 
 describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execution', () => {
@@ -172,5 +213,164 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execut
     const durationSecs = ffprobeDurationSecs(out);
     expect(durationSecs).toBeGreaterThan(5.7); // ~6s total, not clip24's own natural 4s
     expect(durationSecs).toBeLessThan(6.3);
+  });
+});
+
+// D-197 — real audio mixing: gain, fade, duck, and multi-source mix, each
+// verified against ffprobe/`volumedetect`'s own real numbers, not just a
+// plausible-looking argv string. Exactly the rigor B-075/B-076 taught this
+// session string-only tests miss (this file's own header doc).
+describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing (D-197)', () => {
+  let dir: string;
+  let toneA: string; // 440Hz sine, 4s — a plain audio-track fixture
+  let toneB: string; // 880Hz sine, 4s — a second, distinguishable source for mixing/duck tests
+  let videoWithAudio: string; // testsrc + an embedded 440Hz tone, 4s
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chroma-audio-export-test-'));
+    toneA = join(dir, 'toneA.wav');
+    toneB = join(dir, 'toneB.wav');
+    videoWithAudio = join(dir, 'video_with_audio.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4:sample_rate=48000',
+      '-ac', '2', toneA,
+    ]);
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=4:sample_rate=48000',
+      '-ac', '2', toneB,
+    ]);
+    execFileSync('ffmpeg', [
+      '-y',
+      '-f', 'lavfi', '-i', 'testsrc=duration=4:size=320x240:rate=24',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4:sample_rate=48000',
+      '-pix_fmt', 'yuv420p', '-shortest', videoWithAudio,
+    ]);
+  }, 30000);
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('a plain audio-track clip really lands in the output file, at roughly its own real level and duration', () => {
+    const a = clip('a1', { source_path: toneA, duration: 96, source_fps: 24 }); // 96/24 = 4s
+    const tl = timeline([track('audio', [a])]);
+    const out = join(dir, 'gain1.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+    expect(hasAudioStream(out)).toBe(true);
+    expect(ffprobeDurationSecs(out)).toBeGreaterThan(3.8);
+
+    const inputStats = volumeStats(toneA);
+    const outStats = volumeStats(out);
+    // Real, non-silent audio, at roughly the source's own level (allow a
+    // couple dB of encoder/container slack — this is NOT a bit-exact codec
+    // round-trip test).
+    expect(outStats.mean).toBeGreaterThan(-90);
+    expect(Math.abs(outStats.mean - inputStats.mean)).toBeLessThan(3);
+  });
+
+  it("D-057: track gain=0.5 measurably lowers the exported level by ~6.02dB (20*log10(0.5)) relative to gain=1", () => {
+    const unity = clip('u', { source_path: toneA, duration: 96, source_fps: 24 });
+    const halved = clip('h', { source_path: toneA, duration: 96, source_fps: 24 });
+    const outUnity = join(dir, 'gain_unity.mp4');
+    const outHalved = join(dir, 'gain_half.mp4');
+
+    execFileSync('ffmpeg', [
+      '-y',
+      ...buildExportFfmpegArgs(timeline([track('audio', [unity], { gain: 1 })]), outUnity, { fps: 30, width: 320, height: 240 }),
+    ], { stdio: 'pipe' });
+    execFileSync('ffmpeg', [
+      '-y',
+      ...buildExportFfmpegArgs(timeline([track('audio', [halved], { gain: 0.5 })]), outHalved, { fps: 30, width: 320, height: 240 }),
+    ], { stdio: 'pipe' });
+
+    const unityDb = volumeStats(outUnity).mean;
+    const halvedDb = volumeStats(outHalved).mean;
+    const dropDb = unityDb - halvedDb;
+    expect(dropDb).toBeGreaterThan(4.5);
+    expect(dropDb).toBeLessThan(7.5); // ~6.02dB, real encoder/measurement slack allowed
+  });
+
+  it('D-147: a fade-in makes the first second of the export measurably quieter than the middle second', () => {
+    const a = clip('a1', {
+      source_path: toneA,
+      duration: 96, // 4s @ 24fps
+      source_fps: 24,
+      fade_in_frames: 48, // 2s fade-in @ 24fps
+    });
+    const tl = timeline([track('audio', [a])]);
+    const out = join(dir, 'fade.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const firstHalfSecond = volumeStats(out, 0, 0.5).mean; // deep in the ramp-up
+    const middleSecond = volumeStats(out, 2.5, 0.5).mean; // well past the 2s fade window
+    expect(middleSecond).toBeGreaterThan(firstHalfSecond + 4); // measurably louder once faded in
+  });
+
+  it("D-149: a music bed measurably ducks under a dialogue track's own trigger clip, and recovers after it ends", () => {
+    // Bed: a continuous 4s tone on track 0, ducked by track 1 (the trigger).
+    const bed = clip('bed', { source_path: toneA, duration: 96, source_fps: 24 }); // 4s
+    // Trigger: a real clip covering roughly the middle 1.5s of the bed.
+    const trigger = clip('trig', {
+      source_path: toneB,
+      duration: 36, // 1.5s @ 24fps
+      source_fps: 24,
+      start_frame: Math.round(1.25 * 30), // ~1.25s in, at the 30fps export rate
+    });
+    const tl = timeline([
+      track('audio', [bed], { duck_from: 1, duck_db: -18, duck_attack_ms: 10, duck_release_ms: 100 }),
+      track('audio', [trigger], { gain: 0 }), // muted itself — isolates the BED's own ducked level in the mix
+    ]);
+    const out = join(dir, 'duck.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const beforeDuck = volumeStats(out, 0.2, 0.4).mean; // well before the trigger
+    const duringDuck = volumeStats(out, 1.8, 0.4).mean; // solidly inside the trigger + past attack
+    const afterRelease = volumeStats(out, 3.2, 0.4).mean; // well after the trigger ends + past release
+
+    expect(beforeDuck - duringDuck).toBeGreaterThan(8); // measurably quieter while ducked
+    expect(afterRelease).toBeGreaterThan(duringDuck + 8); // and recovers afterward
+  });
+
+  it('two audio-track clips both really land in the mixed output (amix + asoftclip), not just one surviving', () => {
+    const a = clip('a1', { source_path: toneA, duration: 96, source_fps: 24 });
+    const b = clip('a2', { source_path: toneB, duration: 96, source_fps: 24 });
+    const tl = timeline([track('audio', [a]), track('audio', [b])]);
+    const out = join(dir, 'mix.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    expect(hasAudioStream(out)).toBe(true);
+    const mixed = volumeStats(out).mean;
+    const soloA = volumeStats(toneA).mean;
+    // The mix must be real audio (not silence) and, with two real sources
+    // summed, at least as loud as either alone (never quieter than a single
+    // source, which is what ffmpeg's OWN default `amix` normalize=1 would
+    // produce by dividing by the input count — exactly what `normalize=0`
+    // in the compiled argv is there to avoid).
+    expect(mixed).toBeGreaterThan(-90);
+    expect(mixed).toBeGreaterThan(soloA - 3);
+  });
+
+  it("a video clip's embedded audio (hasAudioOverrides) really lands in the output, reusing the SAME input as the picture", () => {
+    const v = clip('v1', { source_path: videoWithAudio, duration: 96, source_fps: 24 });
+    const tl = timeline([track('video', [v])]);
+    const out = join(dir, 'embedded.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240, hasAudioOverrides: { v1: true } });
+
+    expect(args.filter((a) => a === '-i')).toHaveLength(1); // no second input for the same file's audio
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    expect(hasAudioStream(out)).toBe(true);
+    expect(volumeStats(out).mean).toBeGreaterThan(-90);
+  });
+
+  it('without hasAudioOverrides, a video clip export stays silent (no audio stream at all) — the conservative default holds for real ffmpeg output too', () => {
+    const v = clip('v1', { source_path: videoWithAudio, duration: 96, source_fps: 24 });
+    const tl = timeline([track('video', [v])]);
+    const out = join(dir, 'no_audio.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    expect(hasAudioStream(out)).toBe(false);
   });
 });

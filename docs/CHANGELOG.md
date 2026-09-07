@@ -40,6 +40,25 @@ One or two lines per session. Detail lives in the decision it references.
   separate follow-up, not attempted this pass — see D-196 for the full
   field-mapping table and why.
 
+- **2026-09-07** — **`editor_export` mixes real audio (D-197), and the Edit tab
+  gets a real Export button/dialog/sequential queue (D-198).** Closes D-183's own
+  "video-only, a documented follow-up" gap, found live via the owner's own
+  hand-rolled external-ffmpeg workaround for SFX in a real reel. Gain (D-057),
+  one-pole ducking (D-149, exact via `exp()`), cubic-bezier fades (D-147, sampled)
+  and a video clip's own embedded audio (D-129-aware) now mix down to a real
+  output stream, replicating the LIVE mixer's semantics rather than reinventing
+  them — deliberately using the B-075/B-077/D-194-CORRECTED fps math for duck
+  trigger spans, not B-079's still-open conflation (new code, no reason to carry a
+  known bug into it). `TimelinePane.tsx`'s toolbar gets a real Export button
+  (`EditorExportDialog.tsx`) with per-clip speed/fit/freeze rows and a real
+  sequential queue (`exportQueueStore.ts`), wired through the exact same
+  `compileEditorExportArgs`/`runEditorExport` the MCP tool now also calls
+  (`editorExport.ts`) — not a parallel implementation. `docs/notes/audio-export-
+  mixing.md` / `docs/notes/export-dialog-queue.md` have the full design.
+  `npm test --workspace @chroma/editor` 408/408 (was 357), including real
+  `ffprobe`/`volumedetect`-verified ffmpeg execution (gain drop, fade ramp, duck
+  engage/release, two-source mix all measured, not just argv-matched); the
+  dialog/queue live-tested in a real Chromium tab via the D-142 harness.
 - **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/
   `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
   end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into

@@ -41,15 +41,14 @@
  * convention), removed from Colorist's file.
  */
 import { useEffect } from 'react';
-import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import {
   timelineDuration,
-  timelineFps,
   FADE_PRESETS,
   DEFAULT_FADE_CURVE,
   DEFAULT_DUCK_ATTACK_MS,
@@ -60,19 +59,9 @@ import {
   type NewClipFields,
   type Timeline,
 } from './timeline';
-import { buildExportFfmpegArgs } from './timelineExport';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
+import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
-
-/** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
- *  no shared types package between this package and the Rust crate exists
- *  (Motion's `MotionRenderResult` in `manifestIO.ts` is the same kind of
- *  duplicate-by-hand DTO for the same reason), so this is copied by hand. */
-interface FfmpegRunOutcome {
-  ok: boolean;
-  stdout_tail: string;
-  stderr_tail: string;
-}
 
 const EDITOR_OP_PREFIX = 'editor_';
 
@@ -576,71 +565,11 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, count: keyframes.length };
       },
 
-      // ---- export (Phase 2/3, D-183) — timelineExport.ts compiles the
-      // Timeline to an ffmpeg argv; chroma_run_ffmpeg just spawns it -------
-      editor_export: async (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline;
-
-        const outPath = a?.outPath;
-        if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
-        const width = Math.round(Number(a?.width));
-        const height = Math.round(Number(a?.height));
-        if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
-          return { error: 'width and height must be positive numbers (the output composition size)' };
-        }
-        const fps = a?.fps !== undefined ? Number(a.fps) : timelineFps(tl);
-        if (!Number.isFinite(fps) || fps <= 0) return { error: 'fps must be a positive number' };
-
-        let speedOverrides: Record<string, number> | undefined;
-        if (a?.speedOverrides !== undefined) {
-          if (typeof a.speedOverrides !== 'object' || a.speedOverrides === null || Array.isArray(a.speedOverrides)) {
-            return { error: 'speedOverrides must be an object of {clipId: multiplier}' };
-          }
-          speedOverrides = {};
-          for (const [clipId, mult] of Object.entries(a.speedOverrides as Record<string, unknown>)) {
-            const n = Number(mult);
-            if (!Number.isFinite(n) || n <= 0) return { error: `speedOverrides["${clipId}"] must be a positive number` };
-            speedOverrides[clipId] = n;
-          }
-        }
-
-        let fitOverrides: Record<string, 'fit' | 'stretch'> | undefined;
-        if (a?.fitOverrides !== undefined) {
-          if (typeof a.fitOverrides !== 'object' || a.fitOverrides === null || Array.isArray(a.fitOverrides)) {
-            return { error: 'fitOverrides must be an object of {clipId: "fit" | "stretch"}' };
-          }
-          fitOverrides = {};
-          for (const [clipId, mode] of Object.entries(a.fitOverrides as Record<string, unknown>)) {
-            if (mode !== 'fit' && mode !== 'stretch') {
-              return { error: `fitOverrides["${clipId}"] must be "fit" or "stretch"` };
-            }
-            fitOverrides[clipId] = mode;
-          }
-        }
-
-        let freezeOverrides: Record<string, boolean> | undefined;
-        if (a?.freezeOverrides !== undefined) {
-          if (typeof a.freezeOverrides !== 'object' || a.freezeOverrides === null || Array.isArray(a.freezeOverrides)) {
-            return { error: 'freezeOverrides must be an object of {clipId: boolean}' };
-          }
-          freezeOverrides = {};
-          for (const [clipId, val] of Object.entries(a.freezeOverrides as Record<string, unknown>)) {
-            freezeOverrides[clipId] = !!val;
-          }
-        }
-
-        const args = buildExportFfmpegArgs(tl, outPath, { fps, width, height, speedOverrides, fitOverrides, freezeOverrides });
-        const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args });
-        return {
-          ok: outcome.ok,
-          error: outcome.ok ? null : (outcome.stderr_tail || 'ffmpeg failed with no stderr output'),
-          outPath,
-          stdoutTail: outcome.stdout_tail,
-          stderrTail: outcome.stderr_tail,
-          args,
-        };
-      },
+      // ---- export (Phase 2/3, D-183; D-197 real audio mixing; D-198
+      // extracted the real body into `editorExport.ts` so the Edit tab's own
+      // GUI Export dialog + queue can call the EXACT same compile+run logic
+      // rather than a parallel implementation) --------------------------
+      editor_export: (a) => runEditorExport(a ?? {}),
 
       // ---- interchange export (D-196) — timelineInterchange.ts compiles the
       // Timeline to a real FCPXML 1.7 document; chroma_write_text_file just

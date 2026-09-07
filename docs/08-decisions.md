@@ -16194,6 +16194,11 @@ change to the trim/split/move frame-unit model wasn't justified for it.
 v1 scope is video-only; audio tracks/mixing are a documented follow-up, not
 wired into the filtergraph this pass. 18 new tests, all passing.
 
+**Follow-up closed: D-197 (2026-09-07) wired real audio mixing (gain/duck/fade,
+embedded-audio inclusion) into this same `buildExportFfmpegArgs`/`editor_export`** —
+see that decision entry; the "video-only, documented follow-up" line above is now
+historical, not the current state.
+
 `editor_export` (in `useEditorControl.ts`) wires the two together: reads
 the open timeline, calls `buildExportFfmpegArgs`, invokes
 `chroma_run_ffmpeg` with the resulting argv, and reports `{ok, error,
@@ -17166,6 +17171,213 @@ clippy/fmt drift this pass did not introduce and did not touch).
 available to actually import the generated file and confirm round-trip
 fidelity — "well-formed and real-DTD-valid" is the verified claim; "imports
 correctly in Resolve" is not one this pass makes.
+## D-197 — `editor_export` mixes real audio: gain/duck/fade replicated in the ffmpeg filtergraph, not reinvented (`docs/notes/audio-export-mixing.md`)
+
+**Context.** `timelineExport.ts`'s own header (D-183) scoped audio out explicitly:
+"a documented follow-up ... since this pass's own concrete use case ... has no
+multi-track audio mixing need yet." That need arrived this same session: building a
+real stacked before/after comparison reel needed SFX (click/whoosh/success sounds)
+mixed into the final export, and `editor_export` had no way to do it — the owner had
+to hand-roll a SEPARATE ffmpeg post-process pass outside the app entirely (manual
+`adelay`/`amix` filters), exactly the kind of thing this MCP-driven Edit tab exists to
+make unnecessary. Meanwhile the real model (`Track.gain`/`duck_from`/`duck_db`/
+`duck_attack_ms`/`duck_release_ms`, D-149; `Clip.fade_in_frames`/`fade_out_frames`/
+curves, D-147) has been live for PLAYBACK since D-057/D-149 — the gap was purely that
+none of it ever reached the render.
+
+**Real options.** (1) Leave it — keep the hand-rolled external ffmpeg pass as the
+answer. Rejected: it is exactly the manual-ffmpeg workflow this whole MCP-editor
+effort (D-183) exists to replace, and it doesn't compose with the rest of
+`editor_export`'s own per-clip export-time options (`speedOverrides`/`fitOverrides`/
+`freezeOverrides`). (2) Invent a simplified mixing model for export only (e.g. flat
+per-track volume, no ducking, no fades) — cheaper to build, but a "grade" the export
+renders would then audibly disagree with what the user heard during playback, which
+is a real, confusing correctness bug for a tool whose entire pitch is "what you see
+(hear) is what you get." (3) **Replicate the REAL playback semantics exactly in the
+export compiler**, reading `app/src-tauri/src/chroma/audio.rs` / `crates/chroma-media/
+src/audio.rs`'s actual mixer rather than guessing. Chosen.
+
+**Chosen: (3), and specifically the following real design decisions**, each because
+the alternative was either wrong or needlessly invented a second mechanism:
+
+- **Fade curve → SAMPLED, not solved, in ffmpeg's expression language.** The real
+  fade uses a cubic-bezier Newton-Raphson-then-bisection solve (`chroma_types::
+  fade_gain`/`FadeCurve::eval`) — ffmpeg's own expression evaluator has no root-solver.
+  `timelineExportAudio.ts` mirrors the EXACT algorithm in TS (`fadeCurveEval`/
+  `fadeGainAt`, pinned against the Rust presets' own control points), then samples it
+  at 20 points per fade window and feeds the samples through the SAME piecewise-linear
+  ffmpeg-expression builder `keyframeExprAt` (D-183) already used for animated
+  position/scale — extracted to `ffmpegExpr.ts` once a second, unrelated caller needed
+  the identical construction (CLAUDE.md's "if two places need it, extract it"). This is
+  an approximation of the CURVE's continuous shape (bounded, sub-1% error for any real
+  fade window), not of the algorithm, which is exact.
+- **Duck envelope → EXACT, not sampled, because ffmpeg's `exp()` makes the closed form
+  directly expressible.** The real ducker (`chroma_media::audio::DuckEnvelope`) is a
+  one-pole smoother with a closed-form solution,
+  `target + (entry−target)·e^(−(t−t0)/τ)` — `buildDuckSegments`/`duckGainExpr` build
+  the identical segment list and the identical expression, using ffmpeg's real `exp`
+  function. No sampling, no approximation.
+- **A deliberate improvement over B-079's still-open bug, not a new interpretation.**
+  Computing which frames a duck's trigger track sounds on needs `Track::clip_spans_from`
+  — but B-079 (`docs/BUGS.md`) documents that the LIVE Rust playback path's own version
+  of this still adds `start_frame`/`duration` directly with no `source_fps` conversion,
+  a real, currently-shipping bug for any mixed-native-fps timeline. `timelineExportAudio
+  .ts`'s `resolveDuckForTrack` uses `endFrame` — this session's own B-075/B-077/D-194
+  CORRECTED conversion, already required anyway to place audio clips at their real
+  timeline position (the task's own explicit ask: reuse the same fix, don't reintroduce
+  the class of bug). Carrying a known, separately-tracked bug into brand-new code would
+  violate CLAUDE.md's "if something is structurally wrong, fix the structure" — this is
+  new code, not a patch to the live mixer B-079 is scoped against, so there is no reason
+  to match its defect.
+- **`hasAudioOverrides` — the one thing the pure compiler cannot know, resolved by the
+  one caller who can.** `timelineExport.ts` is deliberately pure (no I/O, per its own
+  header) and so cannot probe whether a video clip's source has a real audio stream.
+  Referencing a non-existent audio stream inside `-filter_complex` is a HARD ffmpeg
+  failure (no `?`-optional form the way top-level `-map` has one) — so `editorExport.ts`
+  (a real caller, with store access) resolves this from the media pool's own probed
+  `MediaVideoInfo.hasAudio` (D-129) and passes it down as `TimelineExportOptions.
+  hasAudioOverrides`, the same "pure compiler + caller-supplied per-clip fact" shape
+  `speedOverrides`/`fitOverrides`/`freezeOverrides` already established. Defaults are
+  asymmetric and deliberate: unknown → `false` for a video clip's embedded audio (fail
+  toward silence, not a broken export — screen recordings are very often genuinely
+  mute), unknown → `true` for a dedicated audio-track clip (it was placed there on
+  purpose).
+- **Mix topology: `amix … normalize=0` then `asoftclip=type=tanh`, mirroring the real
+  mixer's own "sum, then a soft saturating limiter" (roadmap's Phase C / D-057 write-up)
+  — not ffmpeg's own default.** `amix`'s default `normalize=1` divides by the input
+  count, which artificially quietens a mix just because more tracks exist — not what a
+  real mixer does and not what D-057's own `mix_sources` does either. `asoftclip`'s
+  default `type` IS `tanh`, so this is a precise reuse of a real ffmpeg filter for the
+  same algorithm, not an invented approximation. A single total audio-contributing clip
+  bypasses `amix`/`asoftclip` entirely (mirrors D-057's own documented single-active-
+  source bypass) — the overwhelmingly common "just this clip's own embedded audio, no
+  separate tracks" case stays byte-simple.
+- **`speedOverrides` + embedded/attached audio → a real `atempo` chain, not silently
+  desynced audio.** Before this pass audio was never in the export at all, so there was
+  no existing behavior to preserve; the standards-based choice (every real NLE keeps
+  audio tempo/duration in lock-step with a speed change unless "maintain pitch" is
+  explicitly requested) is `atempo` decomposed into ffmpeg's documented `[0.5, 2.0]`
+  per-instance chain (`atempoFactors`). Volume/fade/duck run AFTER `atempo` in the
+  chain, with `len`/`fadeIn`/`fadeOut` pre-divided by `speed` — which is what keeps a
+  duck or fade CORRECTLY timed even on a clip that also has a `speedOverrides` entry
+  (a real one-line fix once the ordering is right, not a documented gap).
+- **A real bug found and fixed BY this pass's own real-ffmpeg tests, not left for
+  later:** `totalDurationSec` (B-076's own global `-t` cap) was computed ONLY from
+  video `pending`, so a timeline with audio tracks but no video clip whose own end
+  covers them produced `-t 0` — a silently EMPTY output file ("Output file does not
+  contain any stream"), caught immediately by `timelineExport.ffmpeg.test.ts`'s real
+  execution (not the pure string tests, which never noticed). Fixed by folding every
+  audio-track clip's own real end time into the same max — exactly the kind of defect
+  CLAUDE.md's real-execution testing rule exists to catch before a human hits it.
+
+**What this does NOT do (honest scope).** No pan/stereo positioning (mono gain scaling
+only, matching D-057's own scoping for the SAME reason). No crossfade between two
+audio clips (a distinct feature, `docs/notes/audio-fade-duck-crossfade-plan.md`'s own
+"not yet built" list). No sidechain-by-real-signal ducking (D-149's own scoping: the
+trigger is "does this track have a clip here," not RMS detection). Freeze
+(`freezeOverrides`, D-188) is video-only — there is no audio analog to "hold the last
+sample," and this pass does not invent one.
+
+**Verified — real, not just string-matched.** `timelineExportAudio.test.ts` (25 tests):
+the fade solver pinned against the Rust presets' own numbers, the duck one-pole formula
+checked against real `gain_at` values, `resolveDuckForTrack` proven to use the
+corrected fps math (a synthetic mixed-fps repro that would silently pass with B-079's
+own conflation). `timelineExport.test.ts` (+13): the compiled argv's real shape (amix/
+asoftclip placement, embedded-audio input reuse, A/V-link exclusion, conservative
+`hasAudioOverrides` defaults). `timelineExport.ffmpeg.test.ts` (+7, REAL ffmpeg
+execution + `ffprobe`/`volumedetect`): a plain clip's audio really lands in the output
+at its own real level; `track.gain = 0.5` measurably drops the exported level by
+4.5–7.5 dB (theoretical 6.02 dB, real encoder/measurement slack allowed); a 2-second
+fade-in makes the first half-second measurably quieter (>4 dB) than a point past the
+fade window; a `-18 dB` duck measurably quiets a bed by >8 dB while its trigger plays
+and recovers by >8 dB afterward; two real tones both survive a two-source `amix`
+(mixed level ≥ either alone, proving `normalize=0` actually took effect); a video
+clip's embedded audio reuses its own already-open input (`-i` count stays 1) and
+really lands in the output; the conservative silent-by-default case still produces
+genuinely no audio stream at all (`ffprobe`-confirmed). `npx tsc --noEmit -p
+packages/editor` clean. `npm test --workspace @chroma/editor` — 402/402 (was 357).
+
+## D-198 — A real Export button/dialog/queue for the Edit tab, wired through the SAME `editor_export` (`docs/notes/export-dialog-queue.md`)
+
+**Context.** The owner pointed at a real screenshot of the running Edit tab: no Export
+affordance anywhere in `TimelinePane.tsx`'s own toolbar, despite `editor_export`
+(D-183, and now D-197's real audio mixing) being a fully working backend capability —
+reachable only through MCP. Colorist already has a real Export dialog (`ExportDialog
+.tsx`, D-049): a `Dialog`, a native `save()` path picker, width/height, a progress
+readout. The Edit tab had nothing.
+
+**Real options.** (1) A single blocking dialog, structurally identical to Colorist's
+own (pick options, click Export, wait). Rejected as too little: `editor_export`
+already has THREE real export-time-only per-clip options (`speedOverrides`/
+`fitOverrides`/`freezeOverrides`, D-184/D-188) with no GUI at all, and a multi-track
+timeline is exactly the shape where a human wants to queue several export variants
+(different resolutions, a couple of per-clip speed experiments) without babysitting
+each one to completion. (2) A full concurrent job-pool queue (N workers, real
+scheduling, cancel, reordering). Rejected FOR THIS PASS: ffmpeg is already CPU/GPU-
+heavy per export on a single machine, so running two at once mostly makes both slower
+rather than finishing sooner, and a real bounded-concurrency scheduler with cancel
+semantics is a genuinely separate, larger piece of work than "add a queue" — see the
+honest gaps below. (3) **A real dialog with per-clip override rows PLUS a real
+SEQUENTIAL queue** (job 2 starts automatically the instant job 1 settles, real live
+status per job). Chosen — the floor the task itself set as acceptable when full
+concurrency doesn't fit in one pass, and what was actually buildable to a real,
+verified standard.
+
+**Not a parallel implementation — literally the same functions.** `useEditorControl
+.ts`'s `editor_export` MCP op used to inline validation + `buildExportFfmpegArgs` +
+the `chroma_run_ffmpeg` invoke all in one closure. Extracted verbatim into
+`editorExport.ts` as `compileEditorExportArgs` (validate + compile, no I/O) and
+`runEditorExport` (compile + run, what the MCP op now is — a one-line delegate) /
+`runCompiledExport` (run only, for the queue). `EditorExportDialog.tsx`'s "Add to
+queue" button and `exportQueueStore.ts`'s `enqueue` call `compileEditorExportArgs`
+directly — the GUI and MCP genuinely cannot drift apart, because there is only one
+function that decides what a given set of export options compiles to.
+
+**Why compile at ENQUEUE time, not at RUN time.** A job's ffmpeg argv is a real
+snapshot of the timeline the moment "Add to queue" is clicked — `useExportQueueStore
+.enqueue` calls `compileEditorExportArgs` immediately and freezes the resulting argv
+on the job. The alternative (re-derive from the live timeline when the job's turn
+comes) would let further edits made while job 1 is still running silently change what
+job 2 renders — surprising and hard to reason about for a real multi-export session.
+
+**Per-clip overrides UI.** A row per VIDEO clip (speed multiplier, fit/stretch select,
+freeze switch) — audio clips get no row, because `speedOverrides`/`fitOverrides`/
+`freezeOverrides` have no real per-export creative meaning for gain/duck/fade
+(D-197's own audio mixing needs zero dialog controls at all — "just export" once
+tracks exist, per the task's own explicit goal). Width/height default from the
+project's own composition size (`chroma_timeline_clip_geometry`'s `compWidth`/
+`compHeight`, the SAME command D-193's Inspector already uses for exactly this fact),
+falling back to 1920×1080 for a brand-new project with no clip yet to derive it from;
+fps defaults to the timeline's own rate.
+
+**Honest, explicit scope gaps for this pass** (not silently shipped as if complete):
+no cancel of a queued or running job; no drag-to-reorder the queue; the queue is
+in-memory only (a module-level zustand store, like `useEditorTimelineStore`) and does
+not survive an app restart; no real bounded-concurrency worker pool (see option (2)
+above) — sequential is the floor the task explicitly allowed when full concurrency
+doesn't fit in one pass, stated here plainly rather than presented as done.
+
+**Verified.** `exportQueueStore.test.ts` (6 tests) proves REAL sequential behavior with
+deferred promises under direct control: job 2 provably stays `'queued'` (ffmpeg
+invoked exactly once) while job 1 is still in flight, and starts automatically —
+with no external poke — the instant job 1 settles; a failed ffmpeg run marks the job
+`'failed'` with its real stderr and still lets the next job run; a rejected `invoke()`
+(not just a `{ok:false}` result) also resolves to `'failed'` rather than hanging.
+Live-tested in a REAL Chromium tab via the D-142 harness (`app/harness.html` +
+`harness-main.tsx`, extended with `chroma_timeline_clip_geometry`/`chroma_run_ffmpeg`/
+`plugin:dialog|save` stubs): the Export button renders in `TimelinePane`'s own
+toolbar next to the zoom controls; clicking it opens the dialog with REAL computed
+defaults (1080×1920 from the stubbed composition geometry, 24 fps from the fixture's
+own `rate`); the four fixture clips (A/B/C/D) each get a real per-clip override row;
+"Choose…" round-trips through the native save-dialog stub to a real path; setting
+clip A's speed to `1.5` and clicking "Add to queue" enqueues a job that transitions
+live to a green "Done" without a page reload; a second enqueue while the dialog stays
+open correctly lists two independent jobs. Zero console errors during the whole
+sequence. `npx tsc --noEmit -p packages/editor` clean; `npx tsc --noEmit -p app`
+unaffected (73 pre-existing, unrelated errors in Colorist panels/i18n typing — none
+touching `harness-main.tsx`/`EditorTab`/`TimelinePane`/`EditorExportDialog`, confirmed
+by name). `npm test --workspace @chroma/editor` — 408/408 (was 357 at session start;
++51 across both D-197 and D-198).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
