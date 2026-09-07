@@ -118,7 +118,17 @@ export interface TimelineExportOptions {
    *  source's — correct for a deliberate distort effect, or a plain
    *  same-aspect picture-in-picture bubble where that was already true
    *  anyway, never correct for fitting arbitrary source footage into a
-   *  differently-shaped region. */
+   *  differently-shaped region.
+   *
+   *  **D-186 superseded the need for this on any clip with a real
+   *  `box_width`/`box_height` override** (now a first-class, persisted
+   *  `Clip` field, not an export-time parameter — see that field's own doc
+   *  and `buildClipFilterChain`'s use of it): an explicit per-axis
+   *  canvas-fraction size has no more `fit`/`stretch` ambiguity to resolve.
+   *  `fitOverrides` is NOT removed or deprecated — it is still exactly
+   *  right for a clip that only sets `scale` (no independent-axis override
+   *  at all), which stays a real, common, first-class case this option
+   *  keeps serving unchanged. */
   fitOverrides?: Record<string, 'fit' | 'stretch'>;
   /** D-188 — export-time-only per-clip choice to hold this clip's OWN LAST
    *  FRAME, frozen, for the rest of the export's total runtime (the longest
@@ -176,6 +186,14 @@ function buildClipFilterChain(
   }
 
   const scale = clip.scale ?? 1;
+  // D-186 — `box_width`, when the clip has one, is a DIRECT canvas-fraction
+  // override (mirrors `position_x`'s own convention) — it replaces
+  // `opts.width*scale` outright rather than participating in B-074's
+  // `fit`/`stretch` choice, since there is no more ambiguity to resolve
+  // once the caller has stated the width explicitly. Falls back to the
+  // pre-D-186 `opts.width*scale` when absent, so an existing clip (or one
+  // that only sets `scale`) compiles byte-identically to before.
+  const widthExpr = clip.box_width != null ? `${opts.width}*${clip.box_width}` : `${opts.width}*${scale}`;
   // B-074 — see `TimelineExportOptions.fitOverrides`'s own doc for the full
   // "why": `'fit'` (default) sizes WIDTH from the canvas and lets ffmpeg's
   // `-2` compute height from the clip's real post-crop aspect ratio;
@@ -186,10 +204,33 @@ function buildClipFilterChain(
   // to put it, e.g. centering a shorter-than-its-slot 'fit' box within one
   // canvas-half using the clip's own known aspect ratio from
   // `editor_import_media`'s probe result.
+  //
+  // D-186 — `box_height`, when the clip has one, is the same kind of direct
+  // canvas-fraction override as `box_width` above and takes priority over
+  // `fitOverrides` entirely: an explicit persisted height is a MORE
+  // specific signal than an export-time-only fit/stretch default, and once
+  // both axes are explicitly known there is nothing left for ffmpeg's `-2`
+  // to compute. Unlike `box_width` (which was always unconditional — `fit`/
+  // `stretch` never touched width), `box_height` is genuinely a third
+  // option alongside `fit`/`stretch`, not a variant of either.
+  //
+  // **Known, deliberate limit (D-186):** `box_width`/`box_height` are a
+  // fraction of the OUTPUT CANVAS in both this compiler and the Rust
+  // live-preview compositor (`chroma::edit::composite_layer_onto`) — a
+  // genuinely NEW field with NO Rust/TS parity gap, unlike `scale` itself
+  // (whose meaning depends on the clip's own SOURCE resolution, which this
+  // pure, no-I/O module still cannot probe — B-074/D-184's own pre-existing,
+  // intentionally-not-reopened gap). See D-186's decision entry for the
+  // full comparison.
   const fitMode = opts.fitOverrides?.[clip.id] ?? 'fit';
-  const heightExpr = fitMode === 'stretch' ? `${opts.height}*${scale}` : '-2';
+  const heightExpr =
+    clip.box_height != null
+      ? `${opts.height}*${clip.box_height}`
+      : fitMode === 'stretch'
+        ? `${opts.height}*${scale}`
+        : '-2';
   const scaleLabel = padSecs > 0 ? `p${label}` : label;
-  steps.push(`${src}scale=${opts.width}*${scale}:${heightExpr}[${scaleLabel}]`);
+  steps.push(`${src}scale=${widthExpr}:${heightExpr}[${scaleLabel}]`);
 
   // D-188 — `freezeOverrides`: hold this clip's own real last decoded frame,
   // cloned, for `padSecs` more seconds past its natural end. `tpad` operates

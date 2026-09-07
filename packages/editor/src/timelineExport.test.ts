@@ -309,6 +309,43 @@ describe('buildExportFfmpegArgs', () => {
     expect(filterComplex).not.toContain('tpad');
   });
 
+  it('D-186: box_width/box_height size the overlay as independent canvas fractions, the "full width, half height" layout B-074 could never express via scale alone', () => {
+    const c = clip('c1', { box_width: 1, box_height: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('scale=1080*1:1920*0.5[v0]');
+  });
+
+  it('D-186: box_width alone overrides only the width — height falls back to scale/fitOverrides exactly as before', () => {
+    const c = clip('c1', { box_width: 0.75, scale: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('scale=1080*0.75:-2[v0]');
+  });
+
+  it('D-186: box_height takes priority over fitOverrides — an explicit persisted height wins over the export-time-only stretch default', () => {
+    const c = clip('c1', { scale: 0.5, box_height: 0.9 });
+    const tl = timeline([track('video', [c])]);
+    const opts: TimelineExportOptions = { ...opts30, fitOverrides: { c1: 'stretch' } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('scale=1080*0.5:1920*0.9[v0]');
+  });
+
+  it('D-186: a clip with no box_width/box_height compiles byte-identically to pre-D-186 — the backward-compatibility case', () => {
+    const c = clip('c1', { scale: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('scale=1080*0.5:-2[v0]');
+  });
+
   it('omits the crop filter node entirely when all four crop fractions are zero', () => {
     const tl = timeline([track('video', [clip('c1')])]);
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
