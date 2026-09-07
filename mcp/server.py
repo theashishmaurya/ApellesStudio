@@ -467,10 +467,10 @@ def set_track_duck(
 # own `OPS` map for the authoritative behavior; these are thin wrappers, same
 # shape as `get_timeline`/`set_clip_fade`/`set_track_duck` above.
 #
-# `editor_get_capabilities` (D-185) is the one exception: it is pure static
+# `editor_get_capabilities` (D-191) is the one exception: it is pure static
 # documentation, answered entirely in this process with NO round trip to
 # `chroma::control` — deliberately, so it works even with no project open and
-# no Chroma window running at all. See docs/08-decisions.md's D-185 entry
+# no Chroma window running at all. See docs/08-decisions.md's D-191 entry
 # (and D-184's own closing note, which flagged this as a separate, parallel
 # effort) for why this exists: D-183's own first live use surfaced real,
 # hard-won facts (the `scale`/aspect-ratio gap fixed by D-184/B-074, plus

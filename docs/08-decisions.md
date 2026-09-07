@@ -16634,9 +16634,9 @@ called out honestly rather than silently picked around.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
-## D-186 — a checked-in Claude Code project skill packages the comparison-reel workflow
+## D-192 — a checked-in Claude Code project skill packages the comparison-reel workflow
 
-**Context.** Owner, verbatim, after D-183/D-184/D-185 landed: "start making skill out of
+**Context.** Owner, verbatim, after D-183/D-184/D-191 landed: "start making skill out of
 it." The reel session ran a real, repeatable procedure — live-test the MCP surface,
 resolve source paths safely, plan a stacked layout, drive `editor_*` tools end-to-end,
 export — that existed only as this session's own chat transcript. Without packaging it,
@@ -16674,7 +16674,7 @@ since no error boundary exists yet to prevent a *different* crash from reproduci
 same shape. (2) The macOS screen-recording filename trap (B-070, U+202F before AM/PM)
 with the actual shell commands to resolve it safely, not just a warning. (3) The
 stacking/PIP `scale`/`fit_overrides` model and its crop-then-scale recipe for the `'fit'`
-default, delegated to `editor_get_capabilities` (D-185) as the live source of truth rather
+default, delegated to `editor_get_capabilities` (D-191) as the live source of truth rather
 than duplicated and risking drift — the skill says WHEN to apply the fact, the tool says
 WHAT the fact currently is. (4) The real `editor_*` tool call sequence this session
 actually ran, in order, with the specific gotchas each step has (B-073 on

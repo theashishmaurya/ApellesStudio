@@ -68,7 +68,7 @@ One or two lines per session. Detail lives in the decision it references.
   B-073's rough edges — answered entirely in-process, no app/project needed at all.
   `editor_import_media`/`editor_set_clip_transform`'s own docstrings gained short
   pointers to it. 63 tools total, verified via a real module import.
-- **2026-09-07** — **A Claude Code project skill packages the reel workflow (D-186).**
+- **2026-09-07** — **A Claude Code project skill packages the reel workflow (D-192).**
   `.claude/skills/chroma-comparison-reel/SKILL.md` turns this session's real end-to-end
   procedure — live-test the MCP surface first, avoid the macOS screen-recording filename
   trap, the stacking/PIP compositing recipe (delegated to `editor_get_capabilities`), the

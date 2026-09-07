@@ -12,8 +12,8 @@ driven entirely through Chroma's own MCP tools, no raw ffmpeg scripting alongsid
 What it does NOT do: grade the result (Colorist's own MCP tools, `mcp/server.py`'s
 non-`editor_*` tools, are a separate surface — see `docs/notes/mcp-architecture.md`), or
 build a from-scratch animated composition (that's the `hyperframes` skill family, a
-different tool for a different job). Created by D-186 (`docs/08-decisions.md`), the same
-session that shipped D-183/D-184/D-185 and hit the gaps this skill exists to route around
+different tool for a different job). Created by D-192 (`docs/08-decisions.md`), the same
+session that shipped D-183/D-184/D-191 and hit the gaps this skill exists to route around
 (`docs/BUGS.md` B-069/B-070/B-071/B-073/B-074).
 
 **The standing rule this whole workflow runs on** (owner, verbatim, mid-session): *"wtf
@@ -32,7 +32,7 @@ source files instead of an `editor_*` call, that is a real MCP gap, not a shortc
   should show it). If you just added or changed a tool in `mcp/server.py`, **restart
   Claude Code** — a (re)connected MCP server's tools only become visible after a full
   exit + relaunch, not immediately (`docs/notes/mcp-architecture.md`'s recipe, step 4).
-- Read `editor_get_capabilities` (D-185) once, right now, before anything else below.
+- Read `editor_get_capabilities` (D-191) once, right now, before anything else below.
   It is static reference data — no app round trip, works even before you've confirmed
   the app is up — and covers the compositing/export facts and rough edges this whole
   skill is built around. This skill tells you WHEN to use each fact; that tool is the
@@ -189,12 +189,12 @@ failure shape, now fixed but structurally not prevented): there is no isolation 
 "one panel's render crashed" and "the control server can no longer answer any request."
 See `docs/notes/mcp-architecture.md` for the full four-layer picture (MCP client →
 `mcp/server.py` → `chroma::control` → `useEditorControl.ts` → the store) and
-`docs/08-decisions.md`'s D-183/D-184/D-185 entries for how this tool surface and its
+`docs/08-decisions.md`'s D-183/D-184/D-191 entries for how this tool surface and its
 documentation tool came to exist.
 
 ## Reference
 
-- `editor_get_capabilities` (D-185) — the live, structured source of truth for the
+- `editor_get_capabilities` (D-191) — the live, structured source of truth for the
   compositing/export facts and known landmines this skill references; call it, don't
   assume this document stays byte-for-byte in sync with it forever.
 - `docs/notes/mcp-architecture.md` — the four-layer MCP pattern, and the "one MCP server,
@@ -205,7 +205,7 @@ documentation tool came to exist.
   (post-restart flake), B-072 (audiocraft memory spike), B-073 (stuck media-pool item),
   B-074 (the `scale`/aspect-ratio bug, fixed by D-184).
 - `docs/08-decisions.md` D-183 (the Edit-tab MCP surface itself), D-184 (`fit_overrides`),
-  D-185 (the capabilities tool), D-186 (this skill).
+  D-191 (the capabilities tool), D-192 (this skill).
 - `docs/notes/media-understanding-sidecar-scope.md` — the scoped, not-yet-started plan to
   bring §5's cross-repo calls into Chroma's own `ai/` sidecar. Read it before touching
   that migration; it is out of scope for this skill.
