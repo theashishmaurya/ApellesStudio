@@ -335,7 +335,6 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
   const warnings: string[] = [];
   const projectRate = opts.fps !== undefined ? fpsToRational(opts.fps) : timelineRational(timeline);
   const totalFrames = timelineDuration(timeline);
-  const projectFps = projectRate.num / projectRate.den;
 
   const sequenceFormat: FormatResource = { id: 'fmt-sequence', rate: projectRate, width: opts.width, height: opts.height };
   const formats = new Map<string, FormatResource>([[formatKey(projectRate, opts.width, opts.height), sequenceFormat]]);
