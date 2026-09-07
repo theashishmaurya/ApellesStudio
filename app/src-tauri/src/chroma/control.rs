@@ -10,7 +10,16 @@
 //! What it does NOT do: any grade or mask logic, and it does not know the op
 //! list. It just forwards `{op, args}`. The op registry lives in the frontend.
 //!
-//! See chroma/docs/08-decisions.md D-020 and chroma/docs/notes/control-server/SPEC.md.
+//! The one exception is [`native_op`] (D-209): a short, explicit list of ops
+//! that have no frontend state to consult and are answered here, in Rust —
+//! today the debug webview screenshot and its pixel probe. Those deliberately
+//! do NOT round-trip through the frontend, because the single most valuable
+//! moment to photograph the UI is when the frontend is too wedged to answer
+//! (and a screenshot is a picture of the webview, not a fact about the store,
+//! so routing it through the store would buy nothing anyway).
+//!
+//! See chroma/docs/08-decisions.md D-020 / D-209 and
+//! chroma/docs/notes/control-server/SPEC.md.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -103,6 +112,12 @@ pub fn serve(app: tauri::AppHandle) {
             continue;
         }
 
+        // Ops this server answers itself (D-209) — never forwarded onward.
+        if let Some(body) = native_op(&app, &op, &args) {
+            let _ = req.respond(json_response(200, body));
+            continue;
+        }
+
         match dispatch(&app, &op, args, BRIDGE_TIMEOUT) {
             Ok(payload) => {
                 let _ = req.respond(json_response(200, payload));
@@ -119,6 +134,55 @@ pub fn serve(app: tauri::AppHandle) {
 
 enum BridgeErr {
     Timeout,
+}
+
+/// The ops answered in-process instead of being forwarded to the frontend
+/// (D-209). Returns `None` for everything else, which is how the caller knows
+/// to fall through to [`dispatch`] — so this can never accidentally swallow a
+/// real frontend op it doesn't recognise.
+///
+/// The reply always uses the same `{ok, error, result}` envelope the frontend
+/// produces, and always with HTTP 200: a *failed* screenshot is a normal
+/// answer with a reason in it, not a transport failure, and the MCP client
+/// reads `ok`/`error` rather than the status code.
+fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Option<String> {
+    let result = match op {
+        "debug_screenshot" => {
+            let window = args.get("window").and_then(|v| v.as_str());
+            let out_path = args.get("out_path").and_then(|v| v.as_str());
+            super::debug_capture::screenshot_to_file(app, window, out_path)
+                .and_then(|shot| serde_json::to_value(shot).map_err(|e| e.to_string()))
+        }
+        "debug_sample_pixel" => sample_pixel_args(args).and_then(|(path, x, y)| {
+            super::debug_capture::sample_png_pixel(&path, x, y)
+                .and_then(|sample| serde_json::to_value(sample).map_err(|e| e.to_string()))
+        }),
+        _ => return None,
+    };
+
+    Some(match result {
+        Ok(value) => serde_json::json!({ "ok": true, "result": value }).to_string(),
+        Err(e) => {
+            log::warn!("[chroma::control] native op '{op}' failed: {e}");
+            err_body(&e)
+        }
+    })
+}
+
+/// `{path, x, y}` for `debug_sample_pixel`, with a real message naming the
+/// argument that was missing rather than a silent default.
+fn sample_pixel_args(args: &serde_json::Value) -> Result<(String, u32, u32), String> {
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "debug_sample_pixel needs a 'path' to a saved screenshot".to_string())?;
+    let coord = |name: &str| -> Result<u32, String> {
+        args.get(name)
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| format!("debug_sample_pixel needs a non-negative integer '{name}'"))
+    };
+    Ok((path.to_string(), coord("x")?, coord("y")?))
 }
 
 /// The bridge: emit `chroma://request`, wait for the frontend's

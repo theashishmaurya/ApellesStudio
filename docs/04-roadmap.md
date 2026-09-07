@@ -1668,6 +1668,13 @@ response forever" — refuse-and-warn policy, a live 10s re-poll, a real "AI Sid
 Settings card as `chroma_ai_status`'s first UI consumer. Live-verified against the
 session's own genuinely ~6-hour-stale sidecar.
 
+**An agent can see the app (2026-09-08, D-209):** `chroma_debug_screenshot` /
+`chroma_debug_sample_pixel` — the running window's WKWebView photographs itself via
+`takeSnapshotWithConfiguration:`, which needs no macOS Screen Recording permission (it
+is not screen capture), removing the wall that had forced every live UI verification
+onto indirect signals. MCP `debug_screenshot` (shoot → `Read` the path → look) +
+`debug_sample_pixel`; Cmd/Ctrl+Shift+D for a human. `docs/notes/debug-screenshot-tool.md`.
+
 **Deliberately deferred, not abandoned:** the deeper crate-extraction migration
 (`chroma-gpu`/`chroma-media`/`chroma-project`, eventually `chroma-compositor`) — the
 roadmap's own "Then" section already flags it as a bigger, no-urgency structural bet

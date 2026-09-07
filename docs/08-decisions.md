@@ -18457,3 +18457,112 @@ rather than implied.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+---
+
+## D-209 — An agent can now actually SEE the app: the webview screenshots itself via `WKWebView takeSnapshot`, not the OS
+
+**decided (2026-09-08)**
+
+**Context.** Multiple agents in one session independently hit the identical
+wall live-verifying a UI fix: this environment's process has no macOS **Screen
+Recording** (TCC) permission, so `screencapture(1)` fails outright, and
+WebKit's accessibility tree isn't reachable through System Events either. One
+said it plainly: "Screenshots were not possible — this process lacks macOS
+Screen Recording TCC permission." Every verification pass since has fallen back
+to indirect signals — MCP state polling, blind `cliclick` coordinates,
+`ffprobe`/pixel-sampling a real *exported* file instead of the live preview.
+All real, all strictly worse than looking, and it is why "the on-canvas box
+doesn't match the picture" (B-085/D-204) took several rounds of owner
+screenshots before an agent could verify it at all. Owner's ask: a real
+internal debugging tool that lets an agent take an actual screenshot of the
+running app, good enough to inspect colour placement and pixel alignment,
+without a human in the loop.
+
+**Options.**
+(a) System capture (`screencapture`, `CGWindowListCreateImage`,
+ScreenCaptureKit) — all three are gated by exactly the permission we don't
+have; this is the wall, not a way around it.
+(b) `html2canvas`/DOM-to-image in the frontend — re-*renders* the DOM with a
+separate rasteriser, so it is a picture of what a second implementation thinks
+the page looks like. Useless for the actual question ("is the real compositor
+putting this box where I think"), and blind to `<canvas>`/WebGL content, which
+is most of Chroma's preview.
+(c) The WKWebView's backing `CALayer` via `renderInContext:` — WebKit renders
+out-of-process, so this typically comes back blank.
+(d) **`-[WKWebView takeSnapshotWithConfiguration:completionHandler:]`** — a
+webview rendering its own content, in the process that already owns it. Not
+screen capture, so no TCC permission, entitlement, or prompt. macOS 10.13+.
+
+**Choice: (d).** Verified reachable before committing to it, not assumed:
+Tauri 2.11's `PlatformWebview::inner()` on macOS *is* the `WKWebView` pointer,
+and the typed binding exists in `objc2-web-kit`, which tauri/wry already pull
+in. Then verified live — a real capture of a real running window, read back and
+looked at.
+
+**Bindings: the `objc2` stack, not this fork's existing `objc` 0.2 +
+`msg_send!`.** `window_customizer.rs` (upstream RapidRAW) uses raw `objc` 0.2.
+Matching it would mean hand-writing an async completion **block** and four
+untyped `msg_send!` calls for the `NSImage → PNG` encode — every selector and
+type encoding unchecked until it crashes at runtime. `objc2-web-kit` /
+`objc2-app-kit` / `objc2-foundation` / `block2` give the same calls typed and
+selector-checked at compile time, are the maintained successor to `objc` 0.2 by
+the same author, and are **already in the workspace lock** as transitive deps
+of tauri/wry/muda/cpal — so this adds four direct edges and zero new crates to
+the build. All MIT/Apache-2.0, actively maintained. The one new *concept* in
+the tree is `block2`; `objc` 0.2 stays where it is (not worth churning upstream
+code that works).
+
+**A native control-server op, not a frontend round trip.** `debug_screenshot`
+and `debug_sample_pixel` are the first ops `control.rs` answers itself instead
+of forwarding to the frontend's `OPS` registry (D-020's rule). Justified: a
+screenshot is a picture of the webview, not a fact about the store, so routing
+it through the store buys nothing — and the single most valuable moment to
+photograph the UI is precisely when the frontend is too wedged to reply to
+anything. `native_op()` returns `None` for every unrecognised op, so it can
+never swallow a real frontend one.
+
+**Human and AI, same capture (CLAUDE.md's standing rule).** MCP
+`debug_screenshot` / `debug_sample_pixel` for an agent; **Cmd/Ctrl+Shift+D** in
+the app for a human, toasting back the saved path — one `chroma_debug_screenshot`
+command underneath both. The shortcut lives in its own Chroma hook rather than
+upstream's rebindable `KEYBIND_DEFINITIONS` table (that table needs an i18n
+description per locale for a fixed developer/bug-report affordance): a smaller
+divergence from upstream, per D-003.
+
+**Files land outside the repo.** `$TMPDIR/chroma-debug-screenshots/<label>-<ms
+timestamp>.png` by default, `CHROMA_DEBUG_SHOTS_DIR` or an explicit `out_path`
+to override. The app also runs as a built `.app` with no repo near it, and a
+debug tool must not drop files into a tracked tree. Timestamped names sort a
+before/after pair in order.
+
+**Honest errors over blank images.** No window, unknown label, minimised,
+hidden, 0×0, or a completion handler that never fires inside 10s each produce a
+real message. A black rectangle that *looks* like a screenshot is worse than a
+refusal, because it gets believed.
+
+**No Tauri capability entry needed** — checked, not assumed:
+`capabilities/default.json` gates *plugin* commands, and no `chroma_*` app
+command is listed there.
+
+**Known limits** (in `docs/notes/debug-screenshot-tool.md`, in full): webview
+only — native title bar, native menus, a native file dialog, another app, a
+second display are all invisible, because capturing those *is* the system
+screen capture we can't do; the image is in device pixels (CSS × `scaleFactor`);
+one frame per call; macOS only.
+
+**Verified live, not just compiled.** A real `tauri dev` instance on this
+branch (isolated worktree, `CHROMA_CONTROL_PORT=19790`): `debug_screenshot`
+returned a 2692×1800 PNG at `scaleFactor` 2.0 (331054 bytes), and that file was
+**read back and looked at** — the real project launcher, "Welcome to Chroma",
+the New Project card, three project cards with their real thumbnails.
+`debug_sample_pixel` on the same file read `#fb2c36` at the window's red close
+dot and `#181818` on the page background. Every error path returned a real
+message (`"(9999, 0) is outside the 2692x1800 image"`, `"no window labelled
+'nope' (open: main)"`). Plus `cargo clippy` clean on the new code, 4 unit tests
+green, and no new `tsc` errors. **Not** verified live: the Cmd/Ctrl+Shift+D
+keypress — synthesising a keystroke needs macOS Accessibility permission, which
+this process lacks for the same reason it lacks Screen Recording; the GUI path
+is verified by construction only (it invokes the same
+`screenshot_to_file` the verified route calls). Stated plainly rather than
+implied. Full numbers in `docs/notes/debug-screenshot-tool.md`.
