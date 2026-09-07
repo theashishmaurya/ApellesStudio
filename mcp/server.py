@@ -740,6 +740,49 @@ def editor_import_media(paths: list[str], folder: str | None = None) -> str:
 
 
 @mcp.tool()
+def editor_remove_media(ids: list[str]) -> str:
+    """Remove one or more items from the project's shared media pool by id
+    (`editor_import_media`'s/a pool item's own `id`, not a source path).
+    Wraps the SAME `chroma_media_remove` Tauri command the GUI's own Sources
+    panel delete action already calls — no separate/new removal logic.
+
+    **This is the only correction mechanism the pool has right now** (roadmap
+    item 23, 2026-09-07): `editor_import_media`'s dedup treats "already known
+    by this exact source path" as permanent, so a pool item whose probe
+    failed once (a transient race, or a real probe bug — see `docs/BUGS.md`
+    B-073/B-089) stays wrong for the rest of the project's life otherwise.
+    There is still no re-probe-on-demand or expiry (that remains an open
+    architectural gap, not fixed by this tool) — the only way to fix a
+    stuck/wrong item today is `editor_remove_media` the bad id, then
+    `editor_import_media` the same path again to get a fresh probe.
+
+    An id already gone from the pool (already removed, a stale id) is
+    silently skipped, not an error — same "the caller's own already-rendered
+    list can be stale" reasoning `chroma_media_remove` itself documents.
+    Does not touch the file on disk (media is always referenced in place,
+    never owned by the project) — only the pool's reference to it and its
+    cached thumbnail.
+
+    **A clip already placed on the timeline that references a removed item
+    does NOT go offline, error, or get cascade-removed — investigated, not
+    assumed.** A `Clip` copies its `source_path` from the pool item at the
+    moment it's placed and never re-reads the pool afterward; only
+    `Clip.media_id` — a back-link used for legacy grade-file migration
+    bookkeeping, never for playback/rendering/export — goes stale. So a clip
+    built from a removed pool item keeps playing/exporting fine as long as
+    its source file is still on disk; it simply becomes invisible/unmanaged
+    in the Sources panel and its `media_id` no longer resolves to any pool
+    item. The response's `stillReferencedBy` array lists every timeline
+    clip (by `track`/`clip` index and `clipId`) whose `media_id` matched one
+    of the ids you just removed, so you can tell whether you just orphaned
+    a live clip's pool entry before deciding whether that's what you
+    wanted."""
+    import json
+
+    return json.dumps(_op("editor_remove_media", ids=ids), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_add_clip(
     track: int,
     media_id: str | None = None,

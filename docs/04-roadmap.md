@@ -1063,8 +1063,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     format-agnostic — `is_media_file` (added today, B-089) is the first step of that
     correction, used consistently now by both of the pool's own "is this online"
     call sites; auditing for any OTHER place still assuming "pool item" means
-    "video" is worth a dedicated pass, not assumed done. Not started as a build —
-    this entry is the scope, not the implementation.
+    "video" is worth a dedicated pass, not assumed done.
+
+    **Minimal slice DONE, 2026-09-07 (later same day):** `editor_remove_media`
+    now exists in `mcp/server.py`, wired through a new `editor_remove_media` op
+    in `packages/editor/src/useEditorControl.ts` that calls the SAME
+    `useMediaPoolStore.removeMedia` → `chroma_media_remove` path the GUI's
+    Sources panel already used correctly — no new removal logic. Investigated
+    (not assumed) what happens to a clip already placed on the timeline that
+    references the removed item: nothing breaks. `Clip.source_path` is an
+    independent copy resolved at drop time and is never re-read from the pool
+    afterward, so playback/export is unaffected; only `Clip.media_id` (a
+    back-link used solely for legacy shot-grade-migration bookkeeping, never
+    for playback/rendering) goes stale/dangling. The tool reports any such
+    still-referenced clips in its `stillReferencedBy` field rather than
+    silently leaving that unobservable. `docs/notes/mcp-tool-coverage.md`
+    updated to reflect the tool exists. **This is the tool-exposure slice
+    only — the real architectural gap named above (no expiry, no
+    re-probe-on-demand for a stuck/wrong item) is still OPEN**; the fix today
+    is "remove the bad id, then re-import the same path," a two-call manual
+    correction, not automatic detection/recovery. That remains future work.
 24. **No text/title clip primitive in the Edit tab at all** — owner, 2026-09-07,
     asking for real "AFTER"/"BEFORE" labels on the comparison reel. Confirmed by
     grep: no `TrackKind::Text`, no title-clip concept anywhere in

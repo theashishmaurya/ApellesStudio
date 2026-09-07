@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Roadmap item 23, minimal slice:** added `editor_remove_media`
+  MCP tool, wrapping the SAME `chroma_media_remove`/`removeMedia` path the
+  Sources panel's own delete UI already used — the pool's only
+  stuck/wrong-item correction mechanism until a real re-probe/expiry exists
+  (still open). Traced (not live-tested — no built Tauri instance in this
+  worktree; see roadmap item 23) that a clip already placed on the timeline
+  referencing a removed pool item does not break: its `source_path` is an
+  independent copy, never re-read from the pool, only its `media_id`
+  back-link goes stale — now reported in the tool's `stillReferencedBy`
+  field. `docs/notes/mcp-tool-coverage.md` updated.
 - **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
   intermittently fails outright for a large-but-not-huge payload, instead
   of the graceful size-limit truncation the same size class usually gets —
