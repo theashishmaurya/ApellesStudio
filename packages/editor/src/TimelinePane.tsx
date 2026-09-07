@@ -1677,10 +1677,33 @@ export function TimelinePane() {
   // inline-function pattern existed before D-080 too (checked via `git show`
   // against the pre-D-080 revision), but re-rendering 1 hardcoded row's
   // worth of actions was cheap enough to never be felt — re-rendering N
-  // tracks' worth on every tick is what actually froze the UI. `useCallback`
-  // with real dependency arrays keeps these stable across renders that don't
-  // actually change anything these functions read.
-  const getActionRender = useCallback(
+  // tracks' worth on every tick is what actually froze the UI.
+  //
+  // D-197 — that stability now comes from the React Compiler (D-091), not from
+  // a hand-written dependency array, and the two are mutually exclusive: the
+  // compiler only auto-memoizes a component when it can *preserve* every
+  // manual `useMemo`/`useCallback` already in it, and SEVEN of this file's
+  // arrays disagreed with the dependencies it inferred — this one and
+  // `onClickAction` (`idxOf`/`clipsOf`/`setSelection`/`setSelectedGap`, the
+  // component-body arrows their bodies actually call), `onActionResizeEndCb`
+  // (`s2f`), `linkCheck` (`idxOf`), and `onDndDragMove`/`onDndDragEnd`
+  // (`dndBoundary`, `inferNewTrackKind`, `trackIndexAfterMove`,
+  // `setSelection`). ONE disagreement bails the compiler out of the WHOLE
+  // component, so `TimelinePane` — the highest-update-frequency surface in the
+  // app — was getting zero auto-memoization while still paying for the
+  // hand-written kind: precisely the B-024 regression the arrays were added to
+  // prevent. Worse, two of the seven were memoizing nothing at all —
+  // `onDndDragMove`/`onDndDragEnd` listed `idxOf`/`clipsOf`, plain arrows
+  // re-created on every render, so both got a fresh identity every render
+  // regardless.
+  //
+  // All seven are plain functions now, and the compiler memoizes them with
+  // dependencies it infers itself — which is also strictly safer than a
+  // hand-maintained array. `reactCompiler.test.ts` fails if a future edit
+  // reintroduces a bailout in this file, so B-024 cannot come back silently.
+  // If you think you need hand-written memoization here, run that test first:
+  // a `useMemo`/`useCallback` the compiler cannot preserve is a net LOSS.
+  const getActionRender =
     (action: TimelineAction, row: TimelineRow) => {
       const ti = Number(row.id);
       const track = tracks[ti];
@@ -1829,9 +1852,7 @@ export function TimelinePane() {
           </div>
         </ClipBody>
       );
-    },
-    [tracks, selection, rippled, pxPerSec, fps, syncLinkedIds, avLinkedIds, filmstripScrollLeft, viewportWidth],
-  );
+    };
 
   /** Multi-select, Phase 1 (D-107) — shift-click range-extends within the
    *  clicked clip's own track (ordered by `start_frame`, this model's real
@@ -1842,7 +1863,8 @@ export function TimelinePane() {
    *  MouseEvent>` (checked against its `.d.ts`, not the loosely-typed
    *  `unknown` this handler used to cast it to) — `shiftKey`/`metaKey`/
    *  `ctrlKey` are real fields on it. */
-  const onClickAction = useCallback(
+  /** D-197 — no `useCallback` (see the note above `getActionRender`). */
+  const onClickAction =
     (e: ReactMouseEvent<HTMLElement, MouseEvent>, { action, row }: { action: TimelineAction; row: TimelineRow }) => {
       setSelectedGap(null); // D-105 — clicking a clip always supersedes a gap selection
       const track = Number(row.id);
@@ -1874,9 +1896,7 @@ export function TimelinePane() {
         return;
       }
       setSelection([{ track, id }]);
-    },
-    [selection, clipsOf],
-  );
+    };
 
   const onTimelineScroll = useCallback(({ scrollTop: st, scrollLeft: sl }: { scrollTop: number; scrollLeft: number }) => {
     setScrollTop(st);
@@ -1889,34 +1909,34 @@ export function TimelinePane() {
   // clip now, same-track or cross-track alike. Kept as dead code this would
   // violate `CLAUDE.md`'s own "no dead code" rule, so it's removed rather
   // than left unused.
-  const onActionResizeEndCb = useCallback(
-    ({
-      action,
-      row,
-      start,
-      end,
-      dir,
-    }: {
-      action: TimelineAction;
-      row: TimelineRow;
-      start: number;
-      end: number;
-      dir: 'left' | 'right';
-    }) => {
-      const ti = Number(row.id);
-      const i = idxOf(ti, action.id);
-      if (i < 0) return;
-      const c = clipsOf(ti)[i];
-      if (dir === 'left') {
-        const delta = s2f(start) - c.start_frame;
-        if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
-      } else {
-        const delta = s2f(end) - endFrame(c, fps);
-        if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
-      }
-    },
-    [tracks, fps, applyOp],
-  );
+  /** D-197 — no `useCallback` (see the note above `getActionRender`): its old
+   *  `[tracks, fps, applyOp]` array left out `s2f`, which the compiler infers
+   *  and which is enough on its own to bail the whole component out. */
+  const onActionResizeEndCb = ({
+    action,
+    row,
+    start,
+    end,
+    dir,
+  }: {
+    action: TimelineAction;
+    row: TimelineRow;
+    start: number;
+    end: number;
+    dir: 'left' | 'right';
+  }) => {
+    const ti = Number(row.id);
+    const i = idxOf(ti, action.id);
+    if (i < 0) return;
+    const c = clipsOf(ti)[i];
+    if (dir === 'left') {
+      const delta = s2f(start) - c.start_frame;
+      if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
+    } else {
+      const delta = s2f(end) - endFrame(c, fps);
+      if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
+    }
+  };
 
   // D-080: split now requires a selection — with N tracks, "at the
   // playhead" alone no longer says which track's clip. Standard-NLE
@@ -1987,8 +2007,11 @@ export function TimelinePane() {
    *  precondition check `applyOp`'s `link` case uses, see that op's own
    *  doc) — `null` when the selection isn't shaped like a link candidate at
    *  all (not exactly two clips selected), so the button is hidden rather
-   *  than shown-and-always-refused for the common case of 0/1/3+ selected. */
-  const linkCheck = useMemo((): { a: LinkTarget; b: LinkTarget; result: LinkCheck } | null => {
+   *  than shown-and-always-refused for the common case of 0/1/3+ selected.
+   *  D-197 — no `useMemo` (see the note above `getActionRender`): its
+   *  `[timeline, selection]` array left out `idxOf`, and the body returns
+   *  `null` immediately unless exactly two clips are selected anyway. */
+  const linkCheck = ((): { a: LinkTarget; b: LinkTarget; result: LinkCheck } | null => {
     if (!timeline || selection.length !== 2) return null;
     const [sa, sb] = selection;
     const ia = idxOf(sa.track, sa.id);
@@ -1997,7 +2020,7 @@ export function TimelinePane() {
     const a: LinkTarget = { track: sa.track, clip: ia };
     const b: LinkTarget = { track: sb.track, clip: ib };
     return { a, b, result: checkLink(timeline, a, b) };
-  }, [timeline, selection]);
+  })();
 
   /** D-138 — link the two selected (already-independent) clips into a new
    *  A/V group: Palmier's own `manage_clip_links` `link`, Premiere's `Clip >
@@ -2193,7 +2216,11 @@ export function TimelinePane() {
     return trackInsertBoundary(y, tracks.length);
   };
 
-  const onDndDragMove = useCallback(
+  /** D-197 — no `useCallback` (see the note above `getActionRender`): its old
+   *  array listed `idxOf`/`clipsOf`, plain arrows re-created on every render,
+   *  so it never memoized anything — while still bailing the compiler out of
+   *  the whole component. */
+  const onDndDragMove =
     (event: DragMoveEvent) => {
       const data = event.active.data.current as
         | { type: 'track'; index: number }
@@ -2247,11 +2274,10 @@ export function TimelinePane() {
         // (source-frame) value — see `dragSyncGhosts`'s own doc for why.
         return { fromTrack, toTrack, clipId, startFrame, duration: sourceFramesToTimeline(clip, clip.duration, fps), ripple };
       });
-    },
-    [idxOf, clipsOf, pxPerSec, fps, tracks, scrollTop],
-  );
+    };
 
-  const onDndDragEnd = useCallback(
+  /** D-197 — no `useCallback`, same reasoning as `onDndDragMove` just above. */
+  const onDndDragEnd =
     (event: DragEndEvent) => {
       const data = event.active.data.current as
         | { type: 'track'; index: number }
@@ -2341,9 +2367,7 @@ export function TimelinePane() {
       // just the dragged clip — multi-clip drag-move is the same deferred
       // Phase 3 as multi-clip "Move to" (see `doMoveToTrack`'s own doc).
       setSelection([{ track: toTrack, id: clipId }]);
-    },
-    [applyOp, clipsOf, idxOf, doMoveTrack, pxPerSec, fps, tracks, scrollTop],
-  );
+    };
 
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
   const zoomIn = () => setPxPerSec((w) => clampPxPerSec(w * ZOOM_STEP));
@@ -2408,6 +2432,10 @@ export function TimelinePane() {
   // bridge reading from it) down with no error boundary to catch it. Hooks
   // must run unconditionally on every render — only the JSX below may
   // branch, so this check moved down here, after every hook call above.
+  // (D-197 unwrapped the `useMemo`/`useCallback` this note names on `linkCheck`
+  // and the DnD handlers, so those specific ones are no longer hooks. Real
+  // hooks still sit above this line and more will be added, so these early
+  // returns must STAY here, below every hook call, regardless.)
   if (!timeline) return null;
 
   if (tracks.length === 0) {

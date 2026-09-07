@@ -54,7 +54,7 @@
  * MOVE (reposition) drag never touches box size and always preserves
  * whatever override already existed.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useContentBox } from '@chroma/player';
 
 import { findClip } from './timeline';
@@ -115,20 +115,29 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   const position = draft?.position ?? committedPosition;
   const scale = draft?.scale ?? committedScale;
 
-  const localPoint = useCallback(
-    (e: { clientX: number; clientY: number }) => {
-      const el = containerRef.current;
-      if (!el) return { x: 0, y: 0 };
-      const rect = el.getBoundingClientRect();
-      return screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
-    },
-    [containerRef, contentBox],
-  );
+  // D-197 — no `useCallback` here, nor on `commit` below, deliberately. The
+  // React Compiler (D-091) auto-memoizes this whole component, but only when it
+  // can *preserve* every piece of memoization already written by hand; these
+  // two made it bail out of `TransformOverlay` entirely ("Existing memoization
+  // could not be preserved" — one for a dependency it saw as mutated later, one
+  // for a value it does not need to memoize at all), which costs the component
+  // every bit of auto-memoization it would otherwise get. This is the
+  // highest-update-frequency surface in the Edit tab's preview (an on-canvas
+  // move/scale drag), so bailing out here is exactly the wrong trade. Leave
+  // these plain — the compiler memoizes them with dependencies it infers
+  // itself, which is also strictly safer than a hand-maintained array.
+  // `reactCompiler.test.ts` fails if a future edit reintroduces a bailout here.
+  const localPoint = (e: { clientX: number; clientY: number }) => {
+    const el = containerRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const rect = el.getBoundingClientRect();
+    return screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
+  };
 
-  const cancelDrag = useCallback(() => {
+  const cancelDrag = () => {
     dragRef.current = null;
     setDraft(null);
-  }, []);
+  };
 
   // Escape cancels the in-flight gesture (the note's own Phase 1 spec) —
   // listened for only while a drag is actually active.
@@ -141,35 +150,32 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [draft, cancelDrag]);
 
-  const commit = useCallback(
-    (next: { position: { x: number; y: number }; scale: number }, kind: 'move' | 'scale') => {
-      if (!primary || !clip || clipIndex < 0) return;
-      applyOp({
-        kind: 'set_clip_transform',
-        track: primary.track,
-        clip: clipIndex,
-        opacity: clip.opacity ?? 1,
-        position_x: next.position.x,
-        position_y: next.position.y,
-        scale: next.scale,
-        // D-193 — a corner (scale) drag stays Phase-1 uniform-only (see this
-        // module's own doc above): committing one always clears any
-        // independent `box_width`/`box_height` override back to `null`, so
-        // the box actually ends up the uniform size just dragged rather
-        // than silently keeping a stale, now-wrong override. A plain MOVE
-        // drag never resizes anything, so it preserves whatever override
-        // already existed untouched.
-        box_width: kind === 'scale' ? null : clip.box_width ?? null,
-        box_height: kind === 'scale' ? null : clip.box_height ?? null,
-        rotation: clip.rotation ?? 0,
-        crop_left: clip.crop_left ?? 0,
-        crop_top: clip.crop_top ?? 0,
-        crop_right: clip.crop_right ?? 0,
-        crop_bottom: clip.crop_bottom ?? 0,
-      });
-    },
-    [applyOp, primary, clip, clipIndex],
-  );
+  const commit = (next: { position: { x: number; y: number }; scale: number }, kind: 'move' | 'scale') => {
+    if (!primary || !clip || clipIndex < 0) return;
+    applyOp({
+      kind: 'set_clip_transform',
+      track: primary.track,
+      clip: clipIndex,
+      opacity: clip.opacity ?? 1,
+      position_x: next.position.x,
+      position_y: next.position.y,
+      scale: next.scale,
+      // D-193 — a corner (scale) drag stays Phase-1 uniform-only (see this
+      // module's own doc above): committing one always clears any
+      // independent `box_width`/`box_height` override back to `null`, so
+      // the box actually ends up the uniform size just dragged rather
+      // than silently keeping a stale, now-wrong override. A plain MOVE
+      // drag never resizes anything, so it preserves whatever override
+      // already existed untouched.
+      box_width: kind === 'scale' ? null : clip.box_width ?? null,
+      box_height: kind === 'scale' ? null : clip.box_height ?? null,
+      rotation: clip.rotation ?? 0,
+      crop_left: clip.crop_left ?? 0,
+      crop_top: clip.crop_top ?? 0,
+      crop_right: clip.crop_right ?? 0,
+      crop_bottom: clip.crop_bottom ?? 0,
+    });
+  };
 
   const handleBodyPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || trackLocked) return;

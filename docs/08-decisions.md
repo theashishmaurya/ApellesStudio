@@ -17681,3 +17681,75 @@ owner's. To confirm it directly next session: run `npm run tauri:dev`, edit
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+### Part 2 — React Compiler bailouts: delete the hand-written memoization the compiler can't preserve, and pin it with a test
+
+**Context.** `docs/notes/react-compiler-coverage.md` inventoried 55 unique
+bailouts across 45 files from real dev-server logs. A bailout is silent: the
+compiler logs a line, emits that file uncompiled, and the component quietly
+loses *all* auto-memoization. Two of the 45 are not low-stakes —
+`packages/editor/src/TimelinePane.tsx` and
+`packages/editor/src/TransformOverlay.tsx`, the two highest-update-frequency
+surfaces in the app (clip drag, trim, marquee, zoom, scrub; the on-canvas
+move/scale gesture) — and both bailed on *"Existing memoization could not be
+preserved."*
+
+**What the compiler actually objected to** (read out of its own diagnostics,
+not guessed — a small standalone reporter running the identical
+`reactCompilerPreset` `app/vite.config.mjs` uses, per file, printing the exact
+reason):
+
+- `TimelinePane`: **seven** hand-written arrays disagreed with the dependencies
+  the compiler inferred — `getActionRender` and `onClickAction` (`idxOf`,
+  `clipsOf`, `setSelection`, `setSelectedGap`), `onActionResizeEndCb` (`s2f`),
+  `linkCheck` (`idxOf`), `onDndDragMove` and `onDndDragEnd` (`dndBoundary`,
+  `inferNewTrackKind`, `trackIndexAfterMove`, `setSelection`). One disagreement
+  is enough to bail out the whole component.
+- `TransformOverlay`: `localPoint` (a dependency the compiler sees as mutated
+  later) and `commit` (*"memoized in source but not in compilation output"*).
+
+**Two things worth naming, because they change how this reads.** First, this is
+the *opposite* of what the hand-written arrays were for: B-024 added them
+specifically to stop `TimelinePane` re-rendering every clip on every drag tick,
+and by fighting the compiler they were causing exactly that outcome
+component-wide. Second, two of the seven were **memoizing nothing at all**:
+`onDndDragMove`/`onDndDragEnd` listed `idxOf`/`clipsOf` as dependencies, and
+those are plain arrows re-created on every render, so both callbacks already
+got a fresh identity on every render. Deleting them costs nothing and gains the
+whole component.
+
+**Options considered.**
+1. **Fix the dependency arrays to match what the compiler infers.** Rejected:
+   the inferred dependencies are things like `s2f`/`dndBoundary`/`idxOf` —
+   component-body arrows re-created every render — so listing them honestly
+   would make each memo recompute on every render anyway. It would satisfy the
+   compiler and memoize nothing.
+2. **Turn the offending helpers into `useCallback`s of their own so the arrays
+   become honest.** Rejected: that is more hand-written memoization to keep in
+   sync, in the file that just demonstrated how that goes wrong, for a result
+   the compiler produces for free and more accurately.
+3. **Delete the hand-written memoization and let the compiler do it — chosen.**
+   All seven in `TimelinePane` and both in `TransformOverlay` are now plain
+   functions. Both files verify as compiling with **zero** bailouts.
+   `getActionRender`'s `useCallback` went too: keeping it would have been
+   pointless, since the compiler memoizes it on inferred dependencies anyway
+   and its presence is what made the component ineligible in the first place.
+
+**The obvious risk, and what closes it.** "Trust the compiler" is only safe
+while the file actually compiles, and a bailout is silent — a future edit could
+reintroduce one and quietly undo B-024 all over again with nothing failing.
+So the guard is a real test: `packages/editor/src/reactCompiler.test.ts` runs
+the same preset over a whitelist of hot files and fails if any of them bails
+out. It was negative-tested (a `try {} finally {}` added to
+`TransformOverlay.cancelDrag` makes it fail; removing it makes it pass), not
+just written and assumed. `@babel/core` and `@vitejs/plugin-react` are declared
+as `devDependencies` of `@chroma/editor` for it — both already in the tree as
+`app`'s own build toolchain, test-only here, no new third-party code.
+
+**Verification.** `npm test --workspace @chroma/editor` 411/411 (was 409 — the
+2 new guard tests; every pre-existing test, including the real-DOM/real-
+PointerEvent `TimelinePane.marquee.dom.test.tsx` D-142 suite, unchanged and
+passing). `npx tsc --noEmit -p packages/editor` clean.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

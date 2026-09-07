@@ -69,8 +69,25 @@ the underlying issue or narrowing the disable to the smallest possible scope:
 **`Existing memoization could not be preserved` (3 files)** — the file already has
 manual `useMemo`/`useCallback` that conflicts with what the compiler would generate.
 Usually fixable by deleting the manual memoization and trusting the compiler:
-`app/src/hooks/useAppNavigation.ts`, `packages/editor/src/TimelinePane.tsx`,
-`packages/editor/src/TransformOverlay.tsx`.
+`app/src/hooks/useAppNavigation.ts`,
+~~`packages/editor/src/TimelinePane.tsx`~~ **FIXED (D-197)**,
+~~`packages/editor/src/TransformOverlay.tsx`~~ **FIXED (D-197)**.
+
+> **D-197, 2026-09-07 — the two hot files are fixed and now pinned by a test.**
+> `TimelinePane` had **seven** hand-written arrays disagreeing with the
+> compiler's inferred dependencies (`getActionRender`, `onClickAction`,
+> `onActionResizeEndCb`, `linkCheck`, `onDndDragMove`, `onDndDragEnd` —
+> inferring `idxOf`/`clipsOf`/`s2f`/`dndBoundary`/`inferNewTrackKind`/
+> `trackIndexAfterMove`/`setSelection`); `TransformOverlay` had two
+> (`localPoint`, `commit`). ONE disagreement bails the compiler out of the
+> whole component, so both files were getting zero auto-memoization while still
+> paying for the hand-written kind — the exact opposite of what B-024 added
+> those arrays for. Two of `TimelinePane`'s seven were memoizing nothing at all
+> anyway (they listed `idxOf`/`clipsOf`, plain arrows re-created every render).
+> All nine are plain functions now; both files compile with **zero** bailouts.
+> `packages/editor/src/reactCompiler.test.ts` runs the same preset
+> `app/vite.config.mjs` uses over a whitelist of hot files and fails if a bailout
+> comes back — negative-tested, not assumed. See D-197 Part 2.
 
 **`Support value blocks (conditional/logical/optional-chaining) within a try/catch`
 (5 files)** — a narrower variant of the try/finally issue above, same general fix
