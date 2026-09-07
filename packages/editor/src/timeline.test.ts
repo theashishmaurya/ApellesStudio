@@ -27,6 +27,7 @@ import {
   syncLinkedClipIdsAtPosition,
   timelineDuration,
   trackDuration,
+  trackIndexAfterMove,
   type Clip,
   type Timeline,
   type Track,
@@ -882,6 +883,82 @@ describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () =>
     const after = applyOp(before, { kind: 'move_track', from: 0, to: 1 });
     expect(after.tracks[0].kind).toBe('audio');
     expect(after.tracks[1]).toEqual({ kind: 'video', clips: [], locked: true });
+  });
+
+  // D-214 — roadmap item 24(e): a newly `add_track`ed track always lands at
+  // the highest index (bottom of the z-order stack), so getting it ABOVE
+  // existing footage needs a real `move_track` afterward. This is the
+  // reindexing-correctness coverage the fix promised: inserting a track
+  // above one that already has real content (keyframes, a fade, a non-zero
+  // `start_frame`) must move that content's Z-ORDER only — not touch a
+  // single field of it, and not off-by-one it onto the wrong track.
+  it('inserting a new track above an existing one (add_track + move_track) leaves that track\'s clip data byte-for-byte unchanged, only its index shifts', () => {
+    const existingClip = clip('footage', 'Footage', {
+      start_frame: 24,
+      duration: 150,
+      chroma_keyframes: [
+        { frame: 0, params: { opacity: 0, scale: 1 } },
+        { frame: 30, params: { opacity: 1, scale: 1.2 } },
+      ],
+      fade_in_frames: 12,
+      fade_out_frames: 8,
+      link_group: 'g1',
+    });
+    const before: Timeline = {
+      id: 't1',
+      name: 'Timeline',
+      tracks: [{ kind: 'video', clips: [existingClip], gain: 1 }],
+    };
+
+    // Exactly the sequence `editor_add_track` + `editor_move_track` (and the
+    // GUI's own drag-to-create-track path) run: append, then move the new
+    // (now highest-index) track down to 0.
+    const appended = applyOp(before, { kind: 'add_track', trackKind: 'video' });
+    expect(appended.tracks).toHaveLength(2);
+    const after = applyOp(appended, { kind: 'move_track', from: 1, to: 0 });
+
+    // The new empty track is now on top (index 0); the original content is
+    // pushed down to index 1 — z-order shifted, nothing else.
+    expect(after.tracks[0].clips).toEqual([]);
+    expect(after.tracks[1].clips).toEqual([existingClip]);
+    // Explicit field-by-field sanity beyond the structural `toEqual` above —
+    // the exact fields a data-corruption bug would most plausibly clobber.
+    const moved = after.tracks[1].clips[0];
+    expect(moved.start_frame).toBe(24);
+    expect(moved.duration).toBe(150);
+    expect(moved.chroma_keyframes).toEqual(existingClip.chroma_keyframes);
+    expect(moved.fade_in_frames).toBe(12);
+    expect(moved.fade_out_frames).toBe(8);
+    expect(moved.link_group).toBe('g1');
+  });
+
+  describe('trackIndexAfterMove (D-094, promoted D-214)', () => {
+    it('the moved track itself lands exactly at `to`', () => {
+      expect(trackIndexAfterMove(2, 2, 0)).toBe(0);
+      expect(trackIndexAfterMove(0, 0, 3)).toBe(3);
+    });
+
+    it('moving a track UP (from > to) shifts everything in [to, from) down by one', () => {
+      // splice(2,1) then insert(0,_): old 0,1 -> new 1,2; old 2 (moved) -> 0.
+      expect(trackIndexAfterMove(0, 2, 0)).toBe(1);
+      expect(trackIndexAfterMove(1, 2, 0)).toBe(2);
+      // Outside the [to, from) span — untouched.
+      expect(trackIndexAfterMove(3, 2, 0)).toBe(3);
+    });
+
+    it('moving a track DOWN (from < to) shifts everything in (from, to] up by one', () => {
+      // splice(0,1) then insert(2,_): old 1,2 -> new 0,1; old 0 (moved) -> 2.
+      expect(trackIndexAfterMove(1, 0, 2)).toBe(0);
+      expect(trackIndexAfterMove(2, 0, 2)).toBe(1);
+      // Before the span — untouched.
+      expect(trackIndexAfterMove(0, 1, 3)).toBe(0);
+    });
+
+    it('from === to is a real no-op for every index', () => {
+      expect(trackIndexAfterMove(0, 1, 1)).toBe(0);
+      expect(trackIndexAfterMove(1, 1, 1)).toBe(1);
+      expect(trackIndexAfterMove(5, 1, 1)).toBe(5);
+    });
   });
 });
 

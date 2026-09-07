@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **`editor_move_track` (roadmap 24(e), D-214):** closes the
+  "a new track always lands at the bottom of the z-order" gap found right
+  after text/title clips shipped — `editor_add_track` only ever appends, so a
+  title added to a project that already had footage had no MCP way to get
+  above it. Wraps `Timeline::move_track`, the same primitive
+  `TimelinePane.tsx`'s drag-to-reorder track headers already used (D-094) —
+  a pure MCP-exposure gap, not a missing primitive. Along the way, promoted
+  the GUI's local selection-follow math (`trackIndexAfterMove`) to a shared
+  `timeline.ts` helper so the new MCP op keeps a human's live clip selection
+  correct after an agent-driven reorder, the same way the GUI's own drag
+  already does.
 - **2026-09-08** — **Text/title clips in the Edit tab** (roadmap 24,
   D-211/D-212/D-213): `Clip::text` as a real clip variant on an ordinary video
   track (so placement/trim/split/keyframes/fades are all the existing ops), an

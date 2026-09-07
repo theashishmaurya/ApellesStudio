@@ -19017,3 +19017,87 @@ compiles to a byte-identical argv to before D-211.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-214 — `editor_move_track`: a dedicated reorder op, not an `add_track` insertion index
+
+**Context.** Roadmap item 24(e), found live 2026-09-08 right after text/title
+clips (D-211) shipped: `editor_add_track` only ever appends at the highest
+index — which, because track index order **is** compositing z-order, lower
+index paints on top (D-086) — means a freshly-added track is always the
+BOTTOMMOST layer. Confirmed live at the time: a title added to a new track
+rendered fully occluded behind existing footage. The tool's own docstring
+said "put the title on a LOWER track index than the footage", which is only
+achievable when building a timeline from empty, not when adding to a project
+that already has content on track 0 — the normal real-world case.
+
+**Two shapes, per the roadmap entry's own framing:**
+
+1. Give `editor_add_track` an optional `at_index`, shifting every later
+   track down by one. Investigated the real cost rather than assuming it
+   away: `timelineStore.ts`'s `selection: [{track, id}]` (and `selectedGap:
+   {track, frame}`) hold raw track indices across renders, so an insertion
+   that shifts every later index would silently point a live selection at
+   the wrong track unless every insertion call site also remapped it — the
+   same class of bug D-094's track-reorder drag already had to solve for
+   `move_track`.
+2. A dedicated `move_track(from, to)` op.
+
+**Chosen: 2 — and it turned out to already be almost entirely built.**
+Reading `crates/chroma-timeline/src/lib.rs` and `packages/editor/src/
+timeline.ts` first (rather than guessing the fix shape) found
+`Timeline::move_track` / `EditOp::'move_track'` already existed, fully
+modeled and unit-tested on BOTH sides: `TimelinePane.tsx`'s track-header rows
+already have a real drag-to-reorder handle (`GripVertical`, D-094) wired to
+it, and the Sources-panel's own "drag a clip past the last track to create a
+new one" gesture already runs `add_track` (always appends) followed by
+`move_track` to relocate the new track to wherever the drop landed — the
+EXACT sequence this roadmap item needed, just never reachable from MCP. So
+this was a pure exposure gap, not a missing primitive. Building option 1
+instead would have meant inventing a SECOND way to reorder tracks (an
+implicit shift-on-insert) alongside the one the GUI already ships, for no
+real benefit — the reason to pick the primitive that already existed rather
+than a new one that reimplements it.
+
+**The one real gap found and closed.** `timelineStore.ts::applyOp`'s own
+generic selection remap (the block that resolves a clip's new track by its
+stable id after a mutation) only fires when the track list SHRINKS
+(`remove_track`, possibly pruning an emptied track) — `move_track` reorders
+WITHOUT changing the list's length, so that generic path never runs for it.
+`TimelinePane.tsx`'s `doMoveTrack` already knew this and did its own
+selection-follow math locally (a `trackIndexAfterMove` closure). Promoted
+that function to a shared, exported, doc-commented helper in `timeline.ts`
+(`TimelinePane.tsx` now imports it instead of keeping its own copy) so the
+new `useEditorControl.ts` `editor_move_track` handler performs the IDENTICAL
+remap — without it, an agent reordering tracks under a human's open GUI
+session would silently leave their on-screen clip selection pointing at the
+wrong track after the reorder.
+
+**Both interfaces** (CLAUDE.md's human-AND-AI rule). The GUI's own
+drag-to-reorder already existed pre-D-214 (D-094); this pass's GUI-side
+change was purely the dedup described above, no behaviour change. The new
+surface is `editor_move_track(from_index, to_index)` in `mcp/server.py`,
+wired through a new `useEditorControl.ts` `OPS` entry — bounds-checked (an
+out-of-range index comes back as a clear tool error, not the raw `EditOp`'s
+silent no-op) and documented with the exact "add then move" recipe an agent
+needs; `editor_add_track`'s own docstring and `editor_add_text_clip`'s now
+both point at it instead of the old (only-true-from-empty) "use a lower
+track index" advice.
+
+**Verified.** `timeline.test.ts`: a reindexing-correctness test builds a
+clip with keyframes, a fade, a `link_group` and a non-zero `start_frame`,
+runs it through the real `add_track` + `move_track` sequence, and asserts
+every field unchanged — only the clip's track index (hence z-order) moves;
+plus direct `trackIndexAfterMove` coverage (the moved index lands exactly at
+`to`, up/down shifts of everything between the two endpoints, `from ===
+to`). Full `@chroma/editor` suite: 691/691 passing, including the React
+Compiler bailout check on the now-edited `TimelinePane.tsx`. `tsc --noEmit`
+on `packages/editor`: zero errors. No Rust touched — `Timeline::move_track`
+was already shipped and unit-tested there — so no Rust build was needed.
+**No live GUI/Tauri run**, for the same reason D-211/D-208 already document:
+this worktree has no `app/node_modules` and no `target/` of its own, and
+between the single-instance lock and the shared checkout's own running dev
+server, neither a from-scratch build nor reusing the main checkout's live
+app (which would mean testing this worktree's unmerged code against
+someone else's already-open real project) was a safe option. The unit tests
+above exercise the identical `applyOp` / `Timeline::move_track` code path
+the shipped GUI drag and the live preview already use.

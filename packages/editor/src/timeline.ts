@@ -1669,6 +1669,28 @@ function clamp01(v: number): number {
   return Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0;
 }
 
+/** Where index `idx` lands after `move_track(from, to)` reorders the track
+ *  list (`Vec::remove(from)` then `insert(to, _)`, exactly what the `'move_
+ *  track'` case below does) — the shared selection-follow math D-094's
+ *  track-reorder drag introduced (`TimelinePane.tsx`'s original local
+ *  `trackIndexAfterMove`) and D-214 promoted here so `useEditorControl.ts`'s
+ *  `editor_move_track` MCP op can reuse it verbatim instead of re-deriving
+ *  it. Needed because `move_track` reorders WITHOUT changing the track
+ *  list's length, so `timelineStore.ts::applyOp`'s own generic selection
+ *  remap — gated on the list SHRINKING (see `pruneIfEmptyTrack`'s doc) —
+ *  never fires for it; every `move_track` call site is responsible for
+ *  calling this itself.
+ *
+ *  `idx === from` moves to `to` outright; anything strictly between the two
+ *  endpoints shifts by one to close/open the gap `splice` leaves behind;
+ *  everything else (outside the `[from, to]` span, or when `from === to`)
+ *  is untouched. */
+export function trackIndexAfterMove(idx: number, from: number, to: number): number {
+  if (idx === from) return to;
+  if (from < to) return idx > from && idx <= to ? idx - 1 : idx;
+  return idx >= to && idx < from ? idx + 1 : idx;
+}
+
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // B-077 — the project's own timeline-frame rate, needed by every op below
   // that combines a `start_frame`-space position with a `duration`/

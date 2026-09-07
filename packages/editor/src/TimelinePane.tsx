@@ -297,6 +297,7 @@ import {
   syncLinkedClipIds,
   syncLinkedClipIdsAtPosition,
   timelineFps,
+  trackIndexAfterMove,
   videoTrackIndex,
   type Clip,
   type DraggedMedia,
@@ -2259,12 +2260,11 @@ export function TimelinePane() {
   // the selection-follow math generically here (rather than the old
   // two-branch swap) keeps it correct for both: an adjacent `to` reduces to
   // exactly the old swap.
-  const trackIndexAfterMove = (idx: number, from: number, to: number): number => {
-    if (idx === from) return to;
-    if (from < to) return idx > from && idx <= to ? idx - 1 : idx;
-    return idx >= to && idx < from ? idx + 1 : idx;
-  };
-
+  //
+  // D-214 promoted this to `timeline.ts`'s own exported `trackIndexAfterMove`
+  // so `useEditorControl.ts`'s `editor_move_track` MCP op (the same
+  // `move_track` primitive, driven by an agent instead of a drag) does the
+  // identical selection-follow rather than re-deriving it — imported above.
   const doMoveTrack = (from: number, to: number) => {
     if (from < 0 || from >= tracks.length || to < 0 || to >= tracks.length || from === to) return;
     applyOp({ kind: 'move_track', from, to });

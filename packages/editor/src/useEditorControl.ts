@@ -59,6 +59,7 @@ import {
   newTextClipFields,
   newTextLayer,
   timelineFps,
+  trackIndexAfterMove,
   type FadeCurve,
   type Clip,
   type NewClipFields,
@@ -720,6 +721,39 @@ export function useEditorControl(): void {
         useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind });
         const tl = useEditorTimelineStore.getState().timeline;
         return { ok: true, track: (tl?.tracks.length ?? 1) - 1 };
+      },
+      // D-214 — `editor_add_track` only ever APPENDS (roadmap item 24(e)),
+      // which lands a newly-added track at the HIGHEST index — the BOTTOM of
+      // the z-order stack (D-086: lower track index paints on top). Getting a
+      // new track compositing above existing footage needs a second, real
+      // move — this wraps the SAME `move_track` primitive `TimelinePane.tsx`'s
+      // drag-to-reorder header rows already use, so an agent gets exactly the
+      // human GUI's reorder, not a second implementation. Bounds-checked
+      // up front (unlike the raw `EditOp`, which silently no-ops out of
+      // range) so a bad index comes back as a clear tool error instead of a
+      // quiet non-edit.
+      editor_move_track: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const from = Math.round(Number(a?.from));
+        const to = Math.round(Number(a?.to));
+        if (!Number.isFinite(from) || from < 0 || from >= tl.tracks.length) {
+          return { error: `no track at from=${a?.from} (timeline has ${tl.tracks.length} track(s))` };
+        }
+        if (!Number.isFinite(to) || to < 0 || to >= tl.tracks.length) {
+          return { error: `no track at to=${a?.to} (timeline has ${tl.tracks.length} track(s))` };
+        }
+        useEditorTimelineStore.getState().applyOp({ kind: 'move_track', from, to });
+        // Selection-follow (same math as `TimelinePane.tsx`'s `doMoveTrack`,
+        // `trackIndexAfterMove` in `./timeline`): `move_track` reorders the
+        // list WITHOUT changing its length, so `timelineStore.ts::applyOp`'s
+        // own generic remap — gated on the list SHRINKING — never fires here.
+        // Without this, a human's on-screen clip selection would silently
+        // point at the wrong track the moment an agent reorders tracks under
+        // it. `selectedGap` is left as-is, matching `doMoveTrack` itself —
+        // a gap selection has no stable identity to follow either way.
+        useEditorTimelineStore.getState().setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, from, to) })));
+        return { ok: true, from, to };
       },
 
       // ---- compositing transform + keyframes (D-182's stacking + zoom) ----
