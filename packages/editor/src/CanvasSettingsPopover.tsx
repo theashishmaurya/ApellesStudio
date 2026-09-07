@@ -23,10 +23,11 @@
  * toolbar, next to the Inspector toggle.
  *
  * **Live update, no page reload.** Saving calls `chroma_project_set_settings`
- * directly and bumps `onSaved()` — `PreviewPane.tsx` passes a state setter
- * that changes `useCompositionSize`'s `extraDep`, so the boundary overlay
- * (and any future consumer of that hook) re-fetches immediately rather than
- * waiting for the next unrelated timeline edit.
+ * directly. That Rust command itself broadcasts a `chroma://project-settings-
+ * changed` Tauri event on every successful write (B-086), which
+ * `useCompositionSize` listens for directly — so the boundary overlay (and
+ * any future consumer of that hook) re-fetches immediately, with no callback
+ * needed from this component to make it happen.
  */
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -47,7 +48,7 @@ interface ProjectSettingsWH {
   height?: number | null;
 }
 
-export function CanvasSettingsPopover({ onSaved }: { onSaved: () => void }) {
+export function CanvasSettingsPopover() {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [width, setWidth] = useState('');
@@ -94,7 +95,6 @@ export function CanvasSettingsPopover({ onSaved }: { onSaved: () => void }) {
     // neither block returns). `reactCompiler.test.ts` enforces this.
     try {
       await invoke('chroma_project_set_settings', { path: null, partial });
-      onSaved();
       setOpen(false);
     } catch (e) {
       setError(String(e));

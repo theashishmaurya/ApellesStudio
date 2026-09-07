@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use base64::Engine as _;
 use serde::Serialize;
 use serde_json::Value;
+use tauri::Emitter;
 
 use crate::app_state::AppState;
 
@@ -595,10 +596,21 @@ pub async fn chroma_project_relink(
 /// applied, an explicit `null` clears that field (→ clip-derived again), an
 /// **absent** key is left as-is. `color_space` is stored + surfaced only — a
 /// colour-managed pipeline is D-004, not this.
+///
+/// B-086: emits `chroma://project-settings-changed` (the merged
+/// [`ProjectSettings`] as payload) on every successful write, regardless of
+/// caller — `CanvasSettingsPopover.tsx`'s own "Apply" handler used to be the
+/// only path that told `useCompositionSize` to refetch (via a hand-bumped
+/// `refreshToken`), so a write from anywhere else (the `set_project_settings`
+/// MCP tool, any future caller) left `CanvasBoundary`'s displayed composition
+/// size stale until an unrelated timeline edit happened to refresh it. A
+/// broadcast closes the gap for every caller at once instead of relying on
+/// each one to remember a token.
 #[tauri::command]
 pub fn chroma_project_set_settings(
     path: Option<String>,
     partial: Value,
+    app_handle: tauri::AppHandle,
 ) -> Result<ProjectSettings, String> {
     let dir = path
         .map(PathBuf::from)
@@ -608,6 +620,7 @@ pub fn chroma_project_set_settings(
     manifest.settings.merge_patch(&partial);
     manifest.modified = now_rfc3339();
     save_manifest(&dir, &manifest)?;
+    let _ = app_handle.emit("chroma://project-settings-changed", &manifest.settings);
     Ok(manifest.settings)
 }
 

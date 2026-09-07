@@ -150,8 +150,46 @@ const STUB_FRAME =
  *  trips into the boundary overlay resizing. */
 const harnessSettings: { width: number | null; height: number | null } = { width: 1920, height: 1080 };
 
+/** B-086 — a minimal in-page stand-in for Tauri's real event-plugin IPC, just
+ *  enough for `@tauri-apps/api/event`'s `listen`/`emit` to work inside this
+ *  browser-only harness: a `transformCallback` registry (the mechanism
+ *  `listen()` uses to hand its handler a numeric id the "backend" can call
+ *  back into) plus the `plugin:event|listen`/`unlisten`/`emit` invoke commands
+ *  those functions themselves call. Needed because `useCompositionSize`
+ *  (B-086) now listens for the real `chroma://project-settings-changed`
+ *  broadcast directly instead of `PreviewPane` threading a hand-bumped token
+ *  through `CanvasSettingsPopover`'s `onSaved` — without this, the harness
+ *  could no longer prove the `CanvasSettingsPopover` -> `CanvasBoundary`
+ *  round trip live, as `docs/notes/preview-canvas-boundary.md` documents doing.
+ *  Deliberately NOT a general `window.__TAURI_INTERNALS__` reimplementation
+ *  (this file's own module doc explains why that's out of scope, D-095) —
+ *  just the one mechanism this fix now needs. */
+let nextCallbackId = 1;
+const eventCallbacks = new Map<number, (payload: unknown) => void>();
+const eventListenerIds = new Map<string, Set<number>>();
+
+function emitHarnessEvent(event: string, payload: unknown): void {
+  for (const id of eventListenerIds.get(event) ?? []) {
+    eventCallbacks.get(id)?.({ event, id, payload });
+  }
+}
+
 function installInvokeStub(): void {
   const handlers: Record<string, (args: unknown) => unknown> = {
+    'plugin:event|listen': (args) => {
+      const { event, handler } = args as { event: string; handler: number };
+      if (!eventListenerIds.has(event)) eventListenerIds.set(event, new Set());
+      eventListenerIds.get(event)!.add(handler);
+      return handler;
+    },
+    'plugin:event|unlisten': (args) => {
+      const { event, eventId } = args as { event: string; eventId: number };
+      eventListenerIds.get(event)?.delete(eventId);
+    },
+    'plugin:event|emit': (args) => {
+      const { event, payload } = args as { event: string; payload: unknown };
+      emitHarnessEvent(event, payload);
+    },
     chroma_clip_thumbnails: () => [],
     chroma_audio_waveform: () => [],
     chroma_timeline_get: () => {
@@ -209,6 +247,11 @@ function installInvokeStub(): void {
       const patch = (args as { partial?: { width?: number | null; height?: number | null } })?.partial ?? {};
       if ('width' in patch) harnessSettings.width = patch.width ?? null;
       if ('height' in patch) harnessSettings.height = patch.height ?? null;
+      // B-086 — the real `chroma_project_set_settings` command broadcasts
+      // this event on every successful write; mirrored here so the harness
+      // keeps proving `useCompositionSize`'s own refetch-on-broadcast path,
+      // not just the direct invoke-stub round trip.
+      emitHarnessEvent('chroma://project-settings-changed', { ...harnessSettings });
       return { ...harnessSettings };
     },
     chroma_audio_play: () => undefined,
@@ -223,7 +266,14 @@ function installInvokeStub(): void {
     chroma_run_ffmpeg: () => ({ ok: true, stdout_tail: '', stderr_tail: '' }),
     'plugin:dialog|save': () => '/tmp/harness-export.mp4',
   };
-  (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
+  (
+    window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke: (cmd: string, args?: unknown) => Promise<unknown>;
+        transformCallback: (callback: (payload: unknown) => void, once?: boolean) => number;
+      };
+    }
+  ).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: unknown) => {
       const h = handlers[cmd];
       if (!h) {
@@ -232,6 +282,14 @@ function installInvokeStub(): void {
         throw new Error(msg);
       }
       return h(args);
+    },
+    // B-086 — backs `@tauri-apps/api/event`'s `transformCallback`, the
+    // mechanism `listen()` uses to hand its handler a numeric id the
+    // `plugin:event|listen` stub above registers against `eventListenerIds`.
+    transformCallback: (callback) => {
+      const id = nextCallbackId++;
+      eventCallbacks.set(id, callback);
+      return id;
     },
   };
 }

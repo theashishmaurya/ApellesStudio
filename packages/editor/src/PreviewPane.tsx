@@ -58,10 +58,10 @@
  * `docs/notes/preview-canvas-boundary.md`): `<CanvasBoundary>` is a THIRD
  * sibling in that same stack — always drawn (selection-independent, unlike
  * `TransformOverlay`), under it in z-order. `<CanvasSettingsPopover>` sits in
- * the toolbar next to the Inspector toggle; `compSizeVersion` is bumped on a
- * successful save so `useCompositionSize` refetches immediately rather than
- * waiting for an unrelated timeline edit (that hook is keyed on `timeline`'s
- * identity, which a settings write never touches).
+ * the toolbar next to the Inspector toggle. `useCompositionSize` refetches
+ * itself on the backend's own `chroma://project-settings-changed` broadcast
+ * (B-086) — this file no longer needs to plumb a refresh token through
+ * `CanvasSettingsPopover`'s `onSaved` for that; see that hook's own doc.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -169,10 +169,10 @@ export function PreviewPane() {
 
   // D-199 — the canvas/composition boundary overlay's size, selection-
   // independent (unlike `TransformOverlay`'s per-clip `useClipGeometry`).
-  // `compSizeVersion` forces a refetch right after a `CanvasSettingsPopover`
-  // save, which changes `ProjectSettings` without touching `timeline` at all.
-  const [compSizeVersion, setCompSizeVersion] = useState(0);
-  const compSize = useCompositionSize(!!timeline, compSizeVersion);
+  // Refetches itself on a `CanvasSettingsPopover` save via the backend's own
+  // `chroma://project-settings-changed` broadcast (B-086) — see that hook's
+  // own doc.
+  const compSize = useCompositionSize(!!timeline);
 
   // D-201 — two shapes here exist for the React Compiler's sake, both exactly
   // equivalent to what they replaced (see
@@ -362,7 +362,7 @@ export function PreviewPane() {
           `EditorTab.tsx`'s Inspector toggle uses against ITS `relative`
           wrapper one level up. Rendered here (not `EditorTab.tsx`) because
           only this component owns `compSizeVersion`/`useCompositionSize`. */}
-      <CanvasSettingsPopover onSaved={() => setCompSizeVersion((v) => v + 1)} />
+      <CanvasSettingsPopover />
       <Player
         title="Timeline"
         muted={muted}

@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-086** (`CanvasBoundary`'s displayed composition
+  size went stale after a `set_project_settings` write from anywhere other
+  than `CanvasSettingsPopover`'s own "Apply" — e.g. the MCP tool): the Rust
+  `chroma_project_set_settings` command now broadcasts a
+  `chroma://project-settings-changed` Tauri event on every successful write,
+  and `useCompositionSize` listens for it directly instead of depending on
+  each caller to hand-bump a refresh token — closes the gap for the MCP tool
+  and any future caller, not just this one symptom. Live-verified in the
+  `app/harness.html?mode=preview` browser harness.
 - **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
   intermittently fails outright for a large-but-not-huge payload, instead
   of the graceful size-limit truncation the same size class usually gets —
