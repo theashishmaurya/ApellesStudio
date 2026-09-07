@@ -18,14 +18,30 @@
  * spawning ffmpeg (a small generic Rust `chroma_run_ffmpeg` command, built
  * in a parallel effort).
  *
- * **v1 scope, deliberately**: VIDEO tracks/clips only — audio tracks/clips
- * (gain, ducking, fades) are out of scope this pass, a documented follow-up
- * rather than an oversight, since this pass's own concrete use case
- * (a stacked before/after screen-recording comparison reel) has no
- * multi-track audio mixing need yet.
+ * **D-197 closed the "v1 scope: video-only" gap this doc used to describe.**
+ * Every visible `Track.kind === 'audio'` clip, PLUS a video clip's own
+ * embedded audio (when its source is known to have one and it isn't A/V-
+ * linked to a separate audio clip, D-129), is now mixed into a real second
+ * output stream — gain (D-057), ducking (D-149) and fades (D-147), each
+ * replicating the exact semantics `app/src-tauri/src/chroma/audio.rs`'s live
+ * playback mixer already implements, not a re-invented interpretation. See
+ * `timelineExportAudio.ts` for the actual per-source math (fade-curve
+ * sampling, the one-pole duck envelope) and D-197 in `docs/08-decisions.md`
+ * for the full design (why sampling, not a closed-form bezier; why `amix`
+ * `normalize=0` + `asoftclip=type=tanh` instead of ffmpeg's default
+ * per-input attenuation).
  */
 
 import type { Clip, Timeline } from './timeline';
+import { DEFAULT_FADE_CURVE, endFrame } from './timeline';
+import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
+import {
+  audioRefBracket,
+  audioRefMapArg,
+  buildAudioSourceChain,
+  resolveDuckForTrack,
+  type AudioRef,
+} from './timelineExportAudio';
 
 // --------------------------------------------------------------------------- //
 // keyframeExprAt — piecewise-linear ffmpeg expression generator
@@ -56,6 +72,12 @@ export interface ExportKeyframe {
  * `keyframes` is never mutated — a sorted copy is used internally, since
  * keyframes are not guaranteed to arrive in frame order (mirrors every other
  * keyframe reader in this codebase, e.g. `chroma-timeline`'s own parser).
+ *
+ * D-197 — the actual nested-`if`/`between` construction now lives in
+ * `ffmpegExpr.ts`'s `piecewiseLinearExpr`, extracted verbatim (byte-identical
+ * output, see that module's own doc) once a second, unrelated caller
+ * (`timelineExportAudio.ts`'s sampled fade-curve expression) needed the exact
+ * same piecewise-linear-over-points construction.
  */
 export function keyframeExprAt(
   keyframes: ExportKeyframe[],
@@ -63,29 +85,13 @@ export function keyframeExprAt(
   staticValue: number,
   fps: number,
 ): string {
-  const points = keyframes
+  const points: ExprPoint[] = keyframes
     .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
     .map((k) => ({ t: k.frame / fps, value: Number(k.params[param]) }))
     .sort((a, b) => a.t - b.t);
 
   if (points.length === 0) return String(staticValue);
-  if (points.length === 1) return String(points[0].value);
-
-  // Build the nested if()/else chain from the LAST segment inward, so the
-  // innermost final "else" is the after-last-keyframe hold and each
-  // outer if() wraps the one built so far — same structure as ffmpeg's own
-  // documented if(cond,then,else) nesting for a piecewise function.
-  let expr = String(points[points.length - 1].value);
-  for (let i = points.length - 2; i >= 0; i--) {
-    const { t: t0, value: y0 } = points[i];
-    const { t: t1, value: y1 } = points[i + 1];
-    const slopeTerm = `${y0}+(${y1}-${y0})*(t-${t0})/(${t1}-${t0})`;
-    expr = `if(between(t,${t0},${t1}),${slopeTerm},${expr})`;
-  }
-  // Before the first keyframe: hold at its value (no backward extrapolation).
-  const firstT = points[0].t;
-  expr = `if(lt(t,${firstT}),${points[0].value},${expr})`;
-  return expr;
+  return piecewiseLinearExpr(points, 't');
 }
 
 // --------------------------------------------------------------------------- //
@@ -140,6 +146,30 @@ export interface TimelineExportOptions {
    *  model change). A clip already at (or past) the overall total runtime is
    *  simply unaffected — no negative-duration padding is ever added. */
   freezeOverrides?: Record<string, boolean>;
+  /** D-197 — which clips' sources are known to carry a real decodeable
+   *  audio stream, keyed by `Clip.id`. This module is pure (no store/I-O
+   *  access, per its own header doc) and so cannot probe a source itself —
+   *  the caller (`editorExport.ts`'s `compileEditorExportArgs`) resolves
+   *  this from the media pool's own probed `MediaVideoInfo.hasAudio`
+   *  (D-129) and passes it down, the same "the compiler stays pure, the
+   *  caller supplies what only it can know" split `speedOverrides`/
+   *  `fitOverrides`/`freezeOverrides` already established.
+   *
+   *  Absent/unset for a clip resolves conservatively: `false` (no embedded
+   *  audio contributed) for a `kind === 'video'` clip — the same "don't
+   *  invent a signal" reading `linkedClipsFromDraggedMedia`'s own
+   *  `hasAudio` doc already gives an unprobed source — and `true` for a
+   *  `kind === 'audio'` clip, since a clip placed deliberately on a real
+   *  audio track is assumed to carry real audio unless POSITIVELY known
+   *  otherwise. Referencing a non-existent audio stream inside ffmpeg's
+   *  `-filter_complex` is a hard failure (unlike a top-level `-map`, a
+   *  filtergraph stream reference has no "optional" form), so getting this
+   *  wrong in the "assume audio" direction breaks the whole export — the
+   *  asymmetric defaults above are chosen to fail closed on the case that
+   *  actually risks that (an unprobed VIDEO source, which is very often
+   *  genuinely silent screen-recording footage), not out of an arbitrary
+   *  preference. */
+  hasAudioOverrides?: Record<string, boolean>;
 }
 
 interface ClipChain {
@@ -272,9 +302,16 @@ function positionExpr(clip: Clip, param: 'position_x' | 'position_y', fps: numbe
  * Compile `timeline` into a single ffmpeg argv array rendering `outPath` at
  * `opts.fps`/`opts.width`/`opts.height`.
  *
- * v1 scope: VIDEO tracks only, visible (`!track.hidden`) clips only. Audio
- * tracks/clips are not read at all this pass (see this module's own header
- * doc) — a silent export, with audio mixing a documented follow-up.
+ * Picture: VIDEO tracks only, visible (`!track.hidden`) clips only — the
+ * original v1 scope, unchanged.
+ *
+ * Sound (D-197): every visible video-track clip's own embedded audio (unless
+ * A/V-linked, D-129, or `opts.hasAudioOverrides` says its source has none)
+ * PLUS every `kind === 'audio'` track's clips (hidden or not — `hidden` is a
+ * picture-only concept, matching `resolve_audio_track_positions`'s own real
+ * behavior, replicated here rather than reinvented) are mixed down to one
+ * `-map`ped audio stream — see `timelineExportAudio.ts` for the actual
+ * gain/fade/duck math.
  *
  * Compositing order mirrors `chroma_timeline::edit::composite_video_frame`'s
  * own documented paint contract (`edit.rs`): **track index 0 is the highest
@@ -310,10 +347,14 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     startSec: number;
     endSec: number;
     clipFps: number;
+    /** D-197 — which VIDEO track this clip is on, needed only for embedded-
+     *  audio ducking (`resolveDuckForTrack` looks up `duck_from` on THIS
+     *  track, not the clip). */
+    trackIndex: number;
   }
   const pending: PendingClip[] = [];
 
-  for (const { track } of paintOrder) {
+  for (const { track, index: trackIndex } of paintOrder) {
     for (const clip of track.clips) {
       const speed = opts.speedOverrides?.[clip.id] ?? 1;
       // B-075 — `source_start`/`duration` (and a keyframe's `frame`) are
@@ -349,7 +390,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // remainder of its original window.
       const startSec = clip.start_frame / opts.fps;
       const endSec = startSec + clip.duration / speed / clipFps;
-      pending.push({ clip, inputIdx, label: `v${inputIdx}`, startSec, endSec, clipFps });
+      pending.push({ clip, inputIdx, label: `v${inputIdx}`, startSec, endSec, clipFps, trackIndex });
 
       inputIdx++;
     }
@@ -359,7 +400,29 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // export will actually run (see the final `-t` below) — computed here,
   // BEFORE any freeze padding, since a frozen clip's own padding target IS
   // this number, not the other way around.
-  const totalDurationSec = pending.reduce((max, p) => Math.max(max, p.endSec), 0);
+  //
+  // D-197 — this MUST also account for genuine audio-track clips, not just
+  // video's own `pending`: a timeline with audio tracks but NO video track
+  // at all (or one where an audio-track clip runs past every video clip's
+  // own end) previously computed `totalDurationSec = 0` here (an empty
+  // `pending`), which then capped the WHOLE output — video AND audio — at
+  // `-t 0`: a real, silently-broken zero-length export with "Output file
+  // does not contain any stream", caught by this pass's own real-ffmpeg
+  // tests. Counted unconditionally (even a clip `hasAudioOverrides` will
+  // later exclude from the actual mix still occupies real timeline space
+  // and must not truncate the export it's sitting on).
+  const audioTrackEndSecs = timeline.tracks
+    .filter((t) => t.kind === 'audio')
+    .flatMap((t) => t.clips)
+    .map((c) => {
+      const speed = opts.speedOverrides?.[c.id] ?? 1;
+      const clipFps = c.source_fps ?? opts.fps;
+      return c.start_frame / opts.fps + c.duration / speed / clipFps;
+    });
+  const totalDurationSec = [...pending.map((p) => p.endSec), ...audioTrackEndSecs].reduce(
+    (max, end) => Math.max(max, end),
+    0,
+  );
 
   // Pass 2 — real filter chains, now that `totalDurationSec` is known.
   for (const p of pending) {
@@ -427,16 +490,110 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // this number, never past it, so re-deriving it from `chains` here would
   // just recompute the identical value.)
 
-  return [
+  // --------------------------------------------------------------------- //
+  // D-197 — audio: embedded video-clip audio + every audio-track clip,
+  // mixed down to at most one `-map`ped stream. See `timelineExportAudio.ts`
+  // for the actual per-source math; this is purely the walk + assembly.
+  // --------------------------------------------------------------------- //
+  const audioRefs: AudioRef[] = [];
+  let audioLabelSeq = 0;
+  const duckCache = new Map<number, ReturnType<typeof resolveDuckForTrack>>();
+  const duckForTrack = (idx: number) => {
+    if (!duckCache.has(idx)) duckCache.set(idx, resolveDuckForTrack(timeline, idx, opts.fps));
+    return duckCache.get(idx) ?? null;
+  };
+
+  // Embedded video-clip audio — reuses each clip's ALREADY-OPENED `-ss`/`-t`
+  // input (no second `-i` for the same file/window), skips a clip whose
+  // audio has been externalized to a linked clip (D-129) or whose source
+  // isn't known to have audio at all (`hasAudioOverrides`, conservative
+  // default `false` for a video clip — see that option's own doc). Its own
+  // NATURAL end (`p.endSec`, pre-freeze) bounds it — freezing a clip's last
+  // VIDEO frame has no audio analog, so a frozen clip's audio simply ends on
+  // time rather than looping or holding silence past it.
+  for (const p of pending) {
+    if (p.clip.link_group) continue;
+    if (!(opts.hasAudioOverrides?.[p.clip.id] ?? false)) continue;
+    const speed = opts.speedOverrides?.[p.clip.id] ?? 1;
+    const { steps, ref } = buildAudioSourceChain({
+      srcRef: `[${p.inputIdx}:a]`,
+      clip: p.clip,
+      clipFps: p.clipFps,
+      gain: 1, // D-057: a video track's own embedded audio stays hardcoded at unity
+      speed,
+      startSec: p.startSec,
+      duck: duckForTrack(p.trackIndex),
+      idLabel: `au${audioLabelSeq++}`,
+    });
+    filterSteps.push(...steps);
+    audioRefs.push(ref);
+  }
+
+  // Genuine audio-track clips — each gets its own dedicated `-i` (continuing
+  // the SAME `inputIdx` counter Pass 1 used, so every input index in the
+  // final argv stays unique and in argv order). NOT filtered by `track.
+  // hidden` — `resolve_audio_track_positions` (the live mixer's real
+  // behavior) never checks it either; `hidden` is a picture-only concept.
+  for (const track of timeline.tracks) {
+    if (track.kind !== 'audio') continue;
+    const trackIndex = timeline.tracks.indexOf(track);
+    for (const clip of track.clips) {
+      if (!(opts.hasAudioOverrides?.[clip.id] ?? true)) continue;
+      const clipFps = clip.source_fps ?? opts.fps;
+      inputs.push(
+        '-ss',
+        String(clip.source_start / clipFps),
+        '-t',
+        String(clip.duration / clipFps),
+        '-i',
+        clip.source_path,
+      );
+      const thisInputIdx = inputIdx++;
+      const speed = opts.speedOverrides?.[clip.id] ?? 1;
+      const startSec = clip.start_frame / opts.fps;
+      const { steps, ref } = buildAudioSourceChain({
+        srcRef: `[${thisInputIdx}:a]`,
+        clip,
+        clipFps,
+        gain: track.gain ?? 1,
+        speed,
+        startSec,
+        duck: duckForTrack(trackIndex),
+        idLabel: `au${audioLabelSeq++}`,
+      });
+      filterSteps.push(...steps);
+      audioRefs.push(ref);
+    }
+  }
+
+  // Final mix. Exactly one total audio-contributing clip bypasses `amix`/
+  // `asoftclip` entirely — mirrors `chroma_media::audio::mix_sources`'s own
+  // documented single-active-source bypass (Phase C, D-057), which is what
+  // keeps the overwhelmingly common "just this one clip's own audio, no
+  // separate tracks" case byte-simple. Two or more sum with `normalize=0`
+  // (ffmpeg's own default divides by input count, which is NOT what a real
+  // mixer does just because more tracks exist) then `asoftclip=type=tanh` —
+  // the same "sum, then a soft saturating limiter" topology the roadmap's
+  // own Phase C write-up describes for live playback, replicated with
+  // ffmpeg's own real soft-clip filter rather than approximated.
+  let audioMapArg: string | null = null;
+  if (audioRefs.length === 1) {
+    audioMapArg = audioRefMapArg(audioRefs[0]);
+  } else if (audioRefs.length > 1) {
+    const mixInputs = audioRefs.map(audioRefBracket).join('');
+    filterSteps.push(`${mixInputs}amix=inputs=${audioRefs.length}:duration=longest:normalize=0[mixa]`);
+    filterSteps.push(`[mixa]asoftclip=type=tanh[outa]`);
+    audioMapArg = '[outa]';
+  }
+
+  const args = [
     ...inputs,
     '-filter_complex',
     filterSteps.join(';'),
     '-map',
     `[${lastLabel}]`,
-    '-r',
-    String(opts.fps),
-    '-t',
-    String(totalDurationSec),
-    outPath,
   ];
+  if (audioMapArg) args.push('-map', audioMapArg);
+  args.push('-r', String(opts.fps), '-t', String(totalDurationSec), outPath);
+  return args;
 }

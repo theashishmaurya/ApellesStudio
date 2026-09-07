@@ -443,3 +443,159 @@ describe('buildExportFfmpegArgs', () => {
     expect(args[args.indexOf('-map') + 1]).toBe('[outv]');
   });
 });
+
+// D-197 — real audio mixing. These are the string-matching layer
+// (`timelineExport.ffmpeg.test.ts` is the real-ffmpeg-execution layer that
+// actually confirms the mixed audio is correct at the sample/level, not just
+// that these strings look plausible).
+describe('buildExportFfmpegArgs — audio (D-197)', () => {
+  it('a video-only timeline with no audio tracks and no hasAudioOverrides produces NO audio map at all — byte-identical to pre-D-197', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args.filter((a) => a === '-map')).toHaveLength(1); // video only
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+    expect(filterComplex).not.toContain('amix');
+    expect(filterComplex).not.toContain('asoftclip');
+    expect(filterComplex).not.toContain(':a]');
+  });
+
+  it('a single audio-track clip is mapped directly off its own input — no amix/asoftclip needed for exactly one source', () => {
+    const a = clip('a1', { duration: 240 });
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).not.toContain('amix');
+    expect(filterComplex).not.toContain('asoftclip');
+    // exactly one clip, no video at all -> input 0 is the audio clip itself
+    const maps = args.filter((a2, i) => args[i - 1] === '-map');
+    expect(maps).toContain('0:a');
+  });
+
+  it('a plain audio-track clip with default gain/no fade/no duck at frame 0 needs no filter chain at all — direct raw mapping', () => {
+    const a = clip('a1', { duration: 240, start_frame: 0 });
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).not.toContain('volume=');
+    expect(filterComplex).not.toContain('adelay');
+  });
+
+  it("an audio-track clip's non-zero start_frame gets an adelay matching its real timeline position in ms", () => {
+    const a = clip('a1', { duration: 240, start_frame: 60 }); // 60/30fps = 2s -> 2000ms
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('adelay=2000:all=1');
+  });
+
+  it("track gain != 1 becomes a plain volume=<gain> filter when there's no fade/duck", () => {
+    const a = clip('a1', { duration: 240 });
+    const tl = timeline([track('audio', [a], { gain: 0.5 })]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('volume=0.5');
+    expect(filterComplex).not.toContain('eval=frame');
+  });
+
+  it('a clip with a fade configured gets a volume=eval=frame:volume=\'...\' expression, not a plain constant', () => {
+    const a = clip('a1', { duration: 240, fade_in_frames: 30 });
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toMatch(/volume=eval=frame:volume='[^']+'/);
+  });
+
+  it('two audio-track clips mix via amix with normalize=0, then asoftclip=type=tanh, mapped as [outa]', () => {
+    const a = clip('a1', { duration: 240 });
+    const b = clip('a2', { duration: 240 });
+    const tl = timeline([track('audio', [a]), track('audio', [b])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('amix=inputs=2:duration=longest:normalize=0[mixa]');
+    expect(filterComplex).toContain('[mixa]asoftclip=type=tanh[outa]');
+    const maps = args.filter((a2, i) => args[i - 1] === '-map');
+    expect(maps).toContain('[outa]');
+  });
+
+  it("a video clip's embedded audio is INCLUDED only when hasAudioOverrides positively says so — the conservative default", () => {
+    const v = clip('v1', { duration: 240 });
+    const tl = timeline([track('video', [v])]);
+    const withoutOverride = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    expect(withoutOverride.filter((a) => a === '-map')).toHaveLength(1);
+
+    const withOverride = buildExportFfmpegArgs(tl, '/out.mp4', { ...opts30, hasAudioOverrides: { v1: true } });
+    const maps = withOverride.filter((a, i) => withOverride[i - 1] === '-map');
+    expect(maps).toContain('0:a'); // reuses the SAME input as the video, no second -i
+    expect(withOverride.filter((a) => a === '-i')).toHaveLength(1);
+  });
+
+  it('a video clip with an A/V link_group is EXCLUDED from embedded audio even when hasAudioOverrides says true — D-129: its audio comes from the linked clip instead', () => {
+    const v = clip('v1', { duration: 240, link_group: 'lg-1' });
+    const a = clip('a1', { duration: 240, link_group: 'lg-1' });
+    const tl = timeline([track('video', [v]), track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', { ...opts30, hasAudioOverrides: { v1: true, a1: true } });
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    // Only ONE audio source total (the real audio-track clip) -> no amix.
+    expect(filterComplex).not.toContain('amix');
+    const maps = args.filter((a2, i) => args[i - 1] === '-map');
+    expect(maps).toContain('1:a'); // input 1 is the audio-track clip (input 0 is the video)
+  });
+
+  it("an audio-track clip explicitly marked hasAudioOverrides: false is excluded, even though audio-track clips default to included", () => {
+    const a = clip('a1', { duration: 240 });
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', { ...opts30, hasAudioOverrides: { a1: false } });
+    // The black-background `[base]` layer is always mapped regardless of
+    // whether any real video track exists — with the sole audio clip
+    // excluded, that's the ONLY `-map` in the whole command.
+    expect(args.filter((a2) => a2 === '-map')).toHaveLength(1);
+  });
+
+  it('a sped-up clip gets an atempo chain on its audio, keeping it in sync with the setpts-sped picture', () => {
+    const v = clip('v1', { duration: 240 });
+    const tl = timeline([track('video', [v])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', {
+      ...opts30,
+      hasAudioOverrides: { v1: true },
+      speedOverrides: { v1: 1.5 },
+    });
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('atempo=1.5');
+  });
+
+  it("duck ties to the trigger track's OWN configured clips, not any arbitrary track", () => {
+    const bed = clip('bed', { duration: 300 });
+    const dialogue = clip('dia', { duration: 60, start_frame: 30 });
+    const tl = timeline([
+      track('audio', [bed], { duck_from: 1, duck_db: -12, duck_attack_ms: 10, duck_release_ms: 300 }),
+      track('audio', [dialogue]),
+    ]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('exp(');
+    expect(filterComplex).toContain('amix'); // two real sources (bed + dialogue)
+  });
+
+  it('a video track can also be ducked (D-149: "a video track\'s embedded audio ... ducks like any other")', () => {
+    const v = clip('v1', { duration: 240 });
+    const trigger = clip('trig', { duration: 60, start_frame: 30 });
+    const tl = timeline([
+      track('video', [v], { duck_from: 1, duck_db: -12, duck_attack_ms: 10, duck_release_ms: 300 }),
+      track('audio', [trigger]),
+    ]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', { ...opts30, hasAudioOverrides: { v1: true } });
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('exp(');
+  });
+});
