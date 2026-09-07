@@ -221,10 +221,12 @@ workspace `target/` is fresh at the repo root.
 
 - Small, focused, one concern each.
 - Message says *what changed and why*, references the `D-NNN` / `B-NNN` / roadmap phase.
-- End with:
-  ```
-  Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-  ```
+- **Author, as of 2026-09-08 (owner):** `Ashish Maurya <ashish.1999vns@gmail.com>`, no
+  `Co-Authored-By` trailer. Set explicitly per commit (`git commit --author="Ashish Maurya
+  <ashish.1999vns@gmail.com>"`) rather than by editing git config — this repo's own rules
+  never touch git config. Commits before this date carry the old
+  `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailer and a mix of author
+  emails; left as history, not rewritten, unless the owner asks for that specifically.
 - Branch off `main` for anything non-trivial. `main` stays buildable.
 
 ## Verification
