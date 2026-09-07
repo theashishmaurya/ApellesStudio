@@ -10,6 +10,15 @@
  * stays here — only the rendered transport JSX (the hand-rolled button row)
  * moved to `<Player>`, which is purely presentational.
  *
+ * **What triggers a refetch (B-088).** `chroma_timeline_frame` takes only a
+ * position: it composites the open project's **persisted** manifest, so the
+ * only two things that can make it return a different picture are the
+ * playhead moving and the backend's own copy of the timeline changing. The
+ * scrub effect below depends on exactly those two — `playhead` and the
+ * store's `savedVersion` — and pointedly NOT on the `timeline` object, which
+ * changes identity ~400 ms *before* the edit it carries has been persisted.
+ * See that effect's own comment for the failure that caused.
+ *
  * Audio session churn (D-130): the audio effect is keyed on whether a timeline
  * exists, not on the timeline object — see that effect's comment. And both
  * audio commands carry a monotonic `seq` (`nextAudioSeq`), because since D-125
@@ -119,6 +128,9 @@ export function PreviewPane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const playing = useEditorTimelineStore((s) => s.playing);
+  // B-088 — the scrub effect's refetch trigger. NOT `timeline`: see that
+  // effect's own comment, and `savedVersion`'s doc in `timelineStore.ts`.
+  const savedVersion = useEditorTimelineStore((s) => s.savedVersion);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const setPlaying = useEditorTimelineStore((s) => s.setPlaying);
 
@@ -166,6 +178,11 @@ export function PreviewPane() {
   const fps = timelineFps(timeline);
   const duration = timelineDuration(timeline);
   const lastFrame = Math.max(0, duration - 1);
+  // Whether a timeline exists at all, as a boolean — deliberately not the
+  // object. Two effects below depend on this exact distinction, for two
+  // different reasons (D-130's audio-session churn, and B-088's stale
+  // preview); see each of their own comments.
+  const hasTimeline = timeline !== null;
 
   // D-199 — the canvas/composition boundary overlay's size, selection-
   // independent (unlike `TransformOverlay`'s per-clip `useClipGeometry`).
@@ -220,11 +237,27 @@ export function PreviewPane() {
     inFlight.current = false;
   }, []);
 
-  // scrub: refetch on playhead change while paused
+  // scrub: refetch on playhead change — or on a real backend timeline
+  // change — while paused.
+  //
+  // **B-088 — keyed on `savedVersion`, NOT on the `timeline` object.**
+  // `chroma_timeline_frame` composites the project's PERSISTED manifest off
+  // disk; it is handed no timeline. `applyOp` updates the store's `timeline`
+  // optimistically and persists it 400 ms later (`SAVE_DEBOUNCE_MS`). So
+  // depending on `timeline`'s identity meant every edit fired exactly one
+  // fetch, ~400 ms BEFORE the state it was supposed to show existed on the
+  // backend — the frame that came back was the pre-edit picture, and since
+  // nothing changed identity again once the save landed, nothing ever
+  // refetched. The preview sat one edit behind for the rest of the session,
+  // with no error: transforms set via the Inspector or the MCP surface
+  // appeared to do nothing, and dragging `TransformOverlay`'s handles moved
+  // its box (drawn from the live store) over a picture that never moved.
+  // `savedVersion` bumps only when the backend really does hold the new
+  // timeline, which is exactly when a refetch can return something new.
   useEffect(() => {
-    if (playing || !timeline) return;
+    if (playing || !hasTimeline) return;
     fetchFrame(playhead, PREVIEW_LONG_EDGE);
-  }, [playhead, playing, timeline, fetchFrame]);
+  }, [playhead, playing, hasTimeline, savedVersion, fetchFrame]);
 
   // play: wall-clock rAF loop, frame-dropping to stay real-time
   useEffect(() => {
@@ -325,7 +358,6 @@ export function PreviewPane() {
   // not from anything passed in here. A real change that matters — the project
   // closing, a different timeline becoming active — still stops playback,
   // because that flips `playing` or empties `timeline` outright.
-  const hasTimeline = timeline !== null;
   useEffect(() => {
     if (!playing || !hasTimeline) {
       invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});

@@ -146,6 +146,26 @@ export async function waitFrames(n = 1): Promise<void> {
   for (let i = 0; i < n; i++) await nextFrame();
 }
 
+/** Real wall-clock time, wrapped in `act()` — the same jsdom concern
+ *  [`nextFrame`] handles, for the cases where what a test is waiting on is a
+ *  real `setTimeout` rather than a frame. Animation frames are useless for
+ *  those: a debounce measured in hundreds of milliseconds (`timelineStore`'s
+ *  own `SAVE_DEBOUNCE_MS`, B-088) will not fire inside any realistic number
+ *  of `waitFrames` calls, and the state updates its callback eventually
+ *  makes would land outside `act` and warn.
+ *
+ *  Deliberately real timers, not `vi.useFakeTimers()`: the sequences these
+ *  tests cover interleave timers with promise resolutions (the debounce
+ *  fires → `invoke` resolves → a `.then` sets state → an effect re-runs and
+ *  invokes again), and faking one of those two clocks while the other stays
+ *  real is precisely how a test starts asserting an ordering the real app
+ *  never has. */
+export async function waitMs(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  });
+}
+
 /** Run `fn` (a store `setState`, or any other out-of-band mutation a test
  *  wants React to see) inside `act()`, so components subscribed to it
  *  re-render — and their event handlers close over the NEW value — before

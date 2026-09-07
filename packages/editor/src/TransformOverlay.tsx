@@ -37,6 +37,15 @@
  * the composited picture catches up once the drag commits and the next
  * frame is fetched.
  *
+ * **B-088 — that last clause was, until D-202, simply not true**, and this
+ * component is where it showed: the box moved and the picture underneath it
+ * never did. Nothing here was wrong (the box is drawn from the live store,
+ * which is correct); `PreviewPane` refetched its frame ~400 ms before the
+ * committed op had been persisted, and the backend renders only what is
+ * persisted. See `timelineStore.ts`'s `savedVersion` for the real story. The
+ * "catches up on commit" contract above now holds — ~400 ms after
+ * pointer-up, once the debounced save actually lands.
+ *
  * Not in Phase 1 (see the note): rotation, non-uniform scale (via on-canvas
  * DRAGGING — see D-193's own note on this component below), crop, anchor
  * point, click-to-select, snapping/guides, marquee, multi-clip transform.

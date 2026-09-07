@@ -17879,3 +17879,77 @@ the next person to look does not have to re-derive it — and so nobody
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-202 — B-088: the Edit tab's live preview refetches on the BACKEND's timeline clock (`savedVersion`), not on the optimistic store object
+
+**Context**: `docs/BUGS.md`'s B-088 — the live preview never showed a clip's
+current position/crop/scale. The owner hit it twice independently, live
+(transforms set via `editor_set_clip_transform` producing no visible change;
+`TransformOverlay`'s handles moving their box over a picture that never
+moved), while a real `editor_export` of the identical timeline was provably
+correct.
+
+**Root cause is an ordering race between two individually-correct facts.**
+`chroma_timeline_frame` is handed no timeline — it composites the project's
+**persisted** manifest off disk. `timelineStore.applyOp` updates `timeline`
+optimistically and persists it 400 ms later (`SAVE_DEBOUNCE_MS`, a deliberate
+perf choice). `PreviewPane`'s scrub effect keyed its refetch on `timeline`'s
+identity, so every edit fetched a frame ~400 ms *before* the backend held the
+state it was meant to show, and — since nothing changed identity again once
+the save landed — never fetched again. **The Rust compositor was read end to
+end against the export compiler and is correct; zero Rust changed.**
+
+**Choice — a second, explicit clock for the backend's copy, rather than any of
+the alternatives:**
+- **`savedVersion`** on `timelineStore`: a monotonic counter bumped *only* when
+  the backend demonstrably holds the new timeline — a `chroma_timeline_set`
+  that resolved, or a `chroma_timeline_get` that landed. `PreviewPane` depends
+  on `[playhead, playing, hasTimeline, savedVersion]`, which is exactly the set
+  of inputs that can make `chroma_timeline_frame` return a different picture.
+  It also removes a real wasted IPC round trip per edit (the premature fetch
+  was pure cost — it could only ever return the picture already on screen).
+- **Considered and rejected — drop or shorten the debounce.** It would close
+  the race by making the two clocks coincide, at the price of writing
+  `project.json` on every rapid edit. The debounce is not the defect; keying a
+  backend read off the optimistic clock is.
+- **Considered and rejected — send the timeline to `chroma_timeline_frame`.**
+  A whole `Timeline` over IPC per preview frame during playback, and a second
+  source of truth for the renderer to disagree with the manifest about — the
+  opposite of this project's "the document is the single source of truth, no
+  hidden state in the app" invariant.
+
+**The rule this establishes**, stated on `savedVersion` itself and in
+`timelineStore`'s module doc so the next consumer does not have to rediscover
+it: *anything that re-runs a backend **read** of the timeline keys off
+`savedVersion`, never off `timeline`'s identity.* `PreviewPane` is currently
+the only such consumer (confirmed by grep — it is the sole caller of
+`chroma_timeline_frame`); `useCompositionSize` already took a boolean plus its
+own D-199 refresh token rather than the object, so it was never exposed.
+
+**Intended residual behaviour**: the picture now catches up ~400 ms after the
+last edit in a burst instead of instantly — which is precisely what
+`TransformOverlay`'s own module doc has always claimed happens ("the
+composited picture catches up once the drag commits and the next frame is
+fetched") and, until this, never did.
+
+**Verified.** New real-DOM regression test
+(`packages/editor/src/PreviewPane.staleness.dom.test.tsx`) mounting the real
+`PreviewPane` over the real store, with an `invoke` stub that reproduces the
+one backend property this turns on, asserting the preview `<img>`'s actual
+`src` — confirmed failing before the fix, passing after. `npm test --workspace
+@chroma/editor` 497/497 (was 495). `npx tsc --noEmit -p packages/editor` clean;
+`-p app` unchanged at the same 64 pre-existing errors. D-201's React Compiler
+bailout check still passes for `PreviewPane`. `cargo test -p RapidRAW --lib
+chroma::edit` 33/33 — run to back the "the compositor is correct" claim above,
+not because anything Rust changed (nothing did). Note `cargo fmt --all --check`
+is dirty across `app/src-tauri` on this branch point *before* any change here
+(verified against the pristine tree) — pre-existing repo-wide drift, left alone
+rather than folded into a bug fix as an unrelated whole-tree reformat. Not
+live-verified in the running
+Tauri app (not practical to build from this isolated worktree) — disclosed, and
+the reason the test drives the real component and asserts real rendered output
+rather than checking that a command was called. Full trail: B-088 in
+`docs/BUGS.md`.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

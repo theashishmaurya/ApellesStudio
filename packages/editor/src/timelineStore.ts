@@ -17,6 +17,14 @@
  * `setActiveTimeline()` wrap the D-045 `chroma_timeline_list`/`_create`/
  * `_set_active` commands that had no UI consumer until this pass.
  *
+ * B-088 — **the optimistic timeline and the backend's timeline are two
+ * different documents for the length of that debounce, and `savedVersion`
+ * is the second one's clock.** Anything that re-runs a backend *read* of
+ * this timeline (`chroma_timeline_frame`, above all — the live preview
+ * renders the persisted manifest, never anything handed to it) must key off
+ * `savedVersion`, not off `timeline`'s identity; see that field's own doc
+ * for the full failure mode.
+ *
  * D-051: every real (non-no-op) `applyOp` call pushes a `{tab:'edit', ...}`
  * before/after snapshot pair onto `@chroma/history`'s shared undo stack —
  * whole-`Timeline` snapshots (not inverse deltas), because every op here is
@@ -124,6 +132,25 @@ interface EditorTimelineState {
   selection: Selection[];
   /** the current gap selection (D-105), mutually exclusive with `selection` */
   selectedGap: SelectedGap | null;
+  /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
+   *  the active timeline is known to have changed: a `chroma_timeline_set`
+   *  that actually resolved, or a `chroma_timeline_get` that actually
+   *  landed. Never bumped by the optimistic `set({ timeline })` in
+   *  `applyOp`.
+   *
+   *  It exists because the two are genuinely different facts and one
+   *  consumer needs the second one. Every backend renderer of this timeline
+   *  — `chroma_timeline_frame` above all — reads the project's **persisted**
+   *  manifest off disk, not anything passed in; but `applyOp` persists on a
+   *  {@link SAVE_DEBOUNCE_MS} debounce, so for ~400 ms after every edit the
+   *  in-memory `timeline` and the timeline those commands render are two
+   *  different documents. A consumer that re-invokes such a command on
+   *  `timeline`'s identity therefore asks for a frame of a state the backend
+   *  does not have yet, gets the pre-edit picture, and — since nothing
+   *  changes identity again once the save finally lands — keeps showing it
+   *  forever. That was B-088. Depend on this instead of on `timeline`
+   *  whenever the thing being re-run is a backend read of the timeline. */
+  savedVersion: number;
 
   /** The one signal that starts and stops this store's work. Idempotent —
    *  the composition root's effect may re-run with an unchanged value. */
@@ -210,6 +237,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   timelines: [],
   selection: [],
   selectedGap: null,
+  savedVersion: 0,
 
   setProjectOpen: (open) => {
     if (get().projectOpen === open) return;
@@ -270,6 +298,12 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
         error: null,
         status: 'ready',
         playhead: Math.min(s.playhead, Math.max(0, dur - 1)),
+        // B-088 — this timeline came FROM the backend, so the backend
+        // demonstrably holds it: a real `savedVersion` change. Covers the
+        // window-`focus` refetch, the timeline switcher, and
+        // `restoreSnapshot`'s own trailing reconcile (which is why undo/redo
+        // needs no bump of its own).
+        savedVersion: s.savedVersion + 1,
       }));
     } catch (e) {
       if (token !== loadToken) return; // superseded — never clobber a newer result
@@ -369,10 +403,18 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   // under any real system load. `restoreSnapshot` (undo/redo, a rare,
   // deliberate action, not a rapid edit stream) keeps its own refetch as the
   // more conservative choice — the cost there is negligible either way.
+  //
+  // B-088 — the save's *resolution* is a real event with a real consumer now
+  // (see `savedVersion`'s own doc): it is the moment the backend starts
+  // rendering this edit rather than the one before it. Bumping on `.then`
+  // rather than optimistically alongside the `set` above is the whole point
+  // — an optimistic bump would reintroduce exactly the race it closes.
   _flushSave: () => {
     const timeline = get().timeline;
     if (!timeline) return;
-    invoke('chroma_timeline_set', { timeline }).catch((e) => set({ error: String(e) }));
+    invoke('chroma_timeline_set', { timeline })
+      .then(() => set((s) => ({ savedVersion: s.savedVersion + 1 })))
+      .catch((e) => set({ error: String(e) }));
   },
 
   loadList: async () => {

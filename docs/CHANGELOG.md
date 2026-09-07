@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-088 (D-202): the Edit tab's live preview never
+  showed a clip's current position/crop/scale.** Root-caused to an ordering
+  race, not the compositor: `chroma_timeline_frame` renders the project's
+  *persisted* manifest, but `PreviewPane` refetched on the store's
+  *optimistic* `timeline` object — ~400 ms before the debounced
+  `chroma_timeline_set` had written anything, and never again after. The
+  preview sat one edit behind, permanently, which is why transforms set via
+  the Inspector or MCP appeared to do nothing and `TransformOverlay`'s
+  handles moved their box over a picture that never moved. Fixed with a
+  `savedVersion` clock bumped only when the backend really holds the new
+  timeline. The Rust compositor was read end to end against the export
+  compiler and is correct — zero Rust changed. New real-DOM regression test
+  drives the real `PreviewPane` and asserts the rendered `<img>`.
+
 - **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
   intermittently fails outright for a large-but-not-huge payload, instead
   of the graceful size-limit truncation the same size class usually gets —
