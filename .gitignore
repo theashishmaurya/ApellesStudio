@@ -34,6 +34,11 @@ ai/models/
 ai/vendor/**/checkpoints/
 *.pyc
 
+# python media-understanding sidecar (D-184) — its own venv, deliberately
+# separate from ai/.venv (mlx-vlm needs transformers>=5, ai/ pins <5)
+ai-media/.venv/
+ai-media/__pycache__/
+
 # mcp server
 mcp/target/
 mcp/.venv/

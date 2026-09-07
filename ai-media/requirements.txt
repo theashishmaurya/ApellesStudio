@@ -1,0 +1,23 @@
+# Chroma media-understanding sidecar (D-184). MLX (Apple Silicon) — deliberately
+# NOT installable alongside ai/requirements.txt: `mlx-vlm >= 0.6` requires
+# `transformers >= 5.5`, `ai/` pins `transformers < 5` for ViTMatte, and pip
+# reports the union as ResolutionImpossible. That is the whole reason this is a
+# second venv and a second process. See D-184 for the spike evidence.
+
+# The two MLX top-levels are pinned EXACTLY, unlike ai/'s ranges: this stack's
+# resolution is the fragile thing the sidecar split exists to contain (a
+# same-day prototype had mlx-vlm silently upgrade transformers/tokenizers/
+# numpy/mlx-metal out from under mlx-audiocraft in a shared venv). These are the
+# versions actually verified working together — a float here is a risk with no
+# upside.
+mlx-vlm==0.6.17       # Qwen3-VL-4B-Instruct-4bit — "what changed on screen"
+mlx-whisper==0.4.3    # whisper large-v3 — "what was said, and when"
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Also required, NOT pip-installable: `ffmpeg` on PATH (scene detection and the
+# 16 kHz audio extract). `GET /health` reports where it found it, or null.
+# Models are pulled from the HF cache on first use:
+#   mlx-community/Qwen3-VL-4B-Instruct-4bit  ~2.9 GB
+#   mlx-community/whisper-large-v3-mlx       ~2.9 GB

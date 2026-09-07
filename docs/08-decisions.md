@@ -16428,6 +16428,119 @@ syntax is exactly the kind of thing B-075 already showed this codebase's tests
 weren't previously catching), confirming the real output duration matches the
 frozen clip's widened window, not its own natural end. `npx tsc --noEmit -p
 packages/editor` clean. `npm test --workspace @chroma/editor` — **328/328**.
+## D-189 — Media understanding (transcript + video) lands as a SECOND supervised sidecar, not more endpoints on `ai/`
+**decided (2026-09-07)**
+
+- **Context:** `docs/notes/media-understanding-sidecar-scope.md` scoped pulling two
+  validated capabilities out of the sibling `videoAgent` prototype into Chroma
+  proper — word-level transcript (mlx-whisper) and "what changed on screen, and
+  when" (ffmpeg scene-detect + Qwen3-VL). The scope doc named one real risk and
+  demanded a spike rather than reasoning: `ai/server.py` is **PyTorch/MPS**
+  (`torch`, `ultralytics`, `transformers>=4.40,<5` for ViTMatte); the new work is
+  **MLX** (`mlx-vlm`). A same-day prototype had already broken `mlx-audiocraft`
+  by installing `mlx-vlm` beside it in a shared venv — the resolver silently
+  upgraded `transformers`/`tokenizers`/`numpy`/`mlx-metal` out from under it, and
+  removing `mlx-metal` (assumed mlx-vlm-specific) broke `mlx.core` itself.
+- **Options:** (a) a second sidecar process — own dir, own `.venv`, own port,
+  supervised by the same `chroma_ai::sidecar` machinery; (b) rebuild `ai/.venv`
+  on `mlx-vlm`'s own resolved versions, upgrading `transformers`/`torch`
+  project-wide so one process serves everything; (c) shell out to the
+  `videoAgent` venvs from Chroma (keep the prototype as the implementation).
+- **Choice: (a).** **Spike evidence, not reasoning — both halves were actually
+  run:**
+  - **(a) verified working.** A fresh `ai-media/.venv` took `mlx-vlm` +
+    `mlx-whisper` + `fastapi` + `uvicorn` together with no conflict, resolving to
+    `mlx 0.32.2` / `mlx-vlm 0.6.17` / `mlx-whisper 0.4.3` / `transformers 5.16.1`
+    / `tokenizers 0.23.2` / `numpy 2.4.6`. Imports plus a real Metal matmul
+    (`Device(gpu, 0)`) all pass. Both endpoints then ran end-to-end against real
+    footage (see "Verified" below).
+  - **(b) is mechanically impossible, not merely risky.** `pip install --dry-run`
+    of `ai/requirements.txt` ∪ `{mlx-vlm, mlx-whisper}` in a clean venv exits
+    **`ResolutionImpossible`**: every `mlx-vlm >= 0.6` requires
+    `transformers >= 5.5` (0.6.4 excepted, `<5.13.0 and >=5.5.0`), and `ai/` pins
+    `transformers < 5`. That kills the option outright — no judgment call needed.
+    (Worth recording precisely, since the obvious next thought is "just drop the
+    pin": `VitMatteForImageMatting`/`VitMatteImageProcessor` *do* still exist in
+    transformers 5.16.1, so the pin is not itself the blocker — but taking it
+    would also drag `torch 2.13.0 → 2.14.0` under a live SAM 2 / ViTMatte /
+    Video-Depth-Anything / MoGe-2 stack, a big-bang upgrade of the venv the
+    shipping app depends on, bought for nothing except avoiding one more
+    supervised process.)
+  - **(c)** makes Chroma depend on a sibling repo's private venv layout — the
+    exact "same capability maintained in two places" the scope doc exists to end.
+- **Why this is not a new pattern:** it is one more instance of one that already
+  works. `chroma_ai::sidecar` was generalized from a hardcoded singleton to a
+  `SidecarSpec`-parameterized supervisor (see D-190) rather than copy-pasted, so
+  both sidecars share one implementation of health-polling, content-hash
+  staleness detection (D-101), capped-backoff respawn and external-process
+  monitoring.
+- **Two real design calls made while porting**, both deviations from the
+  prototype worth stating:
+  - **Background jobs, not synchronous POSTs.** `chroma::control`'s
+    `BRIDGE_TIMEOUT` is **20 s** (`app/src-tauri/src/chroma/control.rs`); a
+    transcript takes tens of seconds and an analysis runs at roughly 4x realtime.
+    A synchronous call literally could not reach an agent. Start-then-poll is
+    what `ai/`'s own `/track` and `/depth_track` already do for the same reason,
+    down to the `{state, done, total}` fields. This is why the MCP surface is
+    four tools, not the two the scope doc sketched.
+  - **No model weights resident in the sidecar process.** Every model call is a
+    subprocess (`transcribe.py` as a whole; `mlx_vlm.generate` from inside
+    `video_understand.py`), so the OS reclaims the ~9 GB peak on exit. `ai/`
+    needed a whole TTL idle-unloader (D-084) because its lazy singletons never
+    released weights; doing it this way makes that failure mode structurally
+    impossible in the second sidecar instead of re-solving it there. It also
+    keeps the VLM invocation byte-identical to the validated prototype's, whose
+    tuning is expressed as those exact CLI flags.
+- **Ported verbatim, deliberately** (the scope doc's own instruction — "copy the
+  logic and tuning, don't redesign it"): ffmpeg scene-detect for the timing, the
+  before/after frame-PAIR prompt, Qwen's own recommended sampling params
+  (temp 0.7 / top_p 0.8 / top_k 20 / rep 1.0 / presence 1.5 — greedy decoding
+  degenerates into a repeated-phrase loop), the fenced-JSON `raw_decode`
+  tolerance, the 0.5 s seed candidate (ffmpeg's scene-diff structurally cannot
+  flag frame 0), and Qwen3-VL **4B not 2B** (2B tested, produced garbage).
+- **Verified live**, not compiled-and-assumed — sidecar on :8766, real footage:
+  - `/transcribe` on an 18 s talking-head clip: **11.9 s**, correct English
+    transcript, 3 segments, 55 word-level timings (` want` 0.00–0.24, …).
+  - `/understand_video` on the same clip, `max_candidates=6`: 1 candidate (the
+    0.5 s seed) — scene-detect correctly found no cut in a continuous shot,
+    the documented behaviour, not a failure.
+  - `/understand_video` on a 20 s cut-heavy product reel, `max_candidates=5`,
+    `min_gap_s=1.5`: **37.9 s**, 5 candidates → 5 descriptions, 1:1 zip,
+    `truncated: true` correctly reported. It also reproduced the known
+    semantic-repetition limit on the last two near-identical frames — the
+    documented limit behaving as documented.
+- **Status of the `videoAgent` prototype:** still the reference implementation,
+  untouched. The scope doc's phase 5 (retire it) stays open until this ships
+  through a running app — see the scope doc's own "what actually shipped"
+  section for exactly which layers are live-tested vs. type-checked.
+
+## D-190 — `chroma_ai::sidecar` generalized to supervise N sidecars, not copy-pasted for the second one
+**decided (2026-09-07)**
+
+- **Context:** D-189 adds a second supervised Python sidecar. `chroma_ai::sidecar`
+  was written for exactly one: module-level `OnceLock` singletons for the owned
+  child handle and the status snapshot, a hardcoded `CHROMA_AI_PORT`/`CHROMA_AI_DIR`/
+  `CHROMA_AI_PYTHON`/`CHROMA_AI_NO_SPAWN` env quartet, and `server.py` hardcoded
+  as the marker file and uvicorn target.
+- **Options:** (a) copy the file to a second module with the names swapped;
+  (b) parameterize it — a `SidecarSpec` describing one sidecar (name, env var
+  names, default port, dir candidates) plus per-sidecar runtime state in a
+  registry, with both sidecars as `static` specs.
+- **Choice: (b).** `CLAUDE.md` is explicit — "shared logic → a package/crate,
+  never copy-pasted; if two places need it, extract it" and "if something is
+  structurally wrong, fix the structure — don't monkey-patch around it." (a)
+  would duplicate ~450 lines of genuinely subtle logic (the D-101 staleness
+  policy, the fast-fail/slow-retry backoff ladder, the shutdown races) and
+  guarantee the two copies drift — every future fix would have to be remembered
+  twice.
+- **What that cost, concretely:** the global `owned()`/`status()` `OnceLock`s
+  became a `SidecarState` struct held per-spec in a `HashMap` registry;
+  `shutdown()` now kills every owned child rather than the one; `status_snapshot()`
+  takes a spec. `spawn_and_supervise()` keeps a zero-argument overload for the
+  `ai/` sidecar so `lib.rs`'s existing `.setup()` call site is unchanged, and the
+  existing `chroma_ai_status` command still returns the same shape. No behaviour
+  change for the existing sidecar — the existing unit tests (content-hash
+  determinism, the staleness policy matrix) pass untouched.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
