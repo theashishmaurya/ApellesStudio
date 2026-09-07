@@ -109,6 +109,35 @@ function volumeStats(path: string, startSecs?: number, durSecs?: number): { mean
   return { mean: Number(mean[1]), max: Number(max[1]) };
 }
 
+/** The real decoded RGB pixel at `(x, y)` at `timeSecs` into `path` — a
+ *  1x1 `crop` to raw `rgb24`, read directly off stdout. B-090's own real
+ *  proof: a string-matched filtergraph proves nothing about whether an
+ *  overlay's PIXEL SIZE actually changed over time, only that the argv
+ *  looked plausible — exactly how B-090 (a keyframed `scale` silently
+ *  compiling to a static, unanimated resize) shipped invisibly under the
+ *  existing keyframe test below, which only checked "ffmpeg didn't error". */
+function pixelAt(path: string, timeSecs: number, x: number, y: number): [number, number, number] {
+  // `crop=1:1:...` (a genuine 1x1 output) fails outright on this ffmpeg
+  // build ("Invalid too big or non positive size for width '0' or height
+  // '0'") — reproduced directly on the CLI, unrelated to this test's own
+  // filtergraph; a 2x2 crop works, so this reads its own top-left pixel.
+  const res = spawnSync(
+    'ffmpeg',
+    [
+      '-ss', String(timeSecs), '-i', path,
+      '-vf', `crop=2:2:${x}:${y}`,
+      '-vframes', '1',
+      '-f', 'rawvideo', '-pix_fmt', 'rgb24',
+      '-',
+    ],
+    { encoding: 'buffer', maxBuffer: 1024 * 1024 },
+  );
+  if (res.status !== 0 || res.stdout.length < 3) {
+    throw new Error(`pixelAt(${path}, ${timeSecs}, ${x}, ${y}) produced no pixel: ${res.stderr?.toString()}`);
+  }
+  return [res.stdout[0], res.stdout[1], res.stdout[2]];
+}
+
 describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execution', () => {
   let dir: string;
   // Two synthetic source clips at two DIFFERENT native frame rates — the
@@ -213,6 +242,58 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execut
     const durationSecs = ffprobeDurationSecs(out);
     expect(durationSecs).toBeGreaterThan(5.7); // ~6s total, not clip24's own natural 4s
     expect(durationSecs).toBeLessThan(6.3);
+  });
+
+  it("B-090: a keyframed `scale` actually resizes the overlay's real pixels over time, not just the (fixed-size) `x`/`y` position", () => {
+    // A solid green 200x200 source, `fitOverrides: 'stretch'` so BOTH width
+    // and height track the same animated scale expression (sidesteps the
+    // default 'fit' mode's own aspect-ratio-preserving '-2', which this
+    // test isn't about). Anchored at position (0,0) — no pan at all — so
+    // the ONLY thing that can reveal or hide the far corner is `scale`
+    // itself actually resizing the overlay, isolating this fix from any
+    // position-interpolation logic (already covered by the keyframe test
+    // above).
+    const green = join(dir, 'green.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=green:size=200x200:duration=2:rate=24',
+      '-pix_fmt', 'yuv420p', green,
+    ]);
+    const c = clip('g1', {
+      source_path: green,
+      source_fps: 24,
+      duration: 48,
+      scale: 0.5,
+      position_x: 0,
+      position_y: 0,
+      chroma_keyframes: [
+        { frame: 0, params: { scale: 0.5 } },
+        { frame: 12, params: { scale: 0.5 } },
+        { frame: 24, params: { scale: 1 } },
+        { frame: 47, params: { scale: 1 } },
+      ],
+    });
+    const tl = timeline([track('video', [c])]);
+    const out = join(dir, 'out-scale-kf.mp4');
+    const args = buildExportFfmpegArgs(tl, out, {
+      fps: 24, width: 200, height: 200,
+      fitOverrides: { g1: 'stretch' },
+    });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    // (180, 180) is inside the 200x200 canvas but OUTSIDE a 0.5-scaled
+    // (100x100) overlay anchored at (0,0) — real background black, if
+    // `scale` never actually resized anything (B-090's own bug: the overlay
+    // was always sized from the clip's static base `scale`, here 0.5,
+    // regardless of any keyframe). It IS inside the fully-zoomed (200x200)
+    // overlay once `scale` reaches 1 and actually grows the box.
+    const [rBefore, gBefore, bBefore] = pixelAt(out, 0.2, 180, 180);
+    expect(rBefore + gBefore + bBefore).toBeLessThan(30); // real background black
+
+    const [rAfter, gAfter, bAfter] = pixelAt(out, 1.2, 180, 180);
+    expect(gAfter).toBeGreaterThan(100); // real green, not background black
+    expect(rAfter).toBeLessThan(80);
+    expect(bAfter).toBeLessThan(80);
   });
 });
 

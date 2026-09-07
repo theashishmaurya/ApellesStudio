@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-090: `editor_export` silently ignored `scale`
+  keyframes — only `position_x`/`position_y` ever animated per-frame.** A
+  "zoom" authored via `editor_set_clip_keyframes` compiled to a fixed-size
+  overlay panning around, revealing real background wherever the box never
+  grew to cover. Found live via a real black band the owner spotted in an
+  exported frame, confirmed by pixel-sampling a dense sequence of real
+  decoded frames. New `scaleExpr` mirrors `positionExpr`'s own keyframe
+  shape exactly, feeding a `scale` ffmpeg filter with `eval=frame`; also
+  single-quoted `w=`/`h=` (the same B-075 class of bug — unquoted keyframe
+  expressions break ffmpeg's filtergraph parser). New real-ffmpeg pixel
+  test proves actual overlay SIZE changes, not just argv shape or "ffmpeg
+  didn't error" (how B-090 shipped invisibly under the existing keyframe
+  test). `npm test --workspace @chroma/editor` 495/495 (was 494).
 - **2026-09-07** — **Fixed B-089: pure-audio media (no video stream at all)
   could never be imported at all.** `video::probe`'s `-select_streams v:0`
   legitimately returns zero streams for a real SFX/music file, but the code

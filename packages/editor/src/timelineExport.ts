@@ -195,6 +195,7 @@ function buildClipFilterChain(
   inputIdx: number,
   label: string,
   opts: TimelineExportOptions,
+  clipFps: number,
   padSecs = 0,
 ): string {
   const steps: string[] = [];
@@ -215,7 +216,25 @@ function buildClipFilterChain(
     src = `[s${label}]`;
   }
 
+  // B-090 — `scale` used to be read ONCE here (`clip.scale ?? 1`, a plain
+  // number baked into a static ffmpeg `scale=` step) even when the clip had
+  // real `scale` keyframes (`editor_set_clip_keyframes`) — so a "zoom"
+  // authored as a `scale` animation silently compiled to NO resize at all;
+  // only `position_x`/`position_y`'s own dynamic expressions (below, in the
+  // `overlay` step) actually moved anything, panning a box that never grew
+  // to compensate — confirmed live: a punch-in zoom's pan revealed a real
+  // black gap on the box's trailing edge, proportional to how far scale had
+  // "zoomed" (which never actually happened). `scaleExpr` mirrors
+  // `positionExpr`'s own keyframe-or-static shape exactly; `eval=frame` on
+  // the `scale` filter (default `eval=init`, evaluated ONCE) is what makes
+  // ffmpeg re-evaluate a `t`-referencing width expression every frame —
+  // without it a keyframed expression would still only be sampled once, at
+  // t=0, silently reproducing the same bug under a different mechanism.
   const scale = clip.scale ?? 1;
+  const hasScaleKeyframes = hasKeyframesFor(clip, 'scale');
+  const scaleExpr = hasScaleKeyframes
+    ? keyframeExprAt(rebaseKeyframesToClipInput(clip), 'scale', scale, clipFps)
+    : String(scale);
   // D-193 — `box_width`, when the clip has one, is a DIRECT canvas-fraction
   // override (mirrors `position_x`'s own convention) — it replaces
   // `opts.width*scale` outright rather than participating in B-074's
@@ -223,7 +242,7 @@ function buildClipFilterChain(
   // once the caller has stated the width explicitly. Falls back to the
   // pre-D-193 `opts.width*scale` when absent, so an existing clip (or one
   // that only sets `scale`) compiles byte-identically to before.
-  const widthExpr = clip.box_width != null ? `${opts.width}*${clip.box_width}` : `${opts.width}*${scale}`;
+  const widthExpr = clip.box_width != null ? `${opts.width}*${clip.box_width}` : `${opts.width}*(${scaleExpr})`;
   // B-074 — see `TimelineExportOptions.fitOverrides`'s own doc for the full
   // "why": `'fit'` (default) sizes WIDTH from the canvas and lets ffmpeg's
   // `-2` compute height from the clip's real post-crop aspect ratio;
@@ -257,10 +276,26 @@ function buildClipFilterChain(
     clip.box_height != null
       ? `${opts.height}*${clip.box_height}`
       : fitMode === 'stretch'
-        ? `${opts.height}*${scale}`
+        ? `${opts.height}*(${scaleExpr})`
         : '-2';
   const scaleLabel = padSecs > 0 ? `p${label}` : label;
-  steps.push(`${src}scale=${widthExpr}:${heightExpr}[${scaleLabel}]`);
+  // `eval=frame` (default `eval=init`, sampled once) only when `scale` is
+  // actually animated — a keyframed width/height expression under the
+  // default `eval=init` would still only be evaluated at t=0, reproducing
+  // B-090 under a different name. Harmless to omit for the static case
+  // (nothing in `widthExpr`/`heightExpr` references `t` then), so this stays
+  // scoped rather than always-on.
+  const evalSuffix = hasScaleKeyframes ? ':eval=frame' : '';
+  // B-090/B-075 — same single-quoting requirement as the overlay's own x/y
+  // expressions: a keyframed `if(between(t,a,b),...)` expression is full of
+  // bare commas/colons ffmpeg's filtergraph syntax would otherwise split
+  // on. `'-2'` (the `fit` mode's own literal auto-height sentinel, not an
+  // expression) must stay unquoted — quoting it would make ffmpeg try to
+  // parse the literal two-character string "-2" as an expression, which it
+  // is not.
+  const quotedWidth = `'${widthExpr}'`;
+  const quotedHeight = heightExpr === '-2' ? heightExpr : `'${heightExpr}'`;
+  steps.push(`${src}scale=w=${quotedWidth}:h=${quotedHeight}${evalSuffix}[${scaleLabel}]`);
 
   // D-188 — `freezeOverrides`: hold this clip's own real last decoded frame,
   // cloned, for `padSecs` more seconds past its natural end. `tpad` operates
@@ -441,7 +476,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     const padSecs = freeze ? Math.max(0, totalDurationSec - p.endSec) : 0;
     const finalEndSec = freeze ? Math.max(p.endSec, totalDurationSec) : p.endSec;
 
-    filterSteps.push(buildClipFilterChain(p.clip, p.inputIdx, p.label, opts, padSecs));
+    filterSteps.push(buildClipFilterChain(p.clip, p.inputIdx, p.label, opts, p.clipFps, padSecs));
     chains.push({ label: p.label, clip: p.clip, startSec: p.startSec, endSec: finalEndSec, clipFps: p.clipFps });
   }
 

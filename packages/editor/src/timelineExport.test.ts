@@ -147,7 +147,7 @@ describe('buildExportFfmpegArgs', () => {
       '-i',
       '/media/c1.mov',
       '-filter_complex',
-      "[0:v]scale=1080*1:-2[v0];color=black:size=1080x1920:rate=30[base];[base][v0]overlay=x='0*W':y='0*H':enable='between(t,0,8)'[outv]",
+      "[0:v]scale=w='1080*(1)':h=-2[v0];color=black:size=1080x1920:rate=30[base];[base][v0]overlay=x='0*W':y='0*H':enable='between(t,0,8)'[outv]",
       '-map',
       '[outv]',
       '-r',
@@ -165,7 +165,7 @@ describe('buildExportFfmpegArgs', () => {
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
     expect(filterComplex).toContain(
-      '[0:v]crop=iw*(1-0.1-0.05):ih*(1-0-0):iw*0.1:ih*0[cv0];[cv0]scale=1080*0.5:-2[v0]',
+      "[0:v]crop=iw*(1-0.1-0.05):ih*(1-0-0):iw*0.1:ih*0[cv0];[cv0]scale=w='1080*(0.5)':h=-2[v0]",
     );
   });
 
@@ -180,9 +180,9 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', wideOpts);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1000*0.5:-2[v0]');
+    expect(filterComplex).toContain("scale=w='1000*(0.5)':h=-2[v0]");
     // the old formula (`400*0.5` = 200) must never appear as this clip's height
-    expect(filterComplex).not.toContain('scale=1000*0.5:200[v0]');
+    expect(filterComplex).not.toContain("scale=w='1000*(0.5)':h='200'[v0]");
   });
 
   it('B-074: fitOverrides lets a caller opt back into the old force-to-canvas-box (stretch) behavior per clip', () => {
@@ -192,7 +192,7 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*0.5:1920*0.5[v0]');
+    expect(filterComplex).toContain("scale=w='1080*(0.5)':h='1920*(0.5)'[v0]");
   });
 
   it('B-074: a clip with no fitOverrides entry defaults to fit (aspect-preserving), even when other clips are overridden', () => {
@@ -203,8 +203,8 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*1:-2'); // a: no override, fits
-    expect(filterComplex).toContain('scale=1080*1:1920*1'); // b: stretch override
+    expect(filterComplex).toContain("scale=w='1080*(1)':h=-2"); // a: no override, fits
+    expect(filterComplex).toContain("scale=w='1080*(1)':h='1920*(1)'"); // b: stretch override
   });
 
   it('B-075: uses a clip\'s own source_fps (not opts.fps) to convert source_start/duration to real seconds for -ss/-t', () => {
@@ -315,7 +315,7 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*1:1920*0.5[v0]');
+    expect(filterComplex).toContain("scale=w='1080*1':h='1920*0.5'[v0]");
   });
 
   it('D-193: box_width alone overrides only the width — height falls back to scale/fitOverrides exactly as before', () => {
@@ -324,7 +324,7 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*0.75:-2[v0]');
+    expect(filterComplex).toContain("scale=w='1080*0.75':h=-2[v0]");
   });
 
   it('D-193: box_height takes priority over fitOverrides — an explicit persisted height wins over the export-time-only stretch default', () => {
@@ -334,16 +334,16 @@ describe('buildExportFfmpegArgs', () => {
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*0.5:1920*0.9[v0]');
+    expect(filterComplex).toContain("scale=w='1080*(0.5)':h='1920*0.9'[v0]");
   });
 
-  it('D-193: a clip with no box_width/box_height compiles byte-identically to pre-D-193 — the backward-compatibility case', () => {
+  it('D-193: a clip with no box_width/box_height behaves the same as the plain scale-only path (pre-D-193 shape, now safely quoted per B-090)', () => {
     const c = clip('c1', { scale: 0.5 });
     const tl = timeline([track('video', [c])]);
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
     const filterComplex = args[args.indexOf('-filter_complex') + 1];
 
-    expect(filterComplex).toContain('scale=1080*0.5:-2[v0]');
+    expect(filterComplex).toContain("scale=w='1080*(0.5)':h=-2[v0]");
   });
 
   it('omits the crop filter node entirely when all four crop fractions are zero', () => {
