@@ -19101,3 +19101,92 @@ app (which would mean testing this worktree's unmerged code against
 someone else's already-open real project) was a safe option. The unit tests
 above exercise the identical `applyOp` / `Timeline::move_track` code path
 the shipped GUI drag and the live preview already use.
+
+## D-215 — B-095's fix: `geq`, not `colorchannelmixer`, for exported opacity; `rotate` for rotation; both mirror `scaleExpr`'s identity-preserving shape
+
+**Context.** B-095 found `editor_export`'s ffmpeg compiler never implemented
+`opacity` or `rotation` at all — not statically, not keyframed — while the
+live preview (`resolve_clip_transform`) has always resolved both. B-095's
+own filed guidance suggested `format=rgba,colorchannelmixer=aa=<expr>` for
+opacity and a `rotate=` step for rotation. Building the actual fix required
+confirming, empirically, whether that suggestion was actually implementable
+— it wasn't, in the form suggested.
+
+**Real options considered for opacity, tested against a real local ffmpeg
+7.1 rather than assumed from documentation:**
+- **`colorchannelmixer`'s `aa` option, given a `t`-based expression** (the
+  bug's own original suggestion). Tried directly: `ffmpeg` refuses it
+  outright — `Undefined constant or missing '(' in 't,0.5),1,0)'`. This
+  filter's numeric options are evaluated once via a generic `AVExpr` that
+  does not bind `t` (or any per-frame variable) at all, unlike
+  `scale`/`crop`/`rotate`. Ruled out — not a slower alternative, a
+  non-option.
+- **`blend`'s `all_opacity`**, blending the layer against a transparent
+  source. Not pursued past reading its option list: it composites two
+  already-open filter inputs together, which would mean opening the same
+  decoded stream twice into the graph just to fade it — solvable, but a
+  second decode of the same input for a single-purpose alpha multiply is a
+  real, avoidable cost `geq` doesn't have.
+- **`geq`'s `alpha_expr`** (chosen). A genuine per-pixel expression filter
+  with real time support — confirmed empirically (`if(lt(T,0.5),1,0)`
+  against a solid-colour source, alpha genuinely flips at the right frame)
+  — and its `alpha(X,Y)` builtin reads the INCOMING alpha plane, so
+  `a='alpha(X,Y)*(<expr>)'` multiplies through whatever the crop step above
+  already zeroed out, rather than overwriting it. **Its time variable is
+  `T` (uppercase), not `t`** — confirmed by the same experiment that ruled
+  out `colorchannelmixer` (lowercase `t` in a `geq` expression fails with
+  the identical "undefined constant" error) — a second real trap this
+  decision exists partly to record, since it's exactly the kind of thing
+  that looks like a typo in review and isn't.
+
+**Rotation: `rotate=angle='(<deg-expr>)*PI/180':fillcolor=black@0.0`.** Two
+real questions here, both resolved empirically rather than assumed:
+1. **Sign/direction.** The Rust compositor rotates via
+   `imageproc::rotate_about_center(img, radians, ...)`; does a positive
+   value there mean the same visual rotation as a positive `angle` in
+   ffmpeg's `rotate` filter? Verified with a real two-tone probe image (a
+   left/right or top-left-quadrant marker) pushed through BOTH engines at
+   +90°: both move the marker the identical direction (a temporary Rust
+   unit test — `probe_rotate_about_center_direction`, added, run, and
+   reverted — plus a real `ffmpeg` CLI run on an identical synthetic
+   frame). No sign flip needed.
+2. **Output canvas size.** `rotate`'s default `ow=iw:oh=ih` keeps the
+   original frame's own bounding box (corners clip, don't grow the canvas).
+   The same Rust probe showed `rotate_about_center` does the same by
+   default. No `ow`/`oh` override needed to match.
+
+`rotate`'s `angle` and `geq`'s `alpha_expr` both re-evaluate every frame
+with no extra flag — unlike `scale`/`crop`, which default to `eval=init`
+(the B-090 trap) and need `eval=frame` added explicitly once animated.
+Confirmed for both, not assumed, by the same kind of direct experiment.
+
+**Where in the chain.** Both effects are implemented **inside
+`buildClipFilterChain`** — the clip's own single-input filter chain
+(crop → setpts → scale → rotate → alpha → tpad) — not in the cross-clip
+`overlay` step `position_x`/`position_y` already use. This was a deliberate
+choice to avoid re-litigating `positionExpr`'s own `t`-domain semantics
+(which filter input's timestamp `overlay`'s expressions actually read):
+`buildClipFilterChain` is unambiguous — every filter in it operates on the
+clip's own decoded stream, whose `t == 0` is already that clip's own
+in-point (the same domain `scaleExpr` already correctly uses) — so this fix
+introduces no new cross-input timing question at all.
+
+**Opacity × fade, folded into one expression** — `alphaExpr = opacity ×
+fadeGainExpr(...)`, exactly mirroring `resolve_clip_transform`'s own
+composition (D-147) and `buildTextDrawtextStep`'s already-shipped
+`alphaExpr`. This was not optional scope: without it, a clip's fade handle
+(D-207, real in the GUI, video or audio) would still export a picture that
+never actually fades, just with a *different* wrong reason (no opacity
+filter step for the fade to fold into) than opacity being flatly ignored —
+the exact same "same doc ⇒ same picture" bar B-095 itself invokes.
+
+**Identity-preserving.** Both new filter branches (`format=rgba` → `rotate`
+→ `geq`) are only emitted when a clip's `opacity`/`rotation`/fade are
+actually non-default or keyframed — `after.length === 0` for every other
+clip, which then compiles the exact same single `scale=...[label]` line as
+before this fix. Verified by the full pre-existing test suite (691 → 694,
+zero of the 691 pre-existing assertions changed).
+
+**Not fixed here:** crop's four insets remain static-only in export — filed
+separately as B-098 rather than folded in, matching this decision's own
+"resolve one clearly-scoped thing per fix" discipline.

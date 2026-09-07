@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **B-095 fixed (D-215): `editor_export` now honours `opacity` and `rotation`,
+  static and keyframed** — both were completely absent from the ffmpeg
+  compiler before this. `geq`'s `alpha_expr` for opacity (`colorchannelmixer`,
+  the originally-suggested filter, turns out to flatly reject a time-varying
+  expression — confirmed empirically), `rotate=` for rotation (direction and
+  canvas-size behavior verified to match the Rust compositor's own
+  `imageproc::rotate_about_center` empirically, not assumed). Folding fade
+  into the same opacity expression also fixed an adjacent, previously-silent
+  gap: a video clip's own fade handle (D-207) only ever reached its embedded
+  audio, never the picture. Three new real-ffmpeg pixel tests. Filed B-098
+  separately for the one still-open piece of the same shape: crop insets
+  remain static-only in export.
 - **2026-09-08** — **`editor_move_track` (roadmap 24(e), D-214):** closes the
   "a new track always lands at the bottom of the z-order" gap found right
   after text/title clips shipped — `editor_add_track` only ever appends, so a

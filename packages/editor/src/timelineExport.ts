@@ -470,7 +470,6 @@ function buildClipFilterChain(
       : fitMode === 'stretch'
         ? `${opts.height}*(${scaleExpr})`
         : '-2';
-  const scaleLabel = padSecs > 0 ? `p${label}` : label;
   // `eval=frame` (default `eval=init`, sampled once) only when `scale` is
   // actually animated — a keyframed width/height expression under the
   // default `eval=init` would still only be evaluated at t=0, reproducing
@@ -487,19 +486,119 @@ function buildClipFilterChain(
   // is not.
   const quotedWidth = `'${widthExpr}'`;
   const quotedHeight = heightExpr === '-2' ? heightExpr : `'${heightExpr}'`;
-  steps.push(`${src}scale=w=${quotedWidth}:h=${quotedHeight}${evalSuffix}[${scaleLabel}]`);
 
+  // B-095 — `opacity` and `rotation`, static AND keyframed, mirroring
+  // `scaleExpr`'s own identity-when-default shape exactly: neither field
+  // emits a filter step at all unless it's actually doing something, so
+  // every clip that never touches either (still the overwhelming majority)
+  // compiles byte-identically to before this fix.
+  const speedValue = speed || 1;
+  const opacity = clip.opacity ?? 1;
+  const hasOpacityKeyframes = hasKeyframesFor(clip, 'opacity');
+  // `geq` (below) is the only filter here whose time variable is spelled
+  // `T`, not `t` — confirmed empirically: `T` animates per frame exactly
+  // like every other filter's `t`, but `t` itself is flatly undefined in a
+  // `geq` expression ("Undefined constant... in 't,...'"), unlike
+  // `scale`/`crop`/`rotate`, which all take lowercase `t`. Both expressions
+  // built for `alphaExpr` below are built in terms of `T` for exactly this
+  // reason — nothing else in this function reuses them.
+  const opacityExpr = hasOpacityKeyframes
+    ? keyframeExprAt(rebaseKeyframesToClipInput(clip), 'opacity', opacity, clipFps, 'T')
+    : String(opacity);
+  // Opacity × fade, as one alpha expression — the same multiplicative
+  // composition `resolve_clip_transform` performs on the preview side
+  // (D-147), mirroring `buildTextDrawtextStep`'s own `alphaExpr` exactly.
+  // `len` is this clip's OWN post-speed decoded-stream duration in seconds —
+  // already the domain `T` lives in here (this filter chain is the clip's
+  // own single ffmpeg input, whose `T == 0` is its own in-point; unlike
+  // `buildTextDrawtextStep`, which runs on the composited BASE stream and
+  // needs `clipTime` rebasing, nothing here needs an offset).
+  const lenSec = clip.duration / speedValue / clipFps;
+  const fadeExpr = fadeGainExpr(
+    lenSec,
+    (clip.fade_in_frames ?? 0) / clipFps,
+    (clip.fade_out_frames ?? 0) / clipFps,
+    clip.fade_in_curve ?? DEFAULT_FADE_CURVE,
+    clip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+    'T',
+  );
+  const alphaExpr = fadeExpr ? `(${opacityExpr})*(${fadeExpr})` : opacityExpr;
+  const needsAlpha = hasOpacityKeyframes || opacity !== 1 || !!fadeExpr;
+
+  const rotation = clip.rotation ?? 0;
+  const hasRotationKeyframes = hasKeyframesFor(clip, 'rotation');
+  const rotationExpr = hasRotationKeyframes
+    ? keyframeExprAt(rebaseKeyframesToClipInput(clip), 'rotation', rotation, clipFps)
+    : String(rotation);
+  const needsRotation = hasRotationKeyframes || rotation !== 0;
+
+  // Ordered chain from here: scale -> [format+rotate+alpha, if either is
+  // real] -> [tpad, if freezing]. Each step's OUTPUT label is `label` itself
+  // only if it's the LAST one that actually runs — everything before that
+  // gets its own tagged intermediate label. This is what keeps a plain clip
+  // (no rotation, no opacity/fade, no freeze — still most clips) emitting
+  // the exact same single `scale=...[label]` line as before B-095.
+  type Step = (inLabel: string) => string;
+  const after: { tag: string; build: Step }[] = [];
+  if (needsRotation || needsAlpha) {
+    // `format=rgba` first: a plain decoded video frame (yuv420p, no alpha
+    // plane) makes `rotate`'s transparent `fillcolor` and `geq`'s alpha
+    // read/write both silently no-op. Needed for either effect alone.
+    after.push({ tag: 'fmt', build: (inLabel) => `[${inLabel}]format=rgba` });
+  }
+  if (needsRotation) {
+    // `angle` is in RADIANS; `t.rotation`/keyframes are stored in DEGREES
+    // (matching the Rust side's own `ClipTransform.rotation` unit) — hence
+    // `*PI/180`. Verified against the Rust compositor's own
+    // `imageproc::rotate_about_center` empirically (a real two-tone probe
+    // image through both engines): both rotate the same visual direction
+    // for the same signed angle, and both keep the ORIGINAL frame's own
+    // dimensions (no `ow`/`oh` override needed) — so no sign flip and no
+    // extra canvas math is required to match. `rotate` has no `eval=init`
+    // trap the way `scale`/`crop` do — its `angle` expression is always
+    // re-evaluated per frame, confirmed against real ffmpeg output, not
+    // assumed (see the B-095 decision entry).
+    after.push({
+      tag: 'rot',
+      build: (inLabel) => `[${inLabel}]rotate=angle='(${rotationExpr})*PI/180':fillcolor=black@0.0`,
+    });
+  }
+  if (needsAlpha) {
+    // No filter takes a single per-frame "multiply the whole layer's alpha"
+    // parameter that also accepts a time-varying expression — confirmed
+    // empirically: `colorchannelmixer`'s `aa` rejects `t` outright
+    // ("Undefined constant... in 't,...'"), unlike `scale`/`crop`/`rotate`.
+    // `geq`'s per-pixel `alpha_expr` does support time (as `T`) and can read
+    // the existing alpha plane back via `alpha(X,Y)` — multiplying through
+    // it rather than overwriting is what keeps this composing correctly
+    // with the crop mask above (a cropped-away pixel is already alpha 0
+    // there; opacity must not un-hide it).
+    after.push({
+      tag: 'al',
+      build: (inLabel) =>
+        `[${inLabel}]geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(${alphaExpr})'`,
+    });
+  }
   // D-188 — `freezeOverrides`: hold this clip's own real last decoded frame,
-  // cloned, for `padSecs` more seconds past its natural end. `tpad` operates
-  // on the already-scaled/positioned overlay stream (last step, not before
-  // crop/setpts/scale) so the held frame is pixel-identical to whatever the
-  // clip's last real frame actually rendered as, at full output resolution —
-  // the caller (`buildExportFfmpegArgs`) also extends this clip's own
+  // cloned, for `padSecs` more seconds past its natural end. `tpad` runs
+  // LAST (after any rotate/alpha) so the held frame is pixel-identical to
+  // whatever the clip's own last real frame actually rendered as — the
+  // caller (`buildExportFfmpegArgs`) also extends this clip's own
   // `enable=between()` window to match, or the held frame would decode fine
   // but never actually get composited past the original window.
   if (padSecs > 0) {
-    steps.push(`[${scaleLabel}]tpad=stop_mode=clone:stop_duration=${padSecs}[${label}]`);
+    after.push({ tag: 'tpad', build: (inLabel) => `[${inLabel}]tpad=stop_mode=clone:stop_duration=${padSecs}` });
   }
+
+  const scaleLabel = after.length > 0 ? `sc${label}` : label;
+  steps.push(`${src}scale=w=${quotedWidth}:h=${quotedHeight}${evalSuffix}[${scaleLabel}]`);
+
+  let cur = scaleLabel;
+  after.forEach((step, i) => {
+    const outLabel = i === after.length - 1 ? label : `${step.tag}${label}`;
+    steps.push(`${step.build(cur)}[${outLabel}]`);
+    cur = outLabel;
+  });
 
   return steps.join(';');
 }

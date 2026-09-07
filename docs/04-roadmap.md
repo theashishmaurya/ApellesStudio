@@ -763,10 +763,10 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       only the ON-CANVAS half open: whether a `TransformOverlay` drag should
       do the same. Fixed on the way: **B-094** (the Rust live-preview
       resolver could not actually interpolate per-property keyframes; it
-      held them into a step function). **B-095 filed, not fixed** — the
-      ffmpeg export compiler ignores `opacity`/`rotation` entirely, so those
-      two of the nine now-keyframeable properties animate in the preview but
-      not in an exported file.
+      held them into a step function). **B-095 fixed (D-215, 2026-09-08)** —
+      the ffmpeg export compiler now honours `opacity`/`rotation`, static and
+      keyframed, matching the preview; the crop insets' own still-open piece
+      of the same shape is B-098.
       **The ON-CANVAS half is now built too (D-209, 2026-09-08), fixing
       B-093** — which turned out not to be an open design question so much as
       a live defect the moment canvas click-to-select started working

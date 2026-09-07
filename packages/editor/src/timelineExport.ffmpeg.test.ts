@@ -297,6 +297,112 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execut
     expect(rAfter).toBeLessThan(80);
     expect(bAfter).toBeLessThan(80);
   });
+
+  it('B-095: a keyframed `opacity` actually fades the exported picture, not just the live preview', () => {
+    // Full-canvas green, no crop/scale/position in play — isolates opacity
+    // from every other transform. Ramped 1 -> 0 across the clip's own
+    // 2-second span; sampled well inside each half so encoder blur near the
+    // ramp's midpoint can't affect either reading.
+    const green = join(dir, 'green.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=green:size=200x200:duration=2:rate=24',
+      '-pix_fmt', 'yuv420p', green,
+    ]);
+    const c = clip('op1', {
+      source_path: green,
+      source_fps: 24,
+      duration: 48,
+      chroma_keyframes: [
+        { frame: 0, params: { opacity: 1 } },
+        { frame: 47, params: { opacity: 0 } },
+      ],
+    });
+    const tl = timeline([track('video', [c])]);
+    const out = join(dir, 'out-opacity-kf.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 24, width: 200, height: 200 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    // Against the exporter's own black base (`buildExportFfmpegArgs`'s
+    // `color=black[base]`), near-full opacity should read as real green;
+    // near-zero opacity should have faded almost entirely to that same
+    // background black — the exact distinction B-095 found completely
+    // absent (every clip exported fully, permanently opaque regardless of
+    // this field, static or animated).
+    const [, gEarly] = pixelAt(out, 0.05, 100, 100);
+    expect(gEarly).toBeGreaterThan(100);
+
+    const [rLate, gLate, bLate] = pixelAt(out, 1.9, 100, 100);
+    expect(rLate + gLate + bLate).toBeLessThan(30);
+  });
+
+  it("B-095: a static `rotation` actually rotates the exported picture, not just the live preview", () => {
+    // A blue marker in the TOP-LEFT quadrant of an otherwise green square —
+    // asymmetric on both axes, so a rotation (as opposed to e.g. a mirror)
+    // is the only transform that could move it. Empirically confirmed
+    // (real ffmpeg, this exact `rotate=angle=...:fillcolor=black@0.0` shape)
+    // that a +90 degree rotation moves a top-left marker to top-right —
+    // asserted here, not assumed, matching this file's own founding
+    // discipline of proving real pixels rather than trusting a plausible
+    // argv string.
+    const marked = join(dir, 'marked.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=green:size=200x200:duration=1:rate=24',
+      '-vf', 'drawbox=x=0:y=0:w=100:h=100:color=blue@1:t=fill',
+      '-pix_fmt', 'yuv420p', marked,
+    ]);
+    const c = clip('rot1', {
+      source_path: marked,
+      source_fps: 24,
+      duration: 24,
+      rotation: 90,
+    });
+    const tl = timeline([track('video', [c])]);
+    const out = join(dir, 'out-rotation.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 24, width: 200, height: 200 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    const [, , bTopRight] = pixelAt(out, 0.2, 190, 10);
+    expect(bTopRight).toBeGreaterThan(150); // the marker really moved here
+
+    const [, gTopLeft] = pixelAt(out, 0.2, 10, 10);
+    expect(gTopLeft).toBeGreaterThan(80); // and really left its original corner
+  });
+
+  it("B-095 (adjacent, picked up by the same fix): a VIDEO clip's own fade-in handle (D-207) now actually fades the PICTURE on export, not just its embedded audio", () => {
+    // `resolve_clip_transform` (the live preview) already folds
+    // `fade_multiplier_at` into `opacity` (D-147) — this repo's own "same
+    // doc, same picture" bar means the export owes the identical
+    // composition, not just the narrower opacity/rotation cases named in
+    // B-095's own title. Before this fix there was no picture-opacity
+    // filter step of any kind in this compiler, so a video clip's fade
+    // handle (D-207 — real in the GUI, on every clip, video or audio) only
+    // ever affected the exported clip's EMBEDDED AUDIO (D-147's own test
+    // above), never what the frame actually looked like.
+    const green = join(dir, 'green-fade.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=green:size=200x200:duration=2:rate=24',
+      '-pix_fmt', 'yuv420p', green,
+    ]);
+    const c = clip('fade1', {
+      source_path: green,
+      source_fps: 24,
+      duration: 48,
+      fade_in_frames: 24, // one full second of a two-second clip
+    });
+    const tl = timeline([track('video', [c])]);
+    const out = join(dir, 'out-video-fade.mp4');
+    const args = buildExportFfmpegArgs(tl, out, { fps: 24, width: 200, height: 200 });
+
+    execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' });
+
+    const [, gEarly] = pixelAt(out, 0.05, 100, 100);
+    expect(gEarly).toBeLessThan(40); // still near-black, right at the fade's start
+
+    const [, gLate] = pixelAt(out, 1.9, 100, 100);
+    expect(gLate).toBeGreaterThan(100); // fully faded in, well past the 1s ramp
+  });
 });
 
 // D-197 — real audio mixing: gain, fade, duck, and multi-source mix, each
