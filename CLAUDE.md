@@ -147,6 +147,14 @@ in the same commit.
   a nice-to-have polish pass. Never trade a snappy, correct UI for a quicker build; do
   not take a shortcut to hit that speed either, unless the owner explicitly says to for
   that specific case (this mirrors "no shortcuts" above, not a carve-out from it).
+- **Internal debug tooling (screenshots, UI state open/close/select, pixel inspection)
+  is real and welcome, but debug-only, always** (owner, 2026-09-08). Scope/tracker:
+  `docs/notes/debug-tooling.md`. These exist so an agent can inspect and drive the
+  running app directly instead of relying on the owner's own eyes/manual screenshots —
+  build them properly, with real MCP tools, not one-off scripts. But every one of them
+  must be compiled out of a production build via a real compile-time gate
+  (`#[cfg(debug_assertions)]`, a Cargo feature, or equivalent) — never a runtime flag,
+  never "just don't call it in prod." For us, never shipped.
 
 ## Monorepo layout (D-039 / D-040)
 
