@@ -1065,6 +1065,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     call sites; auditing for any OTHER place still assuming "pool item" means
     "video" is worth a dedicated pass, not assumed done. Not started as a build —
     this entry is the scope, not the implementation.
+24. **No text/title clip primitive in the Edit tab at all** — owner, 2026-09-07,
+    asking for real "AFTER"/"BEFORE" labels on the comparison reel. Confirmed by
+    grep: no `TrackKind::Text`, no title-clip concept anywhere in
+    `packages/editor/src/timeline.ts`/`crates/chroma-timeline` — a video track holds
+    only real decoded video, an audio track only real decoded/synthesized audio.
+    Worked around THIS session with a real `ffmpeg drawtext` pass laid on top of
+    Chroma's own correct export (not a Chroma feature — an external finishing
+    step, disclosed as such), which is fine for a one-off but is not something a
+    GUI user can do at all. A real text/title primitive needs, at minimum: a new
+    `Clip`-like model (font/size/color/content/position, keyframeable position at
+    least, matching the existing transform-keyframe convention), a Rust
+    live-preview compositor path (a text-rendering layer, not a decoded-frame one),
+    and an `editor_export` compiler path (most naturally `drawtext`/`ass` under the
+    hood, given this session's own precedent). A real, standalone feature — not a
+    quick add alongside anything else. Not started as a build — this entry is the
+    scope, not the implementation.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

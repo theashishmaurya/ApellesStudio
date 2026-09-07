@@ -1110,7 +1110,24 @@ def editor_export(
         args["fitOverrides"] = fit_overrides
     if freeze_overrides is not None:
         args["freezeOverrides"] = freeze_overrides
-    return json.dumps(_op("editor_export", **args), indent=2, default=str)
+    env = _op("editor_export", **args)
+    # B-091 — the compiled ffmpeg `args` (the FULL filter_complex, verbatim)
+    # made this response grow with keyframe count/precision until it was
+    # observed hitting an unreliable size boundary: the same general payload
+    # size sometimes got a graceful "saved to a file" truncation and
+    # sometimes failed the whole tool call outright with no detail, even
+    # though the real ffmpeg render succeeded either way. `args` is genuinely
+    # useful for debugging a failed compile, but is the wrong DEFAULT once a
+    # timeline has more than a handful of keyframes — a caller almost always
+    # only needs to know whether it succeeded and where the file landed, not
+    # the literal argv. Dropped here (the MCP boundary), not in the TS
+    # compiler itself, so `editor_export`'s own real return value stays the
+    # complete, undiminished one for any in-app/test caller.
+    result = env.get("result")
+    if isinstance(result, dict) and "args" in result:
+        result = {k: v for k, v in result.items() if k != "args"}
+        env = {**env, "result": result}
+    return json.dumps(env, indent=2, default=str)
 
 
 @mcp.tool()

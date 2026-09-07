@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
+  intermittently fails outright for a large-but-not-huge payload, instead
+  of the graceful size-limit truncation the same size class usually gets —
+  the real ffmpeg render always succeeds regardless) and mitigated it on
+  this side of the boundary: `editor_export`'s MCP tool now drops the
+  compiled `args` (the full `ffmpeg` argv, the actual driver of the
+  oversized response) from its return value by default — a caller almost
+  always only needs to know whether it succeeded and where the file
+  landed, not the literal filtergraph. Also filed roadmap item 24: the
+  Edit tab has no text/title clip primitive at all (confirmed by grep) —
+  this session's own "AFTER"/"BEFORE" labels were a real `ffmpeg drawtext`
+  finishing pass laid on top of Chroma's own correct export, not a Chroma
+  feature, disclosed as such.
+
 - **2026-09-07** — **Fixed B-090: `editor_export` silently ignored `scale`
   keyframes — only `position_x`/`position_y` ever animated per-frame.** A
   "zoom" authored via `editor_set_clip_keyframes` compiled to a fixed-size
