@@ -1158,7 +1158,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `clip.text == null` is a one-line-per-row follow-up; (c) on-canvas drag of
     a title (`TransformOverlay.tsx`, off-limits the same way — the backend's
     `chroma_timeline_clip_geometry` already answers correctly for a text clip);
-    (d) FCPXML interchange does not map a title yet.
+    (d) FCPXML interchange does not map a title yet; (e) **found live,
+    2026-09-08, self-testing this feature right after merge:** `editor_add_track`
+    only APPENDS (highest index — bottommost z-order); it takes no `track_kind`
+    position and has no `index` parameter at all, and there is no
+    `editor_move_track`/reorder tool. So an agent adding a title to a project
+    that already has footage on track 0 (the normal case, not a from-scratch
+    build) has no MCP way to get the new track compositing ABOVE that footage —
+    confirmed live: a title added to a freshly-appended track rendered fully
+    occluded, exactly as the "lower index = top" z-order rule predicts. The
+    tool's own docstring says "put the title on a LOWER track index than the
+    footage," which is only actually achievable when building a timeline from
+    empty. Real, small, well-shaped follow-up: either `editor_add_track` takes
+    an optional insertion index, or a dedicated `editor_move_track` exists —
+    either closes it.
 25. **A real Resolve-Edit-page-inspired build-out — owner, 2026-09-08, several items
     logged live while a fix was in flight, to action once it lands (not
     investigated individually yet — this is the log, not the diagnosis):**
