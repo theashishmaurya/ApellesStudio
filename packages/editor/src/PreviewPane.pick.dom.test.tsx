@@ -48,6 +48,7 @@ import {
   mount,
   stubOffsetMetrics,
   waitFrames,
+  waitMs,
   type MountedComponent,
 } from './testUtils/pointerHarness';
 
@@ -68,9 +69,27 @@ const STUB_FRAME = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALA
  *  every expected box is readable straight off the fixture. */
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
+/**
+ * How long `chroma_timeline_frame` takes to answer, in ms — B-085's second
+ * (WKWebView-only) half, made reproducible.
+ *
+ * `0` (the default for every test below) is what a stub backend does: the
+ * frame and the composition size land in the SAME microtask flush, so React
+ * commits both in one render. That coincidence is the whole reason the first
+ * fix passed here and in the browser harness while still being broken in the
+ * real app — see this file's `real backend ordering` block and B-085's
+ * 2026-09-07 follow-up. Set it non-zero to get the REAL app's ordering: a
+ * cheap `chroma_timeline_composition_size` resolving first, and a real
+ * ffmpeg decode arriving hundreds of ms later in its own commit.
+ */
+let frameDelayMs = 0;
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
-    chroma_timeline_frame: () => STUB_FRAME,
+    chroma_timeline_frame: () =>
+      frameDelayMs === 0
+        ? STUB_FRAME
+        : new Promise<string>((resolve) => setTimeout(() => resolve(STUB_FRAME), frameDelayMs)),
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
@@ -141,7 +160,11 @@ let console_: ReturnType<typeof captureConsole>;
  *  fetch + every geometry probe to settle. Returns the preview SURFACE — the
  *  element `useCanvasClipPick` listens on, and the element a real press on
  *  the picture lands in. */
-async function mountWith(timeline: Timeline, initialSelection: { track: number; id: string }[] = []): Promise<HTMLElement> {
+async function mountWith(
+  timeline: Timeline,
+  initialSelection: { track: number; id: string }[] = [],
+  opts: { strictMode?: boolean } = {},
+): Promise<HTMLElement> {
   actSync(() =>
     useEditorTimelineStore.setState({
       timeline,
@@ -154,7 +177,17 @@ async function mountWith(timeline: Timeline, initialSelection: { track: number; 
       selectedGap: null,
     }),
   );
-  mounted = mount(React.createElement(PreviewPane), { strictMode: true });
+  mounted = mount(React.createElement(PreviewPane), { strictMode: opts.strictMode ?? true });
+  // A slow frame has to settle in its OWN `act()` block, after the ones the
+  // fast commands already settled in — `act` drains everything scheduled
+  // inside it into a single render pass, so awaiting one block long enough to
+  // cover both would collapse the two commits back into the one commit that
+  // hides this bug (which is exactly what the stub backend does naturally).
+  // See `frameDelayMs`.
+  if (frameDelayMs > 0) {
+    await waitFrames(2);
+    await waitMs(frameDelayMs + 20);
+  }
   await waitFrames(4);
   const el = mounted.container.querySelector('[data-preview-surface]');
   if (!el) throw new Error('preview surface never rendered — frame/composition-size stubs are broken');
@@ -169,6 +202,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  frameDelayMs = 0;
   // Same bar every prior pointer-gesture harness in this repo set: zero
   // console errors under real StrictMode double-invoke, asserted rather than
   // eyeballed.
@@ -356,6 +390,61 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
       await waitFrames(1);
 
       expect(selection()).toEqual([{ track: 0, id: 'pip' }]);
+    });
+  });
+
+  /**
+   * B-085's second half — the one the first fix shipped without covering.
+   *
+   * Every test above (and the whole real-Chromium harness pass) answers
+   * `chroma_timeline_frame` and `chroma_timeline_composition_size` in the
+   * same microtask flush, because both are synchronous stubs. The real app
+   * does not: the composition size is a cheap settings/probe read that
+   * answers in milliseconds, while the frame is a real ffmpeg decode over
+   * IPC that answers hundreds of milliseconds later. Those are two separate
+   * React commits, and `PreviewPane` only renders its surface `<div>` — the
+   * element every overlay measures itself against — once a frame exists. So
+   * in the real app the composition size arrived while that element was
+   * still unmounted, and nothing ever re-measured once it appeared: the
+   * content box stayed 0×0 forever, the pick listener was never attached,
+   * and clicking the canvas did nothing at all in the shipped app while
+   * passing every test here.
+   *
+   * These two mount with that real ordering, which is the only difference
+   * from their same-named counterparts above.
+   */
+  describe('with the real backend’s ordering — the composition size resolving before the first frame', () => {
+    it('still selects the clip under the pointer (the WKWebView-only half of B-085)', async () => {
+      frameDelayMs = 120;
+      const surface = await mountWith(timelineOf([{ kind: 'video', clips: [clip('solo')] }]));
+      expect(selection()).toEqual([]);
+
+      firePointerEvent(surface, 'pointerdown', at(0.5, 0.5));
+      await waitFrames(1);
+
+      expect(selection()).toEqual([{ track: 0, id: 'solo' }]);
+    });
+
+    // Without StrictMode — i.e. the shape a RELEASE build actually runs.
+    // StrictMode's double-invoke of a newly-mounted effect happens to rescue
+    // the two overlays that mount WITH the surface (`CanvasBoundary`,
+    // `TransformOverlay`): their second run sees the container attached. It
+    // cannot rescue `useCanvasClipPick`, which belongs to `PreviewPane` — long
+    // since mounted — and that is exactly why the dev app showed a correct
+    // canvas boundary while the click was dead. Drop StrictMode and the
+    // boundary is dead too, so this case pins the whole overlay stack.
+    it('still selects, and still draws the canvas boundary, with no StrictMode double-invoke to fall back on', async () => {
+      frameDelayMs = 120;
+      const surface = await mountWith(timelineOf([{ kind: 'video', clips: [clip('solo')] }]), [], {
+        strictMode: false,
+      });
+
+      expect(mounted?.container.querySelector('[data-canvas-boundary]')).not.toBeNull();
+
+      firePointerEvent(surface, 'pointerdown', at(0.5, 0.5));
+      await waitFrames(1);
+
+      expect(selection()).toEqual([{ track: 0, id: 'solo' }]);
     });
   });
 });

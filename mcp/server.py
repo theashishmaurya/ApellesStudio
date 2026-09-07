@@ -694,10 +694,12 @@ def editor_get_capabilities() -> str:
 def editor_get_state() -> str:
     """The Edit tab's own top-level state: whether a project is open AND
     which one (`openProject`, its `.chroma` path — B-083), load status,
-    playhead position, whether it is playing, and whether a timeline exists at
-    all. Cheap, read-only — call before anything else if you don't already
-    know a project is open, or to confirm which project the Edit tab is
-    actually on after an `open_project`/`new_project` switch."""
+    playhead position, whether it is playing, whether a timeline exists at
+    all, and the current `selection` (a list of `{track, id}`) plus
+    `selectedGap`. Cheap, read-only — call before anything else if you don't
+    already know a project is open, to confirm which project the Edit tab is
+    actually on after an `open_project`/`new_project` switch, or to see what
+    the user currently has selected."""
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)

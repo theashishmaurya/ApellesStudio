@@ -80,8 +80,12 @@ import { clipGeometryKey, useClipGeometries } from './useClipGeometry';
 import type { CompositionSize } from './useCompositionSize';
 
 /**
- * Wire canvas click-to-select onto `containerRef` — `PreviewPane`'s
- * `surfaceRef`, the element the `<img>` is `object-contain`-fit within.
+ * Wire canvas click-to-select onto `container` — `PreviewPane`'s preview
+ * surface, the element the `<img>` is `object-contain`-fit within. It is the
+ * ELEMENT, not a ref object, because `PreviewPane` only renders it once the
+ * first frame has decoded: the hook has to re-run when it appears, and a ref
+ * object never tells anyone that it did (B-085's second half — see
+ * `useContentBox`'s own note).
  *
  * Measures its own content box from that container, exactly as
  * `CanvasBoundary` and `TransformOverlay` each already do: all three derive
@@ -92,10 +96,7 @@ import type { CompositionSize } from './useCompositionSize';
  * Renders nothing and returns nothing: the only observable effect is on the
  * store's `selection`/`selectedGap`.
  */
-export function useCanvasClipPick(
-  containerRef: React.RefObject<HTMLElement | null>,
-  size: CompositionSize | null,
-): void {
+export function useCanvasClipPick(container: HTMLElement | null, size: CompositionSize | null): void {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
 
@@ -111,12 +112,11 @@ export function useCanvasClipPick(
     size ? `${size.width}x${size.height}` : null,
   );
 
-  const contentBox = useContentBox(containerRef, size);
+  const contentBox = useContentBox(container, size);
   const ready = !!size && contentBox.width > 0 && contentBox.height > 0;
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !ready) return;
+    if (!container || !ready) return;
 
     const onPointerDownCapture = (e: PointerEvent) => {
       if (e.button !== 0) return;
@@ -124,7 +124,7 @@ export function useCanvasClipPick(
       // Rule 2 — a corner grab is never a selection gesture.
       if (target?.closest('[data-transform-handle]')) return;
 
-      const rect = el.getBoundingClientRect();
+      const rect = container.getBoundingClientRect();
       const point = screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
       const candidates: PickCandidate[] = layers.map((l) => {
         const g = geometries.get(clipGeometryKey(l.track, l.clipIndex, l.clip.source_path));
@@ -157,7 +157,7 @@ export function useCanvasClipPick(
       e.stopPropagation();
     };
 
-    el.addEventListener('pointerdown', onPointerDownCapture, { capture: true });
-    return () => el.removeEventListener('pointerdown', onPointerDownCapture, { capture: true });
-  }, [containerRef, ready, contentBox, layers, geometries]);
+    container.addEventListener('pointerdown', onPointerDownCapture, { capture: true });
+    return () => container.removeEventListener('pointerdown', onPointerDownCapture, { capture: true });
+  }, [container, ready, contentBox, layers, geometries]);
 }

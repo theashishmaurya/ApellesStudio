@@ -34,13 +34,13 @@ import type { CompositionSize } from './useCompositionSize';
 const LABEL_MARGIN = 4;
 
 export function CanvasBoundary({
-  containerRef,
+  container,
   size,
 }: {
-  containerRef: React.RefObject<HTMLElement | null>;
+  container: HTMLElement | null;
   size: CompositionSize | null;
 }) {
-  const contentBox = useContentBox(containerRef, size);
+  const contentBox = useContentBox(container, size);
   if (!size || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
   return (

@@ -56,7 +56,7 @@
  *
  * On-canvas transform handles (D-136, Phase 1 of
  * `docs/notes/on-canvas-transform.md`): `<TransformOverlay>` renders as a
- * sibling of the `<img>`, both children of `surfaceRef` — an
+ * sibling of the `<img>`, both children of the preview surface div — an
  * absolutely-positioned DOM/SVG overlay, not a second `<canvas>`, per that
  * note's own finding that the preview surface is a plain `<img>` and
  * `<Player>`'s `surface` slot already accepts any ReactNode. No prop drilling
@@ -74,8 +74,8 @@
  *
  * Canvas click-to-select (D-204, fixing B-085): `useCanvasClipPick` is a
  * BEHAVIOUR, not a fifth thing in the overlay stack — it listens on
- * `surfaceRef` in the capture phase and decides, per press, whether that
- * press is a selection or a `TransformOverlay` drag. It is deliberately not
+ * the preview surface in the capture phase and decides, per press, whether
+ * that press is a selection or a `TransformOverlay` drag. It is deliberately not
  * an overlay div: a full-bleed hit layer under `TransformOverlay` cannot work,
  * because a full-frame clip's own transform box is full-bleed too and would
  * swallow every press. See that hook's own doc.
@@ -148,12 +148,20 @@ export function PreviewPane() {
   const inFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
-  // D-136 — the container `TransformOverlay` measures its content box
-  // against (`useContentBox`'s `containerRef`). Must be the same element the
-  // `<img>` is `object-contain`-fit within, i.e. its own parent, not
-  // `Player`'s outer viewport div (which also holds letterboxing bars this
-  // ref must NOT include).
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  // D-136 — the container `TransformOverlay`, `CanvasBoundary` and
+  // `useCanvasClipPick` all measure their content box against. Must be the
+  // same element the `<img>` is `object-contain`-fit within, i.e. its own
+  // parent, not `Player`'s outer viewport div (which also holds letterboxing
+  // bars this must NOT include).
+  //
+  // **State + a callback ref, not `useRef` (B-085 follow-up, 2026-09-07).**
+  // This element only exists once the first frame has decoded, and a ref
+  // object populated mid-commit tells nobody: every consumer's measurement
+  // effect had already run against `null` (the composition size resolves in
+  // milliseconds, the frame in hundreds), stored a 0×0 box, and never re-ran.
+  // Holding the node in state makes it appearing a real render, which is what
+  // React's docs prescribe for exactly this. See `useContentBox`'s own note.
+  const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
 
   // D-126 — mute/volume: local monitoring state, not project data (see the
   // module doc). `volume` is the last non-zero level, remembered across a
@@ -201,10 +209,11 @@ export function PreviewPane() {
   const compSize = useCompositionSize(!!timeline);
 
   // D-204 (B-085) — canvas click-to-select. A behaviour, not a surface: it
-  // listens on `surfaceRef` in the CAPTURE phase so it can decide, per press,
-  // whether this is a selection or a `TransformOverlay` drag — see that hook's
-  // own doc for why no z-ordered overlay div can make that call correctly.
-  useCanvasClipPick(surfaceRef, compSize);
+  // listens on the preview surface in the CAPTURE phase so it can decide, per
+  // press, whether this is a selection or a `TransformOverlay` drag — see that
+  // hook's own doc for why no z-ordered overlay div can make that call
+  // correctly.
+  useCanvasClipPick(surfaceEl, compSize);
 
   // D-201 — two shapes here exist for the React Compiler's sake, both exactly
   // equivalent to what they replaced (see
@@ -435,13 +444,13 @@ export function PreviewPane() {
             <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
           ) : frameSrc ? (
             <div
-              ref={surfaceRef}
+              ref={setSurfaceEl}
               data-preview-surface
               className="relative flex h-full w-full items-center justify-center"
             >
               <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
-              <CanvasBoundary containerRef={surfaceRef} size={compSize} />
-              <TransformOverlay containerRef={surfaceRef} />
+              <CanvasBoundary container={surfaceEl} size={compSize} />
+              <TransformOverlay container={surfaceEl} />
             </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">
