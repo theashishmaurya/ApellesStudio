@@ -16,6 +16,14 @@ One or two lines per session. Detail lives in the decision it references.
   timeline store when switching PROJECTS (D-195's multi-TIMELINE-within-one-
   project switching is unaffected) — worked around this session by not
   switching projects mid-build.
+- **2026-09-07** — **B-081 root-caused and fixed — and it was never an IPC bug
+  (D-197).** The `IPC custom protocol failed` burst fires once per Tauri IPC call
+  in flight when the page navigates; the navigation was a **Vite full page reload
+  of the entire app**, caused by `app/src/main.tsx` holding the `Root` component
+  while exporting nothing (an invalidating React Fast Refresh boundary that every
+  edit behind a `@chroma/*` barrel propagated to). `Root` moved to its own
+  `app/src/Root.tsx`; verified live that editing `timeline.ts`/`timelineStore.ts`/
+  the editor barrel now hot-updates instead of reloading the whole app.
 - **2026-09-07** — **"Multiple timelines" live-verified working; B-080 filed.**
   Extended the D-142 browser harness to mount `TimelineSwitcher` against a real
   multi-timeline fake backend and drove it with real Chromium pointer events:

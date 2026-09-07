@@ -969,11 +969,18 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 21. **UI performance: real findings, not a hand-wavy "webviews are slow"** — owner,
     2026-09-07, after a real discussion about React 19/Tauri performance ceilings.
     Three concrete, evidence-based items, not guesswork:
-    1. **B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
+    1. ~~**B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
        intermittently fails at startup and silently falls back to the slower
-       `postMessage` bridge; observed live this session (88 occurrences in one of
-       three `npm run tauri:dev` launches, zero in the other two). Root cause
-       unknown — needs real investigation, not a guess.
+       `postMessage` bridge~~ — **root-caused and fixed (D-197, 2026-09-07)**,
+       and it was not an IPC bug at all: the warning burst fires once per IPC
+       call that is in flight when the page navigates, and the navigation was a
+       **Vite full page reload of the whole app**, triggered because
+       `app/src/main.tsx` held the `Root` component while exporting nothing,
+       making it an invalidating React Fast Refresh boundary that every edit
+       behind a `@chroma/*` barrel propagated to. `Root` now lives in
+       `app/src/Root.tsx` (exports only components); verified live that editing
+       `timeline.ts` / `timelineStore.ts` / the editor barrel now hot-updates
+       instead of full-reloading.
     2. **React Compiler bailout coverage** — `docs/notes/react-compiler-coverage.md`,
        a real inventory of 55 unique bailouts across 45 files, extracted from real
        dev-server logs, grouped by root cause with a fix direction per bucket. Two

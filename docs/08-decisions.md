@@ -17553,3 +17553,131 @@ touched formulas/identifiers against `rustfmt`'s output, not just line numbers.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-197 — Dev-mode iteration speed: fix the full-page-reload HMR boundary (root cause of B-081), clear the React Compiler bailouts on the hot Edit-tab surfaces, and pin the drag gesture's already-deferred commit
+
+Owner, 2026-09-07: *"make the whole dev [experience] faster, and prod will
+automatically be faster too."* Three evidence-based findings from that session
+(`docs/04-roadmap.md` item 21) were dispatched together; this entry covers what
+each turned out to be and what was actually done.
+
+### Part 1 — B-081's real root cause: an invalidating Fast Refresh boundary, not a Tauri IPC bug
+
+**Context.** B-081 recorded 88 occurrences of
+`IPC custom protocol failed, Tauri will now use the postMessage interface instead`
+in one of three `npm run tauri:dev` launches, zero in the other two, with the
+root cause listed as unknown and the suspicion aimed at Tauri's IPC transport
+(a WKWebView permission issue, a webview-readiness race, port reuse…).
+
+**What the evidence actually says.** Re-reading the three saved dev logs from
+that session — the ones the original entry was written from — the correlation
+is exact and total:
+
+| log | Tauri-webview `page reload`s | `IPC custom protocol failed` |
+|---|---|---|
+| `tauri-dev.log` | 0 | 0 |
+| `tauri-dev-2.log` | 3 (`src/main.tsx`) | 88 (51 + 17 + 20, one burst per reload) |
+| `tauri-dev-3.log` | 0 (its 12 reloads are all of `harness.html`, a plain Chrome page with no Tauri IPC at all) | 0 |
+
+and the surrounding lines in `tauri-dev-2.log` spell out the whole chain:
+
+```
+4:18:59 pm  hmr update /src/main.tsx, …/TimelinePane.tsx, …  (10 modules)
+4:18:59 pm  [console.error] You are calling ReactDOMClient.createRoot() on a
+            container that has already been passed to createRoot() before.
+4:18:59 pm  hmr invalidate /src/main.tsx  Could not Fast Refresh
+            ("true" export is incompatible)
+4:18:59 pm  page reload src/main.tsx
+4:19:00 pm  [console.warn] IPC custom protocol failed …          ×51
+4:19:01 pm  [TAURI] Couldn't find callback id 863394175. This might happen
+            when the app is reloaded while Rust is running an asynchronous
+            operation.                                            ×4
+```
+
+Reading `tauri-2.11.5/scripts/ipc-protocol.js` closes it: the warning is
+logged from the *rejection* handler of the `fetch()` to `ipc://localhost/<cmd>`
+— i.e. it fires once per IPC call that was **in flight when the page
+navigated**, because WKWebView cancels every pending custom-scheme task on
+navigation. The counts (51 / 17 / 20, not a constant) are "however many calls
+happened to be in flight at that instant," and the *following* second's
+`Couldn't find callback id` warnings are Tauri's own message for exactly this
+situation. `customProtocolIpcFailed` is a per-JS-context flag, so it is the
+*outgoing* document that flips to `postMessage` for its last few milliseconds;
+the freshly-loaded document gets a clean flag and the fast transport back.
+
+**So B-081 is not a Tauri bug and not a lasting transport downgrade.** It is a
+*symptom*, and the thing it was pointing at is far more expensive than the
+symptom: **every Vite HMR update that reached `app/src/main.tsx` full-reloaded
+the entire app.**
+
+**Why the reload happened.** `@vitejs/plugin-react` treats a module as a React
+Fast Refresh boundary only when *all* of its exports are components; its
+runtime check (`validateRefreshBoundaryAndEnqueueUpdate`,
+`refresh-runtime.js`) additionally requires that there be **at least one**
+export — a module with none fails with `hasExports === false`, which is what
+prints the odd-looking `("true" export is incompatible)` message. `main.tsx`
+declared the `Root` component (so the plugin made it a boundary candidate and
+injected `import.meta.hot.accept`) while exporting *nothing* (it is the entry
+module). Every update that reached it therefore: re-executed the module (hence
+the duplicate `createRoot()` error), failed validation, invalidated, and asked
+Vite for a full page reload.
+
+And updates reached it constantly, because **no `@chroma/*` barrel is a
+refresh boundary either** — `packages/editor/src/index.ts` and friends
+deliberately re-export stores, plain functions and types alongside components,
+so Vite propagates an update straight through them to whatever imports the
+barrel. In practice that meant an edit to `timeline.ts`, `timelineStore.ts` or
+the barrel itself — three of the most-edited files in the Edit tab — reloaded
+the whole app: every module re-fetched, all app state lost, the project
+re-opened, and the B-081 warning burst on the way out.
+
+**Options considered.**
+1. **Chase the IPC transport itself** (entitlements, CSP, `devUrl`, a Tauri
+   upgrade). Rejected once the log correlation was exact — there is nothing
+   wrong with the transport; it is cancelled by a navigation, which is correct
+   behavior, and no Tauri-side config changes that.
+2. **Suppress/ignore the warning.** Rejected — it is a true signal, and
+   silencing it would have hidden the actual defect underneath it.
+3. **Move `Root` into its own module that exports only components — chosen.**
+   `app/src/Root.tsx` exports exactly one thing, the `Root` component, so it is
+   a valid Fast Refresh boundary and propagation stops there. `app/src/main.tsx`
+   keeps only bootstrap (`installFrontendLogBridge()`, `createRoot`, `render`)
+   and therefore contains no component at all, so the plugin never makes it a
+   boundary candidate in the first place. This is React's own documented
+   "only export components from a component file" rule and Vite's own
+   `#consistent-components-exports` guidance — the framework's canonical
+   pattern, not a workaround.
+
+**Verified live, before and after,** with a real Vite 8 dev server + a real
+Chromium page (a second dev server on port 1440 in the agent's worktree, so the
+owner's running `npm run tauri:dev` was never disturbed):
+
+- **before** — appending a comment to `packages/editor/src/timeline.ts` produced
+  `hmr update … /src/main.tsx …` → `hmr invalidate /src/main.tsx Could not Fast
+  Refresh ("true" export is incompatible)` → **`page reload src/main.tsx`**, plus
+  the same duplicate-`createRoot()` console error seen in the original session log.
+- **after** — the identical edit, and the same edit to `timelineStore.ts` and to
+  `packages/editor/src/index.ts`, each produced `hmr update … /src/Root.tsx …`
+  and **no `hmr invalidate` and no `page reload`** at all.
+
+**Not changed, deliberately.** `app/src/harness-main.tsx` and
+`app/src/motion-harness-main.tsx` (the D-142 / motion browser harnesses) still
+full-reload, and should: they own module-level fixture state that a hot update
+would leave half-stale, so a reload is the correct behavior for a test page —
+and unlike the app they import the `@chroma/*` barrels directly for non-component
+values, so making them boundaries would mean restructuring them for no real gain.
+
+**Residual honesty.** The before/after above is live-verified for the *cause*
+(the full page reload) in a real browser. The last link — "no reload ⇒ no
+`IPC custom protocol failed` burst" — rests on the three-log correlation and on
+reading Tauri's own `ipc-protocol.js`, not on a fresh `npm run tauri:dev`
+launch: the owner's dev server and the single-instance Tauri app were running
+on the main checkout throughout, and `tauri.conf.json`'s `devUrl` is pinned to
+`http://localhost:1420` while `tauri-plugin-single-instance` refuses a second
+app process, so a second real Tauri launch was not possible without killing the
+owner's. To confirm it directly next session: run `npm run tauri:dev`, edit
+`packages/editor/src/timeline.ts`, and check the dev-server console shows an
+`hmr update` (not a `page reload`) and logs zero IPC-fallback warnings.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
