@@ -44,7 +44,7 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 21 tools (D-183, 2026-09-07; +1, D-191)
+## Edit tab / multi-track NLE — CLOSED, 22 tools (D-183, 2026-09-07; +1, D-191; +1, D-195)
 
 > **The gap tracked below is closed.** D-147 (clip fades) and D-149 (ducking)
 > shipped the first three Edit-tab tools; D-183 shipped the other seventeen in one
@@ -75,6 +75,7 @@ zero.**
 > | `editor_set_clip_keyframes` | Animates ONE clip's own transform over time (e.g. zoom-in on a click) — scoped to that clip's own local timeline, never the whole track, so two clips on two tracks each zoom at their own moment while both stay visible. |
 > | `editor_export` | Renders the WHOLE multi-track timeline (composited, cropped, keyframed, speed-adjusted) to a real output file via ffmpeg — the one tool that produces an actual video, everything else only edits in-memory state. v1 is video-only; audio mixing (gain/duck/fade) is a documented follow-up, not wired into the export yet. `fit_overrides` (D-184, B-074) lets a caller choose per-clip whether `scale` fits the clip's real aspect ratio into its box (`'fit'`, the default) or force-stretches to the canvas's own aspect ratio (`'stretch'`, the pre-D-184 behavior) — read `editor_export`'s own docstring before compositing more than one clip, it explains why `scale` alone can never produce a differently-shaped box than the canvas. |
 > | `editor_get_capabilities` (D-191) | Static reference-only tool — no round trip to the app, works with no project open. Hard-won facts an agent would otherwise only learn by reading source or hitting them live: what `scale`/`fit_overrides` really control (a stacking/PIP primitive tied to the CLIP's own aspect ratio by default, not the canvas's — plus the crop-then-scale recipe for an exact half-canvas box), track paint order, per-clip keyframe scoping, export's real v1 scope, and B-069/B-070/B-071/B-073's rough edges (B-069 itself is fixed; documented here as a known failure shape worth recognizing if a similar crash recurs elsewhere). |
+> | `editor_export_fcpxml` (D-195) | Renders the WHOLE multi-track timeline to a real, DTD-verified **FCPXML 1.7** interchange document (no picture/audio produced) — the "move this edit to DaVinci Resolve / Final Cut Pro" export, a sibling of `editor_export` compiling the SAME `Timeline` model to a different output format (`packages/editor/src/timelineInterchange.ts`, D-183's own pattern). Maps clip placement/trims, track z-order (as fcpxml lanes), transform/crop/opacity, A/V `link_group`, and audio track gain; does NOT export `chroma_keyframes` animation, clip fades, or audio ducking (no verified FCPXML syntax for the first two without guessing, no static equivalent for the third) — every one of these surfaces in the tool's own `warnings` rather than a silent drop. Read `editor_export_fcpxml`'s own docstring and D-195's field-mapping table before relying on round-trip fidelity for anything beyond that list. XMEML/Premiere export is a separate, not-yet-built format — see D-195. |
 >
 > Every mutating tool goes through `useEditorTimelineStore.applyOp` (or the
 > equivalent real store action), so an agent's edit lands on the same undo stack
