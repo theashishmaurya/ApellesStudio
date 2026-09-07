@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for the media-understanding store (D-184).
+// @chroma/editor — unit tests for the media-understanding store (D-189).
 //
 // What these actually protect. This store's whole job is to turn the
 // `ai-media/` sidecar's START-then-POLL job protocol into something the

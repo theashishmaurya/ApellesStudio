@@ -781,7 +781,7 @@ def editor_export(
 
 
 # --------------------------------------------------------------------------- #
-# Edit tab: media understanding (D-184) — "what was said" and "what changed on
+# Edit tab: media understanding (D-189) — "what was said" and "what changed on
 # screen," from the `ai-media/` sidecar. Both are START-then-POLL, like
 # `depth_track`/`depth_track_status` below: `chroma::control`'s bridge times out
 # at 20s and these jobs run for tens of seconds to minutes, so a blocking tool

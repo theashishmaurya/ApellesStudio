@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Video content understanding — "what changed on screen, and when" (D-184).
+"""Video content understanding — "what changed on screen, and when" (D-189).
 
 **What it is:** the video-understanding half of Chroma's media sidecar. Given a
 video path and an open-ended question, it returns a list of
@@ -14,7 +14,7 @@ network calls beyond a first-run model download (`HF_HUB_OFFLINE=1` is set on
 the model subprocess, so a cached model never reaches the network at all).
 
 Ported verbatim — logic, tuning and all — from the validated prototype at
-`~/my_projects/videoAgent/src/review/video_understand.py` (D-184; the scope is
+`~/my_projects/videoAgent/src/review/video_understand.py` (D-189; the scope is
 `docs/notes/media-understanding-sidecar-scope.md`). Everything below this line
 is that module's own hard-won design, restated because it is the reason the
 code looks the way it does. Do not "simplify" any of it without re-validating
@@ -69,7 +69,7 @@ presence_penalty 1.5), not ad-hoc tuning. Greedy decoding (temperature 0 or
 unset) reliably degenerates into a repeated-phrase loop on real screen
 recordings — never use it.
 
-**Why the model runs as a SUBPROCESS and not in-process** (D-184): a call
+**Why the model runs as a SUBPROCESS and not in-process** (D-189): a call
 peaks around 9 GB. `ai/server.py` had to grow a whole TTL idle-unloader
 (D-084) because its lazily-loaded singletons never released weights. Spawning
 `python -m mlx_vlm.generate` per call means the OS reclaims every byte on

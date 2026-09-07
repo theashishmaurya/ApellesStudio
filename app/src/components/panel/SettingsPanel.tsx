@@ -59,7 +59,7 @@ interface SidecarStatus {
   lastError?: string;
 }
 
-/** One supervised sidecar, for the status cards below. D-184 added the second
+/** One supervised sidecar, for the status cards below. D-189 added the second
  *  (`ai-media/`), so the card that D-101 wrote inline became this descriptor +
  *  the `SidecarStatusCard` component — two cards' worth of near-identical JSX
  *  is exactly the copy-paste `CLAUDE.md` rules out. */
@@ -98,7 +98,7 @@ const SIDECAR_CARDS: SidecarCardSpec[] = [
  *  consumed it — a dead process, or a stale one from an old build, looked
  *  identical to "the feature is just broken," which is exactly what happened in
  *  D-069. Not a settings toggle, purely a diagnostic — there's nothing to
- *  configure here. Generalized to N sidecars in D-184. */
+ *  configure here. Generalized to N sidecars in D-189. */
 function SidecarStatusCard({ spec, status }: { spec: SidecarCardSpec; status: SidecarStatus | null }) {
   return (
     <div className="p-6 bg-surface rounded-xl shadow-md">
@@ -665,7 +665,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
   // D-101 — chroma_ai_status existed since D-028 but nothing consumed it
   // ("nothing consumes it yet," per docs/notes/sidecar-lifecycle.md). This is
   // the first real UI surface for it, so the owner isn't blind to sidecar
-  // health/staleness without reading app.log by hand. D-184: keyed by command
+  // health/staleness without reading app.log by hand. D-189: keyed by command
   // name, since there are two supervised sidecars now.
   const [sidecarStatuses, setSidecarStatuses] = useState<Record<string, SidecarStatus | null>>({});
   const [dpr, setDpr] = useState(() => (typeof window !== 'undefined' ? window.devicePixelRatio : 1));
@@ -797,7 +797,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
   // while Settings is open. 5s is deliberately coarser than the Rust
   // supervisor's own 10s external re-poll / 2s owned-child poll — this is a
   // human-readable status display, not a control loop, no need to match its
-  // cadence exactly. D-184: one poll per supervised sidecar, driven off
+  // cadence exactly. D-189: one poll per supervised sidecar, driven off
   // SIDECAR_CARDS so a third one needs no change here.
   useEffect(() => {
     let cancelled = false;
@@ -2300,7 +2300,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                     </div>
                   </div>
 
-                  {/* D-101 / D-184 — one status card per supervised sidecar.
+                  {/* D-101 / D-189 — one status card per supervised sidecar.
                       The card body is `SidecarStatusCard` above; this just
                       renders one per spec, so a third sidecar is a one-line
                       addition to SIDECAR_CARDS and nothing else. */}

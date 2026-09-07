@@ -71,7 +71,7 @@ place calling a plain Tauri command directly is fine, since there's no undo
 history to preserve.
 
 **A worked example of that carve-out, so it isn't mistaken for a violation**:
-D-184's `editor_get_transcript` / `editor_analyze_video` (plus their two
+D-189's `editor_get_transcript` / `editor_analyze_video` (plus their two
 `*_status` polls) go straight to `chroma_transcribe` / `chroma_analyze_video`
 via a store action that only caches. They mutate no document state at all —
 they ask the `ai-media/` sidecar a question about a file on disk — so there is

@@ -111,7 +111,7 @@ function resolveClip(
   return { track, clip, tr, c };
 }
 
-/** Resolve the media file the D-184 analysis ops should look at, from any of
+/** Resolve the media file the D-189 analysis ops should look at, from any of
  *  the three things a caller might reasonably have: a media-pool `mediaId`, a
  *  pool item's `sourcePath`, or a bare absolute `path` that isn't in the pool
  *  at all. The third is deliberate — "what's in this file?" is a question you
@@ -131,7 +131,7 @@ function resolveMediaPath(a: any): { path: string } | { error: string } {
   return { path };
 }
 
-/** The D-184 transcript response, shared by the start op and its status op so
+/** The D-189 transcript response, shared by the start op and its status op so
  *  the two can never report the same job differently. `state` mirrors the
  *  sidecar's own job vocabulary (`running` / `done` / `error`) plus `idle`
  *  ("never asked"), so a poller reads one field to decide what to do next. */
@@ -154,7 +154,7 @@ function transcriptResult(path: string) {
   };
 }
 
-/** The D-184 video-analysis response. Same contract as [`transcriptResult`]. */
+/** The D-189 video-analysis response. Same contract as [`transcriptResult`]. */
 function analysisResult(path: string) {
   const status = useMediaUnderstandingStore.getState().analysisStatus(path);
   if (status.phase === 'error') return { error: status.error ?? 'video analysis failed' };
@@ -636,7 +636,7 @@ export function useEditorControl(): void {
         };
       },
 
-      // ---- media understanding (D-184) — read-only analysis of a file ----
+      // ---- media understanding (D-189) — read-only analysis of a file ----
       //
       // These two are the ONE documented exception to "a mutating op must go
       // through the same store action a GUI click does" (docs/notes/

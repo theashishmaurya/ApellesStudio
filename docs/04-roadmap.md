@@ -1214,7 +1214,7 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   ambient) survives an export; a "Preset" tab on `RelightPanel`; MCP tool
   wrapping (`mcp/server.py`) for the 4 control-server relight ops. All four
   landed in one pass — see D-054.
-- **Visual understanding for the Editor tab** — **first slice shipped, D-184
+- **Visual understanding for the Editor tab** — **first slice shipped, D-189
   (2026-09-07)**: the `ai-media/` sidecar plus 4 MCP tools give an agent
   "what was said, and when" (mlx-whisper large-v3, word-level) and "what changed
   on screen, and when" (ffmpeg scene-detect for exact timing + Qwen3-VL-4B for

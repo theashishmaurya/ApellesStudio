@@ -1,4 +1,4 @@
-# `ai-media/` — Chroma media-understanding sidecar (D-184)
+# `ai-media/` — Chroma media-understanding sidecar (D-189)
 
 Local FastAPI service on **MLX** (Apple Silicon). Answers the two "understand
 this footage" questions the app itself can't:
@@ -22,7 +22,7 @@ what's being asked.
 `ai/` is PyTorch/MPS pinned to `transformers<5` (ViTMatte). This is MLX, and
 `mlx-vlm>=0.6` requires `transformers>=5.5`. `pip install -r ai/requirements.txt
 -r ai-media/requirements.txt` is a literal **`ResolutionImpossible`** — verified,
-not assumed (D-184). Two processes, two venvs, two ports, no shared Python
+not assumed (D-189). Two processes, two venvs, two ports, no shared Python
 state. Same supervised-subprocess pattern, one more instance of it.
 
 ## Run

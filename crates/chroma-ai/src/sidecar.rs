@@ -1,6 +1,6 @@
 //! Rust-managed Python sidecar lifecycle (D-028; extracted from
 //! `app/src-tauri/src/chroma/sidecar.rs` into `chroma-ai` in D-145; generalized
-//! from one hardcoded sidecar to N in D-185).
+//! from one hardcoded sidecar to N in D-190).
 //!
 //! Starts and supervises Chroma's Python sidecars so the user never has to
 //! `cd <dir> && ./run.sh` by hand. Two exist today, described by the two
@@ -8,10 +8,10 @@
 //!   - [`AI`] — `ai/`, PyTorch/MPS: SAM 2 → ViTMatte matting (D-012/D-016),
 //!     Video-Depth-Anything depth tracking (D-036), MoGe-2 normals (D-077).
 //!   - [`AI_MEDIA`] — `ai-media/`, MLX: word-level transcript (mlx-whisper) and
-//!     video understanding (ffmpeg scene-detect + Qwen3-VL), D-184. A separate
+//!     video understanding (ffmpeg scene-detect + Qwen3-VL), D-189. A separate
 //!     PROCESS because it is a separate dependency universe — `mlx-vlm` needs
 //!     `transformers>=5.5` and `ai/` pins `<5`, which pip reports as an outright
-//!     `ResolutionImpossible`. See D-184 for the spike that settled it.
+//!     `ResolutionImpossible`. See D-189 for the spike that settled it.
 //!
 //! The app spawns [`spawn_and_supervise`] on a thread per sidecar from `lib.rs`
 //! `.setup()`; the app-exit hook in `lib.rs` `.run(...)` calls [`shutdown`],
@@ -38,7 +38,7 @@
 //! keeps the thin `chroma_ai_status` / `chroma_ai_media_status` wrappers around
 //! [`status_snapshot`] (D-039 §1: commands do not move).
 //!
-//! **D-185, why this is parameterized rather than copy-pasted:** adding the second
+//! **D-190, why this is parameterized rather than copy-pasted:** adding the second
 //! sidecar could have been a second module with the names swapped. That would
 //! duplicate the genuinely subtle parts — the D-101 staleness policy, the
 //! fast-fail/slow-retry backoff ladder, the shutdown races — and guarantee the two
@@ -129,7 +129,7 @@ pub static AI: SidecarSpec = SidecarSpec {
     default_port: 8765,
 };
 
-/// The `ai-media/` sidecar (D-184): transcript + video understanding, MLX.
+/// The `ai-media/` sidecar (D-189): transcript + video understanding, MLX.
 pub static AI_MEDIA: SidecarSpec = SidecarSpec {
     name: "ai-media",
     dir: "ai-media",
@@ -194,7 +194,7 @@ fn shutting_down(spec: &SidecarSpec) -> bool {
 /// and safe when we own nothing (external sidecars, or spawns that never
 /// succeeded).
 ///
-/// D-185: kills *all* registered sidecars rather than the one global child, so a
+/// D-190: kills *all* registered sidecars rather than the one global child, so a
 /// new sidecar can never be forgotten here by whoever adds it — the exit hook's
 /// call site in `lib.rs` needs no change per sidecar.
 pub fn shutdown() {
@@ -219,7 +219,7 @@ pub fn shutdown() {
 // ---- status (backs the app-side chroma_ai_status commands) ------------------------
 
 /// Snapshot for the settings-panel sidecar status cards (D-101 — the first real
-/// consumer; before this, nothing did; D-184 added the second card).
+/// consumer; before this, nothing did; D-189 added the second card).
 /// `camelCase` on the wire to match every other Chroma command struct's
 /// convention (`commands.rs`, `project.rs`, `grade.rs`, etc.).
 #[derive(Debug, Clone, Default, Serialize)]
@@ -253,7 +253,7 @@ fn set_status(spec: &SidecarSpec, f: impl FnOnce(&mut SidecarStatus)) {
 }
 
 /// `{ managed, healthy, pid?, restarts, stale, lastError? }` for one sidecar —
-/// the plain-Rust half of the Settings panel's status cards (D-101/D-184). The
+/// the plain-Rust half of the Settings panel's status cards (D-101/D-189). The
 /// app-side `#[tauri::command]`s are 1-line wrappers around this (D-039 §1:
 /// commands do not move).
 pub fn status_snapshot(spec: &SidecarSpec) -> SidecarStatus {
@@ -466,13 +466,13 @@ fn child_gone(spec: &SidecarSpec) -> bool {
 
 /// Supervise the `ai/` sidecar. Kept as a zero-argument function so `lib.rs`'s
 /// existing `std::thread::spawn(chroma::sidecar::spawn_and_supervise)` call site
-/// is unchanged by D-185 — `spawn` needs an `FnOnce()`, and a spec-taking
+/// is unchanged by D-190 — `spawn` needs an `FnOnce()`, and a spec-taking
 /// function is not one.
 pub fn spawn_and_supervise() {
     supervise(&AI);
 }
 
-/// Supervise the `ai-media/` sidecar (D-184). Same reason for the dedicated
+/// Supervise the `ai-media/` sidecar (D-189). Same reason for the dedicated
 /// zero-argument entry point as [`spawn_and_supervise`].
 pub fn spawn_and_supervise_media() {
     supervise(&AI_MEDIA);
@@ -859,7 +859,7 @@ mod tests {
     }
 
     /// A real regression test for the actual D-101 policy, now testing the one
-    /// shared [`is_stale`] the supervisor itself calls (before D-185 this test
+    /// shared [`is_stale`] the supervisor itself calls (before D-190 this test
     /// had to re-declare the rule locally, which meant it could pass while the
     /// real code drifted).
     #[test]
@@ -886,10 +886,10 @@ mod tests {
         );
     }
 
-    // ---- D-185: the multi-sidecar registry ---------------------------------------
+    // ---- D-190: the multi-sidecar registry ---------------------------------------
 
-    /// The whole point of the D-185 refactor: two specs must get two genuinely
-    /// independent state slots. If they shared one (the pre-D-185 global
+    /// The whole point of the D-190 refactor: two specs must get two genuinely
+    /// independent state slots. If they shared one (the pre-D-190 global
     /// `OnceLock`), the media sidecar going down would show the `ai/` card as
     /// unhealthy and vice versa.
     #[test]
@@ -947,7 +947,7 @@ mod tests {
         }
     }
 
-    /// `port()` honours the spec's OWN env var and nothing else — the pre-D-185
+    /// `port()` honours the spec's OWN env var and nothing else — the pre-D-190
     /// code read a hardcoded `CHROMA_AI_PORT`, so getting this wrong would point
     /// both supervisors at one port.
     #[test]

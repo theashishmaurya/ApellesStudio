@@ -25,7 +25,7 @@ export { TimelinePane } from './TimelinePane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
-/** D-184 — media understanding (transcript + "what changed on screen"), cached
+/** D-189 — media understanding (transcript + "what changed on screen"), cached
  *  by source path. Exported because the results are Edit-tab data a future
  *  panel will read, not just something the `editor_*` control ops consume. */
 export { useMediaUnderstandingStore } from './mediaUnderstandingStore';

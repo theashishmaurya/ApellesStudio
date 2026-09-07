@@ -1,4 +1,4 @@
-"""Chroma media-understanding sidecar — local, MLX, Apple Silicon (D-184).
+"""Chroma media-understanding sidecar — local, MLX, Apple Silicon (D-189).
 
 **What it is:** Chroma's *second* supervised Python sidecar. It answers the two
 "understand this footage" questions the Edit tab needs and the app itself
@@ -7,14 +7,14 @@ what CHANGED on screen and when (`video_understand.py`, ffmpeg scene-detect +
 Qwen3-VL). Same FastAPI + supervised-subprocess shape as `ai/server.py`, one
 more instance of a pattern that already works — not a new one.
 
-**Why it is a separate process from `ai/server.py`** (D-184, and the whole
+**Why it is a separate process from `ai/server.py`** (D-189, and the whole
 reason `docs/notes/media-understanding-sidecar-scope.md` exists): `ai/` is
 PyTorch/MPS on `transformers<5`; this is MLX on `transformers>=5`. Installing
 both stacks into one venv is not a matter of taste — the resolver silently
 upgrades `transformers`/`tokenizers`/`numpy` out from under whichever package
 got there first, which is exactly how a same-day prototype broke
 `mlx-audiocraft` by installing `mlx-vlm` beside it. Two processes, two venvs,
-two ports; no shared Python state at all. See D-184 for the spike evidence.
+two ports; no shared Python state at all. See D-189 for the spike evidence.
 
 **What it does NOT do:** no `grade.json`, no timeline, no app state, no GPU
 render path, no network (models are local; the VLM subprocess additionally
@@ -35,7 +35,7 @@ Endpoints
   POST /understand_video            -> {job_id, state, ...}   (background job)
   GET  /understand_video/{job_id}   -> {state, result?, error?, ...}
 
-**Why background jobs and not a plain synchronous POST** (D-184): the MCP
+**Why background jobs and not a plain synchronous POST** (D-189): the MCP
 chain these results travel back through has a hard 20 s ceiling —
 `chroma::control`'s `BRIDGE_TIMEOUT` (`app/src-tauri/src/chroma/control.rs`).
 A transcript takes tens of seconds and a video analysis runs at roughly 4x

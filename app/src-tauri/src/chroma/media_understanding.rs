@@ -1,4 +1,4 @@
-//! Tauri bridge for media understanding via the `ai-media/` sidecar (D-184).
+//! Tauri bridge for media understanding via the `ai-media/` sidecar (D-189).
 //!
 //! What it is: the app-side half of the media-understanding capability — four
 //! `#[tauri::command]`s that start and poll the two background jobs the

@@ -1,4 +1,4 @@
-# Sidecar lifecycle (D-028; two sidecars since D-184, N-sidecar supervisor D-185)
+# Sidecar lifecycle (D-028; two sidecars since D-189, N-sidecar supervisor D-190)
 
 The Chroma app starts and supervises its Python sidecars itself. No more
 `cd <dir> && ./run.sh` before using the features that depend on them.
@@ -9,7 +9,7 @@ they are separate processes, separate venvs, separate ports, separate status:
 | spec | dir | port | what it does | why it's separate |
 |---|---|---|---|---|
 | `AI` | `ai/` | 8765 | SAM 2 → ViTMatte matting (D-012/D-016), depth track (D-036), MoGe-2 normals (D-077) | — |
-| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-184 | PyTorch/`transformers<5` vs. MLX/`transformers>=5.5` — pip reports the union as `ResolutionImpossible` (D-184) |
+| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | PyTorch/`transformers<5` vs. MLX/`transformers>=5.5` — pip reports the union as `ResolutionImpossible` (D-189) |
 
 Code: `chroma_ai::sidecar` (the whole implementation, D-145) +
 `app/src-tauri/src/chroma/sidecar.rs` (the Tauri-only bits). Upstream
@@ -19,7 +19,7 @@ footprint: `chroma/mod.rs` +1 (`pub mod sidecar;`), `lib.rs` +2
 kills *both*), +2 `generate_handler!` lines (`chroma_ai_status`,
 `chroma_ai_media_status`). No new crate.
 
-**D-185 — one supervisor, N sidecars.** The per-sidecar facts (name, dir,
+**D-190 — one supervisor, N sidecars.** The per-sidecar facts (name, dir,
 default port, the four env var names) live in a `SidecarSpec` static; the
 per-sidecar runtime state (owned child, status snapshot) lives in a registry
 keyed by spec name; the logic below is written once and shared. Adding a third
@@ -92,7 +92,7 @@ the same value `chroma_ai::media_understanding::media_base_url()` uses.
 
 `lib.rs` `.run(...)` handles `RunEvent::ExitRequested` and `RunEvent::Exit` by
 calling `chroma::sidecar::shutdown()` **before** its `libc::_exit(0)` /
-`std::process::exit(0)`. One call covers **every** sidecar (D-185): it walks the
+`std::process::exit(0)`. One call covers **every** sidecar (D-190): it walks the
 registry, sets each one's `shutting_down` flag (every sleep in every supervisor
 is interruptible and checks it) and `child.kill()` + `wait()`s each owned child.
 So a newly-added sidecar can never be forgotten here — the exit-hook call site
@@ -101,11 +101,11 @@ needs no per-sidecar change. External sidecars are never touched. Result:
 
 ## The status commands
 
-`chroma_ai_status` and `chroma_ai_media_status` (D-184) both return
+`chroma_ai_status` and `chroma_ai_media_status` (D-189) both return
 `{ managed: bool, healthy: bool, pid?: u32, restarts: u32, stale: bool,
 lastError?: string }` — the same `SidecarStatus`, one per spec, from
 `chroma_ai::sidecar::status_snapshot(&SPEC)`. Both are consumed by the Settings
-panel's sidecar status cards (D-101 built the first, D-184 the second; before
+panel's sidecar status cards (D-101 built the first, D-189 the second; before
 D-101 nothing consumed the command at all).
 
 ## Real ownership of an "external" sidecar — done (D-101, 2026-09-04)

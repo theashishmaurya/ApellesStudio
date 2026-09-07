@@ -9,12 +9,12 @@
 //! later:
 //! - [`sidecar`] — process lifecycle: spawn, health-poll, content-hash
 //!   staleness detection, capped-backoff respawn, external-process monitoring
-//!   (from `app/src-tauri/src/chroma/sidecar.rs`, D-028/D-101). Since D-185 it
+//!   (from `app/src-tauri/src/chroma/sidecar.rs`, D-028/D-101). Since D-190 it
 //!   supervises **N** sidecars from one `SidecarSpec`-parameterized
 //!   implementation, not just `ai/`.
 //! - [`media_understanding`] — the `ai-media/` sidecar's HTTP client:
 //!   `/transcribe` + `/understand_video` and their two job-status polls
-//!   (D-184). Written here rather than extracted from the fork, since the
+//!   (D-189). Written here rather than extracted from the fork, since the
 //!   capability is new — but the same shape as [`depth`], for the same reason.
 //! - [`depth`] — the `/depth_track` + `/depth_track/<id>` HTTP client and the
 //!   per-frame tracked-depth-PNG lookup (from `chroma/depth.rs`, D-036).

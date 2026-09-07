@@ -1,5 +1,5 @@
 /**
- * `@chroma/editor` — media understanding for the Edit tab (D-184).
+ * `@chroma/editor` — media understanding for the Edit tab (D-189).
  *
  * **What it is:** a small Zustand store holding what the `ai-media/` sidecar
  * has told us about each media file — its transcript ("what was said, and
@@ -24,7 +24,7 @@
  *
  * **Why it polls rather than awaiting one call:** the sidecar runs both
  * capabilities as background jobs, because `chroma::control`'s bridge has a
- * hard 20 s ceiling and these run far longer (D-184). So each action here
+ * hard 20 s ceiling and these run far longer (D-189). So each action here
  * starts a job, then polls its status command until terminal. The action's own
  * promise still resolves with the finished result, so callers see a plain
  * async function and the job machinery stays an implementation detail.

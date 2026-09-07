@@ -86,13 +86,13 @@ multiple video tracks with per-clip keyframed zooms, and render the result to a
 file. The one still-open piece: audio tracks (gain/duck/fade) are read but not
 yet mixed into `editor_export`'s own output.
 
-## Edit tab: media understanding — CLOSED, 4 tools (D-184, 2026-09-07)
+## Edit tab: media understanding — CLOSED, 4 tools (D-189, 2026-09-07)
 
 > **What an agent could not do before this**, even with all 20 tools above: know
 > what is actually IN the footage. It could cut a timeline precisely and had no
 > way to decide *where* to cut, because nothing exposed the content of a file —
 > only its structure. That is what these close. Scope + the dependency-isolation
-> spike: `docs/notes/media-understanding-sidecar-scope.md`; the decision, D-184.
+> spike: `docs/notes/media-understanding-sidecar-scope.md`; the decision, D-189.
 >
 > | Tool | What it does |
 > |---|---|

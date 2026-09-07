@@ -138,7 +138,7 @@ Rust + TS + MCP tool, not a bare CLI script), not a port.
 
 Everything above this line is the ORIGINAL scope, left as written so the plan
 and the outcome can be compared. This section is the outcome. Decisions:
-**D-184** (the capability + the spike) and **D-185** (the N-sidecar supervisor).
+**D-189** (the capability + the spike) and **D-190** (the N-sidecar supervisor).
 
 **Phase 1 — spike: done, and it settled the question outright.** The scope
 asked for a real install attempt rather than reasoning, and both halves were
@@ -152,7 +152,7 @@ actually run:
   **mechanically impossible**, not merely risky: `pip install --dry-run` of
   `ai/requirements.txt` ∪ `{mlx-vlm, mlx-whisper}` in a clean venv exits
   `ResolutionImpossible` — every `mlx-vlm >= 0.6` requires
-  `transformers >= 5.5`, `ai/` pins `< 5`. Recorded in D-184 with the caveat
+  `transformers >= 5.5`, `ai/` pins `< 5`. Recorded in D-189 with the caveat
   that the pin itself is not the blocker (ViTMatte's classes do still exist in
   transformers 5.16.1); the real cost would be dragging `torch 2.13 → 2.14`
   and `transformers 4 → 5` under a live SAM 2 / ViTMatte / VDA / MoGe-2 stack,
@@ -185,7 +185,7 @@ from a running Chroma app at least once.
    for exactly this reason. The sidecar endpoints are correspondingly
    `POST /transcribe` + `GET /transcribe/{job_id}` (and the same for
    `/understand_video`), rather than the two bare POSTs the scope named.
-2. **The supervisor was generalized, not duplicated** (D-185). The scope left
+2. **The supervisor was generalized, not duplicated** (D-190). The scope left
    this as an explicit judgment call ("or generalize it to supervise N sidecars
    if that's cleaner"). Generalizing won: copying ~450 lines containing the
    D-101 staleness policy, the backoff ladder and the shutdown races would

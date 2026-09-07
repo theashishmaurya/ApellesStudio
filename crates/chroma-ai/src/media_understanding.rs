@@ -1,5 +1,5 @@
 //! HTTP client for the `ai-media/` sidecar — transcript + video understanding
-//! (D-184).
+//! (D-189).
 //!
 //! **What it is:** the wire half of Chroma's media-understanding capability.
 //! Four thin async functions, one per `ai-media/server.py` endpoint: start a
@@ -16,7 +16,7 @@
 //! sidecar's JSON back verbatim.
 //!
 //! **Why both capabilities are start-then-poll rather than one blocking call**
-//! (D-184): `chroma::control`'s `BRIDGE_TIMEOUT` is 20 s, and these jobs run for
+//! (D-189): `chroma::control`'s `BRIDGE_TIMEOUT` is 20 s, and these jobs run for
 //! tens of seconds (transcript) to minutes (video analysis, roughly 4x
 //! realtime). Blocking would put the result permanently out of an agent's reach.
 //! Identical reasoning, and identical `{job_id}` → `{state, result?}` shape, to
@@ -26,7 +26,7 @@ use serde_json::json;
 
 /// The `ai-media/` sidecar's base URL — `http://127.0.0.1:<CHROMA_AI_MEDIA_PORT
 /// or 8766>`. Deliberately separate from [`crate::sidecar_base_url`]: this is a
-/// different process on a different port (D-184), and conflating them would send
+/// different process on a different port (D-189), and conflating them would send
 /// transcript requests to the matting sidecar.
 pub fn media_base_url() -> String {
     let port = std::env::var(crate::sidecar::AI_MEDIA.port_env)
@@ -36,7 +36,7 @@ pub fn media_base_url() -> String {
 
 fn unreachable_hint(e: impl std::fmt::Display) -> String {
     format!(
-        "Chroma media sidecar unreachable ({e}). The app auto-starts it (D-184) — check \
+        "Chroma media sidecar unreachable ({e}). The app auto-starts it (D-189) — check \
          the app log for '[sidecar/ai-media]' lines (CHROMA_AI_MEDIA_NO_SPAWN=1 disables the \
          auto-start; manual start: cd ai-media && ./run.sh). It also needs its own venv: \
          cd ai-media && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"

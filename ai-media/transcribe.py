@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Speech-to-text — "what was said, and when" (D-184).
+"""Speech-to-text — "what was said, and when" (D-189).
 
 **What it is:** the audio half of Chroma's media sidecar. Given an audio or
 video path, returns the full text plus segment- and word-level timings —
@@ -32,7 +32,7 @@ surface (`CLAUDE.md`: no dead code):
 guard that matters on exactly the long single-take footage an editor works
 with.
 
-**Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-184):
+**Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-189):
 `large-v3` weights are ~3 GB. `ai/server.py` had to grow a whole TTL
 idle-unloader (D-084) because its lazily-loaded singletons never released
 theirs. Running each job as its own process means the OS reclaims every byte

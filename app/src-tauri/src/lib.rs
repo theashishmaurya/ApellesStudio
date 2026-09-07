@@ -1940,7 +1940,7 @@ pub fn run() {
                 // `AppHandle` parameter — dropped when the function moved into the
                 // `chroma-ai` crate, so no handle needs cloning for it here anymore.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise);
-                // Chroma: and the `ai-media/` sidecar (D-184) — transcript +
+                // Chroma: and the `ai-media/` sidecar (D-189) — transcript +
                 // video understanding, MLX, a separate PROCESS because it is a
                 // separate dependency universe (`mlx-vlm` needs
                 // `transformers>=5.5`, `ai/` pins `<5`). One thread each; the
