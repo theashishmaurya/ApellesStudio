@@ -292,6 +292,17 @@ export function useEditorControl(): void {
           playhead: s.playhead,
           playing: s.playing,
           hasTimeline: !!s.timeline,
+          // What is selected right now — the same `selection`/`selectedGap`
+          // pair every selection path writes (timeline click, marquee, canvas
+          // click-to-select), so a caller can both read the user's current
+          // selection and confirm its own selecting gesture landed.
+          //
+          // Added while chasing B-085's follow-up: selection was the one piece
+          // of Edit-tab state NOTHING outside the webview could observe, so a
+          // selection bug could only be caught by eyeballing the window — which
+          // is precisely how the WKWebView half of B-085 shipped as "fixed".
+          selection: s.selection,
+          selectedGap: s.selectedGap,
         };
       },
 
