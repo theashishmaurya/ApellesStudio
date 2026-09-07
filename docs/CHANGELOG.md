@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **React Compiler bailout pass (D-197): `@chroma/editor` is now
+  bailout-free, and one real bug fell out of it.** All 22 source files in the
+  package compile with zero bailouts (`TimelinePane`/`TransformOverlay`'s
+  hand-written memoization was fighting the compiler and costing them ALL
+  auto-memoization; `PreviewPane`/`Filmstrip`/`useEditorControl`/`SourcesPanel`
+  cleared too), pinned by a new `reactCompiler.test.ts` guard. Investigating the
+  inventory's "possibly a real bug" flags found **B-082** (two components read
+  Zustand state with `getState()` during render, so Colorist's Paste button never
+  updates after a copy) — filed, not fixed. `TimelinePane`'s drag gesture was
+  audited and is already deferred to pointer-up; no change.
 - **2026-09-07** — **Fixed B-082: `new_project`'s auto-placed clips never got
   `source_fps`.** `append_media_clip`'s `..Default::default()` left it `None`
   despite the real probe sitting right above — the one other real `Clip`-

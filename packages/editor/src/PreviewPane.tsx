@@ -174,29 +174,50 @@ export function PreviewPane() {
   const [compSizeVersion, setCompSizeVersion] = useState(0);
   const compSize = useCompositionSize(!!timeline, compSizeVersion);
 
+  // D-197 — two shapes here exist for the React Compiler's sake, both exactly
+  // equivalent to what they replaced (see
+  // `docs/notes/react-compiler-coverage.md`), because ONE unsupported
+  // construct anywhere in a component makes the compiler skip auto-memoizing
+  // the WHOLE component — and `PreviewPane` re-renders on every playhead tick
+  // during playback, so that is a real cost:
+  //   1. `try/catch` followed by the former `finally` body inline, rather than
+  //      `try/catch/finally`. The compiler cannot lower a `finally` clause at
+  //      all. Equivalent here because the `catch` swallows everything and
+  //      neither block contains a `return`, so the tail is unconditionally
+  //      reached on both paths.
+  //   2. A `while` drain loop rather than the tail-recursive call this used to
+  //      make into itself. A `const`-bound function referring to its own
+  //      binding reads to the compiler as "accessed before it is declared"
+  //      (and, as a named function expression, trips an internal error).
+  //      Equivalent because the old recursion happened synchronously right
+  //      after clearing `inFlight`/`pending`, with no `await` in between, so
+  //      no other caller could ever interleave — exactly what the loop does,
+  //      just without leaving and re-entering the function. Nothing awaits
+  //      `fetchFrame`, so the loop resolving later than the old call did is
+  //      unobservable.
   const fetchFrame = useCallback(async (frame: number, longEdge: number) => {
     if (inFlight.current) {
       pending.current = frame;
       return;
     }
     inFlight.current = true;
-    try {
-      const src = await invoke<string>('chroma_timeline_frame', {
-        pos: Math.max(0, Math.round(frame)),
-        maxLongEdge: longEdge,
-      });
-      setFrameSrc(src);
-      setDecodeErr(null);
-    } catch (e) {
-      setDecodeErr(String(e));
-    } finally {
-      inFlight.current = false;
-      if (pending.current !== null) {
-        const n = pending.current;
-        pending.current = null;
-        fetchFrame(n, longEdge);
+    let next: number | null = frame;
+    while (next !== null) {
+      const at = next;
+      try {
+        const src = await invoke<string>('chroma_timeline_frame', {
+          pos: Math.max(0, Math.round(at)),
+          maxLongEdge: longEdge,
+        });
+        setFrameSrc(src);
+        setDecodeErr(null);
+      } catch (e) {
+        setDecodeErr(String(e));
       }
+      next = pending.current;
+      pending.current = null;
     }
+    inFlight.current = false;
   }, []);
 
   // scrub: refetch on playhead change while paused
@@ -251,21 +272,22 @@ export function PreviewPane() {
           setFrameSrc(src);
         } catch {
           /* keep going — a heavy clip can drop frames */
-        } finally {
-          inFlight.current = false;
-          // Drain exactly like `fetchFrame`'s own `finally` does. Pausing
-          // mid-fetch makes the scrub effect run while this request is still
-          // in flight, so it parks its frame in `pending` — without this it
-          // would never be fetched and the preview would sit on the last
-          // frame playback happened to render rather than the paused one.
-          // (`pending` can only be non-null once `playing` is already false:
-          // the scrub effect early-returns while playing, and play start
-          // clears it.)
-          const queued = pending.current;
-          if (queued !== null) {
-            pending.current = null;
-            fetchFrame(queued, PREVIEW_LONG_EDGE);
-          }
+        }
+        // D-197 — the former `finally` body, inline: see `fetchFrame`'s own
+        // note above for why this is a plain tail rather than a `finally`
+        // clause, and why it is exactly equivalent here.
+        inFlight.current = false;
+        // Drain exactly like `fetchFrame` does. Pausing mid-fetch makes the
+        // scrub effect run while this request is still in flight, so it parks
+        // its frame in `pending` — without this it would never be fetched and
+        // the preview would sit on the last frame playback happened to render
+        // rather than the paused one. (`pending` can only be non-null once
+        // `playing` is already false: the scrub effect early-returns while
+        // playing, and play start clears it.)
+        const queued = pending.current;
+        if (queued !== null) {
+          pending.current = null;
+          fetchFrame(queued, PREVIEW_LONG_EDGE);
         }
       }
       rafRef.current = requestAnimationFrame(tick);

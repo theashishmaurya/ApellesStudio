@@ -17800,3 +17800,78 @@ the next person to look does not have to re-derive it — and so nobody
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+### Part 2b — the rest of the bailout pass: `@chroma/editor` is now bailout-free, and what was deliberately left
+
+Beyond the two hot files in Part 2a, the pass worked outward by real cost, not
+by list order — Edit-tab surfaces first, one-off modals last (and, in the end,
+not at all).
+
+**Also cleared**, each with the equivalence argument written into the code next
+to the change:
+- `packages/editor/src/PreviewPane.tsx` — `finally` clauses became plain tails
+  after their `try/catch` (the `catch` swallows and neither block returns, so
+  the tail is unconditionally reached), and `fetchFrame`'s tail-recursive
+  self-call became a `while` drain loop (the recursion ran synchronously right
+  after clearing `inFlight`/`pending`, with no `await` between, so nothing could
+  interleave — and nothing awaits `fetchFrame`). Worth recording: the second
+  bailout was *masked* by the first, and a named function expression — the
+  obvious first fix for the self-reference — trips an internal compiler error.
+- `packages/editor/src/Filmstrip.tsx` — its `react-hooks/exhaustive-deps`
+  suppression was load-bearing (the effect must key on the SNAPPED window, not
+  the window object's identity), so it became the standard
+  latest-ref-written-in-an-effect shape, which needs no suppression. Behind it
+  sat a **real Rules-of-React violation**: `lastGood.current` read in the render
+  body. Removed by never overwriting good tiles with an empty response —
+  identical on-screen behaviour, one piece of state, no ref.
+- `packages/editor/src/useEditorControl.ts` — its suppression was simply
+  **stale** (the hook takes no arguments and its one effect closes over nothing
+  but module-level values, so `[]` was always honest); then three value blocks
+  inside a `try/catch` hoisted verbatim into module-scope helpers.
+- `app/src/components/chroma/SourcesPanel.tsx` — same plain-tail `finally`
+  rewrite.
+
+Every one of the package's 22 source files now compiles clean, so the guard
+test was widened from a hot-file whitelist to **the whole package**, reading the
+directory at run time so a newly-added file is covered the day it lands.
+
+**Deliberately left, and why** (the full list, with reasoning, is in
+`docs/notes/react-compiler-coverage.md`):
+- `packages/motion/src/useMotionManifest.ts` was **attempted and reverted**. Its
+  `finally` clauses and `??`/`?.` value blocks rewrite cleanly, but underneath
+  them the per-scene render `for` loop is itself a value block inside the `try`.
+  Clearing that means lifting the scene-render loop out into its own function —
+  a real change to the Motion render path — and stopping short leaves the file
+  still bailing out: all of the churn, none of the benefit. Reverted rather than
+  left half-done.
+- `app/`'s modals / settings / presets / tethering / AI-masking `finally`
+  bucket — mechanical, but the inventory's own "low-stakes" half, and not worth
+  spending the pass's remaining time on ahead of anything else.
+- `app/src/hooks/useAiMasking.ts` (10 distinct bailouts — a rewrite, not a
+  touch-up) and `app/src/components/panel/editor/ImageCanvas.tsx` (`this`
+  syntax in fork code that needs reading first).
+
+**One real bug found and filed, not fixed: B-082.** The inventory flagged
+`App.tsx`/`EditorView.tsx`'s *"Hooks may not be referenced as normal values"* as
+possibly a real Rules-of-Hooks bug. It is: both read `store.getState()` in the
+render body, so render output depends on state they never subscribe to — the
+visible symptom being Colorist's Paste button staying disabled after a copy
+until something unrelated re-renders. Filed with the exact two-line fix rather
+than applied, because it is Colorist-tab UI in the vendored fork and wants its
+own live check plus an engine-notes divergence entry — the same discipline
+B-079/B-080 used. Every other "possibly a real bug" item in the inventory was
+also checked individually; three were false alarms (Filmstrip's
+`performSafeScroll` self-recursion, `useProductivityActions`'s
+compiler-generated `err_1` name, `TetheringPanel`'s captured `i++`), one is a
+second real Rules-of-React violation left unfixed for the same fork-code reason
+(`app/.../Filmstrip.tsx`'s render-phase ref write), and one — `ParticleFlow` —
+turned out NOT to share a root cause with Filmstrip as the inventory guessed.
+The per-item verdicts are tabulated in the coverage note.
+
+**Verification.** `npm test --workspace @chroma/editor` 432/432 (was 409 at the
+start of this pass; +23 = the per-file compiler guards). `npx tsc --noEmit -p
+packages/editor` clean. `npx tsc --noEmit -p app`: 64 errors before and after —
+the pre-existing baseline, zero new.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

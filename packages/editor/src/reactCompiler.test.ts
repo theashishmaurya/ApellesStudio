@@ -10,11 +10,10 @@
  * inventory of where that was happening; D-197 cleared it for the two files
  * where it costs the most.
  *
- * This test runs the exact same preset `app/vite.config.mjs` runs, over the
- * Edit tab's highest-update-frequency surfaces, and fails if any of them bails
- * out again. It is deliberately a *whitelist of hot files*, not the whole
- * package: the point is to defend the surfaces where a lost memoization is
- * felt during a drag/scrub, not to freeze the compiler's coverage everywhere.
+ * This test runs the exact same preset `app/vite.config.mjs` runs, over EVERY
+ * source file in this package, and fails if any of them bails out. The whole
+ * package is clean as of D-197, so the bar is "keep it that way" rather than a
+ * whitelist that would quietly let the hot files drift back.
  *
  * It does NOT check that the compiled output is correct or faster — the
  * compiler's own test suite owns that, and every behavioral guarantee for
@@ -22,20 +21,18 @@
  * `timeline.test.ts`, `transformGeometry.test.ts`).
  */
 import { describe, expect, it } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { transformAsync } from '@babel/core';
 import { reactCompilerPreset } from '@vitejs/plugin-react';
 
-/** The files whose auto-memoization we actually defend, and why each is here.
- *  Adding one is cheap; removing one needs a real reason in the commit. */
-const HOT_FILES = [
-  // Every clip drag, trim, marquee, zoom and scrub tick re-renders this.
-  'TimelinePane.tsx',
-  // The on-canvas move/scale gesture in the preview — a pointermove-rate
-  // component by construction.
-  'TransformOverlay.tsx',
-];
+/** Every `.ts`/`.tsx` in this package except the tests themselves. Read from
+ *  disk rather than listed by hand so a newly-added file is covered the day it
+ *  lands, not whenever someone remembers to update a list. */
+const SRC_DIR = fileURLToPath(new URL('.', import.meta.url));
+const SOURCE_FILES = (await readdir(SRC_DIR))
+  .filter((f) => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.includes('.test.'))
+  .sort();
 
 async function bailoutsFor(file: string): Promise<string[]> {
   const filename = fileURLToPath(new URL(file, import.meta.url));
@@ -64,8 +61,12 @@ async function bailoutsFor(file: string): Promise<string[]> {
   return [...new Set(reasons)];
 }
 
-describe('React Compiler coverage on the Edit tab’s hot surfaces (D-197)', () => {
-  for (const file of HOT_FILES) {
+describe('React Compiler coverage across @chroma/editor (D-197)', () => {
+  it('found source files to check', () => {
+    expect(SOURCE_FILES.length).toBeGreaterThan(10);
+  });
+
+  for (const file of SOURCE_FILES) {
     it(`${file} compiles with no React Compiler bailout`, async () => {
       expect(await bailoutsFor(file)).toEqual([]);
     }, 30_000);

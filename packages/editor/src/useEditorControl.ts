@@ -244,6 +244,19 @@ function parseCurve(v: unknown, which: string): FadeCurve | { error: string } | 
   return { x1: pts[0], y1: pts[1], x2: pts[2], y2: pts[3] };
 }
 
+/** D-197 — module-scope helpers so the request listener's `try/catch` below
+ *  contains no `||` / `?.` / `??` "value blocks", which the React Compiler
+ *  cannot lower inside a `try/catch` (and one of them anywhere in the hook
+ *  makes it skip auto-memoizing the whole file). Each is exactly the
+ *  expression it replaced, extracted verbatim — no behaviour change.
+ *  See `docs/notes/react-compiler-coverage.md`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the untyped `chroma://request` payload these replace
+const opArgs = (args: any): any => args || {};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: an op handler's result is an open record by contract
+const opError = (result: any): string | null => result?.error ?? null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- ditto: a thrown value is `unknown` in practice
+const thrownMessage = (e: any): string => String(e?.message || e);
+
 /** Mount once from `EditorTab.tsx`. No arguments — see this file's own
  *  module doc comment for why (both stores it reads are module-level). */
 export function useEditorControl(): void {
@@ -824,16 +837,24 @@ export function useEditorControl(): void {
       }
 
       try {
-        const result = await fn(args || {});
-        respond({ ok: !result?.error, error: result?.error ?? null, result });
-      } catch (e: any) {
-        respond({ ok: false, error: String(e?.message || e), result: null });
+        const result = await fn(opArgs(args));
+        const error = opError(result);
+        respond({ ok: !error, error, result });
+      } catch (e) {
+        respond({ ok: false, error: thrownMessage(e), result: null });
       }
     });
 
     return () => {
       safeUnlisten(unlistenP);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // D-197 — `[]` is honest, and the suppression that used to sit here is
+    // gone. `useEditorControl` takes no arguments and this effect closes over
+    // nothing from a component scope: every store it touches is reached
+    // through `getState()` on a module-level store, and `EDITOR_OP_PREFIX`,
+    // `listen`/`emit` and `safeUnlisten` are module-level too. Suppressing ANY
+    // react-hooks lint rule also switches the React Compiler off for the whole
+    // file (see `docs/notes/react-compiler-coverage.md`), so a stale
+    // suppression is not free.
   }, []);
 }
