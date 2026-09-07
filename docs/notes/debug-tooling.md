@@ -42,6 +42,37 @@ several rounds of the owner's own screenshots before an agent could even confirm
 3. **Pixel/color inspection** — scoped alongside the screenshot tool: sample a real
    RGB value at given (x, y) from a captured screenshot, for the "color placement,
    pixel alignment" checks the owner named directly.
+4. **DOM tree capture** — scoped, not started (owner, 2026-09-08: "build tools to
+   capture the dom tree and other things which help you visualize, be smart about
+   it"). A way to dump the running webview's real DOM structure (element hierarchy,
+   computed styles, bounding rects) — not just pixels, so an agent can answer "why
+   is this element positioned/sized/styled this way" directly instead of guessing
+   from a screenshot alone. Likely a small in-page JS snippet invoked the same way
+   the screenshot tool is invoked (a Tauri command that evaluates JS in the webview
+   and returns the result — check what Tauri's own `eval`/`webview.eval` API already
+   offers before building a custom bridge). Dispatch AFTER the screenshot tool lands
+   (same Tauri-command-registration and `mcp/server.py` territory — parallel
+   dispatch would just conflict).
+
+## Two different levels — don't conflate them
+
+- **Component level** (a single component in isolation, e.g. `PreviewPane`/
+  `TimelinePane`): mostly ALREADY SOLVED, before this initiative — the D-142
+  browser harness (`app/harness.html?mode=preview` etc.) is a real Chromium tab,
+  reachable via `chrome-devtools`/`claude-in-chrome` MCP tools INCLUDING their own
+  screenshot action, with none of the Screen Recording permission problem (it's a
+  normal browser tab, not the native window). Several agents this session already
+  used it for real hit-testing/pointer-gesture verification. Prefer extending this
+  harness (a new `?mode=` if one doesn't exist yet for what needs isolating) over
+  building a new mechanism, for anything that can be exercised there.
+- **Whole-app level** (the real, native, WKWebView-backed Tauri window, actually
+  opening a project/tab/panel and interacting with it as a user would): this is the
+  actual gap items 1–4 above exist to close — no existing tool reaches this level.
+  "Work as a user — open things, edit things, take a screenshot to validate" (owner,
+  2026-09-08) means items 1 (screenshot) and 2 (open/close/select) together, as one
+  real loop: drive a real state change through the same store actions/Tauri commands
+  a human's click would, then screenshot to confirm what actually rendered — not two
+  independent tools used separately.
 
 ## Status
 

@@ -216,6 +216,20 @@ workspace `target/` is fresh at the repo root.
   it: back it up to a file, then `git stash push` it right back onto the shared stack
   with a message identifying it as recovered-not-yours, so its real owner can find it.
 
+## Building UI: research the real pattern first, don't guess (owner, 2026-09-08)
+
+Before building or redesigning a real UI surface (a panel, a control, an interaction
+pattern), look at how established tools actually do it — pull the real reference
+(a product's own feature/help pages, real screenshots, not a vague impression of
+"how NLEs generally work") and build from that, the same way this session scraped
+DaVinci Resolve's own Edit page (`scratch/resolve-reference/`) before touching the
+Inspector, and cross-checked Premiere/Final Cut's own help docs before this note was
+written. Don't invent a bespoke interaction pattern for something an established tool
+already solved well, and don't build "something UI" from a mental guess when the real
+thing is one scrape away. This is a process step, not busywork — do it, keep the
+reference material (even if `scratch/` is gitignored — it's for this session and the
+next one, not for the repo), and cite it in the resulting `D-NNN`.
+
 ## Code
 
 - Rust: match the surrounding style in `app/src-tauri`. `cargo fmt`, `cargo clippy`
