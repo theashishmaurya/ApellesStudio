@@ -17679,9 +17679,6 @@ owner's. To confirm it directly next session: run `npm run tauri:dev`, edit
 `packages/editor/src/timeline.ts`, and check the dev-server console shows an
 `hmr update` (not a `page reload`) and logs zero IPC-fallback warnings.
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
-
 ### Part 2 — React Compiler bailouts: delete the hand-written memoization the compiler can't preserve, and pin it with a test
 
 **Context.** `docs/notes/react-compiler-coverage.md` inventoried 55 unique
@@ -17750,56 +17747,6 @@ as `devDependencies` of `@chroma/editor` for it — both already in the tree as
 2 new guard tests; every pre-existing test, including the real-DOM/real-
 PointerEvent `TimelinePane.marquee.dom.test.tsx` D-142 suite, unchanged and
 passing). `npx tsc --noEmit -p packages/editor` clean.
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
-
-### Part 3 — `TimelinePane`'s drag gesture: already deferred to pointer-up; nothing changed
-
-Roadmap item 21.3 asked, explicitly unverified either way: does a clip drag
-bypass React state during the gesture and commit only on pointer-up, or does it
-re-render through the store every pointer-move frame? **It already defers.**
-Traced, not assumed:
-
-- **Clip drag (the only move mechanism since D-100, same-track and cross-track
-  alike).** `onDndDragMove` fires on every pointer-move tick and writes *only*
-  two pieces of local component state, `clipDragPreview` and `insertPreview` —
-  and both writes are change-gated (`setClipDragPreview` returns the previous
-  object verbatim unless the resolved landing frame/track/ripple actually
-  changed), so a drag that moves many pixels without changing where the clip
-  would land produces **zero** re-renders. `applyOp` is called exactly once,
-  in `onDndDragEnd`.
-- **Trim.** The timeline library owns the in-flight resize; `onActionResizeEndCb`
-  — resize *end* — is the only thing that reaches `applyOp`.
-- **Marquee (D-137).** Per-tick writes are the local `marquee` band rect;
-  `setSelection` lands once, on `pointerup`.
-- **On-canvas transform (D-136, `TransformOverlay`).** A local `draft`
-  per pointermove; one `set_clip_transform` `applyOp` on release. Its own
-  module doc already states this as the Phase-0b contract.
-
-That matters because `timelineStore.applyOp` pushes one `useHistoryStore` entry
-and schedules one debounced `chroma_timeline_set` per call — a per-frame
-`applyOp` would flood the undo stack and the IPC channel, which is precisely
-the outcome the existing design avoids.
-
-**So no change was made here, deliberately.** The item's own hard constraint
-("the store's post-gesture state, and therefore what every `editor_*` MCP tool
-observes and what lands on the undo stack, must be byte-identical") is already
-satisfied by construction, and the direct-DOM `style.transform` technique it
-proposed would buy nothing: the intermediate frames it would eliminate are
-already gated away, and applying it would mean taking `@dnd-kit`'s own
-`DragOverlay` (which is what actually follows the cursor) out of the picture —
-a large, risky change to the drag's real machinery for no measured win. The
-only remaining per-tick *store* write in this pane is `setPlayhead` during a
-cursor scrub, which is transient playhead state (not a timeline edit, no undo
-entry, no save) that `PreviewPane` genuinely needs each frame.
-
-What is added instead is a comment on `onDndDragMove` recording this audit, so
-the next person to look does not have to re-derive it — and so nobody
-"optimizes" a store write into that handler.
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
 ### Part 2b — the rest of the bailout pass: `@chroma/editor` is now bailout-free, and what was deliberately left
 
@@ -17885,6 +17832,50 @@ not just the standalone reporter: a fresh `vite` boot with the app loaded logs
 115 `[react-compiler] bailout` lines and **zero** of them name any
 `packages/editor` file or `app/src/components/chroma/SourcesPanel.tsx` — and
 zero `page reload` lines.
+
+### Part 3 — `TimelinePane`'s drag gesture: already deferred to pointer-up; nothing changed
+
+Roadmap item 21.3 asked, explicitly unverified either way: does a clip drag
+bypass React state during the gesture and commit only on pointer-up, or does it
+re-render through the store every pointer-move frame? **It already defers.**
+Traced, not assumed:
+
+- **Clip drag (the only move mechanism since D-100, same-track and cross-track
+  alike).** `onDndDragMove` fires on every pointer-move tick and writes *only*
+  two pieces of local component state, `clipDragPreview` and `insertPreview` —
+  and both writes are change-gated (`setClipDragPreview` returns the previous
+  object verbatim unless the resolved landing frame/track/ripple actually
+  changed), so a drag that moves many pixels without changing where the clip
+  would land produces **zero** re-renders. `applyOp` is called exactly once,
+  in `onDndDragEnd`.
+- **Trim.** The timeline library owns the in-flight resize; `onActionResizeEndCb`
+  — resize *end* — is the only thing that reaches `applyOp`.
+- **Marquee (D-137).** Per-tick writes are the local `marquee` band rect;
+  `setSelection` lands once, on `pointerup`.
+- **On-canvas transform (D-136, `TransformOverlay`).** A local `draft`
+  per pointermove; one `set_clip_transform` `applyOp` on release. Its own
+  module doc already states this as the Phase-0b contract.
+
+That matters because `timelineStore.applyOp` pushes one `useHistoryStore` entry
+and schedules one debounced `chroma_timeline_set` per call — a per-frame
+`applyOp` would flood the undo stack and the IPC channel, which is precisely
+the outcome the existing design avoids.
+
+**So no change was made here, deliberately.** The item's own hard constraint
+("the store's post-gesture state, and therefore what every `editor_*` MCP tool
+observes and what lands on the undo stack, must be byte-identical") is already
+satisfied by construction, and the direct-DOM `style.transform` technique it
+proposed would buy nothing: the intermediate frames it would eliminate are
+already gated away, and applying it would mean taking `@dnd-kit`'s own
+`DragOverlay` (which is what actually follows the cursor) out of the picture —
+a large, risky change to the drag's real machinery for no measured win. The
+only remaining per-tick *store* write in this pane is `setPlayhead` during a
+cursor scrub, which is transient playhead state (not a timeline edit, no undo
+entry, no save) that `PreviewPane` genuinely needs each frame.
+
+What is added instead is a comment on `onDndDragMove` recording this audit, so
+the next person to look does not have to re-derive it — and so nobody
+"optimizes" a store write into that handler.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
