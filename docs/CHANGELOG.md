@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Fixed B-096: the Edit tab's preview/timeline split
+  wasn't actually resizable**, a fixed `h-[46%]` flex row despite CLAUDE.md's
+  own standing rule for exactly this class of pane. Wrapped in a nested
+  vertical `ResizablePanelGroup` — the same pattern this file's own
+  Inspector column and `MotionTab.tsx`'s equivalent split already use, not a
+  new one.
+
 - **2026-09-07** — **Fixed B-092 (D-205): canvas click-to-select was still
   completely dead in the real app after D-204 shipped it** ("still not able to
   select / unselect clips / video by clicking on the canvas... from timeline it

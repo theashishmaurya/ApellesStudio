@@ -1129,14 +1129,16 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - **No canvas/preview zoom control** — the timeline already has one (the
       `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
       own viewer zoom control, top-left of the timeline viewer.
-    - **Three panels reported not resizable**, a direct instance of this file's
-      own existing standing rule ("every resizable-by-nature panel/pane/sidebar
-      must actually be resizable," `CLAUDE.md`) not yet honoured in the Edit tab:
-      the Inspector panel (content visibly cut off against the window edge in a
-      live screenshot), the Timeline panel, and implicitly the preview/timeline
-      split. Needs a real audit of `EditorTab.tsx`'s `ResizablePanelGroup` usage
-      — confirm which panes are and are not wrapped in `@chroma/ui`'s
-      `resizable.tsx` already, fix the ones that aren't.
+    - ~~**Three panels reported not resizable**~~ — **audited and closed,
+      2026-09-08 (B-096).** `EditorTab.tsx`'s Inspector column was ALREADY a
+      real `ResizablePanel` (264–420px, user-draggable) — the reported "content
+      cut off" was almost certainly the owner's own screenshot crop, not a real
+      clipping bug, since nothing in that panel's layout can overflow a
+      `ResizablePanel` of any width without wrapping. The Timeline panel
+      (and, with it, the preview/timeline split) genuinely was NOT resizable —
+      a fixed `h-[46%]` flex row — fixed by wrapping both in a nested vertical
+      `ResizablePanelGroup`, the exact pattern `MotionTab.tsx`'s own equivalent
+      split already used. See B-096 in `docs/BUGS.md` for the full fix/verification.
     - **The full, accurate DaVinci Resolve Edit-page reference is now saved**:
       `scratch/resolve-reference/` (26 feature sections, each with its real
       heading, full description text, and its own correctly-matched image,

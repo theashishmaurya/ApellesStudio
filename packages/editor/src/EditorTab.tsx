@@ -63,6 +63,17 @@ const INSPECTOR_DEFAULT_WIDTH = 320;
 const INSPECTOR_MIN_WIDTH = 264;
 const INSPECTOR_MAX_WIDTH = 420;
 
+// Roadmap 25 — the preview/timeline split was a fixed `h-[46%]` flex row, not
+// a real `ResizablePanel`, in violation of this repo's own standing rule
+// ("every resizable-by-nature panel/pane/sidebar must actually be
+// resizable" — CLAUDE.md) and reported live by the owner ("the timeline
+// panel is also not resizable"). Same vertical-`PanelGroup` convention
+// `MotionTab.tsx` already uses for its own preview/timeline split, same
+// pixel-based sizing this file already uses for the Inspector column.
+const PREVIEW_MIN_HEIGHT = 200;
+const TIMELINE_DEFAULT_HEIGHT = 320;
+const TIMELINE_MIN_HEIGHT = 180;
+
 export function EditorTab() {
   const load = useEditorTimelineStore((s) => s.load);
   const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
@@ -128,38 +139,49 @@ export function EditorTab() {
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
       <ResizablePanel className="min-w-0 flex flex-col min-h-0">
-        <div className="flex-1 min-h-0 flex flex-col relative">
-          <PreviewPane />
-          {/* D-118 — the Inspector's own opener: tab-local (see this file's
-              module doc for why it isn't a `Shell.tsx` chrome-bar button
-              like Sources'), placed at the preview's top-right so it reads
-              as "the same corner Sources' own toggle lives in," just scoped
-              to this tab. A real elevated chip, not a transparent `ghost`
-              button — it floats directly over the `Player`'s own title
-              strip ("Timeline"), and Shell's matching Sources toggle hit the
-              identical crowding problem for the same reason (see its own
-              comment in `Shell.tsx`). */}
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => setInspectorOpen((v) => !v)}
-            title="Inspector"
-            aria-label="Inspector"
-            aria-pressed={inspectorOpen}
-            className={
-              'absolute top-2 right-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
-              (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
-            }
+        <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
+          <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">
+            <div className="flex-1 min-h-0 flex flex-col relative">
+              <PreviewPane />
+              {/* D-118 — the Inspector's own opener: tab-local (see this file's
+                  module doc for why it isn't a `Shell.tsx` chrome-bar button
+                  like Sources'), placed at the preview's top-right so it reads
+                  as "the same corner Sources' own toggle lives in," just scoped
+                  to this tab. A real elevated chip, not a transparent `ghost`
+                  button — it floats directly over the `Player`'s own title
+                  strip ("Timeline"), and Shell's matching Sources toggle hit the
+                  identical crowding problem for the same reason (see its own
+                  comment in `Shell.tsx`). */}
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setInspectorOpen((v) => !v)}
+                title="Inspector"
+                aria-label="Inspector"
+                aria-pressed={inspectorOpen}
+                className={
+                  'absolute top-2 right-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
+                  (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
+                }
+              >
+                <PanelRight className="size-3.5" />
+              </Button>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle />
+
+          <ResizablePanel
+            defaultSize={TIMELINE_DEFAULT_HEIGHT}
+            minSize={TIMELINE_MIN_HEIGHT}
+            className="shrink-0 border-t border-border-color flex flex-col min-h-0"
           >
-            <PanelRight className="size-3.5" />
-          </Button>
-        </div>
-        <div className="h-[46%] min-h-[180px] shrink-0 border-t border-border-color flex flex-col min-h-0">
-          <TimelineSwitcher />
-          <div className="flex-1 min-h-0">
-            <TimelinePane />
-          </div>
-        </div>
+            <TimelineSwitcher />
+            <div className="flex-1 min-h-0">
+              <TimelinePane />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </ResizablePanel>
 
       {inspectorOpen && (
