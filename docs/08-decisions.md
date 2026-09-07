@@ -16633,3 +16633,62 @@ called out honestly rather than silently picked around.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-186 — a checked-in Claude Code project skill packages the comparison-reel workflow
+
+**Context.** Owner, verbatim, after D-183/D-184/D-185 landed: "start making skill out of
+it." The reel session ran a real, repeatable procedure — live-test the MCP surface,
+resolve source paths safely, plan a stacked layout, drive `editor_*` tools end-to-end,
+export — that existed only as this session's own chat transcript. Without packaging it,
+the next session doing the same kind of job re-derives all of it from scratch, including
+re-discovering B-069/B-070/B-071/B-073/B-074 live, the exact cost this decision exists to
+avoid.
+
+**Format, verified rather than guessed.** Read several real, currently-installed Claude
+Code skills before writing this one (`~/.claude-personal/skills/{hyperframes,media-use,
+talking-head-recut,general-video,...}/SKILL.md`) to confirm the actual expected shape: a
+YAML frontmatter block with exactly `name:` and `description:`, then a Markdown body
+starting with a `# Title` — not guessed from general Markdown conventions, and confirmed
+parseable with a real YAML parser, not just eyeballed. The `description` is written the
+way those examples write theirs: what the skill does, when to trigger it, and an explicit
+"not this, that's a different skill" boundary (`talking-head-recut`'s own description does
+the same "not plain subtitles" carve-out).
+
+**Where it lives, and a real gap flagged rather than silently resolved.** Scoped at the
+project level, `.claude/skills/chroma-comparison-reel/SKILL.md`, per the owner's own
+framing ("so its check into the repo" — checked project-level skills travel with the repo,
+unlike a personal skill under `~/.claude-personal/`). **`.claude/` did not exist anywhere
+in this repo before this commit** — verified with `git check-ignore -v .claude` and
+`.claude/skills/chroma-comparison-reel/SKILL.md` from this worktree (both exit 1, i.e.
+neither is ignored) and `ls .claude` (no such file/directory). Flagged here per this
+repo's own documentation rule rather than deciding silently either way: nothing in
+`.gitignore` needed changing, and nothing else in the repo currently reads or writes
+`.claude/` for any other purpose, so there was no existing convention to reconcile with.
+
+**Content, not vague advice — five concrete things, kept accurate against the real
+shipped state (D-184's `fit_overrides`, B-069's fix), not the pre-fix limitations this
+whole effort started from.** (1) Live-test the surface first (`editor_get_state` then a
+real mutating round trip, confirmed against the store) before trusting it for a real
+edit — B-069's own failure shape, now fixed, restated as a numbered pre-flight check
+since no error boundary exists yet to prevent a *different* crash from reproducing the
+same shape. (2) The macOS screen-recording filename trap (B-070, U+202F before AM/PM)
+with the actual shell commands to resolve it safely, not just a warning. (3) The
+stacking/PIP `scale`/`fit_overrides` model and its crop-then-scale recipe for the `'fit'`
+default, delegated to `editor_get_capabilities` (D-185) as the live source of truth rather
+than duplicated and risking drift — the skill says WHEN to apply the fact, the tool says
+WHAT the fact currently is. (4) The real `editor_*` tool call sequence this session
+actually ran, in order, with the specific gotchas each step has (B-073 on
+`editor_add_clip`, per-clip keyframe-list-replacement semantics, `speed_overrides`'/
+`fit_overrides`' shared export-time-only scope). (5) The cross-repo `videoAgent` pattern
+(`video_understand.py`/`audiocraft_generate.py`) as an explicitly-scoped-out one-off,
+linking `docs/notes/media-understanding-sidecar-scope.md` rather than re-litigating or
+starting that migration here — that migration is a separate, larger, not-yet-started
+effort (tracked in that doc, being worked in a different worktree entirely) and doing any
+part of it here would blur this skill's own scope.
+
+**Not done here, deliberately:** no attempt to make this skill auto-trigger more broadly
+than its own `description` already scopes it to, and no changes to any *other* skill —
+this is additive, one new directory, nothing existing touched.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
