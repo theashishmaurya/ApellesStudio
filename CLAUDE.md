@@ -158,12 +158,18 @@ in `app/`, which runs `app/`'s vite via `beforeDevCommand`). Or `cd app && npm r
 `npm run tauri:build` for a release build. A `cargo clean` is **not** needed — the
 workspace `target/` is fresh at the repo root.
 
-## Subagent dispatch — model choice
+## Subagent dispatch
 
-For a tough task — a large/cross-cutting feature build, or hard debugging (root-causing
-a bug that isn't a quick, obvious fix) — dispatch the subagent on **Opus**, not the
-default model. Use judgment on what counts as "tough"; a small, well-bounded fix or a
-routine mechanical task doesn't need it.
+- **Model choice.** For a tough task — a large/cross-cutting feature build, or hard
+  debugging (root-causing a bug that isn't a quick, obvious fix) — dispatch the
+  subagent on **Opus**, not the default model. Use judgment on what counts as "tough";
+  a small, well-bounded fix or a routine mechanical task doesn't need it.
+- **Isolation.** Always dispatch with `isolation: "worktree"`. This repo usually has a
+  dev server running against the shared checkout (`npm run tauri:dev`) and multiple
+  subagents in flight at once — a subagent working directly in the main checkout would
+  edit files out from under the running dev server and/or collide with other
+  subagents' uncommitted changes. A worktree gives it an isolated copy to build/test/
+  commit in; merge its branch back deliberately once its work is verified.
 
 ## Code
 
