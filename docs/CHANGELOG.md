@@ -24,6 +24,22 @@ One or two lines per session. Detail lives in the decision it references.
   keeping the old one (the same fix-class as B-075/B-077/D-194)
   (`editor_swap_clip_media` MCP tool). `@chroma/editor` 377/377 (20 new tests),
   `tsc` clean.
+- **2026-09-07** — **Timeline interchange export (D-196): a real, DTD-verified
+  FCPXML 1.7 exporter** so a Chroma edit can move to DaVinci Resolve/Final Cut
+  Pro. New pure compiler `packages/editor/src/timelineInterchange.ts` (mirrors
+  `timelineExport.ts`'s own "same Timeline model, different output format"
+  shape) → `editor_export_fcpxml` op → a new narrow `chroma_write_text_file`
+  Tauri command → `mcp/server.py`'s `editor_export_fcpxml` tool. Maps clip
+  placement/trims, track z-order (as fcpxml lanes), transform/crop/opacity,
+  A/V `link_group`, and audio track gain; does NOT export `chroma_keyframes`
+  animation, clip fades, or audio ducking — no verified FCPXML syntax for the
+  first two without guessing, no static equivalent for the third — every one
+  surfaces as a warning rather than a silent drop. Verified against Apple's
+  own real FCPXML 1.7 DTD (`__fixtures__/fcpxml-1.7.dtd`) via `xmllint
+  --dtdvalid`, not just string-compared. XMEML/Premiere scoped as a precise,
+  separate follow-up, not attempted this pass — see D-196 for the full
+  field-mapping table and why.
+
 - **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/
   `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
   end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into

@@ -17043,6 +17043,129 @@ A full `mcp.server.mcpserver` module import could not be verified in this worktr
 different package than whatever `mcp>=2.0` custom SDK the real dev/runtime
 environment has `mcp.server.mcpserver` from) — a pre-existing environment gap, not
 a regression introduced here.
+## D-196 — Timeline interchange export: FCPXML 1.7, DTD-verified; XMEML/Premiere scoped as a follow-up, not built
+
+**Context.** The owner pointed at a competitor (Palmier)'s own docs for the
+shape of a "move this edit to another NLE" feature: an XMEML/FCP7 XML export
+for Premiere (which has no native FCPXML support) and a real FCPXML export
+for DaVinci Resolve/Final Cut Pro, each with its own documented field
+coverage. Chroma has a real multi-track `Timeline` model
+(`packages/editor/src/timeline.ts`) and a proven "compile the SAME model to a
+different output format" precedent — `timelineExport.ts`'s pure
+Timeline-to-ffmpeg-argv compiler (D-183) — so the natural shape is a sibling
+pure compiler, not a rewrite of anything existing.
+
+**Options considered.**
+1. **Build both formats this pass.** Rejected — XMEML/FCP7 XML is a
+   genuinely different model (bins/sequences/clipitems, its own DTD, its own
+   time-value and linking conventions) that needs its own from-scratch spec
+   research to do honestly; attempting both in one pass risked two
+   half-verified exporters instead of one real one, which this project's own
+   "no shortcuts" standard rules out.
+2. **FCPXML only, this pass — chosen.** FCPXML covers DaVinci Resolve (this
+   space's most common non-Adobe target) AND Final Cut Pro with one exporter,
+   Apple has published real, versioned DTDs for it (unlike XMEML, whose only
+   public spec is Apple's old, less formally versioned FCP7 interchange
+   docs), and it shares far more structural DNA with Chroma's own multi-track/
+   multi-lane compositing model (spine + lane-based connected clips maps
+   naturally onto Chroma's "N video tracks by z-order" — XMEML's flat
+   track-array model would need a different mapping). XMEML/Premiere is a
+   named, precise follow-up (see "Not built" below), not abandoned.
+3. Route XML generation through a DOM library (jsdom) or an XML-builder
+   dependency. Rejected for the same reason `timelineExport.ts` builds its
+   ffmpeg argv as plain strings rather than pulling in a filtergraph library:
+   this is a small, fully deterministic text template, and CLAUDE.md's "boring,
+   well-maintained deps" bar is best served by adding none when a hand-built,
+   well-tested string compiler already matches the codebase's own established
+   pattern. `jsdom` (already a devDependency, used by
+   `TimelinePane.marquee.dom.test.tsx`'s own `@vitest-environment jsdom`) is
+   used only in tests, for real parser-based well-formedness checking.
+
+**Spec grounding — not guessed.** Every element/attribute
+`timelineInterchange.ts` emits was checked against Apple's own real, published
+**FCPXML v1.7 DTD** — fetched from Apple's archived developer documentation
+(`developer.apple.com/library/archive/.../FCPXMLDTDv1.7/FCPXMLDTDv1.7.html`,
+Copyright 2011-2017 Apple Inc.), the newest version Apple ever released in
+machine-checkable DTD form (later versions, 1.8-1.14, are documented in prose
+only — no public DTD/XSD exists for them). A verbatim copy lives at
+`packages/editor/src/__fixtures__/fcpxml-1.7.dtd` and is what
+`timelineInterchange.test.ts` validates every non-trivial fixture against via
+a real DTD validator (`xmllint --dtdvalid`), not a guess at the XML shape or a
+string comparison. Output declares `version="1.7"` — an honest floor, not a
+claim about 1.10/1.11 compatibility this pass couldn't verify (real NLEs are
+broadly backward-compatible importing older FCPXML versions in practice, but
+that's a documented expectation here, not a tested one — see "Not built"
+below for exactly what a version bump would need).
+
+**Field-mapping table (the real "what maps, what doesn't").**
+
+| Chroma field | FCPXML 1.7 | Direction / notes |
+|---|---|---|
+| `Clip.start_frame`, `source_start`, `duration` | `asset-clip@offset`/`@start`/`@duration` | Exact — real `Rational` time (`num/den` seconds), not a rounded float. `offset` at the PROJECT's own rate; `start`/`duration` at the CLIP's own native rate (B-075/B-077/D-194's same dual-frame-space rule, mirrored exactly) |
+| Track z-order (`Track` array index, `0` = topmost) | `asset-clip@lane` (positive = above/foreground, DTD's own rule) | Track 0 → the HIGHEST lane number (never `0` — the DTD requires a non-zero lane for anything anchored to the backbone `<gap>`) |
+| `position_x`/`position_y`/`scale`/`box_width`/`box_height` (D-136/D-193, canvas-fraction) | `adjust-transform@position`/`@scale` (native-pixel-multiplier + centre-offset) | Real unit conversion, not a passthrough — needs the clip's own SOURCE resolution, which this pure module can't probe; exact when the caller supplies `sourceInfo`, else falls back to the OUTPUT canvas's own aspect ratio (exact for a plain full-canvas clip, approximate otherwise — flagged in the compiler's own `warnings`) |
+| `crop_top`/`crop_bottom` (D-132, height-normalised in both systems) | `adjust-crop`/`trim-rect@top`/`@bottom` | Exact, unconditionally |
+| `crop_left`/`crop_right` (D-132, WIDTH-normalised) | `trim-rect@left`/`@right` (HEIGHT-normalised, DTD's own documented convention) | Needs the source aspect ratio to convert correctly — same `sourceInfo`/canvas-fallback split as transform, above |
+| `rotation` (degrees) | `adjust-transform@rotation` | Direct — and notably MORE complete than `timelineExport.ts`'s own ffmpeg compiler, which never implemented rotation at all |
+| `opacity` (static) | `adjust-blend@amount` | Direct, only emitted for a non-default value |
+| `link_group` (D-129, A/V linking) | One shared `<asset>`, two `asset-clip`s (`srcEnable="video"` / `srcEnable="audio"`) | The real FCP mechanism for "same file, video-only vs audio-only" |
+| `Track.gain` (D-057, audio tracks only) | `adjust-volume@amount` (dB, per clip on that track) | Converted via `20*log10(gain)`; never emitted for a video track's embedded audio (D-057's own "stays hardcoded at unity" scoping) |
+| Clip/asset name, `source_path` | `asset-clip@name`, `asset@src` (`file://` URL) | Direct |
+| `chroma_keyframes` (animated transform) | — | **NOT exported.** FCPXML genuinely supports keyframing via `<param>`/`<keyframeAnimation>` nested under an `adjust-*` element (DTD-confirmed structurally), but the exact intrinsic `param name`/`key` Final Cut expects for its OWN built-in adjustments (as opposed to a named third-party filter, which declares its own names) could not be confirmed from the DTD or any available spec material without guessing — only the clip's static/base transform is exported. Surfaces in `warnings` whenever a clip actually has keyframes. |
+| `fade_in_frames`/`fade_out_frames`/fade curves (D-147) | — | **NOT exported**, same reason as keyframes — `<fadeIn>`/`<fadeOut>` DTD-confirmed as children of `<param>`, but no verified target `param name` for a built-in fade. Surfaces in `warnings`. |
+| `Track.duck_from`/`duck_db`/`duck_attack_ms`/`duck_release_ms` (D-149) | — | **NOT exported** — no static FCPXML equivalent exists at all (dynamic audio automation), matching the competitor doc's own stated FCPXML exclusion of audio volume keyframes. Surfaces in `warnings`. |
+| `editor_export`'s `speedOverrides`/`fitOverrides`/`freezeOverrides` | — | **N/A** — these are ffmpeg-render-time-only parameters with no backing `Clip` field to read from an interchange compiler at all. A real interchange speed change is FCPXML's `conform-rate`/`timeMap` (DTD-confirmed elements), a different mechanism entirely — not attempted this pass. |
+| Text/title clips | — | N/A — Chroma has no text/title clip type today, nothing to map either direction. |
+
+**Not built, precisely scoped:**
+- **XMEML/FCP7 XML (Premiere).** Needs its own spec pass (Apple's FCP7
+  interchange docs, a different element/attribute vocabulary entirely —
+  `<sequence>`/`<track>`/`<clipitem>`/`<link>`, no DTD published in the same
+  machine-checkable form FCPXML 1.7's is) before a single line is written —
+  explicitly not guessed at by analogy to the FCPXML work above. A precise,
+  separate follow-up.
+- **Bumping the declared version past 1.7** once real 1.9+ schema material
+  (or a real Resolve/FCP round-trip test) is available to confirm whether
+  newer syntax (e.g. a `media-rep` child wrapping `asset@src`, seen in some
+  real-world 1.9+ example files but not in any DTD this pass could verify) is
+  actually required, rather than the DTD-confirmed 1.7 shape this pass ships.
+- **`chroma_keyframes`/fade export** once the correct built-in `adjust-*`
+  parameter names are confirmed (a real Final Cut export sample, or newer
+  Apple spec prose, would settle this without guessing).
+
+**Where it surfaces.** Follows D-183's own exact pattern: the compiler
+(`packages/editor/src/timelineInterchange.ts`, pure — no I/O) → a new
+`editor_export_fcpxml` op in `useEditorControl.ts` (builds a `sourceInfo` map
+from the media pool's own probed `MediaItem.video` for every clip with a
+`media_id`, then writes the string via a new, narrow
+`chroma_write_text_file` Tauri command, `app/src-tauri/src/chroma/
+write_text_file.rs` — mirroring `ffmpeg_run.rs`'s own "generic primitive, the
+caller owns the content" split, chosen over widening `tauri-plugin-fs`'s
+capability grant for one call site) → a matching `@mcp.tool()` wrapper in
+`mcp/server.py`. `docs/notes/mcp-tool-coverage.md`'s Edit-tab table updated.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test
+--workspace @chroma/editor` — **389/389** (357 baseline at dispatch + 32 new
+in `timelineInterchange.test.ts`) — every fixture checked for real
+well-formedness via a real `DOMParser` (the `jsdom` vitest environment,
+matching `TimelinePane.marquee.dom.test.tsx`'s own established pattern), and
+the more complete fixtures ALSO validated against the real FCPXML 1.7 DTD via
+`xmllint --dtdvalid` (confirmed actually running, not silently skipped —
+`xmllint` is present on this host). `python3 -m py_compile mcp/server.py`
+clean; a real `import server` hits a PRE-EXISTING `mcp.server.mcpserver`
+import mismatch unrelated to this change (confirmed present, unmodified, on
+`main`'s tip before this work started) — not something this pass introduced
+or could fix without scope creep into the MCP SDK version itself.
+`cargo build -p RapidRAW` — clean (a full from-scratch build in this fresh
+worktree, ~11 min, only pre-existing/unrelated warnings). `cargo test -p
+RapidRAW write_text_file` — **3/3** new tests pass. `cargo clippy -p RapidRAW
+--all-targets` and `cargo fmt -p RapidRAW -- --check` — both clean on
+`write_text_file.rs` specifically (the wider crate carries real pre-existing
+clippy/fmt drift this pass did not introduce and did not touch).
+**Honest limit, stated plainly**: no real Premiere/Resolve/Final Cut Pro was
+available to actually import the generated file and confirm round-trip
+fidelity — "well-formed and real-DTD-valid" is the verified claim; "imports
+correctly in Resolve" is not one this pass makes.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

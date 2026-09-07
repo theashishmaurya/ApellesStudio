@@ -1118,6 +1118,18 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
+- **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
+  FCPXML 1.7 half of "move a Chroma edit to another NLE" (DaVinci
+  Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at
+  its shape by analogy — it's a genuinely different element vocabulary
+  (`<sequence>`/`<track>`/`<clipitem>`/`<link>`) with no DTD published in the
+  same machine-checkable form FCPXML 1.7's is. Needs its own spec research
+  pass (Apple's old FCP7 interchange docs) before a line of `<clipitem>`-
+  building code is written. Also flagged there: bumping the shipped FCPXML
+  version past 1.7 once real 1.9+ schema material or an actual Resolve/FCP
+  round-trip test is available, and exporting `chroma_keyframes`/clip-fade
+  animation once the correct built-in `adjust-*` FCP parameter names are
+  confirmed (not guessed).
 - **Motion tab visual builder — on-canvas drag / size / animate** — owner asked for it live
   2026-09-05 ("drag and drop multiple elements… a visual builder for me and animation as well…
   fix easily, with human in loop"). **Researched and phased: D-152,

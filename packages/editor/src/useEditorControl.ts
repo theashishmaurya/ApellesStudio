@@ -61,6 +61,7 @@ import {
   type Timeline,
 } from './timeline';
 import { buildExportFfmpegArgs } from './timelineExport';
+import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
@@ -639,6 +640,68 @@ export function useEditorControl(): void {
           stderrTail: outcome.stderr_tail,
           args,
         };
+      },
+
+      // ---- interchange export (D-196) — timelineInterchange.ts compiles the
+      // Timeline to a real FCPXML 1.7 document; chroma_write_text_file just
+      // writes the string to disk. See timelineInterchange.ts's own header
+      // doc for the full, precise scope (what maps, what doesn't) and D-196
+      // in docs/08-decisions.md for the field-mapping table. -----------------
+      editor_export_fcpxml: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline;
+
+        const outPath = a?.outPath;
+        if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
+        const width = Math.round(Number(a?.width));
+        const height = Math.round(Number(a?.height));
+        if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          return { error: 'width and height must be positive numbers (the output composition size)' };
+        }
+        let fps: number | undefined;
+        if (a?.fps !== undefined) {
+          fps = Number(a.fps);
+          if (!Number.isFinite(fps) || fps <= 0) return { error: 'fps must be a positive number' };
+        }
+
+        // Real per-clip native resolution/hasAudio, when known — the media
+        // pool's own probed `MediaItem.video` for whichever pool item
+        // `Clip.media_id` names (D-070's unified clip identity). Closes the
+        // exact "this pure module can't probe a source file" gap
+        // `timelineInterchange.ts`'s own `ClipSourceInfo` doc names — a clip
+        // built before D-070, or from an offline/unprobed source, simply has
+        // no entry and the compiler falls back to its own documented
+        // canvas-aspect approximation (surfaced in `warnings`).
+        const poolItems = useMediaPoolStore.getState().items;
+        const sourceInfo: Record<string, ClipSourceInfo> = {};
+        for (const track of tl.tracks) {
+          for (const clip of track.clips) {
+            if (!clip.media_id) continue;
+            const item = poolItems.find((m) => m.id === clip.media_id);
+            if (!item?.video) continue;
+            sourceInfo[clip.id] = {
+              width: item.video.width,
+              height: item.video.height,
+              hasAudio: item.video.hasAudio ?? undefined,
+            };
+          }
+        }
+
+        const { xml, warnings } = buildFcpxml(tl, {
+          fps,
+          width,
+          height,
+          projectName: typeof a?.projectName === 'string' ? a.projectName : undefined,
+          sourceInfo,
+        });
+
+        try {
+          await invoke('chroma_write_text_file', { path: outPath, contents: xml });
+        } catch (e) {
+          return { error: `failed to write ${outPath}: ${String(e)}` };
+        }
+
+        return { ok: true, outPath, warnings };
       },
 
       // ---- fade (D-147) + duck (D-149) — moved from useChromaControl.ts ---
