@@ -1940,6 +1940,12 @@ pub fn run() {
                 // `AppHandle` parameter — dropped when the function moved into the
                 // `chroma-ai` crate, so no handle needs cloning for it here anymore.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise);
+                // Chroma: and the `ai-media/` sidecar (D-184) — transcript +
+                // video understanding, MLX, a separate PROCESS because it is a
+                // separate dependency universe (`mlx-vlm` needs
+                // `transformers>=5.5`, `ai/` pins `<5`). One thread each; the
+                // shared `shutdown()` below kills both.
+                std::thread::spawn(chroma::sidecar::spawn_and_supervise_media);
             }
 
             let window_cfg = app.config().app.windows.first().unwrap().clone();
@@ -2203,6 +2209,11 @@ pub fn run() {
             chroma::motion::chroma_motion_save_manifest,
             chroma::motion::chroma_motion_render,
             chroma::sidecar::chroma_ai_status,
+            chroma::sidecar::chroma_ai_media_status,
+            chroma::media_understanding::chroma_transcribe,
+            chroma::media_understanding::chroma_transcribe_status,
+            chroma::media_understanding::chroma_analyze_video,
+            chroma::media_understanding::chroma_analyze_video_status,
             apply_adjustments,
             generate_preview_for_path,
             generate_preset_preview,

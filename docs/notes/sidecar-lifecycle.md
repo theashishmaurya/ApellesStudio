@@ -1,39 +1,67 @@
-# Sidecar lifecycle (D-028)
+# Sidecar lifecycle (D-028; two sidecars since D-184, N-sidecar supervisor D-185)
 
-The Chroma app starts and supervises the `ai/` FastAPI sidecar itself. No more
-`cd ai && ./run.sh` before using subject mask / tracking / depth.
+The Chroma app starts and supervises its Python sidecars itself. No more
+`cd <dir> && ./run.sh` before using the features that depend on them.
 
-Code: `app/src-tauri/src/chroma/sidecar.rs` (one file). Upstream footprint:
-`chroma/mod.rs` +1 (`pub mod sidecar;`), `lib.rs` +1 `std::thread::spawn` in
-`.setup()`, +2 `chroma::sidecar::shutdown()` calls in the `.run(...)` exit hook,
-+1 `generate_handler!` line (`chroma_ai_status`). No new crate.
+**There are two**, and everything in this doc applies to each independently —
+they are separate processes, separate venvs, separate ports, separate status:
+
+| spec | dir | port | what it does | why it's separate |
+|---|---|---|---|---|
+| `AI` | `ai/` | 8765 | SAM 2 → ViTMatte matting (D-012/D-016), depth track (D-036), MoGe-2 normals (D-077) | — |
+| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-184 | PyTorch/`transformers<5` vs. MLX/`transformers>=5.5` — pip reports the union as `ResolutionImpossible` (D-184) |
+
+Code: `chroma_ai::sidecar` (the whole implementation, D-145) +
+`app/src-tauri/src/chroma/sidecar.rs` (the Tauri-only bits). Upstream
+footprint: `chroma/mod.rs` +1 (`pub mod sidecar;`), `lib.rs` +2
+`std::thread::spawn` in `.setup()` (one per sidecar), +2
+`chroma::sidecar::shutdown()` calls in the `.run(...)` exit hook (one call
+kills *both*), +2 `generate_handler!` lines (`chroma_ai_status`,
+`chroma_ai_media_status`). No new crate.
+
+**D-185 — one supervisor, N sidecars.** The per-sidecar facts (name, dir,
+default port, the four env var names) live in a `SidecarSpec` static; the
+per-sidecar runtime state (owned child, status snapshot) lives in a registry
+keyed by spec name; the logic below is written once and shared. Adding a third
+sidecar is a new `SidecarSpec` + a spawn line + a status command — not a copy
+of this file. Everything below reads "the sidecar" for brevity; substitute the
+spec you care about.
 
 ## Where it runs
 
-`spawn_and_supervise(app)` runs on its own thread, spawned from `lib.rs`
-`.setup()` right after the preview / analytics / thumbnail workers (so `fern`
-logging is already installed and every `[sidecar]` line lands in `app.log`).
+`supervise(&SPEC)` runs on its own thread — one per sidecar, spawned from
+`lib.rs` `.setup()` right after the preview / analytics / thumbnail workers (so
+`fern` logging is already installed and every `[sidecar/<name>]` line lands in
+`app.log`). `spawn_and_supervise` / `spawn_and_supervise_media` are zero-argument
+wrappers, because `std::thread::spawn` needs an `FnOnce()`.
 
 ## Resolve order
 
-**Sidecar dir** (`resolve_ai_dir`):
-1. `CHROMA_AI_DIR` env, if it contains `server.py` (else warn + fall through).
-2. `env!("CARGO_MANIFEST_DIR")/../../ai` → `../ai` → `ai` (first with `server.py`).
-   `CARGO_MANIFEST_DIR` is `<workspace>/app/src-tauri`, so `../../ai` is the
-   dev checkout's sidecar.
+Each spec names its own four env vars. For `AI` they are `CHROMA_AI_*`; for
+`AI_MEDIA`, `CHROMA_AI_MEDIA_*`.
+
+**Sidecar dir** (`resolve_dir`):
+1. `<spec>.dir_env` (`CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR`), if it contains
+   `server.py` (else warn + fall through).
+2. `env!("CARGO_MANIFEST_DIR")/../../<dir>` → `../<dir>` → `./<dir>` (first with
+   `server.py`). `CARGO_MANIFEST_DIR` is `<workspace>/crates/chroma-ai` since
+   D-145, so `../../ai` and `../../ai-media` are the dev checkout's sidecars.
 
 **Python** (`resolve`):
-1. `CHROMA_AI_PYTHON` env — must be an existing file (else hard error, retried).
-2. `<ai>/.venv/bin/python`.
+1. `<spec>.python_env` (`CHROMA_AI_PYTHON` / `CHROMA_AI_MEDIA_PYTHON`) — must be
+   an existing file (else hard error, retried).
+2. `<dir>/.venv/bin/python`.
 3. `python3` on `PATH`.
 
-**Port**: `CHROMA_AI_PORT` (default `8765`) — same value `chroma::mask`'s
-`sidecar_base_url()` uses.
+**Port**: `<spec>.port_env` — `CHROMA_AI_PORT` (default `8765`), the same value
+`chroma_ai::sidecar_base_url()` uses; `CHROMA_AI_MEDIA_PORT` (default `8766`),
+the same value `chroma_ai::media_understanding::media_base_url()` uses.
 
 ## Modes
 
-- **`CHROMA_AI_NO_SPAWN=1`** → log "auto-spawn disabled" and return. For devs
-  running `ai/run.sh` by hand.
+- **`<spec>.no_spawn_env=1`** (`CHROMA_AI_NO_SPAWN` / `CHROMA_AI_MEDIA_NO_SPAWN`)
+  → log "auto-spawn disabled" and return, for that sidecar only. For devs
+  running `ai/run.sh` / `ai-media/run.sh` by hand.
 - **External already up** → one `GET /health` at start; if OK, log
   "already running (external)" and enter monitor-only mode: health-poll every
   10 s, log state changes, never own / kill / respawn it. `chroma_ai_status`
@@ -56,7 +84,7 @@ logging is already installed and every `[sidecar]` line lands in `app.log`).
   clear "check the [sidecar] log" error. Any run that stays up ≥ 60 s resets the
   backoff and the fast-failure counter.
 - **venv / python missing**: log
-  `AI sidecar can't start: no python at <path>. Run:  cd ai && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+  `<name> sidecar can't start: no python at <path>. Run:  cd <dir> && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
   and re-resolve every 30 s. The app does not crash; mask/track calls fail with
   the existing "sidecar unreachable" error until it's fixed.
 
@@ -64,15 +92,21 @@ logging is already installed and every `[sidecar]` line lands in `app.log`).
 
 `lib.rs` `.run(...)` handles `RunEvent::ExitRequested` and `RunEvent::Exit` by
 calling `chroma::sidecar::shutdown()` **before** its `libc::_exit(0)` /
-`std::process::exit(0)`. `shutdown()` sets a `shutting_down` flag (every sleep in
-the supervisor is interruptible and checks it) and `child.kill()` + `wait()` on
-the owned child. An external sidecar is never touched. Result: `pgrep -f
-"uvicorn server:app"` is empty after quit.
+`std::process::exit(0)`. One call covers **every** sidecar (D-185): it walks the
+registry, sets each one's `shutting_down` flag (every sleep in every supervisor
+is interruptible and checks it) and `child.kill()` + `wait()`s each owned child.
+So a newly-added sidecar can never be forgotten here — the exit-hook call site
+needs no per-sidecar change. External sidecars are never touched. Result:
+`pgrep -f "uvicorn server:app"` is empty after quit.
 
-## `chroma_ai_status` command
+## The status commands
 
-`{ managed: bool, healthy: bool, pid?: u32, restarts: u32, lastError?: string }`
-— for a future UI "AI: ●" indicator. Nothing consumes it yet.
+`chroma_ai_status` and `chroma_ai_media_status` (D-184) both return
+`{ managed: bool, healthy: bool, pid?: u32, restarts: u32, stale: bool,
+lastError?: string }` — the same `SidecarStatus`, one per spec, from
+`chroma_ai::sidecar::status_snapshot(&SPEC)`. Both are consumed by the Settings
+panel's sidecar status cards (D-101 built the first, D-184 the second; before
+D-101 nothing consumed the command at all).
 
 ## Real ownership of an "external" sidecar — done (D-101, 2026-09-04)
 

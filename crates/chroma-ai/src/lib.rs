@@ -5,10 +5,17 @@
 //! Depth Anything depth tracking, D-036) that does not require `tauri::State`,
 //! an `AppHandle`, or a fork-side global (`chroma::state::current_video()`).
 //!
-//! Three modules, one per source file it was extracted from:
+//! Four modules — three per source file it was extracted from, plus one added
+//! later:
 //! - [`sidecar`] — process lifecycle: spawn, health-poll, content-hash
 //!   staleness detection, capped-backoff respawn, external-process monitoring
-//!   (from `app/src-tauri/src/chroma/sidecar.rs`, D-028/D-101).
+//!   (from `app/src-tauri/src/chroma/sidecar.rs`, D-028/D-101). Since D-185 it
+//!   supervises **N** sidecars from one `SidecarSpec`-parameterized
+//!   implementation, not just `ai/`.
+//! - [`media_understanding`] — the `ai-media/` sidecar's HTTP client:
+//!   `/transcribe` + `/understand_video` and their two job-status polls
+//!   (D-184). Written here rather than extracted from the fork, since the
+//!   capability is new — but the same shape as [`depth`], for the same reason.
 //! - [`depth`] — the `/depth_track` + `/depth_track/<id>` HTTP client and the
 //!   per-frame tracked-depth-PNG lookup (from `chroma/depth.rs`, D-036).
 //! - [`mask`] — the `/segment`, `/track`, `/track/<id>`, `/refine_track`,
@@ -45,6 +52,7 @@
 
 pub mod depth;
 pub mod mask;
+pub mod media_understanding;
 pub mod sidecar;
 
 /// The Chroma AI sidecar's base URL — `http://127.0.0.1:<CHROMA_AI_PORT or 8765>`.

@@ -49,7 +49,7 @@ import { RotateCcw } from 'lucide-react';
 import { useUIStore } from '../../store/useUIStore';
 
 /** Mirrors `chroma::sidecar::SidecarStatus` (D-101, `camelCase` on the wire —
- *  see that struct's own doc comment for why). */
+ *  see that struct's own doc comment for why). One per supervised sidecar. */
 interface SidecarStatus {
   managed: boolean;
   healthy: boolean;
@@ -57,6 +57,111 @@ interface SidecarStatus {
   restarts: number;
   stale: boolean;
   lastError?: string;
+}
+
+/** One supervised sidecar, for the status cards below. D-184 added the second
+ *  (`ai-media/`), so the card that D-101 wrote inline became this descriptor +
+ *  the `SidecarStatusCard` component — two cards' worth of near-identical JSX
+ *  is exactly the copy-paste `CLAUDE.md` rules out. */
+interface SidecarCardSpec {
+  /** Tauri command returning this sidecar's `SidecarStatus`. */
+  command: string;
+  /** Card heading. */
+  title: string;
+  /** What breaks when it's down — the user has no other way to know. */
+  purpose: string;
+  /** The manual-start hint, matching the Rust supervisor's own `run_hint()`. */
+  runHint: string;
+  /** The file the content hash is taken over, named in the staleness message. */
+  serverFile: string;
+}
+
+const SIDECAR_CARDS: SidecarCardSpec[] = [
+  {
+    command: 'chroma_ai_status',
+    title: 'AI Sidecar',
+    purpose: 'Subject masks, tracking, depth and relight normals need this.',
+    runHint: 'cd ai && ./run.sh',
+    serverFile: 'ai/server.py',
+  },
+  {
+    command: 'chroma_ai_media_status',
+    title: 'Media Understanding Sidecar',
+    purpose: 'Transcripts and video analysis in the Edit tab need this.',
+    runHint: 'cd ai-media && ./run.sh',
+    serverFile: 'ai-media/server.py',
+  },
+];
+
+/** D-101 — real status for a supervised sidecar, which real features silently
+ *  depend on. Before this, `chroma_ai_status` existed (D-028) but nothing
+ *  consumed it — a dead process, or a stale one from an old build, looked
+ *  identical to "the feature is just broken," which is exactly what happened in
+ *  D-069. Not a settings toggle, purely a diagnostic — there's nothing to
+ *  configure here. Generalized to N sidecars in D-184. */
+function SidecarStatusCard({ spec, status }: { spec: SidecarCardSpec; status: SidecarStatus | null }) {
+  return (
+    <div className="p-6 bg-surface rounded-xl shadow-md">
+      <Text variant={TextVariants.title} color={TextColors.accent} className="mb-2">
+        {spec.title}
+      </Text>
+      <Text variant={TextVariants.small} className="mb-6 opacity-60">
+        {spec.purpose}
+      </Text>
+      {!status ? (
+        <Text variant={TextVariants.small} className="opacity-70">
+          Checking…
+        </Text>
+      ) : (
+        <div className="flex items-start gap-3">
+          {status.stale ? (
+            // amber = the same "degraded, not fully broken" precedent
+            // ShotStrip.tsx/SourcesPanel.tsx already use for "media offline"
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          ) : status.healthy ? (
+            <Wifi size={18} className="mt-0.5 shrink-0 text-green-400" />
+          ) : (
+            <WifiOff size={18} className="mt-0.5 shrink-0 text-red-400" />
+          )}
+          <div>
+            <Text>
+              {status.stale
+                ? 'Running, but stale'
+                : status.healthy
+                  ? status.managed
+                    ? `Running (pid ${status.pid ?? '?'})`
+                    : 'Running (external)'
+                  : 'Not responding'}
+            </Text>
+            {status.stale && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-80">
+                An external sidecar process answered, but it's running different code than
+                this build's <code>{spec.serverFile}</code> — likely an old process left over
+                from before a rebuild (see D-069). Restart it by hand: <code>kill</code> the
+                process, then <code>{spec.runHint}</code>.
+              </Text>
+            )}
+            {!status.managed && status.healthy && !status.stale && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                This app didn't start it — running one yourself (<code>{spec.runHint}</code>)
+                is fine, it just won't be auto-restarted if it crashes.
+              </Text>
+            )}
+            {status.restarts > 0 && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                Restarted {status.restarts} time{status.restarts === 1 ? '' : 's'} this session.
+              </Text>
+            )}
+            {status.lastError && (
+              <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
+                {status.lastError}
+              </Text>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface ConfirmModalState {
@@ -560,8 +665,9 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
   // D-101 — chroma_ai_status existed since D-028 but nothing consumed it
   // ("nothing consumes it yet," per docs/notes/sidecar-lifecycle.md). This is
   // the first real UI surface for it, so the owner isn't blind to sidecar
-  // health/staleness without reading app.log by hand.
-  const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null);
+  // health/staleness without reading app.log by hand. D-184: keyed by command
+  // name, since there are two supervised sidecars now.
+  const [sidecarStatuses, setSidecarStatuses] = useState<Record<string, SidecarStatus | null>>({});
   const [dpr, setDpr] = useState(() => (typeof window !== 'undefined' ? window.devicePixelRatio : 1));
 
   const settingCategories = useMemo(
@@ -687,19 +793,22 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
     invoke<string[]>('get_lensfun_makers').then(setLensMakers).catch(console.error);
   }, []);
 
-  // D-101 — poll chroma_ai_status so the "AI Sidecar" card below stays live
+  // D-101 — poll each sidecar's status command so the cards below stay live
   // while Settings is open. 5s is deliberately coarser than the Rust
   // supervisor's own 10s external re-poll / 2s owned-child poll — this is a
   // human-readable status display, not a control loop, no need to match its
-  // cadence exactly.
+  // cadence exactly. D-184: one poll per supervised sidecar, driven off
+  // SIDECAR_CARDS so a third one needs no change here.
   useEffect(() => {
     let cancelled = false;
     const poll = () => {
-      invoke<SidecarStatus>('chroma_ai_status')
-        .then((s) => {
-          if (!cancelled) setSidecarStatus(s);
-        })
-        .catch(console.error);
+      for (const spec of SIDECAR_CARDS) {
+        invoke<SidecarStatus>(spec.command)
+          .then((status) => {
+            if (!cancelled) setSidecarStatuses((prev) => ({ ...prev, [spec.command]: status }));
+          })
+          .catch(console.error);
+      }
     };
     poll();
     const id = setInterval(poll, 5000);
@@ -2191,73 +2300,17 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                     </div>
                   </div>
 
-                  <div className="p-6 bg-surface rounded-xl shadow-md">
-                    <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
-                      AI Sidecar
-                    </Text>
-                    {/* D-101 — real status for the ai/ sidecar (SAM 2 / ViTMatte /
-                        depth / relight normals), which the Colorist's masking,
-                        tracking, and relight features silently depend on. Before
-                        this, chroma_ai_status existed (D-028) but nothing consumed
-                        it — a dead process or a stale one from an old build looked
-                        identical to "the feature is just broken," which is exactly
-                        what happened in D-069. Not a settings toggle, purely a
-                        diagnostic — there's nothing to configure here. */}
-                    {!sidecarStatus ? (
-                      <Text variant={TextVariants.small} className="opacity-70">
-                        Checking…
-                      </Text>
-                    ) : (
-                      <div className="flex items-start gap-3">
-                        {sidecarStatus.stale ? (
-                          // amber = the same "degraded, not fully broken" precedent
-                          // ShotStrip.tsx/SourcesPanel.tsx already use for "media offline"
-                          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
-                        ) : sidecarStatus.healthy ? (
-                          <Wifi size={18} className="mt-0.5 shrink-0 text-green-400" />
-                        ) : (
-                          <WifiOff size={18} className="mt-0.5 shrink-0 text-red-400" />
-                        )}
-                        <div>
-                          <Text>
-                            {sidecarStatus.stale
-                              ? 'Running, but stale'
-                              : sidecarStatus.healthy
-                                ? sidecarStatus.managed
-                                  ? `Running (pid ${sidecarStatus.pid ?? '?'})`
-                                  : 'Running (external)'
-                                : 'Not responding'}
-                          </Text>
-                          {sidecarStatus.stale && (
-                            <Text variant={TextVariants.small} className="mt-1 opacity-80">
-                              An external sidecar process answered, but it's running different
-                              code than this build's <code>ai/server.py</code> — likely an old
-                              process left over from before a rebuild (see D-069). Restart it by
-                              hand: <code>kill</code> the process, then <code>cd ai && ./run.sh</code>.
-                            </Text>
-                          )}
-                          {!sidecarStatus.managed && sidecarStatus.healthy && !sidecarStatus.stale && (
-                            <Text variant={TextVariants.small} className="mt-1 opacity-60">
-                              This app didn't start it — running one yourself (
-                              <code>cd ai && ./run.sh</code>) is fine, it just won't be
-                              auto-restarted if it crashes.
-                            </Text>
-                          )}
-                          {sidecarStatus.restarts > 0 && (
-                            <Text variant={TextVariants.small} className="mt-1 opacity-60">
-                              Restarted {sidecarStatus.restarts} time{sidecarStatus.restarts === 1 ? '' : 's'}{' '}
-                              this session.
-                            </Text>
-                          )}
-                          {sidecarStatus.lastError && (
-                            <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
-                              {sidecarStatus.lastError}
-                            </Text>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {/* D-101 / D-184 — one status card per supervised sidecar.
+                      The card body is `SidecarStatusCard` above; this just
+                      renders one per spec, so a third sidecar is a one-line
+                      addition to SIDECAR_CARDS and nothing else. */}
+                  {SIDECAR_CARDS.map((spec) => (
+                    <SidecarStatusCard
+                      key={spec.command}
+                      spec={spec}
+                      status={sidecarStatuses[spec.command] ?? null}
+                    />
+                  ))}
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
                     <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">

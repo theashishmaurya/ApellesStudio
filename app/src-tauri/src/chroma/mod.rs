@@ -46,7 +46,11 @@
 //! - `grade`    — the `grade.json` document command bridge: save / load
 //!                (D-025); the model itself lives in `chroma-grade-model` (D-143)
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
-//! - `sidecar`  — spawn + supervise the `ai/` FastAPI sidecar, kill it on exit (D-028)
+//! - `media_understanding` — transcript + "what changed on screen, and when"
+//!   via the `ai-media/` sidecar (mlx-whisper + Qwen3-VL, D-184); just the 4
+//!   `#[tauri::command]`s — the wire client is `chroma_ai::media_understanding`
+//! - `sidecar`  — spawn + supervise the `ai/` and `ai-media/` FastAPI sidecars,
+//!   kill them on exit (D-028; second sidecar D-184, N-sidecar supervisor D-185)
 
 pub mod audio;
 pub mod commands;
@@ -62,6 +66,7 @@ pub mod keyframes;
 pub mod load;
 pub mod mask;
 pub mod media_cache;
+pub mod media_understanding;
 pub mod motion;
 pub mod playback;
 pub mod project;

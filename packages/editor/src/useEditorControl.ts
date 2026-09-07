@@ -61,6 +61,7 @@ import {
   type Timeline,
 } from './timeline';
 import { buildExportFfmpegArgs } from './timelineExport';
+import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  no shared types package between this package and the Rust crate exists
@@ -108,6 +109,26 @@ function resolveClip(
   const c = tr.clips[clip];
   if (!c) return { error: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
   return { track, clip, tr, c };
+}
+
+/** Resolve the media file the D-184 analysis ops should look at, from any of
+ *  the three things a caller might reasonably have: a media-pool `mediaId`, a
+ *  pool item's `sourcePath`, or a bare absolute `path` that isn't in the pool
+ *  at all. The third is deliberate — "what's in this file?" is a question you
+ *  most want answered BEFORE deciding whether to import it, so requiring an
+ *  import first would put the tool on the wrong side of its own use case.
+ *  A pool lookup still wins when it matches, so `sourcePath` behaves
+ *  identically whether or not the file has been imported. */
+function resolveMediaPath(a: any): { path: string } | { error: string } {
+  const items = useMediaPoolStore.getState().items;
+  const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
+  if (media) return { path: media.sourcePath };
+  if (a?.mediaId) return { error: `no pool item with mediaId "${a.mediaId}"` };
+  const path = a?.path ?? a?.sourcePath;
+  if (typeof path !== 'string' || !path) {
+    return { error: 'pass mediaId, sourcePath, or an absolute path' };
+  }
+  return { path };
 }
 
 /** The exact clip-fade shape `get_timeline` (pre-D-183, `useChromaControl
@@ -568,6 +589,78 @@ export function useEditorControl(): void {
           attackMs: after?.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
           releaseMs: after?.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
         };
+      },
+
+      // ---- media understanding (D-184) — read-only analysis of a file ----
+      //
+      // These two are the ONE documented exception to "a mutating op must go
+      // through the same store action a GUI click does" (docs/notes/
+      // mcp-architecture.md): they mutate nothing. They ask the `ai-media/`
+      // sidecar a question about a file on disk and cache the answer, so there
+      // is no undo history to preserve and no GUI state to keep in sync.
+      //
+      // They resolve a media-pool item the same way `editor_add_clip` does
+      // (`mediaId` or `sourcePath`), so an agent that has just called
+      // `editor_import_media` can pass either — but a bare absolute path that
+      // isn't in the pool is also accepted, since "should I import this?" is
+      // exactly the sort of question you'd want to answer BEFORE importing.
+      //
+      // Both are slow (a transcript is tens of seconds; an analysis runs at
+      // roughly 4x realtime) and both are CACHED by path — a second call for
+      // the same file returns instantly. Pass `force: true` to re-run.
+      editor_get_transcript: async (a) => {
+        const path = resolveMediaPath(a);
+        if ('error' in path) return path;
+        try {
+          const transcript = await useMediaUnderstandingStore.getState().getTranscript(path.path, {
+            language: typeof a?.language === 'string' ? a.language : undefined,
+            wordTimestamps: a?.wordTimestamps === undefined ? undefined : !!a.wordTimestamps,
+            force: !!a?.force,
+          });
+          return {
+            ok: true,
+            path: path.path,
+            language: transcript.language,
+            model: transcript.model,
+            text: transcript.text,
+            segments: transcript.segments,
+            words: transcript.words ?? [],
+          };
+        } catch (e: unknown) {
+          return { error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+
+      editor_analyze_video: async (a) => {
+        const path = resolveMediaPath(a);
+        if ('error' in path) return path;
+        const num = (v: unknown): number | undefined => {
+          if (v === undefined || v === null) return undefined;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        try {
+          const analysis = await useMediaUnderstandingStore.getState().analyzeVideo(path.path, {
+            question: typeof a?.question === 'string' ? a.question : undefined,
+            sceneThreshold: num(a?.sceneThreshold),
+            minGapS: num(a?.minGapS),
+            maxCandidates: num(a?.maxCandidates),
+            force: !!a?.force,
+          });
+          return {
+            ok: true,
+            path: path.path,
+            question: analysis.question,
+            events: analysis.events,
+            meta: analysis._meta,
+            // Surfaced as a top-level field, not buried in `meta`, because it
+            // is the one thing a caller must act on: results were silently
+            // dropped at the cap, so raise `maxCandidates` and re-run.
+            truncated: analysis._meta?.truncated ?? false,
+          };
+        } catch (e: unknown) {
+          return { error: e instanceof Error ? e.message : String(e) };
+        }
       },
 
       // ---- track-level toggles — trivial 1:1 EditOp wrappers --------------
