@@ -25,15 +25,17 @@ exists today — not assumed from a feature's plausibility.
 
 ## Real gaps (nothing in the model or tool surface covers these)
 
-1. **Slip editing** — adjusting a clip's `source_start` (what part of the source plays)
-   WITHOUT moving its `start_frame` or changing its `duration`. Every existing trim op
-   changes duration; nothing changes only the source window in place. A real, missing
-   `EditOp` (`slip`), small and well-bounded — clamped against `source_len` the same way
-   `trim_start`/`trim_end` already are.
-2. **Media swapping** — replace a clip's `source_path`/`media_id` while preserving its
-   `start_frame`/`duration`/transform/keyframes/fades exactly. Nothing today lets you
-   re-point an existing clip at different source media; the only way to change source is
-   remove-and-re-add, which loses every other field. A real, missing `EditOp`.
+1. ~~**Slip editing**~~ **DONE (D-195, 2026-09-07).** A real `slip` `EditOp` in
+   `packages/editor/src/timeline.ts` — adjusts `source_start` in place, clamped
+   against `source_len` the same way `trim_start`/`trim_end` already are, lockstep
+   with a linked A/V pair. MCP: `editor_slip_clip`. 8 new unit tests.
+2. ~~**Media swapping**~~ **DONE (D-195, 2026-09-07).** A real `swap_media`
+   `EditOp` — repoints a clip's `source_path`/`media_id` while preserving
+   `start_frame`/transform/keyframes/fades/`link_group` exactly, re-clamping
+   `source_start`/`duration` (never `start_frame`) if the new source is shorter,
+   always re-reading `source_fps` from the new source. MCP:
+   `editor_swap_clip_media`. 8 new unit tests. See D-195 in
+   `docs/08-decisions.md` for the re-clamp judgment call's full reasoning.
 3. **Blur as a keyframeable param** — `editor_set_clip_keyframes` covers `position_x`/
    `position_y`/`scale`/`rotation`/`crop_*`/`opacity` but `Clip` has no blur field at all
    (keyframeable or otherwise). Not just a keyframing gap — the base compositing model
@@ -77,20 +79,41 @@ exists today — not assumed from a feature's plausibility.
     in flight this session) lands, since it needs the same composite the fixed preview
     will already be able to render.
 
-## Needs live verification, not a confirmed gap
+## Multiple timelines — VERIFIED WORKING, not a gap (D-195, 2026-09-07)
 
-- **Multiple timelines** — `project.json`'s own schema already supports an array of
-  timelines with an active index (`activeTimeline`), and the real Edit-tab GUI (seen
-  live this session, screenshot evidence) shows a tab strip with a "+" control next to
-  the current timeline's name tab — suggesting this may ALREADY be a real, working
-  feature, not a gap. Nobody has explicitly exercised "create a second timeline, switch
-  between them" this session to confirm. Verify before assuming either way.
+Confirmed live, not just from reading code: extended the D-142 browser harness
+(`app/harness.html`/`app/src/harness-main.tsx`) to mount `TimelineSwitcher` alongside
+`TimelinePane` against a real in-memory multi-timeline fake backend (mirroring
+`chroma::edit`'s `chroma_timeline_list`/`_create`/`_set_active`/`_get`/`_set` exactly),
+then drove it with real Chromium `PointerEvent`s via chrome-devtools MCP: clicked the
+"+" tab, typed a name, pressed Enter — a real second timeline ("Alt Cut") was created
+and became active, `TimelinePane` correctly showed it as empty. Added distinct content
+to each of two timelines, switched back and forth by clicking their tabs, and confirmed
+by reading both the store's live state and the fake backend's own map that each
+timeline's content is fully independent — no bleed either direction, both persist
+correctly. Rust's own `multi_timeline_create_list_and_set_active_round_trip` test
+(`app/src-tauri/src/chroma/project.rs`) already covered the backend half of this; this
+pass is the first time the FRONTEND click-through path was actually exercised.
+
+**One real bug found during this verification, filed as B-080 in `docs/BUGS.md`, not
+fixed here:** switching or creating a timeline while an edit's debounced save (400ms,
+`SAVE_DEBOUNCE_MS`) is still pending silently drops that edit — it never reaches disk
+and is no longer recoverable from memory either, with no error or warning of any kind.
+The basic feature (create/switch/persist/isolate, given >400ms between an edit and a
+switch) is unaffected and works correctly; the bug is specifically about that race.
+
+Also fixed, in the same pass, a real usability defect in the D-142 harness itself (not
+a product bug): its `#harness-status` debug overlay was pinned top-LEFT, directly over
+`TimelineSwitcher`'s own top-left tab strip, silently eating real pointer clicks on the
+tabs even though the accessibility tree still reported them as clickable — moved to
+top-right. See B-080's own "harness note" for the full detail; worth remembering for
+the next feature that mounts UI at the very top of this harness.
 
 ## Not scoped further here (out of this note's own scope)
 
 Whichever of the above the owner wants built next is a real, separate dispatch each —
 this note is the comparison or the "what's missing," not a build plan. Items 1–2 (slip,
-media swap) are the smallest, most self-contained, and most clearly missing primitives
-if a quick win is wanted first. Items 5–7 (markers, agent review, nested timelines) are
-each substantial enough to warrant their own scoping pass before a build, not a
-same-pass bundle with anything else.
+media swap) were the smallest, most self-contained, most clearly missing primitives —
+now done, D-195. Items 5–7 (markers, agent review, nested timelines) are each
+substantial enough to warrant their own scoping pass before a build, not a same-pass
+bundle with anything else.

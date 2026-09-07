@@ -933,16 +933,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     started.
 20. **Timeline-editing feature gaps vs. a comparable competitor** — owner, 2026-09-07,
     pointed at a competitor's own docs for comparison. Full writeup:
-    `docs/notes/timeline-editing-feature-gap-analysis.md`. Real, confirmed-missing
-    primitives: slip editing, media swapping, blur as a keyframeable param, audio
-    volume keyframes within a clip, markers (point & range), nested timelines
-    (compound clips), a Timeline Index panel (transcript/caption text-navigation —
-    the underlying data now exists via D-189/D-190, just merged), canvas guides
+    `docs/notes/timeline-editing-feature-gap-analysis.md`. ~~Slip editing~~ and
+    ~~media swapping~~ **done (D-195, 2026-09-07)** — new `slip`/`swap_media`
+    `EditOp`s + `editor_slip_clip`/`editor_swap_clip_media` MCP tools. Remaining
+    real, confirmed-missing primitives: blur as a keyframeable param, audio volume
+    keyframes within a clip, markers (point & range), nested timelines (compound
+    clips), a Timeline Index panel (transcript/caption text-navigation — the
+    underlying data now exists via D-189/D-190, just merged), canvas guides
     (grid/safe-zone overlays, broader than the plain canvas-boundary work in item 18),
-    frame capture (export the current composite as a still). Needs live verification,
-    not confirmed either way: whether "multiple timelines" already works (the data
-    model and a GUI "+" tab control both look like they support it, untested this
-    session). Not started as a build — that note is the comparison, not a build plan.
+    frame capture (export the current composite as a still). ~~"Multiple
+    timelines"~~ — the gap note's other open question — **verified WORKING**
+    (D-195, 2026-09-07), live via the D-142 harness (extended to mount
+    `TimelineSwitcher`); see the gap note's own section for the full writeup. One
+    real bug found during that verification, filed as **B-080** (not fixed): an
+    edit made within the 400ms debounced-save window of a timeline switch is
+    silently lost. Not started as a build — that note is the comparison, not a
+    build plan.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

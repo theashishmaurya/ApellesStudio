@@ -44,7 +44,7 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 21 tools (D-183, 2026-09-07; +1, D-191)
+## Edit tab / multi-track NLE — CLOSED, 23 tools (D-183, 2026-09-07; +1, D-191; +2, D-195)
 
 > **The gap tracked below is closed.** D-147 (clip fades) and D-149 (ducking)
 > shipped the first three Edit-tab tools; D-183 shipped the other seventeen in one
@@ -69,6 +69,8 @@ zero.**
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
 > | `editor_split_clip` / `editor_remove_clip` / `editor_remove_gap` / `editor_trim_clip` / `editor_move_clip` | The rest of the ripple-edit primitives — no new `EditOp` had to be invented for any of these; every one already existed in `packages/editor/src/timeline.ts`, only the MCP wrapper was missing. |
+> | `editor_slip_clip` (D-195) | Slip a clip's SOURCE window in place — `start_frame`/`duration` stay fixed, only `source_start` moves (clamped to the source's own bounds, lockstep with a linked A/V pair). A real, previously-missing `EditOp` (`slip`), not a wrapper around an existing one. |
+> | `editor_swap_clip_media` (D-195) | Repoint a clip at different already-imported source media while preserving everything else — transform/keyframes/fades/`link_group` — with `source_start`/`duration` re-clamped (never `start_frame`) if the new source is shorter, and `source_fps` always re-read from the NEW source. A real, previously-missing `EditOp` (`swap_media`); before this, changing a clip's source meant remove-and-re-add, losing every other field. |
 > | `editor_add_track` / `editor_set_track_gain` / `editor_set_track_locked` / `editor_set_track_hidden` | Track management. |
 > | `set_clip_fade` / `set_track_duck` | Unchanged from D-147/D-149 (see above for the internal rename). |
 > | `editor_set_clip_transform` | A clip's base position/scale/rotation/crop/opacity, as fractions of the output composition — the stacking/PIP primitive (D-136's normalised-fraction convention). `box_width`/`box_height` (D-193) let a caller size a clip's box on each axis INDEPENDENTLY as a fraction of the output composition — unlike `scale` (a uniform multiplier of the clip's own source resolution, which can only ever produce a box sharing the clip's own aspect ratio), these have no Rust/TS-export parity gap and are the real fix for the same limitation `editor_export`'s `fit_overrides` below works around at export time only. `null` clears a previously-set override (the Python tool's `clear_box_width`/`clear_box_height` booleans, since a bare omitted argument already means "leave it alone" on this tool). |

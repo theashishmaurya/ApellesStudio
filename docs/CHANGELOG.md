@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **"Multiple timelines" live-verified working; B-080 filed.**
+  Extended the D-142 browser harness to mount `TimelineSwitcher` against a real
+  multi-timeline fake backend and drove it with real Chromium pointer events:
+  create-via-"+", switch-by-click, and per-timeline persistence/isolation all work
+  correctly. Found and filed (not fixed) **B-080**: switching/creating a timeline
+  while an edit's 400ms debounced save is still pending silently drops that edit —
+  no error, not on disk, not recoverable from memory. Also fixed a harness-only
+  usability bug (its debug overlay was eating real clicks on the newly-added tab
+  strip).
+- **2026-09-07** — **Two new `EditOp`s from the timeline-editing gap analysis
+  (D-195): `slip` and `swap_media`, both with new MCP tools.** `slip` moves a
+  clip's `source_start` in place without touching `start_frame`/`duration`
+  (mirrors `trim_start`/`trim_end`'s clamp/lockstep discipline, `editor_slip_clip`
+  MCP tool). `swap_media` repoints a clip at different source media while
+  preserving everything else about it — transform, keyframes, fades, `link_group`
+  — re-clamping `source_start`/`duration` (never `start_frame`) if the new source
+  is shorter, and always re-reading `source_fps` from the NEW source rather than
+  keeping the old one (the same fix-class as B-075/B-077/D-194)
+  (`editor_swap_clip_media` MCP tool). `@chroma/editor` 377/377 (20 new tests),
+  `tsc` clean.
 - **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/
   `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
   end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into
