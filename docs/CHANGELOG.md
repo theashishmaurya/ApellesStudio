@@ -23,8 +23,14 @@ One or two lines per session. Detail lives in the decision it references.
   27 times per Inspector render — measured 31.7 µs → 1.2 µs at 50 keys (26.9×).
   That is not what "lagging like hell" is, though: D-209 records the real
   target (every preview frame crosses IPC as a base64 JPEG string, one at a
-  time) in roadmap item 25. 23 new tests, 632/632; not live-tested in a Tauri
-  instance — see D-209.
+  time) in roadmap item 25. 23 new tests, 632/632. Live-run in a second
+  isolated Tauri instance on the owner's real 50-keyframe project (loads,
+  scrubs, no console error or panic; zero React-Compiler bailouts in
+  `packages/editor/src` in the real vite build) but **not** verified at the
+  pointer tier — and the reason is its own new roadmap item 26: there is no
+  `editor_set_selection` op, so nothing but a human's mouse can put a clip into
+  the state where the transform box even mounts, which leaves the whole
+  on-canvas surface agent-unverifiable. See D-209.
 
 - **2026-09-07** — **Fixed B-092 (D-205): canvas click-to-select was still
   completely dead in the real app after D-204 shipped it** ("still not able to

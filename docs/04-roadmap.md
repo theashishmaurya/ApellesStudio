@@ -1169,6 +1169,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         but it is per playback frame. Deliberately not touched inside D-209's
         bug fix — that hook is the delicate B-085/B-092 surface and deserves its
         own pass.
+26. **`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
+    not WRITABLE, so the whole on-canvas surface is agent-unreachable.** Found
+    2026-09-08 while trying to live-verify D-209/B-093: `editor_get_state`
+    reports `selection` (a list of `{track, id}`) and `selectedGap`, but no op
+    sets either, so nothing outside a human's mouse can put a clip into the
+    state where `TransformOverlay` mounts at all. That makes the transform box,
+    its handles, and canvas click-to-select impossible for an agent to drive or
+    check — every on-canvas fix so far (D-136, D-204, B-085, B-092, D-209) has
+    had to be verified by a human clicking, or not at all. A direct instance of
+    CLAUDE.md's "every feature is built for a human AND an AI" rule left
+    unhonoured on the read/write boundary rather than on a capability (the
+    transform ops themselves ARE MCP-complete). Small and well-shaped: one
+    `editor_set_selection` op on `useEditorControl.ts`'s map driving the store's
+    existing `setSelection`/`setSelectedGap`, one MCP tool, mirroring
+    `editor_set_playhead` exactly. Needs its own `D-NNN` (does it validate that
+    the track/id exists? does it clear `selectedGap` the way every other
+    selection path does — D-105 says yes?).
     - **No canvas/preview zoom control** — the timeline already has one (the
       `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
       own viewer zoom control, top-left of the timeline viewer.

@@ -18607,12 +18607,46 @@ un-keyframed clips — the correct signal). `npx tsc --noEmit -p packages/editor
 clean; `reactCompiler.test.ts` still reports no bailout on the edited
 components (D-201).
 
-**Not live-verified in a running Tauri window.** What that leaves unproven is
-only what the jsdom tier never covers — that a real browser routes a press to
-the same element — and specifically NOT the geometry, which this suite reads
-off the real component's real CSS. The drag/press routing itself is unchanged
-by this pass (D-204's capture-phase rules and every pointer handler are
-untouched); what changed is the numbers those handlers read and write.
+**Live, partially — and what is missing is missing for a reason worth
+recording.** A second, fully isolated Tauri instance was built and run from
+this worktree (its own vite port 1432, `CHROMA_CONTROL_PORT=19801`, its own
+bundle identifier so `tauri-plugin-single-instance` doesn't fold it into the
+checkout's app — the recipe D-167/B-092 already document). It opened a real
+copy of the owner's 50-keyframe project (`b093-verify.chroma`, whose track-0
+clip carries static `position_x -1.0297` / `scale 0.3764` against a frame-0
+keyframe of `position_x 0` / `scale 0.4773` — the exact disagreement this bug
+is) and scrubbed it. That establishes: the changed modules load and run in a
+real WKWebView, the Edit tab reaches `status: ready` with the timeline loaded,
+the playhead moves, and **no console error or panic is logged**. It also gives
+a stronger React-Compiler signal than `reactCompiler.test.ts` does — the real
+vite build reports 114 bailouts across the repo and **none** in
+`packages/editor/src`.
+
+The pointer tier could NOT be reached: this shell has no macOS
+screen-recording permission (`screencapture` → "could not create image from
+display") and the app's `decorations: false` window exposes no Accessibility
+window (`count of windows` → 0), so there was no way to locate the preview
+surface on screen or to see the box. Blind `cliclick` presses at guessed
+coordinates would have been worse than not trying.
+
+**The deeper reason that tier is hard, which is a real gap rather than this
+session's bad luck: there is no `editor_set_selection` op.**
+`editor_get_state` REPORTS `selection`, but nothing can set it, so an agent
+cannot put a clip into the state where `TransformOverlay` even mounts — the
+whole on-canvas transform surface is unreachable from MCP, for verification or
+anything else. The *capability* behind the gesture is fully MCP-reachable
+(`editor_set_clip_transform` / `editor_set_clip_keyframes` are the same ops the
+drag commits, which is what CLAUDE.md's both-interfaces rule actually asks
+for), so this is not a half-built feature — but the missing setter is why this
+and every future on-canvas change has no agent-drivable check. Filed in
+`docs/04-roadmap.md`; deliberately not built here, since a new MCP tool is its
+own concern and its own `D-NNN`.
+
+So: the geometry is proven at the real-DOM tier (real component, real CSS,
+five of seven cases confirmed failing pre-fix), not at the pixel tier. Note
+that press ROUTING is unchanged by this pass — D-204's capture-phase rules and
+every pointer handler are untouched; what changed is the numbers those
+handlers read and write.
 
 ### MCP (the both-interfaces rule)
 
