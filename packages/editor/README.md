@@ -38,6 +38,15 @@ dragging a pool item in from the shell's Sources panel.
   selection, and the pixel↔timeline conversions the overlay paints from. No
   React, no DOM, no `window` — `TimelinePane` owns the wiring. See
   **Marquee-select** below.
+- `clipFade.ts` (D-205) — the pure half of the timeline's on-clip fade
+  handles: a fade duration in the clip's own **source** frames ↔ its on-screen
+  width at the current zoom (via `timeline.ts`'s
+  `sourceFramesToTimeline`/`timelineFramesToSource`, so a mixed-native-fps clip
+  is right — B-077), the handle's drag clamp, and the SVG paths that draw each
+  ramp at its real `FadeCurve` shape. It never evaluates a fade's *gain* —
+  that is `chroma_types::fade_gain` and its one mirror,
+  `timelineExportAudio.ts`'s `fadeGainAt`. `ClipFadeOverlay.tsx` is the
+  DOM/pointer wiring around it. See **On-clip fade handles** below.
 
 **Marquee-select (D-137, roadmap item 12 Phase 2).** Click-drag on empty
 timeline canvas draws a rubber band; every clip whose bounding box the rect
@@ -54,6 +63,30 @@ attribute on its propagation path. Nothing relies on handler order or
 track row), so a scroll or ctrl-wheel zoom mid-drag moves and rescales the band
 with the content it encloses. `marquee.test.ts` covers the intersection math,
 the threshold, the modifier composition and the gesture guard.
+
+**On-clip fade handles (D-205).** Every clip on the timeline — video track and
+audio track alike, because one fade pair drives picture and sound together in
+this model — draws its `fade_in_frames`/`fade_out_frames` as a rubber band
+across its own body, at the ramps' real `FadeCurve` shape (an SVG cubic *is* a
+`cubic-bezier`, so no solver and no sampling), with a small handle at each
+ramp's top that drags to set the fade. **It is a view of the stored field, not
+a second state**: a completed drag commits one
+`applyOp({kind:'set_clip_fade', …})` — the same op, undo stack and debounced
+persist `EditorInspectorPanel.tsx`'s numeric Fade field already used — so the
+two views cannot disagree. Live overlay-only feedback during the drag and one
+op on pointer-up is the `TransformOverlay`/D-046 convention (`applyOp`
+snapshots the whole timeline per call). Against the **third** gesture on a clip
+body, the timeline library's own full-height 10px edge-trim handles, the fade
+handle is separated by *where in the row* the press lands — a 15px-tall grab
+target at the clip's top edge, leaving the lower ~37px of both trim zones
+untouched, which is how Resolve stacks the same two affordances. Against the
+dnd-kit clip drag it is a distinct hit target that `stopPropagation`s, as
+D-094's grip handle was. The drag clamps to the clip's own length; the *model*
+still permits a longer-than-clip fade (`set_clip_fade` deliberately does not
+clamp), which renders honestly and parks its handle at the far edge.
+`clipFade.test.ts` covers the geometry, `TimelinePane.fade.dom.test.tsx` the
+gesture and its committed effect, and `timelineExport.ffmpeg.test.ts` proves a
+drag-derived fade really exports faded.
 
 **Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
 `{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto

@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **On-clip fade handles (D-205), closing D-147's last UI
+  gap.** Owner, by screenshot: the fade "rubber band" every reference NLE has.
+  Every clip on the timeline — video track and audio track alike, because one
+  fade pair drives picture and sound together in this model — now draws its
+  `fade_in_frames`/`fade_out_frames` ramps at their real `FadeCurve` shape
+  (exactly, not straightened: an SVG cubic *is* a `cubic-bezier`), with a small
+  handle at each ramp's top that drags to set the fade live and commits ONE
+  `set_clip_fade` op on pointer-up — the same op, undo stack and persist path
+  the Inspector's numeric Fade field already used, so the two can't disagree.
+  Coexists with the clip-move drag (distinct hit target) and the library's
+  full-height edge-trim handles (a 15px-tall grab target at the clip's top
+  edge, leaving the lower ~37px of both trim zones alone — Resolve's own
+  stacking). Verified pure (22), jsdom with real `PointerEvent`s (10, including
+  "the store must not change until pointer-up"), and by real ffmpeg: a
+  drag-derived fade exports at −41.2/−21.6/−38.5 dB head/mid/tail against a
+  flat −21.1 dB unfaded. Not live-tested in a Tauri instance — see D-205.
+
 - **2026-09-07** — **Fixed B-088 (D-202): the Edit tab's live preview never
   showed a clip's current position/crop/scale.** Root-caused to an ordering
   race, not the compositor: `chroma_timeline_frame` renders the project's

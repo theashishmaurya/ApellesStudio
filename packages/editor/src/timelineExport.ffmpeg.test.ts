@@ -24,7 +24,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildExportFfmpegArgs } from './timelineExport';
+import { DEFAULT_FADE_CURVE, applyOp } from './timeline';
 import type { Clip, Timeline, Track } from './timeline';
+import { pxToFadeFrames } from './clipFade';
 
 function hasBinary(name: string): boolean {
   try {
@@ -387,6 +389,51 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     const firstHalfSecond = volumeStats(out, 0, 0.5).mean; // deep in the ramp-up
     const middleSecond = volumeStats(out, 2.5, 0.5).mean; // well past the 2s fade window
     expect(middleSecond).toBeGreaterThan(firstHalfSecond + 4); // measurably louder once faded in
+  });
+
+  it('D-205: a fade set the way the TIMELINE HANDLE sets one really exports faded, both ends', () => {
+    // Closes the last link in the on-clip fade handle's chain. The test above
+    // hand-writes `fade_in_frames` onto a fixture; this one starts from a
+    // pixel drag distance, converts it with `clipFade.ts`'s OWN
+    // `pxToFadeFrames` (the exact function `ClipFadeOverlay` calls on
+    // pointermove), and commits it through the SAME `set_clip_fade` op the
+    // handle's pointer-up commits — then measures the real exported audio.
+    // `TimelinePane.fade.dom.test.tsx` proves the drag produces this op; this
+    // proves this op produces an audibly faded file. Neither half alone would
+    // have caught a handle that only moved a picture around in local state.
+    const PX_PER_SEC = 90; // DEFAULT_PX_PER_SEC
+    const EXPORT_FPS = 24;
+    const a = clip('a1', { source_path: toneA, duration: 96, source_fps: 24 }); // 4s @ 24fps
+    const dragged = pxToFadeFrames({ source_fps: 24 }, 2 * PX_PER_SEC, EXPORT_FPS, PX_PER_SEC);
+    expect(dragged).toBe(48); // a 180px drag == 2s == 48 source frames
+
+    const faded = applyOp(timeline([track('audio', [a])]), {
+      kind: 'set_clip_fade',
+      track: 0,
+      clip: 0,
+      fade_in_frames: dragged,
+      fade_out_frames: dragged,
+      fade_in_curve: DEFAULT_FADE_CURVE,
+      fade_out_curve: DEFAULT_FADE_CURVE,
+    });
+    // The op really stored what the drag computed — not silently clamped or
+    // dropped on the way through.
+    expect(faded.tracks[0].clips[0].fade_in_frames).toBe(48);
+    expect(faded.tracks[0].clips[0].fade_out_frames).toBe(48);
+
+    const out = join(dir, 'fade-handle.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(faded, out, { fps: EXPORT_FPS, width: 320, height: 240 })], {
+      stdio: 'pipe',
+    });
+
+    // With both windows at 2s on a 4s clip they meet exactly in the middle,
+    // so the loudest point is the centre and both ends ramp away from it —
+    // the real, measurable signature of a symmetric fade pair.
+    const head = volumeStats(out, 0, 0.4).mean;
+    const middle = volumeStats(out, 1.8, 0.4).mean;
+    const tail = volumeStats(out, 3.6, 0.4).mean;
+    expect(middle).toBeGreaterThan(head + 4);
+    expect(middle).toBeGreaterThan(tail + 4);
   });
 
   it("D-149: a music bed measurably ducks under a dialogue track's own trigger clip, and recovers after it ends", () => {

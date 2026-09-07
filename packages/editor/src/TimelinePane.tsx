@@ -149,6 +149,23 @@
  * gesture's own code below for why that distinction is the entire point,
  * given D-094–D-100.
  *
+ * D-205 (on-clip fade handles) — a THIRD pointer gesture on this surface, and
+ * the reason it is noted here alongside D-137's: each clip's rendered content
+ * now carries a `ClipFadeOverlay` drawing its `fade_in_frames`/
+ * `fade_out_frames` rubber band, with a small handle at each ramp's top that
+ * drags to set the fade live and commits ONE `set_clip_fade` op on pointer-up
+ * (the same op, undo stack and persist path the Inspector's numeric Fade field
+ * already used — the two are views of one field, never two states). It cannot
+ * collide with the clip drag or the marquee, structurally, for the same reason
+ * they cannot collide with each other: the handle is a distinct hit target
+ * inside `ClipBody` that `stopPropagation`s the press, and every press in that
+ * subtree already carries `data-chroma-clip-drag`, which `canStartMarquee`
+ * refuses. Against the library's own full-height 10px edge-trim handles it is
+ * separated by WHERE IN THE ROW the press lands (a 15px-tall grab target at
+ * the clip's top edge; the lower ~37px of both trim zones are untouched) —
+ * see `ClipFadeOverlay.tsx`'s own doc for the full coexistence story, and
+ * `clipFade.ts` for the pure geometry, which is where all of the math lives.
+ *
  * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
  * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
  * tick density) via `getScaleRender`, and the labeled-tick interval
@@ -247,6 +264,7 @@ import {
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { Waveform } from './Waveform';
 import { Filmstrip } from './Filmstrip';
+import { ClipFadeOverlay } from './ClipFadeOverlay';
 import { EditorExportDialog } from './EditorExportDialog';
 import {
   niceTickIntervalSeconds,
@@ -1736,7 +1754,11 @@ export function TimelinePane() {
           track={ti}
           clipId={action.id}
           className={
-            'relative h-full w-full overflow-hidden rounded ' +
+            // D-205 — `group/clip` is what lets `ClipFadeOverlay`'s handles
+            // reveal themselves on hover when a clip has no fade set yet
+            // (named group, so it can never be captured by an unrelated
+            // ancestor `group` elsewhere in the tree).
+            'group/clip relative h-full w-full overflow-hidden rounded ' +
             (isSel ? 'ring-2 ring-accent ' : '') +
             (isRippled ? 'ring-2 ring-accent animate-pulse ' : '') +
             // Dashed, not a second solid ring: `ring-*` has no dashed style
@@ -1847,6 +1869,26 @@ export function TimelinePane() {
               swap above. `button-text` already reads fine against the
               plain video/audio clip colours too (no complaints there
               before this pass), so one token now covers both states. */}
+          {/* D-205 — the fade rubber-band + its two draggable handles, on
+              EVERY clip regardless of track kind: one fade pair drives picture
+              and sound together in this model (`Clip::fade_in_frames`' own
+              doc), so drawing it only on audio clips would split one feature
+              into two. Rendered before the label so the label's own `z-10`
+              still wins the paint order and stays legible (D-100). Its own
+              module-scope component, so a fade drag re-renders one clip's
+              overlay rather than this whole pane — see its module doc. */}
+          {clip && (
+            <ClipFadeOverlay
+              track={ti}
+              clipIndex={i}
+              clip={clip}
+              widthPx={pxWidth}
+              heightPx={ROW_HEIGHT}
+              fps={fps}
+              pxPerSec={pxPerSec}
+              disabled={isLockedTrack}
+            />
+          )}
           <div className="relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none text-button-text">
             {clip?.name ?? action.id}
           </div>

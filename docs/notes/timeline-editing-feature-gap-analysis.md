@@ -20,7 +20,7 @@ exists today — not assumed from a feature's plausibility.
 | Ripple editing | `ripple: true` on `add_clip`/`move_clip`, `editor_remove_gap`, `shiftClipsAtOrAfter` |
 | Clip linking/unlinking (J-cut/L-cut) | `link`/`unlink` `EditOp`s (D-129, `av-linking.md`) |
 | Sync lock | `Track.sync_locked` (D-106), enforced in ripple ops |
-| Fade handles | `set_clip_fade` (D-147), `fade_in_frames`/`fade_out_frames` + curves |
+| Fade handles | `set_clip_fade` (D-147), `fade_in_frames`/`fade_out_frames` + curves; draggable on-clip handles on the timeline itself since D-205 |
 | Keyframing (position/scale/rotation/opacity/crop) | `editor_set_clip_keyframes` — all of `position_x`/`position_y`/`scale`/`rotation`/`crop_*`/`opacity` are keyframeable per-clip |
 
 ## Real gaps (nothing in the model or tool surface covers these)

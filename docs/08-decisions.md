@@ -18111,3 +18111,133 @@ full-bleed-box case above and a real corner-handle resize committing
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-205 — On-clip fade handles: the timeline's own draggable affordance for `fade_in_frames` / `fade_out_frames`
+
+**decided (2026-09-07)**
+
+**Context.** The owner screenshotted a reference NLE's audio clip — a diagonal
+line across the waveform ramping from silence up to full, with a small handle
+where the ramp meets the flat top — asked what it was called (a **fade
+handle** / volume rubber band; Premiere, Resolve and Final Cut all have one)
+and asked for it on every clip, calling it "very common." Everything *behind*
+it already existed since D-147: `Clip::fade_in_frames`/`fade_out_frames` plus
+a real `FadeCurve` each, the compositor and mixer that consume them, the
+`set_clip_fade` op, the Inspector's numeric Fade section, and MCP's
+`set_clip_fade`. What did not exist was any way to author a fade **on the
+timeline**: nothing drew a fade indicator on a clip's body, and dragging on a
+clip could only move or trim it. D-147's own roadmap entry had flagged the
+missing *custom-curve* widget; the missing *duration* handle was not even
+listed.
+
+**Decision 1 — one affordance on EVERY clip, not an audio-only one.** The
+model is explicit that one fade pair drives picture and sound together
+(`Clip::fade_in_frames`' own doc; `set_clip_fade`'s docstring: a fade on a
+video clip fades its opacity *and* its embedded audio, a fade on an audio-track
+clip fades gain only — you unlink the pair to fade them differently). Drawing
+the handle only on audio-track clips would have split one modelled feature
+into two apparent ones, and would have left a video clip's opacity fade
+authorable only by number. So `ClipFadeOverlay` renders for every clip on
+every track kind, over the filmstrip on a video clip and over the waveform on
+an audio one — which is also what both references do.
+
+**Decision 2 — draw the real curve, do not simplify to a straight line.**
+Considered: (a) always draw a straight ramp and treat the curve as an
+Inspector-only concern; (b) sample `fadeGainAt` at N points and draw a
+polyline; (c) draw the curve exactly. Chose (c), because it turned out to cost
+*nothing*: a `FadeCurve` is `cubic-bezier(x1,y1,x2,y2)` with `P0=(0,0)`/
+`P3=(1,1)` implicit, and an SVG `C` segment is that same parametric cubic with
+those same control points — so mapping the curve's unit square onto (ramp
+width × clip height) traces the identical geometry with no solver and no
+sampling. (a) would have shown an ease-in fade as a straight line, i.e. lied
+about a value the user can already set; (b) would have been a second, worse
+copy of maths that only exists at all because *ffmpeg* has no bezier solver
+(`fadeGainExpr`). Nothing here evaluates gain — the one gain evaluator per side
+of the wire (`chroma_types::fade_gain`, `timelineExportAudio.ts`'s
+`fadeGainAt`) stays exactly that.
+
+**Decision 3 — the established drag-commit convention, not a new one.** Live
+overlay-only feedback during the drag; **one** `applyOp({kind:
+'set_clip_fade'})` on pointer-up — the same op, undo stack and debounced
+persist `EditorInspectorPanel.tsx`'s `applyFade` already used, and the same
+convention `TransformOverlay.tsx` (D-136) and `RelightPuckLayer.tsx` (D-046)
+document: `applyOp` snapshots the whole timeline per call, so a per-pointermove
+commit would push one undo entry per pixel dragged. The draft is quantised to
+whole frames while dragging, so what is on screen is exactly what release
+commits; a drag that ends where it began commits nothing at all (`set_clip_fade`
+always rebuilds the clip object, so it would never compare reference-equal and
+would push a real undo entry for a no-op). Escape cancels, matching both
+D-136's and D-137's gestures. Move/up listen on `window` rather than via
+`setPointerCapture`, for the reason the marquee's own listeners state.
+
+**Decision 4 — coexistence with the two gestures already on a clip body,
+settled by hit-target and row position, never by precedence.** dnd-kit's
+clip-move drag owns `pointerdown` anywhere on `ClipBody`; each fade handle is a
+distinct target inside it that `stopPropagation`s, exactly as D-094's grip
+handle did (marquee-select needs nothing — `canStartMarquee` already refuses
+any press carrying `data-chroma-clip-drag`). The harder case is the timeline
+library's own edge-trim handles: they are 10px-wide, **full-height** siblings,
+and a fade handle *at rest sits exactly on one* (a zero fade is at the clip's
+own corner). They are separated by **where in the row** the press lands — a
+fade handle's grab target is 15px tall, anchored to the clip's top edge,
+leaving the lower ~37px of both trim zones untouched, which is how Resolve
+stacks the same two affordances. `z-20` is what makes the fade handle win
+inside those 15px (the library's handles are `z-index: auto`, rendered after
+the content block); B-013 is the cautionary tale in reverse — there an
+unbounded `z-10` label ate every trim press across the whole clip width, so
+here the paint-order win is deliberate *and* bounded to a small rectangle, and
+the ramp layer itself is `pointer-events-none`. Handles at zero fade only
+appear on hover, so an un-faded timeline has no permanent grab targets on its
+clips' corners; handles disappear entirely below a clip width of 36px so a
+zoomed-out timeline stays trimmable.
+
+**Decision 5 — the drag clamps to the clip; the model still does not.**
+`set_clip_fade` deliberately allows a fade longer than the clip (the windows
+overlap and their multipliers multiply — `fade_gain`'s own doc), and D-147 was
+explicit that clamping would silently move a handle the user placed. That is
+preserved: `clampFadeDragPx` bounds only how far a *handle* can travel, because
+the clip's far edge is where it runs out of timeline to travel along. A
+longer-than-clip fade set from the Inspector or MCP renders honestly (the ramp
+simply has not reached unity when the clip ends) and parks its handle at the
+far edge so it stays draggable back.
+
+**Where the code lives.** `clipFade.ts` (pure: frames↔px through
+`sourceFramesToTimeline`/`timelineFramesToSource` so a mixed-native-fps clip is
+right — B-077 — the drag clamp, and the path geometry) + `ClipFadeOverlay.tsx`
+(DOM/pointer wiring, module scope so a drag re-renders one clip's overlay
+rather than the whole pane — B-024's failure mode). The same pure/wiring split
+as `transformGeometry.ts`/`TransformOverlay.tsx` and `marquee.ts`. Fade frames
+are in the clip's **own source frames**, the same unit as `Clip.duration`,
+which is what `fade_multiplier_at` compares them to and what
+`buildAudioSourceChain` divides by `clipFps` — never divided by the timeline's
+`fps` directly.
+
+**`Waveform.tsx` is deliberately unchanged.** Considered attenuating the drawn
+peaks themselves. Rejected: Premiere and Resolve both draw the rubber band
+*over* an un-attenuated waveform, one overlay reads identically on a video
+clip (where the waveform is a 40%-height strip over a filmstrip) and an audio
+clip (full height), and baking the fade into the waveform would have coupled a
+cached, Rust-computed peak array to a value the user changes by dragging.
+
+**Verified.** `clipFade.test.ts` (22 pure cases: the conversion including a
+48fps-source-in-a-24fps-timeline clip, the clamp's deliberate asymmetry with
+the model's own no-clamp rule, exact control points, and that linear vs.
+ease-in genuinely differ). `TimelinePane.fade.dom.test.tsx` (10 scenarios,
+jsdom + real `PointerEvent`s + StrictMode + zero console errors): a drag writes
+the real store field, the store is referentially unchanged across every
+intermediate pointermove and changes exactly once on release, the drawn ramp
+tracks the drag live and does not jump on commit, Escape and no-movement
+commit nothing, the drag clamps to the clip, a locked track offers no handles.
+And a new real-**ffmpeg** case in `timelineExport.ffmpeg.test.ts` closes the
+last link: a 180px drag distance, converted by `clipFade.ts`'s own
+`pxToFadeFrames` and committed through the same `set_clip_fade` op, exports a
+measurably faded file — a 4s 440Hz tone that is flat at −21.1 dB unfaded
+measures −41.2 / −21.6 / −38.5 dB at head/middle/tail with both handles
+dragged to 2s. Not verified in a live Tauri instance: the host volume was out
+of space and two other dev builds were already running, so a third full debug
+build was not possible — the jsdom tier cannot prove hit-testing (that a press
+at a clip's top-left corner reaches the fade handle rather than the trim
+handle beneath it), which stays for the interactive tier.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
