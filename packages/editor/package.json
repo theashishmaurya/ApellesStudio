@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@chroma/bridge": "*",
     "@chroma/history": "*",
     "@chroma/inspector": "*",
     "@chroma/player": "*",

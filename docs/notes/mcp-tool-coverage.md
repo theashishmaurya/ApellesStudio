@@ -44,71 +44,47 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Gap: Edit tab / multi-track NLE — 3 tools (was a real zero until D-147, 2026-09-05)
+## Edit tab / multi-track NLE — CLOSED, 20 tools (D-183, 2026-09-07)
 
-> **The zero is broken, but only just.** D-147 (clip fades) shipped the first two
-> Edit-tab tools and D-149 (ducking) added a third; each is the tool its own
-> feature needed — not a sweep of the list below:
+> **The gap tracked below is closed.** D-147 (clip fades) and D-149 (ducking)
+> shipped the first three Edit-tab tools; D-183 shipped the other seventeen in one
+> pass — read/seek, media import, clip placement/split/trim/move/remove, gap
+> removal, track add/gain/lock/hide, compositing transform + per-clip keyframes,
+> and a real multi-track export to a video file. See
+> `docs/notes/mcp-architecture.md` for the pattern this followed (frontend
+> `useEditorControl.ts`'s `editor_*`-prefixed ops, one `@mcp.tool()` wrapper each
+> in `mcp/server.py`) and `docs/08-decisions.md`'s D-183 entry for the full story.
+>
+> `get_timeline`/`set_clip_fade`/`set_track_duck` also moved OUT of
+> `useChromaControl.ts` (Colorist's catch-all) into `useEditorControl.ts` proper
+> as part of the same pass — same Python tool names, since there was no reason to
+> break an existing MCP caller over an internal rename; only the wire op each
+> posts to the control server changed (`editor_get_timeline` etc).
 >
 > | Tool | What it does |
 > |---|---|
-> | `get_timeline` | Read-only. Every track and clip on the active timeline, with the `index` the mutating tools address a clip by and the `id` that survives a reorder. Exactly the "without which no tool can name a clip" prerequisite the callout below already predicted. Reports each track's ducking too, since D-149. |
-> | `set_clip_fade` | Sets a clip's fade in/out durations (in frames) and cubic-bezier curve shapes. |
-> | `set_track_duck` | D-149. Ducks one track under another: which track triggers, the amount in dB, and the one-pole attack/release time constants in ms — the real DSP numbers, not a "strength" dial. |
+> | `get_timeline` | Read-only. Every track and clip, with the `index` mutating tools address a clip by and the `id` that survives a reorder. Reports fades + ducking. |
+> | `editor_get_state` | Read-only. Project-open/load-status/playhead/playing/has-timeline. |
+> | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
+> | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
+> | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
+> | `editor_split_clip` / `editor_remove_clip` / `editor_remove_gap` / `editor_trim_clip` / `editor_move_clip` | The rest of the ripple-edit primitives — no new `EditOp` had to be invented for any of these; every one already existed in `packages/editor/src/timeline.ts`, only the MCP wrapper was missing. |
+> | `editor_add_track` / `editor_set_track_gain` / `editor_set_track_locked` / `editor_set_track_hidden` | Track management. |
+> | `set_clip_fade` / `set_track_duck` | Unchanged from D-147/D-149 (see above for the internal rename). |
+> | `editor_set_clip_transform` | A clip's base position/scale/rotation/crop/opacity, as fractions of the output composition — the stacking/PIP primitive (D-136's normalised-fraction convention). |
+> | `editor_set_clip_keyframes` | Animates ONE clip's own transform over time (e.g. zoom-in on a click) — scoped to that clip's own local timeline, never the whole track, so two clips on two tracks each zoom at their own moment while both stay visible. |
+> | `editor_export` | Renders the WHOLE multi-track timeline (composited, cropped, keyframed, speed-adjusted) to a real output file via ffmpeg — the one tool that produces an actual video, everything else only edits in-memory state. v1 is video-only; audio mixing (gain/duck/fade) is a documented follow-up, not wired into the export yet. `fit_overrides` (D-184, B-074) lets a caller choose per-clip whether `scale` fits the clip's real aspect ratio into its box (`'fit'`, the default) or force-stretches to the canvas's own aspect ratio (`'stretch'`, the pre-D-184 behavior) — read `editor_export`'s own docstring before compositing more than one clip, it explains why `scale` alone can never produce a differently-shaped box than the canvas. |
 >
-> Both go through `useEditorTimelineStore.applyOp`, so this is also the first time
-> the "which path does a tool call" answer below is actually *exercised* rather
-> than only written down: an agent's fade edit lands on the same undo stack a
-> human's does. Everything else in this section is still a real zero.
+> Every mutating tool goes through `useEditorTimelineStore.applyOp` (or the
+> equivalent real store action), so an agent's edit lands on the same undo stack
+> a human's does — D-140's rule, restated in `mcp-architecture.md`.
 
-Every other Tauri command in `chroma::edit` (`app/src-tauri/src/chroma/edit.rs`)
-has no MCP equivalent at all:
-
-- `chroma_timeline_get` / `chroma_timeline_set` / `chroma_timeline_frame`
-- `chroma_timeline_list` / `chroma_timeline_create` / `chroma_timeline_set_active`
-- `chroma_timeline_add_track` / `chroma_timeline_remove_track` /
-  `chroma_timeline_move_clip` (Phase A, D-054 — dedicated Tauri commands exist, but
-  note: the real frontend (`packages/editor`) doesn't call these directly today —
-  it computes a whole new `Timeline` client-side (`timeline.ts`'s pure `applyOp`)
-  and persists via the generic `chroma_timeline_set`, matching this app's
-  established "verbatim whole-document storage" contract. An MCP tool for "add a
-  track" etc. could either call the dedicated Rust commands directly (simpler,
-  but a second code path from what the GUI actually exercises) or replicate the
-  op-then-set-whole-timeline pattern (matches the GUI exactly, more moving parts
-  for a tool to get right) — worth a real decision when this gets built, not
-  assumed here.
-- **Everything landing from tonight's P0 NLE build** (D-080/D-086/D-088, still
-  in progress as this doc is written — re-check `docs/08-decisions.md`'s latest
-  D-NNN entries for the final list once that work lands): `set_track_gain`
-  (mute), `set_track_locked`, `set_track_hidden`, `move_track` (rearrange
-  z-order), `set_clip_transform` (position/scale/rotation/opacity) and its
-  keyframe variants (reusing the D-034 keyframe engine the same way relight's
-  `add_mask_keyframe`-style tools already do — that's real precedent to follow,
-  not a new pattern to invent).
-- Split/trim/reorder/remove clip ops (`packages/editor/src/timeline.ts`'s
-  `EditOp` variants) have no Rust-side dedicated command at all today (client
-  computes, `chroma_timeline_set` persists) — same "which path does a tool
-  call" question as above applies to all of them, not just the track ops.
-
-> **The "which path does a tool call" question is answered — D-140, 2026-09-05.**
-> A *mutating* Edit-tab tool goes through the GUI's own path
-> (`@chroma/editor`'s `timelineStore.applyOp` → debounced `chroma_timeline_set`),
-> not the dedicated Rust commands. Reason: `applyOp` pushes a before/after
-> snapshot pair onto the shared `@chroma/history` undo stack (D-051) and
-> `chroma_timeline_move_clip` does not, so calling the Rust command directly
-> would produce an agent edit the user cannot undo — a violation of MCP design
-> rule 7 ("one shared state… the UI and the agent never diverge") and of
-> `00-vision.md`'s "reviewable and undoable, not a black box." No new plumbing
-> is needed: `useChromaControl()` is mounted app-level in `App.tsx` (verified),
-> and `app` already depends on `@chroma/editor`. The dedicated Rust commands
-> stay what D-138 built them for — headless/scripting callers outside the app.
-> D-140's own Phase 1 also ships the minimal read op this whole section
-> presupposes: `get_timeline` (shaped `chroma_timeline_get`), without which no
-> tool can name a clip. See `docs/notes/pacing-audio-assistance-plan.md` §6.
-
-**Net effect: an agent can read the timeline and set a clip's fades, and nothing
-else on this tab** (D-147) — no adding clips, no trimming, no track management,
-none of the compositing/lock/hide/rearrange/keyframe work.
+**Net effect: an agent can now drive essentially the whole Edit tab** — import
+media, assemble a track from raw footage (cut gaps/retakes by only placing the
+segments to keep), split/trim/move/remove clips, manage tracks, composite/stack
+multiple video tracks with per-clip keyframed zooms, and render the result to a
+file. The one still-open piece: audio tracks (gain/duck/fade) are read but not
+yet mixed into `editor_export`'s own output.
 
 ## Gap: Motion tab — 0 tools
 
@@ -123,12 +99,16 @@ D-081's new `LayerList`/`Selection` (Motion tab, tonight) has no MCP surface
 either, but selection is a pure UI-navigation concept — the manifest
 get/save/render triad is the real, load-bearing gap.
 
-## Gap: Media / Sources pool — 0 tools
+## Gap: Media / Sources pool — 1 of 6 tools (D-183 added import only)
 
-`chroma_media_import` / `_list` / `_move` / `_remove` / `_create_folder` /
-`_folders` — no MCP tool. An agent can't import media, organize the pool, or query
-what's available, independent of Colorist's own `list_shots`/`add_shots` (which
-are project-timeline-scoped, not pool-scoped — a real, different thing).
+`editor_import_media` (D-183) covers `chroma_media_import`'s job — importing
+absolute paths into the pool — but only that one; it exists because
+`editor_add_clip` needs a pool item to place, not as a sweep of this section.
+`chroma_media_list` / `_move` / `_remove` / `_create_folder` / `_folders` still
+have no MCP tool: an agent can't query what's already in the pool, organize it
+into folders, or remove items, independent of Colorist's own
+`list_shots`/`add_shots` (project-timeline-scoped, not pool-scoped — a real,
+different thing).
 
 ## Gap: Audio playback — 0 tools, lowest priority
 

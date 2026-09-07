@@ -1891,29 +1891,6 @@ export function TimelinePane() {
     [tracks, fps, applyOp],
   );
 
-  if (!timeline) return null;
-
-  if (tracks.length === 0) {
-    // a brand new timeline (`chroma_timeline_create`) has no tracks yet —
-    // the first drop creates one (see `applyOp`'s 'add_clip' handling).
-    return (
-      <div
-        className={
-          'h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6 border-2 border-dashed rounded-none transition-colors ' +
-          (dragOver ? 'border-accent bg-accent/5' : 'border-transparent')
-        }
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
-        <Film className="size-6 text-text-secondary/50" />
-        <p className="text-xs text-text-secondary">
-          Empty timeline — drag a clip from Sources to get started.
-        </p>
-      </div>
-    );
-  }
-
   // D-080: split now requires a selection — with N tracks, "at the
   // playhead" alone no longer says which track's clip. Standard-NLE
   // reading: split whatever's currently selected, if the playhead actually
@@ -2390,6 +2367,40 @@ export function TimelinePane() {
   const dragOverlayWidth = dragOverlayClip
     ? Math.max(60, Math.min(MAX_OVERLAY_PX, (dragOverlayClip.duration / fps) * pxPerSec))
     : 0;
+
+  // B-069 fix: these two cases used to `return` early, ABOVE several
+  // useMemo/useCallback hooks that follow in this component (linkCheck, the
+  // DnD handlers) — a real Rules-of-Hooks violation. React only detects a
+  // mismatched hook count once the SET of hooks actually called differs
+  // between renders of the same component instance (e.g. `timeline` flips
+  // from null to non-null, or `tracks.length` crosses 0), which is exactly
+  // what happened live: "Rendered fewer/more hooks than during the previous
+  // render," and it took the whole render tree (and the control-server
+  // bridge reading from it) down with no error boundary to catch it. Hooks
+  // must run unconditionally on every render — only the JSX below may
+  // branch, so this check moved down here, after every hook call above.
+  if (!timeline) return null;
+
+  if (tracks.length === 0) {
+    // a brand new timeline (`chroma_timeline_create`) has no tracks yet —
+    // the first drop creates one (see `applyOp`'s 'add_clip' handling).
+    return (
+      <div
+        className={
+          'h-full w-full flex flex-col items-center justify-center gap-2 text-center px-6 border-2 border-dashed rounded-none transition-colors ' +
+          (dragOver ? 'border-accent bg-accent/5' : 'border-transparent')
+        }
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        <Film className="size-6 text-text-secondary/50" />
+        <p className="text-xs text-text-secondary">
+          Empty timeline — drag a clip from Sources to get started.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <DndContext

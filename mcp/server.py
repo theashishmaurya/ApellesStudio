@@ -303,7 +303,16 @@ def seek(frame: int) -> list:
 # The first Edit-tab tools on this surface; everything above is Colorist.
 # `get_timeline` exists because `set_clip_fade(track, clip, ...)` is unusable
 # without a way to learn a track/clip index — it is scoped to that need, not an
-# attempt to close the whole Edit-tab MCP gap.
+# attempt to close the whole Edit-tab MCP gap (D-183 below is that attempt).
+#
+# D-183 moved the frontend handlers for these three ops out of
+# `useChromaControl.ts` (Colorist's own catch-all) into `@chroma/editor`'s own
+# `useEditorControl.ts`, renamed `editor_get_timeline` / `editor_set_clip_fade`
+# / `editor_set_track_duck` — every Edit-tab op now lives under that one
+# prefix, `docs/notes/mcp-architecture.md`'s "every tab owns its own ops"
+# rule. Same tool NAMES here (`get_timeline` etc. — no reason to break callers
+# of this MCP surface over an internal rename), just the `_op(...)` wire name
+# each posts to the control server changed to match.
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 def get_timeline() -> str:
@@ -323,7 +332,7 @@ def get_timeline() -> str:
     Read-only, cheap, no side effects."""
     import json
 
-    return json.dumps(_op("get_timeline"), indent=2, default=str)
+    return json.dumps(_op("editor_get_timeline"), indent=2, default=str)
 
 
 @mcp.tool()
@@ -381,7 +390,7 @@ def set_clip_fade(
         args["fade_in_curve"] = fade_in_curve
     if fade_out_curve is not None:
         args["fade_out_curve"] = fade_out_curve
-    return json.dumps(_op("set_clip_fade", **args), indent=2, default=str)
+    return json.dumps(_op("editor_set_clip_fade", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -441,7 +450,317 @@ def set_track_duck(
         args["attack_ms"] = attack_ms
     if release_ms is not None:
         args["release_ms"] = release_ms
-    return json.dumps(_op("set_track_duck", **args), indent=2, default=str)
+    return json.dumps(_op("editor_set_track_duck", **args), indent=2, default=str)
+
+
+# --------------------------------------------------------------------------- #
+# Edit tab, continued (D-183) — closing the whole Edit-tab MCP gap that
+# D-147/D-149 above deliberately left open. Every tool below wraps one
+# `editor_*` op in `@chroma/editor`'s `useEditorControl.ts` — read that file's
+# own `OPS` map for the authoritative behavior; these are thin wrappers, same
+# shape as `get_timeline`/`set_clip_fade`/`set_track_duck` above.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def editor_get_state() -> str:
+    """The Edit tab's own top-level state: whether a project is open, load
+    status, playhead position, whether it is playing, and whether a timeline
+    exists at all. Cheap, read-only — call before anything else if you don't
+    already know a project is open."""
+    import json
+
+    return json.dumps(_op("editor_get_state"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_playhead(frame: int) -> str:
+    """Move the Edit tab's playhead to an exact frame (0-based, absolute
+    timeline frame)."""
+    import json
+
+    return json.dumps(_op("editor_set_playhead", frame=frame), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_playing(playing: bool) -> str:
+    """Start (`True`) or stop (`False`) Edit-tab playback."""
+    import json
+
+    return json.dumps(_op("editor_set_playing", playing=playing), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_import_media(paths: list[str], folder: str | None = None) -> str:
+    """Import one or more absolute file paths into the project's shared media
+    pool. Required before `editor_add_clip` can place them — that tool looks
+    an item up by the `id`/`sourcePath` this one returns."""
+    import json
+
+    args: dict = {"paths": paths}
+    if folder is not None:
+        args["folder"] = folder
+    return json.dumps(_op("editor_import_media", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_clip(
+    track: int,
+    media_id: str | None = None,
+    source_path: str | None = None,
+    source_start: int | None = None,
+    duration: int | None = None,
+    start_frame: int | None = None,
+    at_index: int | None = None,
+    ripple: bool = False,
+    name: str | None = None,
+) -> str:
+    """Place a clip from an already-imported media-pool item (`editor_import_media`)
+    onto a track, trimmed to `[source_start, source_start+duration)` of the
+    source's own frames. Pass either `media_id` or `source_path` to identify
+    the pool item.
+
+    Calling this once per KEPT segment, with back-to-back `start_frame`
+    values, is how a gap or an unwanted section (a retake, a silence) is cut
+    out of a raw recording — you don't place the whole clip and then remove
+    a gap; you place only the parts you want, already sitting where they
+    should land. `source_start` defaults to 0 and `duration` to the rest of
+    the source if omitted. `at_index` inserts at a specific position on the
+    track instead of appending; `ripple=True` shifts later clips to make
+    room rather than overlapping them."""
+    import json
+
+    args: dict = {"track": track, "ripple": ripple}
+    if media_id is not None:
+        args["mediaId"] = media_id
+    if source_path is not None:
+        args["sourcePath"] = source_path
+    if source_start is not None:
+        args["sourceStart"] = source_start
+    if duration is not None:
+        args["duration"] = duration
+    if start_frame is not None:
+        args["startFrame"] = start_frame
+    if at_index is not None:
+        args["atIndex"] = at_index
+    if name is not None:
+        args["name"] = name
+    return json.dumps(_op("editor_add_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_split_clip(track: int, clip: int, at_frame: int) -> str:
+    """Split one clip on the timeline into two, at an exact TIMELINE frame.
+    `track`/`clip` are the 0-based indices from `get_timeline`."""
+    import json
+
+    return json.dumps(_op("editor_split_clip", track=track, clip=clip, atFrame=at_frame), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_remove_clip(track: int, clip: int) -> str:
+    """Remove one clip from the timeline, leaving a gap in its place. Follow
+    with `editor_remove_gap` to ripple-close the gap, or leave it if the gap
+    is wanted (e.g. to hold a still frame of nothing)."""
+    import json
+
+    return json.dumps(_op("editor_remove_clip", track=track, clip=clip), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_remove_gap(track: int, frame: int) -> str:
+    """Ripple-delete the empty gap on `track` at `frame` (any frame inside
+    the gap works), shifting every later clip on that track earlier to close
+    it. Does nothing to other tracks."""
+    import json
+
+    return json.dumps(_op("editor_remove_gap", track=track, frame=frame), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_trim_clip(track: int, clip: int, edge: str, delta: int) -> str:
+    """Trim a clip's `edge` ("start" or "end") by `delta` frames — positive
+    shortens the clip, negative extends it back into previously-trimmed
+    source material (up to the source's own bounds)."""
+    import json
+
+    return json.dumps(_op("editor_trim_clip", track=track, clip=clip, edge=edge, delta=delta), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_move_clip(
+    from_track: int,
+    clip: int,
+    start_frame: int,
+    to_track: int | None = None,
+    ripple: bool = False,
+) -> str:
+    """Move a clip to `start_frame`, optionally onto a different track
+    (`to_track`; default: stays on `from_track`). `ripple=True` shifts later
+    clips out of the way rather than overlapping them."""
+    import json
+
+    args: dict = {"fromTrack": from_track, "clip": clip, "startFrame": start_frame, "ripple": ripple}
+    if to_track is not None:
+        args["toTrack"] = to_track
+    return json.dumps(_op("editor_move_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_track(track_kind: str = "video") -> str:
+    """Add a new, empty track to the timeline. `track_kind` is "video" or
+    "audio". Returns the new track's index."""
+    import json
+
+    return json.dumps(_op("editor_add_track", trackKind=track_kind), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_track_gain(track: int, gain: float) -> str:
+    """Set an audio track's linear gain multiplier (1.0 = unity, 0.0 = muted)."""
+    import json
+
+    return json.dumps(_op("editor_set_track_gain", track=track, gain=gain), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_track_locked(track: int, locked: bool) -> str:
+    """Lock or unlock a track. A locked track refuses per-clip edits
+    (trim/split/remove/move/transform/keyframes) until unlocked."""
+    import json
+
+    return json.dumps(_op("editor_set_track_locked", track=track, locked=locked), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_track_hidden(track: int, hidden: bool) -> str:
+    """Show or hide a video track. A hidden track is skipped by both the
+    live preview compositor and `editor_export`."""
+    import json
+
+    return json.dumps(_op("editor_set_track_hidden", track=track, hidden=hidden), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_clip_transform(
+    track: int,
+    clip: int,
+    opacity: float | None = None,
+    position_x: float | None = None,
+    position_y: float | None = None,
+    scale: float | None = None,
+    rotation: float | None = None,
+    crop_left: float | None = None,
+    crop_top: float | None = None,
+    crop_right: float | None = None,
+    crop_bottom: float | None = None,
+) -> str:
+    """Set a clip's BASE (unkeyframed) compositing transform — e.g. to place
+    it in one half of a stacked before/after comparison layout.
+    `position_x`/`position_y`/`scale` are fractions of the OUTPUT
+    composition (0,0 = top-left), not pixels or the clip's own source
+    footprint. `crop_*` are fractions of the clip trimmed off each edge
+    (0..1). Omitted fields keep the clip's current value — this tool reads
+    the clip back first, it never silently resets a field you didn't
+    mention."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    for key, val in (
+        ("opacity", opacity),
+        ("position_x", position_x),
+        ("position_y", position_y),
+        ("scale", scale),
+        ("rotation", rotation),
+        ("crop_left", crop_left),
+        ("crop_top", crop_top),
+        ("crop_right", crop_right),
+        ("crop_bottom", crop_bottom),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_set_clip_transform", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> str:
+    """Animate a SINGLE clip's own transform over time — e.g. a zoom-in at
+    the moment of a click. Keyframes are scoped to this one clip only (its
+    own local timeline), never the whole track or timeline, so two clips on
+    two different tracks can each zoom at their own moment while both stay
+    visible throughout.
+
+    `keyframes` REPLACES the clip's entire keyframe list — pass all of them
+    every time, not just the one you're adding. Each entry is
+    `{"frame": <source-frame-absolute int>, "params": {<subset of
+    opacity/position_x/position_y/scale/rotation/crop_left/crop_top/
+    crop_right/crop_bottom>: <number>}}`. Values are piecewise-linearly
+    interpolated between keyframes, held constant before the first and after
+    the last."""
+    import json
+
+    return json.dumps(_op("editor_set_clip_keyframes", track=track, clip=clip, keyframes=keyframes), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_export(
+    out_path: str,
+    width: int,
+    height: int,
+    fps: float | None = None,
+    speed_overrides: dict[str, float] | None = None,
+    fit_overrides: dict[str, str] | None = None,
+) -> str:
+    """Render the open project's ENTIRE multi-track timeline — every visible
+    video track/clip, composited in z-order (track 0 on top), cropped,
+    keyframed and speed-adjusted — to a single output file via ffmpeg. This
+    is the only Edit-tab tool that produces a real output file;
+    `editor_get_timeline` and every `editor_set_*`/`editor_add_*` tool above
+    only change in-memory state.
+
+    `width`/`height` are the output composition's pixel size (every clip's
+    `position_x`/`position_y`/`scale` from `editor_set_clip_transform` are
+    fractions of this). `fps` defaults to the timeline's own rate.
+    `speed_overrides` is `{clip_id: multiplier}` (e.g. `{"clip-abc": 1.2}`)
+    — an EXPORT-TIME-ONLY speed change; it does not touch the clip's stored
+    trim/duration, so scrubbing it in the GUI still plays at 1x.
+
+    **`scale` is a WIDTH fraction of the output composition, not a box
+    shape (B-074)** — read this before compositing more than one clip onto
+    a track/canvas. `overlay_width = width * clip.scale` always; the
+    overlay's HEIGHT depends on `fit_overrides` (`{clip_id: "fit" |
+    "stretch"}`, EXPORT-TIME-ONLY, mirrors `speed_overrides`'s own shape):
+    `"fit"` (the default for any clip with no entry here) lets ffmpeg
+    compute height from the clip's own real, post-crop aspect ratio — the
+    overlay is correctly proportioned, undistorted, and generally will NOT
+    exactly fill a target box unless you chose `width`/`height`/`scale` to
+    make it so. `"stretch"` forces height to `height * clip.scale` too —
+    i.e. the overlay ALWAYS has exactly the OUTPUT canvas's own aspect
+    ratio, at any `scale`, regardless of the source's real shape (correct
+    for a same-aspect picture-in-picture bubble, or a deliberate distort
+    effect; wrong for fitting arbitrary footage into a differently-shaped
+    region). Concretely: a full-width/half-height stacked layout (two clips,
+    one per half of a 9:16 canvas) is mathematically impossible to get
+    undistorted via `"stretch"` for ANY canvas size, because that box's
+    aspect ratio necessarily differs from the canvas's own — use `"fit"`
+    (the default) for that layout, and compute `position_y` yourself from
+    the clip's own known resolution (`editor_import_media`'s probe result)
+    to center or top-align the resulting box within its slot; ffmpeg
+    round-trips height to the nearest even pixel count under `"fit"`, so
+    treat the exact rendered height as approximate when computing that
+    offset.
+
+    v1 scope: video only — audio tracks (gain/ducking/fades) are not mixed
+    into the export yet, a documented follow-up, not an oversight. Blocks
+    until ffmpeg finishes; there is no progress reporting yet."""
+    import json
+
+    args: dict = {"outPath": out_path, "width": width, "height": height}
+    if fps is not None:
+        args["fps"] = fps
+    if speed_overrides is not None:
+        args["speedOverrides"] = speed_overrides
+    if fit_overrides is not None:
+        args["fitOverrides"] = fit_overrides
+    return json.dumps(_op("editor_export", **args), indent=2, default=str)
 
 
 # --------------------------------------------------------------------------- #

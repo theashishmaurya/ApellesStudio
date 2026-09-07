@@ -4,20 +4,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
 import { safeUnlisten } from '../utils/tauriListeners';
 
-// D-147/D-149 — the Edit tab's own store + fade curve and ducking helpers. `app` already depends
-// on `@chroma/editor` (see `main.tsx`), and `useChromaControl()` is mounted
-// app-level in `App.tsx`, so an Edit-tab op is reachable from here without new
-// plumbing. Going through `applyOp` (not the Rust commands) is D-140 §6c.
-import {
-  useEditorTimelineStore,
-  timelineDuration,
-  FADE_PRESETS,
-  DEFAULT_FADE_CURVE,
-  DEFAULT_DUCK_ATTACK_MS,
-  DEFAULT_DUCK_RELEASE_MS,
-  fadePresetName,
-  type FadeCurve,
-} from '@chroma/editor';
+// D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
+// `set_clip_fade`, `set_track_duck`) moved to `@chroma/editor`'s own
+// `useEditorControl.ts` (renamed `editor_get_timeline`/`editor_set_clip_fade`/
+// `editor_set_track_duck`) — see `docs/notes/mcp-architecture.md`'s "every
+// tab owns its own ops" rule. This file no longer imports `@chroma/editor`
+// at all.
 import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
 import { useAgentStore } from '../store/useAgentStore';
@@ -324,200 +316,11 @@ export function useChromaControl() {
         };
       },
 
-      // ---- Edit tab: timeline read + clip fades (D-147) -------------------
-      // The FIRST Edit-tab MCP tools — `mcp-tool-coverage.md` recorded a
-      // verified zero. `get_timeline` is a prerequisite, not scope creep:
-      // `set_clip_fade(track, clip, …)` is unusable if an agent has no way to
-      // learn a track or clip index. It is scoped to exactly that need and is
-      // not an attempt to close the whole Edit-tab MCP gap, which stays its
-      // own tracked item.
-      get_timeline: () => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return { error: 'no timeline — open a project first' };
-        return {
-          id: tl.id,
-          name: tl.name,
-          durationFrames: timelineDuration(tl),
-          tracks: tl.tracks.map((t, ti) => ({
-            index: ti,
-            kind: t.kind,
-            gain: t.gain ?? 1,
-            locked: !!t.locked,
-            hidden: !!t.hidden,
-            // D-149 — reported so an agent can read a track's ducking back and
-            // write it again unchanged, the same round-trip property the fade
-            // curves have. `duckFrom: null` is "not ducked."
-            duckFrom: t.duck_from ?? null,
-            duckDb: t.duck_db ?? 0,
-            duckAttackMs: t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
-            duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
-            clips: t.clips.map((c, ci) => ({
-              // `index` is what every mutating op addresses a clip by
-              // (`set_clip_fade`, `chroma_timeline_move_clip`); `id` is the
-              // stable identity that survives a reorder. Both, deliberately —
-              // an agent that reads here and writes there needs the index, and
-              // one that wants to re-find a clip after an edit needs the id.
-              index: ci,
-              id: c.id,
-              name: c.name,
-              sourcePath: c.source_path,
-              startFrame: c.start_frame,
-              duration: c.duration,
-              sourceStart: c.source_start,
-              sourceLen: c.source_len,
-              linkGroup: c.link_group ?? null,
-              fadeInFrames: c.fade_in_frames ?? 0,
-              fadeOutFrames: c.fade_out_frames ?? 0,
-              // Always the four control points, plus the preset name when it
-              // matches one — so an agent that reads a curve and writes it
-              // back gets exactly what it read, and a name stays a convenience
-              // on input rather than the stored truth (D-147).
-              fadeInCurve: c.fade_in_curve ?? DEFAULT_FADE_CURVE,
-              fadeOutCurve: c.fade_out_curve ?? DEFAULT_FADE_CURVE,
-              fadeInCurveName: fadePresetName(c.fade_in_curve),
-              fadeOutCurveName: fadePresetName(c.fade_out_curve),
-            })),
-          })),
-        };
-      },
-
-      set_clip_fade: (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return { error: 'no timeline — open a project first' };
-        const track = Math.round(Number(a?.track));
-        const clip = Math.round(Number(a?.clip));
-        const tr = tl.tracks[track];
-        if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
-        const c = tr.clips[clip];
-        if (!c) return { error: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
-        if (tr.locked) return { error: `track ${track} is locked — unlock it first` };
-
-        // A curve arrives as either a preset name ("ease-in") or four control
-        // points (`[x1,y1,x2,y2]` or `{x1,y1,x2,y2}`). An unknown NAME is
-        // reported rather than silently substituted — a caller that typo'd
-        // "ease-inn" must not quietly get a linear fade.
-        const parseCurve = (v: any, which: string): FadeCurve | { error: string } | undefined => {
-          if (v == null) return undefined;
-          if (typeof v === 'string') {
-            const hit = FADE_PRESETS.find((p) => p.name === v);
-            return (
-              hit?.curve ?? {
-                error: `unknown ${which} "${v}" — one of ${FADE_PRESETS.map((p) => p.name).join(' | ')}, or four control points [x1,y1,x2,y2]`,
-              }
-            );
-          }
-          const pts = Array.isArray(v) ? v : [v?.x1, v?.y1, v?.x2, v?.y2];
-          if (pts.length !== 4 || pts.some((n: any) => typeof n !== 'number' || !Number.isFinite(n))) {
-            return { error: `${which} must be a preset name or four finite numbers [x1,y1,x2,y2]` };
-          }
-          return { x1: pts[0], y1: pts[1], x2: pts[2], y2: pts[3] };
-        };
-        const inCurve = parseCurve(a?.fade_in_curve, 'fade_in_curve');
-        if (inCurve && 'error' in inCurve) return inCurve;
-        const outCurve = parseCurve(a?.fade_out_curve, 'fade_out_curve');
-        if (outCurve && 'error' in outCurve) return outCurve;
-
-        // Through `applyOp`, NOT the Rust `chroma_timeline_*` commands —
-        // D-140 §6c's already-settled answer, exercised here for the first
-        // time. `applyOp` pushes a before/after pair onto the shared
-        // `@chroma/history` undo stack (D-051); the Rust commands do not, so
-        // going direct would produce an agent edit the user cannot undo.
-        useEditorTimelineStore.getState().applyOp({
-          kind: 'set_clip_fade',
-          track,
-          clip,
-          fade_in_frames: Number(a?.fade_in_frames ?? c.fade_in_frames ?? 0),
-          fade_out_frames: Number(a?.fade_out_frames ?? c.fade_out_frames ?? 0),
-          fade_in_curve: inCurve ?? c.fade_in_curve ?? DEFAULT_FADE_CURVE,
-          fade_out_curve: outCurve ?? c.fade_out_curve ?? DEFAULT_FADE_CURVE,
-        });
-
-        // Read back from the store rather than echoing the request: `applyOp`
-        // floors and normalises (see the op in `timeline.ts`), and a caller
-        // that asked for -5 frames should be told it got 0.
-        const after = useEditorTimelineStore.getState().timeline?.tracks[track]?.clips[clip];
-        return {
-          ok: true,
-          track,
-          clip,
-          name: after?.name ?? c.name,
-          fadeInFrames: after?.fade_in_frames ?? 0,
-          fadeOutFrames: after?.fade_out_frames ?? 0,
-          fadeInCurve: after?.fade_in_curve ?? DEFAULT_FADE_CURVE,
-          fadeOutCurve: after?.fade_out_curve ?? DEFAULT_FADE_CURVE,
-          fadeInCurveName: fadePresetName(after?.fade_in_curve),
-          fadeOutCurveName: fadePresetName(after?.fade_out_curve),
-          note: 'a fade on a video clip fades its picture AND its embedded audio together',
-        };
-      },
-
-      // ---- Edit tab: track ducking (D-149) --------------------------------
-      // The second mutating Edit-tab tool, on the same `applyOp`/undo-stack
-      // path `set_clip_fade` established (D-140 §6c). Real DSP numbers, not a
-      // "strength" dial: the attack and release time constants ARE the feel of
-      // a ducker, and an agent asked to "duck the music under the VO" should be
-      // able to state them.
-      set_track_duck: (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return { error: 'no timeline — open a project first' };
-        const track = Math.round(Number(a?.track));
-        const tr = tl.tracks[track];
-        if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
-
-        // `duck_from` arrives as a track index, or null/"off" to turn ducking
-        // off. Both failure modes are reported rather than silently accepted:
-        // a duck pointing at a track that does not exist, or at itself, is
-        // ignored by the mixer, so storing one without saying so would look
-        // like the tool worked and the feature didn't.
-        let duckFrom: number | null;
-        const raw = a?.duck_from;
-        if (raw == null || raw === 'off' || raw === false) {
-          duckFrom = null;
-        } else {
-          duckFrom = Math.round(Number(raw));
-          if (!Number.isFinite(duckFrom) || duckFrom < 0 || duckFrom >= tl.tracks.length) {
-            return { error: `duck_from ${raw} is not a track (0..${tl.tracks.length - 1}), or null to turn ducking off` };
-          }
-          if (duckFrom === track) {
-            return { error: `a track cannot duck from itself (track ${track})` };
-          }
-        }
-
-        const num = (v: unknown, fallback: number) => {
-          const n = Number(v);
-          return Number.isFinite(n) ? n : fallback;
-        };
-
-        // Through `applyOp`, not the Rust `chroma_timeline_*` commands — same
-        // reason `set_clip_fade` does (D-140 §6c): `applyOp` pushes onto the
-        // shared `@chroma/history` stack, so an agent's duck is undoable.
-        useEditorTimelineStore.getState().applyOp({
-          kind: 'set_track_duck',
-          track,
-          duckFrom,
-          duckDb: num(a?.duck_db, tr.duck_db ?? 0),
-          duckAttackMs: num(a?.attack_ms, tr.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS),
-          duckReleaseMs: num(a?.release_ms, tr.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS),
-        });
-
-        // Read back from the store rather than echoing the request: `applyOp`
-        // normalises (see the op in `timeline.ts`), and a caller that asked for
-        // a -50 ms attack should be told it got 0.
-        const after = useEditorTimelineStore.getState().timeline?.tracks[track];
-        return {
-          ok: true,
-          track,
-          kind: after?.kind ?? tr.kind,
-          duckFrom: after?.duck_from ?? null,
-          duckDb: after?.duck_db ?? 0,
-          attackMs: after?.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
-          releaseMs: after?.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
-          note:
-            (after?.duck_from ?? null) == null
-              ? 'ducking is off for this track'
-              : 'the duck follows the trigger track\'s CLIP layout, not its loudness — a pause mid-sentence does not let the bed back up',
-        };
-      },
+      // ---- D-183: get_timeline / set_clip_fade / set_track_duck moved OUT
+      // of this file into @chroma/editor's own useEditorControl.ts, renamed
+      // editor_get_timeline / editor_set_clip_fade / editor_set_track_duck
+      // — see docs/notes/mcp-architecture.md's "every tab owns its own ops"
+      // rule, and this file's own top-of-file comment.
 
       // ---- multi-shot session (round-3, D-033) ----------------------------
       // list_shots / set_active_shot / add_shots so the agent can grade shot 2,
@@ -1644,7 +1447,18 @@ export function useChromaControl() {
       // handler's synchronous "unknown op" branch below would race ahead of
       // Motion's real (multi-`await`) handler and win the one-shot
       // `chroma://response/<id>` slot with a false "unknown op" error.
-      if (typeof op === 'string' && op.startsWith('motion_')) return;
+      //
+      // D-183 — `editor_*` gets the SAME treatment, for the SAME reason, now
+      // that `@chroma/editor`'s own `useEditorControl` (mounted from
+      // `EditorTab.tsx`) is a second real listener on this same event —
+      // this file is deliberately NOT a catch-all any more (see
+      // `docs/notes/mcp-architecture.md`'s "every tab opts IN to its own
+      // prefix" rule); `get_timeline`/`set_clip_fade` moved OUT of this
+      // file's own `OPS` map into that hook, renamed `editor_get_timeline`/
+      // `editor_set_clip_fade`, so this skip is also what stops this file
+      // from answering "unknown op" for its own former ops under their new
+      // names.
+      if (typeof op === 'string' && (op.startsWith('motion_') || op.startsWith('editor_'))) return;
       const respond = (body: any) => emit(`chroma://response/${id}`, body);
 
       const fn = OPS[op];

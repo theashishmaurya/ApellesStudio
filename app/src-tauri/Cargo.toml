@@ -12,6 +12,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 tethering = ["dep:gphoto2"]
+# D-104: gates the embedded WebDriver server (real E2E testing via
+# WebdriverIO's @wdio/tauri-service) into the binary. Off by default —
+# `cfg(debug_assertions)` is NOT a valid `[target.'cfg(...)']` dependency
+# selector (Cargo only supports target-related cfg there: target_os/
+# target_arch/etc, not build-profile flags — confirmed by Cargo's own
+# warning when this was first tried that way), so this has to be an
+# explicit opt-in feature instead, built with `cargo build --features
+# e2e-testing` (or via `docs/notes/e2e-testing.md`'s wdio config, which
+# passes it through). Never enabled for a real release build.
+e2e-testing = ["dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
 # Chroma's own layered crates (D-039 thin-shell/fat-core). Pure domain models,
@@ -86,6 +96,14 @@ rgb = "0.8.53"
 imgref = "1.12.2"
 sysinfo = "0.39.6"
 tiny_http = "0.12" # Chroma: the in-app control server (D-020)
+# Chroma: real E2E testing (D-104) — backend access/mocking side of
+# WebdriverIO's @wdio/tauri-service. Always present (its own permission
+# system gates what it can do); the actual embedded WebDriver SERVER
+# (`tauri-plugin-wdio-webdriver`) is `optional`, only pulled in by the
+# `e2e-testing` feature above (see that comment for why: `cfg(debug_assertions)`
+# is not a valid dependency selector).
+tauri-plugin-wdio = "1.3.0"
+tauri-plugin-wdio-webdriver = { version = "1.3.0", optional = true }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 trash = "5.2.6"

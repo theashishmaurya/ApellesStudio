@@ -16066,3 +16066,247 @@ separate composition… exported as separate video, not on top of it."
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-183 — Closing the Edit-tab MCP gap: 20 tools (read/seek, media import, clip placement/split/trim/move/remove, gap removal, track management, compositing transform + per-clip keyframes, and a real multi-track export to a video file)
+
+**Context.** Owner, live, editing two real screen recordings (a performance
+before/after comparison) into a stacked vertical reel: "so I was doing a
+performance test i want to create a video in reel way but both videos
+should be in full format stack on top of each other… do key frames like
+zoom in when i click etc.. for both vides… also make the faster video seek,
+1.2x :) using RAPID RAW let's do it." Research found no control-surface op
+for ANY Edit-tab mutation beyond D-147/D-149's three (`get_timeline`,
+`set_clip_fade`, `set_track_duck`) — an agent could read fades and set them,
+and nothing else: no adding clips, no cutting a gap out of a recording, no
+compositing/stacking, no export. First response was to script the whole
+edit in raw ffmpeg — the owner's own correction, verbatim: **"wtf then why
+are we building chroma when you want to do it with ffmpeg ? never do such
+edits?"** — the standing rule this session now runs on: a missing capability
+gets BUILT into the tool, not worked around outside it. Followed by: "if
+there is none we should build it simple :) build all the MCP and register
+the MCP its our own tool what is the point if we cant use that ?" and "make
+sure if follows the same architecture and write the architecture and rule."
+
+**A real mistake, caught before it shipped.** The first build attempt
+concluded — from `control.rs` having no `/mcp` route and a `claude mcp list`
+run from an unrelated project directory showing no chroma entry — that no
+real MCP server existed for this app, and built a second one from scratch:
+`packages/mcp-editor/`, a Node/TS package on `@modelcontextprotocol/sdk`.
+That was wrong: `mcp/server.py` (repo root, next to `app/`/`packages/`) is
+the real, already-registered, single MCP stdio server for this whole app —
+41 Colorist tools plus D-147/D-149's three Edit-tab tools, all wrapping the
+same `chroma::control` HTTP bridge the new package would have duplicated.
+Found by actually reading `docs/notes/mcp-tool-coverage.md`, whose own words
+are "adding a new MCP tool… is mechanical: a new `@mcp.tool()` in
+`mcp/server.py`." `packages/mcp-editor/` was deleted (never registered,
+never committed) once this was found, and its already-built pieces —
+`useEditorControl.ts` and `timelineExport.ts` — were kept, since both are
+real frontend/compiler work independent of which MCP server calls them.
+Worse, removing the three Edit-tab ops from `useChromaControl.ts` (moving
+them to `useEditorControl.ts`, renamed) without also updating
+`mcp/server.py`'s existing `get_timeline`/`set_clip_fade`/`set_track_duck`
+tools broke those three already-live tools — caught and fixed in the same
+pass (their Python function names are unchanged; only the wire op name each
+posts internally was updated). See `docs/notes/mcp-architecture.md`'s own
+"A mistake already made" section — written specifically so this doesn't
+happen to the next tab.
+
+### 1 — `useEditorControl.ts` (`packages/editor`): the frontend half
+
+New file, following `@chroma/motion`'s `useMotionControl.ts` OPT-IN prefix
+shape (`EDITOR_OP_PREFIX = 'editor_'`) — NOT Colorist's own catch-all shape,
+which `docs/notes/mcp-architecture.md` calls out as the one not to copy.
+Takes no arguments (unlike Motion's hook, which needs a ref for its
+component-local state) — `useEditorTimelineStore` and `@chroma/bridge`'s
+`useMediaPoolStore` are real module-level Zustand, reachable via
+`.getState()` from anywhere, the same reason `useChromaControl.ts` never
+needed one either. Mounted unconditionally from `EditorTab.tsx`.
+
+Almost every capability needed already existed as a working, tested
+`EditOp` in `packages/editor/src/timeline.ts` — `add_clip`/`split`/
+`remove`/`remove_gap` (the whole "cut a gap out of a recording" surface:
+place only the kept segments, no separate remove-gap step required),
+`set_clip_transform` (normalised 0-1 position/scale/crop — the stacking
+primitive), `set_clip_keyframes` (D-034/D-088's Rust-interpolated keyframed
+opacity/position/scale/rotation/crop — the "zoom in when I click"
+primitive). None of this needed inventing; it needed exposing. The 17 new
+ops: `editor_get_state`, `editor_set_playhead`, `editor_set_playing`,
+`editor_import_media`, `editor_add_clip`, `editor_split_clip`,
+`editor_remove_clip`, `editor_remove_gap`, `editor_trim_clip`,
+`editor_move_clip`, `editor_add_track`, `editor_set_clip_transform`,
+`editor_set_clip_keyframes`, `editor_set_track_gain`,
+`editor_set_track_locked`, `editor_set_track_hidden`, `editor_export`.
+Plus the three moved-in-verbatim: `editor_get_timeline`,
+`editor_set_clip_fade`, `editor_set_track_duck`.
+
+**Per-clip keyframes, not per-track/whole-timeline** — the owner's own
+clarification mid-build: "the transform should be per clip meaning for
+each clip it should zoom not for the whole video as we are showing two
+videos both as different different zoom time and both should be availble
+and visible." `set_clip_keyframes` already scoped keyframes to one clip's
+own local time; `editor_set_clip_keyframes` just exposes that as-is —
+two clips on two different tracks each hold their own keyframe list and
+zoom at their own moment, with no interaction between them.
+
+### 2 — `chroma_run_ffmpeg` (`app/src-tauri/src/chroma/ffmpeg_run.rs`): the generic execution primitive
+
+Built in parallel by a forked subagent while the frontend half above was
+written directly, per the owner's own ask ("why not using subagnet
+parallization we talked about"). The one genuine Rust gap: no command
+renders the Edit tab's multi-track timeline to a file at all —
+`chroma_export_video` (Colorist's) is single-clip-plus-grade only, and a
+bespoke Rust multi-track compositor was rejected as multi-day/high-risk in
+favor of reusing ffmpeg's own filtergraph as a real compositor (Colorist's
+own exporter already leans on ffmpeg internally for decode). So the split
+mirrors `crates/chroma-motion`'s own `build_command`/`run_render` shape one
+level more generic: `FfmpegRunRequest{args}` / pure `build_command`
+(unit-testable without spawning) / `run_ffmpeg` (blocking, both stdout AND
+stderr captured — unlike `chroma-motion`'s stdout-only `RenderOutcome`,
+since ffmpeg puts its real progress/summary on stderr even on success) /
+`#[tauri::command] chroma_run_ffmpeg`, wrapped in `spawn_blocking` exactly
+like `chroma_motion_render`. Zero knowledge of what the argv means — that
+lives entirely in `timelineExport.ts` below. Registered in `chroma/mod.rs`
+and `lib.rs`'s `generate_handler!`. 4 new tests (`build_command_sets_program
+_and_argv_in_order`, `build_command_with_no_args_is_just_the_bare_program`,
+`run_ffmpeg_version_succeeds_with_stdout`, `run_ffmpeg_reports_failure_and
+_stderr_for_a_bad_flag`) — all passing. `cargo check -p RapidRAW`: 6
+warnings, all pre-existing dead-code lints in unrelated CLIP-model code —
+baseline unchanged.
+
+### 3 — `timelineExport.ts` (`packages/editor`): the pure compiler
+
+Pure, no Tauri/React/store access — takes a `Timeline` and output options,
+returns a single ffmpeg argv. `buildExportFfmpegArgs`: one `-i` per clip
+(`-ss`/`-t` trimmed to the clip's own source range), a per-clip
+`crop`/`setpts`(speed)/`scale` filter chain, then an `overlay` chain
+compositing every visible video track onto a black background — mirroring
+`chroma_timeline::edit::composite_video_frame`'s own paint order (track 0
+highest z-priority, painted last/on top). `keyframeExprAt` compiles a
+clip's `chroma_keyframes` into a piecewise-linear ffmpeg expression (using
+`t`, ffmpeg's own per-frame seconds) for `position_x`/`position_y` —
+reimplementing the SAME semantics `chroma_timeline::edit::
+resolve_clip_transform` already applies for live preview, necessarily
+outside Rust's own interpolation loop since export happens in ffmpeg
+itself. `speedOverrides: Record<clipId, number>` is a pure export-time
+parameter, deliberately NOT added to the `Clip`/`EditOp` model — no
+interactive GUI scrubbing of sped-up playback exists, so a cross-cutting
+change to the trim/split/move frame-unit model wasn't justified for it.
+v1 scope is video-only; audio tracks/mixing are a documented follow-up, not
+wired into the filtergraph this pass. 18 new tests, all passing.
+
+`editor_export` (in `useEditorControl.ts`) wires the two together: reads
+the open timeline, calls `buildExportFfmpegArgs`, invokes
+`chroma_run_ffmpeg` with the resulting argv, and reports `{ok, error,
+outPath, stdoutTail, stderrTail, args}`.
+
+### 4 — `mcp/server.py`: the 20 `@mcp.tool()` wrappers, and `docs/notes/mcp-architecture.md`
+
+Every op above gets a thin Python wrapper (`json.dumps(_op("editor_x",
+**args), indent=2, default=str)`), matching the existing tools' docstring
+depth. `get_timeline`/`set_clip_fade`/`set_track_duck` keep their public
+tool names — no reason to break an existing MCP caller over an internal
+rename — only the `_op(...)` call each makes was updated to the new
+`editor_*` wire name. Verified by importing the module directly
+(`mcp/.venv/bin/python -c "import server"`) and listing all registered
+tools: 62 total, 20 editor-related, no name collisions.
+
+`docs/notes/mcp-architecture.md` (new) is the promised "architecture and
+rule" doc: the four-layer diagram (MCP client → `mcp/server.py` →
+`chroma::control` → `useXControl.ts` → real store action), the D-140
+"mutating tools use the same code path a GUI click does" rule restated,
+the op-prefix opt-in convention (and why Colorist's catch-all is the
+anti-pattern), the step-by-step recipe for a new tab's surface, this
+entry's own mistake written up as a cautionary section, and a note that
+Motion's frontend bridge (`motion_*`) has zero Python tool wrappers yet —
+a real, separate, scoped follow-up, not attempted here.
+`docs/notes/mcp-tool-coverage.md`'s Edit-tab section rewritten from "3
+tools, real zero for everything else" to "CLOSED, 20 tools," and its
+media-pool section corrected to note `editor_import_media` as a partial
+(1 of 6) overlap, not full coverage.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test
+--workspace @chroma/editor` — **312/312** (was 294 before `timelineExport
+.test.ts`'s 18). `npx tsc --noEmit -p app` — 64 pre-existing baseline
+errors, none in `useChromaControl.ts` (confirmed by name-filtering the
+error list); no new errors from removing the three moved ops.
+`python3 -m py_compile mcp/server.py` and a real module import both clean.
+`package-lock.json` regenerated (`npm install`) after deleting
+`packages/mcp-editor/`, plus one stale `"extraneous": true` workspace
+entry npm itself left behind, removed by hand and re-validated as JSON.
+
+**Numbering.** Checked against `main`'s own tip immediately before writing
+this entry: `git log --oneline -1` shows `6894b0c` (D-182) — **D-183** is
+free.
+
+**Not yet done, tracked separately**: the actual content work this was all
+in service of (Phase 3 of the owner's own plan — import both recordings,
+cut the gaps, stack them with per-clip zoom keyframes, 1.2x on the whole
+after-video, SFX via `videoAgent`'s `/audiocraft`, export) has not started;
+this decision covers only building the tool this session's own standing
+rule required building first.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01F2hXgAjxNbxkVg9VQmqasn
+
+## D-184 — `editor_export`'s `fitOverrides`: per-clip aspect-fit vs. stretch, export-time-only (B-074)
+
+D-183's first-ever real use (building an actual performance-comparison reel, two
+screen recordings stacked full-width in one canvas) hit a genuine structural bug in
+`timelineExport.ts`'s compositing math, not just a missing feature: `buildClipFilterChain`
+forced BOTH the overlay's width and height to `opts.width * scale` / `opts.height * scale`
+— meaning every overlay this compiler could ever produce had EXACTLY the OUTPUT
+canvas's own aspect ratio, at any `scale`. That's correct for a same-aspect
+picture-in-picture bubble but makes a "full width, half height" stacked layout (two
+clips, one per half of a 9:16 canvas) mathematically impossible for ANY canvas
+dimensions — that box's aspect ratio necessarily differs from the canvas's own.
+Filed as **B-074** in `docs/BUGS.md`, fixed same-session.
+
+**Real options considered:**
+1. Thread each clip's native source resolution through the `Clip` model so the pure,
+   no-I/O `timelineExport.ts` could compute correct aspect-preserving dimensions
+   itself in TypeScript. Rejected as more invasive than needed — a cross-cutting
+   change to the persisted `Clip`/`EditOp` contract (also touching the Rust struct,
+   migration, the live preview) for a problem ffmpeg already solves natively.
+2. **Chosen: let ffmpeg compute height itself.** `scale=${width}*${scale}:-2` —
+   `-2` means "auto-compute, preserve the INPUT'S real aspect ratio (after crop),
+   round to the nearest even pixel count." Correct for any source resolution or
+   crop, with zero new data threaded through the TS model, and it directly matches
+   what `-2`/`-1` height already means throughout the ffmpeg ecosystem — boring,
+   well-understood, not a bespoke scheme.
+3. Old forced-stretch behavior isn't simply deleted — kept available as an explicit
+   opt-in (`'stretch'`), since it's still correct for a genuine same-aspect PIP
+   bubble or a deliberate distort effect. Owner's own framing: "it should be
+   optional... up to the user," not silently one way or the other.
+
+**Shape:** `TimelineExportOptions.fitOverrides?: Record<clipId, 'fit' | 'stretch'>`,
+an EXPORT-TIME-ONLY parameter mirroring `speedOverrides`'s own existing shape and
+rationale exactly (no persisted `Clip`/`EditOp` field, no interactive GUI toggle
+exists yet for this — same reasoning `speedOverrides`'s own doc comment already
+gives). Default (no entry for a clip) is `'fit'` — the newly-correct, aspect-preserving
+behavior — not `'stretch'`, since `'fit'` is what an agent/human actually wants far
+more often (fitting real footage into a region) and `'stretch'`'s old behavior was
+never actually validated against real content, only ever exercised by synthetic
+same-shape test fixtures. `position_y` is unchanged (D-136's top-left-corner,
+canvas-fraction convention) — the CALLER computes where to place a `'fit'` clip's
+(now variable, source-dependent) height within its slot, using the clip's own known
+resolution from `editor_import_media`'s probe result. `mcp/server.py`'s
+`editor_export` docstring rewritten to state the `scale`-is-a-width-fraction,
+box-aspect-always-equals-canvas-aspect-under-`'stretch'` fact explicitly — this
+exact gap (an MCP client with no codebase access had no way to discover it) is
+also being addressed more generally by a separate, parallel capabilities-tool effort
+(see `docs/notes/mcp-tool-coverage.md`).
+
+**Explicitly NOT done here, tracked separately:** a real persisted, GUI-editable
+independent-width/height + ratio-lock control (the fuller fix an Inspector panel
+would want, matching a reference UI the owner pointed at — explicit
+Width/Height/Ratio-lock fields) — scoped as real follow-up work, dispatched
+separately, specifically so it doesn't ship half-done bolted onto this export-only
+fix.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean. `npm test --workspace
+@chroma/editor` — `timelineExport.test.ts` 21/21 (was 18, +1 regression test
+documenting the exact distortion bug, +2 for the new `fitOverrides` behavior).
+`python3 -m py_compile mcp/server.py` clean.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

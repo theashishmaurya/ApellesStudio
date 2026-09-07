@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **D-183's Edit-tab MCP server committed** (was sitting unit-verified but
+  uncommitted since 2026-09-07 morning): `useEditorControl.ts`, `timelineExport.ts` (pure
+  ffmpeg-argv compiler), `chroma_run_ffmpeg`, 62-tool `mcp/server.py`. Its first-ever real use
+  (building a performance-comparison reel) found and fixed two real bugs same-session: **B-069**
+  (a Rules-of-Hooks violation in `TimelinePane.tsx` that crashed the ENTIRE `editor_*`
+  control-server bridge, not just the one panel — two conditional early-`return`s sat between
+  hook calls) and **B-074/D-184** (`editor_export`'s `scale` forced every overlay to the output
+  canvas's own aspect ratio, making a full-width/half-height stacked layout impossible for any
+  canvas size — fixed via ffmpeg's own `-2` auto-height, with the old forced-stretch behavior
+  kept available as an explicit opt-in `fitOverrides` value). See `docs/BUGS.md` B-069–B-074 and
+  `docs/08-decisions.md` D-184 for the full detail.
 - **2026-09-06** — **Per-card drag-to-fix for the `layers` primitive, + B-068 (D-182, Phase 3 of 3).**
   `Layers.tsx`'s `LayerItem` gains optional `dx`/`dy` (a pixel offset added to the computed
   position, `0,0` default, byte-for-byte identical render for every existing manifest) and a

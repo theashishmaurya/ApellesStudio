@@ -51,6 +51,7 @@ import { PreviewPane } from './PreviewPane';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
+import { useEditorControl } from './useEditorControl';
 
 const INSPECTOR_DEFAULT_WIDTH = 280;
 const INSPECTOR_MIN_WIDTH = 220;
@@ -63,6 +64,15 @@ export function EditorTab() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+
+  // D-183 — the Edit tab's own control-server surface (see
+  // `useEditorControl.ts`'s own module doc comment for the full
+  // architecture). Mounted unconditionally here, the same "reachable
+  // regardless of which tab has focus" guarantee `useChromaControl()`
+  // (`App.tsx`) and `useMotionControl()` (`MotionTab.tsx`) already rely on
+  // — `EditorTab`, like every other tab body, stays mounted from boot
+  // (B-007). No arguments — see that hook's own doc comment for why.
+  useEditorControl();
 
   // Re-check when the window regains focus — the project may have changed
   // out from under us. Safe to fire freely now: `load()` is token-guarded, so

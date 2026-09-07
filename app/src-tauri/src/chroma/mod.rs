@@ -39,6 +39,10 @@
 //!                grade layer + resolve its depth source (D-046)
 //! - `control`  — in-app HTTP control server bridging MCP ⇄ the frontend (D-020)
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
+//! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
+//!   used by the Edit-tab timeline exporter (`packages/editor/src/
+//!   timelineExport.ts` builds the argv; this just runs it — no ffmpeg-arg
+//!   knowledge lives here, mirroring `chroma-motion`'s own render/exec split)
 //! - `grade`    — the `grade.json` document command bridge: save / load
 //!                (D-025); the model itself lives in `chroma-grade-model` (D-143)
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
@@ -51,6 +55,7 @@ pub mod decode_pipe;
 pub mod depth;
 pub mod edit;
 pub mod export;
+pub mod ffmpeg_run;
 pub mod filmstrip;
 pub mod grade;
 pub mod keyframes;

@@ -1730,6 +1730,20 @@ pub fn run() {
         }
     }
 
+    // D-104: real E2E testing via WebdriverIO's @wdio/tauri-service (embedded
+    // provider — the macOS-supported path; the classic external tauri-driver
+    // tool does not support macOS at all). `wdio` is the backend-access/
+    // mocking side (always present, its own permission system gates it);
+    // `wdio-webdriver` is the actual embedded WebDriver server, gated behind
+    // the `e2e-testing` Cargo feature (off by default, see Cargo.toml's own
+    // comment on why this couldn't just be `cfg(debug_assertions)`) — never
+    // compiled into an ordinary dev run, let alone a release build.
+    builder = builder.plugin(tauri_plugin_wdio::init());
+    #[cfg(feature = "e2e-testing")]
+    {
+        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
     builder
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
@@ -2182,6 +2196,7 @@ pub fn run() {
             chroma::export::chroma_export_video,
             chroma::export::chroma_export_progress,
             chroma::export::chroma_bake_lut,
+            chroma::ffmpeg_run::chroma_run_ffmpeg,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::motion::chroma_motion_get_manifest,
