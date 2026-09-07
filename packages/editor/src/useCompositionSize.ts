@@ -51,6 +51,14 @@ export function useCompositionSize(
   const [size, setSize] = useState<CompositionSize | null>(null);
 
   useEffect(() => {
+    // D-201 — `extraDep` is a deliberate refetch token with no other use in
+    // this body (see the doc above), which the `exhaustive-deps` lint rule
+    // reads as a redundant dependency. Referencing it here makes the
+    // dependency array honest instead of suppressing the rule — and a
+    // suppression of ANY react-hooks rule switches the React Compiler off for
+    // the whole file (`docs/notes/react-compiler-coverage.md`), which
+    // `reactCompiler.test.ts` now fails on.
+    void extraDep;
     if (!hasTimeline) {
       setSize(null);
       return;
@@ -66,7 +74,6 @@ export function useCompositionSize(
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasTimeline, extraDep]);
 
   return size;

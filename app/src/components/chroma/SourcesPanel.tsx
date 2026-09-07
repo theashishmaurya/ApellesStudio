@@ -412,7 +412,7 @@ export function SourcesPanel() {
     } catch (e) {
       toast.error(`Couldn't add to grading: ${String(e)}`);
     }
-      // D-197 — `try/catch` then the former `finally` body inline, not a
+      // D-201 — `try/catch` then the former `finally` body inline, not a
       // `finally` clause: the React Compiler cannot lower `finally` at all, and
       // ONE of them anywhere in a component/hook makes it skip auto-memoizing
       // the whole thing. Exactly equivalent here — the `catch` swallows

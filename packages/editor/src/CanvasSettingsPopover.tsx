@@ -87,15 +87,19 @@ export function CanvasSettingsPopover({ onSaved }: { onSaved: () => void }) {
   const save = async (partial: { width: number | null; height: number | null }) => {
     setSaving(true);
     setError(null);
+    // D-201 — `try/catch` then the former `finally` body inline, not a
+    // `finally` clause: the React Compiler cannot lower `finally` at all, and
+    // one anywhere in a component makes it skip auto-memoizing the whole
+    // component. Exactly equivalent here (the `catch` swallows everything and
+    // neither block returns). `reactCompiler.test.ts` enforces this.
     try {
       await invoke('chroma_project_set_settings', { path: null, partial });
       onSaved();
       setOpen(false);
     } catch (e) {
       setError(String(e));
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   };
 
   const handleSave = () => {

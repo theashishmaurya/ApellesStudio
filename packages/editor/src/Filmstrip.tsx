@@ -203,7 +203,7 @@ export function Filmstrip({
   // Keeps the last good tiles on screen while a new window is in flight, so
   // a zoom or scroll never blanks the strip (D-124's own hard-won property).
   //
-  // D-197 — that used to be a separate `lastGood` ref that the render body
+  // D-201 — that used to be a separate `lastGood` ref that the render body
   // read (`thumbs?.length ? thumbs : lastGood.current`). Reading a ref during
   // render is a real Rules-of-React violation — render output must not depend
   // on a value React does not track — and it is what the React Compiler's
@@ -231,7 +231,7 @@ export function Filmstrip({
   // is that an unchanged window must not re-fire this effect.
   const windowKey = window_ ? cacheKey(sourcePath, window_) : '';
 
-  // D-197 — the effect below must fire on the SNAPPED window (`windowKey`),
+  // D-201 — the effect below must fire on the SNAPPED window (`windowKey`),
   // never on `window_`'s object identity, for the reason stated just above.
   // That used to need a line-scoped suppression of the `exhaustive-deps`
   // react-hooks lint rule — and a suppression of ANY react-hooks rule also

@@ -17554,7 +17554,7 @@ touched formulas/identifiers against `rustfmt`'s output, not just line numbers.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
-## D-197 — Dev-mode iteration speed: fix the full-page-reload HMR boundary (root cause of B-081), clear the React Compiler bailouts on the hot Edit-tab surfaces, and pin the drag gesture's already-deferred commit
+## D-201 — Dev-mode iteration speed: fix the full-page-reload HMR boundary (root cause of B-081), clear the React Compiler bailouts on the hot Edit-tab surfaces, and pin the drag gesture's already-deferred commit
 
 Owner, 2026-09-07: *"make the whole dev [experience] faster, and prod will
 automatically be faster too."* Three evidence-based findings from that session
@@ -17831,9 +17831,17 @@ to the change:
 - `app/src/components/chroma/SourcesPanel.tsx` — same plain-tail `finally`
   rewrite.
 
-Every one of the package's 22 source files now compiles clean, so the guard
-test was widened from a hot-file whitelist to **the whole package**, reading the
-directory at run time so a newly-added file is covered the day it lands.
+Every one of the package's source files now compiles clean, so the guard test
+was widened from a hot-file whitelist to **the whole package**, reading the
+directory at run time so a newly-added file is covered the day it lands. That
+paid for itself immediately: rebasing onto `main` picked up three files two
+sibling branches had landed in the meantime (`CanvasSettingsPopover.tsx`,
+`EditorExportDialog.tsx`, `useCompositionSize.ts`), the guard failed on all
+three, and each was cleared the same way — a `finally` clause turned into a
+plain tail, and two `exhaustive-deps` suppressions replaced (one by the
+latest-ref shape, one by referencing the deliberate refetch token in the body so
+the array is honest). Without the guard those three would have silently
+re-opened the bucket this pass just closed.
 
 **Deliberately left, and why** (the full list, with reasoning, is in
 `docs/notes/react-compiler-coverage.md`):
@@ -17868,10 +17876,15 @@ second real Rules-of-React violation left unfixed for the same fork-code reason
 turned out NOT to share a root cause with Filmstrip as the inventory guessed.
 The per-item verdicts are tabulated in the coverage note.
 
-**Verification.** `npm test --workspace @chroma/editor` 432/432 (was 409 at the
-start of this pass; +23 = the per-file compiler guards). `npx tsc --noEmit -p
+**Verification.** `npm test --workspace @chroma/editor` **494/494** after
+rebasing onto `main` (463 pre-existing + 31 new per-file compiler guards; the
+pass started from 409 before two sibling branches landed). `npx tsc --noEmit -p
 packages/editor` clean. `npx tsc --noEmit -p app`: 64 errors before and after —
-the pre-existing baseline, zero new.
+the pre-existing baseline, zero new. Confirmed against a **real dev server**,
+not just the standalone reporter: a fresh `vite` boot with the app loaded logs
+115 `[react-compiler] bailout` lines and **zero** of them name any
+`packages/editor` file or `app/src/components/chroma/SourcesPanel.tsx` — and
+zero `page reload` lines.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

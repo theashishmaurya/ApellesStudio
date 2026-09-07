@@ -244,7 +244,7 @@ function parseCurve(v: unknown, which: string): FadeCurve | { error: string } | 
   return { x1: pts[0], y1: pts[1], x2: pts[2], y2: pts[3] };
 }
 
-/** D-197 — module-scope helpers so the request listener's `try/catch` below
+/** D-201 — module-scope helpers so the request listener's `try/catch` below
  *  contains no `||` / `?.` / `??` "value blocks", which the React Compiler
  *  cannot lower inside a `try/catch` (and one of them anywhere in the hook
  *  makes it skip auto-memoizing the whole file). Each is exactly the
@@ -578,7 +578,7 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, count: keyframes.length };
       },
 
-      // ---- export (Phase 2/3, D-183; D-197 real audio mixing; D-198
+      // ---- export (Phase 2/3, D-183; D-201 real audio mixing; D-198
       // extracted the real body into `editorExport.ts` so the Edit tab's own
       // GUI Export dialog + queue can call the EXACT same compile+run logic
       // rather than a parallel implementation) --------------------------
@@ -848,7 +848,7 @@ export function useEditorControl(): void {
     return () => {
       safeUnlisten(unlistenP);
     };
-    // D-197 — `[]` is honest, and the suppression that used to sit here is
+    // D-201 — `[]` is honest, and the suppression that used to sit here is
     // gone. `useEditorControl` takes no arguments and this effect closes over
     // nothing from a component scope: every store it touches is reached
     // through `getState()` on a module-level store, and `EDITOR_OP_PREFIX`,

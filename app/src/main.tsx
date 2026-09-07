@@ -1,7 +1,7 @@
 /**
  * The app's bootstrap entry — mount `<Root>` and nothing else.
  *
- * **Deliberately holds no React component of its own** (D-197/B-081). It used
+ * **Deliberately holds no React component of its own** (D-201/B-081). It used
  * to declare `Root` inline, which made `@vitejs/plugin-react` treat this file
  * as a React Fast Refresh boundary candidate while it has *zero* exports —
  * a combination the refresh runtime rejects

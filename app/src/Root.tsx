@@ -12,7 +12,7 @@ import { useSessionStore } from './store/useSessionStore';
 /**
  * `Root` — the app's composition root component (D-039), and *only* that.
  *
- * **This module must export nothing but React components** (D-197/B-081).
+ * **This module must export nothing but React components** (D-201/B-081).
  * `@vitejs/plugin-react` makes a module a React Fast Refresh boundary only
  * when every one of its exports is a component; a module that fails that test
  * (including one with *no* exports at all, which is what `main.tsx` was while
@@ -23,7 +23,7 @@ import { useSessionStore } from './store/useSessionStore';
  * either, so an HMR update to any module behind a barrel propagates straight
  * up to whatever imports the barrel — this file. Keeping this file a valid
  * boundary is what stops that propagation and turns those edits into a
- * sub-second hot update instead of a full reload. See D-197 for the whole
+ * sub-second hot update instead of a full reload. See D-201 for the whole
  * chain, including the Tauri IPC-transport fallback (B-081) a reload caused.
  *
  * The app opens on the project launcher with no tab bar; opening/creating a

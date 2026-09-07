@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-07** — **React Compiler bailout pass (D-197): `@chroma/editor` is now
+- **2026-09-07** — **React Compiler bailout pass (D-201): `@chroma/editor` is now
   bailout-free, and one real bug fell out of it.** All 22 source files in the
   package compile with zero bailouts (`TimelinePane`/`TransformOverlay`'s
   hand-written memoization was fighting the compiler and costing them ALL
@@ -27,7 +27,7 @@ One or two lines per session. Detail lives in the decision it references.
   project switching is unaffected) — worked around this session by not
   switching projects mid-build.
 - **2026-09-07** — **B-081 root-caused and fixed — and it was never an IPC bug
-  (D-197).** The `IPC custom protocol failed` burst fires once per Tauri IPC call
+  (D-201).** The `IPC custom protocol failed` burst fires once per Tauri IPC call
   in flight when the page navigates; the navigation was a **Vite full page reload
   of the entire app**, caused by `app/src/main.tsx` holding the `Root` component
   while exporting nothing (an invalidating React Fast Refresh boundary that every

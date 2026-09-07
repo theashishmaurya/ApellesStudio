@@ -1679,7 +1679,7 @@ export function TimelinePane() {
   // worth of actions was cheap enough to never be felt — re-rendering N
   // tracks' worth on every tick is what actually froze the UI.
   //
-  // D-197 — that stability now comes from the React Compiler (D-091), not from
+  // D-201 — that stability now comes from the React Compiler (D-091), not from
   // a hand-written dependency array, and the two are mutually exclusive: the
   // compiler only auto-memoizes a component when it can *preserve* every
   // manual `useMemo`/`useCallback` already in it, and SEVEN of this file's
@@ -1863,7 +1863,7 @@ export function TimelinePane() {
    *  MouseEvent>` (checked against its `.d.ts`, not the loosely-typed
    *  `unknown` this handler used to cast it to) — `shiftKey`/`metaKey`/
    *  `ctrlKey` are real fields on it. */
-  /** D-197 — no `useCallback` (see the note above `getActionRender`). */
+  /** D-201 — no `useCallback` (see the note above `getActionRender`). */
   const onClickAction =
     (e: ReactMouseEvent<HTMLElement, MouseEvent>, { action, row }: { action: TimelineAction; row: TimelineRow }) => {
       setSelectedGap(null); // D-105 — clicking a clip always supersedes a gap selection
@@ -1909,7 +1909,7 @@ export function TimelinePane() {
   // clip now, same-track or cross-track alike. Kept as dead code this would
   // violate `CLAUDE.md`'s own "no dead code" rule, so it's removed rather
   // than left unused.
-  /** D-197 — no `useCallback` (see the note above `getActionRender`): its old
+  /** D-201 — no `useCallback` (see the note above `getActionRender`): its old
    *  `[tracks, fps, applyOp]` array left out `s2f`, which the compiler infers
    *  and which is enough on its own to bail the whole component out. */
   const onActionResizeEndCb = ({
@@ -2008,7 +2008,7 @@ export function TimelinePane() {
    *  doc) — `null` when the selection isn't shaped like a link candidate at
    *  all (not exactly two clips selected), so the button is hidden rather
    *  than shown-and-always-refused for the common case of 0/1/3+ selected.
-   *  D-197 — no `useMemo` (see the note above `getActionRender`): its
+   *  D-201 — no `useMemo` (see the note above `getActionRender`): its
    *  `[timeline, selection]` array left out `idxOf`, and the body returns
    *  `null` immediately unless exactly two clips are selected anyway. */
   const linkCheck = ((): { a: LinkTarget; b: LinkTarget; result: LinkCheck } | null => {
@@ -2194,7 +2194,7 @@ export function TimelinePane() {
   // `setClipDragPreview` call is gated to only actually dispatch when the
   // resolved landing genuinely changed, not on every pixel of movement.
   //
-  // D-197 audited this against roadmap item 21.3 ("does the drag re-render
+  // D-201 audited this against roadmap item 21.3 ("does the drag re-render
   // through React state every pointer-move frame?") and the answer is no, for
   // every gesture in this pane: a clip drag writes only this local
   // `clipDragPreview`/`insertPreview` state (both change-gated), a marquee
@@ -2227,7 +2227,7 @@ export function TimelinePane() {
     return trackInsertBoundary(y, tracks.length);
   };
 
-  /** D-197 — no `useCallback` (see the note above `getActionRender`): its old
+  /** D-201 — no `useCallback` (see the note above `getActionRender`): its old
    *  array listed `idxOf`/`clipsOf`, plain arrows re-created on every render,
    *  so it never memoized anything — while still bailing the compiler out of
    *  the whole component. */
@@ -2287,7 +2287,7 @@ export function TimelinePane() {
       });
     };
 
-  /** D-197 — no `useCallback`, same reasoning as `onDndDragMove` just above. */
+  /** D-201 — no `useCallback`, same reasoning as `onDndDragMove` just above. */
   const onDndDragEnd =
     (event: DragEndEvent) => {
       const data = event.active.data.current as
@@ -2443,7 +2443,7 @@ export function TimelinePane() {
   // bridge reading from it) down with no error boundary to catch it. Hooks
   // must run unconditionally on every render — only the JSX below may
   // branch, so this check moved down here, after every hook call above.
-  // (D-197 unwrapped the `useMemo`/`useCallback` this note names on `linkCheck`
+  // (D-201 unwrapped the `useMemo`/`useCallback` this note names on `linkCheck`
   // and the DnD handlers, so those specific ones are no longer hooks. Real
   // hooks still sit above this line and more will be added, so these early
   // returns must STAY here, below every hook call, regardless.)

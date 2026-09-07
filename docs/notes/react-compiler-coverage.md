@@ -21,7 +21,7 @@ component/hook body. Likely fixable in most cases by moving the try/finally out 
 render into a plain helper function, or restructuring to avoid needing `finally`
 inside the component itself:
 `app/src/components/adjustments/Effects.tsx`,
-~~`app/src/components/chroma/SourcesPanel.tsx`~~ **FIXED (D-197)**,
+~~`app/src/components/chroma/SourcesPanel.tsx`~~ **FIXED (D-201)**,
 `app/src/components/modals/CollageModal.tsx`,
 `app/src/components/modals/DenoiseModal.tsx`,
 `app/src/components/modals/FocusStackModal.tsx`,
@@ -36,7 +36,7 @@ inside the component itself:
 `app/src/hooks/useAiMasking.ts`,
 `app/src/hooks/useImageLoader.ts`,
 `app/src/hooks/usePresets.ts`,
-~~`packages/editor/src/PreviewPane.tsx`~~ **FIXED (D-197)**,
+~~`packages/editor/src/PreviewPane.tsx`~~ **FIXED (D-201)**,
 `packages/motion/src/useMotionManifest.ts` (attempted and reverted — see the
 status section at the bottom).
 
@@ -62,8 +62,8 @@ the underlying issue or narrowing the disable to the smallest possible scope:
 `app/src/components/panel/Editor.tsx`,
 `app/src/hooks/useChromaControl.ts`,
 `app/src/hooks/useImageProcessing.ts`,
-~~`packages/editor/src/Filmstrip.tsx`~~ **FIXED (D-197)**,
-~~`packages/editor/src/useEditorControl.ts`~~ **FIXED (D-197)**,
+~~`packages/editor/src/Filmstrip.tsx`~~ **FIXED (D-201)**,
+~~`packages/editor/src/useEditorControl.ts`~~ **FIXED (D-201)**,
 `packages/motion/src/MotionPreview.tsx`,
 `packages/motion/src/useMotionControl.ts`.
 
@@ -71,10 +71,10 @@ the underlying issue or narrowing the disable to the smallest possible scope:
 manual `useMemo`/`useCallback` that conflicts with what the compiler would generate.
 Usually fixable by deleting the manual memoization and trusting the compiler:
 `app/src/hooks/useAppNavigation.ts`,
-~~`packages/editor/src/TimelinePane.tsx`~~ **FIXED (D-197)**,
-~~`packages/editor/src/TransformOverlay.tsx`~~ **FIXED (D-197)**.
+~~`packages/editor/src/TimelinePane.tsx`~~ **FIXED (D-201)**,
+~~`packages/editor/src/TransformOverlay.tsx`~~ **FIXED (D-201)**.
 
-> **D-197, 2026-09-07 — the two hot files are fixed and now pinned by a test.**
+> **D-201, 2026-09-07 — the two hot files are fixed and now pinned by a test.**
 > `TimelinePane` had **seven** hand-written arrays disagreeing with the
 > compiler's inferred dependencies (`getActionRender`, `onClickAction`,
 > `onActionResizeEndCb`, `linkCheck`, `onDndDragMove`, `onDndDragEnd` —
@@ -88,8 +88,8 @@ Usually fixable by deleting the manual memoization and trusting the compiler:
 > All nine are plain functions now; both files compile with **zero** bailouts.
 > `packages/editor/src/reactCompiler.test.ts` runs the same preset
 > `app/vite.config.mjs` uses over every source file in this package and fails if
-> a bailout comes back — negative-tested, not assumed. See D-197 Part 2, and
-> "Status after the D-197 fix pass" at the bottom of this note for everything
+> a bailout comes back — negative-tested, not assumed. See D-201 Part 2, and
+> "Status after the D-201 fix pass" at the bottom of this note for everything
 > else that pass changed.
 
 **`Support value blocks (conditional/logical/optional-chaining) within a try/catch`
@@ -145,14 +145,14 @@ highest-value targets in this whole list for an actual perceived-speed improveme
 ## Not attempted here (as originally filed)
 
 This was an inventory, not a fix — owner's own framing: document first, then dispatch
-a real fix pass. **That pass happened (D-197, same day); see "Status after the D-197
+a real fix pass. **That pass happened (D-201, same day); see "Status after the D-201
 fix pass" below for what it changed and what it deliberately left.** B-081, filed
 alongside this note as a related-but-separate finding, was root-caused in the same
 pass and turned out not to be an IPC bug at all.
 
 ---
 
-# Status after the D-197 fix pass (2026-09-07)
+# Status after the D-201 fix pass (2026-09-07)
 
 The inventory above is the state as filed. This section is what actually
 changed, what is still open, and — for every item the inventory flagged as
@@ -172,12 +172,13 @@ something outside that package.
 
 ## Fixed
 
-- **`packages/editor/*` — the WHOLE package is now bailout-free** (22 source
-  files, verified). Specifically:
+- **`packages/editor/*` — the WHOLE package is now bailout-free** (30 source
+  files, verified against a real dev-server boot as well as the standalone
+  reporter). Specifically:
   - `TimelinePane.tsx`, `TransformOverlay.tsx` — *Existing memoization could not
     be preserved*. Nine hand-written `useMemo`/`useCallback` arrays disagreeing
     with the compiler's inferred dependencies; all now plain functions. See
-    D-197 Part 2 for the full reasoning (including that two of them were
+    D-201 Part 2 for the full reasoning (including that two of them were
     memoizing nothing at all).
   - `PreviewPane.tsx` — *TryStatement with a finalizer*, and then a second
     bailout it had been masking (*Cannot access variable before it is
@@ -202,6 +203,12 @@ something outside that package.
     blocks within a try/catch* (`args || {}`, `result?.error ?? null`,
     `String(e?.message || e)`), hoisted verbatim into three module-scope
     helpers.
+  - `CanvasSettingsPopover.tsx`, `EditorExportDialog.tsx`,
+    `useCompositionSize.ts` — landed by sibling branches while this pass was in
+    flight and caught by the new guard test on rebase. A `finally` clause became
+    a plain tail; two `exhaustive-deps` suppressions went away (one replaced by
+    the latest-ref shape, one by referencing the deliberate refetch token in the
+    effect body so the array is honest rather than suppressed).
 - **`app/src/components/chroma/SourcesPanel.tsx`** — *TryStatement with a
   finalizer*, same plain-tail rewrite as `PreviewPane`.
 

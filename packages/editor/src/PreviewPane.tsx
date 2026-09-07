@@ -174,7 +174,7 @@ export function PreviewPane() {
   const [compSizeVersion, setCompSizeVersion] = useState(0);
   const compSize = useCompositionSize(!!timeline, compSizeVersion);
 
-  // D-197 — two shapes here exist for the React Compiler's sake, both exactly
+  // D-201 — two shapes here exist for the React Compiler's sake, both exactly
   // equivalent to what they replaced (see
   // `docs/notes/react-compiler-coverage.md`), because ONE unsupported
   // construct anywhere in a component makes the compiler skip auto-memoizing
@@ -273,7 +273,7 @@ export function PreviewPane() {
         } catch {
           /* keep going — a heavy clip can drop frames */
         }
-        // D-197 — the former `finally` body, inline: see `fetchFrame`'s own
+        // D-201 — the former `finally` body, inline: see `fetchFrame`'s own
         // note above for why this is a plain tail rather than a `finally`
         // clause, and why it is exactly equivalent here.
         inFlight.current = false;

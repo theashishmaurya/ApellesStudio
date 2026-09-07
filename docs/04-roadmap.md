@@ -971,7 +971,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     Three concrete, evidence-based items, not guesswork:
     1. ~~**B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
        intermittently fails at startup and silently falls back to the slower
-       `postMessage` bridge~~ — **root-caused and fixed (D-197, 2026-09-07)**,
+       `postMessage` bridge~~ — **root-caused and fixed (D-201, 2026-09-07)**,
        and it was not an IPC bug at all: the warning burst fires once per IPC
        call that is in flight when the page navigates, and the navigation was a
        **Vite full page reload of the whole app**, triggered because
@@ -981,18 +981,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        `app/src/Root.tsx` (exports only components); verified live that editing
        `timeline.ts` / `timelineStore.ts` / the editor barrel now hot-updates
        instead of full-reloading.
-    2. **React Compiler bailout coverage** — `docs/notes/react-compiler-coverage.md`,
-       a real inventory of 55 unique bailouts across 45 files, extracted from real
-       dev-server logs, grouped by root cause with a fix direction per bucket. Two
-       files matter most for perceived speed: `TimelinePane.tsx` and
-       `TransformOverlay.tsx` (the highest-update-frequency surfaces in the app —
-       drag/scrub/zoom/keyframe editing) both bail out on "existing memoization
-       could not be preserved," meaning manual memoization is fighting the compiler
-       there specifically.
+    2. ~~**React Compiler bailout coverage** — a real inventory of 55 unique
+       bailouts across 45 files~~ — **the Edit-tab half is fixed (D-201,
+       2026-09-07)**: all 22 source files in `@chroma/editor` now compile with
+       ZERO bailouts (`TimelinePane`/`TransformOverlay`'s hand-written
+       memoization was fighting the compiler and costing them ALL
+       auto-memoization; `PreviewPane`, `Filmstrip`, `useEditorControl` and
+       `app`'s `SourcesPanel` cleared too), pinned by a real regression test
+       (`packages/editor/src/reactCompiler.test.ts`). `app/`'s modals/settings
+       `finally` bucket, `useAiMasking.ts`, `ImageCanvas.tsx` and
+       `packages/motion`'s own files are still open, each with its reason —
+       `docs/notes/react-compiler-coverage.md` marks fixed vs. open and
+       tabulates a per-item verdict for every "possibly a real bug" flag
+       (one turned out to be real: **B-082**).
     3. ~~**`TimelinePane.tsx`'s drag-gesture performance** — unverified either
        way: does its drag code already bypass React state during the gesture
        itself, or does it re-render through React state every pointer-move
-       frame?~~ — **verified (D-197, 2026-09-07): it already defers**, for every
+       frame?~~ — **verified (D-201, 2026-09-07): it already defers**, for every
        gesture in the pane. `onDndDragMove` writes only local, change-gated
        `clipDragPreview`/`insertPreview` state (a drag that doesn't change the
        resolved landing produces zero re-renders); `applyOp` is called exactly
@@ -1002,8 +1007,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        `set_clip_transform` on release. **No change made** — the direct-DOM
        `style.transform` technique would buy nothing here and would mean pulling
        `@dnd-kit`'s own `DragOverlay` out of the drag's real machinery. See
-       D-197 Part 3.
-    Done (D-197) — all three root-caused; 1 and 2 fixed, 3 verified as already
+       D-201 Part 3.
+    Done (D-201) — all three root-caused; 1 and 2 fixed, 3 verified as already
     correct. Remaining open: the rest of the React Compiler bailout list
     (`docs/notes/react-compiler-coverage.md` marks what is fixed vs. still open).
 22. **`editor_export` mixes real audio, and the Edit tab gets a real Export button/

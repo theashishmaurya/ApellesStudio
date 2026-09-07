@@ -115,7 +115,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   const position = draft?.position ?? committedPosition;
   const scale = draft?.scale ?? committedScale;
 
-  // D-197 — no `useCallback` here, nor on `commit` below, deliberately. The
+  // D-201 — no `useCallback` here, nor on `commit` below, deliberately. The
   // React Compiler (D-091) auto-memoizes this whole component, but only when it
   // can *preserve* every piece of memoization already written by hand; these
   // two made it bail out of `TransformOverlay` entirely ("Existing memoization

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — a build-quality guard, not a behavior test (D-197).
+ * @chroma/editor — a build-quality guard, not a behavior test (D-201).
  *
  * The React Compiler (D-091) auto-memoizes a component only when it can
  * *preserve* every hand-written `useMemo`/`useCallback` already in it. A
@@ -7,12 +7,12 @@
  * — silently: it logs a bailout line and emits the file uncompiled, so nothing
  * fails, the component just quietly loses all auto-memoization and re-renders
  * the old-fashioned way. `docs/notes/react-compiler-coverage.md` is the real
- * inventory of where that was happening; D-197 cleared it for the two files
+ * inventory of where that was happening; D-201 cleared it for the two files
  * where it costs the most.
  *
  * This test runs the exact same preset `app/vite.config.mjs` runs, over EVERY
  * source file in this package, and fails if any of them bails out. The whole
- * package is clean as of D-197, so the bar is "keep it that way" rather than a
+ * package is clean as of D-201, so the bar is "keep it that way" rather than a
  * whitelist that would quietly let the hot files drift back.
  *
  * It does NOT check that the compiled output is correct or faster — the
@@ -61,7 +61,7 @@ async function bailoutsFor(file: string): Promise<string[]> {
   return [...new Set(reasons)];
 }
 
-describe('React Compiler coverage across @chroma/editor (D-197)', () => {
+describe('React Compiler coverage across @chroma/editor (D-201)', () => {
   it('found source files to check', () => {
     expect(SOURCE_FILES.length).toBeGreaterThan(10);
   });
