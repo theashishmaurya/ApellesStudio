@@ -18,7 +18,8 @@
  * one all produced the identical, confidently-wrong sentence — while the
  * shell right above it was simultaneously showing the tab bar, which only
  * appears *because a project is open*. Whether a project is open is now
- * `projectOpen`, pushed down from the app's own source of truth, and it is
+ * `openProjectKey` (B-083/D-203: which project, not merely whether one is
+ * open), pushed down from the app's own source of truth, and it is
  * the only thing that can produce that message; a fetch that fails while a
  * project is genuinely open says so instead, with the real backend error and
  * a Retry. Recovery from a transient failure is automatic (the store's retry
@@ -59,7 +60,7 @@ const INSPECTOR_MAX_WIDTH = 420;
 
 export function EditorTab() {
   const load = useEditorTimelineStore((s) => s.load);
-  const projectOpen = useEditorTimelineStore((s) => s.projectOpen);
+  const projectOpen = useEditorTimelineStore((s) => s.openProjectKey !== null);
   const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
@@ -79,7 +80,7 @@ export function EditorTab() {
   // a focus-triggered refetch that fails can no longer clobber good state.
   useEffect(() => {
     const onFocus = () => {
-      if (useEditorTimelineStore.getState().projectOpen) void load();
+      if (useEditorTimelineStore.getState().openProjectKey !== null) void load();
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);

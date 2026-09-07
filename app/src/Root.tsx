@@ -7,7 +7,7 @@ import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
-import { useSessionStore } from './store/useSessionStore';
+import { selectProjectKey, useSessionStore } from './store/useSessionStore';
 
 /**
  * `Root` — the app's composition root component (D-039), and *only* that.
@@ -41,9 +41,23 @@ import { useSessionStore } from './store/useSessionStore';
  * right place to bridge them, not a cross-package import in either direction.
  * B-034/D-112 turned that bridge from "fire a fetch and hope" into handing the
  * store the signal itself — see the effect's own comment below.
+ *
+ * B-083/D-203 — that signal is now the open project's **identity**
+ * (`selectProjectKey`), not a "is one open" boolean, and every store that
+ * caches per-project state gets it from here: the Edit tab's timeline, the
+ * Motion tab's manifest, and the media pool. A boolean cannot see a switch
+ * from project A straight to project B, which is exactly what
+ * `open_project`/`new_project` do — so each of those stores silently served
+ * the outgoing project's state for the rest of the session.
  */
 export function Root() {
   const projectOpen = useSessionStore((s) => !!s.projectPath || !!s.projectName);
+  // B-083/D-203 — *which* project is open, not merely whether one is. Every
+  // bridge below that hands per-project state to a tab keys off this, because
+  // `open_project`/`new_project` (GUI and MCP alike) swap one project for
+  // another without ever passing through "closed" — a transition the boolean
+  // above cannot see at all.
+  const projectKey = useSessionStore(selectProjectKey);
   const activeTab = useActiveTab();
 
   // D-093: tab switches are the cheapest, highest-signal "what is the owner
@@ -67,15 +81,22 @@ export function Root() {
   // it never proved the race it was guarding, and which by construction could
   // only ever paper over one failure at one fixed delay.
   //
-  // `projectOpen` is now handed to the store as state, not used as a trigger
-  // to fire a fetch and hope. The store owns everything downstream of that:
-  // when to fetch, how many times to retry, what to show while it's trying,
-  // and — the part that actually mattered — the fact that a *failed fetch is
-  // not evidence that no project is open*. `setProjectOpen` is idempotent, so
-  // this effect re-running with an unchanged value costs nothing.
+  // The open project is now handed to the store as state, not used as a
+  // trigger to fire a fetch and hope. The store owns everything downstream of
+  // that: when to fetch, how many times to retry, what to show while it's
+  // trying, and — the part that actually mattered — the fact that a *failed
+  // fetch is not evidence that no project is open*. `setOpenProject` is
+  // idempotent per key, so this effect re-running with an unchanged value
+  // costs nothing.
+  //
+  // B-083/D-203 — what's handed over is the project's identity, not a
+  // boolean. `open_project`/`new_project` switch projects in place, so the
+  // boolean this used to pass stayed `true` across the switch and the Edit tab
+  // kept serving (and letting the MCP layer edit) the *previous* project's
+  // timeline, silently, for the rest of the session.
   useEffect(() => {
-    useEditorTimelineStore.getState().setProjectOpen(projectOpen);
-  }, [projectOpen]);
+    useEditorTimelineStore.getState().setOpenProject(projectKey);
+  }, [projectKey]);
 
   // B-058/D-150 — the same bridge for the Motion tab, which never had one: it
   // mounts at boot like every other tab (see this file's B-007 note), read its
@@ -84,16 +105,30 @@ export function Root() {
   // session. Its only escape was a window `focus` event, which opening a
   // project from the in-window launcher never produces.
   //
-  // The signal is deliberately narrower than `projectOpen` above: Motion's
+  // The signal is deliberately narrower than `projectKey` above: Motion's
   // manifest is a sidecar inside the project directory
   // (`<project>.chroma/motion/manifest.json`), so an in-memory "Untitled"
   // loose-clip session — `projectName` set, `projectPath` null — genuinely has
   // nowhere to read or write, and the tab should say so rather than fail a call
-  // it was never able to make.
-  const motionProjectOpen = useSessionStore((s) => !!s.projectPath);
+  // it was never able to make. So this passes the project *path* itself, which
+  // is both the narrower signal and (B-083/D-203) Motion's own project
+  // identity: a switch from project A to project B re-reads B's manifest
+  // instead of leaving A's in the editor, where a save would have written it
+  // straight into B's sidecar.
+  const motionProjectPath = useSessionStore((s) => s.projectPath);
   useEffect(() => {
-    useMotionProjectStore.getState().setProjectOpen(motionProjectOpen);
-  }, [motionProjectOpen]);
+    useMotionProjectStore.getState().setOpenProject(motionProjectPath);
+  }, [motionProjectPath]);
+
+  // B-083/D-203 — the same bridge for the media pool, whose items are what
+  // `editor_add_clip` resolves a `mediaId`/`sourcePath` against (B-084). It
+  // had no bridge here at all: `SourcesPanel` fired the initial `refresh()`
+  // from its own effect, keyed on the "a project is open" boolean, so a
+  // project switch never re-read it and the Sources panel — and every MCP
+  // caller reading through it — stayed on the outgoing project's media.
+  useEffect(() => {
+    useMediaPoolStore.getState().setOpenProject(projectKey);
+  }, [projectKey]);
 
   // D-071: `chroma_timeline_set` (the Edit tab's own save path, fired on
   // every drag/trim/split) never runs `open_manifest`, so nothing else

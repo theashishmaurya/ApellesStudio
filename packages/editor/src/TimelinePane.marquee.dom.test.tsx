@@ -148,7 +148,7 @@ beforeEach(async () => {
 
   actSync(() => useEditorTimelineStore.setState({
     timeline: buildFixture(),
-    projectOpen: true,
+    openProjectKey: '/projects/marquee-fixture.chroma',
     status: 'ready',
     error: null,
     playhead: 0,
@@ -177,7 +177,7 @@ afterEach(() => {
   restoreOffsets();
   actSync(() => useEditorTimelineStore.setState({
     timeline: null,
-    projectOpen: false,
+    openProjectKey: null,
     status: 'idle',
     selection: [],
     selectedGap: null,

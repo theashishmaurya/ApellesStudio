@@ -17951,5 +17951,86 @@ the reason the test drives the real component and asserts real rendered output
 rather than checking that a command was called. Full trail: B-088 in
 `docs/BUGS.md`.
 
+## D-203 — B-083: the composition root tells every per-project store *which* project is open, not merely *whether* one is
+
+**Context.** B-083, found live: `open_project("A")` while project B was open
+returned A's own correct data, and a `get_timeline` immediately after still
+served B's timeline — silently, for the rest of the session. The same held for
+`new_project`. No error, no stale-state warning; D-020's "one shared state"
+guarantee quietly broken for the Edit tab.
+
+The obvious reading — "the `open_project` handler forgot to call the Edit tab's
+`load()`" — is one level too shallow. The real fault is in the *signal*: the
+composition root (`app/src/Root.tsx`) pushed `setProjectOpen(!!projectPath ||
+!!projectName)` into `@chroma/editor`'s timeline store, a **boolean**, and that
+setter is idempotent (B-034/D-112, deliberately — the effect re-runs constantly).
+`open_project`/`new_project` swap one project for another *without ever passing
+through "closed"*, so both sides of the switch are `true` and the transition was
+invisible to the bridge. Nothing the MCP handler could have done would have fixed
+that for the GUI path or for the next caller; the information wasn't in the
+signal.
+
+Auditing for the same shape found it twice more, as expected of a structural
+fault rather than a one-off: `@chroma/motion`'s `motionProjectStore` took the
+identical boolean (its manifest is a per-project sidecar, so a switch left the
+tab editing project A's manifest, and a save would have written it into project
+B's own sidecar), and `@chroma/bridge`'s media pool had no root bridge at all —
+`SourcesPanel` fired the only `refresh()` from its own effect keyed on the same
+boolean, so `items`, the array `editor_add_clip` resolves against (B-084),
+stayed on the outgoing project's media.
+
+**Options.**
+
+1. **Call `useEditorTimelineStore.getState().load()` from `useChromaControl`'s
+   `open_project`/`new_project` handlers** (B-083's own proposed shape). Fixes
+   the reported symptom and nothing else: the GUI path and every future caller
+   stay broken; the store keeps project A's playhead, selection (clip ids that
+   don't exist in B), timeline list and pending save while B loads; it
+   re-introduces the "fire a fetch and hope" pattern D-112 deliberately removed
+   (no retry ladder, no honest loading state); and it puts an `@chroma/editor`
+   import back into the Colorist control hook that D-183 had just removed on
+   purpose.
+2. **A "project generation" counter on `useSessionStore`,** bumped on every
+   open/new/close. Correct for the "re-open the same project" case too, but
+   `_hydrateOpenDto` is shared with `addShots`/`removeShot`/`relink` — every
+   "+" on the Colorist strip would bump it and wipe the Edit tab's selection
+   and playhead. Getting that right means hand-auditing every call site
+   forever.
+3. **Make the identity of the open project the signal** (chosen).
+
+**Choice.** `useSessionStore` gains `selectProjectKey` — the `.chroma` path, an
+`untitled:<name>` marker for an in-memory loose-clip session, `null` for none.
+`Root.tsx` hands it to `useEditorTimelineStore.setOpenProject(key)` and
+`useMediaPoolStore.setOpenProject(key)`, and hands the project *path* to
+`useMotionProjectStore.setOpenProject(path)` (still the narrower signal
+B-058/D-150 chose on purpose: an Untitled session has no directory to hold a
+manifest sidecar). Each store keeps its existing "one input, idempotent" shape —
+idempotent *per key* now, so a re-run with an unchanged value still costs
+nothing, and a *changed* key runs the store's own existing open path: drop
+everything belonging to the outgoing project, then load, retry ladder and all.
+No second reload path anywhere. `projectOpen` is not kept as a separate stored
+field in either tab store — consumers read `openProjectKey !== null` — so the
+boolean and the identity cannot drift apart.
+
+**Why.** The bug is that a boolean cannot represent a switch, so the fix is to
+stop using a boolean — not to bolt a second notification path onto the one
+caller that happened to expose it. This also gives the whole app one rule with
+one home: *per-project client state is invalidated at the composition root, by
+project identity*. Three stores follow it today; the next one that caches
+something per-project has an obvious place to plug in, instead of inventing a
+fourth mechanism and a fourth version of this bug.
+
+**Fallout worth knowing:** (a) the reload lands one React effect *after*
+`open_project`'s MCP response, so an `editor_*` call fired immediately after a
+switch can catch the store mid-reload — `useEditorControl`'s `noTimeline` is
+status-aware now and says "still loading, retry" instead of the flatly wrong "no
+timeline — open a project first", and both MCP docstrings say so; (b) a
+debounced timeline save still pending for the outgoing project is cancelled on a
+switch, because by the time the store hears about it `chroma_timeline_set` would
+land on the *incoming* project — that makes B-080's race deterministic on this
+axis (drop, never mis-write) but does not close it, and B-080 now records that;
+(c) `editor_get_state` reports `openProject`, so "which project does the Edit tab
+think it's on" is answerable in one call.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

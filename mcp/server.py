@@ -692,10 +692,12 @@ def editor_get_capabilities() -> str:
 
 @mcp.tool()
 def editor_get_state() -> str:
-    """The Edit tab's own top-level state: whether a project is open, load
-    status, playhead position, whether it is playing, and whether a timeline
-    exists at all. Cheap, read-only — call before anything else if you don't
-    already know a project is open."""
+    """The Edit tab's own top-level state: whether a project is open AND
+    which one (`openProject`, its `.chroma` path — B-083), load status,
+    playhead position, whether it is playing, and whether a timeline exists at
+    all. Cheap, read-only — call before anything else if you don't already
+    know a project is open, or to confirm which project the Edit tab is
+    actually on after an `open_project`/`new_project` switch."""
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)
@@ -1469,7 +1471,12 @@ def open_project(name_or_path: str) -> str:
     path. Loads its shots into the session, restores each shot's grade, and puts
     the app in the editor. A shot whose source file is missing is flagged "media
     offline" — not fatal; relink it in the app. Returns {opened: {name, path},
-    shots}."""
+    shots}.
+
+    Switches the WHOLE app, every tab: the Edit tab reloads this project's own
+    timeline and media pool, and the Motion tab its manifest (B-083). Their
+    reload is a beat behind this call's return — if an `editor_*` op right
+    after this says the timeline is still loading, retry it once."""
     import json
 
     arg = name_or_path
@@ -1482,7 +1489,11 @@ def new_project(name: str, media_paths: list[str] | None = None) -> str:
     """Create a new `<name>.chroma` project in the projects folder from the given
     media (absolute paths; may be empty and added later), then open it in the
     editor. Media is referenced in place, never copied. Returns {created:
-    {name, path}}."""
+    {name, path}}.
+
+    Like open_project, this switches every tab onto the new project — the Edit
+    tab's timeline/media pool and the Motion tab's manifest all reload for it
+    (B-083), a beat behind this call's return."""
     import json
 
     return json.dumps(

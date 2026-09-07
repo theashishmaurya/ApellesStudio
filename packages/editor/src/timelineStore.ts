@@ -37,8 +37,8 @@
  * it's a rare, deliberate action, not a rapid edit stream.
  *
  * B-034/D-112 — **readiness is a real state machine now, and it has exactly
- * one input.** `projectOpen` is pushed in from the composition root
- * (`setProjectOpen`, the app's own source of truth); `status`
+ * one input.** `openProjectKey` is pushed in from the composition root
+ * (`setOpenProject`, the app's own source of truth); `status`
  * (`idle`/`loading`/`ready`/`error`) says only what the *fetch* is doing.
  * Nothing in this package infers "no project is open" from a failed fetch any
  * more — that conflation is what let five separate, genuinely different
@@ -47,9 +47,19 @@
  * last. Supporting guarantees, all of them things the previous shape lacked:
  * `load()` carries a monotonic token so a slow stale failure can never
  * overwrite a newer success; the fetch has a timeout so a dropped IPC
- * response can't strand the tab forever; and `setProjectOpen(true)` runs a
+ * response can't strand the tab forever; and opening a project runs a
  * short bounded retry ladder (superseding D-085's unexplained 500ms one-shot)
  * that gives up into a real, honest error state rather than a lie.
+ *
+ * B-083/D-203 — **that one input carries the project's identity, not just a
+ * boolean.** It used to be `setProjectOpen(open: boolean)`, which cannot tell
+ * "no project → project A" apart from "project A → project B" — and the
+ * `open_project`/`new_project` paths (GUI and MCP alike) switch projects
+ * without ever closing the first. So this store never heard that the active
+ * project had changed underneath it and kept serving — and letting the MCP
+ * layer edit — project A's timeline for the rest of the session. A changed
+ * key is now a real switch: everything here belongs to the outgoing project,
+ * so it is all dropped and re-read.
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -69,7 +79,7 @@ const SAVE_DEBOUNCE_MS = 400;
  *  past this is a lost request, not a slow one. */
 const LOAD_TIMEOUT_MS = 8000;
 
-/** B-034/D-112 — bounded automatic recovery after `setProjectOpen(true)`.
+/** B-034/D-112 — bounded automatic recovery after a project is opened.
  *  Replaces D-085's single 500ms one-shot retry (which, by its own admission,
  *  never proved the race it was guarding). Backoff is deliberately short and
  *  finite: a genuinely broken backend should end up on a real error screen
@@ -114,12 +124,23 @@ export type TimelineLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 interface EditorTimelineState {
   timeline: Timeline | null;
-  /** The app-level "a project is genuinely open" signal, pushed down from the
-   *  composition root (`app/src/main.tsx` → `setProjectOpen`). This store must
-   *  never *infer* it from a failed fetch — see `TimelineLoadStatus`. The
-   *  dependency direction stays app → tabs (D-039): `@chroma/editor` is told,
-   *  it never reaches up into `useSessionStore` to ask. */
-  projectOpen: boolean;
+  /** **Which** project is open — the composition root's own identity key for
+   *  it (`app/src/store/useSessionStore.ts`'s `selectProjectKey`: the `.chroma`
+   *  directory path, or an `untitled:` marker for an in-memory session) —
+   *  and `null` when none is. Pushed down from the composition root
+   *  (`app/src/Root.tsx` → `setOpenProject`). This store must never *infer* it
+   *  from a failed fetch — see `TimelineLoadStatus`. The dependency direction
+   *  stays app → tabs (D-039): `@chroma/editor` is told, it never reaches up
+   *  into `useSessionStore` to ask.
+   *
+   *  B-083/D-203 — this was a bare `projectOpen: boolean` until 2026-09-07,
+   *  which cannot tell "no project → project A" apart from "project A →
+   *  project B". Both leave it `true`, and `open_project`/`new_project` switch
+   *  projects without ever closing the first, so this store stayed on project
+   *  A's timeline for the rest of the session with no error of any kind.
+   *  Consumers wanting the plain boolean read `openProjectKey !== null`; it is
+   *  deliberately NOT also kept as its own field, so the two cannot drift. */
+  openProjectKey: string | null;
   /** Where the active timeline's fetch actually stands. */
   status: TimelineLoadStatus;
   /** The real backend error behind `status === 'error'`; null otherwise. */
@@ -152,9 +173,11 @@ interface EditorTimelineState {
    *  whenever the thing being re-run is a backend read of the timeline. */
   savedVersion: number;
 
-  /** The one signal that starts and stops this store's work. Idempotent —
-   *  the composition root's effect may re-run with an unchanged value. */
-  setProjectOpen: (open: boolean) => void;
+  /** The one signal that starts and stops this store's work: the key of the
+   *  project that is open now, or `null` for none. Idempotent *per key* — the
+   *  composition root's effect may re-run with an unchanged value — but a
+   *  DIFFERENT key is a real project switch and reloads everything (B-083). */
+  setOpenProject: (key: string | null) => void;
   load: () => Promise<void>;
   setPlayhead: (frame: number) => void;
   setPlaying: (playing: boolean) => void;
@@ -193,9 +216,10 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let loadToken = 0;
 
 /** B-034/D-112 — token identifying the current open-project "generation".
- *  Bumped by every `setProjectOpen` transition so a retry ladder queued for a
+ *  Bumped by every `setOpenProject` transition so a retry ladder queued for a
  *  previous project (or for a project since closed) cannot fire into a newer
- *  one. */
+ *  one — including, since B-083/D-203, a switch straight from one open project
+ *  to another. */
 let openGeneration = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -229,7 +253,7 @@ function invokeWithTimeout<T>(cmd: string, timeoutMs: number): Promise<T> {
 
 export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => ({
   timeline: null,
-  projectOpen: false,
+  openProjectKey: null,
   status: 'idle',
   error: null,
   playhead: 0,
@@ -239,28 +263,41 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   selectedGap: null,
   savedVersion: 0,
 
-  setProjectOpen: (open) => {
-    if (get().projectOpen === open) return;
+  setOpenProject: (key) => {
+    if (get().openProjectKey === key) return;
     cancelRetries();
     const generation = ++openGeneration;
     loadToken += 1; // orphan any fetch still in flight from the old generation
 
-    if (!open) {
-      set({
-        projectOpen: false,
-        timeline: null,
-        status: 'idle',
-        error: null,
-        playing: false,
-        playhead: 0,
-        timelines: [],
-        selection: [],
-        selectedGap: null,
-      });
-      return;
+    // B-083 — every other field in this store describes the *outgoing*
+    // project (its timeline, its timeline list, its selection, a playhead
+    // measured against its own duration), so a switch drops all of it rather
+    // than leaving project A's state on screen under project B's name. That
+    // includes the pending debounced save: `_flushSave` reads `timeline` at
+    // FIRE time, and the backend already points at the incoming project by
+    // the time we hear about the switch, so letting it fire would write A's
+    // timeline into B. Cancelling it means an edit made in the last
+    // `SAVE_DEBOUNCE_MS` before a project switch is dropped — the same race
+    // B-080 already tracks for a *timeline* switch; dropping it is the safe
+    // half of that trade, and closing it properly (flush before the switch
+    // proceeds) is B-080's own scoped fix, not this one's.
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
     }
+    set({
+      openProjectKey: key,
+      timeline: null,
+      status: key === null ? 'idle' : 'loading',
+      error: null,
+      playing: false,
+      playhead: 0,
+      timelines: [],
+      selection: [],
+      selectedGap: null,
+    });
 
-    set({ projectOpen: true, status: 'loading', error: null });
+    if (key === null) return;
 
     // Attempt, then re-attempt on a short bounded ladder while the fetch is
     // still failing. Every rung re-checks the generation, so closing the
@@ -271,7 +308,14 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
         .then(() => {
           if (generation !== openGeneration) return;
           const s = get();
-          if (s.status === 'ready') return;
+          if (s.status === 'ready') {
+            // B-083 — the switcher's tab strip is per-project too, and
+            // `TimelineSwitcher` only fetches it once on its own mount (it
+            // stays mounted across a project switch, B-007), so the list has
+            // to be re-read from here or it stays empty after a switch.
+            void get().loadList();
+            return;
+          }
           const delay = OPEN_RETRY_DELAYS_MS[rung];
           if (delay === undefined) return; // ladder exhausted — the error state stands
           retryTimer = setTimeout(() => {

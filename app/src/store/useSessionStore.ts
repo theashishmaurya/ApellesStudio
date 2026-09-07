@@ -332,6 +332,25 @@ function applyLoaded(
   useChromaStore.getState().bumpFrameNonce();
 }
 
+/** **The** identity of whatever session is open right now — the `.chroma`
+ *  directory path for a real project, an `untitled:` marker for an in-memory
+ *  loose-clip session, and `null` when the launcher is showing.
+ *
+ *  B-083/D-203 — the composition root (`Root.tsx`) hands this to every store
+ *  that caches per-project state (`@chroma/editor`'s timeline, `@chroma/motion`'s
+ *  manifest, `@chroma/bridge`'s media pool), so each of them can tell "no
+ *  project → project A" apart from "project A → project B". The bare boolean
+ *  those bridges used before could not, and `open_project`/`new_project`
+ *  (GUI and MCP alike) switch projects without ever closing the first — which
+ *  is exactly how the Edit tab spent a whole session serving, and letting an
+ *  agent edit, the *previous* project's timeline.
+ *
+ *  A plain selector rather than a stored field: it is derived from
+ *  `projectPath`/`projectName` with no state of its own, so there is nothing
+ *  to keep in sync. */
+export const selectProjectKey = (s: SessionState): string | null =>
+  s.projectPath ?? (s.projectName ? `untitled:${s.projectName}` : null);
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   shots: [],
   activeIndex: 0,

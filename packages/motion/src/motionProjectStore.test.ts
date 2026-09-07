@@ -36,13 +36,18 @@ function deferred<T>() {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** Two real project paths (B-083/D-203 — this store's one input is the open
+ *  project's own `.chroma` path, not a boolean). */
+const PROJECT_A = '/projects/a.chroma';
+const PROJECT_B = '/projects/b.chroma';
+
 const manifest = { scenes: [{ kind: 'text', text: 'hi' }] };
 
 beforeEach(() => {
   invokeMock.mockReset();
-  // `setProjectOpen(false)` is the real reset path — use it rather than poking
+  // `setOpenProject(null)` is the real reset path — use it rather than poking
   // state directly.
-  useMotionProjectStore.getState().setProjectOpen(false);
+  useMotionProjectStore.getState().setOpenProject(null);
 });
 
 describe('the boot-time read that caused B-058', () => {
@@ -64,7 +69,7 @@ describe('the boot-time read that caused B-058', () => {
     // which opening a project from the in-window launcher never produces.
     invokeMock.mockResolvedValue(manifest);
 
-    useMotionProjectStore.getState().setProjectOpen(true);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
 
     const s = useMotionProjectStore.getState();
@@ -76,7 +81,7 @@ describe('the boot-time read that caused B-058', () => {
   it('a project with no saved manifest yet is ready, not an error', async () => {
     invokeMock.mockResolvedValue(null);
 
-    useMotionProjectStore.getState().setProjectOpen(true);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
 
     // `null` = nothing saved; the hook falls back to the engine's sample.
@@ -88,14 +93,14 @@ describe('a failed read is never evidence about the project (B-034/D-112, same f
   it('a read that fails while a project is open reports an error, not "no project open"', async () => {
     invokeMock.mockRejectedValue('parse /p.chroma/motion/manifest.json: EOF while parsing a value');
 
-    useMotionProjectStore.getState().setProjectOpen(true);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('error'));
 
     const s = useMotionProjectStore.getState();
     // The whole point: the read failed and the store still knows perfectly well
     // that a project is open, so `MotionTab` (which renders "No project open"
-    // off `projectOpen` alone) cannot produce that message from this.
-    expect(s.projectOpen).toBe(true);
+    // off `openProjectPath` alone) cannot produce that message from this.
+    expect(s.openProjectPath).toBe(PROJECT_A);
     expect(s.error).toContain('EOF while parsing');
   });
 
@@ -105,22 +110,22 @@ describe('a failed read is never evidence about the project (B-034/D-112, same f
     // becoming the empty state.
     invokeMock.mockRejectedValue(NO_PROJECT);
 
-    useMotionProjectStore.getState().setProjectOpen(true);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('error'));
 
     const s = useMotionProjectStore.getState();
-    expect(s.projectOpen).toBe(true);
+    expect(s.openProjectPath).toBe(PROJECT_A);
     expect(s.error).toContain('no project open');
   });
 
-  it('closing the project is the one thing that clears projectOpen', async () => {
+  it('closing the project is the one thing that clears the open project', async () => {
     invokeMock.mockResolvedValue(manifest);
-    useMotionProjectStore.getState().setProjectOpen(true);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
     await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
 
-    useMotionProjectStore.getState().setProjectOpen(false);
+    useMotionProjectStore.getState().setOpenProject(null);
     const s = useMotionProjectStore.getState();
-    expect(s.projectOpen).toBe(false);
+    expect(s.openProjectPath).toBeNull();
     expect(s.status).toBe('idle');
     // and the closed project's manifest is gone from the tab, rather than left
     // on screen editable against a project that is no longer open.
@@ -134,7 +139,7 @@ describe('concurrent load ordering', () => {
     const fresh = deferred<unknown>();
     invokeMock.mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise);
 
-    useMotionProjectStore.setState({ projectOpen: true });
+    useMotionProjectStore.setState({ openProjectPath: PROJECT_A });
     const store = useMotionProjectStore.getState();
     const staleLoad = store.load();
     const freshLoad = store.load();
@@ -157,20 +162,20 @@ describe('concurrent load ordering', () => {
     const old = deferred<unknown>();
     invokeMock.mockReturnValueOnce(old.promise).mockResolvedValue(manifest);
 
-    useMotionProjectStore.getState().setProjectOpen(true); // project A — read hangs
-    useMotionProjectStore.getState().setProjectOpen(false); // "‹ Projects"
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A); // project A — read hangs
+    useMotionProjectStore.getState().setOpenProject(null); // "‹ Projects"
     old.resolve({ scenes: [{ kind: 'text', text: 'project A' }] });
     await flush();
 
     const s = useMotionProjectStore.getState();
-    expect(s.projectOpen).toBe(false);
+    expect(s.openProjectPath).toBeNull();
     expect(s.loaded).toBeNull();
     expect(s.status).toBe('idle');
   });
 
   it('a fresh read bumps the generation so the editor re-seeds', async () => {
     invokeMock.mockResolvedValue(manifest);
-    useMotionProjectStore.setState({ projectOpen: true });
+    useMotionProjectStore.setState({ openProjectPath: PROJECT_A });
 
     await useMotionProjectStore.getState().load();
     const first = useMotionProjectStore.getState().loaded?.generation;
@@ -179,5 +184,45 @@ describe('concurrent load ordering', () => {
 
     expect(first).toBeDefined();
     expect(second).toBe((first as number) + 1);
+  });
+});
+
+// B-083/D-203 — found on the Edit tab (its timeline store had the identical
+// "one boolean input" shape), audited here and confirmed present: this store
+// was told only *whether* a project was open, and `open_project`/`new_project`
+// swap one project for another without ever passing through closed. The
+// manifest is a per-project sidecar, so the tab kept editing the outgoing
+// project's manifest — and a save would have written it into the incoming
+// project's own sidecar.
+describe('switching projects (B-083 / D-202)', () => {
+  it('opening a DIFFERENT project re-reads THAT project’s manifest', async () => {
+    const manifestA = { scenes: [{ kind: 'text', text: 'A' }] };
+    const manifestB = { scenes: [{ kind: 'text', text: 'B' }] };
+    invokeMock.mockResolvedValue(manifestA);
+
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
+    expect(useMotionProjectStore.getState().loaded?.manifest).toEqual(manifestA);
+
+    invokeMock.mockResolvedValue(manifestB);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_B);
+    await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
+
+    const s = useMotionProjectStore.getState();
+    expect(s.openProjectPath).toBe(PROJECT_B);
+    expect(s.loaded?.manifest).toEqual(manifestB);
+  });
+
+  it('drops the outgoing project’s manifest immediately, rather than leaving it editable', async () => {
+    invokeMock.mockResolvedValue(manifest);
+    useMotionProjectStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMotionProjectStore.getState().status).toBe('ready'));
+
+    invokeMock.mockReturnValue(new Promise(() => {})); // B's read hangs
+    useMotionProjectStore.getState().setOpenProject(PROJECT_B);
+
+    const s = useMotionProjectStore.getState();
+    expect(s.loaded).toBeNull();
+    expect(s.status).toBe('loading');
   });
 });

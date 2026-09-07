@@ -125,6 +125,12 @@ function makeFakeProject(): FakeProject {
 
 let fakeProject: FakeProject = makeFakeProject();
 
+/** B-083/D-203 — the store's one input is the open project's identity key
+ *  (`app/src/store/useSessionStore.ts`'s `selectProjectKey`, a `.chroma` path
+ *  in the real app). The harness has exactly one fake project, so any stable
+ *  non-null string is the faithful stand-in. */
+const HARNESS_PROJECT_KEY = '/harness/fake.chroma';
+
 /** A stand-in for `@tauri-apps/api/core`'s `invoke` — the real signature is
  *  `window.__TAURI_INTERNALS__.invoke(cmd, args)`, so this stubs exactly
  *  that global rather than the module (this page never runs inside Tauri,
@@ -277,7 +283,7 @@ function seed(timeline: Timeline): void {
   fakeProject.timelines.set(fakeProject.activeId, timeline);
   useEditorTimelineStore.setState({
     timeline,
-    projectOpen: true,
+    openProjectKey: HARNESS_PROJECT_KEY,
     status: 'ready',
     error: null,
     playhead: 0,
@@ -326,12 +332,16 @@ function render(): void {
 installInvokeStub();
 seed(defaultFixture());
 // D-195, Task 3 — `TimelineSwitcher` fetches its own tab list via `loadList()`
-// on mount; `setProjectOpen(true)` is the same real signal `app/src/main.tsx`
-// sends on a real project open, and drives `load()` (`chroma_timeline_get`)
-// the same way. Both now resolve against `fakeProject`, not the `seed()` call
-// above alone — `seed()` still sets the store directly too so the pane paints
-// immediately on the very first render, before either async call resolves.
-useEditorTimelineStore.getState().setProjectOpen(true);
+// on mount, against `fakeProject` rather than the `seed()` call above alone.
+// `setOpenProject(<key>)` is the same real signal `app/src/Root.tsx` sends on a
+// real project open (B-083/D-203 — the project's identity, not a boolean). It
+// is deliberately a **no-op here**: `seed()` has already put the store in the
+// open state with real content, so the pane paints on the very first render
+// with no async round trip, and this call only pins the invariant that the
+// harness leaves the store in exactly the shape the real app's bridge would.
+// (Switch the harness to a second fake project one day and this is the call
+// that would do the real work.)
+useEditorTimelineStore.getState().setOpenProject(HARNESS_PROJECT_KEY);
 render();
 
 // CDP-reachable control surface — see this file's own header for the

@@ -153,7 +153,7 @@ function defaultFixture(): Manifest {
 function seed(manifest: Manifest): void {
   savedManifest = manifest;
   useMotionProjectStore.setState({
-    projectOpen: true,
+    openProjectPath: '/harness/fake.chroma',
     status: 'ready',
     error: null,
     loaded: { generation: Date.now(), manifest },

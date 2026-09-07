@@ -28,6 +28,21 @@ One or two lines per session. Detail lives in the decision it references.
   independent copy, never re-read from the pool, only its `media_id`
   back-link goes stale — now reported in the tool's `stillReferencedBy`
   field. `docs/notes/mcp-tool-coverage.md` updated.
+
+- **2026-09-07** — **Fixed B-083 (D-203): switching projects left the Edit
+  tab on the previous project's timeline.** The composition root told each
+  tab only *whether* a project was open — a boolean, and both sides of an
+  `open_project`/`new_project` switch are `true`, so the switch was
+  invisible to the bridge. Every per-project store now takes the open
+  project's **identity** (`selectProjectKey`) as its one input: a changed
+  key drops the outgoing project's state and re-runs the store's existing
+  open path. The same gap was audited and fixed in two more stores it was
+  equally open in — the Motion tab's manifest (a per-project sidecar a save
+  would have written into the wrong project) and the media pool that
+  `editor_add_clip` resolves against. `npm test --workspaces` green
+  (`@chroma/editor` 499/499, `@chroma/motion` 441/441, `@chroma/bridge`
+  5/5 — that package gained a test setup for this).
+
 - **2026-09-07** — **Filed B-091** (`editor_export`'s own MCP response
   intermittently fails outright for a large-but-not-huge payload, instead
   of the graceful size-limit truncation the same size class usually gets —

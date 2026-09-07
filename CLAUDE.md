@@ -34,6 +34,18 @@ session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
 - **No `TODO` / `FIXME` in committed code** without a matching `docs/04-roadmap.md` line.
 - **Every commit builds, is atomic, one concern, messaged with the why + the `D-NNN`.**
 - If something is structurally wrong, fix the structure — don't monkey-patch around it.
+- **When a tool is broken, fix the tool — don't route around it** (owner, 2026-09-07,
+  said once so it's standing, not a per-incident ask). Hitting a broken/crashing/wrong
+  tool (an MCP tool, a script in this repo or a sibling repo, a CLI flag that no longer
+  exists, etc.) is not a cue to reach for a workaround (a raw shell command standing in
+  for the tool, skipping the check, hand-rolling the thing the tool was supposed to do) —
+  it's the moment to open the tool, find the real root cause, and fix it properly, the
+  same standard as everything else in this file. Only skip the real fix when the user has
+  explicitly said to, for this specific case. A workaround used anyway (time pressure,
+  the fix is out of scope for right now) gets flagged to the user as a workaround, not
+  presented as done. This mirrors "no shortcuts" above but is called out on its own since
+  the failure mode is specifically reaching for a workaround under time pressure instead
+  of diagnosing.
 
 ---
 

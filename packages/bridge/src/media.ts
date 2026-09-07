@@ -13,6 +13,9 @@
  * from a folder only *implied* by an item's `folder` string), and "add to
  * grading" (D-046 — create a `ProjectShot` referencing a pool item; distinct
  * from a plain import, which stays pool-only).
+ * Which project's pool it holds is pushed in from the composition root
+ * (`app/src/Root.tsx` → `setOpenProject`, B-083/D-203), the same one-input
+ * shape both tab stores use; the panel no longer fetches it itself.
  * What it does NOT do: no client-side search index (the panel filters `items`
  * in memory). Thumbnail generation (D-059) happens Rust-side at import time —
  * this store just carries whatever `thumb` `chroma_media_list`/`_import`
@@ -70,7 +73,21 @@ interface MediaPoolState {
   folders: string[];
   loading: boolean;
   error: string | null;
+  /** **Which** project this pool belongs to — the composition root's own
+   *  identity key for it (`app/src/store/useSessionStore.ts`'s
+   *  `selectProjectKey`), `null` when none is open (B-083/D-203). */
+  openProjectKey: string | null;
 
+  /** The one signal that says which project's pool this is. Idempotent per
+   *  key; a DIFFERENT key drops everything cached here (it is the outgoing
+   *  project's media) and re-reads.
+   *
+   *  B-083/D-203 — the Sources panel used to fire the initial `refresh()`
+   *  itself, off a bare "is a project open" boolean, which never changes when
+   *  one project is swapped for another. So after an `open_project`/
+   *  `new_project` switch this store still held project A's items — the array
+   *  `editor_add_clip` resolves `mediaId`/`sourcePath` against (B-084). */
+  setOpenProject: (key: string | null) => void;
   /** re-read the open project's full media pool (+ folder list) from Rust. */
   refresh: () => Promise<{ ok: boolean; error?: string }>;
   /** probe + add `paths` (referenced in place, never copied) to the open
@@ -106,23 +123,43 @@ interface MediaPoolState {
   // that store.
 }
 
-export const useMediaPoolStore = create<MediaPoolState>((set) => ({
+/** B-083/D-203 — monotonic `refresh()` token. A project switch fires a refresh
+ *  while an earlier one (the Sources panel's own, an import's fallback) may
+ *  still be in flight; without this the slower call wins by writing last, and
+ *  the outgoing project's pool lands on top of the incoming project's. Same
+ *  guard, for the same reason, as `@chroma/editor`'s `timelineStore` `load()`
+ *  (B-034/D-112). */
+let refreshToken = 0;
+
+export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
   items: [],
   folders: [],
   loading: false,
   error: null,
+  openProjectKey: null,
+
+  setOpenProject: (key) => {
+    if (get().openProjectKey === key) return;
+    refreshToken += 1; // orphan any read still in flight from the old project
+    set({ openProjectKey: key, items: [], folders: [], error: null, loading: key !== null });
+    if (key === null) return;
+    void get().refresh();
+  },
 
   refresh: async () => {
+    const token = ++refreshToken;
     set({ loading: true, error: null });
     try {
       const [items, folders] = await Promise.all([
         invoke<MediaItem[]>('chroma_media_list'),
         invoke<string[]>('chroma_media_folders'),
       ]);
+      if (token !== refreshToken) return { ok: true }; // superseded — a newer read owns the pool
       set({ items, folders, loading: false });
       return { ok: true };
     } catch (e) {
       const error = String(e);
+      if (token !== refreshToken) return { ok: false, error };
       set({ loading: false, error });
       return { ok: false, error };
     }

@@ -190,7 +190,7 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   }, [m.manifest]);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
-  // signal (`motionProjectStore.projectOpen`) and nothing else, so it can no
+  // signal (`motionProjectStore.openProjectPath`) and nothing else, so it can no
   // longer appear while a project genuinely is open. There is deliberately no
   // Retry here any more: there was never anything for it to retry: the fix is
   // to open (or save) a project, which flips the signal on its own.

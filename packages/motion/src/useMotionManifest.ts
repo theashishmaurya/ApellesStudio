@@ -4,8 +4,9 @@
  *
  * The *editing* state is component-local (text, parse errors, dirty, save,
  * render) — nothing outside this tab needs it. **Readiness is not**: whether a
- * project is open comes from the app (`app/src/main.tsx` → `useMotionProject
- * Store.setProjectOpen`) and the tab is mounted from boot, so it lives in the
+ * project is open — and, since B-083/D-203, *which* one — comes from the app
+ * (`app/src/Root.tsx` → `useMotionProjectStore.setOpenProject`) and the tab is
+ * mounted from boot, so it lives in the
  * store. This hook seeds its editor text from whatever that store last read
  * (falling back to the engine's own sample manifest for a project with no
  * saved manifest yet), live-validates every edit (debounced) against
@@ -13,7 +14,7 @@
  * — and drives save/render through `manifestIO`.
  *
  * B-058: `loadState` is *derived* — `'no-project'` comes from the store's
- * `projectOpen` flag alone, never from a failed read. A read that fails while a
+ * `openProjectPath` alone, never from a failed read. A read that fails while a
  * project is genuinely open is `'error'`, with the real backend message.
  *
  * A parse/validation error never blinks the preview away: `manifest` only
@@ -99,7 +100,7 @@ export interface RenderOutcome {
 }
 
 export function useMotionManifest(onRendered?: (outputPath: string) => void) {
-  const projectOpen = useMotionProjectStore((s) => s.projectOpen);
+  const projectOpen = useMotionProjectStore((s) => s.openProjectPath !== null);
   const status = useMotionProjectStore((s) => s.status);
   const loadError = useMotionProjectStore((s) => s.error);
   const loaded = useMotionProjectStore((s) => s.loaded);
@@ -174,7 +175,7 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
   useEffect(() => {
     const onFocus = () => {
       const s = useMotionProjectStore.getState();
-      if (s.projectOpen && s.status === 'error') void s.load();
+      if (s.openProjectPath !== null && s.status === 'error') void s.load();
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
