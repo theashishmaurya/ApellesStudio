@@ -1051,5 +1051,19 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   reaching both the compositor and the audio mixer is exactly the kind of change
   that could have leaked into `image_processing.rs`, and did not.
 
+- **2026-09-07** — **Canvas click-to-select (D-202, fixing B-085)** · **zero
+  upstream-file edits.** All of the behaviour is in `packages/editor/*`
+  (`canvasPick.ts`, `useCanvasClipPick.ts`, `transformGeometry.ts`,
+  `useClipGeometry.ts`, `PreviewPane.tsx`, `TransformOverlay.tsx`). The only
+  file touched inside the fork is `app/src/harness-main.tsx` — a Chroma
+  addition (D-142's permanent pointer-gesture browser harness), not an upstream
+  RapidRAW file: its `chroma_timeline_clip_geometry` stub now resolves its real
+  track/clip arguments instead of returning one fixed answer, so two layers can
+  have genuinely different boxes to hit-test against. No new Tauri command and
+  no `generate_handler!` line: the fix reuses `chroma_timeline_clip_geometry`
+  and `chroma_timeline_composition_size` exactly as they are. Logged because
+  the *absence* of a backend change is the point — the note's own open question
+  had assumed a new per-layer-rect command was required, and it was not.
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

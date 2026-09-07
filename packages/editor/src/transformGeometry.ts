@@ -17,6 +17,13 @@
  * (see that command's Rust-side doc, `chroma::edit::ClipGeometry`). A
  * `ContentBox` (`@chroma/player`'s `useContentBox`) then maps that fraction
  * space onto real screen pixels — see `boxToScreenRect`.
+ *
+ * **D-202 (B-085) — a second consumer.** `canvasPick.ts` (canvas
+ * click-to-select) hit-tests a pointer against every visible layer's own box,
+ * which has to be the SAME box `TransformOverlay` draws or a click could
+ * select a clip whose handles then appear somewhere else. `resolvedBoxSize`
+ * + `fractionBoxContains` below are that shared rule, extracted here rather
+ * than re-derived in either component.
  */
 
 export interface ContentBoxLike {
@@ -69,6 +76,42 @@ export function clipBoxFraction(
     width,
     height,
   };
+}
+
+/** The clip's box SIZE (composition fractions) at rest, i.e. with no drag in
+ *  flight — `natural * scale` per axis, except on an axis carrying an
+ *  independent `box_width`/`box_height` override (D-193,
+ *  `docs/notes/independent-clip-size.md`), which wins outright.
+ *
+ *  Mirrors `ClipTransform::effective_size` (Rust, `chroma::edit`) — the
+ *  compositor's own per-axis resolution of the same two inputs. Extracted as
+ *  its own function by D-202 because two frontend consumers now need exactly
+ *  this: `TransformOverlay.tsx`'s static box, and `canvasPick.ts`'s
+ *  click-to-select hit rect. A hit rect that disagreed with the drawn box by
+ *  even one of these rules would let a click land "on" a clip the handles
+ *  aren't drawn around, so this is the one place the rule lives. */
+export function resolvedBoxSize(
+  natural: { width: number; height: number },
+  scale: number,
+  override: { width?: number | null; height?: number | null },
+): { width: number; height: number } {
+  return {
+    width: override.width ?? natural.width * scale,
+    height: override.height ?? natural.height * scale,
+  };
+}
+
+/** Whether `point` (composition fractions) is inside `box` — half-open on the
+ *  right/bottom edges, the same convention `Track::clip_at`'s own
+ *  `start <= f < end` frame test uses, so two exactly-abutting boxes can
+ *  never both claim the same point. */
+export function fractionBoxContains(box: FractionBox, point: { x: number; y: number }): boolean {
+  return (
+    point.x >= box.left &&
+    point.x < box.left + box.width &&
+    point.y >= box.top &&
+    point.y < box.top + box.height
+  );
 }
 
 /** `box` (composition fractions) placed onto real screen pixels, relative to

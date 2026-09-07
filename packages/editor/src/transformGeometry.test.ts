@@ -8,6 +8,8 @@ import {
   clipBoxFraction,
   dragCornerScale,
   dragReposition,
+  fractionBoxContains,
+  resolvedBoxSize,
   screenToFraction,
 } from './transformGeometry';
 
@@ -132,5 +134,52 @@ describe('dragCornerScale', () => {
     // the drag can't have started ON the pivot in practice (nothing to grab
     // there), but this guards the division rather than producing NaN/Infinity.
     expect(dragCornerScale(center, center, { x: 0.9, y: 0.9 }, 1.5)).toBe(1.5);
+  });
+});
+
+// D-202 (B-085) — the two helpers `TransformOverlay`'s at-rest box and
+// `canvasPick.ts`'s hit rect now share, so a click can never select a clip
+// whose handles then draw somewhere else.
+describe('resolvedBoxSize', () => {
+  const natural = { width: 0.5, height: 0.25 };
+
+  it('is natural × scale on both axes with no override', () => {
+    expect(resolvedBoxSize(natural, 2, {})).toEqual({ width: 1, height: 0.5 });
+  });
+
+  it('lets an override win per axis, independently (D-193)', () => {
+    expect(resolvedBoxSize(natural, 2, { width: 0.8 })).toEqual({ width: 0.8, height: 0.5 });
+    expect(resolvedBoxSize(natural, 2, { height: 0.1 })).toEqual({ width: 1, height: 0.1 });
+  });
+
+  it('treats a null/undefined override as absent, not as zero', () => {
+    expect(resolvedBoxSize(natural, 1, { width: null, height: undefined })).toEqual(natural);
+  });
+
+  it('honours an override of exactly 0 rather than falling back to scale', () => {
+    // `??`, not `||` — a deliberately collapsed axis must stay collapsed.
+    expect(resolvedBoxSize(natural, 1, { width: 0 }).width).toBe(0);
+  });
+});
+
+describe('fractionBoxContains', () => {
+  // Binary-exact edges (0.25 / 0.5 / 0.75) on purpose: an edge assertion
+  // written with values like 0.2 + 0.4 tests floating-point representation,
+  // not the containment rule.
+  const box = { left: 0.25, top: 0.25, width: 0.5, height: 0.25 };
+
+  it('contains an interior point', () => {
+    expect(fractionBoxContains(box, { x: 0.5, y: 0.375 })).toBe(true);
+  });
+
+  it('includes the top-left edge and excludes the bottom-right one (half-open)', () => {
+    expect(fractionBoxContains(box, { x: 0.25, y: 0.25 })).toBe(true);
+    expect(fractionBoxContains(box, { x: 0.75, y: 0.375 })).toBe(false);
+    expect(fractionBoxContains(box, { x: 0.5, y: 0.5 })).toBe(false);
+  });
+
+  it('rejects a point outside on either axis alone', () => {
+    expect(fractionBoxContains(box, { x: 0.1, y: 0.375 })).toBe(false);
+    expect(fractionBoxContains(box, { x: 0.5, y: 0.1 })).toBe(false);
   });
 });

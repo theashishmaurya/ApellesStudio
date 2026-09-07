@@ -62,6 +62,14 @@
  * successful save so `useCompositionSize` refetches immediately rather than
  * waiting for an unrelated timeline edit (that hook is keyed on `timeline`'s
  * identity, which a settings write never touches).
+ *
+ * Canvas click-to-select (D-202, fixing B-085): `useCanvasClipPick` is a
+ * BEHAVIOUR, not a fifth thing in the overlay stack — it listens on
+ * `surfaceRef` in the capture phase and decides, per press, whether that
+ * press is a selection or a `TransformOverlay` drag. It is deliberately not
+ * an overlay div: a full-bleed hit layer under `TransformOverlay` cannot work,
+ * because a full-frame clip's own transform box is full-bleed too and would
+ * swallow every press. See that hook's own doc.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -73,6 +81,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
+import { useCanvasClipPick } from './useCanvasClipPick';
 import { CanvasSettingsPopover } from './CanvasSettingsPopover';
 import { useCompositionSize } from './useCompositionSize';
 
@@ -173,6 +182,12 @@ export function PreviewPane() {
   // save, which changes `ProjectSettings` without touching `timeline` at all.
   const [compSizeVersion, setCompSizeVersion] = useState(0);
   const compSize = useCompositionSize(!!timeline, compSizeVersion);
+
+  // D-202 (B-085) — canvas click-to-select. A behaviour, not a surface: it
+  // listens on `surfaceRef` in the CAPTURE phase so it can decide, per press,
+  // whether this is a selection or a `TransformOverlay` drag — see that hook's
+  // own doc for why no z-ordered overlay div can make that call correctly.
+  useCanvasClipPick(surfaceRef, compSize);
 
   // D-201 — two shapes here exist for the React Compiler's sake, both exactly
   // equivalent to what they replaced (see
@@ -387,7 +402,11 @@ export function PreviewPane() {
           decodeErr ? (
             <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
           ) : frameSrc ? (
-            <div ref={surfaceRef} className="relative flex h-full w-full items-center justify-center">
+            <div
+              ref={surfaceRef}
+              data-preview-surface
+              className="relative flex h-full w-full items-center justify-center"
+            >
               <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
               <CanvasBoundary containerRef={surfaceRef} size={compSize} />
               <TransformOverlay containerRef={surfaceRef} />

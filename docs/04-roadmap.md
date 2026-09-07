@@ -64,7 +64,10 @@ restarted once each is done.
   on `chroma.project`, not silently reinterpreted. Phases 0 and 1 (the
   handles themselves — select, drag, uniform corner-scale) are built; Phase
   2 (rotation, non-uniform scale) is untouched; Phase 3 (crop) is built,
-  minus its own on-canvas mode.
+  minus its own on-canvas mode. **Clicking the picture itself to select a
+  clip — the note's own Open Question 3, and the one thing that made those
+  handles reachable only via the timeline — is now built too: D-202,
+  2026-09-07, fixing B-085.**
 - ✅ **"It takes so long to open a project" + "if you are loading 4k that might
   be wrong"** — done, D-128 (B-044/B-045/B-046). Both instincts were right and
   they were two different defects. Every cache in the codebase was a
