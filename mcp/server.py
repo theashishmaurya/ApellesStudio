@@ -1043,6 +1043,72 @@ def editor_export(
     return json.dumps(_op("editor_export", **args), indent=2, default=str)
 
 
+@mcp.tool()
+def editor_export_fcpxml(
+    out_path: str,
+    width: int,
+    height: int,
+    fps: float | None = None,
+    project_name: str | None = None,
+) -> str:
+    """Export the open project's ENTIRE multi-track timeline as a real,
+    standard **FCPXML 1.7** document — the Final Cut Pro X XML Interchange
+    Format DaVinci Resolve and Final Cut Pro both import natively (D-195).
+    Unlike `editor_export`, this produces no picture/audio at all — a text
+    file describing the EDIT itself, so the same cuts/composite/trims can be
+    finished in another NLE instead of (or in addition to) Chroma's own
+    render.
+
+    Verified against Apple's own real, published FCPXML 1.7 DTD (a real DTD
+    validator, not a guess at the XML shape) — see
+    `packages/editor/src/timelineInterchange.ts`'s own header doc and D-195
+    in `docs/08-decisions.md` for the full field-mapping table. Real, honest
+    scope, not a stub:
+
+    MAPS: clip placement/trims (`start_frame`/`source_start`/`duration`),
+    track z-order (Chroma's own "track 0 = topmost" convention becomes the
+    HIGHEST fcpxml `lane` number), the compositing transform
+    (`position_x`/`position_y`/`scale`/`box_width`/`box_height`/`rotation`),
+    crop, static opacity, A/V `link_group` (exported as one shared FCPXML
+    `<asset>` with the video half `srcEnable="video"` and the audio half
+    `srcEnable="audio"` — the real FCP mechanism for "same file, video-only
+    vs audio-only"), and audio track gain (`Track.gain`, as `adjust-volume`
+    dB on every clip on that track).
+
+    DOES NOT MAP, on purpose (each surfaces in this call's own `warnings`
+    array when it actually applies to this timeline, never a silent drop):
+    per-clip animated transform (`chroma_keyframes`), clip fades
+    (`fade_in_frames`/`fade_out_frames`), audio ducking
+    (`Track.duck_from`/`duck_db`/...) — FCPXML itself has no static
+    equivalent for ducking, matching the format's own documented exclusion
+    of audio volume automation — and `editor_export`'s own ffmpeg-only,
+    non-persisted export-time parameters (`speed_overrides`/
+    `fit_overrides`/`freeze_overrides`), which have no `Clip` field to read
+    here at all.
+
+    A clip's exact scale/crop conversion needs its SOURCE's real pixel
+    resolution; this tool passes through whatever the media pool already has
+    probed (`editor_import_media`'s result) automatically. A clip with no
+    probed resolution (an offline source, or one added before probing)
+    falls back to assuming the OUTPUT canvas's own aspect ratio — exact for
+    a plain full-canvas clip, approximate for a scaled/cropped/PIP one, and
+    always called out by name in `warnings` when it's actually load-bearing.
+
+    `width`/`height` are the output composition's pixel size, the same
+    convention `editor_export` already uses. `fps` defaults to the
+    timeline's own exact rate. Does NOT export XMEML/FCP7 XML (the
+    Premiere-targeted sibling interchange format) — a precise, scoped,
+    not-yet-built follow-up, see D-195."""
+    import json
+
+    args: dict = {"outPath": out_path, "width": width, "height": height}
+    if fps is not None:
+        args["fps"] = fps
+    if project_name is not None:
+        args["projectName"] = project_name
+    return json.dumps(_op("editor_export_fcpxml", **args), indent=2, default=str)
+
+
 # --------------------------------------------------------------------------- #
 # Edit tab: media understanding (D-189) — "what was said" and "what changed on
 # screen," from the `ai-media/` sidecar. Both are START-then-POLL, like
