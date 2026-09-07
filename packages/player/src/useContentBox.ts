@@ -1,6 +1,6 @@
 /**
  * `@chroma/player` — the letterbox math for an `object-contain` surface: the
- * on-screen rect a picture of `size` actually occupies inside `containerRef`,
+ * on-screen rect a picture of `size` actually occupies inside its container,
  * once the browser has centred and scaled it to fit. Extracted (not
  * reimplemented) from `app/src/hooks/useImageRenderSize.ts` (D-046's own
  * on-canvas overlay math) so a tab built on `@chroma/player` — whose
@@ -18,6 +18,23 @@
  * it tonight, out of scope for landing the Edit tab's on-canvas transform
  * overlay. This is the shared math a NEW call site should use; it is not
  * (yet) the only copy, and that divergence is deliberate, not an oversight.
+ *
+ * **Takes the ELEMENT, not a `RefObject` (2026-09-07, B-085 follow-up).**
+ * This used to take `React.RefObject<HTMLElement | null>` and read
+ * `.current` inside its layout effect. A ref object never notifies anyone
+ * when it is populated, and the effect only re-runs when `size` changes — so
+ * if the container was not mounted at the moment the size became known, the
+ * hook stored a 0×0 box and there was nothing left to make it measure again,
+ * ever. That is not a hypothetical ordering: `PreviewPane` renders the
+ * container only once the first `chroma_timeline_frame` has decoded
+ * (hundreds of ms of real ffmpeg), while `chroma_timeline_composition_size`
+ * answers in milliseconds, so in the shipped app the size ALWAYS arrived
+ * first — and `useCanvasClipPick`'s content box was permanently 0×0, which
+ * is why clicking the preview canvas did nothing in the real WKWebView
+ * window while passing every stub-backed test (where both commands resolve
+ * in one flush). Taking the element is React's own answer to "measure a node
+ * that may mount later": the caller holds it in state via a callback ref, so
+ * the node appearing is a real render, and this effect re-runs with it.
  */
 import { useLayoutEffect, useState } from 'react';
 
@@ -38,19 +55,22 @@ export interface ContentBox {
 
 const EMPTY_BOX: ContentBox = { offsetX: 0, offsetY: 0, width: 0, height: 0 };
 
-/** `containerRef`'s element must fill the space the `object-contain` picture
- *  is centred within (this is exactly the assumption `PreviewPane.tsx`'s
- *  wrapper div and `<img className="object-contain">` already satisfy).
+/** `container` must fill the space the `object-contain` picture is centred
+ *  within (this is exactly the assumption `PreviewPane.tsx`'s wrapper div and
+ *  `<img className="object-contain">` already satisfy). Pass it as an
+ *  ELEMENT held in state (`const [el, setEl] = useState<HTMLDivElement |
+ *  null>(null)`, used as `ref={setEl}`), not as a ref object — see this
+ *  module's own note on why. `null` while it isn't mounted yet.
+ *
  *  `size` is the picture's own natural aspect ratio source — pass `null`
  *  while it isn't known yet (nothing has loaded), which reports the empty
  *  box rather than a stale/guessed one. */
-export function useContentBox(containerRef: React.RefObject<HTMLElement | null>, size: ContentSize | null): ContentBox {
+export function useContentBox(container: HTMLElement | null, size: ContentSize | null): ContentBox {
   const [box, setBox] = useState<ContentBox>(EMPTY_BOX);
   const w = size?.width;
   const h = size?.height;
 
   useLayoutEffect(() => {
-    const container = containerRef.current;
     if (!container || !w || !h) {
       setBox(EMPTY_BOX);
       return;
@@ -79,7 +99,7 @@ export function useContentBox(containerRef: React.RefObject<HTMLElement | null>,
     const resizeObserver = new ResizeObserver(update);
     resizeObserver.observe(container);
     return () => resizeObserver.disconnect();
-  }, [containerRef, w, h]);
+  }, [container, w, h]);
 
   return box;
 }

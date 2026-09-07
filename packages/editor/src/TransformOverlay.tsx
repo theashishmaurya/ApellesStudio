@@ -99,7 +99,7 @@ type DragState =
   | { kind: 'move'; startPoint: { x: number; y: number }; startPosition: { x: number; y: number } }
   | { kind: 'scale'; startPoint: { x: number; y: number }; center: { x: number; y: number }; startScale: number };
 
-export function TransformOverlay({ containerRef }: { containerRef: React.RefObject<HTMLElement | null> }) {
+export function TransformOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
@@ -115,7 +115,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
 
   const contentBox = useContentBox(
-    containerRef,
+    container,
     geometry ? { width: geometry.compWidth, height: geometry.compHeight } : null,
   );
 
@@ -143,9 +143,8 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   // itself, which is also strictly safer than a hand-maintained array.
   // `reactCompiler.test.ts` fails if a future edit reintroduces a bailout here.
   const localPoint = (e: { clientX: number; clientY: number }) => {
-    const el = containerRef.current;
-    if (!el) return { x: 0, y: 0 };
-    const rect = el.getBoundingClientRect();
+    if (!container) return { x: 0, y: 0 };
+    const rect = container.getBoundingClientRect();
     return screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
   };
 

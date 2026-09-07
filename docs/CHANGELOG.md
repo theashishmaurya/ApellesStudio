@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-092 (D-205): canvas click-to-select was still
+  completely dead in the real app after D-204 shipped it** ("still not able to
+  select / unselect clips / video by clicking on the canvas... from timeline it
+  works"). `useContentBox` took a `RefObject` and could only re-measure when
+  its *size* changed — so when the composition size arrived (milliseconds)
+  before the container existed (`PreviewPane` renders its surface only once a
+  real ffmpeg frame decode returns, hundreds of ms), it stored a 0×0 box
+  forever and `useCanvasClipPick` never attached its listener at all. Every
+  test and the browser harness answered both commands from synchronous stubs,
+  so they never saw that ordering. The hook now takes the ELEMENT, held in
+  state via a callback ref. Verified live in a real WKWebView window with real
+  clicks: same coordinates select/clear with the fix and do nothing without it.
+  Also exposed `selection`/`selectedGap` on `editor_get_state` — selection was
+  previously unobservable from outside the webview, which is how this shipped.
+
 - **2026-09-07** — **Fixed B-088 (D-202): the Edit tab's live preview never
   showed a clip's current position/crop/scale.** Root-caused to an ordering
   race, not the compositor: `chroma_timeline_frame` renders the project's

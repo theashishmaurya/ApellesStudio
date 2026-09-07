@@ -18109,5 +18109,48 @@ hit-testing through `app/harness.html?mode=preview` — including the
 full-bleed-box case above and a real corner-handle resize committing
 `scale` 0.25 → 0.482 after a canvas-only selection. See B-085 for the numbers.
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+(That verification was necessary but not sufficient — see D-205 and B-092 for
+what it could not see and why the feature was still dead in the shipped app.)
+
+## D-205 — A DOM-measuring hook takes the ELEMENT, not a `RefObject`; and a stub-backed test tier must model the real backend's ORDERING, not just its answers
+
+**Context.** D-204 shipped canvas click-to-select, verified at three tiers
+(pure, jsdom with real `PointerEvent`s, real Chromium with real layout). The
+owner then tested a real WKWebView build and the feature did nothing at all —
+B-092. Two separate things made that possible, and both are worth pinning
+because both will recur.
+
+**Decision 1 — `useContentBox` (and any hook like it) takes `HTMLElement |
+null`, and its caller holds the node in state via a callback ref.** It used to
+take a `React.RefObject<HTMLElement | null>`, which reads naturally and is
+silently wrong for any container that mounts *later* than the data it is
+measured against: a ref object tells nobody when it is populated, so the
+measuring layout effect — keyed on the size, the only other input — never runs
+again, and the hook reports a 0×0 box forever. That is not a corner case here,
+it is the normal path: `PreviewPane` renders the surface only once a real
+ffmpeg frame decode has come back, while the composition size it is measured
+against arrives in milliseconds. Considered and rejected: making `PreviewPane`
+render its surface unconditionally so the ref is always populated. It fixes
+the three call sites by re-establishing an ordering invariant nothing states
+or checks, and leaves the identical trap armed for the next caller. Taking the
+element makes the node appearing a real render with a real dependency change —
+React's own prescribed shape for measuring a node that may mount later — so
+correctness stops depending on which async answer happens to win.
+
+**Decision 2 — a stub backend's TIMING is part of the contract a test tier
+claims to cover.** Every tier that passed answers `chroma_timeline_frame`
+synchronously, so a frame and a composition size land in one React commit.
+The real backend never does that: one is an ffmpeg decode over IPC, the other
+a settings read. The tests were right about the logic and blind to the
+ordering, which is where the whole bug lived. So a stub for a command whose
+real cost is *categorically* different from its siblings' should be able to
+answer on the real timescale, and at least one case should use it —
+`PreviewPane.pick.dom.test.tsx`'s `frameDelayMs` is that, and its cases fail
+on the pre-fix code. Note `act()` hides this by default: it drains everything
+scheduled inside one block into a single render pass, so a delayed stub only
+reproduces the real ordering if the two answers are awaited in *separate*
+`act` blocks. Also worth stating plainly: React StrictMode's dev-only
+double-invoke can *mask* a defect of this class (it silently rescued
+`CanvasBoundary`, which is why only the click looked broken), so a
+production-shape `strictMode: false` case earns its place when a bug turns on
+effect re-runs.
