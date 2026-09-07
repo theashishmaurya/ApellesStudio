@@ -17074,9 +17074,12 @@ clean; a real `import server` hits a PRE-EXISTING `mcp.server.mcpserver`
 import mismatch unrelated to this change (confirmed present, unmodified, on
 `main`'s tip before this work started) — not something this pass introduced
 or could fix without scope creep into the MCP SDK version itself.
-`cargo build -p RapidRAW`/`cargo test -p RapidRAW` — see this session's own
-commit log for the real pass/fail (a full from-scratch build in a fresh
-worktree; results recorded once it finished, not claimed in advance).
+`cargo build -p RapidRAW` — clean (a full from-scratch build in this fresh
+worktree, ~11 min, only pre-existing/unrelated warnings). `cargo test -p
+RapidRAW write_text_file` — **3/3** new tests pass. `cargo clippy -p RapidRAW
+--all-targets` and `cargo fmt -p RapidRAW -- --check` — both clean on
+`write_text_file.rs` specifically (the wider crate carries real pre-existing
+clippy/fmt drift this pass did not introduce and did not touch).
 **Honest limit, stated plainly**: no real Premiere/Resolve/Final Cut Pro was
 available to actually import the generated file and confirm round-trip
 fidelity — "well-formed and real-DTD-valid" is the verified claim; "imports
