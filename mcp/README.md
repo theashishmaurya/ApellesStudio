@@ -41,7 +41,17 @@ claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools (v1) — 38
+## Tools — 66
+
+The table below is the **Colorist** surface (grading, masks, relight, scopes,
+export). The Edit tab's own 24 `editor_*` tools — 20 from D-183 (read/seek,
+media import, clip placement/split/trim/move/remove, gap removal, track
+management, transform + keyframes, multi-track export) and 4 from D-184 (media
+understanding, listed at the end of this table) — are documented with their
+behaviour in `../docs/notes/mcp-tool-coverage.md`, which is the authoritative
+per-tab inventory; the pattern every tab follows is
+`../docs/notes/mcp-architecture.md`.
+
 
 | tool | what it does |
 |---|---|
@@ -79,10 +89,16 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 | `match_to_reference(reference, strength=1.0, max_iters=4, tolerance=3.0)` | auto-grade toward a reference image — measure the scope gap, iterate a **damped** primary correction (exposure / temperature / tint / contrast / saturation) with roll-back-on-worse until the gap is small. Merges into `primary` (a balance). Returns `{converged, iterations, gap_before, gap_after, applied, trace}` + the final frame + scopes (D-026) |
 | `export(kind, path?, from_frame?, to_frame?, quality?)` | render the grade to a file — `prores` (default) / `h264` clip or a `cube` primary-grade LUT. Video export polls to completion; returns the resolved path + frame count. Default `path` = beside the source as `<name>.graded.{mov,mp4,cube}` (D-022) |
 | `request_human(reason, roi?)` | hand back to the user — a **non-blocking** handoff for genuine uncertainty / a creative call / "please review". Posts a GUI banner (+ an ROI rectangle on the canvas if `roi` = `{x,y,w,h}` normalized 0..1). Returns an ack immediately; poll `get_state().pendingHumanRequest` — it goes null/`cleared` once the user clicks "Resume agent" (D-032) |
+| `editor_get_transcript(path?, media_id?, source_path?, language?, word_timestamps=True, force=False)` | start a word-level transcript — "what was SAID, and when" (mlx-whisper large-v3, via the `ai-media/` sidecar). Returns a `state`; poll `editor_get_transcript_status`. Cached per file; finds nothing in silent footage (D-184) |
+| `editor_get_transcript_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `text`, `segments`, per-word `start`/`end`) / `idle` |
+| `editor_analyze_video(path?, media_id?, source_path?, question?, scene_threshold?, min_gap_s?, max_candidates?, force=False)` | start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect gives the exact timing, Qwen3-VL only describes each before/after frame pair. Finds nothing in a continuous uncut shot — use the transcript there (D-184) |
+| `editor_analyze_video_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `events: [{time_s, event}]` + `truncated`) / `idle` |
 
 Every mutating tool returns the re-rendered frame (as an MCP image when the app
 can supply one) plus the histogram, the full adjustments doc, **and the compact
-`scopes` summary** (the new measurement after the change).
+`scopes` summary** (the new measurement after the change). The four
+media-understanding tools above are the exception: they mutate nothing, so they
+return plain JSON.
 
 ## Agent activity feed (D-032)
 
@@ -111,8 +127,12 @@ re-measure, converge on a target rather than drift — is a regression test:
 `eval/` (task set + offline scorer + committed baseline). See `../eval/README.md`
 and `../docs/notes/eval-harness.md` (D-035).
 
-Adding a capability = one entry in the frontend `OPS` registry
-(`app/src/hooks/useChromaControl.ts`) + one tool here.
+Adding a capability = one entry in the owning tab's own `OPS` registry + one
+tool here. Which hook that is depends on the tab — `useChromaControl.ts`
+(Colorist), `@chroma/editor`'s `useEditorControl.ts` (`editor_*`),
+`@chroma/motion`'s `useMotionControl.ts` (`motion_*`). The full recipe, and the
+op-prefix convention that keeps two hooks from racing for one response, is
+`../docs/notes/mcp-architecture.md`.
 
 ## Troubleshooting
 
