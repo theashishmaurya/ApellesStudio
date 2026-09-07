@@ -48,7 +48,7 @@
  * `Shell.tsx` or the other two tabs (D-118's own decision entry has the
  * real reasoning for why this stayed tab-local, not a shell-level panel).
  *
- * **D-186 — Width/Height + ratio lock.** A single `scale` can only ever
+ * **D-193 — Width/Height + ratio lock.** A single `scale` can only ever
  * produce a box with the clip's own natural (source) aspect ratio — see
  * `Clip.box_width`'s own doc for the full "why" and B-074's own finding
  * that this made a full-width/half-height stacked layout mathematically
@@ -66,7 +66,7 @@
  * control: editing it clears both overrides back to `null`. The lock
  * boolean itself is local, ephemeral UI state (not persisted on `Clip`,
  * reset per clip via the `key={clip.id}` `EditorInspectorPanel.tsx` mounts
- * this component with) — see D-186's decision entry for why: once a real
+ * this component with) — see D-193's decision entry for why: once a real
  * width/height pair is stored, "was it locked when I typed this" carries
  * no independent information a future session needs back.
  */
@@ -160,7 +160,7 @@ export function ClipInspectorPanel({
 }: {
   clip: Clip | null;
   trackLocked: boolean;
-  /** D-186 — the selected clip's composition/source geometry, or `null`
+  /** D-193 — the selected clip's composition/source geometry, or `null`
    *  while it hasn't resolved yet (fresh selection, still probing, or the
    *  source is offline). The Width/Height fields below are disabled without
    *  it — there's no pixel size to show or write without a known
@@ -175,7 +175,7 @@ export function ClipInspectorPanel({
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
 }) {
-  // D-186 — locked by default for a clip with no independent-axis override
+  // D-193 — locked by default for a clip with no independent-axis override
   // yet (the common "just scale it" case); a clip an MCP agent or a prior
   // session already gave independent `box_width`/`box_height` starts
   // unlocked, matching what's actually on screen. Ephemeral — see this
@@ -188,7 +188,7 @@ export function ClipInspectorPanel({
     return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
   }
 
-  // D-186 — the box's CURRENT effective size, in composition fractions:
+  // D-193 — the box's CURRENT effective size, in composition fractions:
   // the override when the clip has one, else `scale`'s own natural-footprint
   // formula (mirrors `chroma::edit::ClipTransform::effective_size` exactly,
   // one layer up). `null` when `geometry` hasn't resolved — nothing to
@@ -289,7 +289,7 @@ export function ClipInspectorPanel({
               disabled={trackLocked}
               className={numInput}
               value={clip.scale ?? 1}
-              // D-186 — always resets to simple uniform mode: an independent
+              // D-193 — always resets to simple uniform mode: an independent
               // Width/Height override (below) is explicitly CLEARED, not
               // left stale, so this field stays a real "go back to plain
               // scale" affordance rather than one that silently does
@@ -298,7 +298,7 @@ export function ClipInspectorPanel({
             />
           </label>
 
-          {/* D-186 — independent Width/Height, in pixels of the project's
+          {/* D-193 — independent Width/Height, in pixels of the project's
               own known composition (`geometry`), with a ratio-lock toggle.
               See this file's own module doc for the full "why" this exists
               alongside `Scale` rather than replacing it. */}

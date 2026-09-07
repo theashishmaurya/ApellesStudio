@@ -1,6 +1,6 @@
-# Independent per-axis clip sizing (D-186, 2026-09-07)
+# Independent per-axis clip sizing (D-193, 2026-09-07)
 
-Terse version lives in `docs/08-decisions.md`'s D-186 entry — this note is the
+Terse version lives in `docs/08-decisions.md`'s D-193 entry — this note is the
 worked-out design detail (the unit-choice reasoning, the exact GUI interaction
 spec, and the Rust/TS parity comparison table) referenced from `Clip.box_width`'s
 own doc comment, `ClipInspectorPanel.tsx`'s module doc, and `timelineExport.ts`'s
@@ -37,7 +37,7 @@ Two candidate units for the new field, both considered seriously mid-implementat
 it is NOT unit-consistent with `scale` (one is canvas-relative, the other
 source-relative) — accepted, because `scale` is not being replaced, only
 supplemented. A clip with neither field set behaves exactly as it did before
-D-186 (falls back to `natural * scale`); a clip with either field set bypasses
+D-193 (falls back to `natural * scale`); a clip with either field set bypasses
 `natural`/`scale` entirely for that axis, using the canvas fraction directly.
 
 ## Persisted shape
@@ -52,7 +52,7 @@ pub box_height: Option<f64>,       // NEW — fraction of composition height, or
 `None` on either axis independently — a clip can override just width, just
 height, or both. `#[serde(default, skip_serializing_if = "Option::is_none")]`,
 the same additive-field convention `media_id`/`link_group` already use: a
-pre-D-186 `project.json` has no such key, deserializes to `None`, zero
+pre-D-193 `project.json` has no such key, deserializes to `None`, zero
 migration pass needed.
 
 TS mirror on `Clip`: `box_width?: number | null; box_height?: number | null;`.
@@ -94,10 +94,10 @@ interpolation, regardless of what else on the clip is keyframed.
 ```ts
 const widthExpr = clip.box_width != null
   ? `${opts.width}*${clip.box_width}`
-  : `${opts.width}*${scale}`;               // pre-D-186 formula, unchanged
+  : `${opts.width}*${scale}`;               // pre-D-193 formula, unchanged
 
 const heightExpr = clip.box_height != null
-  ? `${opts.height}*${clip.box_height}`     // D-186 — wins over fitOverrides
+  ? `${opts.height}*${clip.box_height}`     // D-193 — wins over fitOverrides
   : fitMode === 'stretch'
     ? `${opts.height}*${scale}`             // B-074/D-184, unchanged
     : '-2';                                 // B-074/D-184, unchanged

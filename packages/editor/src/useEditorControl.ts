@@ -438,7 +438,7 @@ export function useEditorControl(): void {
           const n = Number(v);
           return Number.isFinite(n) ? n : fallback;
         };
-        // D-186 — `box_width`/`box_height` are `number | null` on the real
+        // D-193 — `box_width`/`box_height` are `number | null` on the real
         // op (`null` = no override, an explicit, meaningful value — see
         // that op's own doc), so they need their OWN reader rather than
         // `num`'s "coerce or fall back to a number" contract: an explicit

@@ -810,13 +810,13 @@ describe('set_track_locked / set_track_hidden / move_track (D-086/D-089)', () =>
  *  something else (a label, a lock refusal) doesn't have to restate them. */
 const NO_CROP = { crop_left: 0, crop_top: 0, crop_right: 0, crop_bottom: 0 } as const;
 
-/** D-186 — the two independent-axis box-size overrides `set_clip_transform`
+/** D-193 — the two independent-axis box-size overrides `set_clip_transform`
  *  now also requires, at "no override" (`null`, see the op's own doc for
  *  why `null` and not omission). Same one-liner convenience `NO_CROP` gives. */
 const NO_BOX_OVERRIDE = { box_width: null, box_height: null } as const;
 
 describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
-  it('set_clip_transform writes all eleven transform fields together (D-088/D-132/D-186)', () => {
+  it('set_clip_transform writes all eleven transform fields together (D-088/D-132/D-193)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, {
       kind: 'set_clip_transform',
@@ -848,7 +848,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
     expect(c.crop_bottom).toBe(0.4);
   });
 
-  /** D-186 — an explicit `null` on either axis clears a previously-set
+  /** D-193 — an explicit `null` on either axis clears a previously-set
    *  override back to "derive from `scale`", and does so independently per
    *  axis (setting `box_width` doesn't force `box_height` to also change). */
   it('set_clip_transform clears a box-size override with an explicit null, independently per axis', () => {

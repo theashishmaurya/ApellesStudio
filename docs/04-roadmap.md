@@ -187,7 +187,7 @@ restarted once each is done.
   split, capped at the timeline row's height; now a sibling of the
   preview+timeline column, spanning the tab, with its own tab-local opener
   button). **A clip's compositing box can now be sized independently per axis**
-  (D-186 — Width/Height fields in pixels with a ratio-lock toggle, alongside the
+  (D-193 — Width/Height fields in pixels with a ratio-lock toggle, alongside the
   existing uniform `Scale`; persisted as `Clip.box_width`/`box_height`, a
   canvas-fraction override with no Rust/TS export-parity gap, unlike `scale`
   itself). No multi-track or transcript cut yet.
@@ -902,13 +902,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     (9:16, 16:9, 1:1, custom) at all — `editor_export`'s `width`/`height` are
     export-call parameters today, not a project-level setting the GUI reads back for
     its own preview.
-    **Checked against the D-186 independent-width/height ratio-lock work (now landed)
+    **Checked against the D-193 independent-width/height ratio-lock work (now landed)
     — NOT the same root cause, and not a hard prerequisite for it, but a real,
-    related gap D-186 does not close.** D-186's Inspector Width/Height fields
+    related gap D-193 does not close.** D-193's Inspector Width/Height fields
     correctly read the composition's REAL pixel size via the existing
     `chroma_timeline_clip_geometry` command (`ProjectSettings.width`/`height`, D-038 —
-    the backend concept behind "the composition" already exists and is what D-186's
-    math is built against), so the NUMBERS D-186 shows/writes are correct regardless
+    the backend concept behind "the composition" already exists and is what D-193's
+    math is built against), so the NUMBERS D-193 shows/writes are correct regardless
     of this item. What's still missing is purely presentational/UI: (1) needs a new
     `PreviewPane.tsx` overlay component drawing the composition's own boundary (a
     letterbox/pillarbox frame), independent of any single clip's transform — a
@@ -916,7 +916,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     settings surface to read/write `ProjectSettings.width`/`height` after project
     creation (today's likely-only entry point), which is unrelated to `Clip`-level
     fields entirely. Neither touches `Clip.box_width`/`box_height`/`scale` or the
-    Rust/TS export parity story D-186's own decision entry covers. Not started —
+    Rust/TS export parity story D-193's own decision entry covers. Not started —
     real, separately-scoped follow-up work, ownership open.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)

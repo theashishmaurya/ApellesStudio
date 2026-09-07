@@ -74,7 +74,7 @@ export interface Clip {
   source_start: number;
   duration: number;
   source_len: number;
-  /** B-075/D-186 — the SOURCE media's own real frame rate, at the moment
+  /** B-075/D-193 — the SOURCE media's own real frame rate, at the moment
    *  this clip was created from a probed media-pool item (`editor_add_clip`
    *  sets it from `MediaItem.video.fps`). `source_start`/`duration` (and a
    *  keyframe's `frame`) are documented as being in **source frames** — this
@@ -112,15 +112,15 @@ export interface Clip {
   position_x?: number;
   position_y?: number;
   scale?: number;
-  /** Independent per-axis box-size override (D-186,
+  /** Independent per-axis box-size override (D-193,
    *  `docs/notes/independent-clip-size.md`) — mirrors `chroma_timeline::
    *  Clip::box_width`/`box_height`. A fraction of the OUTPUT COMPOSITION's
    *  own width/height, the SAME per-axis convention `position_x`/
    *  `position_y` already use — NOT a multiplier of the clip's own source
    *  resolution the way `scale` is. `null`/absent on either axis (every
-   *  pre-D-186 clip, and the default for a freshly-added one) means "derive
+   *  pre-D-193 clip, and the default for a freshly-added one) means "derive
    *  this axis from `scale`'s own natural-footprint formula instead," the
-   *  byte-identical-to-pre-D-186 fallback both the Rust compositor
+   *  byte-identical-to-pre-D-193 fallback both the Rust compositor
    *  (`chroma::edit::composite_layer_onto`) and `timelineExport.ts`'s
    *  `buildClipFilterChain` apply.
    *
@@ -348,7 +348,7 @@ export interface DraggedMedia {
    *  ("`DraggedMedia`/`MediaItem` carry NO real audio-vs-video signal today
    *  … without a real backend model change"). */
   hasAudio?: boolean | null;
-  /** B-075/D-186 — the source's own real frame rate (`MediaItem.video.fps`),
+  /** B-075/D-193 — the source's own real frame rate (`MediaItem.video.fps`),
    *  threaded onto the built `Clip` as `source_fps` — see that field's own
    *  doc for why. `null`/absent for a pool item probed before this field
    *  existed; the built clip simply has no `source_fps` either, same
@@ -1115,10 +1115,10 @@ export type EditOp =
    *  replaces the full set — an optional crop field would silently reset a
    *  clip's crop to zero on any caller that forgot it.
    *
-   *  **D-186 — `box_width`/`box_height` are required `number | null` too,
+   *  **D-193 — `box_width`/`box_height` are required `number | null` too,
    *  same convention `Track.set_track_duck`'s `duckFrom` already uses: an
    *  explicit `null` means "no override, derive this axis from `scale`"
-   *  (the pre-D-186 behavior), a number is a real independent-axis
+   *  (the pre-D-193 behavior), a number is a real independent-axis
    *  override. Required rather than optional for the exact reason above —
    *  an omittable field could silently clear a clip's override on a caller
    *  that forgot to restate it, since `undefined` is not a legal value on a
@@ -1444,7 +1444,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.position_x = op.position_x;
     nc.position_y = op.position_y;
     nc.scale = op.scale;
-    // D-186 — written verbatim, `null` included: that's the explicit
+    // D-193 — written verbatim, `null` included: that's the explicit
     // "clear this axis's override" value, mirroring `duck_from`'s own
     // null-clears convention. No clamp — same "the model stores what the
     // UI wrote, the consumer decides what it means" rule `scale` itself

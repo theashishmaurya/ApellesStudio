@@ -476,14 +476,14 @@ pub struct Clip {
     /// render every existing clip as a single point.
     #[serde(default = "default_scale")]
     pub scale: f64,
-    /// Independent per-axis box-size override (D-186,
+    /// Independent per-axis box-size override (D-193,
     /// `docs/notes/independent-clip-size.md`) — a fraction of the OUTPUT
     /// COMPOSITION's own width, the SAME per-axis convention `position_x`
     /// already uses (D-136), not a multiplier of the layer's natural
-    /// footprint the way `scale` is. `None` (every pre-D-186 clip, and any
+    /// footprint the way `scale` is. `None` (every pre-D-193 clip, and any
     /// clip this crate builds without setting it) means "derive this axis
     /// from `scale`'s own natural-footprint formula instead" — the
-    /// byte-identical-to-pre-D-186 fallback; see `chroma::edit::
+    /// byte-identical-to-pre-D-193 fallback; see `chroma::edit::
     /// composite_layer_onto`'s own doc for exactly where that fallback is
     /// applied.
     ///
@@ -494,14 +494,14 @@ pub struct Clip {
     /// size, scaled" with zero extra data — genuinely the more useful
     /// default for that case, and every existing project already depends
     /// on it meaning that. `box_width`/`box_height` are for the OTHER real
-    /// case this model could not express at all before D-186: an
+    /// case this model could not express at all before D-193: an
     /// arbitrary, independently-sized box (e.g. exactly half a 9:16
     /// canvas's width, full height) that has nothing to do with the
     /// clip's own source resolution. Two concepts, not one field
     /// overloaded to mean either depending on how many numbers you passed.
     ///
     /// **Why this, unlike `scale`, has NO Rust/TS-export parity gap
-    /// (D-186):** both engines already know the OUTPUT canvas's own pixel
+    /// (D-193):** both engines already know the OUTPUT canvas's own pixel
     /// size (it's a render parameter on both sides), so a canvas-fraction
     /// box needs no source-resolution probing anywhere — `scale` needs the
     /// clip's SOURCE resolution to place it correctly (`chroma::edit`'s

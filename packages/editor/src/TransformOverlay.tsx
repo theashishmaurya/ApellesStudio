@@ -38,10 +38,10 @@
  * frame is fetched.
  *
  * Not in Phase 1 (see the note): rotation, non-uniform scale (via on-canvas
- * DRAGGING — see D-186's own note on this component below), crop, anchor
+ * DRAGGING — see D-193's own note on this component below), crop, anchor
  * point, click-to-select, snapping/guides, marquee, multi-clip transform.
  *
- * **D-186 — independent `box_width`/`box_height` (the Inspector's new
+ * **D-193 — independent `box_width`/`box_height` (the Inspector's new
  * Width/Height/ratio-lock control) render correctly here (the STATIC box,
  * whenever no drag is in flight, uses them when the clip has them), but
  * dragging a corner handle stays Phase-1 uniform-only and, on release,
@@ -152,7 +152,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
         position_x: next.position.x,
         position_y: next.position.y,
         scale: next.scale,
-        // D-186 — a corner (scale) drag stays Phase-1 uniform-only (see this
+        // D-193 — a corner (scale) drag stays Phase-1 uniform-only (see this
         // module's own doc above): committing one always clears any
         // independent `box_width`/`box_height` override back to `null`, so
         // the box actually ends up the uniform size just dragged rather
@@ -220,7 +220,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
 
   if (!clip || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
-  // D-186 — while a drag is live, the box always follows the natural*scale
+  // D-193 — while a drag is live, the box always follows the natural*scale
   // formula (Phase 1's uniform-only drag math, unchanged). At rest, an
   // independent `box_width`/`box_height` override (set via the Inspector)
   // takes over per axis — passing the already-resolved size through as

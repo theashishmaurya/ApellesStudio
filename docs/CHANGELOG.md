@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-07** — **Independent per-axis clip sizing (D-186): `Clip.box_width`/
+- **2026-09-07** — **Independent per-axis clip sizing (D-193): `Clip.box_width`/
   `box_height` + an Inspector Width/Height/ratio-lock control.** The fuller,
   end-to-end fix D-184/B-074 explicitly scoped out — a clip can now be placed into
   an arbitrary, independently-sized box (not just a uniform `scale` of its own
@@ -15,7 +15,7 @@ One or two lines per session. Detail lives in the decision it references.
   separate "reset to uniform" affordance), and `editor_set_clip_transform`'s MCP
   surface. Unlike `scale`, `box_width`/`box_height` are a canvas fraction in BOTH
   engines — zero Rust/TS export-parity gap for the new fields, closing that gap
-  rather than inheriting it. Honest remaining gaps, both documented in D-186 and
+  rather than inheriting it. Honest remaining gaps, both documented in D-193 and
   `docs/04-roadmap.md` item 18: not wired into the clip-keyframe GUI button yet
   (engine supports it via `editor_set_clip_keyframes` directly), and no visible
   canvas-boundary overlay/project-settings UI exists yet (a separate, related but

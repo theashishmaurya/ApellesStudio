@@ -16693,7 +16693,7 @@ this is additive, one new directory, nothing existing touched.
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
-## D-186 — Independent per-axis clip sizing: `Clip.box_width`/`box_height` + Inspector Width/Height/ratio-lock (`docs/notes/independent-clip-size.md`)
+## D-193 — Independent per-axis clip sizing: `Clip.box_width`/`box_height` + Inspector Width/Height/ratio-lock (`docs/notes/independent-clip-size.md`)
 
 D-184/B-074 fixed the export-only symptom of a real structural gap, and explicitly
 scoped the fuller fix out for separate dispatch: `scale` is a SINGLE uniform
@@ -16722,7 +16722,7 @@ and an MCP surface — not another export-time-only parameter.
    parameter on both sides) — so a canvas-fraction box needs NO source-resolution
    probing anywhere, closing the parity gap entirely for this new pair of
    fields rather than inheriting it. `None`/absent on either axis (every
-   pre-D-186 clip) falls back to exactly the pre-D-186 `natural * scale`
+   pre-D-193 clip) falls back to exactly the pre-D-193 `natural * scale`
    formula — zero behavior change for anything that predates this.
 3. `scale` itself is NOT reinterpreted or removed — it stays exactly what it
    was (a real, still-useful "native size, scaled uniformly" picture-in-picture
@@ -16797,7 +16797,7 @@ the Edit-tab preview draws NO visible boundary for the output composition
 itself (no letterbox/frame showing where the canvas edges are), and there is
 no GUI to change `ProjectSettings.width`/`height` after project creation.
 Checked directly against this pass — NOT the same root cause, and not a
-blocker for it: D-186's own math is built against the composition size that
+blocker for it: D-193's own math is built against the composition size that
 already exists server-side (D-038) via the same `chroma_timeline_clip_geometry`
 command this pass's Inspector already calls, so the Width/Height numbers
 shown/written are correct regardless. What's missing is purely presentational

@@ -580,7 +580,7 @@ export function SourcesPanel() {
                             // one-time backfill) means "unknown", and the drop
                             // conservatively creates no audio half.
                             hasAudio: it.video?.hasAudio ?? null,
-                            // B-075/D-186 — the source's real frame rate, so a
+                            // B-075/D-193 — the source's real frame rate, so a
                             // dropped clip's `source_start`/`duration` convert
                             // to real seconds at export time instead of being
                             // silently misread at the project/export fps.

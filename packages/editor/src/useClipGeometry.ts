@@ -1,12 +1,12 @@
 /**
- * @chroma/editor — shared clip-geometry fetch (D-136 origin, extracted D-186).
+ * @chroma/editor — shared clip-geometry fetch (D-136 origin, extracted D-193).
  *
  * `chroma_timeline_clip_geometry` (Rust, `chroma::edit::clip_geometry`) is
  * the one thing about a clip's placement box that neither `TransformOverlay.
  * tsx` (the on-canvas handles) nor `ClipInspectorPanel.tsx`'s Width/Height
- * fields (D-186) can derive on their own: a clip's own SOURCE resolution,
+ * fields (D-193) can derive on their own: a clip's own SOURCE resolution,
  * measured against the project's composition. Both need the exact same
- * fetch — before D-186 `TransformOverlay.tsx` had its own private copy of
+ * fetch — before D-193 `TransformOverlay.tsx` had its own private copy of
  * this `invoke` call + effect + local state; this hook is the one place it
  * now lives, so a future change to the fetch (retry, caching, whatever)
  * only has to happen once — this repo's own "shared logic -> extract, don't

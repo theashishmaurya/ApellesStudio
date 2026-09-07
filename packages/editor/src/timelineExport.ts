@@ -120,7 +120,7 @@ export interface TimelineExportOptions {
    *  anyway, never correct for fitting arbitrary source footage into a
    *  differently-shaped region.
    *
-   *  **D-186 superseded the need for this on any clip with a real
+   *  **D-193 superseded the need for this on any clip with a real
    *  `box_width`/`box_height` override** (now a first-class, persisted
    *  `Clip` field, not an export-time parameter — see that field's own doc
    *  and `buildClipFilterChain`'s use of it): an explicit per-axis
@@ -186,12 +186,12 @@ function buildClipFilterChain(
   }
 
   const scale = clip.scale ?? 1;
-  // D-186 — `box_width`, when the clip has one, is a DIRECT canvas-fraction
+  // D-193 — `box_width`, when the clip has one, is a DIRECT canvas-fraction
   // override (mirrors `position_x`'s own convention) — it replaces
   // `opts.width*scale` outright rather than participating in B-074's
   // `fit`/`stretch` choice, since there is no more ambiguity to resolve
   // once the caller has stated the width explicitly. Falls back to the
-  // pre-D-186 `opts.width*scale` when absent, so an existing clip (or one
+  // pre-D-193 `opts.width*scale` when absent, so an existing clip (or one
   // that only sets `scale`) compiles byte-identically to before.
   const widthExpr = clip.box_width != null ? `${opts.width}*${clip.box_width}` : `${opts.width}*${scale}`;
   // B-074 — see `TimelineExportOptions.fitOverrides`'s own doc for the full
@@ -205,7 +205,7 @@ function buildClipFilterChain(
   // canvas-half using the clip's own known aspect ratio from
   // `editor_import_media`'s probe result.
   //
-  // D-186 — `box_height`, when the clip has one, is the same kind of direct
+  // D-193 — `box_height`, when the clip has one, is the same kind of direct
   // canvas-fraction override as `box_width` above and takes priority over
   // `fitOverrides` entirely: an explicit persisted height is a MORE
   // specific signal than an export-time-only fit/stretch default, and once
@@ -214,13 +214,13 @@ function buildClipFilterChain(
   // `stretch` never touched width), `box_height` is genuinely a third
   // option alongside `fit`/`stretch`, not a variant of either.
   //
-  // **Known, deliberate limit (D-186):** `box_width`/`box_height` are a
+  // **Known, deliberate limit (D-193):** `box_width`/`box_height` are a
   // fraction of the OUTPUT CANVAS in both this compiler and the Rust
   // live-preview compositor (`chroma::edit::composite_layer_onto`) — a
   // genuinely NEW field with NO Rust/TS parity gap, unlike `scale` itself
   // (whose meaning depends on the clip's own SOURCE resolution, which this
   // pure, no-I/O module still cannot probe — B-074/D-184's own pre-existing,
-  // intentionally-not-reopened gap). See D-186's decision entry for the
+  // intentionally-not-reopened gap). See D-193's decision entry for the
   // full comparison.
   const fitMode = opts.fitOverrides?.[clip.id] ?? 'fit';
   const heightExpr =

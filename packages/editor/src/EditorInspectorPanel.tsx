@@ -30,7 +30,7 @@
  * own internal layout changed; `Shell.tsx` and the other two tabs are
  * untouched by this pass.
  *
- * D-186 — this is also where `ClipInspectorPanel`'s new Width/Height fields
+ * D-193 — this is also where `ClipInspectorPanel`'s new Width/Height fields
  * get their `chroma_timeline_clip_geometry` fetch (`useClipGeometry`, the
  * same hook `TransformOverlay.tsx` uses for the on-canvas box), keeping
  * that panel pure presentation per its own doc — this file already owns
@@ -64,7 +64,7 @@ export function EditorInspectorPanel() {
   const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
   const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
 
-  // D-186 — the same `chroma_timeline_clip_geometry` fetch `TransformOverlay.
+  // D-193 — the same `chroma_timeline_clip_geometry` fetch `TransformOverlay.
   // tsx` uses for the on-canvas box, needed here for `ClipInspectorPanel`'s
   // Width/Height fields to convert composition-fraction sizes to real
   // pixels and back.
@@ -74,7 +74,7 @@ export function EditorInspectorPanel() {
   // one clip-geometry write, one history entry, one save. See the
   // `set_clip_transform` op's own doc in `timeline.ts` for why.
   //
-  // D-186 — `box_width`/`box_height` join the same patch for the same
+  // D-193 — `box_width`/`box_height` join the same patch for the same
   // reason: one clip-geometry write. `!== undefined` (not `??`) because
   // `null` is itself a MEANINGFUL patch value here (explicitly clear an
   // override) that `??` would otherwise treat the same as "not provided".
@@ -164,7 +164,7 @@ export function EditorInspectorPanel() {
 
   return (
     <ClipInspectorPanel
-      // D-186 — remounts `ClipInspectorPanel` on every new clip selection,
+      // D-193 — remounts `ClipInspectorPanel` on every new clip selection,
       // which is what resets that component's own local ratio-lock state
       // (ephemeral UI state, not a `Clip` field — see that file's own doc)
       // back to the right default for the newly-selected clip, without
