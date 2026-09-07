@@ -885,6 +885,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     start/end marker (at minimum the end — start is always 0 today, nothing trims the
     front of the whole timeline yet) to the timeline ruler, matching how a reference
     NLE marks its own sequence out-point. Not started.
+18. **No visible output-canvas/aspect-ratio frame in the Edit-tab preview, and no way
+    to set it from the UI** — owner, 2026-09-07, live, after seeing the reel's own
+    live preview render the AFTER clip full-bleed (native aspect, no visible 9:16
+    frame boundary) instead of composited/stacked with BEFORE at all: *"in the UI
+    also we have no visual 9:16 ratio for the working canvas we want that — we
+    should be able to change the canvas and it should be in the preview."* Two real
+    gaps, likely the same underlying cause: (1) nothing in the live preview draws
+    the actual OUTPUT COMPOSITION's own frame/aspect boundary (the thing
+    `position_x`/`position_y`/`scale` are fractions OF, per D-136) so a human has no
+    visual reference for where clips will actually land; (2) there's no project/canvas
+    settings control to CHOOSE that aspect ratio (9:16, 16:9, 1:1, custom) at all —
+    `editor_export`'s `width`/`height` are export-call parameters today, not a
+    project-level setting the GUI reads back for its own preview. Directly related to
+    (and likely overlapping code with) the live-preview/export compositing-parity work
+    already dispatched this same session (D-184's own noted preview/export divergence,
+    the independent-width/height ratio-lock effort) — whoever picks this up should
+    check that work's outcome first rather than duplicating the preview-compositor
+    investigation. Not started; folded into the in-flight ratio-lock subagent's scope
+    as a same-session heads-up, final ownership TBD depending on where that work lands.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
