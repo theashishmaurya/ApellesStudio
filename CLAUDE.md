@@ -170,6 +170,16 @@ workspace `target/` is fresh at the repo root.
   edit files out from under the running dev server and/or collide with other
   subagents' uncommitted changes. A worktree gives it an isolated copy to build/test/
   commit in; merge its branch back deliberately once its work is verified.
+- **`git stash` is NOT worktree-isolated — never use it here.** `refs/stash` lives in
+  the shared `.git` common dir, not per-worktree, so with several worktree agents
+  running at once (the normal case in this repo) a `git stash`/`git stash pop` can
+  silently consume or hand back a SIBLING worktree's stash instead of your own — hit
+  live, twice, in one session (2026-09-07). If you need to shelve uncommitted changes
+  to compare against a clean baseline, use `git diff > /tmp/x.patch` (or a plain copy)
+  and restore by hand instead — never `git stash` while other worktrees may be active.
+  If you ever do get a stash-list surprise (content you don't recognize), do NOT drop
+  it: back it up to a file, then `git stash push` it right back onto the shared stack
+  with a message identifying it as recovered-not-yours, so its real owner can find it.
 
 ## Code
 
