@@ -18457,3 +18457,174 @@ rather than implied.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-209 — B-093: the on-canvas transform box resolves keyframes through D-208's OWN per-property interpolator, and a drag auto-keys per property
+
+**Context.** D-136's `TransformOverlay` drew its box from `Clip.position_x`/
+`position_y`/`scale` — the static base fields — because at the time the
+frontend had no way to evaluate `chroma_keyframes` at all. That is correct
+about RENDERING (the picture is composited in Rust and always will be) and
+wrong about EDITING: an on-canvas box has to know where the clip IS RIGHT NOW,
+in TypeScript, at the playhead. On the owner's real ~50-keyframe clip the
+static and resolved answers differ by two thirds of the canvas width (B-093,
+screenshotted). D-204's `canvasPick.ts` hit rect inherited the same static
+read, and by construction must equal the drawn box.
+
+### Part 1 — where the interpolation comes from
+
+Options:
+
+1. **Ask the backend.** A `chroma_timeline_clip_transform_at(track, clip,
+   frame)` command. Exactly right by construction (it would BE
+   `resolve_clip_transform`) and wrong for this surface: the box is redrawn on
+   every playhead tick and on every pointermove of a drag, and an IPC round
+   trip per frame is precisely the latency this component's "overlay-only
+   feedback during a drag" design (D-136 Phase 0b) exists to avoid. It also
+   inverts D-204's own established split — `chroma_timeline_clip_geometry` is
+   the ONE thing the frontend genuinely cannot derive (a clip's source
+   resolution); everything else is already normalised data on `Clip`.
+2. **Write a new frontend mirror of the Rust resolver.** This was the shape of
+   an earlier, uncommitted attempt at B-093 (before D-208 landed): a
+   standalone `interpolateClipKeyframes` mirroring
+   `chroma::keyframes::interpolate`'s bracket-across-all-keys-and-hold rule.
+   It is now the wrong answer twice over. That rule was itself the B-094 bug
+   and no longer describes the compositor (D-208 replaced it with
+   `interpolate_param`), and a second interpolator in this package would be
+   exactly the duplication CLAUDE.md's "shared logic → never copy-pasted" rule
+   exists to prevent — two implementations that must agree pixel-for-pixel and
+   nothing forcing them to.
+3. **Chosen: reuse `paramValueAt`, the interpolator D-208 already built and
+   the Inspector already trusts.** `clipKeyframes.ts` gains one small function,
+   `resolveClipBoxTransform(clip, sourceFrame)`, which is nothing but five
+   `paramValueAt` calls plus D-193's "a clip with no static `box_width`
+   override keeps `null` whatever the keys say" rule. There is exactly one
+   interpolation implementation in `@chroma/editor`, it mirrors exactly one
+   Rust function (`interpolate_param`), and the Inspector's number field and
+   the canvas box are now the same number by construction rather than by two
+   authors agreeing.
+
+**Why five fields and not the resolver's eleven.** Nothing that draws or
+hit-tests this box reads the other six: `opacity` does not move a box (a
+faded-out clip still has one and is still selectable, as in the timeline), the
+four crop insets do not either (`composite_layer_onto` crops in place and keeps
+the footprint, D-132 — `canvasPick.ts` already documented crop as correctly
+ignored), and `rotation` has no on-canvas affordance at all (Phase 2, unbuilt)
+and would need an oriented box rather than this axis-aligned one. Resolving
+them anyway would be six interpolations per render on the preview's hottest
+surface for values nobody reads.
+
+### Part 2 — what a drag on an already-keyframed clip should DO
+
+Correcting only the drawn box would have left the gesture just as dead: the
+commit wrote `set_clip_transform`, which sets the base/unkeyframed value, and
+a keyframe naming `scale` overrides that base at every frame. The drag was
+writing numbers no render could ever show.
+
+Options: refuse the drag on a keyframed clip (honest, and a real capability
+regression for the one workflow this app's own comparison-reel skill produces
+most); write the static field anyway and warn (keeps a write that does
+nothing); or **auto-key**, which is what every reference NLE does with an
+already-animated property — and, decisively, the answer **D-208 already gave
+for this exact model** when the Inspector's own number fields hit the same
+question. Consistency across the two surfaces that edit one value is not a
+tie-breaker here, it is the whole argument: a typed `0.4` and a dragged `0.4`
+must land in the same place.
+
+Three sub-decisions:
+
+- **Per PROPERTY, not per clip.** The earlier attempt used "does this clip have
+  any keyframes?", correctly reasoning that under the OLD Rust rule which
+  properties were keyed varied by frame. D-208 removed that: each property is
+  now resolved over only its own keys, so "animated" is a stable per-property
+  fact, and the coarse rule would be wrong — a move drag on a clip whose
+  `position_x` is keyed but whose `position_y` is not would key both, silently
+  losing the `position_y` half under an animation that never names it. So the
+  commit splits: one `set_clip_keyframes` for the dragged properties that are
+  animated, one `set_clip_transform` for those that are not. Two ops only in
+  that genuinely mixed case; the common cases (all animated, or none) stay at
+  one op / one undo entry.
+- **The key carries ONLY the dragged properties.** `mergeClipKeyframeParams`
+  merges into whatever entry already sits at that frame (D-208's own
+  non-destructive write), so every other property's key there — and every
+  other frame of the animation — is untouched. Interpolation is
+  piecewise-linear, so the inserted point lies ON the existing segment.
+- **One key per GESTURE, not per pointer sample.** Already true structurally
+  (Phase 0b keeps the drag in local `draft` state and commits once on
+  pointer-up) but it now matters much more, so it is asserted by a test. The
+  same concern is why the pre-existing `setDraft(current => …)` commit had to
+  go: under StrictMode an updater may run twice, which on a static write was
+  idempotent and on a keyframe write is two keys and two undo entries. It
+  commits from a `draftRef` mirror instead.
+
+### Part 3 — performance, which is the standing top priority
+
+Both surfaces that read this interpolation re-render on every playhead tick,
+and this change adds a third caller. Before touching anything, the existing
+per-property reads were profiled: `EditorInspectorPanel` builds nine
+`PropertyState`s per render, each doing one `paramValueAt` (filter + map +
+sort) and two `adjacentParamKeyframeFrame` (each its own filter + map + sort)
+— **27 sorts and ~27 throwaway arrays per render**, i.e. per frame of
+playback, growing with key count. That is the first candidate `docs/04-roadmap.md`
+item 25 names for the owner's "lagging like hell" report, and this change
+would have added to it.
+
+So `clipKeyframes.ts` gained a per-param index: on first read of a given
+`chroma_keyframes` ARRAY IDENTITY it builds every param's frame-sorted key
+track once and caches it in a `WeakMap` keyed on that array. Identity is a
+sound key because nothing mutates a stored keyframe array in place — every
+writer here returns a new array, `applyOp` clones before applying, and a
+backend reload produces fresh arrays. Measured, 9 properties × 3 reads on a
+50-key clip: **31.7 µs → 1.2 µs per render (26.9×)**, and 99.9 µs → 2.6 µs
+(38.6×) at 200 keys, with identical checksums across 20 000 renders. The new
+overlay's own five reads therefore cost ~0.7 µs, not ~18 µs.
+
+**Honest scale, so this is not oversold: 31.7 µs per frame is not what "lagging
+like hell" is.** It is real allocation churn (~1 350 short-lived objects per
+frame → GC pressure) and it is the cost this change would otherwise have grown,
+which is why it is fixed here — but the dominant cost is architectural and
+untouched by this pass: `PreviewPane`'s playback loop requests ONE
+server-rendered frame at a time (`inFlight` gate) and `chroma_timeline_frame`
+returns it as a `data:image/jpeg;base64,…` STRING, so every displayed frame
+costs a Rust decode + composite + JPEG encode + base64 encode + IPC + a
+hundreds-of-KB JS string + a base64/JPEG decode in the webview. Playback can
+never exceed that round trip. Recorded in `docs/04-roadmap.md` item 25 as the
+real target for the perf pass, along with `useCanvasClipPick` re-registering
+its capture-phase listener every render (its `layers` dep is a fresh array
+each time) — both deliberately out of scope here rather than half-fixed inside
+a bug fix.
+
+### Verification
+
+`npm test --workspace @chroma/editor` **632/632** (was 609) — 11 new
+`clipKeyframes.test.ts` cases (including one seeded with the owner's real
+`perf-comparison-reel-v3.chroma` values, and the per-param index's own
+cache-correctness cases), 5 new `canvasPick.test.ts` cases, and a new 7-case
+real-DOM suite `PreviewPane.transform.dom.test.tsx` that mounts the real
+`PreviewPane` and reads the box's actual CSS geometry back off the DOM.
+**Five of those seven were confirmed to FAIL against the pre-fix static read**
+by temporarily restoring it (the two that still pass are the two about
+un-keyframed clips — the correct signal). `npx tsc --noEmit -p packages/editor`
+clean; `reactCompiler.test.ts` still reports no bailout on the edited
+components (D-201).
+
+**Not live-verified in a running Tauri window.** What that leaves unproven is
+only what the jsdom tier never covers — that a real browser routes a press to
+the same element — and specifically NOT the geometry, which this suite reads
+off the real component's real CSS. The drag/press routing itself is unchanged
+by this pass (D-204's capture-phase rules and every pointer handler are
+untouched); what changed is the numbers those handlers read and write.
+
+### MCP (the both-interfaces rule)
+
+No new tool: `editor_set_clip_keyframes` / `editor_set_clip_transform` already
+drive this exact model and `editor_get_state` reads it back, so both halves of
+the gesture are already MCP-reachable. What was missing was the **contract an
+agent needs to avoid authoring this bug itself** — that per property a keyframe
+overrides the static field at every frame, so `editor_set_clip_transform` on an
+animated property is a real write that changes no rendered pixel. Added to
+`editor_get_capabilities` (`a_keyframe_overrides_the_static_field_per_property`)
+and to both tools' own docstrings, with how to check it (`editor_get_state`:
+compare the static field against `chroma_keyframes`).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

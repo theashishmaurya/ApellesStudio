@@ -26,18 +26,20 @@
  *     `clipBoxFraction(resolvedBoxSize(...))` — literally the same call
  *     `TransformOverlay` makes to DRAW its box at rest, so a click can never
  *     select a clip whose handles then appear somewhere else.
+ *   - **D-209/B-093 — including the clip's KEYFRAMES.** The transform each box
+ *     is built from is `clipKeyframes.ts`'s `resolveClipBoxTransform`,
+ *     evaluated at that layer's OWN source frame. This module's first version
+ *     tested the STATIC transform and recorded that here as a deliberate,
+ *     acceptable limit, on the reasoning that the overlay drew a static box
+ *     too — which was true, and was the bug: on an animated clip BOTH were
+ *     drawn nowhere near the picture, so a click on the picture selected
+ *     nothing and a click on empty canvas could select the clip. Now that the
+ *     overlay resolves keyframes, so must this, or the "same box" guarantee
+ *     above stops holding the moment a clip is animated.
  *
  * **What it deliberately does NOT model** (each matching an existing,
  * documented limit of the overlay it feeds, not a new one invented here):
  *
- *   - **Keyframes.** A clip's per-frame animated transform lives in
- *     `chroma_keyframes` and is resolved by Rust at render time
- *     (`resolve_clip_transform`); `clipKeyframes.ts`'s own doc states that
- *     interpolation stays the engine's job. So this tests the clip's STATIC
- *     base transform — exactly the box `TransformOverlay` already draws, and
- *     exactly the field an on-canvas drag already writes. A keyframed clip's
- *     hit rect can therefore differ from its painted position mid-animation;
- *     that is the overlay's own pre-existing behaviour, made no worse here.
  *   - **Crop.** `composite_layer_onto` crops a layer's pixels in place
  *     without shrinking its footprint (D-132), so the bounding box is
  *     unchanged by crop — `FractionBox`'s own doc says so, and Phase 1 has no
@@ -53,17 +55,24 @@
  * `node`) — see `canvasPick.test.ts`.
  */
 
+import { resolveClipBoxTransform } from './clipKeyframes';
 import { clipAt, timelineFps, type Clip, type Timeline } from './timeline';
 import { clipBoxFraction, fractionBoxContains, resolvedBoxSize, type FractionBox } from './transformGeometry';
 
 /** One video layer visible at some frame, identified the way every per-clip
  *  command on this surface already identifies one: by track index + clip
  *  index (`chroma_timeline_clip_geometry`, the `set_clip_transform` op) plus
- *  the clip's own stable `id`, which is what `Selection` is keyed on. */
+ *  the clip's own stable `id`, which is what `Selection` is keyed on.
+ *
+ *  `sourceFrame` is the clip's OWN frame under the playhead (D-209) — the
+ *  frame its keyframes are evaluated at, and the same value `Track::clip_at`
+ *  hands `resolve_clip_transform` on the Rust side. `clipAt` already computes
+ *  it while resolving the layer, so carrying it costs nothing. */
 export interface CanvasLayer {
   track: number;
   clipIndex: number;
   clip: Clip;
+  sourceFrame: number;
 }
 
 /**
@@ -84,7 +93,9 @@ export function visibleVideoLayersAt(tl: Timeline | null, frame: number): Canvas
   tl.tracks.forEach((track, i) => {
     if (track.kind !== 'video' || track.hidden) return;
     const found = clipAt(track, frame, fps);
-    if (found) layers.push({ track: i, clipIndex: found.index, clip: found.clip });
+    if (found) {
+      layers.push({ track: i, clipIndex: found.index, clip: found.clip, sourceFrame: found.sourceFrame });
+    }
   });
   return layers;
 }
@@ -98,13 +109,19 @@ export interface PickCandidate extends CanvasLayer {
   natural: { width: number; height: number } | null;
 }
 
-/** The clip's on-canvas bounding box in composition fractions — the SAME
- *  expression `TransformOverlay` draws its at-rest box from (see this
+/** The clip's on-canvas bounding box in composition fractions at its own
+ *  `sourceFrame` — the SAME expression `TransformOverlay` draws its at-rest
+ *  box from, over the same `resolveClipBoxTransform` values (D-209, see this
  *  module's doc). */
-export function layerBoxFraction(clip: Clip, natural: { width: number; height: number }): FractionBox {
+export function layerBoxFraction(
+  clip: Clip,
+  natural: { width: number; height: number },
+  sourceFrame: number,
+): FractionBox {
+  const t = resolveClipBoxTransform(clip, sourceFrame);
   return clipBoxFraction(
-    resolvedBoxSize(natural, clip.scale ?? 1, { width: clip.box_width, height: clip.box_height }),
-    { x: clip.position_x ?? 0, y: clip.position_y ?? 0 },
+    resolvedBoxSize(natural, t.scale, { width: t.box_width, height: t.box_height }),
+    { x: t.position_x, y: t.position_y },
     1,
   );
 }
@@ -126,8 +143,8 @@ export function pickTopmostLayer(
 ): CanvasLayer | null {
   for (const c of candidates) {
     if (!c.natural) continue;
-    if (fractionBoxContains(layerBoxFraction(c.clip, c.natural), point)) {
-      return { track: c.track, clipIndex: c.clipIndex, clip: c.clip };
+    if (fractionBoxContains(layerBoxFraction(c.clip, c.natural, c.sourceFrame), point)) {
+      return { track: c.track, clipIndex: c.clipIndex, clip: c.clip, sourceFrame: c.sourceFrame };
     }
   }
   return null;

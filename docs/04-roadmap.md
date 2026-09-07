@@ -767,9 +767,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       ffmpeg export compiler ignores `opacity`/`rotation` entirely, so those
       two of the nine now-keyframeable properties animate in the preview but
       not in an exported file.
-    **Phases 0, 1 and 3 built; Phase 2 (rotation/non-uniform scale) still
-    scoped, not built; Phase 4's Inspector half built (D-208), its
-    auto-keyframe-on-canvas-drag half still open.**
+      **The ON-CANVAS half is now built too (D-209, 2026-09-08), fixing
+      B-093** — which turned out not to be an open design question so much as
+      a live defect the moment canvas click-to-select started working
+      (B-085/B-092) and a human reached these handles on a real keyframed
+      clip: `TransformOverlay` was not only *writing* the static base, it was
+      *drawing* from it, so on an animated clip the box (and D-204's hit rect)
+      sat nowhere near the picture. Both halves are answered the same way the
+      Inspector's are, through the same D-208 helpers: the box reads
+      `clipKeyframes.ts`'s `resolveClipBoxTransform` (five `paramValueAt`
+      calls, no second interpolator) at the clip's own source frame, and a drag
+      auto-keys **per property** — each dragged property that is animated gets
+      a merged keyframe at the playhead, each one that is not gets the
+      ordinary static write. Also in that pass: the per-param keyframe reads
+      are now indexed per keyframe-array identity (26.9× on the Inspector's
+      own per-render cost at 50 keys — see D-209 Part 3 and item 25 below).
+    **Phases 0, 1, 3 and 4 built; Phase 2 (rotation/non-uniform scale) still
+    scoped, not built.**
 15. ✅ **Video export honours the Colorist's geometry — crop / straighten /
     flip / 90° / lens warp (D-135, 2026-09-04).** **B-042 closed**;
     D-127's `unsupported_geometry` refusal is deleted. All four scoped
@@ -1126,6 +1140,35 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       all nine properties; `useCanvasClipPick`'s `layers`/`geometries` arrays
       rebuilt fresh every render, re-registering its capture-phase listener every
       frame during playback.
+      **Partly actioned, D-209 (2026-09-08) — and the real target now
+      identified, so the rest of this item is no longer a guess:**
+      - ✅ **The unmemoized per-property interpolation is fixed.** It was real:
+        `EditorInspectorPanel` did 27 filter+map+sorts and ~27 throwaway arrays
+        per render (once per playback frame), growing with key count.
+        `clipKeyframes.ts` now indexes every param's key track once per
+        `chroma_keyframes` array identity (`WeakMap`). Measured 31.7 µs → 1.2 µs
+        per render at 50 keys (26.9×), 99.9 µs → 2.6 µs at 200 (38.6×),
+        identical results. Fixed here because D-209 added a third caller to that
+        same path and must not add to the cost.
+      - ⬜ **Still open, and almost certainly the dominant cost:**
+        `PreviewPane`'s playback loop fetches ONE server-rendered frame at a
+        time (an `inFlight` gate), and `chroma_timeline_frame` returns it as a
+        `data:image/jpeg;base64,…` STRING. Every displayed frame therefore costs
+        a Rust decode + composite + JPEG encode + base64 encode + IPC + a
+        hundreds-of-KB JS string allocation + a base64/JPEG decode in the
+        webview, serialized. Playback can never be smoother than that round
+        trip, whatever the frontend does. 31.7 µs of interpolation was never
+        going to explain "lagging like hell"; this is where to look. Worth
+        scoping properly (a binary/`Uint8Array` IPC payload or a shared-memory
+        surface instead of base64; a small decoded-frame lookahead so the next
+        request is in flight while the current one paints; a lower
+        `PREVIEW_LONG_EDGE` while `playing`).
+      - ⬜ **Still open:** `useCanvasClipPick` removes and re-adds its
+        capture-phase `pointerdown` listener on every render, because its
+        `layers` dependency is a fresh array each time. Cheap per occurrence,
+        but it is per playback frame. Deliberately not touched inside D-209's
+        bug fix — that hook is the delicate B-085/B-092 surface and deserves its
+        own pass.
     - **No canvas/preview zoom control** — the timeline already has one (the
       `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
       own viewer zoom control, top-left of the timeline viewer.

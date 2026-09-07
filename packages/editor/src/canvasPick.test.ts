@@ -81,27 +81,92 @@ describe('visibleVideoLayersAt', () => {
 
 describe('layerBoxFraction', () => {
   it('is the identity box for a full-frame, untransformed clip', () => {
-    expect(layerBoxFraction(clip('a', 0, 10), FULL_FRAME)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
+    expect(layerBoxFraction(clip('a', 0, 10), FULL_FRAME, 0)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
   });
 
   it('applies scale about the clip centre and then position', () => {
-    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, position_x: 0.25 }), FULL_FRAME);
+    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, position_x: 0.25 }), FULL_FRAME, 0);
     expect(box).toEqual({ left: 0.5, top: 0.25, width: 0.5, height: 0.5 });
   });
 
   it('honours an independent box_width/box_height override per axis (D-193)', () => {
-    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, box_width: 0.8 }), FULL_FRAME);
+    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, box_width: 0.8 }), FULL_FRAME, 0);
     expect(box.width).toBeCloseTo(0.8); // override wins on x
     expect(box.height).toBeCloseTo(0.5); // scale still drives y
+  });
+
+  // D-209/B-093 — the hit rect follows the ANIMATED transform, or a click on
+  // a keyframed clip's picture lands nowhere near where that picture is.
+  it('resolves the clip KEYFRAMES at the given source frame, not its static fields', () => {
+    const keyed = clip('a', 0, 100, {
+      scale: 0.25,
+      position_x: -0.4,
+      chroma_keyframes: [
+        { frame: 0, params: { scale: 1, position_x: 0 } },
+        { frame: 100, params: { scale: 0.5, position_x: 0.25 } },
+      ],
+    });
+    // At its first frame the clip fills the composition...
+    expect(layerBoxFraction(keyed, FULL_FRAME, 0)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
+    // ...and halfway along it is three-quarter size, shifted right — neither
+    // of which is the static 0.25 / -0.4 box the pre-fix code tested against.
+    const mid = layerBoxFraction(keyed, FULL_FRAME, 50);
+    expect(mid.width).toBeCloseTo(0.75);
+    expect(mid.left).toBeCloseTo(0.5 - 0.375 + 0.125);
+  });
+
+  it('resolves each property over only its OWN keys (D-208), so a foreign key never freezes one', () => {
+    // `position_x` ramps 0 -> 1 across frames 0..100. The `opacity` key at 50
+    // names no geometry at all; under the pre-D-208 frame-bracketing rule it
+    // would have held `position_x` at 0 for the whole first half.
+    const keyed = clip('a', 0, 100, {
+      chroma_keyframes: [
+        { frame: 0, params: { position_x: 0 } },
+        { frame: 50, params: { opacity: 0.5 } },
+        { frame: 100, params: { position_x: 1 } },
+      ],
+    });
+    expect(layerBoxFraction(keyed, FULL_FRAME, 25).left).toBeCloseTo(0.25);
+  });
+
+  it('leaves box_width null on a clip with no static override, whatever the keys say (D-193)', () => {
+    const keyed = clip('a', 0, 100, {
+      scale: 0.5,
+      chroma_keyframes: [{ frame: 0, params: { box_width: 0.8 } }],
+    });
+    // `scale` still drives both axes — the keyed override is ignored, exactly
+    // as `resolve_clip_transform` ignores it.
+    expect(layerBoxFraction(keyed, FULL_FRAME, 0).width).toBeCloseTo(0.5);
+  });
+
+  it('picks a keyframed clip where its picture actually is, and not where its static fields say', () => {
+    // Static: a small box parked far left. Keyed: full frame, centred.
+    const keyed = clip('a', 0, 100, {
+      scale: 0.2,
+      position_x: -0.4,
+      chroma_keyframes: [{ frame: 0, params: { scale: 1, position_x: 0 } }],
+    });
+    const candidates: PickCandidate[] = [
+      { track: 0, clipIndex: 0, clip: keyed, natural: FULL_FRAME, sourceFrame: 0 },
+    ];
+    // Far right: inside the real (keyed) full-frame picture, well outside the
+    // static box (which spans x 0.0–0.2), so the pre-fix code found nothing.
+    expect(pickTopmostLayer({ x: 0.9, y: 0.5 }, candidates)?.clip.id).toBe('a');
   });
 });
 
 describe('pickTopmostLayer', () => {
-  const candidate = (track: number, c: Clip, natural: { width: number; height: number } | null): PickCandidate => ({
+  const candidate = (
+    track: number,
+    c: Clip,
+    natural: { width: number; height: number } | null,
+    sourceFrame = 0,
+  ): PickCandidate => ({
     track,
     clipIndex: 0,
     clip: c,
     natural,
+    sourceFrame,
   });
 
   it('returns null on empty canvas — no layers at all', () => {

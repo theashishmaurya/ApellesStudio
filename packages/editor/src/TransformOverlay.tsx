@@ -30,8 +30,10 @@
  * itself unit-tested, matching this package's `node`-only vitest
  * environment).
  *
- * **Live overlay-only feedback during a drag; ONE `set_clip_transform` op on
- * pointer-up.** Mirrors `RelightPuckLayer.tsx`/D-046's own pattern, which
+ * **Live overlay-only feedback during a drag; ONE write op on pointer-up**
+ * (`set_clip_transform`, or — since D-209 — `set_clip_keyframes` for whichever
+ * of the dragged properties is already animated; see `commit` below).
+ * Mirrors `RelightPuckLayer.tsx`/D-046's own pattern, which
  * exists for exactly this reason (Phase 0b of the note): `applyOp` pushes a
  * whole-timeline undo snapshot on every call, so a naive
  * `onPointerMove -> applyOp` would flood the undo stack. The picture itself
@@ -50,6 +52,23 @@
  * "catches up on commit" contract above now holds — ~400 ms after
  * pointer-up, once the debounced save actually lands.
  *
+ * **D-209/B-093 — the box follows the clip's EFFECTIVE transform at the
+ * playhead, not its static fields, and a drag on an animated property keys
+ * that property.** Until this fix every value below came straight off
+ * `clip.position_x`/`position_y`/`scale`, which on a KEYFRAMED clip is not
+ * where the picture is: the compositor resolves those same fields through
+ * `chroma_keyframes` per frame (`chroma::edit::resolve_clip_transform`) and
+ * only falls back to the static field for a property no keyframe names. On
+ * the owner's real 50-keyframe clip the two disagreed by two thirds of the
+ * canvas width, so the box was drawn well away from the picture it was
+ * supposedly around. `clipKeyframes.ts`'s `resolveClipBoxTransform` — built on
+ * the same per-property `paramValueAt` the Inspector's own number fields use
+ * (D-208), not a second interpolator — is what everything here reads instead.
+ * The second half of the same bug was `commit`: `set_clip_transform` writes
+ * the static field, which a keyframe on that property overrides at every
+ * frame, so a drag on an animated clip moved the box and could not possibly
+ * move the picture. See `commit` for what it does now.
+ *
  * Not in Phase 1 (see the note): rotation, non-uniform scale (via on-canvas
  * DRAGGING — see D-193's own note on this component below), crop, anchor
  * point, snapping/guides, marquee, multi-clip transform. (Click-to-select was
@@ -60,6 +79,8 @@
  * whenever no drag is in flight, uses them when the clip has them), but
  * dragging a corner handle stays Phase-1 uniform-only and, on release,
  * ALWAYS commits a plain `scale` and clears both overrides back to `null`
+ * (on a clip whose `scale` is animated the new value goes into the keyframe
+ * and the override is cleared by its own op — D-209, see `commit`)
  * — an on-canvas resize is a deliberately simpler, uniform gesture, and
  * silently only-partially-respecting an existing non-uniform override
  * would be worse than this explicit, documented "resizing on canvas
@@ -71,7 +92,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useContentBox } from '@chroma/player';
 
-import { findClip } from './timeline';
+import {
+  clipSourceFrame,
+  hasParamKeyframes,
+  mergeClipKeyframeParams,
+  resolveClipBoxTransform,
+} from './clipKeyframes';
+import { findClip, timelineFps, type ClipTransformParam } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import {
@@ -99,8 +126,22 @@ type DragState =
   | { kind: 'move'; startPoint: { x: number; y: number }; startPosition: { x: number; y: number } }
   | { kind: 'scale'; startPoint: { x: number; y: number }; center: { x: number; y: number }; startScale: number };
 
+/** The box's live, uncommitted geometry mid-drag — what it RENDERS from while
+ *  a gesture is in flight, and the exact value `commit` writes on release. */
+interface Draft {
+  position: { x: number; y: number };
+  scale: number;
+}
+
 export function TransformOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
+  // D-209 — the box is a function of the playhead now (see this module's doc),
+  // so this component re-renders as the playhead moves. That is unavoidable
+  // for a box that has to sit on an animated picture; it is also cheap — the
+  // per-property resolution below reads `clipKeyframes.ts`'s cached per-param
+  // index rather than re-sorting the key list, and it renders at all only when
+  // exactly one clip is selected.
+  const playhead = useEditorTimelineStore((s) => s.playhead);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
 
@@ -122,11 +163,39 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // The in-flight drag (Phase 0b: local + uncommitted; one `applyOp` on
   // release). `draft` is what the box actually renders while dragging —
   // `null` means "render straight from the committed clip fields."
+  //
+  // **`draftRef` mirrors `draft` so pointer-up can READ the last dragged
+  // value without a state updater** (D-209). `handlePointerUp` used to commit
+  // from inside `setDraft(current => …)`, which reads the right value but runs
+  // `applyOp` — a store write, i.e. an update to `PreviewPane` — during
+  // React's own update computation: React logs "Cannot update a component
+  // while rendering a different component" for exactly that, and under
+  // StrictMode an updater may be invoked twice, which would commit the gesture
+  // and push its undo entry TWICE. That second half matters much more now than
+  // it did before D-209: a doubled commit on an animated clip means two
+  // keyframe writes, not one idempotent static write. Surfaced by this
+  // component's new DOM drag coverage. The ref keeps the original "commit
+  // precisely what was last rendered" property with none of that.
   const dragRef = useRef<DragState | null>(null);
-  const [draft, setDraft] = useState<{ position: { x: number; y: number }; scale: number } | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  const [draft, setDraftState] = useState<Draft | null>(null);
+  const setDraft = (next: Draft | null) => {
+    draftRef.current = next;
+    setDraftState(next);
+  };
 
-  const committedPosition = { x: clip?.position_x ?? 0, y: clip?.position_y ?? 0 };
-  const committedScale = clip?.scale ?? 1;
+  // D-209 — the clip's own SOURCE frame under the playhead (the frame its
+  // keyframes are keyed against, and the exact value `Track::clip_at` hands
+  // `resolve_clip_transform`), and the box transform that actually holds
+  // there. `clipSourceFrame` clamps into the clip's source window, which is
+  // what the Inspector's own keyframe controls already use — the playhead can
+  // sit outside a still-selected clip, and both surfaces then agree on which
+  // frame they are talking about.
+  const sourceFrame = clip ? clipSourceFrame(clip, playhead, timelineFps(timeline)) : 0;
+  const effective = clip ? resolveClipBoxTransform(clip, sourceFrame) : null;
+
+  const committedPosition = { x: effective?.position_x ?? 0, y: effective?.position_y ?? 0 };
+  const committedScale = effective?.scale ?? 1;
   const position = draft?.position ?? committedPosition;
   const scale = draft?.scale ?? committedScale;
 
@@ -164,31 +233,104 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [draft, cancelDrag]);
 
-  const commit = (next: { position: { x: number; y: number }; scale: number }, kind: 'move' | 'scale') => {
+  /**
+   * Write the gesture — ONCE, on pointer-up, with the value the box was last
+   * rendered at. Every intermediate `pointermove` value stays in `draft` and
+   * is never written anywhere, so a drag across an animated clip produces one
+   * keyframe at the playhead, not one per pointer sample.
+   *
+   * **D-209/B-093 — a drag on an ALREADY-ANIMATED property keys it, per
+   * property.** `set_clip_transform` sets the base/unkeyframed value (that
+   * op's own doc says so). On a clip whose keyframes name `scale`,
+   * `resolve_clip_transform` resolves `scale` from those keys and never
+   * reaches the base — so the pre-D-209 commit wrote a real, persisted number
+   * that no frame of any render could reflect, which is exactly what the owner
+   * saw ("i made it small but no clip follows that only the box"). Every
+   * reference NLE auto-keys an already-animated property on edit instead, and
+   * D-208 already gave that answer for the Inspector's own number fields; this
+   * is the same answer for the same model, reached through the same
+   * `hasParamKeyframes` test and the same `mergeClipKeyframeParams` write.
+   *
+   * **Per PROPERTY, not per clip** — the one place this differs from the
+   * obvious "does the clip have keyframes?" rule. Since D-208 a clip's keys
+   * really do name different subsets of properties, and the Rust resolver
+   * brackets each property over only its own keys (`interpolate_param`,
+   * B-094), so "animated" is a per-property fact. A move drag on a clip whose
+   * `position_x` is keyed but whose `position_y` is not must key the first and
+   * write the second statically, or one of the two axes silently does nothing.
+   * That is the only case that costs two ops; both are one gesture's worth of
+   * history, and the common cases (all dragged properties animated, or none)
+   * stay at one.
+   *
+   * The keyframe carries ONLY the dragged properties: `mergeClipKeyframeParams`
+   * merges into whatever entry already sits at that frame, so every other
+   * property's key there — and every other frame of the animation — is
+   * untouched.
+   *
+   * **The one extra op D-193 forces:** a corner (scale) drag on a clip that
+   * also carries a static `box_width`/`box_height` override. An override wins
+   * over `scale` outright in the compositor and only `set_clip_transform` can
+   * clear it (a keyframe modulates an override, it cannot remove one), so that
+   * gesture emits the clearing transform op as well. Identical to what
+   * `EditorInspectorPanel`'s own `applyParam` does for a typed scale.
+   */
+  const commit = (next: Draft, kind: 'move' | 'scale') => {
     if (!primary || !clip || clipIndex < 0) return;
-    applyOp({
-      kind: 'set_clip_transform',
-      track: primary.track,
-      clip: clipIndex,
-      opacity: clip.opacity ?? 1,
-      position_x: next.position.x,
-      position_y: next.position.y,
-      scale: next.scale,
-      // D-193 — a corner (scale) drag stays Phase-1 uniform-only (see this
-      // module's own doc above): committing one always clears any
-      // independent `box_width`/`box_height` override back to `null`, so
-      // the box actually ends up the uniform size just dragged rather
-      // than silently keeping a stale, now-wrong override. A plain MOVE
-      // drag never resizes anything, so it preserves whatever override
-      // already existed untouched.
-      box_width: kind === 'scale' ? null : clip.box_width ?? null,
-      box_height: kind === 'scale' ? null : clip.box_height ?? null,
-      rotation: clip.rotation ?? 0,
-      crop_left: clip.crop_left ?? 0,
-      crop_top: clip.crop_top ?? 0,
-      crop_right: clip.crop_right ?? 0,
-      crop_bottom: clip.crop_bottom ?? 0,
-    });
+    const keyframes = clip.chroma_keyframes;
+    const dragged: Array<[ClipTransformParam, number]> =
+      kind === 'move'
+        ? [
+            ['position_x', next.position.x],
+            ['position_y', next.position.y],
+          ]
+        : [['scale', next.scale]];
+
+    const keyed: Record<string, number> = {};
+    const statics: Partial<Record<ClipTransformParam, number>> = {};
+    for (const [param, value] of dragged) {
+      if (hasParamKeyframes(keyframes, param)) keyed[param] = value;
+      else statics[param] = value;
+    }
+
+    // D-193 — a corner (scale) drag stays Phase-1 uniform-only (see this
+    // module's own doc above): committing one always clears any independent
+    // `box_width`/`box_height` override back to `null`, so the box ends up the
+    // uniform size just dragged rather than silently keeping a stale,
+    // now-wrong override. A plain MOVE drag never resizes anything, so it
+    // preserves whatever override already existed untouched.
+    const clearsOverride = kind === 'scale' && ((clip.box_width ?? null) !== null || (clip.box_height ?? null) !== null);
+
+    if (Object.keys(statics).length > 0 || clearsOverride) {
+      // `set_clip_transform` replaces the WHOLE static set, so every field the
+      // gesture didn't change is restated from the clip's own static value —
+      // never from the resolved/effective one, which would bake this frame's
+      // interpolated pose into the base underneath the animation.
+      applyOp({
+        kind: 'set_clip_transform',
+        track: primary.track,
+        clip: clipIndex,
+        opacity: clip.opacity ?? 1,
+        position_x: statics.position_x ?? clip.position_x ?? 0,
+        position_y: statics.position_y ?? clip.position_y ?? 0,
+        scale: statics.scale ?? clip.scale ?? 1,
+        box_width: kind === 'scale' ? null : clip.box_width ?? null,
+        box_height: kind === 'scale' ? null : clip.box_height ?? null,
+        rotation: clip.rotation ?? 0,
+        crop_left: clip.crop_left ?? 0,
+        crop_top: clip.crop_top ?? 0,
+        crop_right: clip.crop_right ?? 0,
+        crop_bottom: clip.crop_bottom ?? 0,
+      });
+    }
+
+    if (Object.keys(keyed).length > 0) {
+      applyOp({
+        kind: 'set_clip_keyframes',
+        track: primary.track,
+        clip: clipIndex,
+        keyframes: mergeClipKeyframeParams(keyframes, sourceFrame, keyed),
+      });
+    }
   };
 
   const handleBodyPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -228,30 +370,31 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     if (!drag) return;
     e.stopPropagation();
     dragRef.current = null;
-    const kind = drag.kind;
-    // Read the live draft state rather than recomputing — it's already
-    // exactly what was last rendered, and pointerup itself can land a
-    // fraction of a pixel from the last pointermove.
-    setDraft((current) => {
-      if (current) commit(current, kind);
-      return null;
-    });
+    // Read the live draft rather than recomputing — it's already exactly what
+    // was last rendered, and pointerup itself can land a fraction of a pixel
+    // from the last pointermove. Through the REF, not a `setDraft` updater —
+    // see `draftRef`'s own note above for what that cost.
+    const current = draftRef.current;
+    setDraft(null);
+    if (current) commit(current, drag.kind);
   };
 
-  if (!clip || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
+  if (!clip || !effective || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
   // D-193 — while a drag is live, the box always follows the natural*scale
   // formula (Phase 1's uniform-only drag math, unchanged). At rest, an
   // independent `box_width`/`box_height` override (set via the Inspector)
   // takes over per axis — passing the already-resolved size through as
   // `natural` with `scale: 1` reuses `clipBoxFraction` unchanged rather
-  // than needing a second box-math variant.
+  // than needing a second box-math variant. D-209 — the override read here is
+  // the EFFECTIVE one (an override is itself keyframeable on top of its static
+  // value), for the same reason the position/scale above are.
   const box = draft
     ? clipBoxFraction({ width: geometry.naturalWidth, height: geometry.naturalHeight }, position, scale)
     : clipBoxFraction(
         resolvedBoxSize({ width: geometry.naturalWidth, height: geometry.naturalHeight }, committedScale, {
-          width: clip.box_width,
-          height: clip.box_height,
+          width: effective.box_width,
+          height: effective.box_height,
         }),
         position,
         1,
