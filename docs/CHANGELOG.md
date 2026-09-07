@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Text/title clips (roadmap 24c): `TransformOverlay` hides
+  the corner (scale) handles for a text clip, keeps the move drag.** The box
+  itself needed no special-casing (the backend's `clip_geometry` already
+  answers correctly for a text clip's full-frame natural size); the real gap
+  was that a corner drag's `commit` writes `scale` through the same
+  `set_clip_transform` op a video clip's does, and the frontend store's own
+  reducer applies a text clip's write completely unchecked — silently landing
+  a `scale` value neither the live preview (`resolve_text_clip_transform`
+  pins it to `1.0`) nor `drawtext` (which cannot scale at all) ever reads.
+  B-053's exact shape through a different door; closed by hiding the handles
+  rather than teaching the reducer to refuse mid-drag. 3 new real-DOM tests.
 - **2026-09-08** — **Text/title clips (roadmap 24b): `ClipInspectorPanel`
   hides Scale/Rotation/Width/Height/Crop for a text clip**, leaving Opacity/
   Position X/Position Y — the three fields `resolve_text_clip_transform`

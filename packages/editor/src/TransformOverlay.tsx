@@ -74,6 +74,7 @@
  * point, snapping/guides, marquee, multi-clip transform. (Click-to-select was
  * on this list until D-204 — see above.)
  *
+ *
  * **D-193 — independent `box_width`/`box_height` (the Inspector's new
  * Width/Height/ratio-lock control) render correctly here (the STATIC box,
  * whenever no drag is in flight, uses them when the clip has them), but
@@ -88,6 +89,26 @@
  * Inspector-only affordance for now (see that panel's own doc). A plain
  * MOVE (reposition) drag never touches box size and always preserves
  * whatever override already existed.
+ *
+ * **D-211 follow-up — a text clip gets the box and its MOVE (reposition)
+ * drag, never the four corner handles.** `chroma_timeline_clip_geometry`
+ * already answers correctly for a text clip (its natural footprint is the
+ * whole composition — `chroma::edit::clip_geometry`'s own `is_text()`
+ * branch), so the box itself needs no special-casing at all: `resolveClip
+ * BoxTransform` reads the same `position_x`/`position_y`/`scale` fields
+ * either way, and a title's `scale` is simply always its identity `1`
+ * (never set by anything that writes to a text clip). The corner handles ARE
+ * special-cased, and had to be: a scale drag's `commit` writes `scale`
+ * through the SAME `set_clip_transform` op a video clip's does, and unlike
+ * the MCP tool of the same name, that op's own store reducer
+ * (`timeline.ts`) applies a text clip's write completely unchecked — nothing
+ * stops a non-1 `scale` from actually landing on the clip. It would then sit
+ * there silently doing nothing: `resolve_text_clip_transform` (Rust) pins
+ * `scale` to `1.0` for a text clip regardless of what is stored, and
+ * `drawtext` cannot scale at all on the export side either. That is B-053's
+ * exact shape (a transform silently dropped, not refused) reproduced through
+ * a different door — hiding the handles closes the door rather than
+ * teaching this component (or the store reducer) to refuse mid-drag.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useContentBox } from '@chroma/player';
@@ -152,6 +173,11 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   const clip = found?.clip ?? null;
   const clipIndex = found?.index ?? -1;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
+  // D-211 follow-up — see this module's own doc: a text clip's `scale` is
+  // pinned server-side and a corner drag would silently write a value
+  // nothing ever reads, so the handles for it are hidden entirely rather
+  // than left to fail mid-gesture.
+  const isText = !!clip?.text;
 
   const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
 
@@ -424,6 +450,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
           onPointerUp={handlePointerUp}
         />
         {!trackLocked &&
+          !isText &&
           CORNERS.map((corner) => {
             const isTop = corner[0] === 'n';
             const isLeft = corner[1] === 'w';

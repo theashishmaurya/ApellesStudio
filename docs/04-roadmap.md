@@ -1159,9 +1159,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     is hidden rather than rendered inert), leaving Opacity/Position X/
     Position Y — the three fields `resolve_text_clip_transform` actually
     honours. 3 new real-DOM tests (`ClipInspectorPanel.textGating.dom.test.tsx`).
-    (c) on-canvas drag of
-    a title (`TransformOverlay.tsx`, off-limits the same way — the backend's
-    `chroma_timeline_clip_geometry` already answers correctly for a text clip);
+    (c) ~~on-canvas drag of a title (`TransformOverlay.tsx`, off-limits the
+    same way)~~ — **CLOSED, 2026-09-08.** Needed less than it looked: the box
+    itself already worked with zero special-casing (`chroma_timeline_clip_
+    geometry`'s `is_text()` branch already answers with the whole composition
+    as natural size, and `resolveClipBoxTransform` reads the same fields
+    either way), so a MOVE (reposition) drag was already correct. The real
+    gap was the corner (scale) handles: dragging one calls `commit` ->
+    `set_clip_transform`, and unlike the MCP tool of the same name, the
+    frontend store's own reducer applies a text clip's write completely
+    unchecked — a scale drag would have silently written a value neither
+    engine reads (`resolve_text_clip_transform` pins `scale` to `1.0`
+    regardless, `drawtext` cannot scale at all), B-053's exact shape through a
+    different door. Fixed by hiding the corner handles for a text clip
+    outright rather than teaching the reducer to refuse mid-drag. 3 new
+    real-DOM tests (`TransformOverlay.textClip.dom.test.tsx`).
     (d) FCPXML interchange does not map a title yet; (e) ~~found live,
     2026-09-08, self-testing this feature right after merge: `editor_add_track`
     only APPENDS (highest index — bottommost z-order)~~ — **CLOSED, D-214,
