@@ -10,7 +10,7 @@ One or two lines per session. Detail lives in the decision it references.
   hand-written memoization was fighting the compiler and costing them ALL
   auto-memoization; `PreviewPane`/`Filmstrip`/`useEditorControl`/`SourcesPanel`
   cleared too), pinned by a new `reactCompiler.test.ts` guard. Investigating the
-  inventory's "possibly a real bug" flags found **B-082** (two components read
+  inventory's "possibly a real bug" flags found **B-084** (two components read
   Zustand state with `getState()` during render, so Colorist's Paste button never
   updates after a copy) — filed, not fixed. `TimelinePane`'s drag gesture was
   audited and is already deferred to pointer-up; no change.

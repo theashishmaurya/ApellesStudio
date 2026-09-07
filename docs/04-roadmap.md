@@ -993,7 +993,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        `packages/motion`'s own files are still open, each with its reason —
        `docs/notes/react-compiler-coverage.md` marks fixed vs. open and
        tabulates a per-item verdict for every "possibly a real bug" flag
-       (one turned out to be real: **B-082**).
+       (one turned out to be real: **B-084**).
     3. ~~**`TimelinePane.tsx`'s drag-gesture performance** — unverified either
        way: does its drag code already bypass React state during the gesture
        itself, or does it re-render through React state every pointer-move

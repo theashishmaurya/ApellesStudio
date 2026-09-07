@@ -17806,7 +17806,7 @@ re-opened the bucket this pass just closed.
   touch-up) and `app/src/components/panel/editor/ImageCanvas.tsx` (`this`
   syntax in fork code that needs reading first).
 
-**One real bug found and filed, not fixed: B-082.** The inventory flagged
+**One real bug found and filed, not fixed: B-084.** The inventory flagged
 `App.tsx`/`EditorView.tsx`'s *"Hooks may not be referenced as normal values"* as
 possibly a real Rules-of-Hooks bug. It is: both read `store.getState()` in the
 render body, so render output depends on state they never subscribe to — the
