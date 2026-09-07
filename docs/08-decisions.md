@@ -19017,3 +19017,165 @@ compiles to a byte-identical argv to before D-211.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-214 — `editor_set_selection`: selection is writable over MCP, and it is UI state, not an undoable edit
+
+**Context.** Roadmap item 26, filed by D-209's own verification pass.
+`editor_get_state` has reported the Edit tab's `selection` (`[{track, id}]`)
+and `selectedGap` since the B-085 follow-up, but **nothing could set either**.
+The consequence was not "an agent can't highlight a clip" — every editing
+capability already takes an explicit `track`/`clip` and needs no selection at
+all. The consequence was that the surfaces which exist only *for* a selection
+were unreachable: `TransformOverlay` (the on-canvas transform box and its four
+corner handles) mounts only when EXACTLY ONE clip is selected, and so does the
+Inspector's clip form. So the whole on-canvas transform surface could be
+neither driven nor checked by anything but a human's mouse — which is exactly
+why D-209/B-093 shipped with its pointer tier unverified, and why every
+on-canvas fix before it (D-136, D-204, B-085, B-092) was verified by the owner
+clicking, or not at all. A read/write asymmetry, not a missing capability, but
+a direct instance of CLAUDE.md's "every feature is built for a human AND an AI"
+left unhonoured.
+
+**The real question: is this an `EditOp` on the undo stack, or a plain store
+action?** Both are defensible in the abstract — Premiere/Resolve don't put
+selection on the undo stack either, but this repo's rule is that an agent's
+edit lands on the same undo stack a human's does (D-140), so "MCP op ⇒
+`applyOp`" is the default and needed a real reason to be broken.
+
+**Choice: a plain, non-undoable store action** — the op calls the SAME
+`setSelection`/`setSelectedGap` pair, in the same order, that `TimelinePane`'s
+clip click, its marquee, its empty-area gap click and `useCanvasClipPick`'s
+rule 6 already call. Not a new store action, not an `EditOp`, no history push.
+Why:
+
+- **`selection`/`selectedGap` are fields of the STORE, not of `Timeline`.**
+  D-051's undo entries are whole-`Timeline` snapshots, so selection has never
+  been inside one — an undo today does not restore selection and never has.
+  Making the MCP path undoable would not "match" the existing model, it would
+  invent a second one.
+- **Nothing persists it.** Checked rather than assumed: no `selection` concept
+  exists anywhere in `crates/chroma-timeline`, `crates/chroma-project` or
+  `app/src-tauri/src/chroma`, and `chroma_timeline_set` writes a `Timeline`.
+  Selection never reaches `project.json`. It is genuinely ephemeral UI state,
+  and D-140's rule is about document edits.
+- **A human's click pushes nothing.** An MCP selection that *was* undoable
+  would behave differently from the identical human gesture, and — worse —
+  would sit between the user and their last real edit on the next cmd-Z. That
+  is a real usability regression traded for no gain.
+- Cost, stated honestly: an agent cannot undo a selection. It re-selects
+  instead, from a value `editor_get_state` hands it. That is cheap.
+
+**Shape.** `editor_set_selection(clips=[...])` or `editor_set_selection(gap=
+{track, frame})`, mutually exclusive because the store itself makes them so
+(D-105 — each setter clears the other), and refused rather than silently
+resolved when both are given. `clips=[]` clears. Deliberately an ARRAY, not the
+single `(track, clip_id)` pair the roadmap item sketched: the GUI has real
+multi-select (D-107 cmd/shift-click) and a single-clip-only tool would have
+been the both-interfaces gap again, one level down. Each entry takes EITHER a
+`clip` index (what every other mutating `editor_*` tool takes) or a `clipId`
+(what `editor_get_state`/`editor_get_timeline` hand back) — those two halves of
+the surface genuinely speak different dialects, and forcing a conversion would
+cost a round trip to answer a question the caller already had answered;
+`clipId` wins if both are given, being the address that survives a reorder
+(D-054).
+
+**Validation, per the roadmap item's own open questions.** Every entry is
+resolved against the live timeline through the same `resolveClip` every other
+op uses, so a bad track/clip index reports the identical "no track N (0..M)" /
+"no clip N on track M (0..K)" string, and an unknown id its own. A selection of
+something that does not exist would otherwise be stored happily, return `ok`,
+and render nothing — the exact silent-no-op class of bug B-053 was. A gap is
+validated with `gapAt`, the SAME test `TimelinePane`'s empty-area click makes
+before selecting one and `remove_gap`'s reducer makes before closing one, so
+this op cannot produce a gap selection the GUI could not produce or one
+`editor_remove_gap` would then refuse; trailing empty space past the last clip
+is not a closeable gap and is refused. A duplicated clip is dropped rather than
+failing the call (the GUI's own toggle can never produce one). Locked tracks
+are NOT refused — the GUI lets you select a locked track's clip, it just draws
+no drag handles — but `trackLocked`/`trackHidden` come back per clip so an
+agent knows why the handles are absent.
+
+**Read-back.** The response reports the store's own `selection`/`selectedGap`
+plus `singleClipSelected` — the one derived fact the op exists to make
+reachable, since that is precisely the condition `TransformOverlay` and the
+Inspector's clip form both gate on.
+
+**The GUI half already exists, which is the whole point.** CLAUDE.md's
+both-interfaces rule is normally "don't ship a GUI control without the MCP
+tool"; this is the same rule read from the other side — the human affordance
+(timeline click, cmd/shift-click, marquee, empty-area gap click, canvas
+click-to-select) has been there since D-100/D-105/D-107/D-204, and it was the
+AI half that was missing. Nothing new was added to the GUI, deliberately: a
+second way for a human to select would be a parallel path, not parity.
+
+**No Rust change**, and that was verified, not assumed: `control.rs`'s own doc
+says it "does not know the op list, it just forwards `{op, args}`", the op
+registry is the frontend's, and selection touches no persisted state.
+
+**`editor_get_capabilities` gained one line too** (`compositing
+.selection_gated_surfaces`), because the trap this closes is one an agent
+would otherwise walk into with the new `debug_screenshot`: photograph the
+preview to check a transform, see an empty canvas because nothing is selected,
+and conclude the transform is broken.
+
+**Verified.**
+- `PreviewPane.selection.dom.test.tsx` — 17 new real-DOM cases that drive the
+  REAL op through the REAL `chroma://request`/`chroma://response/<id>` pair
+  (a `useEditorControl()` mounted beside `PreviewPane`, its listener fed a real
+  request payload, its emitted envelope read back), then assert on **what
+  mounts**, not on what the store holds: no box before the call, a box plus
+  exactly four `data-transform-handle` corners after it; the box unmounting
+  again on `clips=[]`; nothing drawn for a two-clip selection (the Phase-1
+  exactly-one rule, asserted rather than assumed); the box but zero handles on
+  a locked track; a gap selection superseding a clip selection and unmounting
+  the box; every validation refusal; and — the D-214 decision itself, as a test
+  — that three selection calls push **zero** entries onto `@chroma/history`'s
+  `undoStack` and leave the `Timeline` byte-identical.
+- `npm test --workspace @chroma/editor` **703/703** (was 686).
+  `npx tsc --noEmit -p packages/editor` clean. `reactCompiler.test.ts` still
+  reports no bailout.
+- **Live, and this time the loop actually closed** — the tier D-209 could not
+  reach, reached, using the very thing this op unblocks. A second, fully
+  isolated instance was built and run from this worktree (vite 1436,
+  `CHROMA_CONTROL_PORT=19802`, its own bundle identifier per D-167's addendum;
+  `lsof`/`ps eww` cross-checked that PID 99033 on 19802 was the worktree binary
+  and that the owner's own instance stayed on 19788 throughout). Then, over
+  `curl` to 19802 and `debug_screenshot` (D-210) with the PNG actually looked
+  at each time:
+  1. Clip placed at `scale 0.5`, `position_x -0.2`. Shot: picture small and
+     left of centre, **no box, no handles**, Inspector reading "Select a clip
+     to edit its properties." — the exact dead end D-209 hit.
+  2. `editor_set_selection(clips=[{track:0, clip:0}])` → `singleClipSelected:
+     true`. Shot: **the transform box and all four corner handles are drawn,
+     tight around the picture**, the Inspector is the real clip form (Position
+     X `-0.2`, Scale `0.5`, Width 1470/Height 835), and the timeline clip is
+     outlined as selected.
+  3. `editor_set_clip_transform(scale 0.25, position 0.32/-0.3)` → the box
+     immediately jumps to the upper right at quarter size (a drag-equivalent
+     state change), and ~a few seconds later the composited picture lands
+     **inside it**, box and picture agreeing pixel-for-pixel. That is B-093's
+     own symptom checked directly, by an agent, for the first time.
+  4. `editor_set_selection(clips=[])` → box, handles, clip outline and
+     Inspector form all gone.
+  5. `editor_set_selection(gap={track:0, frame:500})` on a real gap →
+     `gapStart 302 / gapEnd 900`, and the GUI's own **"Close Gap"** toolbar
+     action appears — the action that exists only for a gap selection, i.e.
+     the gap half drives the same GUI state a human's click does. Frame 5000
+     (trailing space), clip index 9, and `clips`+`gap` together were each
+     refused live with their real messages.
+- **One environment fix, worth recording because it will bite the next
+  worktree agent.** A worktree has no `node_modules` of its own, so Node
+  resolution walks up and finds the SHARED checkout's — whose `@chroma/*`
+  symlinks point at the SHARED `packages/`. The first live run therefore built
+  the worktree's Rust and served the *checkout's* frontend, and answered
+  `unknown editor op: editor_set_selection` for an op that was demonstrably in
+  the file. Fixed properly rather than worked around: a worktree-local
+  `node_modules/@chroma/*` (plus `app/node_modules`) symlinked to the
+  worktree's own packages, which resolves locally and lets everything else
+  fall through to the shared tree. Both are gitignored.
+- Tier limits, still stated honestly: the POINTER tier (a real mouse drag on a
+  real handle) is still unreached — this environment has no macOS
+  screen-recording permission and the `decorations: false` window exposes no
+  Accessibility window, so there is nothing to aim a synthetic click at. What
+  is now covered is everything up to that: real app, real WKWebView, real
+  control server, real compositor, and a picture of the result.

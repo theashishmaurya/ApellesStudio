@@ -599,6 +599,19 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "the export cannot produce. Widening both engines together is "
             "Phase 2 — see docs/notes/text-title-clips.md."
         ),
+        "selection_gated_surfaces": (
+            "D-214: you do NOT need a selection to edit anything — every "
+            "mutating editor_* tool takes an explicit track/clip. But the "
+            "Edit tab has two surfaces that render ONLY for a selection of "
+            "EXACTLY ONE clip: the on-canvas transform box and its four "
+            "corner handles, and the Inspector's per-clip form. If you are "
+            "about to debug_screenshot the preview or the Inspector to check "
+            "a transform, call editor_set_selection(clips=[{'track': t, "
+            "'clip': i}]) first or you will photograph an empty canvas and "
+            "conclude the wrong thing. The response's `singleClipSelected` "
+            "tells you whether that condition now holds; `trackLocked` on a "
+            "selected clip means the box draws but the drag handles do not."
+        ),
     },
     "export": {
         "v1_scope": (
@@ -763,6 +776,83 @@ def editor_set_playing(playing: bool) -> str:
     import json
 
     return json.dumps(_op("editor_set_playing", playing=playing), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_selection(
+    clips: list[dict] | None = None,
+    gap: dict | None = None,
+) -> str:
+    """Set what the Edit tab has SELECTED — the write half of
+    `editor_get_state`'s `selection`/`selectedGap` (D-214, roadmap item 26).
+    Until this existed, selection was readable and not writable, so nothing
+    but a human's mouse click could put a clip into the selected state.
+
+    **Why you would call this at all**, given that every editing capability
+    already takes an explicit `track`/`clip` and needs no selection: the Edit
+    tab has real surfaces that only exist FOR a selection, and this is the
+    only way to reach them.
+
+    - The **on-canvas transform box** (`TransformOverlay` — the box + corner
+      handles drawn over the preview) renders only when EXACTLY ONE clip is
+      selected. Without this tool, that whole surface is undrivable and, more
+      to the point, uncheckable: pair this with `debug_screenshot` to actually
+      SEE the box land on the picture (that is what this tool was built for —
+      B-093/D-209 shipped with its on-canvas tier unverified because there was
+      no way to select anything).
+    - The **Inspector** shows a clip's own form under the same
+      exactly-one-clip rule, so a screenshot of it is only meaningful once
+      something is selected.
+    - It also lets you leave the app in the state a human expects to find:
+      select the clip you just added/moved so the user sees it highlighted.
+
+    **Arguments — pass exactly one of `clips` or `gap`.**
+
+    `clips`: a list of `{"track": N, "clip": I}` or `{"track": N, "clipId":
+    "..."}` entries. Both address forms are accepted because the two halves of
+    this surface speak different dialects — `editor_get_state`/
+    `editor_get_timeline` hand you ids, every mutating `editor_*` tool takes
+    an index — and converting between them would otherwise cost you a round
+    trip. `clipId` wins if you pass both. An index is only meaningful against
+    the track's current Vec order, so prefer `clipId` if anything may have
+    been reordered since you read the timeline.
+
+    - Select one clip: `clips=[{"track": 0, "clip": 2}]`
+    - Multi-select (the same thing cmd-click does in the GUI):
+      `clips=[{"track": 0, "clip": 0}, {"track": 1, "clip": 3}]`
+    - **Clear everything**: `clips=[]`
+
+    `gap`: `{"track": N, "frame": F}` selects a GAP (empty space between two
+    clips) instead — mutually exclusive with a clip selection, exactly as in
+    the GUI. `frame` must fall inside a real, CLOSEABLE gap (one with a clip
+    after it); trailing empty space past the last clip is not a gap and is
+    refused rather than silently selecting nothing. The response reports the
+    gap's real `gapStart`/`gapEnd` bounds, so you can hand `gapStart` straight
+    to `editor_remove_gap`.
+
+    **Not undoable, by design** (D-214): selection is UI state, not document
+    content — it is not part of the `Timeline` that gets persisted, so the
+    undo stack has never carried it and neither does this. A human's click
+    pushes nothing either; this behaves identically. Re-select with another
+    call rather than looking for an undo.
+
+    Every entry is validated against the live timeline — a bad track index,
+    a bad clip index, or an unknown clip id is a real error, not a silently
+    stored selection of something that does not exist.
+
+    The response reads the selection straight back off the store, plus
+    `singleClipSelected` (whether the on-canvas transform box / Inspector clip
+    form will now draw) and, per selected clip, `trackLocked` (a locked
+    track's clip still gets a box but no draggable corner handles) and
+    `trackHidden`."""
+    import json
+
+    args: dict = {}
+    if clips is not None:
+        args["clips"] = clips
+    if gap is not None:
+        args["gap"] = gap
+    return json.dumps(_op("editor_set_selection", **args), indent=2, default=str)
 
 
 @mcp.tool()

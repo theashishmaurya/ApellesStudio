@@ -41,16 +41,18 @@ claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools — 66
+## Tools — 77
 
 The table below is the **Colorist** surface (grading, masks, relight, scopes,
-export). The Edit tab's own 24 `editor_*` tools — 20 from D-183 (read/seek,
-media import, clip placement/split/trim/move/remove, gap removal, track
-management, transform + keyframes, multi-track export) and 4 from D-189 (media
-understanding, listed at the end of this table) — are documented with their
+export). The Edit tab's own 30 `editor_*` tools — read/seek/**selection**
+(D-214), media import/removal, clip placement/split/trim/slip/swap/move/remove,
+gap removal, text/title clips (D-211), track management, transform +
+keyframes, multi-track export, FCPXML interchange, and 4 media-understanding
+tools from D-189 (listed at the end of this table) — are documented with their
 behaviour in `../docs/notes/mcp-tool-coverage.md`, which is the authoritative
 per-tab inventory; the pattern every tab follows is
-`../docs/notes/mcp-architecture.md`.
+`../docs/notes/mcp-architecture.md`. The 2 `debug_*` tools (D-210) are
+debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md`.
 
 
 | tool | what it does |

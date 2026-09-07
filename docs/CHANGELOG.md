@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **`editor_set_selection` (roadmap 26, D-214): the Edit tab's
+  selection is finally WRITABLE over MCP, not just readable.** Closes the
+  read/write asymmetry D-209 hit live — `TransformOverlay`'s on-canvas box and
+  handles mount only for a selection of exactly one clip, so until now nothing
+  but a human's mouse could reach, drive or verify the entire on-canvas
+  transform surface. One op driving the store's existing
+  `setSelection`/`setSelectedGap` (the same pair every GUI selection path
+  calls), one MCP tool, no new store action, no Rust change. Takes an array
+  (so D-107 multi-select is reachable too), each entry addressable by clip
+  index or clip id, `[]` to clear, or a `gap` — validated against the live
+  timeline, and a gap against the same `gapAt` the GUI's own click uses.
+  **Deliberately not undoable**: selection is not part of `Timeline`, so
+  D-051's snapshots never carried it and a human's click pushes nothing
+  either — see D-214. 17 new real-DOM tests that assert the box and its four
+  handles actually mount, not just that the store took the value; 703/703.
+  **Verified live end to end** in a second isolated instance with
+  `debug_screenshot` (D-210): no box → call the op → box + four handles tight
+  around the picture and the real Inspector form → drive a transform and watch
+  the picture land inside the box (B-093's own symptom, checked by an agent for
+  the first time) → clear → select a gap and watch "Close Gap" appear.
+
 - **2026-09-08** — **Text/title clips in the Edit tab** (roadmap 24,
   D-211/D-212/D-213): `Clip::text` as a real clip variant on an ordinary video
   track (so placement/trim/split/keyframes/fades are all the existing ops), an
