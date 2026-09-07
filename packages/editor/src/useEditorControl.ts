@@ -462,7 +462,18 @@ export function useEditorControl(): void {
           }
         }
 
-        const args = buildExportFfmpegArgs(tl, outPath, { fps, width, height, speedOverrides, fitOverrides });
+        let freezeOverrides: Record<string, boolean> | undefined;
+        if (a?.freezeOverrides !== undefined) {
+          if (typeof a.freezeOverrides !== 'object' || a.freezeOverrides === null || Array.isArray(a.freezeOverrides)) {
+            return { error: 'freezeOverrides must be an object of {clipId: boolean}' };
+          }
+          freezeOverrides = {};
+          for (const [clipId, val] of Object.entries(a.freezeOverrides as Record<string, unknown>)) {
+            freezeOverrides[clipId] = !!val;
+          }
+        }
+
+        const args = buildExportFfmpegArgs(tl, outPath, { fps, width, height, speedOverrides, fitOverrides, freezeOverrides });
         const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args });
         return {
           ok: outcome.ok,

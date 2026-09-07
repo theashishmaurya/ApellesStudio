@@ -16387,3 +16387,47 @@ either failed outright (B-075) or ran unbounded (B-076).
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-188 — `editor_export`'s `freezeOverrides`: hold a clip's last frame for the rest of the export, export-time-only
+
+The reel's own real content forced a genuine creative question the owner had already
+flagged needed a real answer before final render (the original brief's own "confirm
+before assuming" instruction): the AFTER clip, sped up 1.2x, finishes at 32.82s while
+BEFORE (unsped) keeps playing to 47.86s — what does AFTER's half of the frame show
+for that last ~15s? Asked directly; owner chose **freeze AFTER's last frame** over
+letting it go black or trimming the whole reel short to match AFTER's end (the other
+two real options presented, with a rendered-timeline preview for each).
+
+**No existing tool did this.** `editor_export`'s `enable=between(startSec,endSec)`
+simply stops compositing a clip once its own content ends — nothing held a frame
+past that. Built as a new export-time-only override, `freezeOverrides: Record<clipId,
+boolean>`, mirroring `speedOverrides`/`fitOverrides`'s own established shape and
+rationale exactly (no persisted `Clip`/`EditOp` field or GUI toggle exists for this
+yet — a real per-export creative choice, not a cross-cutting model change; the same
+reasoning both those earlier overrides already documented).
+
+**Mechanism:** ffmpeg's own `tpad=stop_mode=clone:stop_duration=<secs>` clones a
+stream's real last decoded frame for `<secs>` more seconds — applied to a flagged
+clip's own filter chain (after crop/setpts/scale, so the held frame is pixel-identical
+to what actually last rendered), with its `enable()` window correspondingly widened
+to the export's real total duration (`totalDurationSec`, the same value B-076's fix
+already computes as the furthest NATURAL clip end across the whole timeline) instead
+of its own shorter natural end. Required restructuring `buildExportFfmpegArgs` into
+two passes — natural per-clip timing first (to compute `totalDurationSec` before
+anything needs it), then filter-chain construction (now that padding amounts are
+knowable) — since a frozen clip's own padding target IS that number, and it wasn't
+available yet at the point the single-pass version built each clip's filter chain.
+A clip already at/past the total (the longest clip, or the only one) gets zero
+padding, never a negative-duration `tpad`.
+
+**Verified.** `timelineExport.test.ts` — 3 new tests (holds + widens the enable
+window correctly, an unflagged clip is completely unaffected, freezing the already-
+longest clip is a documented no-op). The real-ffmpeg suite — 1 new test, a real
+`tpad` invocation actually run through ffmpeg (not just string-matched: `tpad`'s own
+syntax is exactly the kind of thing B-075 already showed this codebase's tests
+weren't previously catching), confirming the real output duration matches the
+frozen clip's widened window, not its own natural end. `npx tsc --noEmit -p
+packages/editor` clean. `npm test --workspace @chroma/editor` — **328/328**.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

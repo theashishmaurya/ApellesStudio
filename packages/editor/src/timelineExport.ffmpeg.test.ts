@@ -151,4 +151,26 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real ffmpeg execut
     expect(() => execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' })).not.toThrow();
     expect(ffprobeDurationSecs(out)).toBeGreaterThan(0);
   });
+
+  it('D-188: a real ffmpeg run of a frozen (freezeOverrides) clip completes and produces the correct total duration — tpad\'s own syntax, for real', () => {
+    // clip24 is 4s of real content; clip25 is also 4s. Freeze clip24 and
+    // artificially treat clip25 as if it were longer by placing it starting
+    // at t=2 — its own natural end (2 + 4 = 6s) becomes the real total, so
+    // clip24 (frozen) must hold its last frame for 2 extra seconds.
+    const shortFrozen = clip('short', { source_path: clip24, source_fps: 24, duration: 96, start_frame: 0 });
+    const longer = clip('longer', {
+      source_path: clip25, source_fps: 25, duration: 100, start_frame: 60, position_y: 0.5,
+    }); // start_frame is a TIMELINE frame at opts.fps=30 -> starts at 2s, runs 4s -> ends at 6s
+    const tl = timeline([track('video', [shortFrozen]), track('video', [longer])]);
+    const out = join(dir, 'out4.mp4');
+    const args = buildExportFfmpegArgs(tl, out, {
+      fps: 30, width: 320, height: 480,
+      freezeOverrides: { short: true },
+    });
+
+    expect(() => execFileSync('ffmpeg', ['-y', ...args], { stdio: 'pipe' })).not.toThrow();
+    const durationSecs = ffprobeDurationSecs(out);
+    expect(durationSecs).toBeGreaterThan(5.7); // ~6s total, not clip24's own natural 4s
+    expect(durationSecs).toBeLessThan(6.3);
+  });
 });

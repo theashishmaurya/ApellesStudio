@@ -120,6 +120,16 @@ export interface TimelineExportOptions {
    *  anyway, never correct for fitting arbitrary source footage into a
    *  differently-shaped region. */
   fitOverrides?: Record<string, 'fit' | 'stretch'>;
+  /** D-188 — export-time-only per-clip choice to hold this clip's OWN LAST
+   *  FRAME, frozen, for the rest of the export's total runtime (the longest
+   *  clip on the whole timeline) instead of simply disappearing once its own
+   *  content ends — e.g. a shorter, sped-up clip stacked next to a longer
+   *  one that keeps playing. Keyed by `Clip.id`, mirroring `speedOverrides`'
+   *  own shape/rationale (no persisted `Clip`/`EditOp` field or GUI toggle
+   *  for this yet — a real per-export creative choice, not a cross-cutting
+   *  model change). A clip already at (or past) the overall total runtime is
+   *  simply unaffected — no negative-duration padding is ever added. */
+  freezeOverrides?: Record<string, boolean>;
 }
 
 interface ClipChain {
@@ -145,6 +155,7 @@ function buildClipFilterChain(
   inputIdx: number,
   label: string,
   opts: TimelineExportOptions,
+  padSecs = 0,
 ): string {
   const steps: string[] = [];
   let src = `[${inputIdx}:v]`;
@@ -177,7 +188,20 @@ function buildClipFilterChain(
   // `editor_import_media`'s probe result.
   const fitMode = opts.fitOverrides?.[clip.id] ?? 'fit';
   const heightExpr = fitMode === 'stretch' ? `${opts.height}*${scale}` : '-2';
-  steps.push(`${src}scale=${opts.width}*${scale}:${heightExpr}[${label}]`);
+  const scaleLabel = padSecs > 0 ? `p${label}` : label;
+  steps.push(`${src}scale=${opts.width}*${scale}:${heightExpr}[${scaleLabel}]`);
+
+  // D-188 — `freezeOverrides`: hold this clip's own real last decoded frame,
+  // cloned, for `padSecs` more seconds past its natural end. `tpad` operates
+  // on the already-scaled/positioned overlay stream (last step, not before
+  // crop/setpts/scale) so the held frame is pixel-identical to whatever the
+  // clip's last real frame actually rendered as, at full output resolution —
+  // the caller (`buildExportFfmpegArgs`) also extends this clip's own
+  // `enable=between()` window to match, or the held frame would decode fine
+  // but never actually get composited past the original window.
+  if (padSecs > 0) {
+    steps.push(`[${scaleLabel}]tpad=stop_mode=clone:stop_duration=${padSecs}[${label}]`);
+  }
 
   return steps.join(';');
 }
@@ -232,6 +256,22 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // (painted last/on top) — see this function's own doc.
   const paintOrder = [...videoTracks].sort((a, b) => b.index - a.index);
 
+  // Pass 1 — real per-clip timing only (`-ss`/`-t` inputs, each clip's own
+  // natural start/end in OUTPUT seconds). Deliberately NOT building filter
+  // chains yet: D-188's `freezeOverrides` needs `totalDurationSec` (the
+  // furthest NATURAL end across every clip) to know how much padding a
+  // frozen clip needs, and that isn't known until every clip's own natural
+  // end has been computed once.
+  interface PendingClip {
+    clip: Clip;
+    inputIdx: number;
+    label: string;
+    startSec: number;
+    endSec: number;
+    clipFps: number;
+  }
+  const pending: PendingClip[] = [];
+
   for (const { track } of paintOrder) {
     for (const clip of track.clips) {
       const speed = opts.speedOverrides?.[clip.id] ?? 1;
@@ -258,9 +298,6 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
         clip.source_path,
       );
 
-      const label = `v${inputIdx}`;
-      filterSteps.push(buildClipFilterChain(clip, inputIdx, label, opts));
-
       // `start_frame` is a TIMELINE frame (project/export rate) — `opts.fps`
       // is correct here. `duration` is a SOURCE frame count — `clipFps` is
       // correct here, same reasoning as the `-ss`/`-t` conversion above.
@@ -271,10 +308,37 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // remainder of its original window.
       const startSec = clip.start_frame / opts.fps;
       const endSec = startSec + clip.duration / speed / clipFps;
-      chains.push({ label, clip, startSec, endSec, clipFps });
+      pending.push({ clip, inputIdx, label: `v${inputIdx}`, startSec, endSec, clipFps });
 
       inputIdx++;
     }
+  }
+
+  // B-076 — the furthest NATURAL end across every clip, i.e. how long the
+  // export will actually run (see the final `-t` below) — computed here,
+  // BEFORE any freeze padding, since a frozen clip's own padding target IS
+  // this number, not the other way around.
+  const totalDurationSec = pending.reduce((max, p) => Math.max(max, p.endSec), 0);
+
+  // Pass 2 — real filter chains, now that `totalDurationSec` is known.
+  for (const p of pending) {
+    // D-188 — a clip flagged in `freezeOverrides` holds its own last frame
+    // (via `tpad` inside `buildClipFilterChain`) for whatever's left between
+    // its natural end and the overall export's real total length, and stays
+    // COMPOSITED (this widened `enable=between()` window) for that whole
+    // stretch — without both halves of this, either the held frame would
+    // never actually get drawn (chain's own window still closes at the old,
+    // shorter `endSec`), or it'd get drawn but decoding never produced a
+    // frame to hold past the natural end (no `tpad`) and ffmpeg would error.
+    // `Math.max(0, ...)` — a clip already at/past `totalDurationSec` (e.g.
+    // it's the longest clip on the timeline, or the ONLY one) gets zero
+    // padding and an unchanged `endSec`, never a negative-duration `tpad`.
+    const freeze = opts.freezeOverrides?.[p.clip.id];
+    const padSecs = freeze ? Math.max(0, totalDurationSec - p.endSec) : 0;
+    const finalEndSec = freeze ? Math.max(p.endSec, totalDurationSec) : p.endSec;
+
+    filterSteps.push(buildClipFilterChain(p.clip, p.inputIdx, p.label, opts, padSecs));
+    chains.push({ label: p.label, clip: p.clip, startSec: p.startSec, endSec: finalEndSec, clipFps: p.clipFps });
   }
 
   const bg = `color=black:size=${opts.width}x${opts.height}:rate=${opts.fps}[base]`;
@@ -315,9 +379,12 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // B-075's filtergraph parse error making every real run fail before it
   // could ever start rendering. `-t <furthest clip end>` on the OUTPUT
   // (after `-map`) is the standard, simplest fix — bounded by the real
-  // content instead of an synthetic source that has no natural end. `0` for
+  // content instead of a synthetic source that has no natural end. `0` for
   // an empty timeline (no clips at all) rather than an unbounded run.
-  const totalDurationSec = chains.reduce((max, c) => Math.max(max, c.endSec), 0);
+  // (`totalDurationSec` is the same value computed above, before any D-188
+  // freeze padding — a frozen clip's own `endSec` is clamped to exactly
+  // this number, never past it, so re-deriving it from `chains` here would
+  // just recompute the identical value.)
 
   return [
     ...inputs,

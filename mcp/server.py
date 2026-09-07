@@ -708,6 +708,7 @@ def editor_export(
     fps: float | None = None,
     speed_overrides: dict[str, float] | None = None,
     fit_overrides: dict[str, str] | None = None,
+    freeze_overrides: dict[str, bool] | None = None,
 ) -> str:
     """Render the open project's ENTIRE multi-track timeline — every visible
     video track/clip, composited in z-order (track 0 on top), cropped,
@@ -748,6 +749,20 @@ def editor_export(
     treat the exact rendered height as approximate when computing that
     offset.
 
+    **`source_start`/`duration`/a keyframe's `frame` are all in the CLIP's
+    OWN native source frame rate (B-075), not this export's `fps`** —
+    handled automatically as long as the clip has `source_fps` set (true for
+    any clip placed via `editor_add_clip`), never something you need to
+    convert yourself.
+
+    `freeze_overrides` (`{clip_id: true}`, EXPORT-TIME-ONLY, D-188, mirrors
+    `speed_overrides`'s own shape) holds a clip's own real LAST FRAME, frozen,
+    for the rest of the export's total runtime instead of it simply
+    disappearing once its own content ends — e.g. a shorter/sped-up clip
+    stacked next to a longer one that keeps playing. A clip already at or
+    past the overall total runtime is unaffected (no-op, never a
+    negative-duration hold).
+
     v1 scope: video only — audio tracks (gain/ducking/fades) are not mixed
     into the export yet, a documented follow-up, not an oversight. Blocks
     until ffmpeg finishes; there is no progress reporting yet."""
@@ -760,6 +775,8 @@ def editor_export(
         args["speedOverrides"] = speed_overrides
     if fit_overrides is not None:
         args["fitOverrides"] = fit_overrides
+    if freeze_overrides is not None:
+        args["freezeOverrides"] = freeze_overrides
     return json.dumps(_op("editor_export", **args), indent=2, default=str)
 
 

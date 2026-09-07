@@ -269,6 +269,46 @@ describe('buildExportFfmpegArgs', () => {
     expect(args[args.indexOf('-t', args.indexOf('-filter_complex')) + 1]).toBe('0');
   });
 
+  it('D-188: freezeOverrides holds a clip\'s last frame (tpad) and extends its enable() window to the timeline\'s real total duration', () => {
+    const shortSped = clip('short', { duration: 96, source_fps: 24 }); // 4s real, sped later isn't the point here
+    const long = clip('long', { duration: 240, source_fps: 30, start_frame: 0 }); // 8s real — the longest clip
+    const tl = timeline([track('video', [shortSped]), track('video', [long])]);
+    const opts: TimelineExportOptions = { ...opts30, freezeOverrides: { short: true } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    // tpad pads the short clip's own filter chain by (8 - 4) = 4s.
+    expect(filterComplex).toContain('tpad=stop_mode=clone:stop_duration=4');
+    // its enable() window now runs all the way to the real total (8s), not
+    // its own natural 4s end.
+    expect(filterComplex).toContain("enable='between(t,0,8)'");
+    // the overall export is still capped at the real total duration.
+    expect(args[args.length - 2]).toBe('8');
+  });
+
+  it('D-188: a clip with no freezeOverrides entry is completely unaffected — no tpad, its own natural enable() window', () => {
+    const a = clip('a', { duration: 96, source_fps: 24 }); // 4s
+    const b = clip('b', { duration: 240, source_fps: 30 }); // 8s — the longest
+    const tl = timeline([track('video', [a]), track('video', [b])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30); // no freezeOverrides at all
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).not.toContain('tpad');
+    expect(filterComplex).toContain("enable='between(t,0,4)'"); // a's own natural end
+    expect(filterComplex).toContain("enable='between(t,0,8)'"); // b's own natural end
+  });
+
+  it('D-188: freezing the LONGEST clip on the timeline is a no-op — zero padding, no negative-duration tpad', () => {
+    const shortOne = clip('short', { duration: 96, source_fps: 24 }); // 4s
+    const longest = clip('longest', { duration: 240, source_fps: 30 }); // 8s — already the max
+    const tl = timeline([track('video', [shortOne]), track('video', [longest])]);
+    const opts: TimelineExportOptions = { ...opts30, freezeOverrides: { longest: true } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).not.toContain('tpad');
+  });
+
   it('omits the crop filter node entirely when all four crop fractions are zero', () => {
     const tl = timeline([track('video', [clip('c1')])]);
     const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);

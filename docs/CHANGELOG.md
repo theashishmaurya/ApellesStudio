@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **`editor_export freeze_overrides` (D-188) + B-077 filed.** Owner's own
+  confirmed creative call for the reel — the sped-up AFTER clip finishes while BEFORE keeps
+  playing — needed a real capability that didn't exist: holding a clip's last frame for the
+  rest of the export instead of it just disappearing. New export-time-only
+  `freeze_overrides` (mirrors `speed_overrides`), via ffmpeg's `tpad=stop_mode=clone`, with a
+  real ffmpeg-execution test. Also filed **B-077** (not fixed this pass, dispatched
+  separately): `endFrame`/the GUI timeline display add a clip's SOURCE-frame `duration`
+  directly to its TIMELINE-frame `start_frame` with no fps conversion — wrong displayed
+  duration/gaps for any mixed-native-fps clip (does not affect `editor_export`'s actual
+  output, which already converts correctly per B-075). `@chroma/editor` 328/328.
 - **2026-09-07** — **`editor_export` fixed for real content (B-075/B-076, D-187) + real ffmpeg
   regression tests.** The reel's first real export attempt found every render was actually
   broken three ways: an unquoted keyframe expression made ffmpeg reject the filtergraph
