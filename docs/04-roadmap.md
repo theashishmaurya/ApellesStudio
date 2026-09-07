@@ -1114,6 +1114,40 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     hood, given this session's own precedent). A real, standalone feature — not a
     quick add alongside anything else. Not started as a build — this entry is the
     scope, not the implementation.
+25. **A real Resolve-Edit-page-inspired build-out — owner, 2026-09-08, several items
+    logged live while a fix was in flight, to action once it lands (not
+    investigated individually yet — this is the log, not the diagnosis):**
+    - **UI feels laggy during playback/scrubbing on a dense keyframed clip** ("its
+      working now but lagging a lot, the frame and the video is lagging like
+      hell" / "so it's not able to be smooth enough for me"). Now the Edit tab's
+      **top** standing priority per the new CLAUDE.md rule (performance > stability
+      > ship speed). Not yet profiled — candidates to check first: the new
+      per-property interpolation (D-208) running unmemoized on every render for
+      all nine properties; `useCanvasClipPick`'s `layers`/`geometries` arrays
+      rebuilt fresh every render, re-registering its capture-phase listener every
+      frame during playback.
+    - **No canvas/preview zoom control** — the timeline already has one (the
+      `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
+      own viewer zoom control, top-left of the timeline viewer.
+    - **Three panels reported not resizable**, a direct instance of this file's
+      own existing standing rule ("every resizable-by-nature panel/pane/sidebar
+      must actually be resizable," `CLAUDE.md`) not yet honoured in the Edit tab:
+      the Inspector panel (content visibly cut off against the window edge in a
+      live screenshot), the Timeline panel, and implicitly the preview/timeline
+      split. Needs a real audit of `EditorTab.tsx`'s `ResizablePanelGroup` usage
+      — confirm which panes are and are not wrapped in `@chroma/ui`'s
+      `resizable.tsx` already, fix the ones that aren't.
+    - **The full, accurate DaVinci Resolve Edit-page reference is now saved**:
+      `scratch/resolve-reference/` (26 feature sections, each with its real
+      heading, full description text, and its own correctly-matched image,
+      extracted by DOM position from the page's own markup — not guessed from
+      filenames, which a first pass got wrong twice). Use this, not a fresh
+      re-scrape, for any further Resolve-parity work — `scratch/resolve-reference/README.md`
+      indexes all 26 with a one-line summary each.
+    - Scope check reaffirmed: hardware control surfaces and multi-user
+      collaboration stay explicitly out, per the owner's own cut.
+    Not started as fixes — this entry is the log of what was reported, to be
+    triaged and actioned in the next work pass.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
