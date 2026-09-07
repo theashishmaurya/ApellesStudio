@@ -949,6 +949,36 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     edit made within the 400ms debounced-save window of a timeline switch is
     silently lost. Not started as a build — that note is the comparison, not a
     build plan.
+21. **UI performance: real findings, not a hand-wavy "webviews are slow"** — owner,
+    2026-09-07, after a real discussion about React 19/Tauri performance ceilings.
+    Three concrete, evidence-based items, not guesswork:
+    1. **B-081** (`docs/BUGS.md`) — Tauri's fast custom-protocol IPC transport
+       intermittently fails at startup and silently falls back to the slower
+       `postMessage` bridge; observed live this session (88 occurrences in one of
+       three `npm run tauri:dev` launches, zero in the other two). Root cause
+       unknown — needs real investigation, not a guess.
+    2. **React Compiler bailout coverage** — `docs/notes/react-compiler-coverage.md`,
+       a real inventory of 55 unique bailouts across 45 files, extracted from real
+       dev-server logs, grouped by root cause with a fix direction per bucket. Two
+       files matter most for perceived speed: `TimelinePane.tsx` and
+       `TransformOverlay.tsx` (the highest-update-frequency surfaces in the app —
+       drag/scrub/zoom/keyframe editing) both bail out on "existing memoization
+       could not be preserved," meaning manual memoization is fighting the compiler
+       there specifically.
+    3. **`TimelinePane.tsx`'s drag-gesture performance** — unverified either way:
+       does its drag code already bypass React state during the gesture itself
+       (direct `style.transform` mutation via refs, committing to
+       `useEditorTimelineStore`'s real `applyOp` only on pointer-up), or does it
+       re-render through React state every pointer-move frame? The standard
+       technique for near-native drag feel inside a webview is the former. **Any
+       fix here must preserve the existing contract exactly**: the store's
+       post-gesture state (and therefore what `get_timeline`/every other MCP tool
+       observes) must be byte-identical to today's behavior — only the
+       INTERMEDIATE frames during an active drag may skip a React commit, never
+       the final one.
+    Not started. Real dispatch candidate — the IPC investigation especially is
+    genuinely hard debugging (per this repo's own `CLAUDE.md` rule, route that to
+    Opus).
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
