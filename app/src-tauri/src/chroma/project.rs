@@ -418,6 +418,26 @@ pub fn chroma_project_set_dir(dir: String) -> Result<String, String> {
     Ok(projects_dir().to_string_lossy().to_string())
 }
 
+/// The launcher's own delete button (a hover-revealed trash icon on a
+/// project card) — irreversible, `chroma_project::manifest::delete_project_at`
+/// does the actual `remove_dir_all` plus its own real-project validation.
+/// Refuses to delete whichever project is CURRENTLY open (`state::current_
+/// project()`) — the launcher itself is only ever shown with no project
+/// open, so this should never actually trigger in normal use, but a stray
+/// call (e.g. a second window, a future caller) must not be able to pull a
+/// project's directory out from under a live session that still autosaves
+/// to it.
+#[tauri::command]
+pub fn chroma_project_delete(path: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    if let Some(current) = state::current_project() {
+        if current.path == dir {
+            return Err("cannot delete the currently open project".into());
+        }
+    }
+    delete_project_at(&dir)
+}
+
 #[tauri::command]
 pub async fn chroma_project_open(
     path: String,

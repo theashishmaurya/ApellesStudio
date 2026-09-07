@@ -18109,5 +18109,62 @@ hit-testing through `app/harness.html?mode=preview` — including the
 full-bleed-box case above and a real corner-handle resize committing
 `scale` 0.25 → 0.482 after a canvas-only selection. See B-085 for the numbers.
 
+## D-206 — The project launcher gets a real delete action: a hover-revealed trash button, a confirming `ConfirmModal`, and a new `chroma_project_delete` command
+
+**Context.** The launcher's "My Projects" grid (`ProjectLauncher.tsx`) had no
+way to remove a project at all — a `.chroma` directory once created stayed
+forever, growable only, with no MCP tool or GUI affordance to clean up a
+throwaway/renamed/mistaken one. Owner, live, pointing at the grid: "still not
+added delete button on hover."
+
+**Backend — a new `chroma_project_delete(path)` command, not a repurposed
+one.** `chroma_project_remove_clip` already existed but removes a CLIP from
+within an open project's timeline — a different operation entirely. The new
+`delete_project_at` (`crates/chroma-project/src/manifest.rs`) validates a
+candidate the same way `scan_projects` already validates one before ever
+listing it (a real directory, `.chroma` extension, `project.json` present)
+before `std::fs::remove_dir_all`-ing it — refusing a path that doesn't look
+like a real project rather than blindly removing whatever string a caller
+hands in. The Tauri command wrapper additionally refuses to delete whichever
+project `chroma::state::current_project()` says is CURRENTLY open — the
+launcher itself is only ever shown with no project open, so this should never
+actually trigger, but a stray call must not pull a live session's directory
+out from under it mid-autosave. A stale `MANIFEST_CACHE` entry for the
+deleted path is dropped in the same call.
+
+**Frontend — the existing `ConfirmModal`, not a new one.** `ProjectLauncher.
+tsx` already had its own hand-rolled overlay for `NewProjectModal`, and it
+would have been easy to clone that shape for a delete-confirm dialog too.
+Used the real, already-established `ConfirmModal.tsx` instead (the same
+component `SettingsPanel.tsx`'s own destructive actions use, with a real
+`destructive` Button variant token — not a raw `bg-red-600`, which the first
+draft of this reached for before checking) — one confirm-dialog convention
+for the whole app, not two. Deliberately NOT `SourcesPanel.tsx`'s own
+confirm-free media-removal pattern (D-060/D-061): that action only drops a
+pool reference (the file is never touched, easily re-imported); this one
+`remove_dir_all`s a project's entire timeline/grades/thumbnail with no
+trash/undo, which is a different risk class and earns the confirmation.
+
+**The card had to stop being a `<button>`.** A hover-revealed delete icon
+sitting inside the SAME clickable surface as "open this project" means a
+button nested inside a button — invalid HTML, and browsers reparent/mis-
+target clicks on the inner one rather than erroring, which would have shipped
+a delete button that sometimes also opens the project it just deleted.
+`ProjectCard`'s wrapper is now a `<div role="button" tabIndex>` with its own
+`onClick`/`onKeyDown` (Enter/Space) for the open action, and a real nested
+`<button>` for delete — the exact same shape `SourcesPanel.tsx`'s own card
+already uses for its hover-revealed Trash2/Plus buttons, not a new pattern.
+The delete button's own `stopPropagation()` keeps a click on it from also
+firing the card's open handler.
+
+**Verified.** Three new Rust unit tests (`delete_project_at_removes_a_real_
+project_directory`, `_refuses_a_directory_with_no_project_json`, `_refuses_a_
+non_chroma_extension`) — `cargo test -p chroma-project` 56/56 (was 53).
+`cargo clippy -p chroma-project`/`-p RapidRAW` clean on touched lines; `cargo
+fmt` clean on touched lines (the crate/file have pre-existing, unrelated
+drift elsewhere — not reformatted, per the same call B-088's own entry
+already made). `npx tsc --noEmit -p app` unchanged at its known 64
+pre-existing errors, none in a touched file.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

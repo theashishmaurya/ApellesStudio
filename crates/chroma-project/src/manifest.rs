@@ -1658,6 +1658,44 @@ pub fn list_projects_in(dir: &Path) -> Vec<ProjectSummary> {
         .collect()
 }
 
+/// Permanently delete a `.chroma` project directory and everything in it —
+/// `project.json`, cached thumbnail, grade files, timeline data. Irreversible:
+/// plain `std::fs::remove_dir_all`, no trash/recycle-bin semantics.
+///
+/// Validated the same way [`scan_projects`] already validates a CANDIDATE
+/// project before ever listing it (a real directory, `.chroma` extension,
+/// `project.json` present) — refuses anything that doesn't look like a real
+/// project rather than blindly removing whatever path a caller hands in, so a
+/// stray/mistaken path errors instead of silently deleting something else.
+pub fn delete_project_at(project_dir: &Path) -> Result<(), String> {
+    if !project_dir.is_dir() {
+        return Err(format!("{} is not a directory", project_dir.display()));
+    }
+    if project_dir.extension().and_then(|e| e.to_str()) != Some("chroma") {
+        return Err(format!(
+            "{} is not a .chroma project",
+            project_dir.display()
+        ));
+    }
+    if !project_dir.join("project.json").is_file() {
+        return Err(format!(
+            "{} has no project.json — refusing to delete",
+            project_dir.display()
+        ));
+    }
+    std::fs::remove_dir_all(project_dir)
+        .map_err(|e| format!("delete {}: {e}", project_dir.display()))?;
+
+    // Drop a stale `MANIFEST_CACHE` entry for the now-deleted directory
+    // rather than leaving `load_manifest_cached` able to serve a phantom
+    // read for a path that no longer exists on disk.
+    let mut cache = MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if matches!(cache.as_ref(), Some((dir, _, _)) if dir == project_dir) {
+        *cache = None;
+    }
+    Ok(())
+}
+
 // --------------------------------------------------------------------------- //
 // tests — pure model (no decode, no tauri State)
 // --------------------------------------------------------------------------- //
@@ -2015,6 +2053,52 @@ mod tests {
         s.fps = Some(25.0);
         s.merge_patch(&serde_json::json!("nonsense"));
         assert_eq!(s.fps, Some(25.0));
+    }
+
+    #[test]
+    fn delete_project_at_removes_a_real_project_directory() {
+        let root = tmp("delete_ok");
+        let (dir, _manifest) = new_project_in(&root, "throwaway", &[]).unwrap();
+        assert!(dir.is_dir());
+        assert!(dir.join("project.json").is_file());
+
+        delete_project_at(&dir).unwrap();
+        assert!(!dir.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_project_at_refuses_a_directory_with_no_project_json() {
+        let root = tmp("delete_no_manifest");
+        let fake = root.join("not-a-project.chroma");
+        std::fs::create_dir_all(&fake).unwrap();
+
+        let err = delete_project_at(&fake).unwrap_err();
+        assert!(err.contains("no project.json"), "unexpected error: {err}");
+        assert!(
+            fake.exists(),
+            "must not delete a directory with no project.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_project_at_refuses_a_non_chroma_extension() {
+        let root = tmp("delete_wrong_ext");
+        let fake = root.join("some-other-folder");
+        std::fs::create_dir_all(&fake).unwrap();
+        std::fs::write(fake.join("project.json"), "{}").unwrap();
+
+        let err = delete_project_at(&fake).unwrap_err();
+        assert!(
+            err.contains("not a .chroma project"),
+            "unexpected error: {err}"
+        );
+        assert!(fake.exists(), "must not delete a non-.chroma directory");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

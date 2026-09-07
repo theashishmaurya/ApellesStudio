@@ -14,10 +14,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir } from '@tauri-apps/api/path';
-import { FolderOpen, Plus, Film, Loader2, X } from 'lucide-react';
+import { FolderOpen, Plus, Film, Loader2, X, Trash2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 
 import { useSessionStore } from '../../store/useSessionStore';
+import ConfirmModal from '../modals/ConfirmModal';
 
 const VIDEO_EXTS = ['mov', 'mp4', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'm2ts', 'mxf', 'braw', 'r3d'];
 
@@ -160,23 +161,42 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 // openable while the first is mid-open either) and shows a spinner + "Opening…"
 // on the one actually being opened, the same `Loader2` affordance this file's
 // own "Create" button already uses.
+// The hover-revealed delete button (below) is a real `<button>` nested
+// inside this card, so the card itself can no longer BE a `<button>` — a
+// button cannot validly contain another interactive element, and browsers
+// silently reparent/mis-target clicks on a nested one. Same fix `SourcesPanel.
+// tsx`'s own card already uses for its hover-revealed Trash2/Plus buttons: a
+// `<div role="button" tabIndex>` for the primary (open) action, with a real
+// nested `<button>` for the secondary (delete) one — not a new pattern.
 function ProjectCard({
   p,
   onOpen,
+  onDelete,
   disabled,
   opening,
 }: {
   p: ProjectSummary;
   onOpen: () => void;
+  onDelete: () => void;
   disabled: boolean;
   opening: boolean;
 }) {
   return (
-    <button
-      onClick={onOpen}
-      disabled={disabled}
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      onClick={() => !disabled && onOpen()}
+      onKeyDown={(e) => {
+        if (disabled) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
       title={p.path}
-      className="group flex flex-col rounded-lg overflow-hidden border border-border-color bg-surface text-left hover:border-accent transition-colors disabled:opacity-60 disabled:pointer-events-none"
+      className={`group flex flex-col rounded-lg overflow-hidden border border-border-color bg-surface text-left transition-colors ${
+        disabled ? 'opacity-60 pointer-events-none' : 'hover:border-accent cursor-pointer'
+      }`}
     >
       <div className="aspect-video bg-bg-primary flex items-center justify-center overflow-hidden relative">
         {p.thumb ? (
@@ -189,6 +209,21 @@ function ProjectCard({
             <Loader2 size={14} className="animate-spin" /> Opening…
           </div>
         )}
+        {/* Same hover-reveal + destructive-token convention as `SourcesPanel.
+            tsx`'s own per-item Trash2 button — not a new pattern. */}
+        {!opening && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            title="Delete project"
+            aria-label={`Delete ${p.name}`}
+            className="absolute top-1.5 right-1.5 size-6 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
+          >
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
       <div className="px-3 py-2">
         <div className="text-sm font-medium text-text-primary truncate">{p.name}</div>
@@ -197,7 +232,7 @@ function ProjectCard({
           {p.shotCount ? ` · ${p.shotCount} shot${p.shotCount === 1 ? '' : 's'}` : ''}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -209,6 +244,12 @@ export default function ProjectLauncher() {
   // — real loading feedback for what used to be a silent, sometimes
   // multi-second wait. See `ProjectCard`'s own doc comment for the full story.
   const [opening, setOpening] = useState<string | null>(null);
+  // The project a delete was requested for, and whether `chroma_project_delete`
+  // is currently in flight for it — the confirm modal itself owns `isOpen`
+  // (`ConfirmModal`'s own contract), this just remembers WHICH project so the
+  // modal's message/confirm handler can reference it after it's dismissed.
+  const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const openProject = useSessionStore((s) => s.openProject);
 
   const refresh = useCallback(async () => {
@@ -268,6 +309,27 @@ export default function ProjectLauncher() {
     [openProject, opening],
   );
 
+  // Irreversible (`chroma_project_delete` is a real `remove_dir_all`, no
+  // trash/undo) — confirmed via `ConfirmModal` before this ever runs, the
+  // same gate `SettingsPanel.tsx`'s own destructive actions use, unlike
+  // `SourcesPanel.tsx`'s deliberately confirm-free pool removal (D-060/D-061
+  // — that action only drops a reference, this one deletes the whole
+  // project's timeline/grades/thumbnail off disk).
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await invoke('chroma_project_delete', { path: deleteTarget.path });
+      toast.success(`Deleted "${deleteTarget.name}"`);
+      await refresh();
+    } catch (e: any) {
+      toast.error(`Delete failed: ${String(e?.message || e)}`);
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, refresh]);
+
   return (
     <div className="flex-1 h-full overflow-y-auto bg-bg-primary custom-scrollbar">
       <div className="max-w-5xl mx-auto px-8 py-10 flex flex-col gap-8">
@@ -306,7 +368,8 @@ export default function ProjectLauncher() {
                 key={p.path}
                 p={p}
                 onOpen={() => handleOpen(p.path)}
-                disabled={!!opening}
+                onDelete={() => setDeleteTarget(p)}
+                disabled={!!opening || deleting}
                 opening={opening === p.path}
               />
             ))}
@@ -321,6 +384,20 @@ export default function ProjectLauncher() {
       </div>
 
       {showNew && <NewProjectModal onClose={() => setShowNew(false)} />}
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        title="Delete project?"
+        message={
+          deleteTarget
+            ? `"${deleteTarget.name}" and everything in it — timeline, grades, thumbnail — will be permanently deleted. This cannot be undone. The source media it references is never touched.`
+            : ''
+        }
+        confirmText={deleting ? 'Deleting…' : 'Delete'}
+        confirmVariant="destructive"
+        onConfirm={handleDelete}
+        onClose={() => !deleting && setDeleteTarget(null)}
+      />
     </div>
   );
 }

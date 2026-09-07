@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **(D-206) Added a real delete action to the project
+  launcher** — a hover-revealed trash button on each project card, confirmed
+  via the app's existing `ConfirmModal`, backed by a new
+  `chroma_project_delete` Tauri command (`delete_project_at`, validated the
+  same way the launcher's own listing already validates a project before
+  showing it; refuses to delete whichever project is currently open). The
+  card's outer element changed from a `<button>` to a `<div role="button">`
+  so the delete button can nest inside it without invalid/unreliable nested-
+  button HTML. 3 new Rust tests.
+
 - **2026-09-07** — **Fixed B-088 (D-202): the Edit tab's live preview never
   showed a clip's current position/crop/scale.** Root-caused to an ordering
   race, not the compositor: `chroma_timeline_frame` renders the project's
