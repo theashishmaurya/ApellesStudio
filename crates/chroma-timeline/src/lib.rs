@@ -344,12 +344,12 @@ fn legacy_missing_start() -> i64 {
 /// mutates a live timeline (every edit, GUI or MCP, goes through
 /// `applyOp`+`chroma_timeline_set`; this crate's own `trim_start`/`trim_end`/
 /// `split`/`move_clip` are unreachable from the running app today — see
-/// B-078). The field is declared here so it **persists** through a
+/// B-079). The field is declared here so it **persists** through a
 /// `chroma_timeline_set`/`_get` round trip (Tauri's IPC deserializes a
 /// command's JSON argument straight into this struct — an undeclared field
 /// would be silently dropped, re-breaking B-075/B-077 on the very first save)
 /// and is available to Rust code that DOES already need it
-/// (`chroma::edit`/`chroma::audio`'s real-time playback/decode path — B-078
+/// (`chroma::edit`/`chroma::audio`'s real-time playback/decode path — B-079
 /// tracks bringing that path's own `end_frame`-style arithmetic up to the
 /// same standard).
 #[derive(Debug, Clone, Serialize, Deserialize)]
