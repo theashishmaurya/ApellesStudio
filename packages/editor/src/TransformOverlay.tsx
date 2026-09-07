@@ -37,15 +37,29 @@
  * the composited picture catches up once the drag commits and the next
  * frame is fetched.
  *
- * Not in Phase 1 (see the note): rotation, non-uniform scale, crop, anchor
+ * Not in Phase 1 (see the note): rotation, non-uniform scale (via on-canvas
+ * DRAGGING — see D-186's own note on this component below), crop, anchor
  * point, click-to-select, snapping/guides, marquee, multi-clip transform.
+ *
+ * **D-186 — independent `box_width`/`box_height` (the Inspector's new
+ * Width/Height/ratio-lock control) render correctly here (the STATIC box,
+ * whenever no drag is in flight, uses them when the clip has them), but
+ * dragging a corner handle stays Phase-1 uniform-only and, on release,
+ * ALWAYS commits a plain `scale` and clears both overrides back to `null`
+ * — an on-canvas resize is a deliberately simpler, uniform gesture, and
+ * silently only-partially-respecting an existing non-uniform override
+ * would be worse than this explicit, documented "resizing on canvas
+ * re-uniforms the box" contract. Precise independent sizing stays an
+ * Inspector-only affordance for now (see that panel's own doc). A plain
+ * MOVE (reposition) drag never touches box size and always preserves
+ * whatever override already existed.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { useContentBox } from '@chroma/player';
 
 import { findClip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
+import { useClipGeometry } from './useClipGeometry';
 import {
   boxToScreenRect,
   clipBoxFraction,
@@ -53,14 +67,6 @@ import {
   dragReposition,
   screenToFraction,
 } from './transformGeometry';
-
-/** Mirrors `chroma::edit::ClipGeometry` (`#[serde(rename_all = "camelCase")]`). */
-interface ClipGeometry {
-  compWidth: number;
-  compHeight: number;
-  naturalWidth: number;
-  naturalHeight: number;
-}
 
 /** Screen-pixel handle size + hit-slop, and the box stroke width — named
  *  constants per the house no-magic-numbers rule, not tuned against
@@ -91,26 +97,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   const clipIndex = found?.index ?? -1;
   const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
 
-  const [geometry, setGeometry] = useState<ClipGeometry | null>(null);
-  useEffect(() => {
-    if (!primary || clipIndex < 0) {
-      setGeometry(null);
-      return;
-    }
-    let cancelled = false;
-    invoke<ClipGeometry>('chroma_timeline_clip_geometry', { track: primary.track, clip: clipIndex })
-      .then((g) => {
-        if (!cancelled) setGeometry(g);
-      })
-      .catch(() => {
-        if (!cancelled) setGeometry(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Re-probes on a source swap too (`clip?.source_path`), since a clip's
-    // natural footprint is a property of its SOURCE, not its identity.
-  }, [primary?.track, primary?.id, clipIndex, clip?.source_path]);
+  const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
 
   const contentBox = useContentBox(
     containerRef,
@@ -155,7 +142,7 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
   }, [draft, cancelDrag]);
 
   const commit = useCallback(
-    (next: { position: { x: number; y: number }; scale: number }) => {
+    (next: { position: { x: number; y: number }; scale: number }, kind: 'move' | 'scale') => {
       if (!primary || !clip || clipIndex < 0) return;
       applyOp({
         kind: 'set_clip_transform',
@@ -165,6 +152,15 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
         position_x: next.position.x,
         position_y: next.position.y,
         scale: next.scale,
+        // D-186 — a corner (scale) drag stays Phase-1 uniform-only (see this
+        // module's own doc above): committing one always clears any
+        // independent `box_width`/`box_height` override back to `null`, so
+        // the box actually ends up the uniform size just dragged rather
+        // than silently keeping a stale, now-wrong override. A plain MOVE
+        // drag never resizes anything, so it preserves whatever override
+        // already existed untouched.
+        box_width: kind === 'scale' ? null : clip.box_width ?? null,
+        box_height: kind === 'scale' ? null : clip.box_height ?? null,
         rotation: clip.rotation ?? 0,
         crop_left: clip.crop_left ?? 0,
         crop_top: clip.crop_top ?? 0,
@@ -212,18 +208,34 @@ export function TransformOverlay({ containerRef }: { containerRef: React.RefObje
     if (!drag) return;
     e.stopPropagation();
     dragRef.current = null;
+    const kind = drag.kind;
     // Read the live draft state rather than recomputing — it's already
     // exactly what was last rendered, and pointerup itself can land a
     // fraction of a pixel from the last pointermove.
     setDraft((current) => {
-      if (current) commit(current);
+      if (current) commit(current, kind);
       return null;
     });
   };
 
   if (!clip || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
-  const box = clipBoxFraction({ width: geometry.naturalWidth, height: geometry.naturalHeight }, position, scale);
+  // D-186 — while a drag is live, the box always follows the natural*scale
+  // formula (Phase 1's uniform-only drag math, unchanged). At rest, an
+  // independent `box_width`/`box_height` override (set via the Inspector)
+  // takes over per axis — passing the already-resolved size through as
+  // `natural` with `scale: 1` reuses `clipBoxFraction` unchanged rather
+  // than needing a second box-math variant.
+  const box = draft
+    ? clipBoxFraction({ width: geometry.naturalWidth, height: geometry.naturalHeight }, position, scale)
+    : clipBoxFraction(
+        {
+          width: clip.box_width ?? geometry.naturalWidth * committedScale,
+          height: clip.box_height ?? geometry.naturalHeight * committedScale,
+        },
+        position,
+        1,
+      );
   const rect = boxToScreenRect(box, contentBox);
 
   return (

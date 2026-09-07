@@ -47,8 +47,31 @@
  * panel — this pass only changed the Edit tab's own internal layout, not
  * `Shell.tsx` or the other two tabs (D-118's own decision entry has the
  * real reasoning for why this stayed tab-local, not a shell-level panel).
+ *
+ * **D-186 — Width/Height + ratio lock.** A single `scale` can only ever
+ * produce a box with the clip's own natural (source) aspect ratio — see
+ * `Clip.box_width`'s own doc for the full "why" and B-074's own finding
+ * that this made a full-width/half-height stacked layout mathematically
+ * impossible. This panel's new Size rows show the box's real pixel size
+ * (given the project's own known composition size — `geometry`, a new
+ * prop, since the actual `chroma_timeline_clip_geometry` fetch lives in
+ * `EditorInspectorPanel.tsx`/`useClipGeometry.ts`, keeping this component
+ * pure presentation per its own doc above) with a padlock toggle between
+ * them: locked (the default for a clip with no override yet) keeps both
+ * fields moving together in the ratio currently on screen; unlocked lets
+ * Width and Height be set independently, freezing whichever axis wasn't
+ * just edited at its current value so it never jumps as a side effect of
+ * editing the other. Both modes write `box_width`/`box_height` — `Scale`
+ * above stays a separate, always-available "reset to simple uniform mode"
+ * control: editing it clears both overrides back to `null`. The lock
+ * boolean itself is local, ephemeral UI state (not persisted on `Clip`,
+ * reset per clip via the `key={clip.id}` `EditorInspectorPanel.tsx` mounts
+ * this component with) — see D-186's decision entry for why: once a real
+ * width/height pair is stored, "was it locked when I typed this" carries
+ * no independent information a future session needs back.
  */
-import { Diamond, X } from 'lucide-react';
+import { useState } from 'react';
+import { Diamond, Lock, Unlock, X } from 'lucide-react';
 import {
   Button,
   Input,
@@ -61,12 +84,15 @@ import {
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import { FADE_PRESETS, fadePresetName, type Clip, type FadeCurve } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
+import type { ClipGeometry } from './useClipGeometry';
 
 export type TransformPatch = Partial<{
   opacity: number;
   position_x: number;
   position_y: number;
   scale: number;
+  box_width: number | null;
+  box_height: number | null;
   rotation: number;
   crop_left: number;
   crop_top: number;
@@ -123,6 +149,7 @@ const CROP_STEP = 0.01;
 export function ClipInspectorPanel({
   clip,
   trackLocked,
+  geometry,
   clipKeyframes,
   keyedHere,
   onTransformChange,
@@ -133,6 +160,13 @@ export function ClipInspectorPanel({
 }: {
   clip: Clip | null;
   trackLocked: boolean;
+  /** D-186 — the selected clip's composition/source geometry, or `null`
+   *  while it hasn't resolved yet (fresh selection, still probing, or the
+   *  source is offline). The Width/Height fields below are disabled without
+   *  it — there's no pixel size to show or write without a known
+   *  composition/source resolution. `Scale` needs no such fetch and stays
+   *  always editable. */
+  geometry: ClipGeometry | null;
   clipKeyframes: ClipKeyframe[];
   keyedHere: boolean;
   onTransformChange: (patch: TransformPatch) => void;
@@ -141,9 +175,57 @@ export function ClipInspectorPanel({
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
 }) {
+  // D-186 — locked by default for a clip with no independent-axis override
+  // yet (the common "just scale it" case); a clip an MCP agent or a prior
+  // session already gave independent `box_width`/`box_height` starts
+  // unlocked, matching what's actually on screen. Ephemeral — see this
+  // file's own module doc for why this is UI-only, never persisted, and
+  // `EditorInspectorPanel.tsx`'s `key={clip.id}` for why this resets
+  // correctly on every new clip selection despite living in local state.
+  const [ratioLocked, setRatioLocked] = useState(() => clip?.box_width == null && clip?.box_height == null);
+
   if (!clip) {
     return <InspectorEmptyState>Select a clip to edit its properties.</InspectorEmptyState>;
   }
+
+  // D-186 — the box's CURRENT effective size, in composition fractions:
+  // the override when the clip has one, else `scale`'s own natural-footprint
+  // formula (mirrors `chroma::edit::ClipTransform::effective_size` exactly,
+  // one layer up). `null` when `geometry` hasn't resolved — nothing to
+  // compute a pixel size from yet.
+  const scale = clip.scale ?? 1;
+  const effectiveBoxWidth = clip.box_width ?? (geometry ? geometry.naturalWidth * scale : null);
+  const effectiveBoxHeight = clip.box_height ?? (geometry ? geometry.naturalHeight * scale : null);
+  const widthPx = geometry && effectiveBoxWidth != null ? effectiveBoxWidth * geometry.compWidth : null;
+  const heightPx = geometry && effectiveBoxHeight != null ? effectiveBoxHeight * geometry.compHeight : null;
+
+  const handleWidthPxChange = (newWidthPx: number) => {
+    if (!geometry || effectiveBoxWidth == null || effectiveBoxHeight == null) return;
+    if (!Number.isFinite(newWidthPx) || geometry.compWidth <= 0) return;
+    const newBoxWidth = newWidthPx / geometry.compWidth;
+    if (ratioLocked) {
+      const ratio = effectiveBoxWidth > 0 ? effectiveBoxHeight / effectiveBoxWidth : 1;
+      onTransformChange({ box_width: newBoxWidth, box_height: newBoxWidth * ratio });
+    } else {
+      // Unlocked: only Width changes — Height is restated at its CURRENT
+      // resolved value (possibly still `scale`-derived) so it becomes a
+      // real, explicit override rather than silently drifting later if
+      // `scale` itself ever changes again.
+      onTransformChange({ box_width: newBoxWidth, box_height: effectiveBoxHeight });
+    }
+  };
+
+  const handleHeightPxChange = (newHeightPx: number) => {
+    if (!geometry || effectiveBoxWidth == null || effectiveBoxHeight == null) return;
+    if (!Number.isFinite(newHeightPx) || geometry.compHeight <= 0) return;
+    const newBoxHeight = newHeightPx / geometry.compHeight;
+    if (ratioLocked) {
+      const ratio = effectiveBoxHeight > 0 ? effectiveBoxWidth / effectiveBoxHeight : 1;
+      onTransformChange({ box_width: newBoxHeight * ratio, box_height: newBoxHeight });
+    } else {
+      onTransformChange({ box_width: effectiveBoxWidth, box_height: newBoxHeight });
+    }
+  };
 
   return (
     <div className="h-full w-full overflow-y-auto p-3">
@@ -207,9 +289,60 @@ export function ClipInspectorPanel({
               disabled={trackLocked}
               className={numInput}
               value={clip.scale ?? 1}
-              onChange={(e) => onTransformChange({ scale: Number(e.target.value) })}
+              // D-186 — always resets to simple uniform mode: an independent
+              // Width/Height override (below) is explicitly CLEARED, not
+              // left stale, so this field stays a real "go back to plain
+              // scale" affordance rather than one that silently does
+              // nothing once an override exists.
+              onChange={(e) => onTransformChange({ scale: Number(e.target.value), box_width: null, box_height: null })}
             />
           </label>
+
+          {/* D-186 — independent Width/Height, in pixels of the project's
+              own known composition (`geometry`), with a ratio-lock toggle.
+              See this file's own module doc for the full "why" this exists
+              alongside `Scale` rather than replacing it. */}
+          <label className={row}>
+            <span className="text-text-secondary">Width</span>
+            <Input
+              type="number"
+              step={1}
+              min={0}
+              disabled={trackLocked || !geometry}
+              className={numInput}
+              value={widthPx != null ? Math.round(widthPx) : ''}
+              onChange={(e) => handleWidthPxChange(Number(e.target.value))}
+            />
+          </label>
+          <div className="flex items-center justify-center py-0.5">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={trackLocked || !geometry}
+              onClick={() => setRatioLocked((v) => !v)}
+              title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+            >
+              {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
+            </Button>
+          </div>
+          <label className={row}>
+            <span className="text-text-secondary">Height</span>
+            <Input
+              type="number"
+              step={1}
+              min={0}
+              disabled={trackLocked || !geometry}
+              className={numInput}
+              value={heightPx != null ? Math.round(heightPx) : ''}
+              onChange={(e) => handleHeightPxChange(Number(e.target.value))}
+            />
+          </label>
+          {!geometry && (
+            <p className="text-text-secondary/60 text-[10px] leading-snug">
+              Measuring source resolution…
+            </p>
+          )}
+
           <label className={row}>
             <span className="text-text-secondary">Rotation</span>
             <Input

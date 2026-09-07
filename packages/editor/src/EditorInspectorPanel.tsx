@@ -29,16 +29,18 @@
  * tab's own always-visible right panel, not this one. Only the Edit tab's
  * own internal layout changed; `Shell.tsx` and the other two tabs are
  * untouched by this pass.
+ *
+ * D-186 — this is also where `ClipInspectorPanel`'s new Width/Height fields
+ * get their `chroma_timeline_clip_geometry` fetch (`useClipGeometry`, the
+ * same hook `TransformOverlay.tsx` uses for the on-canvas box), keeping
+ * that panel pure presentation per its own doc — this file already owns
+ * every other piece of selected-clip derived state.
  */
-import {
-  clearClipKeyframes,
-  clipSourceFrame,
-  removeClipKeyframe,
-  upsertClipKeyframe,
-} from './clipKeyframes';
+import { clearClipKeyframes, clipSourceFrame, removeClipKeyframe, upsertClipKeyframe } from './clipKeyframes';
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
 import { DEFAULT_FADE_CURVE, findClip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
+import { useClipGeometry } from './useClipGeometry';
 
 export function EditorInspectorPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -62,9 +64,20 @@ export function EditorInspectorPanel() {
   const clipKeyframes = selectedClip?.chroma_keyframes ?? [];
   const keyedHere = clipKeyframes.some((k) => k.frame === Math.round(clipKfSourceFrame));
 
+  // D-186 — the same `chroma_timeline_clip_geometry` fetch `TransformOverlay.
+  // tsx` uses for the on-canvas box, needed here for `ClipInspectorPanel`'s
+  // Width/Height fields to convert composition-fraction sizes to real
+  // pixels and back.
+  const geometry = useClipGeometry(primary?.track ?? null, selectedIdx, selectedClip?.source_path);
+
   // D-132 — crop joins the transform patch rather than getting its own op:
   // one clip-geometry write, one history entry, one save. See the
   // `set_clip_transform` op's own doc in `timeline.ts` for why.
+  //
+  // D-186 — `box_width`/`box_height` join the same patch for the same
+  // reason: one clip-geometry write. `!== undefined` (not `??`) because
+  // `null` is itself a MEANINGFUL patch value here (explicitly clear an
+  // override) that `??` would otherwise treat the same as "not provided".
   const applyTransform = (patch: TransformPatch) => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
     applyOp({
@@ -75,6 +88,8 @@ export function EditorInspectorPanel() {
       position_x: patch.position_x ?? selectedClip.position_x ?? 0,
       position_y: patch.position_y ?? selectedClip.position_y ?? 0,
       scale: patch.scale ?? selectedClip.scale ?? 1,
+      box_width: patch.box_width !== undefined ? patch.box_width : selectedClip.box_width ?? null,
+      box_height: patch.box_height !== undefined ? patch.box_height : selectedClip.box_height ?? null,
       rotation: patch.rotation ?? selectedClip.rotation ?? 0,
       crop_left: patch.crop_left ?? selectedClip.crop_left ?? 0,
       crop_top: patch.crop_top ?? selectedClip.crop_top ?? 0,
@@ -149,8 +164,15 @@ export function EditorInspectorPanel() {
 
   return (
     <ClipInspectorPanel
+      // D-186 — remounts `ClipInspectorPanel` on every new clip selection,
+      // which is what resets that component's own local ratio-lock state
+      // (ephemeral UI state, not a `Clip` field — see that file's own doc)
+      // back to the right default for the newly-selected clip, without
+      // this file having to own or thread that state itself.
+      key={selectedClip?.id ?? 'none'}
       clip={selectedClip}
       trackLocked={selectedTrackLocked}
+      geometry={geometry}
       clipKeyframes={clipKeyframes}
       keyedHere={keyedHere}
       onTransformChange={applyTransform}
