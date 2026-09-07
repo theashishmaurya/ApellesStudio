@@ -16541,6 +16541,95 @@ packages/editor` clean. `npm test --workspace @chroma/editor` — **328/328**.
   existing `chroma_ai_status` command still returns the same shape. No behaviour
   change for the existing sidecar — the existing unit tests (content-hash
   determinism, the staleness policy matrix) pass untouched.
+## D-191 — `editor_get_capabilities`: a static, no-round-trip MCP tool for the hard-won facts an agent can't get from a docstring alone
+
+**Context.** D-183's own first live use (the performance-comparison reel, same
+session) repeatedly had to fall back to reading Chroma's own source —
+`packages/editor/src/timelineExport.ts`'s `buildClipFilterChain`, specifically —
+to learn that `editor_set_clip_transform`'s `scale` tied an overlay's height to
+the OUTPUT CANVAS's own aspect ratio (fixed for export by D-184/B-074, directly
+above this entry, in the same session — its own closing note flagged this
+D-191 effort as "a separate, parallel capabilities-tool effort," which this is).
+Owner, verbatim: "how come we don't have MCP which can give this info — tool
+should have those things right... not all MCP [clients] will have this
+information and codebase" — most real MCP clients have no filesystem access to
+the Chroma repo at all; this session only could because it happens to also
+carry Read/Grep. The same session separately hit B-073 (a stuck, unprobed
+media-pool item, invisible via any MCP tool, only diagnosed by reading
+`project.json` by hand) and B-070/B-071 (a macOS filename trap, a one-time
+flake after an app restart) — none of which a future agent, with no access to
+this session's transcript or `docs/BUGS.md`, would have any way to anticipate.
+(B-069, a control-server wedge, was also hit and fixed same-session, directly
+above D-184 — this entry documents its *shape* as a landmine worth recognizing
+even though the specific cause is now fixed.)
+
+**Options considered.**
+1. Just fix the `scale`/`editor_export` docstring and move on — D-184 already
+   did exactly this for `editor_export` itself, and it's the right fix for that
+   one tool. But it doesn't address the actual ask ("a general capability"),
+   doesn't help a caller who only reads `editor_set_clip_transform`'s own
+   docstring, and doesn't cover B-069/B-070/B-071/B-073 at all.
+2. A frontend `editor_get_capabilities` op through the normal D-183/
+   `mcp-architecture.md` pipeline (`useEditorControl.ts` → `chroma::control` →
+   `mcp/server.py`), matching every other `editor_*` tool's shape exactly.
+   Correct architecturally, but this is pure static documentation with zero
+   dependency on live app state — routing it through the control server would
+   require the Chroma app running and a project open just to read facts that
+   never change while the app is running, a real, avoidable regression for
+   exactly the audience this tool is for (an MCP client evaluating whether
+   it's even safe to open the app and start editing).
+3. **A tool in `mcp/server.py` that answers entirely in-process, no `_op()`
+   call at all — chosen.** Same file, same registration mechanism as every
+   other tool (satisfies `mcp-architecture.md`'s "there is exactly ONE MCP
+   server" rule — this is not a second server or a new pattern, just one tool
+   with no backend leg), but genuinely available with no Chroma window open at
+   all, which is a real advantage for this specific tool's job: reference
+   material, not a live measurement.
+
+**What it returns.** A structured dict (not prose to scan): `compositing`
+(the `scale`/`fit_overrides` fact — kept in sync with D-184's actual shipped
+behavior, not the pre-fix limitation: preview has no `'stretch'` concept at
+all and always preserves the clip's own aspect; export defaults to `'fit'`
+and offers `'stretch'` as an explicit opt-in — plus a worked recipe for
+hitting an exact target box by choosing crop before scale, track paint order,
+and why keyframes are per-clip not per-track), `export` (v1's real video-only
+scope, `speed_overrides`'/`fit_overrides`' shared export-time-only shape),
+`known_gaps_and_landmines` (B-069/B-070/B-071/B-073, each with what it looks
+like and the right response — e.g. "one retry is correct" for B-071, B-069
+marked fixed but its failure shape documented since no error boundary exists
+yet to prevent a recurrence with a different cause), `architecture` (the
+one-shared-store fact that explains why B-069 was possible at all), and
+`workflow_tip` (live-test the surface — cheap read, then a real mutating round
+trip — before trusting it).
+
+**Docstring audit, same pass.** `editor_import_media` and
+`editor_set_clip_transform`'s own docstrings (the latter otherwise unchanged by
+D-184, which only touched `editor_export`'s) gained short inline pointers to
+the relevant landmine (the filename trap; the aspect-ratio fact, phrased for
+`editor_set_clip_transform`'s own live-preview-only context where there is no
+`fit_overrides`/`'stretch'` concept at all) rather than relying on an agent to
+think to call `editor_get_capabilities` unprompted — the capabilities tool is
+the deep reference, the inline notes are the trip wire that sends an agent
+there. The top-level `MCPServer` `instructions` string gained one paragraph
+naming the Edit tab and pointing at `editor_get_capabilities`, mirroring how
+`SCOPE_DISCIPLINE` already primes Colorist's own grading discipline at the
+same level.
+
+**Verified.** `python3 -m py_compile mcp/server.py` clean; a real module
+import (fresh venv, `mcp`/`httpx` installed from `mcp/requirements.txt`) lists
+**63** tools (62 before + 1), no name collisions; `editor_get_capabilities()`
+called directly returns valid JSON with the 6 documented top-level keys.
+`docs/notes/mcp-tool-coverage.md`'s Edit-tab table and media-pool gap section
+updated to reference this tool.
+
+**Numbering.** This entry sits directly after D-184 in the same file, both
+from the same session's real, committed work (`main`'s tip, `6a2c59a`) —
+D-191 is genuinely free there. A separate, not-yet-merged worktree
+(`worktree-agent-ae86fcfc2f4cd3e2a`, an unrelated media-understanding-sidecar
+migration branched from an OLDER base before D-183/D-184 were committed) has
+also independently claimed D-184/D-191 on its own branch — a real cross-branch
+numbering collision to resolve at merge time, not fixable from here, and
+called out honestly rather than silently picked around.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

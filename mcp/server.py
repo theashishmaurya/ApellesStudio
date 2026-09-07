@@ -50,6 +50,13 @@ mcp = MCPServer(
         + SCOPE_DISCIPLINE
         + "\n\nMutating tools return the rendered frame, its histogram, and the "
         "compact scope summary (the new measurement, for free) after the change."
+        + "\n\nThe Edit tab (multi-track NLE: import/place/trim/composite/export, "
+        "`editor_*`-prefixed tools) is a separate surface from grading above. "
+        "Call `editor_get_capabilities` once before your first "
+        "`editor_set_clip_transform`/`editor_set_clip_keyframes`/`editor_export` "
+        "in a session — it is static reference data (no app round trip) covering "
+        "non-obvious compositing rules and known rough edges an agent would "
+        "otherwise only find by reading source or hitting them live."
     ),
 )
 
@@ -459,7 +466,207 @@ def set_track_duck(
 # `editor_*` op in `@chroma/editor`'s `useEditorControl.ts` — read that file's
 # own `OPS` map for the authoritative behavior; these are thin wrappers, same
 # shape as `get_timeline`/`set_clip_fade`/`set_track_duck` above.
+#
+# `editor_get_capabilities` (D-185) is the one exception: it is pure static
+# documentation, answered entirely in this process with NO round trip to
+# `chroma::control` — deliberately, so it works even with no project open and
+# no Chroma window running at all. See docs/08-decisions.md's D-185 entry
+# (and D-184's own closing note, which flagged this as a separate, parallel
+# effort) for why this exists: D-183's own first live use surfaced real,
+# hard-won facts (the `scale`/aspect-ratio gap fixed by D-184/B-074, plus
+# B-069/B-070/B-071/B-073's rough edges) that no docstring said, discoverable
+# only by reading source or hitting them live.
 # --------------------------------------------------------------------------- #
+EDITOR_CAPABILITIES: dict[str, Any] = {
+    "read_before_calling": [
+        "editor_set_clip_transform",
+        "editor_set_clip_keyframes",
+        "editor_export",
+    ],
+    "compositing": {
+        "scale": (
+            "`scale` on editor_set_clip_transform/editor_export is a "
+            "stacking / picture-in-picture primitive, NOT a 'fill this exact "
+            "box' primitive. `overlay_width = canvas_width * scale` ALWAYS, "
+            "in both the live preview and export. The overlay's HEIGHT is "
+            "the interesting part: in the live preview (Rust "
+            "`composite_layer_onto`, D-136, app/src-tauri/src/chroma/edit.rs) "
+            "it is the clip's own fit-to-canvas footprint's height times "
+            "`scale` (uniform on both axes — the preview has no 'stretch' "
+            "concept at all). In export (`timelineExport.ts`'s "
+            "`buildClipFilterChain`) it depends on `editor_export`'s "
+            "`fit_overrides` (D-184, fixing B-074): the default, `'fit'`, "
+            "lets ffmpeg auto-compute height from the clip's own real "
+            "post-crop aspect ratio (undistorted, but will not exactly fill "
+            "an arbitrary target box); the explicit opt-in `'stretch'` "
+            "forces height to `canvas_height * scale` too, i.e. the overlay "
+            "ALWAYS has exactly the canvas's own aspect ratio regardless of "
+            "the source's real shape — correct only for a genuine same-aspect "
+            "PIP bubble or a deliberate distort effect. Before D-184, export "
+            "had no 'fit' option at all — every overlay was forced to the "
+            "canvas's aspect ratio unconditionally, which is what made a "
+            "full-width/half-height stacked layout mathematically impossible "
+            "for any canvas. Read `editor_export`'s own docstring for the "
+            "complete `fit_overrides` contract before compositing more than "
+            "one clip onto a canvas."
+        ),
+        "full_width_half_height_recipe": (
+            "To land a clip in exactly one half of a stacked comparison "
+            "layout (e.g. the top half of a 9:16 canvas) with `fit_overrides` "
+            "left at its default `'fit'`, `scale` alone will NOT give you an "
+            "exact half-height box — the height follows the clip's own "
+            "cropped aspect ratio, not the canvas's. Recipe: get the clip's "
+            "native width/height from editor_import_media's probe result; "
+            "choose crop_top/crop_bottom (or crop_left/crop_right) so the "
+            "CROPPED frame's aspect ratio equals the target box's aspect "
+            "ratio (target_w / target_h); THEN set scale so target_w == "
+            "canvas_width * scale. crop is applied before scale. position_y "
+            "places the resulting box's top-left corner as a fraction of the "
+            "canvas — it does not center or clamp the box into a slot for "
+            "you, and ffmpeg rounds the computed height to the nearest even "
+            "pixel, so treat it as approximate when computing an offset "
+            "against it."
+        ),
+        "position_and_crop_units": (
+            "position_x / position_y / scale are fractions of the OUTPUT "
+            "canvas (0..1, 0,0 = top-left) — not pixels, and not fractions of "
+            "the clip's own source resolution. crop_left/top/right/bottom are "
+            "fractions (0..1) of the CLIP trimmed off each edge, applied "
+            "before scale."
+        ),
+        "z_order": (
+            "Track index 0 is painted LAST — topmost, on top of every other "
+            "track — in both the live preview and export. Higher track "
+            "indices paint first, further back. This is the opposite of "
+            "'higher number = on top'."
+        ),
+        "keyframes_are_per_clip": (
+            "editor_set_clip_keyframes animates ONE clip's own transform on "
+            "its own local (source-frame-relative) timeline. Two clips on two "
+            "different tracks each hold an independent keyframe list and can "
+            "zoom at their own moment with zero interaction — there is no "
+            "track-level or whole-timeline keyframe concept."
+        ),
+    },
+    "export": {
+        "v1_scope": (
+            "editor_export is VIDEO ONLY. Audio tracks (gain / ducking / "
+            "fades) are readable via get_timeline and settable via "
+            "editor_set_clip_fade / editor_set_track_duck, but are NOT mixed "
+            "into editor_export's output file — a silent video, by design, "
+            "not a bug. A documented follow-up, not yet built."
+        ),
+        "speed_overrides": (
+            "speed_overrides is export-time ONLY — it does not touch the "
+            "clip's stored trim/duration, so editor_set_playhead scrubbing "
+            "and the GUI still show the clip at 1x. The sped-up clip's "
+            "on-timeline window shrinks to duration/speed inside the "
+            "export's own placement math; nothing else needs adjusting for "
+            "it to line up against unsped clips on other tracks. "
+            "`fit_overrides` mirrors this exact shape (`{clip_id: value}`, "
+            "export-time-only) for the unrelated aspect-ratio knob above."
+        ),
+    },
+    "known_gaps_and_landmines": {
+        "media_pool_stuck_item_B073": (
+            "A media-pool item whose FIRST probe failed (e.g. a transient "
+            "file-access race) never gets re-probed and is invisible to "
+            "editor_add_clip after the project is reopened — even though "
+            "editor_import_media on the identical path reports success. "
+            "There is no chroma_media_list / _remove MCP tool to inspect or "
+            "clear it (a tracked gap, docs/notes/mcp-tool-coverage.md). See "
+            "docs/BUGS.md B-073 (status: open). If editor_add_clip keeps "
+            "refusing a path you just imported, don't just retry the same "
+            "call — recreate the project, or read project.json by hand to "
+            "confirm the pool entry actually has a `video` block with real "
+            "metadata."
+        ),
+        "control_server_wedge_B069": (
+            "FIXED (docs/BUGS.md B-069, a Rules-of-Hooks violation in "
+            "TimelinePane.tsx) but worth knowing the failure mode existed: a "
+            "single uncaught React render crash in one Edit-tab panel wedged "
+            "the WHOLE control-server bridge — every editor_* op, including a "
+            "plain read like editor_get_state, failed or timed out, not just "
+            "ops touching the crashed panel. No error boundary exists around "
+            "any Edit-tab panel yet, so a *different* future crash there "
+            "could still reproduce this. If a previously-working "
+            "editor_get_state call suddenly times out or errors, suspect a "
+            "control-server wedge — restart the Chroma app; don't retry in a "
+            "loop."
+        ),
+        "first_call_after_restart_B071": (
+            "The FIRST editor_* call right after restarting the Chroma app "
+            "can fail once and then succeed on an immediate identical retry "
+            "(a stale pooled HTTP connection to the old process's now-closed "
+            "socket). See docs/BUGS.md B-071 (status: open). One retry is the "
+            "correct response — it is not a sign anything is actually broken."
+        ),
+        "macos_screen_recording_filenames_B070": (
+            "macOS names screen recordings with a NARROW NO-BREAK SPACE "
+            "(U+202F), not a regular space, before AM/PM — e.g. 'Screen "
+            "Recording 2026-09-07 at 1.08.16 PM.mov'. A hand-typed path "
+            "using an ordinary space will silently fail to match the real "
+            "file in ANY tool, including editor_import_media — this is not a "
+            "Chroma bug (docs/BUGS.md B-070; every process doing direct-path "
+            "access hits the identical trap). Resolve the real path via a "
+            "shell glob or a directory listing first; never hand-transcribe "
+            "a visible screen-recording filename into a tool call."
+        ),
+    },
+    "architecture": (
+        "Every editor_* tool call and every GUI click go through the exact "
+        "same store (`useEditorTimelineStore`, D-020's one-shared-state "
+        "rule) — an edit made here moves the app's real timeline, and a "
+        "human's manual edit is immediately visible to get_timeline. See "
+        "docs/notes/mcp-architecture.md for the full four-layer picture "
+        "(MCP client -> mcp/server.py -> chroma::control -> "
+        "useEditorControl.ts -> the store). One consequence: a render crash "
+        "anywhere in that shared tree can take the whole bridge down with "
+        "it (see control_server_wedge_B069 above — now fixed, but the "
+        "structural risk of an uncaught crash elsewhere in that tree is "
+        "not)."
+    ),
+    "workflow_tip": (
+        "Live-test the surface before trusting it for a real edit: call "
+        "editor_get_state (cheap read), then do one real mutating round "
+        "trip (e.g. new_project or editor_add_track) and confirm "
+        "editor_get_state / get_timeline actually reflects the change — "
+        "BEFORE building a real edit on top of it. Discovering a wedged "
+        "bridge mid-task (B-069's own failure mode, now fixed, but the "
+        "class of bug it represents is not structurally prevented) costs "
+        "far more than finding a dead surface upfront."
+    ),
+}
+
+
+@mcp.tool()
+def editor_get_capabilities() -> str:
+    """Hard-won, non-obvious facts about the Edit tab's compositing/export
+    model and its rough edges — the things reading `mcp/server.py`'s other
+    docstrings alone will NOT tell you, because they were only discovered by
+    reading Chroma's own source or hitting them live. Call this ONCE per
+    session, before your first `editor_set_clip_transform` /
+    `editor_set_clip_keyframes` / `editor_export`, not per-op.
+
+    Static reference data: answered entirely in this process, no round trip
+    to the running app — the only `editor_*`-prefixed tool that works with no
+    Chroma window running and no project open at all.
+
+    Covers: what `scale`/`fit_overrides` actually control in the live preview
+    vs. export (a stacking/picture-in-picture primitive, not a "fill this
+    exact box" primitive — plus the recipe for landing a clip in an exact
+    half-canvas slot anyway), track paint order, why keyframes are per-clip,
+    export's real v1 scope (video only), and known rough edges worth testing
+    for before trusting a real edit (a stuck media-pool entry, a one-time
+    flake right after an app restart, a macOS screen-recording filename trap
+    that will silently break ANY tool given a hand-typed path, and a
+    now-fixed control-server wedge worth knowing the shape of).
+
+    Returns a structured dict, not prose to scan — read the `known_gaps_and_
+    landmines` and `compositing` keys first."""
+    return json.dumps(EDITOR_CAPABILITIES, indent=2, default=str)
+
+
 @mcp.tool()
 def editor_get_state() -> str:
     """The Edit tab's own top-level state: whether a project is open, load
@@ -492,7 +699,15 @@ def editor_set_playing(playing: bool) -> str:
 def editor_import_media(paths: list[str], folder: str | None = None) -> str:
     """Import one or more absolute file paths into the project's shared media
     pool. Required before `editor_add_clip` can place them — that tool looks
-    an item up by the `id`/`sourcePath` this one returns."""
+    an item up by the `id`/`sourcePath` this one returns.
+
+    A macOS screen recording's filename has a NARROW NO-BREAK SPACE (U+202F),
+    not a regular space, before AM/PM — a hand-typed path with an ordinary
+    space silently matches nothing. Resolve the real path via a shell glob or
+    directory listing first; see `editor_get_capabilities` for the full story
+    (docs/BUGS.md B-070). If this reports success but a later `editor_add_clip`
+    on the same path still can't find the pool item, see B-073 there too —
+    don't just retry."""
     import json
 
     args: dict = {"paths": paths}
@@ -658,9 +873,18 @@ def editor_set_clip_transform(
     `position_x`/`position_y`/`scale` are fractions of the OUTPUT
     composition (0,0 = top-left), not pixels or the clip's own source
     footprint. `crop_*` are fractions of the clip trimmed off each edge
-    (0..1). Omitted fields keep the clip's current value — this tool reads
-    the clip back first, it never silently resets a field you didn't
-    mention."""
+    (0..1), applied before `scale`. Omitted fields keep the clip's current
+    value — this tool reads the clip back first, it never silently resets a
+    field you didn't mention.
+
+    `scale` is a stacking/picture-in-picture primitive: it ties the
+    overlay's width to the canvas, but its HEIGHT follows the CLIP'S OWN
+    aspect ratio in the live preview (there is no 'stretch' option here —
+    that only exists as `editor_export`'s `fit_overrides`, D-184). It does
+    NOT alone produce an exact-height box like a full-width/half-canvas
+    slot. Call `editor_get_capabilities` once before your first use of this
+    tool for the full explanation and the crop-then-scale recipe for hitting
+    an exact target box."""
     import json
 
     args: dict = {"track": track, "clip": clip}

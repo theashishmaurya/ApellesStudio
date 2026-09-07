@@ -44,7 +44,7 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 20 tools (D-183, 2026-09-07)
+## Edit tab / multi-track NLE — CLOSED, 21 tools (D-183, 2026-09-07; +1, D-185)
 
 > **The gap tracked below is closed.** D-147 (clip fades) and D-149 (ducking)
 > shipped the first three Edit-tab tools; D-183 shipped the other seventeen in one
@@ -74,6 +74,7 @@ zero.**
 > | `editor_set_clip_transform` | A clip's base position/scale/rotation/crop/opacity, as fractions of the output composition — the stacking/PIP primitive (D-136's normalised-fraction convention). |
 > | `editor_set_clip_keyframes` | Animates ONE clip's own transform over time (e.g. zoom-in on a click) — scoped to that clip's own local timeline, never the whole track, so two clips on two tracks each zoom at their own moment while both stay visible. |
 > | `editor_export` | Renders the WHOLE multi-track timeline (composited, cropped, keyframed, speed-adjusted) to a real output file via ffmpeg — the one tool that produces an actual video, everything else only edits in-memory state. v1 is video-only; audio mixing (gain/duck/fade) is a documented follow-up, not wired into the export yet. `fit_overrides` (D-184, B-074) lets a caller choose per-clip whether `scale` fits the clip's real aspect ratio into its box (`'fit'`, the default) or force-stretches to the canvas's own aspect ratio (`'stretch'`, the pre-D-184 behavior) — read `editor_export`'s own docstring before compositing more than one clip, it explains why `scale` alone can never produce a differently-shaped box than the canvas. |
+> | `editor_get_capabilities` (D-185) | Static reference-only tool — no round trip to the app, works with no project open. Hard-won facts an agent would otherwise only learn by reading source or hitting them live: what `scale`/`fit_overrides` really control (a stacking/PIP primitive tied to the CLIP's own aspect ratio by default, not the canvas's — plus the crop-then-scale recipe for an exact half-canvas box), track paint order, per-clip keyframe scoping, export's real v1 scope, and B-069/B-070/B-071/B-073's rough edges (B-069 itself is fixed; documented here as a known failure shape worth recognizing if a similar crash recurs elsewhere). |
 >
 > Every mutating tool goes through `useEditorTimelineStore.applyOp` (or the
 > equivalent real store action), so an agent's edit lands on the same undo stack
@@ -142,7 +143,13 @@ absolute paths into the pool — but only that one; it exists because
 have no MCP tool: an agent can't query what's already in the pool, organize it
 into folders, or remove items, independent of Colorist's own
 `list_shots`/`add_shots` (project-timeline-scoped, not pool-scoped — a real,
-different thing).
+different thing). This gap has a real, live-witnessed cost, not just a
+theoretical one: B-073 (`docs/BUGS.md`) is a media-pool item stuck with no
+`video` metadata after a transient probe failure, invisible to `editor_add_clip`
+and impossible to inspect or clear via MCP — the session that hit it had to
+read `project.json` by hand. `editor_get_capabilities` (D-185) documents this
+as a known landmine since it's the best available mitigation until a real
+`chroma_media_list`/`_remove` tool exists.
 
 ## Gap: Audio playback — 0 tools, lowest priority
 

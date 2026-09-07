@@ -59,6 +59,15 @@ One or two lines per session. Detail lives in the decision it references.
   22 chroma-ai + 325 editor tests pass, zero new `tsc` errors. Settings shows a status card per
   sidecar. `docs/notes/media-understanding-sidecar-scope.md` records what shipped vs. the plan.
 
+- **2026-09-07** — **`editor_get_capabilities`: a static, no-round-trip MCP tool for
+  the Edit tab's hard-won constraints (D-191).** The reel session's own first live use
+  of D-183's Edit-tab tools kept needing to read Chroma's own source to learn things no
+  docstring said. New tool returns a structured dict covering the `scale`/`fit_overrides`
+  aspect-ratio model (kept in sync with D-184's actual shipped fix), track paint order,
+  per-clip keyframe scoping, export's real video-only v1 scope, and B-069/B-070/B-071/
+  B-073's rough edges — answered entirely in-process, no app/project needed at all.
+  `editor_import_media`/`editor_set_clip_transform`'s own docstrings gained short
+  pointers to it. 63 tools total, verified via a real module import.
 - **2026-09-06** — **Per-card drag-to-fix for the `layers` primitive, + B-068 (D-182, Phase 3 of 3).**
   `Layers.tsx`'s `LayerItem` gains optional `dx`/`dy` (a pixel offset added to the computed
   position, `0,0` default, byte-for-byte identical render for every existing manifest) and a
