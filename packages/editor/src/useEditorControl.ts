@@ -131,6 +131,51 @@ function resolveMediaPath(a: any): { path: string } | { error: string } {
   return { path };
 }
 
+/** The D-184 transcript response, shared by the start op and its status op so
+ *  the two can never report the same job differently. `state` mirrors the
+ *  sidecar's own job vocabulary (`running` / `done` / `error`) plus `idle`
+ *  ("never asked"), so a poller reads one field to decide what to do next. */
+function transcriptResult(path: string) {
+  const status = useMediaUnderstandingStore.getState().transcriptStatus(path);
+  if (status.phase === 'error') return { error: status.error ?? 'transcription failed' };
+  if (status.phase !== 'done') {
+    return { ok: true, path, state: status.phase, note: 'poll editor_get_transcript_status' };
+  }
+  const t = status.result;
+  return {
+    ok: true,
+    path,
+    state: 'done',
+    language: t?.language,
+    model: t?.model,
+    text: t?.text,
+    segments: t?.segments ?? [],
+    words: t?.words ?? [],
+  };
+}
+
+/** The D-184 video-analysis response. Same contract as [`transcriptResult`]. */
+function analysisResult(path: string) {
+  const status = useMediaUnderstandingStore.getState().analysisStatus(path);
+  if (status.phase === 'error') return { error: status.error ?? 'video analysis failed' };
+  if (status.phase !== 'done') {
+    return { ok: true, path, state: status.phase, note: 'poll editor_analyze_video_status' };
+  }
+  const a = status.result;
+  return {
+    ok: true,
+    path,
+    state: 'done',
+    question: a?.question,
+    events: a?.events ?? [],
+    meta: a?._meta,
+    // Surfaced as a top-level field, not buried in `meta`, because it is the
+    // one thing a caller must act on: candidates were silently dropped at the
+    // cap, so raise `maxCandidates` and re-run.
+    truncated: a?._meta?.truncated ?? false,
+  };
+}
+
 /** The exact clip-fade shape `get_timeline` (pre-D-183, `useChromaControl
  *  .ts`) already reported per clip — reused verbatim so `editor_get_timeline`
  *  is byte-for-byte the same response shape under its new name. */
@@ -605,33 +650,36 @@ export function useEditorControl(): void {
       // isn't in the pool is also accepted, since "should I import this?" is
       // exactly the sort of question you'd want to answer BEFORE importing.
       //
-      // Both are slow (a transcript is tens of seconds; an analysis runs at
-      // roughly 4x realtime) and both are CACHED by path — a second call for
-      // the same file returns instantly. Pass `force: true` to re-run.
-      editor_get_transcript: async (a) => {
+      // **These START a job and return; they do not block on it.** That is
+      // forced, not a style choice: `chroma::control`'s `BRIDGE_TIMEOUT` is 20
+      // seconds (app/src-tauri/src/chroma/control.rs), a transcript takes tens
+      // of seconds and an analysis runs at roughly 4x realtime, so an op that
+      // awaited the result would 504 every time and the answer would never
+      // reach a caller. Start, then poll `*_status` — the same shape
+      // `depth_track`/`depth_track_status` already uses for the same reason.
+      //
+      // Results are CACHED by path, so a start call for an already-analysed
+      // file returns `state: "done"` with the result immediately, and the
+      // poll is skipped entirely. Pass `force: true` to re-run anyway.
+      editor_get_transcript: (a) => {
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
-        try {
-          const transcript = await useMediaUnderstandingStore.getState().getTranscript(path.path, {
-            language: typeof a?.language === 'string' ? a.language : undefined,
-            wordTimestamps: a?.wordTimestamps === undefined ? undefined : !!a.wordTimestamps,
-            force: !!a?.force,
-          });
-          return {
-            ok: true,
-            path: path.path,
-            language: transcript.language,
-            model: transcript.model,
-            text: transcript.text,
-            segments: transcript.segments,
-            words: transcript.words ?? [],
-          };
-        } catch (e: unknown) {
-          return { error: e instanceof Error ? e.message : String(e) };
-        }
+        const store = useMediaUnderstandingStore.getState();
+        store.startTranscript(path.path, {
+          language: typeof a?.language === 'string' ? a.language : undefined,
+          wordTimestamps: a?.wordTimestamps === undefined ? undefined : !!a.wordTimestamps,
+          force: !!a?.force,
+        });
+        return transcriptResult(path.path);
       },
 
-      editor_analyze_video: async (a) => {
+      editor_get_transcript_status: (a) => {
+        const path = resolveMediaPath(a);
+        if ('error' in path) return path;
+        return transcriptResult(path.path);
+      },
+
+      editor_analyze_video: (a) => {
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
         const num = (v: unknown): number | undefined => {
@@ -639,28 +687,20 @@ export function useEditorControl(): void {
           const n = Number(v);
           return Number.isFinite(n) ? n : undefined;
         };
-        try {
-          const analysis = await useMediaUnderstandingStore.getState().analyzeVideo(path.path, {
-            question: typeof a?.question === 'string' ? a.question : undefined,
-            sceneThreshold: num(a?.sceneThreshold),
-            minGapS: num(a?.minGapS),
-            maxCandidates: num(a?.maxCandidates),
-            force: !!a?.force,
-          });
-          return {
-            ok: true,
-            path: path.path,
-            question: analysis.question,
-            events: analysis.events,
-            meta: analysis._meta,
-            // Surfaced as a top-level field, not buried in `meta`, because it
-            // is the one thing a caller must act on: results were silently
-            // dropped at the cap, so raise `maxCandidates` and re-run.
-            truncated: analysis._meta?.truncated ?? false,
-          };
-        } catch (e: unknown) {
-          return { error: e instanceof Error ? e.message : String(e) };
-        }
+        useMediaUnderstandingStore.getState().startAnalysis(path.path, {
+          question: typeof a?.question === 'string' ? a.question : undefined,
+          sceneThreshold: num(a?.sceneThreshold),
+          minGapS: num(a?.minGapS),
+          maxCandidates: num(a?.maxCandidates),
+          force: !!a?.force,
+        });
+        return analysisResult(path.path);
+      },
+
+      editor_analyze_video_status: (a) => {
+        const path = resolveMediaPath(a);
+        if ('error' in path) return path;
+        return analysisResult(path.path);
       },
 
       // ---- track-level toggles — trivial 1:1 EditOp wrappers --------------

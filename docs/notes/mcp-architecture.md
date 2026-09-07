@@ -70,6 +70,19 @@ path an MCP tool takes). A read-only op (`get_state`, `get_timeline`) is the one
 place calling a plain Tauri command directly is fine, since there's no undo
 history to preserve.
 
+**A worked example of that carve-out, so it isn't mistaken for a violation**:
+D-184's `editor_get_transcript` / `editor_analyze_video` (plus their two
+`*_status` polls) go straight to `chroma_transcribe` / `chroma_analyze_video`
+via a store action that only caches. They mutate no document state at all —
+they ask the `ai-media/` sidecar a question about a file on disk — so there is
+nothing for an undo stack to hold and nothing in the GUI that must visibly
+move. They're also the first ops here that **cannot** answer within
+`control.rs`'s 20 s `BRIDGE_TIMEOUT` (a transcript runs for tens of seconds, an
+analysis for minutes), so they follow `depth_track`/`depth_track_status`'s
+start-then-poll shape: the start op kicks a background job and returns a
+`state` immediately, and a second op polls it. Any future op wrapping a slow
+capability should copy that pair rather than trying to make the bridge wait.
+
 ## The op-prefix convention — every tab opts IN to its own namespace
 
 Every tab's `useXControl.ts` listens on the SAME two Tauri events every other

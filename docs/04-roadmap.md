@@ -1214,14 +1214,23 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   ambient) survives an export; a "Preset" tab on `RelightPanel`; MCP tool
   wrapping (`mcp/server.py`) for the 4 control-server relight ops. All four
   landed in one pass — see D-054.
-- **Visual understanding for the Editor tab** — temporal (Qwen3-VL, local default) +
-  spatial (SAM2/YOLO, already have, just under-exposed) → natural-language footage
-  search, B-roll auto-tagging, shot classification, auto-reframe hints, highlight
-  detection. Needs the media pool first. First concrete task: a real local throughput
-  benchmark (current numbers are extrapolated, not measured). Molmo 2 stays
-  excluded from shipping (licence). `docs/notes/video-search.md`. The *audio/rhythm*
-  half of "understanding the footage" is the separate item below — researched and
-  scoped, deliberately not merged into this one.
+- **Visual understanding for the Editor tab** — **first slice shipped, D-184
+  (2026-09-07)**: the `ai-media/` sidecar plus 4 MCP tools give an agent
+  "what was said, and when" (mlx-whisper large-v3, word-level) and "what changed
+  on screen, and when" (ffmpeg scene-detect for exact timing + Qwen3-VL-4B for
+  the description). Ported from a validated prototype, with the real throughput
+  numbers this line used to ask for now MEASURED rather than extrapolated:
+  ~12 s to transcribe an 18 s clip; ~38 s to analyse a 20 s cut-heavy clip at
+  5 candidates (roughly 4x realtime, ~9 GB peak). `docs/notes/
+  media-understanding-sidecar-scope.md`. Still open on this line: natural-language
+  footage **search** across a pool (`search_footage`, per `video-search.md`),
+  B-roll auto-tagging, shot classification, auto-reframe hints, highlight
+  detection, and the spatial half (SAM2/YOLO, already have, still under-exposed)
+  — all of which now have a real capability to build on rather than starting
+  from nothing. Molmo 2 stays excluded from shipping (licence).
+  `docs/notes/video-search.md`. The *audio/rhythm* half of "understanding the
+  footage" is the separate item below — researched and scoped, deliberately not
+  merged into this one.
 - **Pacing & audio assistance for the Editor tab** — beat/onset detection on a clip's
   audio (librosa in the `ai/` sidecar, ffmpeg-decoded, cached in a new `media_cache`
   `"beats"` namespace) surfaced as timeline guides + snap targets, plus a read-only

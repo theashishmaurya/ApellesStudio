@@ -781,6 +781,173 @@ def editor_export(
 
 
 # --------------------------------------------------------------------------- #
+# Edit tab: media understanding (D-184) — "what was said" and "what changed on
+# screen," from the `ai-media/` sidecar. Both are START-then-POLL, like
+# `depth_track`/`depth_track_status` below: `chroma::control`'s bridge times out
+# at 20s and these jobs run for tens of seconds to minutes, so a blocking tool
+# could never return a result. Both cache by path — a repeat ask is free.
+# --------------------------------------------------------------------------- #
+def _media_args(path: str | None, media_id: str | None, source_path: str | None) -> dict:
+    args: dict = {}
+    if path is not None:
+        args["path"] = path
+    if media_id is not None:
+        args["mediaId"] = media_id
+    if source_path is not None:
+        args["sourcePath"] = source_path
+    return args
+
+
+@mcp.tool()
+def editor_get_transcript(
+    path: str | None = None,
+    media_id: str | None = None,
+    source_path: str | None = None,
+    language: str | None = None,
+    word_timestamps: bool = True,
+    force: bool = False,
+) -> str:
+    """Start a word-level transcript of an audio/video file — "what was SAID,
+    and when." Use this to find a moment by its SPOKEN content: a talking-head
+    take where nothing changes visually but every content move is in the
+    speech. Returns immediately with `state`; poll
+    `editor_get_transcript_status` until `state` is `"done"`, then read
+    `words` / `segments` / `text` off that response.
+
+    **`state: "done"` can come back on this very first call** — results are
+    cached per file, so a repeat ask costs nothing. `force=True` re-runs anyway
+    (use it when the file on disk changed).
+
+    Identify the file with `path` (any absolute path — it does NOT have to
+    be imported first, since "what's in this file?" is usually the question you
+    want answered BEFORE importing), or with `media_id`/`source_path` for an
+    item already in the project's media pool.
+
+    `language` is an ISO code ("en", "hi") or omitted to auto-detect
+    (code-switched speech auto-detects fine). `word_timestamps=True` (the
+    default) gives per-word start/end times — the format you need to cut to an
+    exact word; `False` is faster but segment-level only.
+
+    Complements `editor_analyze_video`, does not overlap it: this finds NOTHING
+    in silent or music-only footage. Roughly 12 s for a short clip, longer for
+    a long one (mlx-whisper large-v3, local)."""
+    import json
+
+    args = _media_args(path, media_id, source_path)
+    args["wordTimestamps"] = word_timestamps
+    if language is not None:
+        args["language"] = language
+    if force:
+        args["force"] = True
+    return json.dumps(_op("editor_get_transcript", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_transcript_status(
+    path: str | None = None,
+    media_id: str | None = None,
+    source_path: str | None = None,
+) -> str:
+    """Poll a transcript started by `editor_get_transcript`, identified by the
+    same file. `state` is `"running"` (keep polling), `"done"` (the result is
+    on this response: `text`, `segments`, and `words` with per-word
+    `start`/`end` in source seconds), or `"idle"` (nothing was ever started for
+    this file — call `editor_get_transcript` first). A failure comes back as an
+    `error` instead."""
+    import json
+
+    return json.dumps(
+        _op("editor_get_transcript_status", **_media_args(path, media_id, source_path)),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_analyze_video(
+    path: str | None = None,
+    media_id: str | None = None,
+    source_path: str | None = None,
+    question: str | None = None,
+    scene_threshold: float | None = None,
+    min_gap_s: float | None = None,
+    max_candidates: int | None = None,
+    force: bool = False,
+) -> str:
+    """Start a visual analysis of a video — "what CHANGED on screen, and when,"
+    with EXACT timestamps. Returns immediately with `state`; poll
+    `editor_analyze_video_status` until `"done"`, then read `events`
+    (`[{time_s, event}]`) off that response.
+
+    Timing comes from ffmpeg's own scene-change detection (deterministic,
+    frame-accurate) and never from the model — the model only DESCRIBES a
+    before/after frame pair at each detected moment, since a single static
+    frame cannot show a click, a cut, or a spinner appearing; only the delta
+    can. So `time_s` is trustworthy in a way a model-reported timestamp is not.
+
+    Works well on anything with real visual change: screen recordings (clicks,
+    spinners, toasts), ads, edited multi-shot footage. Finds NOTHING in a
+    single continuous uncut shot (a talking head) — there is no scene change to
+    key off; use `editor_get_transcript` for that content instead. The two are
+    complementary, not alternatives.
+
+    Identify the file with `path` (any absolute path — it does NOT have to
+    be imported first, since "what's in this file?" is usually the question you
+    want answered BEFORE importing), or with `media_id`/`source_path` for an
+    item already in the project's media pool.
+
+    `question` steers what each moment is described AS — "What UI event does
+    this show?" for a screen recording, "What product or shot is this?" for an
+    ad. The default is deliberately generic.
+
+    `scene_threshold` (default 0.12, lower = more candidates), `min_gap_s`
+    (1.0) and `max_candidates` (15) are CONTENT-DEPENDENT: the defaults were
+    tuned against a slow screen recording, and a fast-cut ad or trailer has far
+    more real cuts per second. **If the response has `truncated: true`,
+    candidates were silently dropped at the cap — raise `max_candidates` and
+    re-run.** For action-heavy footage raise `min_gap_s` too: sustained motion
+    produces genuinely similar frames, which the model then describes
+    similarly, a known and documented limit rather than a bug.
+
+    Runs at roughly 4x realtime. Results are cached per file, so `state:
+    "done"` can come back on this first call; `force=True` re-runs anyway."""
+    import json
+
+    args = _media_args(path, media_id, source_path)
+    if question is not None:
+        args["question"] = question
+    if scene_threshold is not None:
+        args["sceneThreshold"] = scene_threshold
+    if min_gap_s is not None:
+        args["minGapS"] = min_gap_s
+    if max_candidates is not None:
+        args["maxCandidates"] = max_candidates
+    if force:
+        args["force"] = True
+    return json.dumps(_op("editor_analyze_video", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_analyze_video_status(
+    path: str | None = None,
+    media_id: str | None = None,
+    source_path: str | None = None,
+) -> str:
+    """Poll an analysis started by `editor_analyze_video`, identified by the
+    same file. `state` is `"running"` (keep polling), `"done"` (the result is
+    on this response: `events` as `[{time_s, event}]`, plus `truncated` and
+    `meta`), or `"idle"` (nothing was ever started for this file). A failure
+    comes back as an `error` instead."""
+    import json
+
+    return json.dumps(
+        _op("editor_analyze_video_status", **_media_args(path, media_id, source_path)),
+        indent=2,
+        default=str,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # multi-shot session (D-033)
 # --------------------------------------------------------------------------- #
 @mcp.tool()

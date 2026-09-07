@@ -37,6 +37,28 @@ One or two lines per session. Detail lives in the decision it references.
   canvas size — fixed via ffmpeg's own `-2` auto-height, with the old forced-stretch behavior
   kept available as an explicit opt-in `fitOverrides` value). See `docs/BUGS.md` B-069–B-074 and
   `docs/08-decisions.md` D-184 for the full detail.
+- **2026-09-07** — **Media understanding lands in Chroma proper: a second sidecar, 4 new MCP
+  tools (D-189, D-190).** Pulled the two capabilities validated in the sibling `videoAgent`
+  prototype into Chroma's own architecture — word-level transcript (mlx-whisper large-v3) and
+  "what changed on screen, and when" (ffmpeg scene-detect for exact timing + Qwen3-VL-4B to
+  describe each before/after frame pair) — as `ai-media/`, a second supervised FastAPI sidecar
+  with its own venv and port. The scope doc demanded a real spike before assuming two processes
+  were necessary, and it settled the question outright: `ai/requirements.txt` ∪ `{mlx-vlm,
+  mlx-whisper}` is a literal pip `ResolutionImpossible` (mlx-vlm needs `transformers>=5.5`, `ai/`
+  pins `<5` for ViTMatte). Rather than copy the supervisor for the second process, **D-190**
+  generalized `chroma_ai::sidecar` to N sidecars via a `SidecarSpec` + a state registry — `ai/`'s
+  behaviour, call sites and tests all unchanged. Then the usual chain, each layer mirroring its
+  precedent: `chroma_ai::media_understanding` (the HTTP client, `depth.rs`'s error discipline),
+  4 Tauri commands, an `@chroma/editor` store that caches results **by source path**, and
+  `editor_get_transcript`/`editor_analyze_video` (+ their two `*_status` polls) in
+  `useEditorControl.ts` and `mcp/server.py`. Start-then-poll rather than blocking because
+  `chroma::control`'s bridge times out at 20 s and these run for tens of seconds to minutes.
+  Live-verified against real footage: an 18 s clip transcribed in 11.9 s with 55 word-level
+  timings; a 20 s cut-heavy reel analysed in 37.9 s, 5 candidates → 5 descriptions with correct
+  ffmpeg-derived timestamps. 66 MCP tools now, no name collisions; `cargo fmt`/`clippy` clean,
+  22 chroma-ai + 325 editor tests pass, zero new `tsc` errors. Settings shows a status card per
+  sidecar. `docs/notes/media-understanding-sidecar-scope.md` records what shipped vs. the plan.
+
 - **2026-09-06** — **Per-card drag-to-fix for the `layers` primitive, + B-068 (D-182, Phase 3 of 3).**
   `Layers.tsx`'s `LayerItem` gains optional `dx`/`dy` (a pixel offset added to the computed
   position, `0,0` default, byte-for-byte identical render for every existing manifest) and a

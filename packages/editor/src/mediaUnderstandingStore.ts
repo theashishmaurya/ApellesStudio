@@ -124,17 +124,47 @@ interface JobStart {
   error?: string;
 }
 
+/** What this store knows about one capability for one file. `idle` means
+ *  "never asked" — distinct from `error`, which means "asked and it failed."
+ *  The distinction matters to a caller deciding whether to start a job. */
+export type AnalysisPhase = 'idle' | 'running' | 'done' | 'error';
+
+export interface AnalysisStatus<T> {
+  phase: AnalysisPhase;
+  result?: T;
+  error?: string;
+}
+
 interface MediaUnderstandingState {
   /** sourcePath -> transcript. */
   transcripts: Record<string, Transcript>;
   /** sourcePath -> analysis. */
   analyses: Record<string, VideoAnalysis>;
-  /** sourcePath -> true while a transcript job is in flight for it. */
+  /** sourcePath -> true while a job is in flight for it. */
   transcribing: Record<string, boolean>;
   analyzing: Record<string, boolean>;
+  /** sourcePath -> the last failure, kept so a poller can be told *why* rather
+   *  than watching `running` silently flip back to `idle`. Cleared when a new
+   *  run for that path starts. */
+  transcriptErrors: Record<string, string>;
+  analysisErrors: Record<string, string>;
 
+  /** Run to completion. Resolves with the result (cached, if there is one).
+   *  Callers that cannot wait minutes — anything reached through
+   *  `chroma::control`'s 20 s bridge — should use `start*` + `*Status` below
+   *  instead. */
   getTranscript(path: string, options?: TranscribeOptions): Promise<Transcript>;
   analyzeVideo(path: string, options?: AnalyzeOptions): Promise<VideoAnalysis>;
+
+  /** Fire-and-forget: kick the job off if it isn't already cached or running,
+   *  and return the phase as of right now. The counterpart to `*Status`, for
+   *  the start-then-poll callers described above. */
+  startTranscript(path: string, options?: TranscribeOptions): AnalysisPhase;
+  startAnalysis(path: string, options?: AnalyzeOptions): AnalysisPhase;
+
+  transcriptStatus(path: string): AnalysisStatus<Transcript>;
+  analysisStatus(path: string): AnalysisStatus<VideoAnalysis>;
+
   /** Drop a cached result (or everything, with no argument) — the escape hatch
    *  for "this file changed and I don't want to pass `force` at every call
    *  site." */
@@ -179,17 +209,45 @@ async function runJob<T>(
   }
 }
 
+/** The shared "start it if it isn't already going" body. Returns the phase as
+ *  of right now; the promise deliberately isn't awaited or returned — a
+ *  rejection is captured into the error map by the actions' own `catch`, so it
+ *  never becomes an unhandled rejection. */
+function startJob(
+  running: boolean,
+  cached: boolean,
+  errored: string | undefined,
+  force: boolean,
+  run: () => Promise<unknown>,
+): AnalysisPhase {
+  if (running) return 'running';
+  if (cached && !force) return 'done';
+  // A previous failure is NOT sticky: asking again retries, which is what a
+  // caller reasonably expects after fixing whatever broke (a stopped sidecar,
+  // a missing venv). `errored` is only read to report the last reason.
+  void errored;
+  run().catch(() => {
+    /* recorded in the store's error map by the action itself */
+  });
+  return 'running';
+}
+
 export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, get) => ({
   transcripts: {},
   analyses: {},
   transcribing: {},
   analyzing: {},
+  transcriptErrors: {},
+  analysisErrors: {},
 
   getTranscript: async (path, options = {}) => {
     const cached = get().transcripts[path];
     if (cached && !options.force) return cached;
 
-    set((s) => ({ transcribing: { ...s.transcribing, [path]: true } }));
+    set((s) => {
+      const { [path]: _cleared, ...transcriptErrors } = s.transcriptErrors;
+      return { transcribing: { ...s.transcribing, [path]: true }, transcriptErrors };
+    });
     try {
       const transcript = await runJob<Transcript>(
         'chroma_transcribe',
@@ -203,6 +261,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
       );
       set((s) => ({ transcripts: { ...s.transcripts, [path]: transcript } }));
       return transcript;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ transcriptErrors: { ...s.transcriptErrors, [path]: message } }));
+      throw e;
     } finally {
       set((s) => {
         const { [path]: _dropped, ...rest } = s.transcribing;
@@ -215,7 +277,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     const cached = get().analyses[path];
     if (cached && !options.force) return cached;
 
-    set((s) => ({ analyzing: { ...s.analyzing, [path]: true } }));
+    set((s) => {
+      const { [path]: _cleared, ...analysisErrors } = s.analysisErrors;
+      return { analyzing: { ...s.analyzing, [path]: true }, analysisErrors };
+    });
     try {
       const analysis = await runJob<VideoAnalysis>(
         'chroma_analyze_video',
@@ -231,6 +296,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
       );
       set((s) => ({ analyses: { ...s.analyses, [path]: analysis } }));
       return analysis;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ analysisErrors: { ...s.analysisErrors, [path]: message } }));
+      throw e;
     } finally {
       set((s) => {
         const { [path]: _dropped, ...rest } = s.analyzing;
@@ -239,15 +308,55 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     }
   },
 
+  startTranscript: (path, options = {}) => {
+    const s = get();
+    return startJob(
+      !!s.transcribing[path],
+      !!s.transcripts[path],
+      s.transcriptErrors[path],
+      !!options.force,
+      () => get().getTranscript(path, options),
+    );
+  },
+
+  startAnalysis: (path, options = {}) => {
+    const s = get();
+    return startJob(
+      !!s.analyzing[path],
+      !!s.analyses[path],
+      s.analysisErrors[path],
+      !!options.force,
+      () => get().analyzeVideo(path, options),
+    );
+  },
+
+  transcriptStatus: (path) => {
+    const s = get();
+    if (s.transcripts[path]) return { phase: 'done', result: s.transcripts[path] };
+    if (s.transcribing[path]) return { phase: 'running' };
+    if (s.transcriptErrors[path]) return { phase: 'error', error: s.transcriptErrors[path] };
+    return { phase: 'idle' };
+  },
+
+  analysisStatus: (path) => {
+    const s = get();
+    if (s.analyses[path]) return { phase: 'done', result: s.analyses[path] };
+    if (s.analyzing[path]) return { phase: 'running' };
+    if (s.analysisErrors[path]) return { phase: 'error', error: s.analysisErrors[path] };
+    return { phase: 'idle' };
+  },
+
   clear: (path) => {
     if (path === undefined) {
-      set({ transcripts: {}, analyses: {} });
+      set({ transcripts: {}, analyses: {}, transcriptErrors: {}, analysisErrors: {} });
       return;
     }
     set((s) => {
       const { [path]: _t, ...transcripts } = s.transcripts;
       const { [path]: _a, ...analyses } = s.analyses;
-      return { transcripts, analyses };
+      const { [path]: _te, ...transcriptErrors } = s.transcriptErrors;
+      const { [path]: _ae, ...analysisErrors } = s.analysisErrors;
+      return { transcripts, analyses, transcriptErrors, analysisErrors };
     });
   },
 }));

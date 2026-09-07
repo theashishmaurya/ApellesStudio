@@ -86,6 +86,40 @@ multiple video tracks with per-clip keyframed zooms, and render the result to a
 file. The one still-open piece: audio tracks (gain/duck/fade) are read but not
 yet mixed into `editor_export`'s own output.
 
+## Edit tab: media understanding — CLOSED, 4 tools (D-184, 2026-09-07)
+
+> **What an agent could not do before this**, even with all 20 tools above: know
+> what is actually IN the footage. It could cut a timeline precisely and had no
+> way to decide *where* to cut, because nothing exposed the content of a file —
+> only its structure. That is what these close. Scope + the dependency-isolation
+> spike: `docs/notes/media-understanding-sidecar-scope.md`; the decision, D-184.
+>
+> | Tool | What it does |
+> |---|---|
+> | `editor_get_transcript` | Start a word-level transcript (mlx-whisper large-v3) — "what was SAID, and when." Per-word `start`/`end` in source seconds, i.e. enough to cut to an exact word. |
+> | `editor_get_transcript_status` | Poll it. `state` is `running` / `done` (result attached) / `idle`. |
+> | `editor_analyze_video` | Start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect supplies the (exact, deterministic) timing; Qwen3-VL only describes a before/after frame pair at each moment. |
+> | `editor_analyze_video_status` | Poll it. Carries `truncated` — candidates hit the cap and were dropped, so raise `max_candidates` and re-run. |
+>
+> **The two capabilities are complementary, not alternatives**, and an agent must
+> pick by content rather than by default: the transcript finds nothing in silent
+> or music-only footage; the analysis finds nothing in a single continuous uncut
+> shot (a talking head has no visual delta to key off). Both tool docstrings say
+> so explicitly.
+>
+> **Why four tools and not two** (the scope doc sketched two): `chroma::control`'s
+> `BRIDGE_TIMEOUT` is 20 s, and these jobs run for tens of seconds (transcript) to
+> minutes (analysis, roughly 4x realtime). A blocking tool would 504 every time
+> and the answer would never reach a caller. Start-then-poll is the same shape
+> `depth_track`/`depth_track_status` already uses, for the same reason.
+>
+> These are also the one deliberate exception to
+> `mcp-architecture.md`'s "a mutating tool goes through the same store action a
+> GUI click does": they mutate nothing. They ask the `ai-media/` sidecar about a
+> file on disk and cache the answer by path, so there is no undo history to
+> preserve. Results are cached, so a repeat ask returns `state: "done"`
+> immediately; `force=True` re-runs.
+
 ## Gap: Motion tab — 0 tools
 
 `chroma_motion_get_manifest` / `chroma_motion_save_manifest` / `chroma_motion_render`
