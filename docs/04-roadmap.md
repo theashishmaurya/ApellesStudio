@@ -1112,22 +1112,53 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     re-probe-on-demand for a stuck/wrong item) is still OPEN**; the fix today
     is "remove the bad id, then re-import the same path," a two-call manual
     correction, not automatic detection/recovery. That remains future work.
-24. **No text/title clip primitive in the Edit tab at all** — owner, 2026-09-07,
-    asking for real "AFTER"/"BEFORE" labels on the comparison reel. Confirmed by
-    grep: no `TrackKind::Text`, no title-clip concept anywhere in
-    `packages/editor/src/timeline.ts`/`crates/chroma-timeline` — a video track holds
-    only real decoded video, an audio track only real decoded/synthesized audio.
-    Worked around THIS session with a real `ffmpeg drawtext` pass laid on top of
-    Chroma's own correct export (not a Chroma feature — an external finishing
-    step, disclosed as such), which is fine for a one-off but is not something a
-    GUI user can do at all. A real text/title primitive needs, at minimum: a new
-    `Clip`-like model (font/size/color/content/position, keyframeable position at
-    least, matching the existing transform-keyframe convention), a Rust
-    live-preview compositor path (a text-rendering layer, not a decoded-frame one),
-    and an `editor_export` compiler path (most naturally `drawtext`/`ass` under the
-    hood, given this session's own precedent). A real, standalone feature — not a
-    quick add alongside anything else. Not started as a build — this entry is the
-    scope, not the implementation.
+24. ~~**No text/title clip primitive in the Edit tab at all**~~ — **BUILT,
+    2026-09-08 (D-211/D-212/D-213, `docs/notes/text-title-clips.md`).** The
+    original entry: owner, 2026-09-07, asking for real "AFTER"/"BEFORE" labels
+    on the comparison reel; confirmed by grep that no `TrackKind::Text` and no
+    title-clip concept existed anywhere in
+    `packages/editor/src/timeline.ts`/`crates/chroma-timeline`, and worked
+    around at the time with an external `ffmpeg drawtext` pass on top of
+    Chroma's own correct export (disclosed then as a finishing step, not a
+    feature). All three of that entry's own "at minimum" requirements now
+    exist, and both interfaces landed in the same pass:
+    - **Model** — `Clip::text: Option<TextLayer>` (content / font / size /
+      colour). A `Clip` *variant*, NOT a new `TrackKind`: a title is a
+      generator clip on an ordinary video track above the picture (Resolve's
+      and Premiere's own shape), and track-index z-order already composites it
+      there. So placement, trim/split/move/remove, gap-close, undo, position
+      and opacity **keyframes**, and fades are all the existing ops, unchanged.
+    - **Live preview** — `app/src-tauri/src/chroma/text.rs`: a font catalogue
+      (`chroma_text_fonts`) plus an `ab_glyph` rasteriser feeding
+      `composite_video_frame` exactly like a decoded layer.
+    - **Export** — `timelineExport.ts` compiles a title to an ffmpeg
+      `drawtext` node spliced into the overlay chain at that clip's own
+      z-order position.
+    - **GUI** — a **Title** button in the timeline toolbar and an Inspector
+      **Title** section (`TextClipInspectorPanel.tsx`).
+    - **MCP** — `editor_add_text_clip`, `editor_set_text_clip`,
+      `editor_text_fonts`, all through the same ops and validator the GUI uses.
+
+    **Deliberately Phase 1 — Resolve's "basic title generator", not its 100+
+    animated Fusion templates.** Scoped out on purpose, with reasons, in
+    `docs/notes/text-title-clips.md`'s "Deferred" section: multi-line text
+    (refused at the write path — inter-line layout is the one thing the two
+    rasterisers genuinely disagree about, and single-line is where
+    preview/export parity is *provable*), alignment, background box / outline /
+    shadow, keyframeable size and colour, text shaping (no bidi/complex
+    scripts), animated title presets, and a bundled font.
+
+    **Still open, small:** (a) a title ignores `scale`/`rotation`/`crop`/
+    `box_*` in both engines (`drawtext` cannot do them) — widening both sides
+    means compiling a title to a rasterised PNG overlay input instead, which
+    would also make the two engines share the rasteriser, and needs the export
+    compiler to stop being pure; (b) `ClipInspectorPanel.tsx` still SHOWS those
+    rows for a title, where they change no pixel — that file was owned by two
+    other concurrent efforts during this pass, so gating each row on
+    `clip.text == null` is a one-line-per-row follow-up; (c) on-canvas drag of
+    a title (`TransformOverlay.tsx`, off-limits the same way — the backend's
+    `chroma_timeline_clip_geometry` already answers correctly for a text clip);
+    (d) FCPXML interchange does not map a title yet.
 25. **A real Resolve-Edit-page-inspired build-out — owner, 2026-09-08, several items
     logged live while a fix was in flight, to action once it lands (not
     investigated individually yet — this is the log, not the diagnosis):**

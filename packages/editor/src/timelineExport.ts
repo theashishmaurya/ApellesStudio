@@ -39,6 +39,7 @@ import {
   audioRefBracket,
   audioRefMapArg,
   buildAudioSourceChain,
+  fadeGainExpr,
   resolveDuckForTrack,
   type AudioRef,
 } from './timelineExportAudio';
@@ -84,6 +85,14 @@ export function keyframeExprAt(
   param: string,
   staticValue: number,
   fps: number,
+  /** D-211 — which ffmpeg time variable the expression is written in terms
+   *  of. `'t'` (the default, and every pre-D-211 caller) is right for a
+   *  per-clip filter chain, whose own `t == 0` is the clip's in-point because
+   *  of its `-ss` input. A TEXT clip has no input of its own: its `drawtext`
+   *  runs on the composited base stream, where `t` is TIMELINE time, so that
+   *  caller passes `'(t-<startSec>)'` to re-base the same keyframe times.
+   *  Byte-identical output for the default, so no existing argv changes. */
+  timeVar = 't',
 ): string {
   const points: ExprPoint[] = keyframes
     .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
@@ -91,7 +100,172 @@ export function keyframeExprAt(
     .sort((a, b) => a.t - b.t);
 
   if (points.length === 0) return String(staticValue);
-  return piecewiseLinearExpr(points, 't');
+  return piecewiseLinearExpr(points, timeVar);
+}
+
+// --------------------------------------------------------------------------- //
+// Text / title clips (D-211/D-213) — compiled to ffmpeg's own `drawtext`
+// --------------------------------------------------------------------------- //
+
+/**
+ * Quote and escape `raw` so ffmpeg delivers it to a filter option **verbatim**
+ * — returns the value *including* its surrounding quotes (D-213).
+ *
+ * **There are two parsers, in series, and that is the whole difficulty.**
+ * ffmpeg first parses the filtergraph description (splitting chains on `;`,
+ * filters on `,`, reading link labels in `[…]`), honouring `'` quoting and
+ * `\` escapes and **stripping them**. What survives is then handed to
+ * `av_opt_set_from_string`, which splits the *remaining* text on `:` into
+ * `key=value` pairs, honouring `'` and `\` all over again. A value that only
+ * satisfies the first parser is therefore still wrong: the quotes that
+ * protected a `:` are gone by the time the parser that splits on `:` runs.
+ *
+ * So each character is escaped for the level that actually cares:
+ * - **`:`** → `\:` inside the quotes. The outer quotes stop the filtergraph
+ *   splitter; the `\` (literal inside a quoted section, so it passes through
+ *   untouched) is what stops the option splitter afterwards.
+ * - **`\`** → `\\`, for the same second-level parser.
+ * - **`'`** → leave the quoted section, emit `\\\'`, re-enter (`'\\\''`).
+ *   Nothing can be escaped *inside* a quoted section, so a literal quote has
+ *   to be emitted outside one — and it needs to survive as `\'` into the
+ *   second parser, which is what the doubled backslash buys. The obvious
+ *   shell-style `'\''` is the version that does NOT work: it delivers a bare
+ *   `'` to the option parser, which opens a quote there and swallows every
+ *   option after it (verified live — it silently rendered nothing at all).
+ * - **`,` `;` `[` `]`** → nothing; the outer quotes already handle them, and
+ *   the option parser does not care about them.
+ * - **`%` and `{}`** → nothing; the `drawtext` node sets `expansion=none`,
+ *   which makes them literal text rather than expansion directives. Turning
+ *   expansion off outright beats escaping around it: none of this feature's
+ *   text is ever meant to be a directive.
+ *
+ * Verified against ffmpeg 7.1 by rendering each awkward string BOTH through
+ * this function and through `drawtext`'s own escaping-free `textfile=`, and
+ * asserting the two frames are byte-identical — see
+ * `timelineExportText.ffmpeg.test.ts`. That test, not this doc comment, is
+ * what keeps the rule honest.
+ */
+export function quoteFiltergraphValue(raw: string): string {
+  let out = "'";
+  for (const ch of raw) {
+    if (ch === '\\') out += '\\\\';
+    else if (ch === ':') out += '\\:';
+    else if (ch === "'") out += "'\\\\\\''";
+    else out += ch;
+  }
+  return `${out}'`;
+}
+
+/** `#RRGGBB` / `#RGB` → ffmpeg's own `0xRRGGBB` colour literal.
+ *
+ *  ffmpeg's `av_parse_color` does accept a `#`-prefixed hex string, but `0x`
+ *  is its documented canonical form and avoids relying on that; the 3-digit
+ *  shorthand is expanded here (each nibble doubled, per CSS) because ffmpeg
+ *  does not accept it at all. An unparseable value falls back to white — the
+ *  same degrade `chroma_timeline::TextLayer::rgb` performs on the preview
+ *  side, so a malformed colour renders the same in both engines rather than
+ *  failing one of them. */
+export function ffmpegColorLiteral(color: string): string {
+  const hex = color.trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{6}$/.test(hex)) return `0x${hex.toUpperCase()}`;
+  if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+    return `0x${[...hex].map((c) => c + c).join('').toUpperCase()}`;
+  }
+  return '0xFFFFFF';
+}
+
+/**
+ * One text clip's `drawtext` filter node: reads `[inLabel]`, writes
+ * `[outLabel]`.
+ *
+ * **`drawtext` on the composited stream, not an `overlay` of its own input**
+ * (D-213). A text clip has no media to open, so it has no ffmpeg input and no
+ * per-clip filter chain; splicing its `drawtext` into the overlay chain at the
+ * exact position that clip's `overlay` would have occupied is what preserves
+ * z-order — a title on track 0 is still drawn last, over everything below it,
+ * with no separate ordering rule to keep in step.
+ *
+ * **Every geometry rule here mirrors `chroma::text::render_text_layer` +
+ * `composite_layer_onto` exactly:**
+ * - `fontsize` = `size × the output height` — the same fraction-of-the-
+ *   composition unit the Rust rasteriser resolves against its own canvas.
+ * - `x`/`y` centre the text's own **ink box** (`text_w`/`text_h` are ffmpeg's
+ *   measurements of the rendered glyphs, which is why the Rust side centres on
+ *   the measured ink box too rather than on font ascent/descent), then add
+ *   `position_x × w` / `position_y × h`.
+ * - `alpha` is the clip's opacity times its fade — `composite_layer_onto`
+ *   applies both as one alpha multiply on the layer.
+ * - `enable` gates the clip to its own timeline window, exactly as the
+ *   `overlay` step does for a media clip.
+ *
+ * `fontFile` is the absolute path the caller resolved from the backend's own
+ * `chroma_text_fonts` catalogue — **the same file the live preview
+ * rasterised** (D-212). Without it there is nothing honest to draw, so the
+ * caller is expected to have resolved it; see `buildExportFfmpegArgs`.
+ */
+export function buildTextDrawtextStep(
+  clip: Clip,
+  inLabel: string,
+  outLabel: string,
+  opts: TimelineExportOptions,
+  startSec: number,
+  endSec: number,
+  clipFps: number,
+  fontFile: string,
+): string {
+  const layer = clip.text;
+  if (!layer) throw new Error('buildTextDrawtextStep called on a clip with no text layer');
+
+  const fontSize = Math.max(1, Math.round(opts.height * layer.size));
+  // Every expression below runs on the BASE stream, where ffmpeg's `t` is
+  // timeline time — so anything authored relative to the clip's own start
+  // (its keyframes, its fade) is re-based through this.
+  const clipTime = `(t-${startSec})`;
+
+  const posExpr = (param: 'position_x' | 'position_y'): string => {
+    const staticValue = clip[param] ?? 0;
+    if (!hasKeyframesFor(clip, param)) return String(staticValue);
+    // A text clip's `source_start` is always 0 (`newTextClipFields`), so
+    // `rebaseKeyframesToClipInput` is a no-op here — called anyway so this
+    // reads the same as `positionExpr` and stays correct if that ever changes.
+    return keyframeExprAt(rebaseKeyframesToClipInput(clip), param, staticValue, clipFps, clipTime);
+  };
+
+  // Opacity × fade, as one alpha expression — the same multiplicative
+  // composition `resolve_clip_transform` performs on the preview side (D-147:
+  // "clip opacity keyframes × the fade handle").
+  const opacity = clip.opacity ?? 1;
+  const opacityExpr = hasKeyframesFor(clip, 'opacity')
+    ? `(${keyframeExprAt(rebaseKeyframesToClipInput(clip), 'opacity', opacity, clipFps, clipTime)})`
+    : String(opacity);
+  const lenSec = Math.max(endSec - startSec, 0);
+  const fadeExpr = fadeGainExpr(
+    lenSec,
+    (clip.fade_in_frames ?? 0) / clipFps,
+    (clip.fade_out_frames ?? 0) / clipFps,
+    clip.fade_in_curve ?? DEFAULT_FADE_CURVE,
+    clip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+    clipTime,
+  );
+  const alphaExpr = fadeExpr ? `(${opacityExpr})*(${fadeExpr})` : opacityExpr;
+
+  const optsList = [
+    // Both quoted through the same escaper — a font path can contain spaces
+    // ("Arial Bold.ttf") and, on some systems, characters the option parser
+    // would otherwise split on.
+    `fontfile=${quoteFiltergraphValue(fontFile)}`,
+    `text=${quoteFiltergraphValue(layer.content)}`,
+    `fontcolor=${ffmpegColorLiteral(layer.color)}`,
+    `fontsize=${fontSize}`,
+    // `expansion=none` — see `quoteFiltergraphValue`'s own doc. Without it a
+    // title containing `%` or `{` is a text-expansion directive, not text.
+    'expansion=none',
+    `x='(w-text_w)/2+w*(${posExpr('position_x')})'`,
+    `y='(h-text_h)/2+h*(${posExpr('position_y')})'`,
+    `alpha='${alphaExpr}'`,
+    `enable='between(t,${startSec},${endSec})'`,
+  ];
+  return `[${inLabel}]drawtext=${optsList.join(':')}[${outLabel}]`;
 }
 
 // --------------------------------------------------------------------------- //
@@ -170,6 +344,24 @@ export interface TimelineExportOptions {
    *  genuinely silent screen-recording footage), not out of an arbitrary
    *  preference. */
   hasAudioOverrides?: Record<string, boolean>;
+  /** D-211/D-212 — absolute font-file paths keyed by `TextLayer.font`'s
+   *  catalogue key, for every text clip on the timeline.
+   *
+   *  This module is pure (no store, no I/O, per its own header doc) and so
+   *  cannot resolve a font key to a file itself; the caller
+   *  (`editorExport.ts`'s `compileEditorExportArgs`) reads the backend's own
+   *  `chroma_text_fonts` catalogue — **the same resolution the live preview
+   *  rasterises with** — and passes it down. Exactly the "the compiler stays
+   *  pure, the caller supplies what only it can know" split
+   *  `hasAudioOverrides` already established (D-197).
+   *
+   *  A text clip whose font key is missing here is **skipped, with a real
+   *  reason**, rather than compiled against a guessed path: `drawtext`
+   *  without a resolvable `fontfile=` is a hard ffmpeg failure that would
+   *  take the whole export down, and a substituted font would produce an
+   *  export that silently disagrees with the preview. See
+   *  `buildExportFfmpegArgs`' return value. */
+  fontFiles?: Record<string, string>;
 }
 
 interface ClipChain {
@@ -334,6 +526,32 @@ function positionExpr(clip: Clip, param: 'position_x' | 'position_y', fps: numbe
 }
 
 /**
+ * D-211/D-212 — every distinct `TextLayer.font` key on `timeline` that
+ * `fontFiles` has no absolute path for, with the clips that use it.
+ *
+ * Called by `compileEditorExportArgs` BEFORE compiling, so an unresolvable
+ * font is a real, named error at compile time rather than an opaque ffmpeg
+ * failure at run time ("Could not load font ...") or, worse, a title silently
+ * missing from the finished file. `buildExportFfmpegArgs` also skips such a
+ * clip defensively, but the caller is where the reason can actually be
+ * reported.
+ */
+export function textClipsMissingFonts(
+  timeline: Timeline,
+  fontFiles: Record<string, string> | undefined,
+): Array<{ clipId: string; font: string }> {
+  const missing: Array<{ clipId: string; font: string }> = [];
+  for (const track of timeline.tracks) {
+    for (const clip of track.clips) {
+      if (!clip.text) continue;
+      if (fontFiles?.[clip.text.font]) continue;
+      missing.push({ clipId: clip.id, font: clip.text.font });
+    }
+  }
+  return missing;
+}
+
+/**
  * Compile `timeline` into a single ffmpeg argv array rendering `outPath` at
  * `opts.fps`/`opts.width`/`opts.height`.
  *
@@ -377,7 +595,11 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // end has been computed once.
   interface PendingClip {
     clip: Clip;
-    inputIdx: number;
+    /** `null` for a TEXT clip (D-211): it opens no file, so it consumes no
+     *  `-i` and has no `[N:v]` to address. Its picture comes from a
+     *  `drawtext` node spliced into the overlay chain instead — see
+     *  `buildTextDrawtextStep`. */
+    inputIdx: number | null;
     label: string;
     startSec: number;
     endSec: number;
@@ -405,6 +627,32 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // pre-B-075 behavior, better than nothing but only actually correct
       // when the source happens to share the project's own rate.
       const clipFps = clip.source_fps ?? opts.fps;
+
+      // D-211 — a TEXT clip has no file to open: no `-i`, no input index, no
+      // per-clip filter chain. It still takes a real slot in `pending` (and
+      // so a real position in the paint order below) because it is a real
+      // visible layer occupying real timeline space — `totalDurationSec` and
+      // z-order both have to count it. `label` is derived from its clip id
+      // rather than an input index, since it has none; `t` prefixed so a text
+      // label can never collide with a `v<N>` input label.
+      if (clip.text) {
+        const startSec = clip.start_frame / opts.fps;
+        pending.push({
+          clip,
+          inputIdx: null,
+          label: `t${pending.length}`,
+          startSec,
+          // A generated layer has no `source_fps` (see `newTextClipFields`),
+          // so `clipFps` is the export's own rate and `duration` really is
+          // its timeline footprint. `speed` still divides it for the same
+          // reason it does for a media clip: `speedOverrides` shrinks the
+          // window a clip occupies in the output.
+          endSec: startSec + clip.duration / speed / clipFps,
+          clipFps,
+          trackIndex,
+        });
+        continue;
+      }
 
       inputs.push(
         '-ss',
@@ -461,6 +709,15 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
 
   // Pass 2 — real filter chains, now that `totalDurationSec` is known.
   for (const p of pending) {
+    // D-211 — a text clip has no per-clip chain to build (its `drawtext` node
+    // is emitted inline in the paint loop below, on the composited stream),
+    // and no `freezeOverrides` behaviour either: `tpad` holds a decoded
+    // frame, and there is nothing decoded to hold. A title that should stay
+    // up longer is simply a longer title.
+    if (p.inputIdx === null) {
+      chains.push({ label: p.label, clip: p.clip, startSec: p.startSec, endSec: p.endSec, clipFps: p.clipFps });
+      continue;
+    }
     // D-188 — a clip flagged in `freezeOverrides` holds its own last frame
     // (via `tpad` inside `buildClipFilterChain`) for whatever's left between
     // its natural end and the overall export's real total length, and stays
@@ -486,6 +743,31 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   let lastLabel = 'base';
   chains.forEach((chain, i) => {
     const outLabel = i === chains.length - 1 ? 'outv' : `ov${i}`;
+    // D-211 — a text clip paints with `drawtext` on the stream built so far,
+    // at exactly the position in the chain its `overlay` would have taken, so
+    // z-order needs no separate rule. A clip whose font could not be resolved
+    // is skipped rather than compiled against a guessed path — the caller
+    // (`compileEditorExportArgs`) has already refused the whole export via
+    // `textClipsMissingFonts`, so this is the defensive second line only.
+    if (chain.clip.text) {
+      const fontFile = opts.fontFiles?.[chain.clip.text.font];
+      if (fontFile) {
+        filterSteps.push(
+          buildTextDrawtextStep(
+            chain.clip,
+            lastLabel,
+            outLabel,
+            opts,
+            chain.startSec,
+            chain.endSec,
+            chain.clipFps,
+            fontFile,
+          ),
+        );
+        lastLabel = outLabel;
+      }
+      return;
+    }
     // B-075 — a keyframe's `frame` is source-frame-absolute (this clip's own
     // native rate), not `opts.fps` — same reasoning as above.
     const xExpr = positionExpr(chain.clip, 'position_x', chain.clipFps);
@@ -547,6 +829,11 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // VIDEO frame has no audio analog, so a frozen clip's audio simply ends on
   // time rather than looping or holding silence past it.
   for (const p of pending) {
+    // D-211 — a text clip has no input stream at all, so `[N:a]` would not
+    // just be silent, it would be a filtergraph reference to nothing (a hard
+    // ffmpeg failure). `resolveHasAudioOverrides` already resolves it to
+    // `false`, so this is belt-and-braces against a caller-supplied override.
+    if (p.inputIdx === null) continue;
     if (p.clip.link_group) continue;
     if (!(opts.hasAudioOverrides?.[p.clip.id] ?? false)) continue;
     const speed = opts.speedOverrides?.[p.clip.id] ?? 1;

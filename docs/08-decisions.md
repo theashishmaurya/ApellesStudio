@@ -18660,6 +18660,113 @@ animated property is a real write that changes no rendered pixel. Added to
 and to both tools' own docstrings, with how to check it (`editor_get_state`:
 compare the static field against `chroma_keyframes`).
 
+## D-211 — A text/title clip primitive for the Edit tab: a `Clip` variant, not a new `TrackKind`
+
+**Context.** Roadmap item 24: there was **no text concept anywhere in the
+codebase** — no `TrackKind::Text`, no title clip, nothing on `Clip`. A video
+track held only decoded video, an audio track only decoded/synthesised audio.
+The 2026-09-07 comparison reel got its "BEFORE"/"AFTER" labels from an
+**external `ffmpeg drawtext` pass** laid on top of a correct Chroma export,
+disclosed at the time as a finishing step rather than a feature; no GUI user,
+and no MCP agent short of raw ffmpeg, could produce a title at all.
+
+**Reference, per CLAUDE.md's "research the real pattern first".** DaVinci
+Resolve's own Edit page, section "Incredible 2D and 3D Titles"
+(`scratch/resolve-reference/titles.jpg` + `resolve-edit-features.json`): "find
+the text generator … and **drag it into the timeline above your video
+tracks**. Then use the inspector to type your text and adjust parameters such
+as font, size, color… The **basic title generators** let you build simple
+titles and lower thirds from scratch. There are also more than 100 Fusion
+title tools…" Premiere is the same shape (a graphic clip on a video track).
+Both treat a *subtitle* track as a separate feature from a *title*; only the
+former gets a track type of its own.
+
+**The real question was the model shape.**
+
+1. *A new `TrackKind::Text`.* Clips on it are always titles. Rejected. The one
+   constraint a title imposes is z-order — composite over the video below it —
+   and that is already solved: track index order **is** compositing z-order
+   (D-086), `resolve_visible_video_layers_at` already returns layers in it, and
+   the compositor already paints them in reverse. A new kind would have needed
+   its own resolver, its own ordering rule against the video tracks, its own
+   branch in every `kind == Video`/`== Audio` walk (~15 across
+   `chroma-timeline`, `chroma::edit`, `chroma::audio`, `timeline.ts`,
+   `timelineExport.ts`), and its own export pass — all re-deriving what track
+   index order already gives. It would also make "a title on the same track as
+   the shot it labels" unrepresentable, which every reference NLE allows.
+2. *Flat text fields on `Clip` plus an `is_title` flag.* Rejected: two sources
+   of truth for "is this a title", and the fields are mostly non-numeric so
+   they gain nothing from the flatness that D-132's crop insets genuinely
+   needed (riding the flat `{name: number}` keyframe interpolator).
+3. **Chosen: `Clip::text: Option<TextLayer>`.** `Some` = a generated layer
+   whose picture is rasterised text and whose `source_path` is empty; `None` =
+   every clip in every existing project, byte-identical (`skip_serializing_if`,
+   so no `project.json` even grows a key). `Clip::is_text()` is the one
+   predicate everything branches on.
+
+**What that shape bought, concretely — none of it written:** placement
+(`add_clip`, with ripple / explicit `startFrame` / auto track creation), trim /
+split / move / remove / gap-close, timeline duration and gap detection, layer
+resolution, undo/redo (one `labelForOp` case), z-order, position and opacity
+keyframes (`chroma_keyframes` as-is), and fade in/out (`Clip::fade_*` as-is).
+
+**Field conventions.** `size` is a **fraction of the composition height**, not
+pixels — exactly the B-043 reasoning that made `position_x` normalised: the
+preview rasterises at 640/960 px while the export renders at full resolution,
+so a pixel size would cover a different fraction of the picture in each.
+`font` is a **catalogue key**, not a path or a system family name (D-212). No
+`opacity` on `TextLayer` — that is `Clip::opacity`, already keyframeable and
+already fade-multiplied; a second alpha would be two sources of truth.
+
+**Phase 1 boundary, stated rather than implied.** A text clip honours
+`opacity` (with its fade) and `position_x`/`position_y`, both keyframeable —
+the roadmap entry's own stated minimum. It does **not** honour `scale`,
+`rotation`, `crop_*` or `box_width`/`box_height`, **in either engine**, and
+`editor_set_clip_transform` returns a real error rather than storing one. See
+D-213 for why that is a correctness decision. Multi-line text is refused at
+the write path. `docs/notes/text-title-clips.md` has the full deferred list.
+
+**Both interfaces, same pass** (CLAUDE.md's human-AND-AI rule): a **Title**
+button in the timeline toolbar (playhead, topmost video track, auto-selected)
+and an Inspector **Title** section, against `editor_add_text_clip` /
+`editor_set_text_clip` / `editor_text_fonts` — both through the same
+`newTextLayer` validator and the same `add_clip` / `set_text_clip` ops.
+`TextClipInspectorPanel` stacks *above* `EditorInspectorPanel` rather than
+branching inside `ClipInspectorPanel`, which is what keeps a title's
+Opacity/Position rows the *existing* D-208 rows instead of a second copy.
+
+**Known gap, disclosed:** `ClipInspectorPanel.tsx` still renders its Scale /
+Rotation / Crop / Size rows for a title, where they change no pixel. That file
+was being edited by two other concurrent efforts during this pass and was
+off-limits; gating each row on `clip.text == null` is a one-line-per-row
+follow-up, tracked in roadmap item 24.
+
+**Verified.** `chroma-timeline`: 6 model tests (migration default, no new key
+in an existing clip's JSON, round trip, colour parse, a title as a real
+visible layer). `chroma::edit`: the Phase 1 transform pinning, keyframes+fade
+still resolving, the fast-path guard, a real composite, plus **two end-to-end
+tests through the actual `chroma_timeline_frame` command** — a real `.chroma`
+project, a real ffmpeg-generated source, the returned JPEG data-URL decoded
+back to pixels: white glyph pixels centred to within 4 px, black corners
+untouched, and a `position_x` of 0.25 measurably moving the ink 80 px on a
+320-wide frame. TS: 31 pure tests + 21 real-ffmpeg pixel tests (see D-213).
+**No live GUI run** — same reason D-208 gives (the single-instance lock plus
+the main checkout's running dev server), and this worktree has no `app/
+node_modules` of its own; the command-level tests are what stands in for it,
+and they exercise the same code the preview pane calls over IPC.
+
+**One real latent defect fixed on the way, in test infrastructure rather than
+shipped code.** Those new preview tests open a project, and `state::set_project`
+plus the decode-pipe pool are process-global — so they failed in parallel and
+passed under `--test-threads=1`. `chroma::project`'s tests already had a
+`PROJECT_STATE_LOCK` for exactly this, but it was a private static inside that
+module's own `mod tests`: it serialised that module against itself and nothing
+else, so adding a second project-opening test module immediately made three of
+its tests fail. Hoisted to one `pub(crate)` lock in `chroma::mod`, taken by
+every project-opening test in `chroma::*`. Not a `B-NNN` — no shipped behaviour
+was ever wrong — but it would have become a genuinely confusing flake for the
+next person, so it is fixed rather than worked around with `--test-threads=1`.
+
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
 
@@ -18769,3 +18876,144 @@ this process lacks for the same reason it lacks Screen Recording; the GUI path
 is verified by construction only (it invokes the same
 `screenshot_to_file` the verified route calls). Stated plainly rather than
 implied. Full numbers in `docs/notes/debug-screenshot-tool.md`.
+
+## D-212 — `ab_glyph` for text rasterisation, and one shared font FILE for both engines
+
+**Context.** D-211 needs a title rasterised into the same pixel buffer decoded
+video frames occupy. Nothing in the codebase did that: RapidRAW's own text is
+webview DOM, and `imageproc` was only ever used here for `rotate_about_center`.
+
+**Crate choice.** `ab_glyph` — Apache-2.0/MIT, and **already in this
+workspace's lock file at the exact version declared**, because `imageproc`
+depends on it. So this adds a direct dependency on a crate already being
+compiled, not a new tree. Small, pure Rust, no C/FreeType FFI, and does the
+one thing needed: outline a glyph at a pixel size, hand back per-pixel
+coverage. Considered: `cosmic-text` (a full shaping/layout engine — the right
+answer for multi-line, bidi and complex scripts, far too much for a
+single-line title and a large new tree), `fontdue` (comparable, not already
+present), `rusttype` (deprecated by its own author in favour of `ab_glyph`),
+`font-kit`/`fontdb` (font *discovery* — would add a dependency and a
+system-wide scan purely to produce a path the catalogue already states).
+
+**`imageproc::drawing::draw_text_mut` is deliberately not used**, despite
+being the obvious shortcut in a crate already present: it blends the glyph
+colour toward the *existing* pixel, which on the transparent canvas this needs
+produces premultiplied RGB against a straight-alpha channel — a dark halo on
+every antialiased edge once `image::imageops::overlay` blends it. Writing
+coverage into alpha and the fill colour into RGB is four lines and is correct;
+there is a unit test asserting an antialiased edge pixel still carries the
+exact fill colour.
+
+**The font catalogue, and why a resolved PATH is the contract.** The export
+half hands ffmpeg an absolute `fontfile=`. For the preview and the export to
+draw the same glyphs they must read the *same file*, so `TextLayer::font`
+stores a stable catalogue **key** and `chroma::text`'s `TEXT_FONTS` maps it to
+an ordered list of candidate absolute paths (first existing wins), exposed by
+the `chroma_text_fonts` command that BOTH the Inspector's picker and
+`editorExport.ts` read. A font-discovery crate would have produced the same
+path with a dependency and a scan.
+
+**Single-face `.ttf` only, never a `.ttc`** — load-bearing, not incidental:
+`drawtext`'s `fontfile=` takes no face index and uses face 0, while `ab_glyph`
+would have to be told which face to parse out of a collection. A single-face
+file is the only shape where "same file" also means "same *face*". That is why
+the obvious macOS picks (Helvetica, Avenir, SF) are absent — they ship only as
+`.ttc`. Eight families resolve on macOS today; a family with no file is
+reported as unavailable rather than dropped, so a stored `font` key can always
+be explained.
+
+**A measured finding, not an assumption: the two libraries mean different
+things by "size".** `ab_glyph`'s `PxScale` is the **em** size; FreeType (and
+so `drawtext`) sizes by the face's **vertical extent** (`ascender -
+descender`). For Arial Bold that is 2288 units against a 2048-unit em. The
+same title rendered both ways at 640×360 came out 129 px of ink wide from
+`ab_glyph` against 144 px from `drawtext` — a ratio of 1.116 against the
+predicted 2288/2048 = 1.117. `freetype_equivalent_scale` applies the
+conversion; the export's convention wins, because ffmpeg's `fontsize` is what
+ships in the file. Found by measuring pixels; without it every title was ~11 %
+smaller on screen than in the exported video, which no argv assertion would
+ever have caught.
+
+**Performance.** Two module-level caches: parsed faces keyed by file (bounded
+by the catalogue's own size, so no eviction needed) and the last four
+*rasterised layers* keyed by everything the output depends on. A title redrawn
+on every frame of playback rasterises once. `Decoded.img` became an `Arc` so a
+cached layer costs one allocation per frame rather than a memcpy of a full
+canvas-sized buffer.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-213 — Exporting a title: `drawtext` spliced into the overlay chain, and the escaping that actually works
+
+**Context.** `timelineExport.ts` compiles a `Timeline` to one ffmpeg
+`-filter_complex`: one `-i` per clip, one `crop`/`setpts`/`scale` chain each,
+and an `overlay` chain painting them onto a `color=black` base. A text clip has
+no file to open, so it has no input and no chain.
+
+**Options.** (a) Render the title to a PNG and add it as a real `-i` overlay.
+Correct, and it would give a title every transform a video layer has for free,
+by sharing the *rasteriser* as well as the font — but it requires the compiler
+to write a file, and that module is deliberately pure/no-I-O (its own header
+doc, and the export queue compiles a job's argv at enqueue time, D-198).
+(b) **Chosen: `drawtext`**, matching this session's own external-workaround
+precedent. The node is spliced into the overlay chain **at exactly the position
+that clip's `overlay` would have occupied**, reading the stream built so far —
+so z-order needs no separate rule at all. (a) is recorded as the Phase 2 route
+in `docs/notes/text-title-clips.md`, together with what it would unlock.
+
+**The consequence, taken deliberately.** `drawtext` can place a text box
+(`x`/`y` expressions) and fade it (`alpha`) and nothing else — no scale, no
+rotation, no crop. So the **live preview is pinned to match**
+(`resolve_text_clip_transform`), the MCP op refuses a non-default value for
+one of those fields, and the Inspector says so. A preview that did what the
+export cannot is the exact class of defect B-053 (a lone clip's transform
+silently dropped in the preview), B-090 (a keyframed `scale` silently dropped
+in the export) and B-094 each closed.
+
+**Time base.** A media clip's chain has its own `t == 0` at its in-point
+(its `-ss`); a title's `drawtext` runs on the composited base stream, where
+`t` is timeline time. So its keyframe and fade expressions are written in
+`(t - startSec)`. `keyframeExprAt` gained an optional `timeVar`, defaulting to
+`'t'`, so every existing caller's argv is byte-identical.
+
+**Escaping — the part that needed measuring.** ffmpeg runs **two parsers in
+series**: the filtergraph description (splits chains on `;`, filters on `,`,
+reads `[…]` labels, honours `'` and `\`, and **strips them**), then
+`av_opt_set_from_string` on what survives (splits on `:` into `key=value`,
+honouring `'` and `\` all over again). A value that satisfies only the first is
+still wrong: the quotes that protected a `:` are gone before the parser that
+splits on `:` runs. The first implementation used the shell-style `'\''`
+idiom — it produced **no ffmpeg error and no text at all**, because the bare
+`'` reaching the second parser opens a quote there and swallows `fontsize`,
+`fontcolor`, `x` and `y` into the text value. `quoteFiltergraphValue` wraps in
+filtergraph quotes and, inside them, escapes `:` as `\:` and `\` as `\\` for
+the second parser, leaving the quoted section only for a literal `'`
+(`'\\\''`); `expansion=none` on the node makes `%` and `{}` literal rather
+than expansion directives.
+
+**Proved, not reasoned.** Thirteen awkward strings (apostrophes, colons,
+commas, semicolons, brackets, `%`, `{}`, backslashes, non-ASCII) are each
+rendered **both** through the escaper and through `drawtext`'s own
+escaping-free `textfile=`, with the two output frames asserted byte-identical
+(`timelineExportText.ffmpeg.test.ts`). "ffmpeg exited 0" would have passed the
+broken version.
+
+**An unresolvable font is refused, not guessed.** `textClipsMissingFonts` runs
+in `compileEditorExportArgs` before compiling: a bad `fontfile=` takes the
+whole export down with an opaque libfreetype message, and substituting a
+different face would ship a file that disagrees with the preview.
+
+**Verified.** 21 real-ffmpeg tests: the 13 escaping round-trips above, plus
+real text burned into a real file and centred to within 3 px; `position_x`/
+`position_y` as fractions of the frame; `size` doubling the ink height when
+doubled; ink present only inside the clip's own window and absent 0.4 s before
+and 0.5 s after; a black title drawn over a white clip (z-order); a fade-in
+measurably ramping; a keyframed position landing left-of-centre at the clip's
+start and right-of-centre at its end (the timeline-time re-basing); and the
+same timeline rendering byte-identical twice (determinism). Plus 31 pure
+compiler tests, including one pinning that a timeline with **no** text clips
+compiles to a byte-identical argv to before D-211.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

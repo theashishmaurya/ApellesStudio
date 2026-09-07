@@ -85,5 +85,27 @@ pub mod relight;
 pub mod session;
 pub mod sidecar;
 pub mod state;
+pub mod text;
 pub mod video;
 pub mod write_text_file;
+
+/// **The one lock every test that opens a project must hold** (D-211).
+///
+/// `state::set_project` and the decode-pipe pool are process-global
+/// (D-033/D-037, D-125) and `cargo test` runs test fns on several threads by
+/// default, so two such tests interleave — one measuring a frame the other has
+/// just re-pointed the project state for. `chroma::project`'s own tests have
+/// had a lock like this since D-054; it lived inside that module's private
+/// `mod tests`, so when `chroma::edit`'s new text/title preview tests needed
+/// the same guarantee they could not reach it, and a second module-local lock
+/// would have serialised each module internally while still letting the two
+/// modules race — the same defect with more code. Hoisted here, where every
+/// `chroma::*` test module can see it, and used by all of them.
+///
+/// Hold it for the whole body (`let _guard = …`), and take it with
+/// `unwrap_or_else(|e| e.into_inner())` rather than `expect`: a panic in one
+/// test poisons the mutex, and a poisoned lock must not turn into a second,
+/// misleading failure everywhere else.
+#[cfg(test)]
+pub(crate) static PROJECT_STATE_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));

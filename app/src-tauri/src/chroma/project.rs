@@ -950,8 +950,15 @@ mod tests {
     /// mutates it must hold this for its whole body or it can interleave
     /// with another such test (see `project_ref_set_and_clear`'s original
     /// comment, which this formalises rather than just shrugs at).
-    static PROJECT_STATE_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> =
-        once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));
+    ///
+    /// **D-211 — this used to be a private static right here, and that was
+    /// half a fix.** It serialised this module's own tests against each other
+    /// but not against `chroma::edit`'s, which open projects through the same
+    /// global state; when D-211 added real end-to-end preview tests there,
+    /// three tests in THIS module started failing under a parallel run.
+    /// Re-pointed at the one crate-level lock in `chroma::mod` so every
+    /// project-opening test in `chroma::*` shares it.
+    use super::super::PROJECT_STATE_LOCK;
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(

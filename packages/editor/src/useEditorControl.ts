@@ -53,15 +53,22 @@ import {
   DEFAULT_FADE_CURVE,
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
+  DEFAULT_TITLE_SECONDS,
   fadePresetName,
+  isTextClip,
+  newTextClipFields,
+  newTextLayer,
+  timelineFps,
   type FadeCurve,
   type Clip,
   type NewClipFields,
+  type TextLayer,
   type Timeline,
 } from './timeline';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
+import { loadTextFonts, textFontsSync } from './textFonts';
 
 const EDITOR_OP_PREFIX = 'editor_';
 
@@ -218,6 +225,12 @@ function timelineDto(tl: Timeline) {
         fadeOutCurve: c.fade_out_curve ?? DEFAULT_FADE_CURVE,
         fadeInCurveName: fadePresetName(c.fade_in_curve),
         fadeOutCurveName: fadePresetName(c.fade_out_curve),
+        // D-211 — `null` for an ordinary media clip; the whole text layer for
+        // a title, so a caller can read back what it wrote without a second
+        // round trip and can tell the two kinds of clip apart from this one
+        // response (there is no `kind` field on a clip — being a title IS
+        // having a text layer, see `chroma_timeline::Clip::text`).
+        text: c.text ?? null,
       })),
     })),
   };
@@ -450,6 +463,128 @@ export function useEditorControl(): void {
         return { ok: true, track, clipId: placed.id, startFrame: placed.start_frame, duration: placed.duration };
       },
 
+      // ---- text / title clips (D-211) --------------------------------------
+      // The AI half of the same primitive the Edit tab's own "Add title"
+      // button drives, both through the SAME `newTextClipFields` + `add_clip`
+      // / `set_text_clip` ops (CLAUDE.md: "the same op/store action
+      // underneath both"). No new placement path: a title is a `Clip`, so it
+      // is placed by the ordinary `add_clip` op and gets ripple / explicit
+      // `startFrame` / auto track creation for free.
+      editor_text_fonts: async () => {
+        const fonts = await loadTextFonts();
+        // The exact layer a title gets with nothing specified — reported so a
+        // caller can see the real defaults rather than infer them, and built
+        // by the same validator every write path uses. `newTextLayer({})`
+        // cannot fail (an empty patch is always valid), but the union is
+        // narrowed rather than cast: a cast would silently start lying if
+        // that ever stopped being true.
+        const defaults = newTextLayer({});
+        return {
+          ok: true,
+          fonts: fonts.map((f) => ({ key: f.key, label: f.label, available: f.path !== null })),
+          defaultTitle: 'error' in defaults ? null : defaults,
+        };
+      },
+
+      editor_add_text_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+
+        const layer = newTextLayer({
+          content: typeof a?.content === 'string' ? a.content : '',
+          font: a?.font !== undefined ? String(a.font) : undefined,
+          size: a?.size !== undefined ? Number(a.size) : undefined,
+          color: a?.color !== undefined ? String(a.color) : undefined,
+        });
+        if ('error' in layer) return layer;
+        if (!layer.content) return { error: 'content must be a non-empty single line of text' };
+        // A font key the backend has no file for would compile to a
+        // `drawtext` ffmpeg cannot run — refused HERE, at the write, rather
+        // than at export time on a timeline the caller has already built.
+        const fonts = textFontsSync();
+        const known = fonts.find((f) => f.key === layer.font);
+        if (fonts.length > 0 && !known?.path) {
+          const usable = fonts.filter((f) => f.path).map((f) => f.key).join(' | ');
+          return { error: `no font file for "${layer.font}" on this machine — one of ${usable} (see editor_text_fonts)` };
+        }
+
+        const track = Math.round(Number(a?.track));
+        if (!Number.isFinite(track) || track < 0) return { error: 'track must be a track index (0 = topmost)' };
+        const fps = timelineFps(tl);
+        const duration =
+          a?.duration !== undefined
+            ? Math.round(Number(a.duration))
+            : Math.round(DEFAULT_TITLE_SECONDS * fps);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          return { error: 'duration must be a positive number of TIMELINE frames' };
+        }
+
+        const clip: NewClipFields = newTextClipFields(layer, duration, a?.name);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'add_clip',
+          track,
+          clip,
+          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
+          ripple: !!a?.ripple,
+        });
+
+        const after = useEditorTimelineStore.getState().timeline;
+        const placed = after?.tracks[track]?.clips.find((c) => c.id === clip.id);
+        if (!placed) {
+          return { error: 'add_clip did not place the title — check the track index (and that it is a video track)' };
+        }
+        return {
+          ok: true,
+          track,
+          clip: after?.tracks[track]?.clips.findIndex((c) => c.id === clip.id) ?? -1,
+          clipId: placed.id,
+          startFrame: placed.start_frame,
+          duration: placed.duration,
+          text: placed.text ?? null,
+        };
+      },
+
+      editor_set_text_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        if (!isTextClip(found.c)) {
+          return { error: `clip ${found.clip} on track ${found.track} is a media clip, not a title — editor_set_text_clip only edits text clips` };
+        }
+        // Only the fields actually mentioned are patched — the reducer merges
+        // against the clip's existing layer, so this can never silently reset
+        // a title's content while changing its colour.
+        const patch: Partial<TextLayer> = {};
+        if (a?.content !== undefined) patch.content = String(a.content);
+        if (a?.font !== undefined) patch.font = String(a.font);
+        if (a?.size !== undefined) patch.size = Number(a.size);
+        if (a?.color !== undefined) patch.color = String(a.color);
+        if (Object.keys(patch).length === 0) {
+          return { error: 'nothing to change — pass at least one of content / font / size / color' };
+        }
+        // Validate here, where there is somewhere to report to: `applyOp`'s
+        // own reducer is pure and can only no-op on a bad patch.
+        const merged = newTextLayer(patch, found.c.text ?? null);
+        if ('error' in merged) return merged;
+        const fonts = textFontsSync();
+        const known = fonts.find((f) => f.key === merged.font);
+        if (fonts.length > 0 && !known?.path) {
+          const usable = fonts.filter((f) => f.path).map((f) => f.key).join(' | ');
+          return { error: `no font file for "${merged.font}" on this machine — one of ${usable} (see editor_text_fonts)` };
+        }
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_text_clip',
+          track: found.track,
+          clip: found.clip,
+          patch,
+        });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return { ok: true, track: found.track, clip: found.clip, text: after?.text ?? null };
+      },
+
       editor_split_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
@@ -612,6 +747,36 @@ export function useEditorControl(): void {
           return Number.isFinite(n) ? n : fallback;
         };
         const c = found.c;
+        // D-211 — a TEXT clip only honours opacity and position, in BOTH
+        // renderers (`chroma::edit::resolve_text_clip_transform`, and the
+        // export's `drawtext`, which has no scale/rotate/crop at all). Refuse
+        // a non-default value for one of the others rather than storing it
+        // and rendering nothing: a silently-ignored transform value is
+        // exactly B-053, and an agent that set `scale` and saw no change
+        // would have no way to find out why. Restating a field at its own
+        // default is fine — the GUI's own transform form does it on every
+        // write.
+        if (isTextClip(c)) {
+          const ignored = (
+            [
+              ['scale', a?.scale, 1],
+              ['rotation', a?.rotation, 0],
+              ['crop_left', a?.crop_left, 0],
+              ['crop_top', a?.crop_top, 0],
+              ['crop_right', a?.crop_right, 0],
+              ['crop_bottom', a?.crop_bottom, 0],
+              ['box_width', a?.box_width, null],
+              ['box_height', a?.box_height, null],
+            ] as const
+          )
+            .filter(([, v, dflt]) => v !== undefined && v !== null && Number(v) !== dflt)
+            .map(([name]) => name);
+          if (ignored.length > 0) {
+            return {
+              error: `a text clip only supports opacity and position_x/position_y — ${ignored.join(', ')} would be silently ignored by both the preview and the export. Use the title's own \`size\` (editor_set_text_clip) to make it bigger.`,
+            };
+          }
+        }
         // Every field required by the real EditOp — read the clip's OWN
         // current values as defaults (same "only state what changes"
         // convenience `set_clip_fade` already gives a caller) so a partial
@@ -899,6 +1064,13 @@ export function useEditorControl(): void {
         return { ok: true, track, hidden: !!a?.hidden };
       },
     };
+
+    // D-211/D-212 — warm the font catalogue once, at Edit-tab mount. The
+    // export compiler reads it SYNCHRONOUSLY (the queue compiles a job's argv
+    // at enqueue time, D-198), so it has to already be there; doing it here
+    // rather than lazily at the first export means a title's font is resolved
+    // long before anyone can queue one. Idempotent — see `textFonts.ts`.
+    void loadTextFonts();
 
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};

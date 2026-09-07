@@ -44,8 +44,15 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 23 tools (D-183, 2026-09-07; +1, D-191; +2, D-195)
-## Edit tab / multi-track NLE — CLOSED, 22 tools (D-183, 2026-09-07; +1, D-191; +1, D-196)
+## Edit tab / multi-track NLE — CLOSED, 28 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211)
+
+<!-- The count above is the real one, checked 2026-09-08 against
+     `grep -oE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck)\(' mcp/server.py`
+     minus the 4 media-understanding tools listed in their own section below.
+     It replaces two contradictory headings (“23 tools” and “22 tools”) that had
+     been sitting here as separate lines, both already stale — count it, don't
+     increment it. -->
+
 
 > **The gap tracked below is closed.** D-147 (clip fades) and D-149 (ducking)
 > shipped the first three Edit-tab tools; D-183 shipped the other seventeen in one
@@ -73,6 +80,7 @@ zero.**
 > | `editor_split_clip` / `editor_remove_clip` / `editor_remove_gap` / `editor_trim_clip` / `editor_move_clip` | The rest of the ripple-edit primitives — no new `EditOp` had to be invented for any of these; every one already existed in `packages/editor/src/timeline.ts`, only the MCP wrapper was missing. |
 > | `editor_slip_clip` (D-195) | Slip a clip's SOURCE window in place — `start_frame`/`duration` stay fixed, only `source_start` moves (clamped to the source's own bounds, lockstep with a linked A/V pair). A real, previously-missing `EditOp` (`slip`), not a wrapper around an existing one. |
 > | `editor_swap_clip_media` (D-195) | Repoint a clip at different already-imported source media while preserving everything else — transform/keyframes/fades/`link_group` — with `source_start`/`duration` re-clamped (never `start_frame`) if the new source is shorter, and `source_fps` always re-read from the NEW source. A real, previously-missing `EditOp` (`swap_media`); before this, changing a clip's source meant remove-and-re-add, losing every other field. |
+> | `editor_add_text_clip` / `editor_set_text_clip` / `editor_text_fonts` (D-211, 2026-09-08) | Real text/title clips — rendered text burned into both the live preview and `editor_export`, so an agent never has to drop to raw `ffmpeg drawtext` for a label or a lower third. A title is an ORDINARY clip on an ORDINARY video track (there is no text track kind), so every other tool above works on it unchanged — move/trim/split/remove/fade, and `editor_set_clip_transform`'s `opacity`/`position_x`/`position_y` with `editor_set_clip_keyframes` animating them. It does NOT support `scale`/`rotation`/`crop_*`/`box_*` in either engine (the export compiles to ffmpeg's `drawtext`, which has none of them) — `editor_set_clip_transform` **refuses** a non-default value for one rather than storing something that renders nothing; a title's size is `editor_set_text_clip`'s own `size`, a fraction of the output frame's HEIGHT. `editor_text_fonts` lists the catalogue keys `font` takes and which of them this machine actually has a file for. Single-line only for now. See `docs/notes/text-title-clips.md`. |
 > | `editor_add_track` / `editor_set_track_gain` / `editor_set_track_locked` / `editor_set_track_hidden` | Track management. |
 > | `set_clip_fade` / `set_track_duck` | Unchanged from D-147/D-149 (see above for the internal rename). |
 > | `editor_set_clip_transform` | A clip's base position/scale/rotation/crop/opacity, as fractions of the output composition — the stacking/PIP primitive (D-136's normalised-fraction convention). `box_width`/`box_height` (D-193) let a caller size a clip's box on each axis INDEPENDENTLY as a fraction of the output composition — unlike `scale` (a uniform multiplier of the clip's own source resolution, which can only ever produce a box sharing the clip's own aspect ratio), these have no Rust/TS-export parity gap and are the real fix for the same limitation `editor_export`'s `fit_overrides` below works around at export time only. `null` clears a previously-set override (the Python tool's `clear_box_width`/`clear_box_height` booleans, since a bare omitted argument already means "leave it alone" on this tool). |

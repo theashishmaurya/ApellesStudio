@@ -25,7 +25,8 @@ import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, type Timeline } from './timeline';
-import { buildExportFfmpegArgs, type TimelineExportOptions } from './timelineExport';
+import { buildExportFfmpegArgs, textClipsMissingFonts, type TimelineExportOptions } from './timelineExport';
+import { loadTextFonts, textFontPaths } from './textFonts';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  copied by hand, same reason `useEditorControl.ts`'s own copy already
@@ -150,6 +151,24 @@ export function compileEditorExportArgs(a: {
     }
   }
 
+  // D-211/D-212 — the font FILE for each text clip's font key, from the
+  // backend's own catalogue (the same resolution the live preview rasterises
+  // with, which is what makes the exported title match the previewed one).
+  // Read synchronously from the module cache `useEditorControl` warms at
+  // mount — see `textFonts.ts`'s own doc for why the cache exists.
+  const fontFiles = textFontPaths();
+  const missingFonts = textClipsMissingFonts(tl, fontFiles);
+  if (missingFonts.length > 0) {
+    // Refused rather than compiled-and-let-ffmpeg-fail: a `drawtext` with an
+    // unresolvable `fontfile=` takes the WHOLE export down with an opaque
+    // libfreetype message, and silently dropping the title would ship a file
+    // that disagrees with what the preview showed.
+    const names = [...new Set(missingFonts.map((m) => m.font))].join(', ');
+    return {
+      error: `no font file for ${names} — ${missingFonts.length} text clip(s) cannot be rendered. Pick a different font in the Inspector, or check chroma_text_fonts for which families this machine has.`,
+    };
+  }
+
   const opts: TimelineExportOptions = {
     fps,
     width,
@@ -158,6 +177,7 @@ export function compileEditorExportArgs(a: {
     fitOverrides,
     freezeOverrides,
     hasAudioOverrides: resolveHasAudioOverrides(tl),
+    fontFiles,
   };
   const args = buildExportFfmpegArgs(tl, outPath, opts);
   return { ok: true, outPath, args };
@@ -176,6 +196,12 @@ export interface EditorExportResult {
 export async function runEditorExport(
   a: Parameters<typeof compileEditorExportArgs>[0],
 ): Promise<EditorExportResult | CompileError> {
+  // D-211 — the ONE place the (synchronous) compiler's font-catalogue read
+  // can be guaranteed warm before it runs: an MCP `editor_export` can be the
+  // very first thing an agent does after opening a project, before the
+  // Inspector has ever rendered a font picker. Idempotent and a no-op once
+  // loaded (see `textFonts.ts`), so this costs nothing on every later call.
+  await loadTextFonts();
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;
   const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args: compiled.args });

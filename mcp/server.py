@@ -578,6 +578,27 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "(B-093/D-209, D-208). Verify with editor_get_state: compare the "
             "clip's static field against its chroma_keyframes params."
         ),
+        "text_title_clips": (
+            "D-211: a TEXT/TITLE clip (editor_add_text_clip) is an ORDINARY "
+            "clip on an ORDINARY video track — there is no text track kind. "
+            "It composites over the video by the same track-index z-order as "
+            "everything else, so put the title on a LOWER track index than "
+            "the footage it labels (track 0 over track 1). Every ordinary "
+            "clip tool works on it: move, trim, split, remove, fade, "
+            "editor_set_clip_transform's opacity/position_x/position_y, and "
+            "editor_set_clip_keyframes on those. But `scale`, `rotation`, "
+            "`crop_*` and `box_width`/`box_height` do NOT apply to a title in "
+            "either the live preview or the export, and "
+            "editor_set_clip_transform REFUSES a non-default value for one "
+            "rather than storing something that renders nothing — a title's "
+            "size is editor_set_text_clip's own `size` (a fraction of the "
+            "output frame's HEIGHT, not pixels). The reason is parity, not "
+            "laziness: the export compiles a title to ffmpeg's `drawtext`, "
+            "which can place and fade a text box and nothing else, so a "
+            "preview that scaled or rotated one would be showing a picture "
+            "the export cannot produce. Widening both engines together is "
+            "Phase 2 — see docs/notes/text-title-clips.md."
+        ),
     },
     "export": {
         "v1_scope": (
@@ -851,6 +872,128 @@ def editor_add_clip(
     if name is not None:
         args["name"] = name
     return json.dumps(_op("editor_add_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_text_fonts() -> str:
+    """List the font families a text/title clip can use, and which of them
+    this machine actually has a font file for.
+
+    Call this once before your first `editor_add_text_clip` in a session. The
+    `key` of each entry is what `font` takes on `editor_add_text_clip` /
+    `editor_set_text_clip` — a catalogue key like "sans-bold", NOT a system
+    font name like "Helvetica" and NOT a file path. A family whose
+    `available` is false has no font file on this machine and will be
+    refused: the live preview and the export both read the SAME file, so
+    substituting a different face would make the exported title silently
+    disagree with the one you previewed.
+
+    Also returns `defaultTitle`, the exact text layer a title gets when you
+    omit `font`/`size`/`color`."""
+    import json
+
+    return json.dumps(_op("editor_text_fonts"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_text_clip(
+    track: int,
+    content: str,
+    start_frame: int | None = None,
+    duration: int | None = None,
+    font: str | None = None,
+    size: float | None = None,
+    color: str | None = None,
+    ripple: bool = False,
+    name: str | None = None,
+) -> str:
+    """Add a TEXT / TITLE clip — real rendered text burned into the picture,
+    in both the live preview and `editor_export`. This is what to use for a
+    label, a lower third, an intro card or a "BEFORE"/"AFTER" tag; you never
+    need to drop to raw `ffmpeg drawtext` for it.
+
+    **A title is an ordinary clip on an ordinary VIDEO track**, not a special
+    track type — the same shape Resolve and Premiere use. Track index order
+    is compositing z-order (lower index = on top), so put the title on a
+    LOWER track index than the footage you want it to sit over: `track=0`
+    with the video on track 1 is the normal case. `editor_add_track` first if
+    you need a spare track above your footage. Every ordinary clip tool then
+    works on it unchanged — `editor_move_clip`, `editor_trim_clip`,
+    `editor_split_clip`, `editor_remove_clip`, `editor_set_clip_fade`.
+
+    `content` is a SINGLE line — multi-line titles are not supported yet and
+    a `\\n` is refused rather than silently flattened. Add a second title
+    clip on a second track for a second line.
+
+    `duration` is in TIMELINE frames (default: 3 seconds at the project's own
+    rate). `start_frame` places it at an exact timeline frame (default:
+    appended after whatever is already on that track); `ripple=True` shifts
+    later clips on that track out of the way instead of refusing to overlap.
+
+    `font` is a catalogue KEY from `editor_text_fonts` (default "sans-bold").
+    `size` is a fraction of the OUTPUT FRAME'S HEIGHT, not pixels — 0.12 (the
+    default) is a big title, 0.05 is a modest caption. Deliberately a
+    fraction, so the same title renders identically at every preview quality
+    and at full export resolution. `color` is `#RGB` or `#RRGGBB`.
+
+    **What else you can do to a title:** its OPACITY and POSITION are
+    ordinary clip properties — `editor_set_clip_transform` with
+    `position_x`/`position_y` (fractions of the frame, 0,0 = centred) and
+    `opacity`, and `editor_set_clip_keyframes` animates either of them, the
+    same way it animates a video clip's. `editor_set_clip_fade` fades it in
+    and out.
+
+    **What you cannot do (it is refused, not ignored):** `scale`, `rotation`,
+    `crop_*` and `box_width`/`box_height` do NOT apply to a title in either
+    the preview or the export. Use this tool's own `size` to make the text
+    bigger — `editor_set_clip_transform` will return an error rather than
+    store a value that would render nothing."""
+    import json
+
+    args: dict = {"track": track, "content": content, "ripple": ripple}
+    for key, val in (
+        ("startFrame", start_frame),
+        ("duration", duration),
+        ("font", font),
+        ("size", size),
+        ("color", color),
+        ("name", name),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_add_text_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_text_clip(
+    track: int,
+    clip: int,
+    content: str | None = None,
+    font: str | None = None,
+    size: float | None = None,
+    color: str | None = None,
+) -> str:
+    """Change an existing TEXT clip's own text properties. Omitted fields keep
+    their current value — this reads the clip back first and merges, so
+    changing the colour never resets the text.
+
+    Refused if `track`/`clip` names a media clip rather than a title (a media
+    clip has no text layer to patch), if the track is locked, if `content`
+    contains a newline (single-line only for now), or if `font` names a
+    family this machine has no font file for (see `editor_text_fonts`).
+
+    `size` is a fraction of the output frame's HEIGHT, `color` is
+    `#RGB`/`#RRGGBB`. For a title's POSITION, OPACITY, fade or keyframes use
+    the ordinary clip tools (`editor_set_clip_transform`,
+    `editor_set_clip_keyframes`, `editor_set_clip_fade`) — a title is a real
+    clip and those all work on it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    for key, val in (("content", content), ("font", font), ("size", size), ("color", color)):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_set_text_clip", **args), indent=2, default=str)
 
 
 @mcp.tool()

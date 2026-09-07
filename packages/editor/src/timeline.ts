@@ -174,6 +174,154 @@ export interface Clip {
   fade_out_frames?: number;
   fade_in_curve?: FadeCurve;
   fade_out_curve?: FadeCurve;
+  /** Text/title layer (D-211) — mirrors `chroma_timeline::Clip::text`.
+   *  Present (non-null) = this clip is a GENERATED text layer: its picture is
+   *  rasterised from these properties rather than decoded from `source_path`
+   *  (which is empty on such a clip). Absent/`null` = an ordinary media clip,
+   *  which is every clip in every pre-D-211 project.
+   *
+   *  A `Clip` variant rather than a new `Track.kind` because a title in
+   *  Resolve/Premiere is a generator clip on an ordinary video track above
+   *  the picture, and track-index z-order already composites it there — see
+   *  the Rust field's own doc and D-211 for the full comparison.
+   *
+   *  **Not every other field on this type applies to it.** `opacity` (with
+   *  its fade) and `position_x`/`position_y` do, and are keyframeable exactly
+   *  as on a media clip. `scale`/`rotation`/`box_width`/`box_height`/the four
+   *  crop insets do NOT — neither renderer honours them for a text clip
+   *  (`chroma::edit::resolve_text_clip_transform`, and `buildClipFilterChain`
+   *  compiling to `drawtext`, which has no scale/rotate/crop at all). See
+   *  `docs/notes/text-title-clips.md`. */
+  text?: TextLayer | null;
+}
+
+/** A generated text/title layer (D-211) — mirrors `chroma_timeline::TextLayer`
+ *  field for field.
+ *
+ *  Phase 1 is Resolve's "basic title generator" (type your text, set
+ *  font/size/colour), NOT its 100+ prebuilt animated Fusion templates —
+ *  `docs/notes/text-title-clips.md` has the full deferred list. */
+export interface TextLayer {
+  /** The text to draw. **Single line** — a `\n` is rejected at the write path
+   *  ([`newTextLayer`], the `set_text_clip` op, `editor_set_text_clip`).
+   *  Deliberate, not an oversight: the live preview rasterises with
+   *  `ab_glyph` and the export with ffmpeg's `drawtext`/libfreetype, and
+   *  inter-line layout is the one thing those two genuinely disagree about.
+   *  See the Rust type's own doc and D-213. */
+  content: string;
+  /** A font-family KEY from the backend's own catalogue (`chroma_text_fonts`)
+   *  — `sans`, `sans-bold`, `serif`, … — not a path and not a system family
+   *  name. The catalogue resolves a key to one real font FILE that BOTH
+   *  renderers read: `ab_glyph` in the preview, `drawtext`'s `fontfile=` in
+   *  the export. That shared file is why the two draw the same glyphs. */
+  font: string;
+  /** Font size as a fraction of the OUTPUT COMPOSITION's height — the same
+   *  per-axis normalised convention `position_y`/`crop_top` already use, and
+   *  for the same B-043 reason: the preview rasterises at 640/960 px while
+   *  the export renders at full resolution, so a pixel size would mean a
+   *  different fraction of the picture in each. */
+  size: number;
+  /** Fill colour, `#RGB` or `#RRGGBB`. Transparency is `Clip.opacity` (already
+   *  keyframeable, already fade-multiplied), never a second alpha here. */
+  color: string;
+}
+
+/** Mirrors `chroma_timeline::DEFAULT_TEXT_FONT`/`_SIZE`/`_COLOR` exactly — the
+ *  one source of truth for what a freshly-added title looks like, on both the
+ *  GUI and MCP paths. A disagreement with the Rust constants would mean a clip
+ *  created here and one deserialised there were different titles. */
+export const DEFAULT_TEXT_FONT = 'sans-bold';
+/** ~12% of the frame height — a real title size, not a placeholder. */
+export const DEFAULT_TEXT_SIZE = 0.12;
+export const DEFAULT_TEXT_COLOR = '#FFFFFF';
+
+/** How long a freshly-added title runs, in SECONDS, before the user trims it.
+ *  Three seconds is the standard default duration a still/generator gets in
+ *  every reference NLE (Premiere's own default still duration is 5s, Resolve's
+ *  4s; 3s reads better for the short-form work this editor is built for) —
+ *  a named constant rather than a magic number, per CLAUDE.md. */
+export const DEFAULT_TITLE_SECONDS = 3;
+
+/** Whether `c` is a generated text/title clip rather than a media clip
+ *  (D-211). Mirrors `chroma_timeline::Clip::is_text` — one predicate, asked
+ *  the same way everywhere, rather than an `!= null` check at each site. */
+export function isTextClip(c: Pick<Clip, 'text'> | null | undefined): boolean {
+  return c?.text != null;
+}
+
+/** Build a valid [`TextLayer`], filling in the defaults and normalising what
+ *  the model cannot store meaningfully — the ONE place a text layer is
+ *  constructed or patched, shared by the GUI's Add-title button, its Inspector
+ *  and the `editor_add_text_clip`/`editor_set_text_clip` MCP ops (CLAUDE.md:
+ *  "the same op/store action underneath both").
+ *
+ *  Returns `{ error }` rather than throwing or silently coercing, matching
+ *  every other validating helper on this surface. The three real rejections:
+ *  a multi-line `content` (Phase 1 is single-line — see [`TextLayer.content`]),
+ *  a non-positive `size` (would render nothing), and a `color` that is not
+ *  `#RGB`/`#RRGGBB` (the Rust side falls back to white for an unparseable
+ *  value, which is a safe *render*, but writing one is still a caller error
+ *  worth naming rather than quietly ignoring). */
+export function newTextLayer(
+  patch: Partial<TextLayer>,
+  base?: TextLayer | null,
+): TextLayer | { error: string } {
+  const from: TextLayer = base ?? {
+    content: '',
+    font: DEFAULT_TEXT_FONT,
+    size: DEFAULT_TEXT_SIZE,
+    color: DEFAULT_TEXT_COLOR,
+  };
+  const content = patch.content ?? from.content;
+  if (typeof content !== 'string') return { error: 'content must be a string' };
+  if (/[\r\n]/.test(content)) {
+    return { error: 'content must be a single line — multi-line titles are not supported yet (D-213)' };
+  }
+  const size = patch.size ?? from.size;
+  if (!Number.isFinite(size) || size <= 0) {
+    return { error: 'size must be a positive fraction of the composition height (e.g. 0.12)' };
+  }
+  const color = patch.color ?? from.color;
+  if (!/^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
+    return { error: `color must be #RGB or #RRGGBB, got "${color}"` };
+  }
+  const font = patch.font ?? from.font;
+  if (typeof font !== 'string' || !font) return { error: 'font must be a catalogue key, e.g. "sans-bold"' };
+  return { content, font, size, color: color.startsWith('#') ? color : `#${color}` };
+}
+
+/** The `NewClipFields` for a title, ready to hand to the ordinary `add_clip`
+ *  op (D-211) — a text clip is placed by exactly the same op a media clip is,
+ *  so ripple / explicit `startFrame` / track creation all come for free and
+ *  there is no second placement path to keep in step.
+ *
+ *  `durationFrames` is in TIMELINE frames and `source_fps` is deliberately
+ *  left unset: a generated layer has no native rate, and `source_frames_to_
+ *  timeline`'s own documented fallback for an absent `source_fps` is a 1:1
+ *  ratio — which is exactly right here, so a title's `duration` really is its
+ *  timeline footprint. `source_len` mirrors `duration` so a trim can still
+ *  extend it back out to its original length, the same ceiling a media clip's
+ *  source length gives. */
+export function newTextClipFields(
+  layer: TextLayer,
+  durationFrames: number,
+  name?: string,
+): NewClipFields {
+  const duration = Math.max(1, Math.round(durationFrames));
+  return {
+    id: `text-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    shot_id: null,
+    media_id: null,
+    link_group: null,
+    // The title's own text is the natural clip name — what both references
+    // show on the clip body in the timeline.
+    name: name || layer.content || 'Title',
+    source_path: '',
+    source_start: 0,
+    duration,
+    source_len: duration,
+    text: layer,
+  };
 }
 
 /** The nine scalar `Clip` fields that are BOTH independently keyframeable
@@ -1409,7 +1557,30 @@ export type EditOp =
       source_path: string;
       source_len: number;
       source_fps?: number;
-    };
+    }
+  /** D-211 — edit a TEXT clip's own text properties (content/font/size/
+   *  colour). Refused (no-op) if the clip's track is locked, and refused if
+   *  the target clip is not a text clip at all — a media clip has no text
+   *  layer to patch, and silently creating one would turn a video into a
+   *  title.
+   *
+   *  **Its own op rather than riding `set_clip_transform`**, the same call
+   *  D-147 made for `set_clip_fade` and for the same reason: these are not
+   *  geometry. `set_clip_transform` replaces a whole geometry form in one
+   *  write; a title's text/font/colour is a different form, edited
+   *  independently, and folding them together would make every nudge of
+   *  `position_x` restate the title's own content.
+   *
+   *  **`patch`, not the full set** — the opposite of `set_clip_transform`'s
+   *  all-required fields, deliberately. That op's fields are required because
+   *  an omitted one would silently RESET a real value to a default. Here the
+   *  reducer merges against the clip's existing layer via [`newTextLayer`],
+   *  so an omitted field provably keeps its current value; requiring all four
+   *  would only force every caller to restate a `content` string it is not
+   *  changing. A patch that fails validation (multi-line content, a bad
+   *  colour) is a no-op — the caller is expected to have run `newTextLayer`
+   *  itself to get the real error message. */
+  | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
  *  labels (D-051) only, never used in the actual edit logic below. */
@@ -1474,6 +1645,12 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
     case 'swap_media':
       return `Swap media on ${clipLabel(before, op.track, op.clip)}`;
+    case 'set_text_clip':
+      // The content is the one patch field worth naming in an undo label —
+      // "Edit title" tells you nothing when you have three of them.
+      return op.patch.content !== undefined
+        ? `Set title text to "${op.patch.content}"`
+        : `Edit ${clipLabel(before, op.track, op.clip)} title`;
     default:
       return 'Edit timeline';
   }
@@ -1771,6 +1948,31 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.source_fps = op.source_fps;
     nc.source_start = clampedStart;
     nc.duration = clampedDuration;
+    return next;
+  }
+  if (op.kind === 'set_text_clip') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    // Refused for a media clip: patching a text layer onto one would silently
+    // turn a video into a title (its `source_path` would still be set, and
+    // the compositor's `if let Some(layer) = &clip.text` branch would then
+    // draw the text and never decode the picture).
+    if (!c || !isTextClip(c)) return tl;
+    const merged = newTextLayer(op.patch, c.text ?? null);
+    // A no-op on an invalid patch — the caller (`editor_set_text_clip`, the
+    // Inspector) runs `newTextLayer` itself first and surfaces the real
+    // message; this reducer is pure and has nowhere to report to.
+    if ('error' in merged) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    nc.text = merged;
+    // Keep the clip's NAME in step with its text, so the timeline body and
+    // the undo labels say what the title actually says — but only while the
+    // name has not been independently renamed away from it, which is what
+    // `c.name === c.text.content` tests. Both references show a title clip
+    // labelled with its own text.
+    if (c.text && c.name === c.text.content) nc.name = merged.content || 'Title';
     return next;
   }
   if (op.kind === 'move') {
