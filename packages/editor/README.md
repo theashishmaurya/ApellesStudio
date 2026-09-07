@@ -68,6 +68,19 @@ Backed by the `chroma-timeline` crate and the `chroma::edit` Tauri commands
 `_set_active`). The preview is a standalone decode→jpeg (`chroma_timeline_frame`)
 — **not** the Colorist's graded wgpu path.
 
+**Two clocks, and which one a backend read follows (B-088 / D-202).**
+`chroma_timeline_frame` (and every other backend renderer of this timeline) is
+handed no timeline: it composites the project's **persisted** manifest. But
+`applyOp` updates `timeline` optimistically and persists it on a 400 ms
+debounce, so for that window the in-memory object and the document the backend
+renders are two different things. `savedVersion` is the backend's clock —
+bumped only when a `chroma_timeline_set` resolves or a `chroma_timeline_get`
+lands. **Anything that re-invokes a backend read of the timeline must depend on
+`savedVersion`, never on `timeline`'s identity**; doing the latter is B-088,
+where the preview fetched a frame ~400 ms before the edit existed backend-side
+and then never fetched again. `PreviewPane` is currently the only such
+consumer.
+
 **Drag-to-track (D-046).** `TimelinePane` accepts a plain HTML5
 `dataTransfer` drop carrying `CHROMA_MEDIA_DRAG_MIME` JSON (from the shell's
 Sources panel, `app/src/components/chroma/SourcesPanel.tsx` — not a package
