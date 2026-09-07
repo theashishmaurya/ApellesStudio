@@ -38,11 +38,13 @@ import React from 'react';
 
 import {
   actSync,
+  installObjectUrlStub,
   installResizeObserverStub,
   mount,
   waitFrames,
   waitMs,
   type MountedComponent,
+  type ObjectUrlStub,
 } from './testUtils/pointerHarness';
 
 /**
@@ -75,12 +77,14 @@ const backend = vi.hoisted(() => {
      *  test can assert a refetch happened at all, separately from what it
      *  returned. */
     framesFetched: [] as number[],
-    /** The preview `<img>`'s `src` for a given persisted state. A real
-     *  backend returns a JPEG data-URL of composited pixels; this returns a
-     *  data-URL whose *content* is the persisted `position_y`, which is the
-     *  same thing for this test's purpose: "does the picture on screen
-     *  reflect the edit." */
-    frameSrcFor: (positionY: number) => `data:image/jpeg;base64,POSITION_Y=${positionY}`,
+    /** The frame payload for a given persisted state. A real backend returns
+     *  the raw JPEG bytes of composited pixels (D-217); this returns bytes
+     *  spelling out the persisted `position_y`, which is the same thing for
+     *  this test's purpose: "does the picture on screen reflect the edit."
+     *  `PreviewPane` wraps whatever comes back in a `Blob` object URL, so the
+     *  test reads it back through `installObjectUrlStub`. */
+    frameBytesFor: (positionY: number): ArrayBuffer =>
+      new TextEncoder().encode(`POSITION_Y=${positionY}`).buffer as ArrayBuffer,
     reset(): void {
       state.persistedPositionY = 0;
       state.framesFetched.length = 0;
@@ -89,7 +93,7 @@ const backend = vi.hoisted(() => {
       switch (cmd) {
         case 'chroma_timeline_frame':
           state.framesFetched.push(Number(args?.pos ?? 0));
-          return state.frameSrcFor(state.persistedPositionY);
+          return state.frameBytesFor(state.persistedPositionY);
         case 'chroma_timeline_set': {
           // The real command "stores whatever is sent verbatim" (its own
           // Rust doc). Mirror that: the sent timeline's clip transform
@@ -182,8 +186,18 @@ function setPositionY(positionY: number): void {
   });
 }
 
-function previewImgSrc(container: HTMLElement): string | null {
-  return container.querySelector('img')?.getAttribute('src') ?? null;
+/** What the preview `<img>` is actually showing, as the bytes the backend
+ *  handed over — resolved through the object-URL stub, since since D-217 the
+ *  `src` itself is an opaque `blob:` URL rather than the payload inline. */
+async function previewFrameContent(
+  objectUrls: ObjectUrlStub,
+  container: HTMLElement,
+): Promise<string | null> {
+  const src = container.querySelector('img')?.getAttribute('src');
+  if (!src) return null;
+  const blob = objectUrls.blobFor(src);
+  if (!blob) throw new Error(`the preview <img> points at an unknown or revoked URL: ${src}`);
+  return blob.text();
 }
 
 async function settle(ms: number): Promise<void> {
@@ -195,8 +209,15 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
   /** Seed the store with the fixture and mount the real `PreviewPane` over
    *  the fake backend, both freshly reset. Returns the mounted view plus its
    *  own teardown, so each test states only what it is actually about. */
-  async function openPreview(): Promise<{ view: MountedComponent; close: () => void }> {
+  async function openPreview(): Promise<{
+    view: MountedComponent;
+    objectUrls: ObjectUrlStub;
+    close: () => void;
+  }> {
     const restoreResizeObserver = installResizeObserverStub();
+    // D-217 — jsdom has no `URL.createObjectURL`, and `PreviewPane` now shows
+    // every frame through one.
+    const objectUrls = installObjectUrlStub();
     backend.reset();
 
     actSync(() => {
@@ -216,18 +237,20 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
     await settle(50);
     return {
       view,
+      objectUrls,
       close: () => {
         view.unmount();
+        objectUrls.restore();
         restoreResizeObserver();
       },
     };
   }
 
   it('repaints with the edited transform once the edit has actually been persisted', async () => {
-    const { view, close } = await openPreview();
+    const { view, objectUrls, close } = await openPreview();
     try {
       // Baseline: the untouched clip, straight from the (empty) persisted state.
-      expect(previewImgSrc(view.container)).toBe(backend.frameSrcFor(0));
+      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0');
       const framesBeforeEdit = backend.framesFetched.length;
 
       actSync(() => setPositionY(0.25));
@@ -244,25 +267,29 @@ describe('B-088 — the live preview reflects a clip transform edit', () => {
       // exactly why the assertion that matters is the rendered `src`.
       expect(backend.persistedPositionY).toBe(0.25);
       expect(backend.framesFetched.length).toBeGreaterThan(framesBeforeEdit);
-      expect(previewImgSrc(view.container)).toBe(backend.frameSrcFor(0.25));
+      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0.25');
+
+      // D-217 — one object URL per displayed frame would be a real leak if
+      // the previous one were not revoked. Only the frame on screen is live.
+      expect(objectUrls.live()).toHaveLength(1);
     } finally {
       close();
     }
   });
 
   it('repaints again on a SECOND consecutive edit — the preview never lags one edit behind', async () => {
-    const { view, close } = await openPreview();
+    const { view, objectUrls, close } = await openPreview();
     try {
       actSync(() => setPositionY(0.25));
       await settle(PAST_SAVE_DEBOUNCE_MS);
-      expect(previewImgSrc(view.container)).toBe(backend.frameSrcFor(0.25));
+      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=0.25');
 
       // Pre-fix, this second edit is what made the bug look like "the preview
       // is one edit behind" rather than "the preview is dead": the stale
       // fetch it triggered would finally have picked up edit #1.
       actSync(() => setPositionY(-0.4));
       await settle(PAST_SAVE_DEBOUNCE_MS);
-      expect(previewImgSrc(view.container)).toBe(backend.frameSrcFor(-0.4));
+      expect(await previewFrameContent(objectUrls, view.container)).toBe('POSITION_Y=-0.4');
     } finally {
       close();
     }

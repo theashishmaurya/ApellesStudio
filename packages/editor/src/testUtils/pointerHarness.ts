@@ -274,6 +274,57 @@ export function installResizeObserverStub(): () => void {
   };
 }
 
+/** What an installed object-URL stub gives a test back (D-217). */
+export interface ObjectUrlStub {
+  /** The `Blob` a given `blob:` URL was minted from, or `undefined` if that
+   *  URL was never created here or has since been revoked. */
+  blobFor(url: string): Blob | undefined;
+  /** URLs created and not yet revoked — a leak check, since `PreviewPane`
+   *  mints one object URL per displayed frame during playback. */
+  live(): string[];
+  restore(): void;
+}
+
+/** jsdom implements neither `URL.createObjectURL` nor `URL.revokeObjectURL`
+ *  (confirmed against the installed jsdom, not assumed), and since D-217
+ *  `PreviewPane` shows every preview frame through one — the backend hands it
+ *  the JPEG's raw bytes now, not a `data:` URL.
+ *
+ *  This is a real stub, not a no-op: it keeps the `Blob` each URL was minted
+ *  from, so a test can still assert on the frame's actual CONTENT the way it
+ *  could when the `<img>`'s `src` was a data URL carrying the bytes inline
+ *  (`await stub.blobFor(img.src)!.text()`), and can check that revocation
+ *  really happens rather than leaking a buffer per played frame. Returns the
+ *  handle; call `restore()` in teardown. */
+export function installObjectUrlStub(): ObjectUrlStub {
+  const had = {
+    create: 'createObjectURL' in URL,
+    revoke: 'revokeObjectURL' in URL,
+  };
+  const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+  const blobs = new Map<string, Blob>();
+  let n = 0;
+  (URL as any).createObjectURL = (blob: Blob): string => {
+    const url = `blob:chroma-test/${++n}`;
+    blobs.set(url, blob);
+    return url;
+  };
+  (URL as any).revokeObjectURL = (url: string): void => {
+    blobs.delete(url);
+  };
+  return {
+    blobFor: (url) => blobs.get(url),
+    live: () => [...blobs.keys()],
+    restore() {
+      if (had.create) (URL as any).createObjectURL = original.create;
+      else delete (URL as any).createObjectURL;
+      if (had.revoke) (URL as any).revokeObjectURL = original.revoke;
+      else delete (URL as any).revokeObjectURL;
+      blobs.clear();
+    },
+  };
+}
+
 /** jsdom implements no Pointer Events *capture* API at all —
  *  `setPointerCapture`/`releasePointerCapture`/`hasPointerCapture` are simply
  *  absent from `Element.prototype` (confirmed directly against the installed

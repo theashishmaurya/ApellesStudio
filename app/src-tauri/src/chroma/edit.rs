@@ -5,7 +5,8 @@
 //!   project's **active** [`Timeline`] (D-041 was single-video-track and
 //!   singular; D-045 made a project hold several independently-editable named
 //!   timelines, one active), list/create/switch timelines, and decode one
-//!   timeline frame to a JPEG data-URL for the preview pane.
+//!   timeline frame to **raw JPEG bytes** for the preview pane (D-217 — it was
+//!   a `data:image/jpeg;base64,…` string until then).
 //! What it does: `chroma_timeline_get` returns the active timeline (building a
 //!   fresh one from the project's shots the first time — probing each source
 //!   for a frame count here, `chroma-timeline` never touches media — and
@@ -59,7 +60,6 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use base64::Engine as _;
 use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use serde::Serialize;
@@ -587,16 +587,46 @@ pub fn chroma_timeline_link_clips(
     Ok(group)
 }
 
-/// A 1×1 transparent PNG data-URL — returned for a timeline position past the
-/// end (or before the start), so the preview `<img>` clears instead of erroring.
-fn blank_frame() -> String {
-    // 1×1 transparent PNG, precomputed.
-    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()
+/// The preview JPEG's quality, 0-100. 80 is what the preview has always used;
+/// named here because [`encode_preview_jpeg`] is now the single place the
+/// preview's wire format is decided, and because this is the one dial that
+/// trades preview bytes for preview fidelity.
+const PREVIEW_JPEG_QUALITY: u8 = 80;
+
+/// Encode one preview picture to JPEG bytes — the only place the preview's wire
+/// format is chosen (D-217).
+fn encode_preview_jpeg(img: &DynamicImage) -> Result<Vec<u8>, String> {
+    let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
+    img.to_rgb8()
+        .write_with_encoder(JpegEncoder::new_with_quality(
+            &mut buf,
+            PREVIEW_JPEG_QUALITY,
+        ))
+        .map_err(|e| format!("jpeg encode: {e}"))?;
+    Ok(buf.into_inner())
+}
+
+/// A 1×1 black JPEG — returned for a timeline position past the end (or before
+/// the start), so the preview `<img>` clears instead of erroring.
+///
+/// **Black JPEG, not the 1×1 transparent PNG this used to be (D-217).** The
+/// preview payload is raw bytes now and the frontend wraps them in one `Blob`
+/// of one fixed MIME type; a second image format on the same channel would mean
+/// either byte-sniffing on the JS side or an outright wrong `Content-Type`. At
+/// 1×1 inside an `object-contain` `<img>` the two are equally invisible — the
+/// element lays out at its 1×1 intrinsic size either way — so nothing the user
+/// sees changes.
+fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
+    encode_preview_jpeg(&DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+        1,
+        1,
+        image::Rgb([0, 0, 0]),
+    )))
 }
 
 /// Decode the source frame(s) under timeline position `pos` and return the
-/// result as a `data:image/jpeg;base64,…` string. `max_long_edge` (px)
-/// optionally caps the decoded size — ffmpeg downscales, so a 4K source is
+/// result as raw JPEG bytes. `max_long_edge` (px) optionally caps the decoded
+/// size — ffmpeg downscales, so a 4K source is
 /// never CPU-scaled here (except inside [`composite_video_frame`]'s own
 /// per-layer resize/rotate, unavoidable once more than one layer is real
 /// compositing, not a plain decode).
@@ -619,8 +649,14 @@ fn blank_frame() -> String {
 /// embedded-audio baseline, both genuinely single-clip concerns this
 /// change has no business touching).
 ///
-/// Out-of-range / nothing visible → a 1×1 transparent PNG; a decode / probe
-/// failure → `Err`.
+/// Out-of-range / nothing visible → a 1×1 black JPEG ([`blank_frame_jpeg`]);
+/// a decode / probe failure → `Err`.
+///
+/// **Raw bytes over IPC, not a `data:image/jpeg;base64,…` string (D-217).**
+/// Base64 on this path cost a second full pass over the picture plus ~33% more
+/// bytes to JSON-escape, ship, parse and decode again in the webview, for every
+/// displayed frame during playback. `tauri::ipc::Response` hands the frontend
+/// an `ArrayBuffer` instead; see D-217 for the measured split.
 ///
 /// **Runs off the Tauri main thread** (D-125). A plain `#[tauri::command] fn`
 /// is `ExecutionContext::Blocking` — Tauri runs it on the main thread, so every
@@ -632,16 +668,42 @@ fn blank_frame() -> String {
 /// `spawn_blocking` shape `chroma::commands`' and `chroma::session`'s decode
 /// commands already use.
 #[tauri::command]
-pub async fn chroma_timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge))
+pub async fn chroma_timeline_frame(
+    pos: u64,
+    max_long_edge: Option<u32>,
+) -> Result<tauri::ipc::Response, String> {
+    let jpeg = tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge))
         .await
-        .map_err(|e| format!("timeline frame task: {e}"))?
+        .map_err(|e| format!("timeline frame task: {e}"))??;
+    Ok(tauri::ipc::Response::new(jpeg))
 }
 
 /// The real body of [`chroma_timeline_frame`], synchronous — split out so the
 /// command can hand it to `spawn_blocking` and so tests can call it directly
 /// without a tokio runtime.
-pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<String, String> {
+///
+/// Two phases, deliberately separable so they can be timed apart (D-217):
+/// [`timeline_frame_image`] produces the picture (decode + composite),
+/// [`encode_preview_jpeg`] turns it into the wire payload.
+pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec<u8>, String> {
+    match timeline_frame_image(pos, max_long_edge)? {
+        Some(img) => encode_preview_jpeg(&img),
+        None => blank_frame_jpeg(),
+    }
+}
+
+/// The decode + composite half of [`timeline_frame`]: the finished preview
+/// picture for timeline position `pos`, or `None` when nothing is visible there
+/// (which [`timeline_frame`] turns into [`blank_frame_jpeg`]).
+///
+/// Split out of `timeline_frame` by D-217 so the two halves can be timed
+/// independently — the whole point of that decision was to find out which half
+/// the preview's per-frame cost actually lives in, and a monolithic function
+/// cannot answer that. See `preview_throughput_tests`.
+pub(crate) fn timeline_frame_image(
+    pos: u64,
+    max_long_edge: Option<u32>,
+) -> Result<Option<DynamicImage>, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
@@ -665,7 +727,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     decode_pipe::retain_track_slots(&visible_tracks);
 
     if layers.is_empty() {
-        return Ok(blank_frame());
+        return Ok(None);
     }
     let comp = composition_size(&settings, &timeline)?;
 
@@ -694,7 +756,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
     };
 
     let img = match layers.as_slice() {
-        [] => return Ok(blank_frame()),
+        [] => return Ok(None),
         [(track, clip, source_frame)] if single_plain => {
             // Fast path: exactly one visible layer, with nothing to apply to
             // it, needs no compositing at all.
@@ -728,14 +790,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Str
         _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
 
-    let mut buf = Cursor::new(Vec::with_capacity(64 * 1024));
-    img.to_rgb8()
-        .write_with_encoder(JpegEncoder::new_with_quality(&mut buf, 80))
-        .map_err(|e| format!("jpeg encode: {e}"))?;
-    Ok(format!(
-        "data:image/jpeg;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(buf.get_ref())
-    ))
+    Ok(Some(img))
 }
 
 /// One clip's placement geometry in composition space — what an on-canvas
@@ -1289,6 +1344,40 @@ fn composite_layer_onto(
     // effective_size`'s own doc for the full "why".
     let (raw_w, raw_h) = t.effective_size(natural, canvas.dimensions());
     let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
+
+    // D-217 — the magnified / 1:1 case goes straight onto the canvas instead of
+    // through a full-size intermediate buffer. This is the preview's single
+    // dominant cost: measured on the owner's own reel (two 2940×1670 layers in
+    // a 1080×1920 canvas at the 960 px preview cap), `image::imageops::resize`
+    // was ~16 ms per layer of a ~43 ms frame — 74% of it — because the layer is
+    // enlarged to its full on-canvas footprint (1470×835 at `scale == 1`,
+    // 1911×1086 at the reel's keyframed `scale == 1.3`) and `overlay` then
+    // throws most of those pixels away against a 540×960 canvas. Sampling
+    // bounds the work by what the canvas can actually show, and at a ratio ≥ 1
+    // it is not an approximation: `Triangle`'s support collapses to the same
+    // two taps per axis that a bilinear fetch uses, so this produces the same
+    // picture. A genuine **minification** keeps the `resize` path below — its
+    // output buffer is smaller than the source there, so the waste it can carry
+    // is bounded anyway, and `Triangle`'s widening support is real area
+    // filtering that a naive bilinear sample would alias against.
+    if t.rotation == 0.0 && sw >= lw && sh >= lh {
+        let (cw, ch) = canvas.dimensions();
+        // Same placement arithmetic as the general path's `overlay` call below,
+        // with `(sw, sh)` standing in for the work buffer's size (identical
+        // when there is no rotation, which is this branch's own condition).
+        let x = (cw as f64) / 2.0 - (sw as f64) / 2.0 + t.position_x * cw as f64;
+        let y = (ch as f64) / 2.0 - (sh as f64) / 2.0 + t.position_y * ch as f64;
+        blend_layer_sampled(
+            canvas,
+            layer,
+            (cx0, cy0, cx1, cy1),
+            (sw, sh),
+            (x, y),
+            opacity,
+        );
+        return;
+    }
+
     // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
     // buffer, no per-pixel pass — so an uncropped clip (every clip in every
     // existing project) costs exactly what it did before.
@@ -1338,6 +1427,145 @@ fn composite_layer_onto(
     let x = (cw as f64) / 2.0 - (ww as f64) / 2.0 + t.position_x * cw as f64;
     let y = (ch as f64) / 2.0 - (wh as f64) / 2.0 + t.position_y * ch as f64;
     image::imageops::overlay(canvas, &work, x.round() as i64, y.round() as i64);
+}
+
+/// Paint a layer onto `canvas` at `dest_size`, scaling it by direct bilinear
+/// sampling and touching **only the canvas pixels it can actually cover**
+/// (D-217).
+///
+/// What it is: the enlarge-and-blend inner loop of [`composite_layer_onto`]'s
+/// no-rotation, ratio-≥-1 fast path — crop mask, scale, opacity and
+/// source-over blend fused into one pass whose cost is bounded by the canvas
+/// rather than by the layer's (arbitrarily large) on-canvas footprint.
+///
+/// What it does NOT do: rotation (the caller keeps that on the general path,
+/// which needs a whole rotated buffer), and **minification** — a ratio below 1
+/// needs `Triangle`'s widening support to avoid aliasing, and a plain bilinear
+/// fetch would not give it. Both are the caller's own guard conditions.
+///
+/// `origin` is the layer's unrounded top-left on the canvas; it is rounded here
+/// exactly the way `image::imageops::overlay` rounds it on the general path, so
+/// a clip does not shift by a pixel depending on which path it took. The sample
+/// position `(o + 0.5) * ratio - 0.5` is the one `image::imageops::resize`
+/// itself uses, so at ratio ≥ 1 the two agree pixel for pixel.
+fn blend_layer_sampled(
+    canvas: &mut image::RgbaImage,
+    layer: &image::RgbaImage,
+    crop: (u32, u32, u32, u32),
+    dest_size: (u32, u32),
+    origin: (f64, f64),
+    opacity: f32,
+) {
+    use image::Pixel as _;
+
+    let (cw, ch) = canvas.dimensions();
+    let (lw, lh) = layer.dimensions();
+    let (sw, sh) = dest_size;
+    let (ox, oy) = (origin.0.round() as i64, origin.1.round() as i64);
+
+    // The visible window: the layer's footprint clipped to the canvas. Empty
+    // means the layer is entirely off-canvas — which the old path still paid a
+    // full-size resize for before `overlay` discarded all of it.
+    let vx0 = ox.max(0);
+    let vy0 = oy.max(0);
+    let vx1 = (ox + sw as i64).min(cw as i64);
+    let vy1 = (oy + sh as i64).min(ch as i64);
+    if vx1 <= vx0 || vy1 <= vy0 {
+        return;
+    }
+
+    let (cx0, cy0, cx1, cy1) = crop;
+    let rx = lw as f64 / sw as f64;
+    let ry = lh as f64 / sh as f64;
+    let src = layer.as_raw();
+    let stride = lw as usize * 4;
+    let last_x = lw as i64 - 1;
+    let last_y = lh as i64 - 1;
+
+    // Per-column sample state, computed once for the whole window rather than
+    // once per row — this loop runs up to canvas-many times.
+    struct Col {
+        i0: usize,
+        i1: usize,
+        fx: f32,
+        keep0: bool,
+        keep1: bool,
+    }
+    // Both the byte offset and the crop test use the **clamped** index: a tap
+    // that falls outside the layer reads the edge texel, so it must carry that
+    // texel's mask too. (`resize` reaches the same place from the other side —
+    // it drops out-of-range taps and renormalises what is left.)
+    let cols: Vec<Col> = (vx0..vx1)
+        .map(|px| {
+            let u = ((px - ox) as f64 + 0.5) * rx - 0.5;
+            let ux = u.floor();
+            let x0 = (ux as i64).clamp(0, last_x);
+            let x1 = (ux as i64 + 1).clamp(0, last_x);
+            Col {
+                i0: x0 as usize * 4,
+                i1: x1 as usize * 4,
+                fx: (u - ux) as f32,
+                keep0: (cx0 as i64..cx1 as i64).contains(&x0),
+                keep1: (cx0 as i64..cx1 as i64).contains(&x1),
+            }
+        })
+        .collect();
+
+    for py in vy0..vy1 {
+        let v = ((py - oy) as f64 + 0.5) * ry - 0.5;
+        let vy = v.floor();
+        let fy = (v - vy) as f32;
+        let y0 = (vy as i64).clamp(0, last_y);
+        let y1 = (vy as i64 + 1).clamp(0, last_y);
+        let row0 = y0 as usize * stride;
+        let row1 = y1 as usize * stride;
+        let keep_y0 = (cy0 as i64..cy1 as i64).contains(&y0);
+        let keep_y1 = (cy0 as i64..cy1 as i64).contains(&y1);
+
+        for (i, px) in (vx0..vx1).enumerate() {
+            let c = &cols[i];
+            // The four taps, each with the crop's alpha mask applied *before*
+            // interpolation — that is what feathers a crop edge over a pixel
+            // instead of stepping it, exactly as the general path's
+            // mask-then-resize order does.
+            let tap = |base: usize, off: usize, keep: bool| -> [f32; 4] {
+                let p = &src[base + off..base + off + 4];
+                [
+                    p[0] as f32,
+                    p[1] as f32,
+                    p[2] as f32,
+                    if keep { p[3] as f32 } else { 0.0 },
+                ]
+            };
+            let p00 = tap(row0, c.i0, keep_y0 && c.keep0);
+            let p10 = tap(row0, c.i1, keep_y0 && c.keep1);
+            let p01 = tap(row1, c.i0, keep_y1 && c.keep0);
+            let p11 = tap(row1, c.i1, keep_y1 && c.keep1);
+
+            let mut out = [0f32; 4];
+            for ch in 0..4 {
+                let top = p00[ch] + (p10[ch] - p00[ch]) * c.fx;
+                let bot = p01[ch] + (p11[ch] - p01[ch]) * c.fx;
+                out[ch] = top + (bot - top) * fy;
+            }
+            let a = (out[3] * opacity).round().clamp(0.0, 255.0) as u8;
+            if a == 0 {
+                continue; // fully transparent sample — nothing to blend
+            }
+            let sample = image::Rgba([
+                out[0].round().clamp(0.0, 255.0) as u8,
+                out[1].round().clamp(0.0, 255.0) as u8,
+                out[2].round().clamp(0.0, 255.0) as u8,
+                a,
+            ]);
+            let dst = canvas.get_pixel_mut(px as u32, py as u32);
+            if a == 255 {
+                *dst = sample; // an opaque source-over is a plain replace
+            } else {
+                dst.blend(&sample);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1711,6 +1939,158 @@ mod composite_tests {
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+    }
+
+    /// **D-217's safety claim, checked.** The sampled fast path must produce
+    /// the same picture as the resize-then-overlay path it replaced — that is
+    /// the whole argument for it being an optimisation rather than a change of
+    /// look. The reference is the pre-D-217 algorithm written out inline, so
+    /// this stays a real comparison even as the fast path evolves.
+    ///
+    /// ±1 per channel, not exact: the two accumulate in a different order (one
+    /// rounds once at the end of a fused sample-and-blend, the other rounds
+    /// into an intermediate `u8` buffer and then blends), which can differ by a
+    /// least-significant bit. It is not a filtering difference — `Triangle`'s
+    /// support collapses to two taps per axis at a ratio ≥ 1, which is exactly
+    /// what the sampler does.
+    #[test]
+    fn the_sampled_fast_path_matches_resize_then_overlay() {
+        let reference_of = |canvas: (u32, u32),
+                            layer: &image::RgbaImage,
+                            t: &ClipTransform,
+                            natural: (f64, f64)| {
+            let mut reference = flat(canvas.0, canvas.1, [0, 0, 0, 255]);
+            let (raw_w, raw_h) = t.effective_size(natural, reference.dimensions());
+            let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
+            let (cx0, cy0, cx1, cy1) =
+                crop_pixel_rect(layer.width(), layer.height(), t).expect("a non-empty crop");
+            let mut masked = layer.clone();
+            for (x, y, px) in masked.enumerate_pixels_mut() {
+                if x < cx0 || x >= cx1 || y < cy0 || y >= cy1 {
+                    px[3] = 0;
+                }
+            }
+            let mut work =
+                image::imageops::resize(&masked, sw, sh, image::imageops::FilterType::Triangle);
+            let opacity = t.opacity.clamp(0.0, 1.0) as f32;
+            if opacity < 1.0 {
+                for p in work.pixels_mut() {
+                    p[3] = (p[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+            let (cw, ch) = reference.dimensions();
+            let x = cw as f64 / 2.0 - sw as f64 / 2.0 + t.position_x * cw as f64;
+            let y = ch as f64 / 2.0 - sh as f64 / 2.0 + t.position_y * ch as f64;
+            image::imageops::overlay(&mut reference, &work, x.round() as i64, y.round() as i64);
+            reference
+        };
+
+        // A layer with real structure, so interpolation actually shows up.
+        let mut layer = image::RgbaImage::new(8, 6);
+        for (x, y, p) in layer.enumerate_pixels_mut() {
+            *p = Rgba([(x * 31) as u8, (y * 41) as u8, 200, 255]);
+        }
+        let natural = natural_of(&layer);
+
+        for (name, t) in [
+            (
+                "magnified and offset",
+                ClipTransform {
+                    scale: 4.0,
+                    position_x: 0.1,
+                    position_y: -0.05,
+                    ..identity_transform()
+                },
+            ),
+            (
+                "magnified, cropped and half-opaque",
+                ClipTransform {
+                    scale: 3.0,
+                    opacity: 0.5,
+                    crop_left: 0.2,
+                    crop_bottom: 0.25,
+                    ..identity_transform()
+                },
+            ),
+            (
+                "magnified far enough to hang off the canvas",
+                ClipTransform {
+                    scale: 6.0,
+                    position_x: 0.4,
+                    ..identity_transform()
+                },
+            ),
+        ] {
+            let mut fast = flat(40, 30, [0, 0, 0, 255]);
+            composite_layer_onto(&mut fast, &layer, &t, natural);
+            let reference = reference_of((40, 30), &layer, &t, natural);
+            for (px, py, p) in fast.enumerate_pixels() {
+                let r = reference.get_pixel(px, py);
+                for c in 0..4 {
+                    assert!(
+                        (p[c] as i32 - r[c] as i32).abs() <= 1,
+                        "{name}: pixel ({px},{py}) channel {c}: fast {p:?} vs reference {r:?}"
+                    );
+                }
+            }
+        }
+
+        // The same equivalence at the real thing's scale and settings: the
+        // owner's reel is a 540×960 preview canvas, a 960×544 decoded layer,
+        // `crop_left`/`crop_right` 0.052212, and `scale` keyframed up to 1.3
+        // with `position_x` up to 0.3 — the exact combination that made this
+        // the preview's dominant cost, and the one a 40×30 fixture cannot
+        // stand in for on its own.
+        let mut real = image::RgbaImage::new(240, 136); // the decoded layer, scaled down
+        for (x, y, p) in real.enumerate_pixels_mut() {
+            // Deterministic pseudo-photographic detail — high-frequency enough
+            // that any sampling difference between the two paths would show.
+            let n = (x * 7919 + y * 104_729) % 251;
+            *p = Rgba([n as u8, ((n * 3) % 251) as u8, ((n * 7) % 251) as u8, 255]);
+        }
+        let real_natural = (367.5, 208.75); // source-derived footprint, canvas px
+        let t = ClipTransform {
+            scale: 1.3,
+            position_x: 0.3,
+            position_y: -0.12,
+            crop_left: 0.052_212,
+            crop_right: 0.052_212,
+            ..identity_transform()
+        };
+        let mut fast = flat(135, 240, [0, 0, 0, 255]);
+        composite_layer_onto(&mut fast, &real, &t, real_natural);
+        let reference = reference_of((135, 240), &real, &t, real_natural);
+        let mut worst = 0i32;
+        for (px, py, p) in fast.enumerate_pixels() {
+            let r = reference.get_pixel(px, py);
+            for c in 0..4 {
+                worst = worst.max((p[c] as i32 - r[c] as i32).abs());
+                assert!(
+                    (p[c] as i32 - r[c] as i32).abs() <= 1,
+                    "reel-shaped: pixel ({px},{py}) channel {c}: fast {p:?} vs reference {r:?}"
+                );
+            }
+        }
+        eprintln!("reel-shaped equivalence: worst per-channel difference {worst}");
+    }
+
+    /// A layer scaled up and pushed entirely off the canvas paints nothing —
+    /// and, since D-217, costs nothing either: the old path resized the whole
+    /// (arbitrarily large) footprint first and let `overlay` discard all of it.
+    #[test]
+    fn a_layer_entirely_off_canvas_paints_nothing() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        let t = ClipTransform {
+            scale: 2.0,
+            position_x: 5.0,
+            ..identity_transform()
+        };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        assert!(
+            canvas.pixels().all(|p| *p == Rgba([0, 0, 0, 255])),
+            "nothing should have been painted"
+        );
     }
 
     // ---------------------------------------------------------------- //
@@ -2230,7 +2610,6 @@ mod composite_tests {
 /// the export" a checked claim rather than an assertion.
 #[cfg(test)]
 mod preview_text_tests {
-    use base64::Engine as _;
     use chroma_timeline::{Clip, TextLayer, Timeline, Track, TrackKind};
 
     const W: u32 = 320;
@@ -2345,16 +2724,10 @@ mod preview_text_tests {
         tmp
     }
 
-    /// `timeline_frame`'s `data:image/jpeg;base64,…` return value, decoded
-    /// back to real pixels — the same bytes the preview `<img>` would show.
-    fn decode_preview(data_url: &str) -> image::RgbaImage {
-        let b64 = data_url
-            .strip_prefix("data:image/jpeg;base64,")
-            .expect("a jpeg data URL");
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .expect("base64");
-        image::load_from_memory(&bytes).expect("decode jpeg").to_rgba8()
+    /// `timeline_frame`'s raw JPEG bytes (D-217), decoded back to real pixels —
+    /// the same bytes the preview `<img>` shows via its `Blob` URL.
+    fn decode_preview(jpeg: &[u8]) -> image::RgbaImage {
+        image::load_from_memory(jpeg).expect("decode jpeg").to_rgba8()
     }
 
     /// The whole point of D-211, checked through the real command: a title
@@ -2476,6 +2849,7 @@ mod preview_text_tests {
 mod preview_throughput_tests {
     use std::time::Instant;
 
+    use base64::Engine as _;
     use chroma_timeline::{Clip, Timeline, Track, TrackKind};
 
     fn test_video() -> Option<String> {
@@ -2489,7 +2863,17 @@ mod preview_throughput_tests {
     /// them the same source file. That is what makes the preview take
     /// `composite_video_frame`'s multi-layer path, which is where the
     /// single-shared-decode-pipe respawn storm lived.
-    fn open_multi_track_project(video_path: &str, tracks_n: usize) -> tempfile::TempDir {
+    ///
+    /// `comp` sets the project's output size (`None` = whatever the source is,
+    /// which takes `composite_video_frame`'s cheapest path). D-217's phase
+    /// breakdown passes the owner's real 1080×1920 portrait composition,
+    /// because a comp size that differs from the source resolution is exactly
+    /// what makes every layer pay a CPU resize per frame.
+    fn open_multi_track_project(
+        video_path: &str,
+        tracks_n: usize,
+        comp: Option<(u32, u32)>,
+    ) -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("tempdir");
         let project_dir = tmp.path().join("MultiTrack.chroma");
         std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
@@ -2524,7 +2908,11 @@ mod preview_throughput_tests {
             shots: Vec::new(),
             active_shot: 0,
             active_clip_id: None,
-            settings: Default::default(),
+            settings: super::project::ProjectSettings {
+                width: comp.map(|(w, _)| w),
+                height: comp.map(|(_, h)| h),
+                ..Default::default()
+            },
             timelines: vec![Timeline {
                 id: "tl1".into(),
                 name: "MultiTrack".into(),
@@ -2570,7 +2958,7 @@ mod preview_throughput_tests {
         let _guard = super::super::PROJECT_STATE_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _project = open_multi_track_project(&vid, 3);
+        let _project = open_multi_track_project(&vid, 3, None);
         super::decode_pipe::reset();
 
         const FRAMES: u64 = 24;
@@ -2612,7 +3000,7 @@ mod preview_throughput_tests {
         let _guard = super::super::PROJECT_STATE_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _project = open_multi_track_project(&vid, 3);
+        let _project = open_multi_track_project(&vid, 3, None);
         super::decode_pipe::reset();
 
         super::timeline_frame(100, Some(960)).expect("frame");
@@ -2630,5 +3018,86 @@ mod preview_throughput_tests {
         );
         super::decode_pipe::reset();
         assert_eq!(super::decode_pipe::open_pipe_count(), 0);
+    }
+
+    /// **D-217's profile.** Where a preview frame's time actually goes, phase
+    /// by phase, on a project shaped like the owner's own laggy one: two video
+    /// layers of real 2940×1670 footage composited into a 1080×1920 portrait
+    /// canvas at the live `PREVIEW_LONG_EDGE`.
+    ///
+    /// This exists because the standing theory ("base64 is the dominant cost")
+    /// had never been measured, and a monolithic `timeline_frame` could not
+    /// answer it. It prints the split rather than asserting a wall-clock
+    /// budget for the two cheap phases — those are microseconds and a
+    /// millisecond assertion on them would be noise — but it *does* assert the
+    /// one structural invariant D-217 bought: the payload the frontend gets is
+    /// the JPEG itself, not a ~4/3-inflated base64 transcription of it.
+    ///
+    /// Run it with the numbers visible:
+    /// `CHROMA_TEST_VIDEO=… cargo test -p RapidRAW preview_frame_phase_breakdown -- --nocapture`
+    #[test]
+    fn preview_frame_phase_breakdown() {
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // The owner's real reel: two video layers, 1080×1920 portrait canvas.
+        let _project = open_multi_track_project(&vid, 2, Some((1080, 1920)));
+        super::decode_pipe::reset();
+
+        const FRAMES: u64 = 24;
+        const LONG_EDGE: u32 = 960;
+
+        // The first frame pays the pipe spawns + keyframe seeks; not measured.
+        super::timeline_frame(100, Some(LONG_EDGE)).expect("warm frame");
+
+        let (mut t_image, mut t_jpeg, mut t_b64) = (0u128, 0u128, 0u128);
+        let (mut n_jpeg, mut n_b64) = (0usize, 0usize);
+        for f in 101..101 + FRAMES {
+            let t0 = Instant::now();
+            let img = super::timeline_frame_image(f, Some(LONG_EDGE))
+                .expect("image")
+                .expect("a visible layer");
+            t_image += t0.elapsed().as_micros();
+
+            let t1 = Instant::now();
+            let jpeg = super::encode_preview_jpeg(&img).expect("jpeg");
+            t_jpeg += t1.elapsed().as_micros();
+            n_jpeg = jpeg.len();
+
+            // The pre-D-217 payload, measured on the same picture in the same
+            // run so the comparison is like-for-like rather than across builds.
+            let t2 = Instant::now();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+            t_b64 += t2.elapsed().as_micros();
+            n_b64 = b64.len() + "data:image/jpeg;base64,".len();
+        }
+
+        let n = FRAMES as u128;
+        eprintln!(
+            "preview frame phases @ {LONG_EDGE}px long edge, 2 layers → 1080×1920 comp, \
+             {FRAMES} frames:\n  decode+composite {:.2} ms/frame\n  jpeg encode      {:.2} ms/frame\
+             \n  base64 encode    {:.2} ms/frame  (removed by D-217)\n  \
+             payload {} KB raw vs {} KB as a data URL (+{:.0}%)",
+            t_image as f64 / n as f64 / 1000.0,
+            t_jpeg as f64 / n as f64 / 1000.0,
+            t_b64 as f64 / n as f64 / 1000.0,
+            n_jpeg / 1024,
+            n_b64 / 1024,
+            (n_b64 as f64 / n_jpeg as f64 - 1.0) * 100.0,
+        );
+
+        // The invariant, not the wall clock: what crosses the IPC boundary is
+        // the JPEG, byte for byte.
+        let payload = super::timeline_frame(120, Some(LONG_EDGE)).expect("frame");
+        assert_eq!(&payload[..2], &[0xFF, 0xD8], "raw JPEG bytes, not a string");
+        assert!(
+            payload.len() < n_b64,
+            "the raw payload must be smaller than the base64 one it replaced"
+        );
+        super::decode_pipe::reset();
     }
 }
