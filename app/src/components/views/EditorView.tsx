@@ -62,9 +62,16 @@ export default function EditorView({
   requestThumbnails,
   renderAppPanel,
 }: EditorViewProps) {
-  const { selectedImage } = useEditorStore(
+  // B-087 — `copiedAdjustments` must be a real subscription, not a `getState()`
+  // read in the render body (see `isPasteDisabled` below): a `getState()` read
+  // has no subscription at all, so copying adjustments never re-rendered this
+  // component and the Paste button stayed disabled until something ELSE
+  // happened to re-render it. See `docs/BUGS.md` B-087 and
+  // `docs/09-engine-notes.md` for the divergence this created against upstream.
+  const { selectedImage, copiedAdjustments } = useEditorStore(
     useShallow((state) => ({
       selectedImage: state.selectedImage,
+      copiedAdjustments: state.copiedAdjustments,
     })),
   );
 
@@ -108,7 +115,7 @@ export default function EditorView({
       isFilmstripVisible={uiVisibility.filmstrip}
       isLoading={isViewLoading}
       isPasted={isPasted}
-      isPasteDisabled={useEditorStore.getState().copiedAdjustments === null}
+      isPasteDisabled={copiedAdjustments === null}
       isRatingDisabled={!selectedImage}
       isResizing={isResizing}
       multiSelectedPaths={multiSelectedPaths}

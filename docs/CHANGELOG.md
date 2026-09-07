@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-07** — **Fixed B-087** (two components read Zustand state with
+  `getState()` during render instead of subscribing, so the UI never updated
+  when that state changed — the Colorist "Paste" button stayed disabled after
+  copying adjustments, and `App.tsx`'s drag-overlay thumbnail could miss one
+  that arrived mid-drag): `EditorView.tsx`'s `copiedAdjustments` and
+  `App.tsx`'s `ImageDragOverlayNode` thumbnail now use real store
+  subscriptions. Both are vendored-fork files — divergence logged in
+  `docs/09-engine-notes.md`.
 - **2026-09-07** — **Fixed B-086** (`CanvasBoundary`'s displayed composition
   size went stale after a `set_project_settings` write from anywhere other
   than `CanvasSettingsPopover`'s own "Apply" — e.g. the MCP tool): the Rust
