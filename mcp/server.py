@@ -1568,7 +1568,7 @@ def editor_generate_captions_from_transcript(
     position_y: float | None = None,
 ) -> str:
     """Auto-caption a file straight from its D-189 transcript — the timed-word
-    follow-up to `editor_import_subtitles` (D-229/D-237). Same result (a new
+    follow-up to `editor_import_subtitles` (D-229/D-238). Same result (a new
     SUBTITLE track, one caption clip per cue, one undoable step) with no
     hand-authored `.srt` required: this transcribes the file itself and groups
     the timed words into cues.

@@ -143,7 +143,7 @@ import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './s
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
-// D-237 — auto-captioning from the D-189 transcript. The grouping algorithm
+// D-238 — auto-captioning from the D-189 transcript. The grouping algorithm
 // and the seconds->frames conversion are the ONE new thing this feature
 // needed; both the GUI button and this hook's own op call them, then dispatch
 // the SAME `import_subtitles` op the `.srt` importer already uses.
@@ -1211,7 +1211,7 @@ export function useEditorControl(): void {
         }
       },
 
-      // D-237 — generate captions straight from the D-189 transcript instead
+      // D-238 — generate captions straight from the D-189 transcript instead
       // of requiring a hand-authored `.srt`. Reuses `import_subtitles`
       // (D-229) verbatim for the actual timeline mutation — the only new work
       // is turning transcript words into cues, which

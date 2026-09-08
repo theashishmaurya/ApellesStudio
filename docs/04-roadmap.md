@@ -1690,7 +1690,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         subset parser would import real files with silently wrong times. Do it
         properly (full timebase + region/style resolution) or not at all.
       - ✅ **Auto-captioning from the D-189 transcript — DONE, 2026-09-08
-        (D-237).** `groupTranscriptIntoCues`/`generatedCuesToCaptions`
+        (D-238).** `groupTranscriptIntoCues`/`generatedCuesToCaptions`
         (`packages/editor/src/captionsFromTranscript.ts`) group transcript
         words into cues (a whisper SEGMENT is always a cue boundary; within
         one, a break at 8 words / 3.0 s / a 0.7 s pause, whichever first) and

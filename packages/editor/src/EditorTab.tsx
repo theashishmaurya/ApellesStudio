@@ -189,7 +189,7 @@ export function EditorTab() {
                 switcher, plus the Import-subtitles action (which creates a
                 whole TRACK, so it belongs here beside the switcher rather
                 than in the Sources media pool — see
-                `SubtitleImportButton`'s own doc). D-237 adds the transcript-
+                `SubtitleImportButton`'s own doc). D-238 adds the transcript-
                 driven alternative right beside it — same "creates a whole
                 track" reasoning, same toolbar. */}
             <div className="flex shrink-0 items-center justify-between gap-2 pr-2">

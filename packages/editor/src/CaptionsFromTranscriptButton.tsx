@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's **Captions from Transcript** action (D-237,
+ * @chroma/editor — the Edit tab's **Captions from Transcript** action (D-238,
  * roadmap item 27's "Auto-captioning from the D-189 transcript" line).
  *
  * **What it does.** Runs the D-189 transcript sidecar over the SELECTED

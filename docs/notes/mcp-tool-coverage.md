@@ -44,9 +44,9 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 56 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-237)
+## Edit tab / multi-track NLE — CLOSED, 56 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238)
 
-> **Count re-verified 2026-09-08 (after D-237 merged) directly against the
+> **Count re-verified 2026-09-08 (after D-238 merged) directly against the
 > merged `mcp/server.py`**: 60 `@mcp.tool()` functions named `editor_*` (or
 > the three pre-D-183 exceptions above), minus the 4 media-understanding ones
 > that have their own section below, is **56**. A prior heading here said 54

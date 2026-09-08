@@ -1,4 +1,4 @@
-// @chroma/editor — auto-captioning from the D-189 transcript (D-237).
+// @chroma/editor — auto-captioning from the D-189 transcript (D-238).
 //
 // Fixture-based: every test asserts the EXACT cues (count, text, start/end)
 // a known transcript produces, not just "some cues came out" — the same

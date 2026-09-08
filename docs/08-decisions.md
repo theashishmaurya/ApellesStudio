@@ -21838,7 +21838,7 @@ tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
 
-## D-237 — Auto-captioning from the D-189 transcript reuses D-229's `import_subtitles` verbatim; the only new code is the word→cue grouping, and it lives in TypeScript, not Rust
+## D-238 — Auto-captioning from the D-189 transcript reuses D-229's `import_subtitles` verbatim; the only new code is the word→cue grouping, and it lives in TypeScript, not Rust
 
 Roadmap item 27's own line, left open by D-229: "the timed words already exist;
 turning them into cues is the obvious high-value follow-up."

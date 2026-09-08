@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Auto-captioning from the D-189 transcript (D-237, roadmap
+- **2026-09-08** — **Auto-captioning from the D-189 transcript (D-238, roadmap
   item 27).** Turns a transcript's timed words into caption cues instead of
   requiring a hand-authored `.srt` — reuses D-229's `import_subtitles` op
   verbatim (no new track kind, no new `Clip` field), with a segment-boundary-

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @chroma/editor — real-DOM coverage for the "Captions from Transcript"
- * button (D-237).
+ * button (D-238).
  *
  * **Why a DOM test.** `captionsFromTranscript.test.ts` already proves the
  * grouping/rounding logic in isolation; it proves nothing about the actual
@@ -117,7 +117,7 @@ function button(): HTMLButtonElement {
   return el as HTMLButtonElement;
 }
 
-describe('CaptionsFromTranscriptButton (D-237)', () => {
+describe('CaptionsFromTranscriptButton (D-238)', () => {
   it('generates a subtitle track from the selected clip’s cached transcript', async () => {
     // Pre-populated cache — `useMediaUnderstandingStore.getTranscript` returns
     // it with no sidecar round trip, exactly as it does for a real repeat ask

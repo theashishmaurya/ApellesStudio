@@ -1,4 +1,4 @@
-// @chroma/editor — auto-captioning from the D-189 transcript (D-237,
+// @chroma/editor — auto-captioning from the D-189 transcript (D-238,
 // roadmap item 27's "Auto-captioning from the D-189 transcript" line).
 //
 // **What it is:** the ONE new thing this feature needed — a pure function
