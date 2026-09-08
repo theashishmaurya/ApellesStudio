@@ -281,7 +281,21 @@ export function Player({
         // mounted) because the toggle is genuinely shell-level, not
         // Edit-tab-specific, so any tab embedding this shared component can
         // have it floating over this same corner.
-        <div className="shrink-0 flex items-center justify-between gap-2 pl-10 pr-3 py-1.5 border-b border-border-color bg-surface text-text-primary">
+        // B-118 — the right end needed the mirror of `pl-10`, and never had
+        // it. D-118 put the Edit tab's Inspector toggle at `absolute top-2
+        // right-2 h-6 w-6` — the same 8px-inset 24px chip as Sources' on the
+        // left, so its LEFT edge lands 32px in from this strip's right edge —
+        // but this strip kept a bare `pr-3` (12px), so anything in the `menu`
+        // slot sat under that chip and the strip read as unpadded and
+        // lopsided: 40px of clearance on one side, 12px on the other, with a
+        // floating control overlapping the short side. The owner flagged
+        // exactly that ("timeline header has no padding, not properly
+        // aligned"). `pr-10` is the same 40px reservation `pl-10` makes, for
+        // the same 24px chip, so the strip is now symmetric and nothing in it
+        // can be covered. `min-h-8` gives it a stable height whether or not it
+        // has any `menu` content, so the label does not shift vertically when
+        // an action appears beside it.
+        <div className="shrink-0 flex min-h-8 items-center justify-between gap-2 pl-10 pr-10 py-1.5 border-b border-border-color bg-surface text-text-primary">
           <div className="flex items-center gap-1 min-w-0">
             {onPrev && (
               <Button variant="ghost" size="icon-xs" onClick={onPrev} title="Previous" aria-label="Previous">
@@ -295,7 +309,7 @@ export function Player({
               </Button>
             )}
           </div>
-          {menu}
+          {menu && <div className="flex shrink-0 items-center gap-1">{menu}</div>}
         </div>
       )}
 

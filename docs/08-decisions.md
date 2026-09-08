@@ -23110,3 +23110,187 @@ undoable). Three existing DOM suites were updated to say which tab they are
 on — the audio ones now select Audio, which is the honest change a tab split
 forces on them. Full suite: 73 files, 1452 passed, 0 failed. `tsc --noEmit` clean on
 `@chroma/editor`, `@chroma/ui` and `@chroma/debug`.
+
+## D-248 — the Edit tab gets a left LIBRARY RAIL, and a generated clip becomes a real drag source
+
+**Context.** The owner's live pass over the running Edit tab produced two
+findings that turn out to be one problem. Dragging a Title onto the timeline
+did nothing (B-117). And a screenshot of the app's far-left edge was annotated
+with three sketched boxes and the words *"Have a side panel here"* /
+*"Add caption from transcript / subtitle here"*.
+
+**The investigation first, because the honest answer changed the scope.**
+There is no broken or half-built left rail in this codebase — nothing renders
+at the Edit tab's left edge at all. The three boxes are the owner's own sketch
+of what they want, not a screenshot of something failing. So this is a design
+decision, not a repair, and it is filed as one.
+
+**The real reference, read not recalled** (`scratch/resolve-reference/
+resolve-edit-features.json`, per CLAUDE.md's research-first rule). Three
+separate Resolve Edit-page entries say the same thing, and together they
+describe exactly the surface the owner sketched:
+
+- `edit-transitions`: *"click the effects library icon **at the top left of the
+  page** to open it, select the effect you want and drag it onto a clip in the
+  timeline"*.
+- `edit-titles`: *"**open the effects library at the top left of the screen**,
+  find the text generator or Fusion title template you want, and **drag it into
+  the timeline** above your video tracks"*.
+- `edit-adjustments`: *"**drag** a new adjustment clip **from the effects
+  library** and place it on a higher video track over your clips"*.
+
+So the left-edge library and the missing Title drag are the same feature seen
+from two sides: a generated clip is something you take out of a library at the
+top left and drop where you want it. Chroma had the clips and had no library —
+Title and Adjust were toolbar buttons that teleported a clip to the playhead,
+which cannot express "where".
+
+### Decision 1 — a rail, and it reuses this repo's existing rail pattern
+
+`EditLibraryRail.tsx`: a fixed-width vertical strip of icon buttons down the
+left edge of the Edit tab, each opening a small library popover. Not invented
+here — the Colorist tab has had a real vertical icon rail since it was RapidRAW
+(`app/src/components/panel/PanelSwitcher.tsx`, a column of icon buttons that
+open panels), and that is the pattern this follows, rebuilt on `@chroma/ui`'s
+own primitives (D-042) rather than that file's Colorist-local framer-motion/
+clsx stack.
+
+Fixed width, deliberately, and not in violation of the "every resizable-by-
+nature panel must actually be resizable" rule — that rule's own text exempts
+"fixed-width panels, popovers and dialogs that don't need to flex". The rail
+holds icon buttons and nothing else; its real content is in popovers; and the
+three genuinely resizable panes on this tab (Sources, the preview/timeline
+split, the Inspector) are untouched.
+
+**Tab-local, not in `Shell.tsx`**, for the reason D-118 already settled for the
+Inspector toggle: its contents (titles, adjustment clips, subtitles) are Edit-tab
+concepts, and a shell-level rail would force the deliberately tab-agnostic
+`Shell` to learn which tab is active just to decide what to show. The cost,
+stated because it is real: with the Sources panel open, the column order is
+Sources → rail → content rather than rail → Sources → content. Resolve's own
+left icons sit alongside its panels too, so this reads acceptably; if the rail
+ever grows tab-shared contents, promoting it to the shell is the follow-up.
+
+The rail's first icon sits under `@chroma/shell`'s floating Sources toggle
+(`absolute top-2 left-2`, which D-120 floats over whichever tab is active on
+purpose), so the rail reserves `pt-10` for it — exactly the reservation
+B-051/D-131 made on `Player`'s title strip for the same chip, in the other
+axis.
+
+### Decision 2 — what goes in it: generated clips and subtitles; NOT transitions
+
+**In:** Titles and Effects (the adjustment clip) — moved out of the timeline
+toolbar, not duplicated — and Subtitles, which hosts the existing
+`CaptionPanel` (D-243) and `CaptionsFromTranscriptButton` (D-238) unchanged,
+moved out of the bare strip above the timeline where they were awkwardly
+inline. All three create something new rather than acting on the timeline you
+have, all three are what the reference calls the effects library, and the last
+is what the owner explicitly asked the rail for.
+
+**Out, deliberately: the transitions palette (D-226) stays in the timeline
+toolbar.** Its only legal target is a *cut*, resolved through `TimelinePane`'s
+own `DndContext` — a `useDraggable` rendered in the rail would be outside that
+provider and would not be a drag at all. Converting it to the native-HTML5
+mechanism is possible (the drop handler has the track and the frame) but it
+would be re-implementing a working, tested D-226 gesture on a second drag
+system for no user-visible gain. The line the toolbar now draws is coherent on
+its own terms: the rail brings things INTO the edit, the toolbar acts ON the
+edit it has (Split, Marker, Remove, Close gap, a transition on a cut).
+
+### Decision 3 — a SECOND MIME type for generators, and native HTML5 drag
+
+`CHROMA_GENERATOR_DRAG_MIME` (`application/x-chroma-generator`) carrying
+`{ kind: 'title' | 'adjustment' }`, alongside D-046's
+`CHROMA_MEDIA_DRAG_MIME`.
+
+**Why native HTML5 rather than `@dnd-kit`:** the rail is a sibling of the whole
+timeline pane, i.e. outside its `DndContext` — the same package boundary the
+Sources panel crosses, so it uses the mechanism the Sources panel already
+crosses it with. (D-098's native-drag trouble was specifically the cross-track
+clip MOVE, a gesture that starts and ends inside one component. Panel→timeline
+drops have worked since D-046.)
+
+**Why a second MIME type rather than a `kind` field inside the media payload:**
+`dataTransfer.getData` is unreadable during `dragover` — only `.types` is (the
+HTML5 constraint `TimelinePane`'s drop handler already documents). The type
+NAME is therefore the only thing a live drag preview can branch on, and "is
+this a source with an audio half to place, or a generated clip that never has
+one" is exactly the question the preview must answer while the pointer is still
+moving.
+
+**One placement algorithm, not two.** The media path's landing logic was
+extracted verbatim into `placeDroppedClip` and both payloads go through it, so
+a dragged title snaps to an edge, ripples, and creates a track by exactly the
+rules a dragged source already does. It reads the generator kind for one thing
+only: a title and an adjustment clip are picture, so a track created for one is
+a VIDEO track regardless of its neighbours, and a drop onto an audio/subtitle
+track is refused with a real sentence rather than placing an invisible clip
+(the mirror of D-229's "a media clip is never inferred onto a subtitle track").
+
+**One clip factory, not two.** `clipFromDraggedGenerator` builds the
+`NewClipFields` for both the drag and the click-to-add, on top of the same
+`newTextLayer`/`newTextClipFields`/`newAdjustmentLayer`/
+`newAdjustmentClipFields` that `editor_add_text_clip` and
+`editor_add_adjustment_clip` already use — so a dropped title, a clicked title
+and an agent's title are byte-identical, per CLAUDE.md's "the same op/store
+action underneath both".
+
+### Decision 4 — each library entry is BOTH a drag source and a click-to-add
+
+Not one or the other. The drag is the reference gesture and the only way to say
+*where*; the click-at-the-playhead is what the toolbar buttons did, what
+`editor_add_text_clip` does over MCP, and the faster gesture when the playhead
+is already right. Removing it while adding the drag would have traded one
+missing half for another. What did change is that the click's `ripple: false`
+refusal — silent before, and half of what the owner hit — now says so.
+
+**Human + AI.** The MCP surface already covered every one of these
+(`editor_add_text_clip`, `editor_add_adjustment_clip`,
+`editor_import_subtitles`, `editor_generate_captions_from_transcript`); this
+pass was the GUI half catching up, which is the same parity rule read from the
+other direction. `editor_add_track` gained an optional `index` in the same pass
+— see B-115.
+
+**Verification.** `TimelinePane.drop.dom.test.tsx`, 9 new real-DOM cases (6 of
+them this decision's). `npm test --workspace @chroma/editor` 1450/1450 (72
+files, up from 1419/69). `npx tsc --noEmit -p packages/editor` and
+`-p packages/player` clean. **No live GUI run** — the same disclosure D-211 and
+D-208 make: a native HTML5 `dragstart` in a real WKWebView is a tier jsdom
+cannot reach, so the payload contract, the drop routing and every op that comes
+out of them are proven here and the real drag gesture is an owner check.
+
+## D-249 — Export moves to the Edit tab's top strip, and that strip gets its missing right-hand padding
+
+**Context.** Two items from the same live pass, on the same strip. The owner
+drew an arrow from the Export button in the bottom timeline toolbar up to the
+top bar; and separately flagged that the header row with the "Timeline" label
+had no padding and was not properly aligned.
+
+**Decision — Export belongs at the top, in the strip's own flow.** D-198 put it
+at the far right of the timeline toolbar, beside the zoom controls, on the
+reasoning that it is "the other always-available, not-selection-scoped action
+on this strip". That was defensible then and is wrong now: delivering the
+finished cut is the tab's TERMINAL action, not one of the per-clip edit actions
+(Split / Remove / Close gap) that toolbar holds — and the same pass moved the
+library items out of it too (D-248), leaving that toolbar with a coherent
+identity it did not have before. It lands in `Player`'s existing `menu` slot,
+which is the top strip's own right-hand cluster, right beside the Inspector
+toggle. `PreviewPane` gained a `headerActions` prop rather than importing
+`EditorExportDialog` itself: that pane is also mounted standalone by
+`app/harness.html` (D-199), and an export dialog is an Edit-tab action, not
+part of what "the preview" is.
+
+**And the strip is rendered INSIDE the flow, not floated.** The Inspector and
+Sources toggles are absolutely-positioned chips by necessity (they must be
+reachable whichever panel state is showing). Export has no such requirement, so
+putting it in the flow means it can never overlap the "Timeline" label at a
+narrow width — which is what a third floating chip in that corner would have
+guaranteed.
+
+**The padding half is B-118**, and it is the exact mirror of a fix this repo
+already made: B-051/D-131 gave the strip `pl-10` to reserve the Sources chip's
+32px footprint on the left, D-118 then added the identical chip on the right,
+and the right padding stayed at `pr-3`. `pr-10` makes it symmetric. That change
+is in `@chroma/player`, so it applies to every tab that embeds `Player` —
+correct, because the chip it reserves for is shell-level and floats over all of
+them, which is the same reason D-131 made the left-hand half unconditional.

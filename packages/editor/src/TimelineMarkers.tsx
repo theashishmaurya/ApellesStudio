@@ -338,27 +338,44 @@ export interface MarkerListMenuProps {
   timeline: Timeline | null;
   fps: number;
   onJump: (frame: number) => void;
+  /** B-114 — commit a `remove_marker` for the row's own trash button. The
+   *  same `onRemove` the strip's popover takes, so both delete affordances
+   *  drive one `EditOp`. */
+  onRemove: (id: string) => void;
 }
 
 /**
- * The toolbar's jump-to-marker list — Resolve's own marker list alongside the
- * ruler strip, as a `DropdownMenu` rather than a permanent panel: at this
- * feature's size a docked panel would cost real timeline height to show a
- * handful of one-line rows, and every other list-of-things action in this
- * toolbar ("Move to ▾") is already a dropdown.
+ * The toolbar's marker list — Resolve's own marker list alongside the ruler
+ * strip, as a `DropdownMenu` rather than a permanent panel: at this feature's
+ * size a docked panel would cost real timeline height to show a handful of
+ * one-line rows, and every other list-of-things action in this toolbar
+ * ("Move to ▾") is already a dropdown.
  *
  * Rendered by `TimelinePane` only when there is at least one marker — an
  * always-present, almost-always-empty menu is noise, the same call D-128's
  * Unlink button made.
+ *
+ * **B-114 — each row carries its own Delete.** D-222 did ship a real delete
+ * (the strip popover's `Trash2`), but the ONLY way to reach it was a
+ * double-click or right-click on the flag itself — a 9×12px glyph on a 16px
+ * strip. The owner, testing live with a marker placed, reported "no way to
+ * remove a marker once placed": they had found this list (it is the visible,
+ * labelled, count-bearing control in the toolbar) and it offered jump and
+ * nothing else. A destructive action being *reachable* is not the same as it
+ * being *findable*, and the list is where someone who wants to manage markers
+ * actually looks. The row's own click still jumps — the delete is a distinct
+ * hit target inside the row that stops the event, exactly the way the
+ * Sources panel's per-card hover trash (D-061) sits inside a card whose body
+ * click does something else.
  */
-export function MarkerListMenu({ timeline, fps, onJump }: MarkerListMenuProps) {
+export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMenuProps) {
   const markers = markersOf(timeline);
   if (markers.length === 0) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="sm" aria-label="Go to marker">
+          <Button variant="ghost" size="sm" aria-label="Markers">
             <Flag />
             {markers.length}
           </Button>
@@ -366,10 +383,39 @@ export function MarkerListMenu({ timeline, fps, onJump }: MarkerListMenuProps) {
       />
       <DropdownMenuContent align="start" className="max-h-72 overflow-y-auto">
         {markers.map((m) => (
-          <DropdownMenuItem key={m.id} data-chroma-marker-list-item={m.id} onClick={() => onJump(m.frame)}>
+          <DropdownMenuItem
+            key={m.id}
+            data-chroma-marker-list-item={m.id}
+            className="gap-2 pr-1"
+            onClick={() => onJump(m.frame)}
+          >
             <span className="size-2.5 shrink-0 rounded-sm" style={{ background: m.color }} />
             <span className="tabular-nums text-text-secondary">{formatTimecode(m.frame / fps, fps, 0)}</span>
-            <span className="truncate">{m.name ?? 'Marker'}</span>
+            <span className="min-w-0 flex-1 truncate">{m.name ?? 'Marker'}</span>
+            {/* Not a `<Button>`: this row is already a menu item, and Base UI's
+                `DropdownMenuItem` renders a focusable element — nesting a
+                second `<button>` inside it would put an interactive control in
+                an interactive control. A `<span role="button">` is the same
+                escape hatch `MarkerStrip`'s own popover anchor uses for the
+                mirror-image reason. */}
+            <span
+              role="button"
+              tabIndex={-1}
+              data-chroma-marker-list-remove={m.id}
+              aria-label={`Delete marker at ${formatTimecode(m.frame / fps, fps, 0)}`}
+              title="Delete this marker"
+              className="shrink-0 cursor-pointer rounded-sm p-1 text-text-secondary hover:bg-red-500/15 hover:text-red-400"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                // The row's own handler jumps the playhead; deleting must not
+                // also jump to the marker being deleted.
+                e.stopPropagation();
+                e.preventDefault();
+                onRemove(m.id);
+              }}
+            >
+              <Trash2 className="size-3" />
+            </span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

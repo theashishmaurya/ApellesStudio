@@ -30,7 +30,10 @@ dragging a pool item in from the shell's Sources panel.
   verbatim), `labelForOp` (D-051), and
   `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia` — the
   drag-to-track contract `TimelinePane`'s drop handler and the Sources
-  panel's drag source both implement.
+  panel's drag source both implement — plus (D-248)
+  `CHROMA_GENERATOR_DRAG_MIME`/`DraggedGenerator`/`clipFromDraggedGenerator`,
+  the same contract for a *generated* clip (a title, an adjustment clip)
+  dragged out of the left library rail.
 - `marquee.ts` (D-137) — marquee-select's pure half: whether a `pointerdown`
   may start a rubber-band at all (`canStartMarquee` /
   `MARQUEE_BLOCKING_SELECTOR`), the activation threshold, the
@@ -235,6 +238,30 @@ tab is active" for free — an inactive tab's content is `hidden`
 handles a *track-less* timeline (`tracks: []`, what `chroma_timeline_create`
 makes) with its own empty-state drop zone; the first drop creates the video
 track.
+
+Two things changed here in the same pass as the owner's live Edit-tab review:
+
+- **A generated clip is a drag source too (D-248, fixing B-117).**
+  `EditLibraryRail.tsx` — a vertical icon rail down the left edge of the tab,
+  Resolve's own "effects library icon at the top left" — carries a draggable
+  Title and Adjustment clip that put `CHROMA_GENERATOR_DRAG_MIME` on the
+  `dataTransfer`. `TimelinePane`'s existing `onDragOver`/`onDrop` recognise it
+  alongside the media MIME and route it through the SAME
+  `placeDroppedClip` the Sources drop uses, so a dragged title snaps, ripples
+  and creates a track by exactly the media path's rules. Every entry is also
+  still a click-to-add-at-the-playhead button, which is what the Title/Adjust
+  toolbar buttons were before they moved here. The rail also hosts the two
+  caption/subtitle entry points. The transitions palette stays in the timeline
+  toolbar — its target is a *cut*, resolved through that pane's own
+  `DndContext` (D-226).
+- **Above the top track is a real insertion boundary (B-115).**
+  `trackInsertBoundary` used to refuse every `y < 0`, so "drop it above your
+  video tracks" — the reference gesture for a title or an adjustment clip —
+  quietly landed on the existing top track (native drop) or cancelled
+  (dnd-kit clip drag). The top is now the mirror of the bottom: both outer
+  boundaries are unconditional, the inner ones still need the band. The
+  dnd-kit path additionally requires the gesture's real pointer to be inside
+  the edit area, so "dropped somewhere else entirely" still cancels.
 
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline

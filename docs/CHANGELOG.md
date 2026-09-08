@@ -23,6 +23,27 @@ One or two lines per session. Detail lives in the decision it references.
   field now shows a `step`-derived rounding and the exact value returns on
   focus, so nothing stored or typed changed.
 
+- **2026-09-08** — **Edit tab, from the owner's live pass: a left library rail,
+  a Title you can actually drag, a track above the top one, an anchored zoom,
+  Export at the top, and a marker you can delete (D-248, D-249; B-114 to
+  B-118).** Six defects reported hands-on against the real
+  `perf-comparison-reel-v3` project, plus one design call the investigation
+  changed: the three boxes sketched on the app's far-left edge were not a
+  broken component — nothing rendered there at all — so the rail is a new
+  decision, built from Resolve's own "effects library icon at the top left"
+  and reusing the Colorist tab's existing icon-rail pattern. It hosts Titles,
+  Effects and Subtitles, each a real HTML5 drag source (a second MIME type,
+  because only `.types` is readable during `dragover`) routed through the
+  media drop's own placement code, so a dragged title snaps, ripples and
+  creates a track by exactly the rules a dragged source does. The timeline's
+  top became the mirror of its bottom (dropping above the tracks now makes a
+  new topmost one, where it used to silently land on the existing top track);
+  the zoom gained an anchor it never had (the cursor for a wheel, the playhead
+  for the +/- buttons); the marker LIST gained the delete that only ever
+  existed behind a double-click on a 9px flag; and the header strip got the
+  right-hand padding B-051/D-131 gave its left side two decisions ago. Human +
+  AI in the same pass: `editor_add_track` takes an optional `index`.
+
 - **2026-09-08** — **B-111 fixed: the audio session now re-resolves the
   timeline as it plays, so a clip starting later than the playhead when Play
   was pressed actually sounds (D-245).** The old `chroma_audio_play` built its

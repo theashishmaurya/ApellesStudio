@@ -48,10 +48,10 @@ import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@c
 import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
+import { EditLibraryRail } from './EditLibraryRail';
+import { EditorExportDialog } from './EditorExportDialog';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
-import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
-import { CaptionPanel } from './CaptionPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
@@ -147,11 +147,28 @@ export function EditorTab() {
 
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
+      {/* D-248 — the Edit tab's library rail. A plain fixed-width sibling of
+          the resizable columns, not a `ResizablePanel`: it holds icon buttons
+          and nothing else, which is exactly the case CLAUDE.md's
+          resizable-panels rule exempts. Tab-local rather than in `Shell.tsx`
+          for the same reason D-118 kept the Inspector toggle local — its
+          contents (titles, adjustment clips, subtitles) are Edit-tab concepts,
+          and a shell-level rail would need `Shell` to know which tab is
+          active just to decide what to show. */}
+      <EditLibraryRail />
       <ResizablePanel className="min-w-0 flex flex-col min-h-0">
         <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
           <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">
             <div className="flex-1 min-h-0 flex flex-col relative">
-              <PreviewPane />
+              <PreviewPane
+                // B-118/D-249 — the top strip's own right-hand cluster. The
+                // Export dialog moved here out of the timeline toolbar (the
+                // owner drew an arrow from it to exactly this corner), and it
+                // is rendered INSIDE the strip's flow rather than floated over
+                // it like the Inspector chip beside it, so it can never
+                // overlap the "Timeline" label at a narrow width.
+                headerActions={<EditorExportDialog />}
+              />
               {/* D-118 — the Inspector's own opener: tab-local (see this file's
                   module doc for why it isn't a `Shell.tsx` chrome-bar button
                   like Sources'), placed at the preview's top-right so it reads
@@ -185,20 +202,17 @@ export function EditorTab() {
             minSize={TIMELINE_MIN_HEIGHT}
             className="shrink-0 border-t border-border-color flex flex-col min-h-0"
           >
-            {/* D-229/D-243 — the timeline's own toolbar strip: the timeline
-                switcher, plus the Captions panel (import + the styled preset
-                library, replacing the old straight-to-file-picker button —
-                see `CaptionPanel`'s own doc) and D-238's transcript-driven
-                alternative beside it. Both create a whole TRACK, so both
-                belong here rather than in the Sources media pool. Not yet
-                unified into one flow — D-243's own decision entry names this
-                as a concrete follow-up. */}
-            <div className="flex shrink-0 items-center justify-between gap-2 pr-2">
+            {/* D-229/D-243 held the Captions panel and D-238's
+                transcript-driven alternative here, in a bare strip beside the
+                timeline switcher. D-248 moved both into the left library
+                rail's Subtitles entry: they create a whole subtitle TRACK,
+                which is a library-shaped action rather than a per-timeline
+                one, and the owner asked for exactly that ("add caption from
+                transcript / subtitle here", drawn on the left edge). What is
+                left is the timeline switcher itself, which really is a
+                property of this pane. */}
+            <div className="flex shrink-0 items-center justify-between gap-2">
               <TimelineSwitcher />
-              <div className="flex items-center gap-1">
-                <CaptionPanel />
-                <CaptionsFromTranscriptButton />
-              </div>
             </div>
             <div className="flex-1 min-h-0">
               <TimelinePane />

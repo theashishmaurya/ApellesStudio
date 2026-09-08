@@ -2363,7 +2363,7 @@ def editor_move_clip(
 
 
 @mcp.tool()
-def editor_add_track(track_kind: str = "video") -> str:
+def editor_add_track(track_kind: str = "video", index: int | None = None) -> str:
     """Add a new, empty track to the timeline. `track_kind` is "video",
     "audio" or "subtitle". Returns the new track's index.
 
@@ -2373,15 +2373,26 @@ def editor_add_track(track_kind: str = "video") -> str:
     `.srt`/`.vtt` file instead, use `editor_import_subtitles`, which creates
     its own track.
 
-    **This always APPENDS at the highest index — the BOTTOM of the
-    compositing stack** (track index order is z-order, lower index paints on
-    top, D-086). There is no `at_index`/insertion-position parameter: adding
-    always appends, moving is `editor_move_track`, a separate explicit call
-    — see that tool's docstring, and read it before adding a track you want
-    to end up ABOVE existing footage (e.g. for a title/overlay)."""
+    **Track index order IS compositing z-order — lower index paints on top
+    (D-086).** With `index` omitted this APPENDS at the highest index, i.e.
+    the BOTTOM of the stack, which is NOT where a title/overlay wants to be.
+
+    `index` (B-115) puts the new track at an exact position instead: `0` is
+    the top of the compositing stack (above all existing footage — what you
+    want for a title, an overlay or an adjustment clip), and `len(tracks)` is
+    the same append you get by omitting it. Anything outside `0..len(tracks)`
+    is refused with an error rather than silently appending. It is a
+    convenience, not a new primitive — it runs exactly the `editor_add_track`
+    + `editor_move_track` pair this docstring used to tell you to run
+    yourself, which is also the pair the human GUI runs when a clip is dragged
+    above the top track. Two undo entries either way; `editor_move_track`
+    remains the tool for reordering tracks that already exist."""
     import json
 
-    return json.dumps(_op("editor_add_track", trackKind=track_kind), indent=2, default=str)
+    args: dict[str, object] = {"trackKind": track_kind}
+    if index is not None:
+        args["index"] = index
+    return json.dumps(_op("editor_add_track", **args), indent=2, default=str)
 
 
 @mcp.tool()
