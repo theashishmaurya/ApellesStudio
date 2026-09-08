@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-256: a Colorist grade now actually renders on the Edit
+  timeline** — previously it had literally no effect on the same clip in Edit,
+  in the preview or the export. Carried across as a **baked 33³ 3D LUT**: an
+  identity lattice run through the Colorist's own wgpu pipeline once per grade
+  change (memoised on the grade file's mtime), then applied by the Edit CPU
+  compositor and by ffmpeg's `lut3d` — so the grade keeps exactly one
+  implementation (the shader) and preview/export agree by construction, which
+  `chroma_types::adjustment`'s header had called structurally unreachable.
+  Measured equal, not approximately: `[227,227,227]` from both engines on the
+  same graded clip. Carries the **global** grade only; masks / Colorist crop /
+  relight are inherently outside a 3D LUT and are dropped with a warning shown
+  in the Export dialog and by the new `editor_get_grade_status` MCP tool, never
+  silently. New `chroma_types::Lut3d` (L0, pure) + `chroma::grade_lut`; D-022's
+  `.cube` bake refactored to share the one baker. Investigation correction
+  worth knowing: the Edit↔grade link is **`Clip::id`** (D-070), not the
+  `shot_id` it looks like.
+
 - **2026-09-09** — **D-253: numeric fields lose the native spinner and gain
   drag-to-scrub** — finishes B-113, whose `pr-5` reserve could never have
   worked (WebKit lays the spin button out INSIDE the padding box, so padding

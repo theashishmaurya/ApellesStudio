@@ -1179,5 +1179,39 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   file vendored into the repo, so `Cargo.toml` and the lock are untouched.
 
 
+- **2026-09-09** — **The Colorist grade rendering on the Edit timeline
+  (D-256)** · **one upstream-file line.** The whole bridge is a new
+  Chroma-owned module, `app/src-tauri/src/chroma/grade_lut.rs`, plus edits to
+  Chroma-owned files only (`chroma/edit.rs`'s compositor, `chroma/export.rs`'s
+  `bake_primary_lut` — whose body moved into the new module rather than being
+  copied — `chroma/project.rs`'s two `join("grades")` call sites, and
+  `chroma/mod.rs`'s module list). The Chroma crates take the rest
+  (`chroma-types`' new pure `lut3d` module, `chroma-project`'s new
+  `grade_dir`), as do `packages/editor/*` (the new `gradeLuts.ts`,
+  `timelineExport.ts`, `editorExport.ts`, `EditorExportDialog.tsx`,
+  `useEditorControl.ts`) and `mcp/server.py`.
+
+  **The upstream footprint is exactly one `generate_handler!` line in
+  `lib.rs`** (`chroma::grade_lut::chroma_timeline_grade_luts`). Nothing else
+  upstream is touched: crucially, the grade **shader and `gpu_processing` are
+  read, never modified** — the bake calls the existing headless
+  `render_core::render` seam (D-014) with an identity lattice as its input
+  image, which is precisely what D-022's own `.cube` bake already did. So the
+  one thing this decision depends on from upstream is a call, not a change,
+  and an upstream shader fix still cherry-picks cleanly and simply changes what
+  the lattice bakes to.
+
+  **No new dependency.** `rayon` (used to parallelise the per-frame lattice
+  application) was already an `app/src-tauri` dependency; `Cargo.toml` and the
+  lock are untouched.
+
+  **Formatting:** unlike D-226's entry above, no file was `cargo fmt`-
+  normalised here. The tree is still not rustfmt-clean at HEAD under the
+  current toolchain, so a whole-file format would have reformatted unrelated
+  pre-existing code in `edit.rs`/`export.rs`/`project.rs`; the new code was
+  written to rustfmt's own output shape instead and the touched files were left
+  otherwise byte-identical, keeping the diff scoped to this change.
+
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

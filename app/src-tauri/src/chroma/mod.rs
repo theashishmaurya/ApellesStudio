@@ -61,6 +61,14 @@
 //!   knowledge lives here, mirroring `chroma-motion`'s own render/exec split)
 //! - `grade`    — the `grade.json` document command bridge: save / load
 //!                (D-025); the model itself lives in `chroma-grade-model` (D-143)
+//! - `grade_lut` — **the Colorist ⇄ Edit bridge (D-256)**: bakes a clip's saved
+//!   grade into a `chroma_types::Lut3d` by running an identity lattice through
+//!   the real Colorist wgpu pipeline, memoised on the grade file's own
+//!   (mtime, len). That lattice is what makes a Colorist grade visible on the
+//!   Edit timeline at all — `edit`'s CPU compositor interpolates it per clip,
+//!   and the ffmpeg exporter hands the same lattice to `lut3d` as a `.cube`, so
+//!   preview and export are the same maths by construction. Carries the
+//!   **global** grade only; masks/crop/relight are stripped with a warning
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
 //! - `media_understanding` — transcript + "what changed on screen, and when"
 //!   via the `ai-media/` sidecar (mlx-whisper + Qwen3-VL, D-189); just the 4
@@ -90,6 +98,7 @@ pub mod export;
 pub mod ffmpeg_run;
 pub mod filmstrip;
 pub mod grade;
+pub mod grade_lut;
 pub mod keyframes;
 pub mod load;
 pub mod mask;

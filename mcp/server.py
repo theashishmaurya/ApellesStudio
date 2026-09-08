@@ -858,6 +858,51 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "the transition sits on, so the two cannot both be honoured."
         ),
     },
+    "colorist_grade": {
+        "it_is_automatic": (
+            "D-256: a clip's COLORIST GRADE is now live on the Edit "
+            "timeline. Grade a clip in the Colorist tab (set_primary, "
+            "set_color_grade, set_curve, save_grade...) and the very same "
+            "clip on the Edit timeline previews graded, and exports graded, "
+            "with NO extra call and no per-clip toggle — there is nothing to "
+            "switch on. Before D-256 a Colorist grade had literally no "
+            "effect on that footage in the Edit tab, so an agent that "
+            "learned the old behaviour should unlearn it: you no longer need "
+            "to bake a LUT by hand or re-export from Colorist to get a "
+            "graded cut."
+        ),
+        "the_link_is_the_clip_id": (
+            "A grade belongs to a CLIP, not to a source file (D-070's "
+            "unified clip identity): it is stored at "
+            "`<project>/grades/<clip.id>.grade.json`. Two clips cut from the "
+            "same file grade independently — which is Resolve's own default "
+            "and is usually what you want, but does mean that splitting a "
+            "graded clip does NOT copy its grade onto the new half. Check "
+            "with editor_get_grade_status."
+        ),
+        "what_it_carries": (
+            "The GLOBAL grade, exactly: exposure, contrast, curves, colour "
+            "wheels, HSL, and an applied .cube. It is carried as a 33-cube "
+            "3D LUT baked by running an identity lattice through the "
+            "Colorist's own GPU pipeline once, so the Edit preview and the "
+            "ffmpeg export apply the identical numbers (measured equal to "
+            "the code, not approximately). What a 3D LUT CANNOT carry is "
+            "anything spatial: mask/local layers, the Colorist crop, and "
+            "depth relight are dropped, and each drop is reported — as a "
+            "warning in editor_get_grade_status, in the Export dialog, and "
+            "in the app log. If editor_get_grade_status lists warnings for a "
+            "clip, the exported file will legitimately differ from what the "
+            "Colorist tab shows for it; nothing else will."
+        ),
+        "identity_is_nothing": (
+            "A clip that was never graded, or whose grade was reset, has NO "
+            "LUT applied at all — not an identity one — so its preview and "
+            "its exported pixels are bit-identical to a build without this "
+            "feature. `graded: false` from editor_get_grade_status means "
+            "exactly that, and covers both 'no grade file' and 'a grade file "
+            "that does nothing'."
+        ),
+    },
     "transitions": {
         "model": (
             "D-224: a transition BRIDGES a cut — the two clips stay abutting "
@@ -1037,6 +1082,38 @@ def editor_get_state() -> str:
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_grade_status() -> str:
+    """Which clips on the Edit timeline carry a real **Colorist grade** — and
+    what, if anything, that grade loses on the way there (D-256).
+
+    Returns `clips` (`{clipId, name, graded}` per video clip), `gradedCount`,
+    and `warnings`. `graded: true` means this clip previews AND exports with
+    its Colorist grade applied — automatically, with no toggle; see
+    `editor_get_capabilities`' `colorist_grade` key for the model. `graded:
+    false` covers both "never graded" and "graded, then reset to nothing":
+    either way no LUT is applied at all, and the pixels are identical to a
+    build without the feature.
+
+    **Read `warnings` before trusting an export to match the Colorist tab.**
+    The grade crosses into the Edit tab as a baked 3D LUT, which carries the
+    whole global grade exactly but *cannot* carry anything spatial — a mask /
+    local layer, the Colorist crop, depth relight. Each such drop is listed
+    here, named by clip. An empty `warnings` list means the exported file is
+    the grade, in full.
+
+    Use it to confirm a grade actually landed on the clip you meant (the link
+    is the CLIP id, not the source file — two clips cut from one file grade
+    independently, and splitting a graded clip does not copy the grade onto
+    the new half), and to check a timeline before `editor_export`.
+
+    Cheap to call repeatedly: each clip's lattice is memoised on its grade
+    file's own mtime, so asking twice costs nothing."""
+    import json
+
+    return json.dumps(_op("editor_get_grade_status"), indent=2, default=str)
 
 
 @mcp.tool()

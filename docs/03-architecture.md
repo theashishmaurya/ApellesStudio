@@ -358,10 +358,20 @@ through the same top-wins resolver (`resolve_active_clip_index` / `top_wins_clip
 didn't appear in the Colorist at all — and the investigation found a **four**-way identity
 split, not the two-list one it looked like (`docs/notes/unified-clip-model.md`).
 
-What is still *not* unified is the **render path**, not the identity: Edit composites and
-Colorist grades in two separate passes over two separate engines, and there is no
-grade-in-preview on the Edit timeline. That is roadmap item 8, and it is a different problem
-from the one this paragraph used to describe.
+The two **render paths** are still two engines — Edit composites on the CPU, Colorist grades
+on the GPU — but as of **D-256 they are no longer disconnected**: a clip's saved Colorist
+grade is baked once into a 33³ 3D LUT (an identity lattice run through the Colorist's own
+wgpu pipeline) and that lattice is applied by the Edit preview's CPU compositor *and* by the
+ffmpeg export's `lut3d` filter, so a grade you set in Colorist shows on the Edit timeline and
+lands in the exported file. Measured equal, not approximately: the same clip renders the same
+graded pixel through both engines. The grade maths still has exactly one implementation (the
+shader) — what crosses the boundary is numbers, not code.
+
+The limit is the one a 3D LUT inherently has: it carries the **global** grade only. The
+spatial half — mask/local layers, the Colorist crop, depth relight — is not representable and
+is dropped with a warning (surfaced in the Export dialog and by `editor_get_grade_status`),
+never silently. Carrying that half would mean a real shared compositor (`chroma-grade` +
+`chroma-compositor`, still future), which is what remains of roadmap item 8.
 
 ### `grade.json` (D-025)
 

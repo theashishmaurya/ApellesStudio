@@ -23873,3 +23873,177 @@ the fork's own default dark theme. `ClipInspectorPanel.tabChrome.dom.test.tsx`
 (5) pins the class/attribute contract; `@chroma/editor` 1513/1513 green
 (78 files), `@chroma/debug` 32/32, `tsc --noEmit` clean on `packages/editor` and
 `packages/ui`.
+
+---
+
+## D-256 — the Colorist grade renders on the Edit timeline, carried across as a baked 3D LUT
+
+**Date:** 2026-09-09. **Full worked detail:** `docs/notes/colorist-edit-grade-bridge.md`.
+
+### Context — and two corrections the investigation made to its own premise
+
+Colorist and Edit were two independent render paths that shared a project and a
+clip identity and nothing else. **A grade set in the Colorist tab had literally
+no effect on that same clip in the Edit tab** — not in the preview, not in the
+export. `chroma/edit.rs` read no grade of any kind.
+
+Two things the investigation was expected to find turned out to be wrong, and
+both changed the shape of the fix:
+
+1. **The link is not `shot_id`.** A `grep` for `shot_id` in `edit.rs` returning
+   nothing reads like "the Edit path never consumes the link", which suggests
+   teaching it to. But `Clip::shot_id` is a *legacy back-link*: **D-070 already
+   made the link `Clip::id` itself**, and grades already persist at
+   `<project>/grades/<clip.id>.grade.json`. `shot_id`'s only live consumer is
+   `migrate_shot_grades_to_clips`' one-time rename of pre-D-070 files. So the
+   producing half was already complete and correct, and the entire missing half
+   was *consuming* it. Building anything on `shot_id` would have added a second
+   linkage beside a working one.
+
+2. **There is no reusable grade function to call — and this repo had already
+   written down why, as a structural impossibility.**
+   `chroma_types::adjustment`'s own header (D-230): the `adjustments` blob is
+   deliberately untyped in Rust (D-020/D-025), it is applied *only* by
+   RapidRAW's wgpu shader, "there is no CPU implementation of it anywhere in the
+   workspace", the Edit compositor is GPU-free by design, and "the ffmpeg export
+   compiler could not reproduce a wgpu shader at all." That paragraph is exactly
+   why D-230's adjustment clip invented a small five-parameter correction of its
+   own rather than reaching for the real grade.
+
+That second finding is what made this a decision rather than a patch.
+
+### Options
+
+1. **A CPU reimplementation of the grading stack**, callable from the Edit
+   compositor. Full fidelity including masks — and two implementations of the
+   grade to keep in step forever, which is precisely the defect class
+   B-090/B-095/B-098 were each filed for. The ffmpeg export still could not run
+   it, so the export would diverge from the preview anyway.
+2. **Run the real GPU pipeline per Edit preview frame, per layer.** One
+   implementation, full fidelity — but it needs a `GpuContext` + `RenderCaches`
+   per layer inside a per-frame CPU compositor (cache thrash across layers is
+   B-040's measured failure mode), it is a serious risk to a snappy preview, and
+   the ffmpeg export *still* cannot reproduce it. Preview/export divergence is
+   guaranteed, which is the thing this was supposed to fix.
+3. **Preview only, export documented as a gap.** Cheapest. Rejected outright:
+   "the preview shows the grade, the exported file silently does not" is the
+   worst possible end state, and the one the brief explicitly forbade.
+4. **Bake the grade to a 3D LUT and carry the numbers.** ← chosen.
+
+### Decision
+
+Run an identity 33³ RGB lattice **through the Colorist's own wgpu pipeline**,
+once per grade change, and carry the resulting lattice into both Edit engines:
+the CPU preview compositor interpolates it (`Lut3d::sample_trilinear`), and the
+ffmpeg exporter hands the very same lattice, written as a `.cube`, to `lut3d`.
+
+Why this and not the others:
+
+- **The grade keeps exactly one implementation — the shader.** Nothing is
+  reimplemented on CPU or in ffmpeg, so nothing can drift from it. This is the
+  repo's "shared logic → extract, never copy-paste" rule satisfied at the level
+  of *results*, which is the only level available given finding 2.
+- **Preview and export agree by construction**, not by two implementations
+  matching — the property D-230 could not get and therefore designed around.
+- **The bake is per grade change, not per frame**, so the per-frame cost is an
+  interpolation rather than a GPU round trip.
+- The repo already did this once: D-022's `bake_primary_lut` renders an identity
+  lattice through the shader to export a grade as a `.cube`. Its body was
+  **factored out and given a second consumer** rather than copied.
+
+`grade.json` remains the single source of truth: the lattice is a derived,
+content-addressed cache of it, invalidated by the file's own mtime.
+
+**Scope, stated as a limit rather than discovered as one.** A 3D LUT is a pure
+per-pixel `RGB → RGB` function, so it carries the **global** grade exactly
+(exposure, contrast, curves, wheels, HSL, an applied `.cube`) and the **spatial**
+half not at all — mask/local layers, the Colorist crop, depth relight. Those are
+stripped before baking and every drop is reported: on the bake's `warnings`, in
+the log, in the Export dialog, and from `editor_get_grade_status`. Never
+silently. Carrying them needs a real shared compositor (`chroma-grade` +
+`chroma-compositor`, still future) that ffmpeg could not reproduce anyway.
+
+### Notable details
+
+- **An identity grade resolves to no lattice at all**, not to an identity
+  lattice. A clip never graded, or graded then reset, renders **byte-identically**
+  to a build without this feature, in both engines — the "an untouched effect
+  emits nothing" property D-230's adjustment clip already has.
+- **The cached resolution is three-state**, and that is load-bearing:
+  `Ok(Some)` = graded, `Ok(None)` = nothing to apply, `Err` = there *is* a grade
+  and it could not be baked. The preview degrades to the ungraded picture on
+  `Err` (a broken bake must not blank the Edit tab); the **export refuses**.
+  Collapsing the last two into `Option` is what would make a dropped grade
+  silent.
+- **`interp=trilinear` is pinned, overriding ffmpeg's tetrahedral default** —
+  the more accurate mode is the wrong one here, because the preview's sampler is
+  trilinear and matching the other engine beats beating it. Same call D-230 made
+  when it quantised the preview's intermediate to 8 bits because ffmpeg's
+  filters do.
+- **Both engines grade before geometry** (preview: decode → grade → crop →
+  resize; export: `setpts` → `lut3d` → `crop` → `scale`). A LUT commutes with
+  crop exactly, so only the resample is order-sensitive and both resample after.
+- The preview's single-layer plain-decode **fast path declines itself** for a
+  graded clip — the same guard D-132/B-053 added for a clip with a real
+  transform, for the same reason.
+- **`.cube` files are content-addressed inside the project**
+  (`<project>/cache/grade-luts/<clip id>-<hash>.cube`): the export queue freezes
+  a job's argv at enqueue time (D-198), so a queued job keeps pointing at the
+  lattice current when it was queued even if the user re-grades while it waits,
+  and a temp dir a cleaner could empty would break it. The hash is a
+  hand-written FNV-1a — `DefaultHasher` is explicitly not stable across Rust
+  releases and this names a persisted file.
+- **A cold cache is a refusal, not a fallback.** `compileEditorExportArgs`
+  refuses outright unless the grades have been baked, mirroring D-211's
+  unresolvable-font and D-243's unmeasured-caption-word refusals. Compiling
+  anyway would produce a file with no grade while the preview showed one.
+
+### Both interfaces (CLAUDE.md's standing rule)
+
+There is no new *control* here — the capability is "the grade you set is the
+grade you see", and it is automatic — so what each side needed was
+**observability of the same fact**, not a mirrored toggle:
+
+- **Human**: the Edit preview shows the grade; the Export dialog bakes before
+  queueing and lists exactly what a LUT could not carry.
+- **AI**: `editor_get_grade_status` (per-clip `graded`, `gradedCount`, the same
+  warnings) plus a `colorist_grade` block in `editor_get_capabilities` telling an
+  agent the model, the clip-id link, and that the old "grades don't apply in
+  Edit" behaviour is gone.
+
+A per-clip *bypass* toggle (Resolve has one) was deliberately **not** added:
+it is a different feature needing a new `Clip` field, an Inspector control, an
+MCP parameter and an export branch — worth scoping on its own, not riding on
+this. Nothing here forecloses it.
+
+### Verification
+
+- **Preview/export parity, measured:** the same clip, same grade — preview
+  `[227,227,227]`, ffmpeg `lut3d` over the exported `.cube` `[227,227,227]`.
+  **Exact match, zero difference** (ungraded baseline `[126,126,126]`).
+- **Negative control run:** with the single `apply_to_rgba` call disabled,
+  `a_colorist_grade_visibly_changes_the_edit_preview` fails at exactly its
+  headline assertion — the test measures the wiring.
+- **The identity control:** an identity grade produces a byte-identical preview
+  frame to having no grade file, which is what proves the headline assertion is
+  measuring the *grade* and not the compositor switching code paths (it does).
+- **Real ffmpeg pixels** for the export half (`timelineExportGrade.ffmpeg.test
+  .ts`, 5): control, a grade reaching the output, a channel swap surviving the
+  chain, per-clip rather than per-file application, and a `.cube` path
+  containing a space and a colon.
+- **Performance:** applying the lattice to one 960×540 preview frame measured
+  **22 ms** serial — over half a 24 fps frame's budget, a real stutter — so
+  `apply_to_rgba` is parallel over rows (`rayon`, already an `app/src-tauri`
+  dependency; `chroma-types` keeps its zero-heavy-deps rule). **3 ms** after,
+  guarded by a budget test. An ungraded clip pays none of it.
+- **Determinism** (CLAUDE.md's render-path invariant) at three levels: the
+  sampler is pure `f32` with no accumulation order; the same grade bakes twice
+  to an identical lattice; the same document renders the same preview bytes
+  twice. The (mtime, len) cache key is a staleness check, never an input.
+- **Suites:** `chroma-types` 68/68 (9 new), `chroma-project` 56/56, `RapidRAW`
+  252 passing + 1 **pre-existing** failure
+  (`track_resolution_opaque_top_wins_across_two_video_tracks`, confirmed failing
+  identically on the clean baseline before any of this landed),
+  `@chroma/editor` 1543/1543 (80 files). `cargo fmt`/`clippy` clean on the new
+  code; `tsc --noEmit` clean on `packages/editor` and unchanged at 64
+  pre-existing errors repo-wide.

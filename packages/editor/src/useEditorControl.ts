@@ -185,6 +185,8 @@ const SPEED_RANGE_HELP =
   `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
+// D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
+import { warmGradeLuts } from './gradeLuts';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 // D-238 — auto-captioning from the D-189 transcript. The grouping algorithm
 // and the seconds->frames conversion are the ONE new thing this feature
@@ -2487,6 +2489,39 @@ export function useEditorControl(): void {
       // GUI Export dialog + queue can call the EXACT same compile+run logic
       // rather than a parallel implementation) --------------------------
       editor_export: (a) => runEditorExport(a ?? {}),
+
+      // D-256 — which clips on this timeline carry a real Colorist grade, and
+      // what baking it had to drop. The AI half of a feature whose human half
+      // is simply "the preview and the export show the grade": there is no
+      // toggle to mirror, so what an agent needs instead is the ability to SEE
+      // the state a human can see by looking at the picture. Runs the same
+      // bake the export path runs (memoised, so asking is cheap and asking
+      // twice is free).
+      editor_get_grade_status: async () => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        let baked: { luts: Record<string, string>; warnings: string[] };
+        try {
+          baked = await warmGradeLuts(tl);
+        } catch (e) {
+          return { error: `could not bake a clip's Colorist grade: ${String((e as Error)?.message ?? e)}` };
+        }
+        const clips: Array<{ clipId: string; name: string; graded: boolean }> = [];
+        for (const track of tl.tracks) {
+          for (const clip of track.clips) {
+            if (clip.text || clip.adjustment || track.kind === 'audio') continue;
+            clips.push({ clipId: clip.id, name: clip.name, graded: !!baked.luts[clip.id] });
+          }
+        }
+        return {
+          clips,
+          gradedCount: clips.filter((c) => c.graded).length,
+          // Each entry names a clip whose exported pixels will legitimately
+          // differ from the Colorist tab (a mask, a Colorist crop — see
+          // `editor_get_capabilities`' `colorist_grade.what_it_carries`).
+          warnings: baked.warnings,
+        };
+      },
 
       // ---- interchange export (D-196) — timelineInterchange.ts compiles the
       // Timeline to a real FCPXML 1.7 document; chroma_write_text_file just

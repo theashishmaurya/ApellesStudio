@@ -84,8 +84,25 @@ splitting / deleting the adjustment clip like any other clip.
 
 ## 3. The effect it carries — and why it is not the Colorist grade
 
+> **Update, 2026-09-09 (D-256).** Everything in this section is still true as
+> written — but it is no longer true that the Colorist grade is unreachable
+> from the Edit tab *at all*. D-256 found the option this analysis had not
+> considered: don't move the computation, move the **result**. Running an
+> identity RGB lattice through the very shader named below, once, yields a 3D
+> LUT that the CPU compositor can interpolate and ffmpeg's `lut3d` can apply —
+> so a *clip's own* saved grade now renders in the Edit preview and the export
+> identically. See `docs/notes/colorist-edit-grade-bridge.md`.
+>
+> That does **not** make an adjustment clip redundant, and the two are not
+> alternatives. A baked lattice is a fixed function of one clip's saved
+> `grade.json`. An adjustment clip is a live, keyframeable operator on whatever
+> is composited *beneath it* — the set of layers under it changes with the edit
+> and its `mix` animates, neither of which a pre-baked table can express. The
+> split is what each is for.
+
 The obvious effect for an adjustment clip is Chroma's real grading stack. **It
-is structurally unavailable.** Verified in the code before deciding:
+is structurally unavailable** *as a computation to call* (see the update
+above). Verified in the code before deciding:
 
 - the Colorist's `adjustments` blob is *deliberately untyped in Rust*
   (D-020/D-025: "the canonical shape is owned by the frontend `useEditorStore`

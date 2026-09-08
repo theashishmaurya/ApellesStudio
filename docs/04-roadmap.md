@@ -583,6 +583,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    "known limit" note on two clips sharing one source path). **Was
    sequenced before item 6's Phase D and item 7's Inspector** — both now
    build against the real model instead of the old split.
+
+   **Follow-up closed 2026-09-09 — D-256: the grade now actually renders on
+   the Edit timeline.** D-070 unified *identity*; what stayed split was the
+   render path, and the practical consequence was that a grade set in
+   Colorist had literally no effect on that same clip in Edit — the Edit
+   compositor never read a grade at all (`chroma/edit.rs` had zero
+   references to one). Fixed by **baking, not by a second renderer**: an
+   identity 33³ RGB lattice is run through the Colorist's own wgpu pipeline
+   once per grade change (`chroma::grade_lut`, memoised on the grade file's
+   mtime), and that lattice is applied by the Edit preview's CPU compositor
+   and handed to ffmpeg's `lut3d` for the export. Verified in pixels on both
+   sides, and — the point of the design — verified *equal* across them: the
+   same clip renders `[227,227,227]` in the preview and `[227,227,227]`
+   through ffmpeg. Carries the **global** grade only; masks / Colorist crop
+   / relight are inherently outside a 3D LUT and are dropped with a warning
+   surfaced in the Export dialog and via `editor_get_grade_status`, never
+   silently. Carrying those too needs a real shared compositor
+   (`chroma-grade` + `chroma-compositor`) and stays future work.
 9. ~~**Real sidecar ownership — detect a stale external AI process instead of
    deferring to it forever**~~ — **done, D-101 (2026-09-04, overnight
    autonomous pass).** All four real design questions this item raised are
