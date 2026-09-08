@@ -2015,12 +2015,19 @@ overnight pass as everything above.
 **Deferred, not abandoned — build LAST, right before launch, per the owner's own
 sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
 a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in
-remote-GPU cloud fallback for the existing local AI sidecars, and the
-marketing website. Research-and-scope pass done, nothing built —
-`docs/notes/pre-launch-plan.md` has the full findings, provider comparisons,
-and — the one thing to resolve before starting the backend or the cloud
-sidecar — the real, currently-UNRESOLVED licensing question `D-002` already
-flagged ("Blocks a closed SaaS... Decide before: first public push").
+remote-GPU cloud fallback for the existing local AI sidecars, the marketing
+website, **a Windows port**, and **general-purpose Python-sidecar hosting**.
+Research-and-scope pass done, nothing built — `docs/notes/pre-launch-plan.md`
+has the full findings, provider comparisons, and — the one thing to resolve
+before starting the backend or the cloud sidecar — the real, currently-
+UNRESOLVED licensing question `D-002` already flagged ("Blocks a closed
+SaaS... Decide before: first public push"). The Windows-port survey found the
+gap narrower than it looked: the Rust compositor (`wgpu`) and most AI
+features (ONNX Runtime, and the relight sidecar's own `mps`/`cuda`/`cpu`
+device selection) are already cross-platform — the real gaps are just the
+`ai-media/` sidecar's MLX-only transcript/video-understanding and the
+mlx-audiocraft SFX path, both with named Windows-native replacements in the
+note.
 
 ---
 

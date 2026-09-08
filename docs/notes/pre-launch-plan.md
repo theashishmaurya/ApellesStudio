@@ -1,14 +1,16 @@
-# Pre-launch plan — monetization, cloud AI, and distribution
+# Pre-launch plan — monetization, cloud AI, Windows, and distribution
 
-Owner, 2026-09-08: four things to plan now and build **last, right before launch** —
+Owner, 2026-09-08: six things to plan now and build **last, right before launch** —
 explicitly not now, not blocking the Edit-tab build-out in progress. This note is the
-research-and-scope pass; none of the four below has been built. Revisit this note
+research-and-scope pass; none of the six below has been built. Revisit this note
 before starting any of them, rather than re-deriving the landscape from scratch.
 
-**Sequencing, per the owner's own framing:** all four are launch-adjacent
+**Sequencing, per the owner's own framing:** all six are launch-adjacent
 infrastructure, not editor features. They belong in the roadmap's "Then" tier
 (`docs/04-roadmap.md`), after the Resolve-parity backlog (roadmap 27) is
-substantially done, not interleaved with it.
+substantially done, not interleaved with it. Items 5 (Windows port) and 6
+(container hosting) were added in a second research pass the same day, after
+items 0–4 below.
 
 ---
 
@@ -214,3 +216,106 @@ No hosting/framework research done yet — a static site (whatever this team's
 own comfort level already is: Astro, plain HTML, a hosted site builder) is
 almost certainly sufficient; this doesn't need the same rigor as the backend
 items above.
+
+---
+
+## 5. Windows port
+
+**The real picture is better than "a lot of things are Mac-only" suggested —
+most of the app is already cross-platform, and the actual gaps are narrow and
+named.** A direct codebase survey (not assumed) found:
+
+**Already cross-platform, no work needed beyond building/testing:**
+- The core Rust compositor uses `wgpu` (Vulkan/DX12/Metal auto-selected per
+  OS) — no macOS-specific code in the render path at all.
+- Most AI features — masking (SAM), denoise, CLIP tagging, inpainting, depth —
+  run via ONNX Runtime (the `ort` crate). `lib.rs` already resolves the right
+  dylib name per OS (`onnxruntime.dll` / `.so` / `.dylib`) — this was already
+  built for Windows, just needs a real Windows build to confirm it works.
+- The relight sidecar (`ai/server.py`, a PyTorch model, MoGe-2, plus subject
+  detection/tracking) already does real device selection —
+  `DEVICE = "mps" if available else ("cuda" if available else "cpu")` —
+  genuinely portable already, needs Windows+CUDA testing, not new code.
+- `tauri.conf.json` already has an NSIS installer config and a Windows `.ico`
+  — baseline Windows packaging already exists (this fork's own upstream,
+  RapidRAW, appears to have shipped Windows builds before: version 1.6.2).
+
+**The real gaps, each with a named, concrete fix:**
+- **`ai-media/` sidecar is hard Apple-Silicon-only** (`mlx-vlm` for "what
+  changed on screen," `mlx-whisper` for word-level transcript) — no fallback
+  exists today. Windows replacements, both real and commonly used for exactly
+  this shape of feature (a Python-embedded desktop app targeting NVIDIA+
+  Windows): **`faster-whisper`** (CTranslate2-based, CUDA-tuned) for
+  transcript; the same Qwen3-VL-4B-Instruct model family run via
+  `transformers` + BitsAndBytes 4-bit quantization (or GGUF via llama.cpp/
+  Ollama) for video understanding — no different model needed, just a
+  different runtime stack for the Windows build, and a 4B model at 4-bit fits
+  a consumer GPU.
+- **`mlx-audiocraft` (SFX generation) is hard Apple-Silicon-only** — already
+  covered in item 3 above (Metal has no container GPU passthrough; needs a
+  separate CUDA-native AudioCraft build for non-Mac).
+- **ffmpeg is assumed on PATH** (macOS dev workflow: `brew install ffmpeg`) —
+  Windows should bundle a static ffmpeg build in the installer's resource
+  directory instead of requiring a separate user install, the exact same
+  pattern `onnxruntime.dll`'s resource-path resolution already uses. FFmpeg
+  ships no official Windows installer; BtbN's and gyan.dev's static builds are
+  the standard, commonly-used sources.
+- **Two cosmetic macOS/Linux-only pieces** with no Windows branch today: a
+  window corner-rounding effect and a pinch-zoom-disable gesture fix
+  (`window_customizer.rs`). Windows 11's own DWM already rounds top-level
+  window corners at the OS level by default — the macOS code has nothing to
+  port here, it's already moot on Windows. The pinch-zoom gesture fix has no
+  confirmed WebView2 equivalent found in this research pass; genuinely
+  low-priority, worth a real check on Windows hardware rather than either
+  assuming it's needed or skipping it blind.
+- **The WKWebView debug-screenshot tool** (`objc2`/D-210, already
+  `#[cfg(target_os = "macos")]`-gated) has no Windows equivalent — but it's
+  internal dev tooling, never shipped (CLAUDE.md's own standing rule), so this
+  is a "nice for whoever debugs on Windows later," not a launch blocker.
+  WebView2 has its own DevTools Protocol screenshot capability if this is ever
+  worth building.
+
+**Build practice — confirmed, not assumed:**
+- **WebView2 distribution is a non-issue.** It's preinstalled on Windows 11
+  and ships via Windows Update on 10; Tauri's own installer downloads it
+  automatically if missing (`webviewInstallMode: embedBootstrapper`, +1.8MB,
+  is the right default — not the full-bundle +180MB option).
+- **Do not cross-compile Windows targets from this Mac.** Tauri's own docs
+  call cross-compiling from macOS "a last resort," specifically unreliable
+  with the NSIS bundler. The standard, real practice is a GitHub Actions
+  matrix build with a native `windows-latest` runner for the Windows leg
+  (`tauri-action`'s own examples show this exact pattern) — plan on that, not
+  a local cross-build, when Windows CI is set up.
+
+---
+
+## 6. Where to host a Python sidecar service (general-purpose, non-GPU)
+
+Complements item 3's GPU-pod comparison (RunPod/Modal/Replicate/Baseten) with
+the lighter-weight case: a CPU-only or bursty-traffic Python (FastAPI) service
+— e.g. a `faster-whisper` transcript endpoint, a fal.ai async-job webhook
+receiver, or the item-2 accounts/credits backend itself.
+
+**Real 2026 options:**
+- **Railway** — cheapest at hobby/low-traffic volume, widely regarded as the
+  best solo-developer experience (git push to deploy, minimal config). **The
+  recommended starting point** for the CPU-only pieces here — fastest path to
+  something actually running.
+- **Render** — most predictable pricing (flat, no surprise bills; moved to
+  flat workspace fees as of April 2026), but its free tier's cold start is
+  slow (30–60s); the $7/mo starter tier avoids that if it matters.
+- **Fly.io** — usage-based, true scale-to-zero, cheap in principle, but
+  developers commonly report bills 2–4x expected once bandwidth/IPv4/volume
+  fees stack up. **Its GPU offering was deprecated August 1, 2026** — CPU-only
+  now; if GPU was ever a plan for this provider specifically, it no longer is.
+- **Google Cloud Run** — usage-based, real scale-to-zero, AND (as of 2026) GA
+  NVIDIA GPU support with sub-5-second cold start including driver load. The
+  one platform here that covers both the CPU services in this section AND the
+  GPU workloads in item 3 — worth standardizing on if GPU is a near-term
+  likelihood, so there's one hosting stack instead of two.
+
+**Recommendation:** start on Railway for whatever CPU-only piece is needed
+first (fastest, cheapest, least ops overhead). If a GPU need becomes real
+and near-term, standardize on Google Cloud Run instead so both the CPU
+service(s) and the GPU sidecar work (item 3) live on one platform rather than
+two separately-managed ones.

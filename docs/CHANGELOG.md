@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Pre-launch plan extended: Windows port + general Python-
+  sidecar hosting** (`docs/notes/pre-launch-plan.md`, items 5-6). Direct
+  codebase survey found the Windows gap narrower than expected: the Rust
+  compositor (`wgpu`) and most AI features (ONNX Runtime, plus the relight
+  sidecar's own already-real `mps`/`cuda`/`cpu` device selection) are already
+  cross-platform, with Windows dylib paths and NSIS packaging already wired.
+  The real gaps are the `ai-media/` sidecar (`mlx-vlm`/`mlx-whisper`, hard
+  Apple-Silicon-only) and `mlx-audiocraft` — named Windows replacements for
+  both (`faster-whisper`; the same Qwen3-VL model via `transformers`+
+  BitsAndBytes or GGUF). Confirmed: don't cross-compile Windows from this Mac
+  (Tauri's own docs call it unreliable) — GitHub Actions `windows-latest` is
+  the standard practice. For general (non-GPU) Python-service hosting:
+  Railway to start, Google Cloud Run if GPU becomes a near-term need (its GPU
+  support went GA in 2026 with sub-5s cold start) — also found Fly.io's own
+  GPU offering was deprecated August 1, 2026.
 - **2026-09-08** — **Pre-launch plan researched: fal.ai media-gen, a lightweight
   accounts/credits/payment backend, an opt-in cloud GPU fallback for the
   existing local AI sidecars, and the website** (`docs/notes/pre-launch-plan.md`).
