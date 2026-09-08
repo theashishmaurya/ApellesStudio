@@ -21,9 +21,23 @@
 //!   counterpart of `resolve_video_position`, resolving every genuine
 //!   `TrackKind::Audio` clip overlapping a position for `chroma::audio`'s
 //!   mixer.
-//! What it does NOT do: no `wgpu`, no colour grade — the editor preview is
-//!   deliberately independent of the Colorist's `AppState`/GPU render path.
-//!   Still no transcript cut / OTIO export.
+//! What it does NOT do: no `wgpu` — this module never opens a GPU device, and
+//!   the editor preview stays independent of the Colorist's `AppState`/GPU
+//!   render path. Still no transcript cut / OTIO export.
+//!   **"No colour grade" is no longer true, as of D-256**, and the way it stopped
+//!   being true is the point: a clip's saved Colorist grade
+//!   (`<project>/grades/<clip.id>.grade.json`) reaches this compositor as a
+//!   baked `chroma_types::Lut3d` — 3×33³ numbers that `chroma::grade_lut`
+//!   produced by running an identity lattice through the Colorist's own wgpu
+//!   pipeline once, memoised on the grade file's (mtime, len). So the grade
+//!   maths still has exactly one implementation (the shader), this module still
+//!   holds no GPU handle, and the ffmpeg exporter applies the very same lattice
+//!   via `lut3d`. `composite_video_frame` applies it to each clip's decoded
+//!   pixels before geometry; the single-layer fast path declines itself when a
+//!   clip is graded, the same way D-132 made it decline a real transform. A 3D
+//!   LUT is per-pixel, so the **spatial** half of a grade (masks/local layers,
+//!   the Colorist crop, relight) is not carried — stripped at bake time with a
+//!   logged warning, never silently.
 //!   **Transitions ARE here as of D-226** (roadmap item 27,
 //!   `docs/notes/transitions.md`): a `chroma_timeline::Transition` bridges a cut
 //!   without the two clips ever overlapping, so
@@ -80,7 +94,7 @@ use chroma_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, Visible
 
 use super::state;
 use super::video::VideoInfo;
-use super::{caption_render, decode_pipe, project, text};
+use super::{caption_render, decode_pipe, grade_lut, project, text};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache — moved out of this file into `chroma-media` (D-146,
@@ -808,6 +822,17 @@ pub(crate) fn timeline_frame_image(
             let info = probe_cached(&PathBuf::from(&clip.source_path))?;
             resolve_clip_transform(clip, *source_frame).is_identity()
                 && (info.resolution.width, info.resolution.height) == comp
+                // D-256 — a clip carrying a real Colorist grade never takes the
+                // plain-decode fast path either, for exactly D-132/B-053's
+                // reason: the grade is a real transform of this clip's pixels
+                // that a raw decode cannot express, so a fast path that ignored
+                // it would show the ungraded picture while the document says the
+                // clip is graded. An UNGRADED clip (no grade file, or one that
+                // bakes to the identity — the overwhelmingly common case) still
+                // takes it, byte-identically to before, because
+                // `lut_for_clip` returns `None` for both and answers from its
+                // memo after the first frame.
+                && grade_lut::lut_for_clip(&clip.id).is_none()
         }
         _ => false,
     };
@@ -1497,8 +1522,26 @@ fn composite_video_frame(
         let img =
             decode_pipe::playback_frame_scaled(pipe_slot(track, *role), &path, &info, frame, scale)
                 .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
+        // D-256 — **the Colorist grade, applied here.** On this clip's own
+        // decoded pixels, before any geometry, because that is what a grade is:
+        // a property of the clip's picture, not of where it sits in the
+        // composition. The ffmpeg exporter puts its `lut3d` node at exactly the
+        // same point in the per-clip chain (before `crop`/`scale`), which is
+        // what makes the two engines agree on order as well as on maths — and
+        // since a 3D LUT is per-pixel it commutes with `crop` exactly anyway,
+        // so only the resample is order-sensitive and both engines resample
+        // after.
+        //
+        // Costs a memo lookup + one `metadata()` stat per layer per frame for
+        // an ungraded clip, and nothing else — `lut_for_clip` returns `None`
+        // before touching the GPU when there is no grade file, which is every
+        // clip in every project that has never been near the Colorist tab.
+        let mut rgba = img.to_rgba8();
+        if let Some(lut) = grade_lut::lut_for_clip(&clip.id) {
+            grade_lut::apply_to_rgba(&mut rgba, &lut);
+        }
         decoded.push(Step::Paint {
-            img: std::sync::Arc::new(img.to_rgba8()),
+            img: std::sync::Arc::new(rgba),
             transform: with_transition_alpha(
                 resolve_clip_transform(clip, *source_frame),
                 layer.alpha,
@@ -4173,5 +4216,489 @@ mod preview_adjustment_tests {
                 &format!("{name}: an identity adjustment must change nothing"),
             );
         }
+    }
+}
+
+/// **D-256 — the Colorist grade really reaches the Edit preview.**
+///
+/// The claim this decision makes is a pixel claim, so it is checked as one: the
+/// same clip, at the same timeline position, through the real `timeline_frame`
+/// command body, with and without a grade file on disk — and the frames must
+/// differ in the direction the grade names.
+///
+/// Four things are asserted together, because any one alone would pass on a
+/// broken build:
+///
+/// 1. **A real grade changes the picture** (and brightens it, for `+EV`) — the
+///    headline. Without it, "the code calls a function" is all that is known.
+/// 2. **An identity grade changes NOTHING, byte for byte** — the control, and
+///    the reason assertion 1 is a measurement of the *grade* rather than of the
+///    mere presence of a grade file flipping the compositor onto a different
+///    code path (which it does: see `single_plain`). A build that applied any
+///    lattice, identity included, fails here.
+/// 3. **The same document renders the same bytes twice** — CLAUDE.md's
+///    render-path invariant, on the new path.
+/// 4. **A grade belongs to its own clip id only** — the D-070 link, checked
+///    from the negative side.
+///
+/// Flat grey, not a test pattern, for `preview_transition_tests`' reason: "how
+/// bright is this pixel now" is unanswerable against moving content.
+#[cfg(test)]
+mod grade_bridge_tests {
+    use chroma_timeline::{Clip, Timeline, Track, TrackKind};
+
+    use super::super::PROJECT_STATE_LOCK;
+    use super::grade_lut;
+
+    const W: u32 = 320;
+    const H: u32 = 180;
+    /// The grey the fixture clip is filled with (ffmpeg's `color=gray`).
+    const GREY: i32 = 128;
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    fn have_gpu() -> bool {
+        crate::render_core::init_gpu_context().is_ok()
+    }
+
+    /// 96 frames (4s at 24fps) of flat grey.
+    fn grey_clip(path: &std::path::Path) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=gray:size={W}x{H}:rate=24:duration=4"),
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(ok.success(), "generating the grey fixture clip failed");
+    }
+
+    /// A one-clip project whose composition size is the clip's own, so an
+    /// ungraded render takes the single-layer plain-decode fast path — which is
+    /// exactly the path D-256 had to teach to decline itself.
+    fn open_one_clip_project(dir: &std::path::Path, clip_path: &std::path::Path) {
+        let project_dir = dir.join("Graded.chroma");
+        std::fs::create_dir_all(chroma_project::grade_dir(&project_dir)).expect("mkdir project");
+
+        let settings = super::project::ProjectSettings {
+            width: Some(W),
+            height: Some(H),
+            ..Default::default()
+        };
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1.1".into(),
+            name: "Graded".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings,
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "Graded".into(),
+                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips: vec![Clip {
+                        id: "A".into(),
+                        name: "A".into(),
+                        source_path: clip_path.to_string_lossy().into_owned(),
+                        source_fps: Some(24.0),
+                        source_start: 0,
+                        duration: 96,
+                        source_len: 96,
+                        start_frame: 0,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                markers: Vec::new(),
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "Graded".into(),
+        }));
+    }
+
+    /// Write clip `A`'s grade document, exactly as `chroma_save_grade` would.
+    fn write_grade(project_dir: &std::path::Path, adjustments: serde_json::Value) {
+        let path = grade_lut::grade_file_for(project_dir, "A");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&serde_json::json!({
+                "schema": "chroma.grade/1",
+                "shot": { "source": "A" },
+                "adjustments": adjustments,
+                "notes": "",
+            }))
+            .expect("serialise grade"),
+        )
+        .expect("write grade");
+        // The memo is keyed on (mtime, len); two writes inside one filesystem
+        // timestamp tick could otherwise look unchanged. Explicit, not hopeful.
+        grade_lut::clear_cache();
+    }
+
+    fn project_dir() -> std::path::PathBuf {
+        super::state::current_project().expect("project open").path
+    }
+
+    /// The preview frame at `pos`, through the real command body, as
+    /// `(centre pixel, hash of the whole JPEG)`.
+    ///
+    /// A hash rather than the `Vec<u8>` itself purely so a failure prints
+    /// something a human can read — asserting on two 3 kB byte vectors dumps
+    /// both of them into the panic message and buries the actual finding.
+    /// Equality of the hash is equality of the bytes for this purpose: the
+    /// frames being compared are renders of the same fixture, not adversarial
+    /// input.
+    fn preview(pos: u64) -> ([u8; 3], u64) {
+        super::decode_pipe::reset();
+        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        (centre_pixel(&jpeg), hash(&jpeg))
+    }
+
+    fn hash(bytes: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut h);
+        h.finish()
+    }
+
+    fn centre_pixel(jpeg: &[u8]) -> [u8; 3] {
+        let img = image::load_from_memory(jpeg)
+            .expect("decode jpeg")
+            .to_rgba8();
+        assert_eq!(img.dimensions(), (W, H));
+        let p = img.get_pixel(W / 2, H / 2);
+        [p[0], p[1], p[2]]
+    }
+
+    #[test]
+    fn a_colorist_grade_visibly_changes_the_edit_preview() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        if !have_gpu() {
+            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        grade_lut::clear_cache();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clip = tmp.path().join("grey.mp4");
+        grey_clip(&clip);
+        open_one_clip_project(tmp.path(), &clip);
+        let dir = project_dir();
+
+        // --- 1. the baseline: no grade file at all -------------------------
+        let (plain_px, plain) = preview(12);
+        assert!(
+            (plain_px[0] as i32 - GREY).abs() <= 8,
+            "fixture is not flat grey: {plain_px:?}"
+        );
+
+        // --- 2. the CONTROL: an identity grade must change nothing ---------
+        // Byte-identical, not merely close: an identity grade resolves to NO
+        // lattice at all (`Lut3d::is_identity`), so the frame must take the very
+        // same code path and produce the very same bytes as having no grade file
+        // at all. This is what makes assertion 3 a measurement of the grade
+        // rather than of the compositor path having changed underneath it.
+        write_grade(&dir, serde_json::json!({}));
+        let (identity_px, identity) = preview(12);
+        assert_eq!(
+            (identity_px, identity),
+            (plain_px, plain),
+            "an identity grade changed the preview — the bridge applied a lattice \
+             it should have recognised as a no-op"
+        );
+
+        // --- 3. the HEADLINE: a real grade changes the picture --------------
+        write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
+        let (graded_px, graded) = preview(12);
+        assert_ne!(
+            graded, plain,
+            "a +1.5 EV Colorist grade produced a byte-identical Edit preview \
+             (centre pixel {graded_px:?} vs {plain_px:?}) — the grade is not \
+             reaching the compositor at all"
+        );
+        assert!(
+            graded_px[0] as i32 > plain_px[0] as i32 + 30,
+            "+1.5 EV should visibly brighten the clip: ungraded {plain_px:?} vs graded {graded_px:?}"
+        );
+
+        // --- 4. determinism (CLAUDE.md's render-path invariant) -------------
+        assert_eq!(
+            preview(12),
+            (graded_px, graded),
+            "the same grade + the same frame rendered two different pictures"
+        );
+
+        // --- 5. and it is reversible: reset the grade, get the baseline back -
+        write_grade(&dir, serde_json::json!({}));
+        assert_eq!(
+            preview(12),
+            (plain_px, plain),
+            "resetting the grade did not restore the ungraded picture"
+        );
+
+        super::state::set_project(None);
+    }
+
+    /// The same claim from the negative side: a grade written under a different
+    /// clip id must not leak onto this clip. The grade↔clip link is the clip id
+    /// (D-070), and nothing weaker.
+    #[test]
+    fn a_grade_belongs_to_its_own_clip_id_only() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        if !have_gpu() {
+            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        grade_lut::clear_cache();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clip = tmp.path().join("grey.mp4");
+        grey_clip(&clip);
+        open_one_clip_project(tmp.path(), &clip);
+        let dir = project_dir();
+
+        let plain = preview(12);
+        std::fs::write(
+            grade_lut::grade_file_for(&dir, "SOME-OTHER-CLIP"),
+            serde_json::to_string(&serde_json::json!({
+                "schema": "chroma.grade/1",
+                "adjustments": { "exposure": 1.5 },
+            }))
+            .expect("serialise"),
+        )
+        .expect("write grade");
+        grade_lut::clear_cache();
+
+        assert_eq!(
+            preview(12),
+            plain,
+            "another clip's grade leaked onto this one"
+        );
+        super::state::set_project(None);
+    }
+
+    /// **The export half of the same lattice.** `bake_luts_for_clips` must hand
+    /// the ffmpeg compiler a real, readable `.cube` for a graded clip — and
+    /// nothing at all for an ungraded one, so an un-graded timeline compiles to
+    /// exactly the argv it always did.
+    ///
+    /// Asserts on the FILE, not just the map: the `.cube` is the actual
+    /// interface with ffmpeg, and a path in a map pointing at a file that does
+    /// not parse is the failure this is here to catch.
+    #[test]
+    fn the_export_bake_writes_a_real_cube_only_for_graded_clips() {
+        if !have_gpu() {
+            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        grade_lut::clear_cache();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clip = tmp.path().join("grey.mp4");
+        // No decode happens on this path, so the file need not be real video.
+        std::fs::write(&clip, b"not a video").expect("write placeholder");
+        open_one_clip_project(tmp.path(), &clip);
+        let dir = project_dir();
+        let ids = vec!["A".to_string()];
+
+        // 1. ungraded — no entry, no file, no GPU device created
+        let none = grade_lut::bake_luts_for_clips(&ids).expect("bake (ungraded)");
+        assert!(none.luts.is_empty(), "an ungraded clip must produce no LUT");
+        assert!(none.warnings.is_empty());
+
+        // 2. an identity grade — a grade FILE exists, but it bakes to a no-op,
+        //    so still no `lut3d` node in the export (mirrors the preview).
+        write_grade(&dir, serde_json::json!({}));
+        let identity = grade_lut::bake_luts_for_clips(&ids).expect("bake (identity)");
+        assert!(
+            identity.luts.is_empty(),
+            "an identity grade must not put a lut3d node in the export"
+        );
+
+        // 3. a real grade — a real .cube, parseable by the app's own reader
+        //    (which is what ffmpeg's `lut3d` will also have to do).
+        write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
+        let graded = grade_lut::bake_luts_for_clips(&ids).expect("bake (graded)");
+        let path = graded
+            .luts
+            .get("A")
+            .expect("a graded clip must produce a LUT path");
+        assert!(
+            std::path::Path::new(path).is_file(),
+            "the .cube path does not exist: {path}"
+        );
+        let parsed = crate::lut_processing::parse_lut_file(path).expect("ffmpeg-readable .cube");
+        assert_eq!(parsed.size, chroma_types::lut3d::DEFAULT_SIZE);
+
+        // 4. content-addressed: baking again is byte-identical and reuses the
+        //    same filename, which is what lets a QUEUED export's frozen argv
+        //    keep pointing at the lattice it was compiled against.
+        let again = grade_lut::bake_luts_for_clips(&ids).expect("bake (repeat)");
+        assert_eq!(
+            again.luts.get("A"),
+            Some(path),
+            "the .cube name is not stable"
+        );
+
+        super::state::set_project(None);
+    }
+
+    /// **The parity claim itself, measured.**
+    ///
+    /// Everything else in this file checks one engine. This checks that the two
+    /// engines agree: the SAME clip, the SAME grade, rendered once by the CPU
+    /// preview compositor and once by ffmpeg's own `lut3d` reading the `.cube`
+    /// the export path writes — and the two pictures must be the same colour.
+    ///
+    /// That is the entire justification for D-256's baked-lattice design over
+    /// the alternatives (a second CPU implementation of the grading stack, or
+    /// preview-only with a documented export gap), so it is checked rather than
+    /// asserted. `chroma_types::adjustment`'s header called this parity
+    /// structurally unreachable; this test is what says otherwise, in pixels.
+    ///
+    /// The tolerance absorbs one h264/yuv420p round trip plus the RGB↔YUV
+    /// conversions `lut3d` forces — the same ±14 the sibling TypeScript ffmpeg
+    /// suites use, and far tighter than the ~100-code move being measured.
+    #[test]
+    fn the_preview_and_the_ffmpeg_export_render_the_same_graded_colour() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        if !have_gpu() {
+            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            return;
+        }
+        const TOL: i32 = 14;
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        grade_lut::clear_cache();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clip = tmp.path().join("grey.mp4");
+        grey_clip(&clip);
+        open_one_clip_project(tmp.path(), &clip);
+        let dir = project_dir();
+        write_grade(&dir, serde_json::json!({ "exposure": 1.5 }));
+
+        // Engine 1 — the live Edit preview (CPU trilinear over the lattice).
+        let (preview_px, _) = preview(12);
+
+        // Engine 2 — ffmpeg's own `lut3d`, over the `.cube` the export writes.
+        let baked = grade_lut::bake_luts_for_clips(&["A".to_string()]).expect("bake");
+        let cube = baked
+            .luts
+            .get("A")
+            .expect("a graded clip must produce a LUT");
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-i"])
+            .arg(&clip)
+            .arg("-vf")
+            // Same interpolation the preview's sampler uses — NOT lut3d's
+            // tetrahedral default. See `timelineExport.ts`'s own node.
+            .arg(format!(
+                "lut3d=file={}:interp=trilinear",
+                cube.replace(':', "\\:")
+            ))
+            .args(["-vframes", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            out.status.success() && out.stdout.len() >= 3,
+            "ffmpeg lut3d produced no pixel: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let export_px = [out.stdout[0], out.stdout[1], out.stdout[2]];
+
+        for (i, ch) in ["R", "G", "B"].iter().enumerate() {
+            assert!(
+                (preview_px[i] as i32 - export_px[i] as i32).abs() <= TOL,
+                "{ch}: the Edit preview and the ffmpeg export disagree on the graded \
+                 colour — preview {preview_px:?}, export {export_px:?}"
+            );
+        }
+        // And the thing they agree on is actually a grade, not the source: a
+        // build that applied nothing anywhere would satisfy the loop above.
+        assert!(
+            preview_px[0] as i32 > GREY + 30,
+            "both engines agree, but on the UNGRADED colour: {preview_px:?}"
+        );
+
+        super::state::set_project(None);
+    }
+
+    /// A masked grade still exports — as its primary only — but says so. The
+    /// warning is the whole point: this is the one case where the exported file
+    /// legitimately will not match the Colorist tab.
+    #[test]
+    fn a_masked_grade_exports_its_primary_and_warns() {
+        if !have_gpu() {
+            eprintln!("skip: no GPU adapter, cannot bake a grade");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        grade_lut::clear_cache();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let clip = tmp.path().join("grey.mp4");
+        std::fs::write(&clip, b"not a video").expect("write placeholder");
+        open_one_clip_project(tmp.path(), &clip);
+        let dir = project_dir();
+
+        write_grade(
+            &dir,
+            serde_json::json!({
+                "exposure": 1.5,
+                "masks": [{ "visible": true, "adjustments": { "exposure": -2.0 } }],
+            }),
+        );
+        let baked = grade_lut::bake_luts_for_clips(&["A".to_string()]).expect("bake");
+        assert!(
+            baked.luts.contains_key("A"),
+            "the primary must still export"
+        );
+        assert!(
+            baked
+                .warnings
+                .iter()
+                .any(|w| w.contains("clip A") && w.contains("masked/local")),
+            "a dropped mask must be reported to the user, not only logged: {:?}",
+            baked.warnings
+        );
+
+        super::state::set_project(None);
     }
 }

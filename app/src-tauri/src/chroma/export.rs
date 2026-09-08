@@ -732,100 +732,32 @@ pub fn export_video(
 
 /// Run a `size³` identity RGB lattice through the **primary grade only** (no
 /// masks, no LUT-on-LUT, no geometry) and write it as a `.cube` 3D LUT.
+///
+/// **D-256 factored the body out of here.** The strip / lattice / GPU render /
+/// read-back is now `chroma::grade_lut`'s `BakeSession::bake`, and the `.cube`
+/// serialisation is `chroma_types::Lut3d::to_cube_text` — because the Edit
+/// tab's grade bridge needs exactly this bake, and a second copy of it would
+/// have been two lattice generators to keep in step (this repo's own
+/// "shared logic → extract, never copy-paste" rule). `chain_source_lut: false`
+/// preserves this caller's own no-LUT-on-LUT behaviour unchanged; see that
+/// method's doc for why the Edit bridge deliberately wants the opposite.
+///
+/// One behaviour change, deliberate: a grade carrying a Colorist **crop** now
+/// says so in `warnings` instead of dropping it silently. The crop was already
+/// being stripped here before D-256 (a crop applied to a 33×1089 lattice image
+/// is meaningless) — it just never told anyone.
 pub fn bake_primary_lut(
     js_adjustments: &Value,
     size: u32,
     out_path: &Path,
 ) -> Result<LutBakeResult, String> {
-    let size = size.clamp(2, 64);
-    let n = size as usize;
-
-    // strip everything a 3D LUT can't carry
-    let mut primary = js_adjustments.clone();
-    let mut warnings = Vec::new();
-    if let Some(masks) = primary.get("masks").and_then(|m| m.as_array()) {
-        let visible = masks
-            .iter()
-            .filter(|m| m.get("visible").and_then(|v| v.as_bool()).unwrap_or(true))
-            .count();
-        if visible > 0 {
-            warnings.push(format!(
-                "grade has {visible} masked/local layer(s); a 3D LUT is global-only — baked the primary grade, dropped the masks"
-            ));
-        }
-    }
-    if primary.get("lutPath").and_then(|p| p.as_str()).is_some() {
-        warnings.push("grade already applies a .cube LUT; it was NOT chained into this bake (no LUT-on-LUT)".into());
-    }
-    for k in ["masks", "lutPath", "crop"] {
-        if let Some(obj) = primary.as_object_mut() {
-            obj.remove(k);
-        }
-    }
-    if let Some(obj) = primary.as_object_mut() {
-        obj.insert("rotation".into(), json!(0.0));
-        obj.insert("flipHorizontal".into(), json!(false));
-        obj.insert("flipVertical".into(), json!(false));
-        obj.insert("orientationSteps".into(), json!(0));
-    }
-
-    // identity lattice: x = r, y = b*size + g, value = channel / (size-1)
-    let w = size;
-    let hgt = size * size;
-    let denom = (size - 1).max(1) as f32;
-    let mut grid = RgbImage::new(w, hgt);
-    for b in 0..n {
-        for g in 0..n {
-            for r in 0..n {
-                let px = image::Rgb([
-                    (r as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
-                    (g as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
-                    (b as f32 / denom * 255.0).round().clamp(0.0, 255.0) as u8,
-                ]);
-                grid.put_pixel(r as u32, (b * n + g) as u32, px);
-            }
-        }
-    }
-
-    let ctx = render_core::init_gpu_context()?;
-    let caches = OwnedRenderCaches::default();
-    let adjustments = get_all_adjustments_from_json(&primary, false, None);
-    let graded = render_core::render(
-        &ctx,
-        caches.as_ref(),
-        &DynamicImage::ImageRgb8(grid),
-        0,
-        RenderRequest { adjustments, mask_bitmaps: &[], lut: None, roi: None },
-        "bake_lut",
-        false,
-        None,
-    )?;
-    let graded = graded.to_rgb8();
-
-    let mut out = String::with_capacity(n * n * n * 24 + 128);
-    out.push_str("TITLE \"Chroma primary grade\"\n");
-    out.push_str(&format!("LUT_3D_SIZE {size}\n"));
-    out.push_str("DOMAIN_MIN 0.0 0.0 0.0\n");
-    out.push_str("DOMAIN_MAX 1.0 1.0 1.0\n");
-    for b in 0..n {
-        for g in 0..n {
-            for r in 0..n {
-                let p = graded.get_pixel(r as u32, (b * n + g) as u32);
-                out.push_str(&format!(
-                    "{:.6} {:.6} {:.6}\n",
-                    p[0] as f32 / 255.0,
-                    p[1] as f32 / 255.0,
-                    p[2] as f32 / 255.0
-                ));
-            }
-        }
-    }
-
-    std::fs::write(out_path, out).map_err(|e| format!("write {}: {e}", out_path.display()))?;
+    let baked = super::grade_lut::bake_lut3d(js_adjustments, size, false)?;
+    let text = baked.lut.to_cube_text("Chroma primary grade");
+    std::fs::write(out_path, text).map_err(|e| format!("write {}: {e}", out_path.display()))?;
     Ok(LutBakeResult {
         out_path: out_path.to_string_lossy().to_string(),
-        size,
-        warnings,
+        size: baked.lut.size(),
+        warnings: baked.warnings,
     })
 }
 

@@ -41,6 +41,8 @@ import { captionAnimationOf, isPerWordAnim, isSingleWordAnim } from './captionAn
 // D-236 — a clip's own persisted speed ramp, which clashes with a transition
 // for exactly the reason an export-time flat override does.
 import { hasSpeedRamp } from './speedRamp';
+// D-256 — each graded clip's baked Colorist grade, as a `.cube` for `lut3d`.
+import { gradeLutPathsSnapshot, gradeLutsAreWarm, warmGradeLuts } from './gradeLuts';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  copied by hand, same reason `useEditorControl.ts`'s own copy already
@@ -251,6 +253,25 @@ export function compileEditorExportArgs(a: {
     };
   }
 
+  // D-256 — the baked Colorist grade for every graded clip, read synchronously
+  // from the module cache `runEditorExport` warms, exactly as `fontFiles` and
+  // `captionMetrics` are read from theirs.
+  //
+  // **A cold cache is a refusal, not a fallback**, for `captionClipsMissing
+  // Metrics`' reason in its sharpest form: compiling anyway would produce a
+  // file with no grade in it while the Edit preview plainly showed one — a
+  // silent preview-vs-export divergence, which is the exact defect D-256 exists
+  // to close. `gradeLutsAreWarm` is checked rather than "is the map non-empty"
+  // because an empty map is also the correct, common answer for a timeline
+  // whose clips are simply ungraded.
+  if (!gradeLutsAreWarm(tl)) {
+    return {
+      error:
+        'the Colorist grade cache is cold, so this export could silently drop a clip’s grade. This is warmed automatically by runEditorExport; if you are calling compileEditorExportArgs directly (the export queue does), await warmGradeLuts(timeline) first.',
+    };
+  }
+  const gradeLutPaths = gradeLutPathsSnapshot();
+
   const opts: TimelineExportOptions = {
     fps,
     width,
@@ -261,6 +282,7 @@ export function compileEditorExportArgs(a: {
     hasAudioOverrides: resolveHasAudioOverrides(tl),
     fontFiles,
     captionMetrics,
+    gradeLutPaths,
   };
   const args = buildExportFfmpegArgs(tl, outPath, opts);
   return { ok: true, outPath, args };
@@ -343,6 +365,17 @@ export async function runEditorExport(
     const h = Math.round(Number(a?.height));
     const fps = a?.fps !== undefined ? Number(a.fps) : tl ? timelineFps(tl) : NaN;
     await warmAnimatedCaptionMetrics(w, h, fps);
+    // D-256 — and each graded clip's baked Colorist grade, for the identical
+    // reason. Throws on a bake failure rather than exporting an ungraded file;
+    // caught here so an MCP `editor_export` gets a real message instead of an
+    // unhandled rejection.
+    if (tl) {
+      try {
+        await warmGradeLuts(tl);
+      } catch (e) {
+        return { error: `could not bake a clip's Colorist grade for export: ${String((e as Error)?.message ?? e)}` };
+      }
+    }
   }
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;

@@ -93,7 +93,7 @@ async fn open_manifest(
 
     let mut manifest = super::edit::ensure_timeline(&project_dir, manifest, true)?;
 
-    let grade_dir = project_dir.join("grades");
+    let grade_dir = chroma_project::grade_dir(&project_dir);
     let migration = migrate_shot_grades_to_clips(&manifest, &grade_dir);
     for w in &migration.warnings {
         log::warn!("[chroma::project] grade migration: {w}");
@@ -246,7 +246,7 @@ pub async fn chroma_project_resync_clips(
     let dir = require_open_project()?;
     let manifest = load_manifest(&dir)?;
     let mut manifest = super::edit::ensure_timeline(&dir, manifest, false)?;
-    let grade_dir = dir.join("grades");
+    let grade_dir = chroma_project::grade_dir(&dir);
 
     let clips = active_timeline_video_clips(&manifest);
     let clip_paths: std::collections::HashSet<PathBuf> = clips

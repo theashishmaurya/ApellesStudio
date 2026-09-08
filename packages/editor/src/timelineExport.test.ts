@@ -603,3 +603,78 @@ describe('buildExportFfmpegArgs — audio (D-197)', () => {
     expect(filterComplex).toContain('exp(');
   });
 });
+
+describe('buildExportFfmpegArgs — the Colorist grade (D-256)', () => {
+  const filtergraph = (args: string[]): string => {
+    const i = args.indexOf('-filter_complex');
+    expect(i, 'no -filter_complex in the argv').toBeGreaterThan(-1);
+    return args[i + 1];
+  };
+
+  // The byte-identity claim in `gradeLutPaths`' own doc. An ungraded timeline
+  // must compile to exactly what it compiled to before D-256 — same property
+  // D-230's untouched adjustment clip has.
+  it('emits nothing at all for a clip with no grade', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const before = buildExportFfmpegArgs(tl, '/tmp/o.mp4', opts30);
+    const after = buildExportFfmpegArgs(tl, '/tmp/o.mp4', { ...opts30, gradeLutPaths: {} });
+    expect(after).toEqual(before);
+    expect(filtergraph(after)).not.toContain('lut3d');
+  });
+
+  it('emits one lut3d node for a graded clip, and only for that clip', () => {
+    const tl = timeline([track('video', [clip('c1'), clip('c2', { start_frame: 240 })])]);
+    const fg = filtergraph(
+      buildExportFfmpegArgs(tl, '/tmp/o.mp4', {
+        ...opts30,
+        gradeLutPaths: { c1: '/p/My.chroma/cache/grade-luts/c1-abc.cube' },
+      }),
+    );
+    expect(fg.match(/lut3d/g)).toHaveLength(1);
+    expect(fg).toContain('/p/My.chroma/cache/grade-luts/c1-abc.cube');
+  });
+
+  // NOT ffmpeg's default (tetrahedral). The preview's own sampler is
+  // trilinear, and matching it is the whole parity claim — see the node's own
+  // comment in `timelineExport.ts`.
+  it('pins interp=trilinear rather than taking ffmpeg-s tetrahedral default', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const fg = filtergraph(
+      buildExportFfmpegArgs(tl, '/tmp/o.mp4', { ...opts30, gradeLutPaths: { c1: '/g.cube' } }),
+    );
+    expect(fg).toContain('interp=trilinear');
+    expect(fg).not.toContain('tetrahedral');
+  });
+
+  // A `.chroma` project can easily live under a path with a colon or a space,
+  // and a bare colon is how a filtergraph separates filter OPTIONS.
+  it('escapes a path containing filtergraph metacharacters', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const fg = filtergraph(
+      buildExportFfmpegArgs(tl, '/tmp/o.mp4', {
+        ...opts30,
+        gradeLutPaths: { c1: '/Vol/My Grade: v2/c1.cube' },
+      }),
+    );
+    expect(fg).toContain("file='/Vol/My Grade\\: v2/c1.cube'");
+  });
+
+  // The grade belongs to the clip's OWN pixels, so it has to be applied before
+  // the geometry that places the clip in the composition — which is exactly
+  // where the live preview applies it (`chroma::edit`'s `composite_video_frame`
+  // grades the decoded frame, then crops/resizes).
+  it('applies the grade before crop and scale, matching the preview-s order', () => {
+    const tl = timeline([
+      track('video', [clip('c1', { crop_left: 0.1, scale: 0.5 } as Partial<Clip>)]),
+    ]);
+    const fg = filtergraph(
+      buildExportFfmpegArgs(tl, '/tmp/o.mp4', { ...opts30, gradeLutPaths: { c1: '/g.cube' } }),
+    );
+    const lut = fg.indexOf('lut3d');
+    const crop = fg.indexOf('crop=');
+    const scale = fg.indexOf('scale=');
+    expect(lut).toBeGreaterThan(-1);
+    expect(crop).toBeGreaterThan(lut);
+    expect(scale).toBeGreaterThan(lut);
+  });
+});

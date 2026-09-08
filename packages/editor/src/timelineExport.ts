@@ -957,6 +957,30 @@ export interface TimelineExportOptions {
    *  fallback exists only so a missing measurement cannot throw mid-compile.
    *  Unused by a static (D-229) caption, which ffmpeg measures itself. */
   captionMetrics?: CaptionMetrics;
+  /** D-256 — the absolute path of the baked `.cube` carrying each clip's
+   *  **Colorist grade**, keyed by `Clip.id`.
+   *
+   *  The same "the compiler stays pure, the caller supplies what only it can
+   *  know" split as `fontFiles` / `captionMetrics` above, and for a stronger
+   *  version of their reason: the grade is applied by RapidRAW's wgpu shader
+   *  and there is no CPU implementation of it anywhere — so the *only* form
+   *  this compiler could ever consume it in is a baked lattice. The backend
+   *  (`chroma::grade_lut`) runs an identity lattice through that shader once
+   *  and writes it as a `.cube`; `gradeLuts.ts` warms the paths; this compiler
+   *  emits one `lut3d` node per entry.
+   *
+   *  **An entry exists ONLY for a clip with a real, non-identity grade.** A
+   *  clip that was never graded, or whose grade was reset, has none — so an
+   *  ungraded timeline compiles to byte-identically the argv it compiled to
+   *  before D-256, exactly as the live preview stays byte-identical for it.
+   *  This is the same "an untouched effect emits nothing" property D-230's
+   *  adjustment clip already has in both engines.
+   *
+   *  A clip that HAS a grade but whose bake failed never reaches here as a
+   *  silent omission: `compileEditorExportArgs` refuses the whole export, for
+   *  the reason a missing font refuses it — shipping a file that quietly
+   *  disagrees with the preview is the defect this repo keeps closing. */
+  gradeLutPaths?: Record<string, string>;
 }
 
 // --------------------------------------------------------------------------- //
@@ -1341,6 +1365,35 @@ function buildClipFilterChain(
   const clipT0 = placement.clipStartSec;
   const tVar = clipT0 !== 0 ? `(t-${clipT0})` : 't';
   const bigTVar = clipT0 !== 0 ? `(T-${clipT0})` : 'T';
+
+  // D-256 — **this clip's Colorist grade**, as the baked lattice `lut3d`
+  // applies. See `TimelineExportOptions.gradeLutPaths`.
+  //
+  // **Here in the chain, and here specifically.** The live preview applies the
+  // very same lattice to this clip's decoded pixels *before* any geometry
+  // (`chroma::edit`'s `composite_video_frame`), so this node goes before
+  // `crop`/`scale` too. A 3D LUT is per-pixel, so it commutes with `crop`
+  // exactly and only the resample is order-sensitive — both engines now
+  // resample after, which is what makes the two agree on order as well as on
+  // maths. It sits after `setpts` only because `setpts` touches timestamps and
+  // not a single pixel.
+  //
+  // **`interp=trilinear`, explicitly, and NOT ffmpeg's default.** vf_lut3d
+  // defaults to `tetrahedral`, which is the more accurate interpolation — and
+  // therefore the wrong one here, because the preview's own sampler
+  // (`chroma_types::Lut3d::sample_trilinear`) is trilinear. Matching the other
+  // engine beats being marginally better than it; that is the same call D-230
+  // made when it quantised the preview's intermediate to 8 bits purely because
+  // ffmpeg's two filters do.
+  //
+  // A clip with no entry emits nothing at all — see the option's own doc.
+  const gradeLut = opts.gradeLutPaths?.[clip.id];
+  if (gradeLut) {
+    steps.push(
+      `${src}lut3d=file=${quoteFiltergraphValue(gradeLut)}:interp=trilinear[g${label}]`,
+    );
+    src = `[g${label}]`;
+  }
 
   // B-098 — the four crop insets are now keyframe-or-static, mirroring
   // `scaleExpr`'s own shape exactly: identity (no filter step) when the clip

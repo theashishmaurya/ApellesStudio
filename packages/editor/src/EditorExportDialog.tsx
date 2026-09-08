@@ -30,7 +30,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Download, Loader2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, Loader2, XCircle } from 'lucide-react';
 import {
   Button,
   Dialog,
@@ -57,6 +57,9 @@ import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, type Clip, type Timeline } from './timeline';
 import { useExportQueueStore, type ExportJobStatus } from './exportQueueStore';
+// D-256 — bake each graded clip's Colorist grade into a .cube before the
+// queue freezes this job's ffmpeg argv against those file paths.
+import { warmGradeLuts } from './gradeLuts';
 
 /** Mirrors `chroma::edit::ClipGeometry` — see `useClipGeometry.ts`'s own
  *  identical DTO. Not reused directly: that hook is keyed to a SELECTED
@@ -139,6 +142,15 @@ export function EditorExportDialog() {
   const [fitOverrides, setFitOverrides] = useState<Record<string, 'fit' | 'stretch'>>({});
   const [freezeOverrides, setFreezeOverrides] = useState<Record<string, boolean>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
+  /** D-256 — what baking the clips' Colorist grades had to drop (a masked
+   *  layer, a Colorist crop). Shown in the dialog rather than only logged:
+   *  these are precisely the cases where the exported file will NOT match what
+   *  the Colorist tab shows, and the user is the only one who can decide
+   *  whether that matters. */
+  const [gradeNotes, setGradeNotes] = useState<string[]>([]);
+  /** The bake runs before the job is queued, so the button has a real busy
+   *  state rather than appearing to do nothing on a cold cache. */
+  const [queueing, setQueueing] = useState(false);
 
   const clips = useMemo(() => videoClips(timeline), [timeline]);
 
@@ -196,7 +208,7 @@ export function EditorExportDialog() {
     }
   };
 
-  const handleAddToQueue = () => {
+  const handleAddToQueue = async () => {
     setValidationError(null);
     if (!outPath) {
       setValidationError('Choose an output file first.');
@@ -219,6 +231,29 @@ export function EditorExportDialog() {
       const n = parseFloat(raw);
       if (Number.isFinite(n) && n > 0 && n !== 1) speed[clipId] = n;
     }
+
+    // D-256 — bake each graded clip's Colorist grade BEFORE compiling. The
+    // queue freezes a job's ffmpeg argv at enqueue time (D-198), and that argv
+    // names the `.cube` files by path, so they have to exist and be current
+    // now. `compileEditorExportArgs` refuses outright on a cold cache rather
+    // than compiling an export that would silently drop a grade — this await is
+    // what keeps the GUI path on the right side of that refusal.
+    if (!timeline) {
+      setValidationError('No timeline — open a project first.');
+      return;
+    }
+    setQueueing(true);
+    try {
+      const baked = await warmGradeLuts(timeline);
+      setGradeNotes(baked.warnings);
+    } catch (e) {
+      setQueueing(false);
+      setValidationError(
+        `Could not bake a clip's Colorist grade for export: ${String((e as Error)?.message ?? e)}`,
+      );
+      return;
+    }
+    setQueueing(false);
 
     const result = useExportQueueStore.getState().enqueue(stemOf(outPath), {
       outPath,
@@ -353,6 +388,20 @@ export function EditorExportDialog() {
               </span>
             )}
 
+            {/* D-256 — the parts of a Colorist grade a 3D LUT cannot carry.
+                Shown, not swallowed: this is the one case where the exported
+                file legitimately differs from what the Colorist tab shows, and
+                only the user can decide whether that is acceptable. */}
+            {gradeNotes.length > 0 && (
+              <div className="flex flex-col gap-1">
+                {gradeNotes.map((note) => (
+                  <span key={note} className="flex items-start gap-1.5 text-xs text-text-secondary">
+                    <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {note}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* the queue */}
             {jobs.length > 0 && (
               <>
@@ -392,7 +441,9 @@ export function EditorExportDialog() {
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Close
             </Button>
-            <Button onClick={handleAddToQueue}>Add to queue</Button>
+            <Button onClick={() => void handleAddToQueue()} disabled={queueing}>
+              {queueing ? 'Baking grades…' : 'Add to queue'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

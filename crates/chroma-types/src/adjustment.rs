@@ -35,6 +35,23 @@
 //! `contrast`, `saturation`, `temperature`, `tint`) so nothing here reads as a
 //! second, parallel effects language. See D-230 for the options weighed.
 //!
+//! **D-256 found the third option this reasoning had missed, and it does not
+//! change anything above.** The paragraph before last is still exactly true —
+//! there is still no CPU implementation of the grading stack, this compositor
+//! still holds no GPU handle, and ffmpeg still cannot run a wgpu shader — but
+//! the grade can nonetheless cross into both engines as **data**: a lattice
+//! baked by running an identity RGB cube through that very shader, once
+//! ([`crate::lut3d`]). That is how a *clip's own* Colorist grade now reaches
+//! the Edit preview and the ffmpeg export identically.
+//!
+//! It is not a replacement for this module, because the two answer different
+//! questions. A baked lattice is a fixed function of one clip's saved
+//! `grade.json`; an **adjustment clip** is a live, keyframeable operator on
+//! whatever happens to be composited *beneath it*, which no pre-baked table
+//! can express — the layers under it change with the edit, and its `mix`
+//! animates. Both exist, and the split is what each one is *for*, not an
+//! accident of what was reachable. See D-256.
+//!
 //! ## The operator — two stages, and why exactly two
 //!
 //! Conceptually the correction is three steps, in this order:

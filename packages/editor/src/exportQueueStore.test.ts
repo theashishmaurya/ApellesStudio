@@ -10,6 +10,11 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeM
 const { useExportQueueStore } = await import('./exportQueueStore');
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { useMediaPoolStore } = await import('@chroma/bridge');
+// D-256 — `enqueue` compiles the argv, and the compiler refuses outright
+// unless each clip's Colorist grade has been baked (see `gradeLuts.ts`'s
+// cold-cache rule). The GUI's own Export dialog awaits this before enqueueing;
+// these tests do the same rather than being exempted from the contract.
+const { resetGradeLutCache, warmGradeLuts } = await import('./gradeLuts');
 import type { Timeline } from './timeline';
 
 function timelineWithOneClip(): Timeline {
@@ -40,11 +45,23 @@ function deferred<T>() {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-beforeEach(() => {
+beforeEach(async () => {
   invokeMock.mockReset();
   useExportQueueStore.setState({ jobs: [] });
   useEditorTimelineStore.setState({ timeline: timelineWithOneClip() } as any);
   useMediaPoolStore.setState({ items: [] } as any);
+  // D-256 — warm the grade cache the way the real Export dialog does. The
+  // fixture clip has no grade, so the backend's honest answer is an empty map;
+  // what matters is that a warm HAPPENED, since "never asked" and "asked, and
+  // nothing is graded" are deliberately different states.
+  resetGradeLutCache();
+  invokeMock.mockResolvedValueOnce({ luts: {}, warnings: [] });
+  await warmGradeLuts(timelineWithOneClip());
+  // ...and forget that call, so the tests below can keep counting `invoke` as
+  // "how many times ffmpeg was actually run". `mockClear` (not `mockReset`)
+  // deliberately: it drops the recorded calls without touching the mock's
+  // queued implementations.
+  invokeMock.mockClear();
 });
 
 afterEach(() => {

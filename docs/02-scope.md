@@ -150,8 +150,15 @@ shipped (D-048/D-077/D-078/D-079, see the GUI section above and
 ### Explicitly OUT of the Edit tab's current scope
 Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
 - 🔨 **GPU compositing** — the compositor is CPU today; `chroma-compositor` is unbuilt
-- 🔨 **grade-in-preview** — Edit and Colorist are still two separate passes over two
-  separate models (roadmap item 8 is where they'd meet)
+- ✅ **grade-in-preview** — landed as **D-256** (2026-09-09): a clip's saved Colorist grade
+  now renders in the Edit preview *and* in the Edit export, carried across as a 33³ 3D LUT
+  baked by running an identity lattice through the Colorist's own wgpu pipeline. The two
+  engines are still two passes, but they no longer disagree — measured equal, pixel for
+  pixel. **The global grade only**: masks / local layers / the Colorist crop / relight are
+  inherently outside a 3D LUT and are dropped with a warning (Export dialog +
+  `editor_get_grade_status`), never silently. Carrying those needs `chroma-grade` +
+  `chroma-compositor`, which is what remains of roadmap item 8.
+  `docs/notes/colorist-edit-grade-bridge.md`
 - 🔨 **OTIO export** — FCPXML shipped instead (D-196); XMEML/Premiere also unbuilt
 - ✅ **subtitles / captions** — landed on `main` as **D-229** while this reconciliation pass
   was in flight: their own `TrackKind`, with multi-line layout owned by us so it renders

@@ -174,6 +174,17 @@ const NORMALISED_GEOMETRY_MINOR: u64 = 1;
 /// affects a project that is already accepting a one-time shift.
 const NOMINAL_COMPOSITION: (u32, u32) = (1920, 1080);
 
+/// `<project_dir>/grades` — the directory holding every clip's
+/// `<clip.id>.grade.json` (D-025's document, at D-070's clip-keyed name).
+///
+/// Extracted by D-256, which added a fourth consumer (`chroma::grade_lut`,
+/// resolving an Edit clip to its Colorist grade) to the three that had each
+/// spelled `join("grades")` out inline: [`new_project_in`] here, and
+/// `chroma::project`'s open / resync paths. One literal, one place.
+pub fn grade_dir(project_dir: &Path) -> PathBuf {
+    project_dir.join("grades")
+}
+
 /// Split a `chroma.project/<major>[.<minor>]` tag into its numbers. An untagged
 /// or unparseable file is `(None, 0)` — treated as v1.0, which is what every
 /// pre-schema file effectively is.
@@ -1535,7 +1546,7 @@ pub fn new_project_in(
             project_dir.display()
         ));
     }
-    std::fs::create_dir_all(project_dir.join("grades"))
+    std::fs::create_dir_all(grade_dir(&project_dir))
         .map_err(|e| format!("create {}: {e}", project_dir.display()))?;
 
     let mut manifest = ProjectManifest::fresh(&clean);

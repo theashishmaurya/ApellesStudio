@@ -140,6 +140,19 @@ pub mod adjustment;
 
 pub use adjustment::{AdjustmentLayer, AdjustmentOps};
 
+/// A baked 3D colour lookup table + its trilinear sampler and `.cube` writer
+/// (D-256). Here for [`adjustment`]'s reason taken one step further: this is
+/// what lets the **Colorist's real grade** — a wgpu shader with no CPU
+/// implementation, which [`adjustment`]'s own header called structurally
+/// unreachable from the Edit tab — cross into the Edit compositor and the
+/// ffmpeg exporter as *data* rather than as code. The shader stays the only
+/// implementation of the grade; this crate only interpolates what it baked.
+/// See its own doc for why trilinear and not tetrahedral, and what a 3D LUT
+/// inherently cannot carry.
+pub mod lut3d;
+
+pub use lut3d::Lut3d;
+
 #[cfg(test)]
 mod tests {
     use super::*;
