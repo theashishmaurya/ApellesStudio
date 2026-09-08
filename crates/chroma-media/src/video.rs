@@ -319,21 +319,32 @@ fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
 
 /// Decode exactly one frame to an 8-bit RGB `DynamicImage`.
 ///
-/// `-ss` before `-i` = fast (keyframe-accurate) seek; adequate for load + proxied
-/// scrub. Frame-exact seeking (slow: decode from the prior keyframe) is a later
-/// concern for the playback path.
+/// Built through [`crate::conform`] (D-228), so the frame this returns for index
+/// `N` is the same picture [`crate::decode_pipe`] and the export produce for
+/// `N` — the one on screen at `N / source_fps` seconds. This function is the
+/// pipe's own fallback when a pipe errors, so "the same picture" is a hard
+/// requirement, not a nicety: before B-104 a fallback could silently swap in a
+/// different frame mid-playback.
+///
+/// A `FramePos::Secs` query is resolved to the grid slot *holding* that instant
+/// rather than being seeked to directly, for the same reason — there is one
+/// grid, and every answer comes off it.
 pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<DynamicImage> {
-    let secs = match at {
-        FramePos::Secs(s) => s,
-        FramePos::Index(f) => info.frame_to_secs(f),
-    }
-    .max(0.0);
+    let frame = match at {
+        FramePos::Secs(s) => crate::conform::frame_at_secs(info, s),
+        FramePos::Index(f) => f,
+    };
+    let grid = crate::conform::from_frame(info, frame);
 
-    let mut child = Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error", "-ss"])
-        .arg(format!("{secs:.6}"))
+    let mut cmd = Command::new(ffmpeg_bin());
+    cmd.args(["-hide_banner", "-loglevel", "error"])
+        .args(&grid.input_args)
         .arg("-i")
-        .arg(path)
+        .arg(path);
+    if let Some(vf) = grid.vf(None::<&str>) {
+        cmd.args(["-vf", &vf]);
+    }
+    let mut child = cmd
         .args([
             "-frames:v", "1",
             "-f", "image2pipe",
@@ -359,7 +370,10 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
         if let Some(mut s) = child.stderr.take() {
             let _ = s.read_to_string(&mut err);
         }
-        return Err(anyhow!("ffmpeg decode failed (t={secs:.3}s): {err}"));
+        return Err(anyhow!(
+            "ffmpeg decode failed (frame {frame}, t={:.3}s): {err}",
+            info.frame_to_secs(frame)
+        ));
     }
 
     image::load_from_memory(&buf).context("decoding the PNG frame ffmpeg produced")
@@ -371,6 +385,13 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
 /// One `ffmpeg` invocation with a `select` filter + `scale`, piping concatenated
 /// MJPEG which we split on the JPEG SOI marker. This is O(one linear read of the
 /// file) instead of O(count) seeks+decodes.
+///
+/// D-228: the source is conformed to its nominal grid *first*, which is what
+/// makes the `select` below legitimate — it filters on the filter graph's own
+/// frame counter `n`, and only after the conform does `n` mean "source frame
+/// `n`" as the rest of Chroma defines it. On a VFR source it previously meant
+/// "the `n`th coded frame", so every returned index labelled a picture that
+/// lives somewhere else (B-104).
 pub fn extract_thumb_strip(
     path: &Path,
     info: &VideoInfo,
@@ -378,13 +399,17 @@ pub fn extract_thumb_strip(
 ) -> Result<Vec<(u64, String)>> {
     let total = info.frame_count.max(1);
     let step = (total / count as u64).max(1);
+    let grid = crate::conform::whole_source(info);
+    let pick = format!("select=not(mod(n\\,{step}))");
+    let vf = grid.vf([pick.as_str(), "scale=-2:150"]).unwrap_or_default();
 
     let out = Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .args(["-hide_banner", "-loglevel", "error"])
+        .args(&grid.input_args)
+        .arg("-i")
         .arg(path)
         .args([
-            "-vf",
-            &format!("select=not(mod(n\\,{step})),scale=-2:150"),
+            "-vf", &vf,
             "-fps_mode", "passthrough",
             "-q:v", "5",
             "-f", "image2pipe",

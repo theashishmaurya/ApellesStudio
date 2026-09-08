@@ -170,48 +170,53 @@ fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
 
 /// Spawn the decoder for `[from, to]` as raw rgb24.
 ///
-/// D-030: `-ss` back ~1 s + `-copyts` + `select` **by absolute timestamp `t`**
-/// (not decoded-frame index `n`). D-022 walked from frame 0 with
-/// `select=between(n,…)` because an input `-ss` shifts `n` and would desync the
-/// per-frame tracked mattes (D-019, keyed by absolute source frame). Selecting by
-/// `t` with `-copyts` keeps timestamps source-absolute — frame `from` is still
-/// frame `from` — while skipping the O(from) decode from 0. `from = 0` ⇒ `-ss 0`
-/// and `select` passes everything, i.e. unchanged.
+/// D-030: `-copyts` + `select` **by absolute timestamp `t`** (not decoded-frame
+/// index `n`). D-022 walked from frame 0 with `select=between(n,…)` because an
+/// input `-ss` shifts `n` and would desync the per-frame tracked mattes (D-019,
+/// keyed by absolute source frame). Selecting by `t` with `-copyts` keeps
+/// timestamps source-absolute — frame `from` is still frame `from` — while
+/// skipping the O(from) decode from 0.
+///
+/// D-228/B-104: the command is now built by [`chroma_media::conform`], which
+/// supplies exactly that `-copyts` + `select=gte(t,…)` pair and puts the
+/// nominal-grid conform in front of it. The `select` only ever fixed the
+/// **first** frame of the range; every frame after it came out of `-fps_mode
+/// passthrough`, i.e. one output per *coded* frame, so on a VFR source the
+/// export drifted away from the frame index the grade, the tracked mattes and
+/// the keyframes are all keyed on — and drifted further the longer the range
+/// ran. The conform makes each of the `count` frames a real grid slot, so the
+/// export and the live preview decode the same picture for the same index by
+/// construction. The hand-rolled 1 s pre-roll went with it: `-noaccurate_seek`
+/// lands on the keyframe at-or-before the target, which is what the conform
+/// needs and is not a guess at the file's longest hold.
 fn spawn_decoder(path: &Path, info: &VideoInfo, from: u64, to: u64) -> Result<Child, String> {
     let count = to.saturating_sub(from) + 1;
-    let fps = info.fps();
-    // seek a second before `from` (throwaway pre-roll), select from a half-frame
-    // before `from` — the margin points backward so a frame-rate rounding wobble
-    // can't skip the first frame forward.
-    let (seek_secs, select_t) = if fps > 0.0 {
-        (((from as f64) / fps - 1.0).max(0.0), ((from as f64 - 0.5) / fps).max(0.0))
-    } else {
-        (0.0, 0.0)
-    };
-    Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error", "-ss"])
-        .arg(format!("{seek_secs:.6}"))
-        .args(["-copyts", "-i"])
+    let grid = chroma_media::conform::from_frame(info, from);
+
+    let mut cmd = Command::new(ffmpeg_bin());
+    cmd.args(["-hide_banner", "-loglevel", "error"])
+        .args(&grid.input_args)
+        .arg("-i")
         .arg(path)
-        .args([
-            "-an",
-            "-sn",
-            "-vf",
-            &format!("select=gte(t\\,{select_t:.6})"),
-            "-frames:v",
-            &count.to_string(),
-            "-fps_mode",
-            "passthrough",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("spawn ffmpeg decoder: {e}"))
+        .args(["-an", "-sn"]);
+    if let Some(vf) = grid.vf(None::<&str>) {
+        cmd.args(["-vf", &vf]);
+    }
+    cmd.args([
+        "-frames:v",
+        &count.to_string(),
+        "-fps_mode",
+        "passthrough",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
+    ])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .map_err(|e| format!("spawn ffmpeg decoder: {e}"))
 }
 
 /// Spawn the encoder: raw rgb24 in on stdin, codec-encoded file out.
