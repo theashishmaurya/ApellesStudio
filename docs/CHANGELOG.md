@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **B-111 fixed: the audio session now re-resolves the
+  timeline as it plays, so a clip starting later than the playhead when Play
+  was pressed actually sounds (D-245).** The old `chroma_audio_play` built its
+  source list once, from the frame Play was pressed at, and froze it for the
+  whole session — on the owner's own reel, only the continuous music bed at
+  frame 0 could ever be heard; the other ten scattered SFX clips never fired
+  no matter how long playback ran. `run_session` now calls the same
+  resolution again periodically (~every 100ms) as a `Send` closure the app
+  hands it — `chroma-media` still never sees a timeline — and opens whichever
+  sources are newly active, matched by a new opaque `AudioSourceSpec::clip_id`
+  so nothing already playing is ever reopened. A second bug the fix had to
+  get right along the way: a source opened mid-session must have its
+  fade/duck/level curve evaluated from ITS OWN start time, not the whole
+  session's clock, or a late-joining clip's fade could read as already over
+  the instant it starts. Verified against real decoded PCM in memory (no live
+  device) — deliberately not confirmed on real speakers yet, stated as the
+  one open gap rather than skipped quietly.
+
 - **2026-09-08** — **EQ response graph: Resolve's ±24 dB / log-frequency plot,
   draggable per-band points, scroll-wheel Q (D-237, roadmap item 27's last open
   half of D-224).** `EqResponseGraph.tsx` above the Inspector's four EQ band

@@ -51,13 +51,16 @@
 //!   limiter, persisted mute/solo UI (Phase D, blocked on this landing),
 //!   audio during scrubbing while paused (silence is correct there — only
 //!   real Play produces sound), export audio (`export.rs` stays video-only,
-//!   untouched by this module), re-resolving which sources are active mid-
-//!   session (a source's set is fixed at the moment `chroma_audio_play` is
-//!   called, same as D-050's "no re-seek mid-play" — a clip beginning after a
-//!   gap mid-session won't be picked up until the next Play/seek; each source
-//!   does stop dead at its own clip's out-point rather than running on into the
-//!   rest of the file, B-048), or long-session drift correction between the
-//!   audio and video clocks (see below).
+//!   untouched by this module), or long-session drift correction between the
+//!   audio and video clocks (see below). **Which sources are active IS
+//!   re-resolved mid-session** (B-111, reversing D-050's original "no
+//!   re-seek mid-play" scope note) — `run_session` calls the same
+//!   [`ResolveAt`] closure `start` was given roughly every
+//!   `RESOLVE_INTERVAL_SECS`, so a clip beginning after a gap, or after
+//!   whatever was playing at `start_frame` has ended, is picked up when its
+//!   own moment comes rather than only at the next Play/seek. Each source
+//!   still stops dead at its own clip's out-point rather than running on
+//!   into the rest of the file (B-048) — that part is unchanged.
 //!
 //! ## Waveform extraction (D-051 — the mature timeline UI pass)
 //!
@@ -853,10 +856,12 @@ pub fn set_volume(volume: f32) {
 
 /// One audio source for a play session (D-057) — a source path, the source
 /// second to start decoding from, and the linear gain to scale its
-/// contribution by in the final mix (see [`mix_sources`]). Built once per
-/// [`start`] call from whatever's active at `start_frame`; not
-/// re-resolved mid-session (matches D-050's own "no re-seek mid-play" design
-/// — see the module doc).
+/// contribution by in the final mix (see [`mix_sources`]). One `Vec` of these
+/// is built for [`start`]'s own `start_frame`; [`run_session`] then asks for
+/// more, periodically, at later frames, as playback continues past it
+/// (B-111) — see [`ResolveAt`] and [`AudioSourceSpec::clip_id`], which is
+/// what makes a fresh `Vec` at a later frame distinguishable from "the same
+/// sources, still playing."
 ///
 /// `pub` with `pub` fields since D-146: the caller that *builds* these is
 /// `app/src-tauri`'s `chroma_audio_play`, because building one means resolving
@@ -964,6 +969,15 @@ pub struct AudioSourceSpec {
     /// one output second, which is why the distinction never had to be drawn
     /// before.
     pub speed: Vec<AudioSpeedSegment>,
+    /// B-111 — an opaque identity for the timeline clip this source came
+    /// from, used ONLY to recognise "already open" across a periodic
+    /// re-resolve during [`run_session`] — never interpreted, never looked up
+    /// against a timeline (this crate still cannot see one, D-039/D-146). Two
+    /// specs with the same id are the same clip queried at two different
+    /// moments; this crate does not care what the string means beyond that.
+    /// The caller sets it to `chroma_timeline::Clip::id`, in `app/src-tauri`'s
+    /// `chroma::audio::resolve_sources_at`.
+    pub clip_id: String,
 }
 
 /// One constant-speed run of a clip's ramp, as the live mixer takes it
@@ -1683,6 +1697,12 @@ pub fn begin_play(seq: u64) -> Option<PlaySession> {
     })
 }
 
+/// A source's stable identity, so [`run_session`]'s periodic re-resolve
+/// (B-111) can tell "this clip is still playing" from "this clip just
+/// started" across two calls to `resolve_at` at different frames — never
+/// interpreted, see [`AudioSourceSpec::clip_id`].
+pub type ResolveAt = Box<dyn Fn(u64) -> Result<Vec<AudioSourceSpec>, String> + Send>;
+
 /// Start a fresh session that decodes and mixes `sources` together (see
 /// [`run_session`]) under the transport claimed by [`begin_play`].
 ///
@@ -1691,6 +1711,12 @@ pub fn begin_play(seq: u64) -> Option<PlaySession> {
 /// means nothing plays, matching the video preview's own "blank frame past the
 /// end" behaviour. The session stays claimed (silence *is* the correct output
 /// for that playhead), which is exactly what the pre-D-146 code did.
+/// **Known gap, stated rather than discovered (B-111's own follow-up):** this
+/// early return means a session that starts with LITERALLY NOTHING active
+/// anywhere never spawns the thread that could later pick something up —
+/// unlike the non-empty case below, which now does. Narrower than B-111's
+/// reported symptom (a session that starts already playing something), and
+/// left for a follow-up rather than folded in here.
 ///
 /// Which sources these are is the caller's business, not this crate's:
 /// `app/src-tauri`'s `chroma_audio_play` resolves the video track's own
@@ -1700,7 +1726,22 @@ pub fn begin_play(seq: u64) -> Option<PlaySession> {
 /// Phase C, every clip on a genuine `TrackKind::Audio` track overlapping the
 /// position, each at its own track's gain. D-129's A/V-link suppression lives
 /// there too, for the same reason: it is a question about clips.
-pub fn start(session: PlaySession, sources: Vec<AudioSourceSpec>) -> Result<(), String> {
+///
+/// **`start_frame`/`fps`/`resolve_at` are B-111's fix.** `sources` is only
+/// ever this session's OPENING set — frozen the instant it was built, exactly
+/// as before. `resolve_at` is the SAME resolution, as a `Send` closure
+/// [`run_session`] calls again on its own thread as playback advances past
+/// `start_frame`, so a clip starting later is opened when its own moment
+/// comes rather than never. This crate still never sees a timeline: it drives
+/// the closure with a frame number and reads back the same
+/// [`AudioSourceSpec`] shape `sources` already is.
+pub fn start(
+    session: PlaySession,
+    sources: Vec<AudioSourceSpec>,
+    start_frame: u64,
+    fps: f64,
+    resolve_at: ResolveAt,
+) -> Result<(), String> {
     let PlaySession {
         generation: my_gen,
         requested_at,
@@ -1714,7 +1755,8 @@ pub fn start(session: PlaySession, sources: Vec<AudioSourceSpec>) -> Result<(), 
         .name("chroma-audio".into())
         .spawn(move || {
             let n = sources.len();
-            if let Err(e) = run_session(sources, my_gen, requested_at) {
+            if let Err(e) = run_session(sources, my_gen, requested_at, start_frame, fps, resolve_at)
+            {
                 log::warn!("chroma audio session ({n} source(s)): {e}");
             }
         })
@@ -2854,6 +2896,71 @@ const PREFILL_SECS: f64 = 0.15;
 /// and logged instead.
 const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 
+/// Open `spec` and push it onto [`run_session`]'s four index-parallel
+/// per-source vecs, tagged with `pos_frames` as its own B-111 `opened_at`
+/// baseline (see [`mix_chunk`]'s doc for what that baseline is for). Shared
+/// by [`run_session`]'s initial open (every source, at `pos_frames == 0`) and
+/// its periodic re-resolve (only the newly-active ones, opened whenever their
+/// own moment comes) so the two paths — which must agree on exactly what
+/// "open a source" means — cannot drift apart.
+#[allow(clippy::too_many_arguments)]
+fn open_and_track(
+    spec: &AudioSourceSpec,
+    out_rate: u32,
+    out_channels: usize,
+    pos_frames: u64,
+    decoded: &mut Vec<DecodedSource>,
+    gains: &mut Vec<f32>,
+    envelopes: &mut Vec<SourceEnvelopes>,
+    clip_ids: &mut Vec<String>,
+    opened_at: &mut Vec<u64>,
+) -> Result<(), String> {
+    let ds = open_source(
+        &spec.path,
+        spec.start_secs,
+        spec.duration_secs,
+        out_rate,
+        out_channels,
+    )?;
+    // D-242 — the ramp is attached here, not inside `open_source`, because it
+    // needs `out_rate` (the device's, only known once the device is open) and
+    // because no other caller of `open_source` has one.
+    decoded.push(ds.with_speed(&spec.speed, out_rate, out_channels));
+    gains.push(spec.gain);
+    // D-147/D-149 — pushed in the same call as `decoded`/`gains` above, so a
+    // source that failed to open (the early `?` on `open_source`) never
+    // leaves its envelopes behind to be applied to the next source's buffer.
+    envelopes.push(SourceEnvelopes {
+        fade: spec.fade.clone(),
+        duck: spec.duck.clone(),
+        level: spec.level.clone(),
+        // D-224 — built HERE rather than by the caller, because a biquad's
+        // coefficients are a function of the sample rate and `out_rate` is
+        // not known until the device is open. Per output channel, for the
+        // same reason (see `EqFilter`).
+        eq: EqFilter::new(&spec.eq_bands, out_rate, out_channels),
+    });
+    clip_ids.push(spec.clip_id.clone());
+    opened_at.push(pos_frames);
+    Ok(())
+}
+
+/// Which of `fresh` — a re-resolve at some later timeline frame — are NOT
+/// already open, by [`AudioSourceSpec::clip_id`] (B-111). Pure and
+/// independently testable on its own: the `open_and_track` step that follows
+/// a positive match touches the filesystem and cannot be, but "which specs
+/// need it" is exactly the part a wrong resolve or a stale id list would get
+/// wrong, and is worth pinning on its own rather than only end-to-end.
+fn newly_active_sources<'a>(
+    fresh: &'a [AudioSourceSpec],
+    open_clip_ids: &[String],
+) -> Vec<&'a AudioSourceSpec> {
+    fresh
+        .iter()
+        .filter(|s| !open_clip_ids.iter().any(|id| id == &s.clip_id))
+        .collect()
+}
+
 /// Pull one `chunk_len` window from every source in lockstep and mix it —
 /// the single step both the prefill and the steady-state loop in
 /// [`run_session`] run, factored out so they cannot drift apart.
@@ -2868,12 +2975,25 @@ const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 ///
 /// `pos_frames` is how many output sample-frames the session has already
 /// produced, which is where the envelopes are evaluated from.
+///
+/// **`opened_at` (B-111)** is index-parallel with `decoded`: each source's own
+/// `pos_frames` value at the moment it was opened, since a source
+/// [`run_session`]'s periodic re-resolve adds mid-session opens later than the
+/// session's own `pos_frames == 0`. Every envelope was built by
+/// `chroma::audio::resolve_sources_at` to expect "seconds since THIS SOURCE
+/// opened" (see [`FadeEnvelope::gain_at`]'s own doc), so it is handed
+/// `pos_frames - opened_at[i]`, never the session's raw `pos_frames` — for
+/// every source opened at session start (`opened_at == 0`, every source
+/// before this fix existed) the two are the same number, which is why nothing
+/// about the pre-B-111 mix changes.
+#[allow(clippy::too_many_arguments)]
 fn mix_chunk(
     decoded: &mut [DecodedSource],
     gains: &[f32],
     // D-224 — `&mut`, because an EQ carries state across chunks (a biquad's
     // own history) where the three gain envelopes are pure functions of time.
     envelopes: &mut [SourceEnvelopes],
+    opened_at: &[u64],
     chunk_len: usize,
     out_channels: usize,
     pos_frames: u64,
@@ -2883,10 +3003,11 @@ fn mix_chunk(
     let mut none = SourceEnvelopes::default();
     for (i, ds) in decoded.iter_mut().enumerate() {
         let mut buf = ds.take(chunk_len, out_channels)?;
+        let local_pos = pos_frames.saturating_sub(opened_at.get(i).copied().unwrap_or(0));
         envelopes.get_mut(i).unwrap_or(&mut none).apply(
             &mut buf,
             out_channels,
-            pos_frames,
+            local_pos,
             out_rate,
         );
         bufs.push(buf);
@@ -2942,10 +3063,22 @@ fn discard_samples(
 /// in practice via its `Monitor: Send + Sync` supertrait bound, but pinning
 /// the whole design on that rather than needing it at all is simpler and
 /// more portable).
+/// B-111 — how often [`run_session`]'s mix loop re-resolves the timeline for
+/// newly-active sources: every this-many OUTPUT sample-frames, ≈100ms at a
+/// typical 44.1/48kHz device. Frequent enough that a clip starting later is
+/// audible within a tenth of a second of its own in-point (imperceptible as
+/// a delay); infrequent enough that a real timeline walk plus a probe-cache
+/// lookup per track, which `resolve_at` does on every call, is not paid 48
+/// times a second in the mixing hot loop.
+const RESOLVE_INTERVAL_SECS: f64 = 0.1;
+
 fn run_session(
     sources: Vec<AudioSourceSpec>,
     my_gen: u64,
     requested_at: Instant,
+    start_frame: u64,
+    fps: f64,
+    resolve_at: ResolveAt,
 ) -> Result<(), String> {
     let host = cpal::default_host();
     let device = host
@@ -2979,41 +3112,38 @@ fn run_session(
     let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
     let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
     let mut envelopes: Vec<SourceEnvelopes> = Vec::with_capacity(sources.len());
+    // B-111 — two more parallel vecs. `clip_ids` is what the periodic
+    // re-resolve below matches a fresh `AudioSourceSpec` against to tell
+    // "already open" from "just started"; `opened_at` is the `pos_frames`
+    // this source was opened at, which every envelope's `gain_at` needs
+    // SUBTRACTED from the session's own `pos_frames` before it sees a
+    // position — a `FadeEnvelope`/`DuckEnvelope`/`LevelEnvelope` is built by
+    // `chroma::audio::resolve_sources_at` to expect "seconds since I opened",
+    // not "seconds since the whole session started" (see `mix_chunk`). Every
+    // source opened HERE, at session construction, opens at `pos_frames == 0`
+    // by definition — the same thing "seconds since I opened" already meant
+    // before this fix, which is why nothing below changes for them.
+    let mut clip_ids: Vec<String> = Vec::with_capacity(sources.len());
+    let mut opened_at: Vec<u64> = Vec::with_capacity(sources.len());
     for (i, spec) in sources.iter().enumerate() {
-        match open_source(
-            &spec.path,
-            spec.start_secs,
-            spec.duration_secs,
+        if let Err(e) = open_and_track(
+            spec,
             out_rate,
             out_channels,
+            0,
+            &mut decoded,
+            &mut gains,
+            &mut envelopes,
+            &mut clip_ids,
+            &mut opened_at,
         ) {
-            Ok(ds) => {
-                // D-242 — the ramp is attached here, not inside `open_source`,
-                // because it needs `out_rate` (the device's, only known now)
-                // and because no other caller of `open_source` has one.
-                decoded.push(ds.with_speed(&spec.speed, out_rate, out_channels));
-                gains.push(spec.gain);
-                // D-147/D-149 — index-parallel with `decoded`/`gains`, which is
-                // why it is pushed in the same arm: a source that failed to
-                // open must not leave its envelopes behind to be applied to the
-                // next source's buffer.
-                envelopes.push(SourceEnvelopes {
-                    fade: spec.fade.clone(),
-                    duck: spec.duck.clone(),
-                    level: spec.level.clone(),
-                    // D-224 — built HERE rather than by the caller, because a
-                    // biquad's coefficients are a function of the sample rate
-                    // and `out_rate` is not known until the device is open a
-                    // few lines above. Per output channel, for the same
-                    // reason (see `EqFilter`).
-                    eq: EqFilter::new(&spec.eq_bands, out_rate, out_channels),
-                });
+            if i == 0 {
+                return Err(e); // the baseline source failing is a real error
             }
-            Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
-            Err(e) => log::warn!(
+            log::warn!(
                 "chroma audio: skipping extra source {}: {e}",
                 spec.path.display()
-            ),
+            );
         }
     }
 
@@ -3091,6 +3221,7 @@ fn run_session(
             &mut decoded,
             &gains,
             &mut envelopes,
+            &opened_at,
             chunk_len,
             out_channels,
             pos_frames,
@@ -3116,18 +3247,67 @@ fn run_session(
     );
     stream.play().map_err(|e| format!("stream.play: {e}"))?;
 
+    // B-111 — how many OUTPUT sample-frames between re-resolves; see
+    // `RESOLVE_INTERVAL_SECS`. Set to fire once immediately BELOW the loop's
+    // first iteration is wrong for a subtle reason: `sources`/`decoded` above
+    // already ARE the resolve at `start_frame`, so re-resolving at the same
+    // frame before any time has passed would just rediscover them all as
+    // "already open" for free — correct, but pointless work every session.
+    let resolve_interval_frames = (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64;
+    let mut next_resolve_at_pos_frames: u64 = resolve_interval_frames;
+
     'mix: loop {
         if !is_current(my_gen) {
             break 'mix;
         }
+
+        // B-111 — re-resolve the timeline BEFORE the exhaustion check below,
+        // not after: a session whose only source has just ended must still
+        // get the chance to discover a LATER clip before this loop decides
+        // there is nothing left and falls through to the idle wait. This is
+        // the fix's whole point — without it, every source opened here would
+        // still be frozen at whatever `resolve_at` returned for `start_frame`.
+        if pos_frames >= next_resolve_at_pos_frames {
+            next_resolve_at_pos_frames = pos_frames + resolve_interval_frames;
+            let elapsed_secs = pos_frames as f64 / out_rate.max(1) as f64;
+            let current_frame = start_frame + (elapsed_secs * fps).round() as u64;
+            match resolve_at(current_frame) {
+                Ok(fresh) => {
+                    for spec in newly_active_sources(&fresh, &clip_ids) {
+                        match open_and_track(
+                            spec,
+                            out_rate,
+                            out_channels,
+                            pos_frames,
+                            &mut decoded,
+                            &mut gains,
+                            &mut envelopes,
+                            &mut clip_ids,
+                            &mut opened_at,
+                        ) {
+                            Ok(()) => log::debug!(
+                                "chroma audio: B-111 periodic resolve opened a newly-active source at timeline frame {current_frame}: {}",
+                                spec.path.display()
+                            ),
+                            Err(e) => log::warn!(
+                                "chroma audio: B-111 periodic resolve failed to open a newly-active source: {e}"
+                            ),
+                        }
+                    }
+                }
+                Err(e) => log::warn!("chroma audio: B-111 periodic resolve failed: {e}"),
+            }
+        }
+
         if decoded.iter().all(DecodedSource::is_done) {
-            break 'mix; // every source exhausted — fall through to the idle wait below
+            break 'mix; // every source exhausted, INCLUDING the fresh resolve above — fall through to the idle wait below
         }
 
         let mixed = mix_chunk(
             &mut decoded,
             &gains,
             &mut envelopes,
+            &opened_at,
             chunk_len,
             out_channels,
             pos_frames,
@@ -3296,6 +3476,215 @@ mod tests {
         let buf = vec![0.5, 0.6];
         assert_eq!(adapt_channels(&buf, 0, 2), buf);
         assert_eq!(adapt_channels(&buf, 2, 0), buf);
+    }
+
+    /// B-111 — a minimal `AudioSourceSpec` for the `newly_active_sources`
+    /// tests below, where only `clip_id` (the field under test) varies.
+    fn spec_with_id(clip_id: &str) -> AudioSourceSpec {
+        AudioSourceSpec {
+            path: PathBuf::from("/dev/null"),
+            start_secs: 0.0,
+            duration_secs: None,
+            gain: 1.0,
+            fade: None,
+            duck: None,
+            level: None,
+            eq_bands: Vec::new(),
+            speed: Vec::new(),
+            clip_id: clip_id.to_string(),
+        }
+    }
+
+    /// B-111 — the core diff the periodic re-resolve runs: a clip already
+    /// open must not be reopened just because it shows up again in a fresh
+    /// resolve, but a clip that was NOT there before must be recognised.
+    #[test]
+    fn newly_active_sources_skips_already_open_and_keeps_the_rest() {
+        let fresh = vec![spec_with_id("a"), spec_with_id("b"), spec_with_id("c")];
+        let open = vec!["a".to_string(), "c".to_string()];
+        let found: Vec<&str> = newly_active_sources(&fresh, &open)
+            .iter()
+            .map(|s| s.clip_id.as_str())
+            .collect();
+        assert_eq!(
+            found,
+            vec!["b"],
+            "only the clip NOT already open comes back"
+        );
+    }
+
+    /// The B-111 symptom itself, as a diff: a resolve at `start_frame` found
+    /// only the clip already playing; a resolve much later finds a second
+    /// clip too. `newly_active_sources` must recognise exactly the new one —
+    /// this is the exact shape `run_session`'s periodic re-resolve produces
+    /// on a real timeline with a clip starting after the playhead.
+    #[test]
+    fn newly_active_sources_finds_a_clip_that_started_after_play_was_pressed() {
+        let at_start_frame = [spec_with_id("music-bed")];
+        let open: Vec<String> = at_start_frame.iter().map(|s| s.clip_id.clone()).collect();
+
+        let later = vec![spec_with_id("music-bed"), spec_with_id("sfx-whoosh")];
+        let found: Vec<&str> = newly_active_sources(&later, &open)
+            .iter()
+            .map(|s| s.clip_id.as_str())
+            .collect();
+        assert_eq!(
+            found,
+            vec!["sfx-whoosh"],
+            "the clip that started later is found; the one already playing is not re-opened"
+        );
+    }
+
+    /// Nothing new at all — the common case on every re-resolve tick between
+    /// two clips starting. Must not manufacture a spurious reopen.
+    #[test]
+    fn newly_active_sources_is_empty_when_nothing_changed() {
+        let fresh = vec![spec_with_id("a"), spec_with_id("b")];
+        let open = vec!["a".to_string(), "b".to_string()];
+        assert!(newly_active_sources(&fresh, &open).is_empty());
+    }
+
+    /// A `pcm_s16le` sine tone (not `synth_test_tone`'s AAC): lossless AND,
+    /// unlike a lossy codec, carries no encoder priming delay at the front of
+    /// the stream — an AAC file's first ~1024-2112 samples are real, silent
+    /// padding the encoder adds, which made this test's first version flake
+    /// exactly at "chunk 0" before this fixture replaced it (caught live,
+    /// not reasoned about in advance).
+    fn synth_sine_wav(dir: &Path, freq_hz: u32, duration_secs: f64, rate: u32) -> PathBuf {
+        let out = dir.join("sine.wav");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("sine=frequency={freq_hz}:duration={duration_secs}:sample_rate={rate}"),
+                "-c:a",
+                "pcm_s16le",
+                "-ac",
+                "2",
+            ])
+            .arg(&out)
+            .status()
+            .expect("spawn ffmpeg to synthesize a sine WAV");
+        assert!(status.success(), "ffmpeg sine WAV synthesis failed");
+        out
+    }
+
+    /// B-111 — `mix_chunk`'s per-source position offset, against real decoded
+    /// PCM opened via the real [`open_source`] — no fake/mocked
+    /// `DecodedSource`, no live device, no `CHROMA_TEST_AUDIO_VIDEO` needed
+    /// since this only decodes a locally synthesized tone.
+    ///
+    /// A source opened `opened_at` some `pos_frames` into the session must
+    /// see `pos_frames - opened_at` — "seconds since THIS SOURCE opened,"
+    /// what every envelope is built against (see [`FadeEnvelope::gain_at`]'s
+    /// own doc) — never the raw session-wide position, which would run its
+    /// fade curve starting from wherever the session happened to be when
+    /// this source was added rather than from its own start. Proved by
+    /// decoding the SAME tone twice (deterministic, out_rate == the synth
+    /// rate so there is no resampling to make the two decodes diverge): once
+    /// through `mix_chunk` with no envelope at all (the raw reference), once
+    /// with a 1s linear fade-in and `opened_at` set so the CURRENT
+    /// `pos_frames` sits exactly 0.5s into it — every sample of the second
+    /// must be the first's sample times that fade's own `gain_at(0.5)`.
+    #[test]
+    fn mix_chunk_evaluates_each_sources_envelope_relative_to_its_own_open_time() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let out_channels = 2usize;
+        let tone = synth_sine_wav(tmp.path(), 440, 2.0, out_rate);
+        let chunk_len = 1024 * out_channels;
+
+        let opened_at_pos_frames: u64 = 3 * out_rate as u64; // 3.0s in
+        let session_pos_frames: u64 = opened_at_pos_frames + out_rate as u64 / 2; // 0.5s later
+
+        // Reference: the same tone, no envelope at all — mix_chunk's
+        // pre-B-111 arithmetic, byte for byte.
+        let mut raw = vec![
+            open_source(&tone, 0.0, Some(2.0), out_rate, out_channels).expect("open tone (raw)"),
+        ];
+        let raw_mixed = mix_chunk(
+            &mut raw,
+            &[1.0],
+            &mut [SourceEnvelopes::default()],
+            &[0],
+            chunk_len,
+            out_channels,
+            0,
+            out_rate,
+        )
+        .expect("mix_chunk (raw)");
+        assert!(
+            raw_mixed.iter().any(|s| s.abs() > 0.01),
+            "sanity: the synthesized tone must be genuinely non-silent"
+        );
+
+        let fade = FadeEnvelope {
+            offset_secs: 0.0,
+            len_secs: 10.0,
+            fade_in_secs: 1.0,
+            fade_out_secs: 0.0,
+            in_curve: chroma_types::EaseCurve::default(),
+            out_curve: chroma_types::EaseCurve::default(),
+        };
+        let expected_gain = fade.gain_at(0.5);
+        assert!(
+            (expected_gain - 0.5).abs() < 1e-3,
+            "sanity: 0.5s into a 1s linear fade-in is ~0.5 gain, got {expected_gain}"
+        );
+
+        let mut faded = vec![
+            open_source(&tone, 0.0, Some(2.0), out_rate, out_channels).expect("open tone (faded)"),
+        ];
+        let faded_mixed = mix_chunk(
+            &mut faded,
+            &[1.0],
+            &mut [SourceEnvelopes {
+                fade: Some(fade.clone()),
+                duck: None,
+                level: None,
+                eq: None,
+            }],
+            &[opened_at_pos_frames],
+            chunk_len,
+            out_channels,
+            session_pos_frames,
+            out_rate,
+        )
+        .expect("mix_chunk (faded)");
+
+        assert_eq!(raw_mixed.len(), faded_mixed.len());
+        let local_pos_frames = session_pos_frames - opened_at_pos_frames; // 0.5s, in samples
+        for (i, (raw_s, faded_s)) in raw_mixed.iter().zip(faded_mixed.iter()).enumerate() {
+            // `apply` evaluates gain PER OUTPUT SAMPLE-FRAME, not once per
+            // chunk — real and correct (a 1024-frame chunk is ~21ms, and a
+            // 1s fade genuinely moves during that), so the expected gain
+            // here must track the same per-frame `t` `apply` itself uses,
+            // not the single `expected_gain` snapshotted at the chunk start.
+            let frame_idx = i / out_channels;
+            let t = (local_pos_frames as f64 + frame_idx as f64) / out_rate as f64;
+            let expected = fade.gain_at(t);
+            assert!(
+                (faded_s - raw_s * expected).abs() < 1e-4,
+                "sample {i} (frame {frame_idx}, t={t:.6}s into THIS SOURCE's own fade): \
+                 raw={raw_s}, faded={faded_s}, expected raw*{expected}={} \
+                 (NOT session time {:.3}s, which is where a wrongly session-relative \
+                 fade would sit and already be silent)",
+                raw_s * expected,
+                session_pos_frames as f64 / out_rate as f64,
+            );
+        }
+        // The very first frame IS exactly t=0.5s (frame_idx == 0 above), so
+        // it must match the chunk-start `expected_gain` computed earlier —
+        // confirms the two gain computations (this loop's per-frame `t` and
+        // the single-point sanity check above) agree at the one point where
+        // they describe the same instant, rather than silently diverging.
+        assert!(
+            (raw_mixed[0] * expected_gain - faded_mixed[0]).abs() < 1e-4,
+            "frame 0 is exactly t=0.5s by construction; the per-frame loop above and \
+             `expected_gain` must agree there"
+        );
     }
 
     #[test]

@@ -22909,3 +22909,113 @@ D-243 Decision 1; the owner also ruled it out directly.
 **No new package dependency was added.** This is vendored design, not a dep, so
 there is nothing in `package.json` to audit — which is itself why this entry
 exists rather than a one-line dependency note.
+
+---
+
+## D-245 — B-111: the audio session re-resolves the timeline periodically, as a `Send` closure the app hands the media crate, not a callback into it
+
+**Context.** B-111, the real root cause behind the owner's own "for the first
+play audio does not come at all" report: `chroma_audio_play` built its
+`Vec<AudioSourceSpec>` ONCE, at the exact frame Play was pressed, and handed it
+to `chroma_media::audio::start`/`run_session` for the whole session. On the
+owner's own real project (11 audio clips, one continuous music bed plus ten
+short SFX scattered across the timeline), playing from frame 0 resolved
+exactly one source — the music bed — and the other ten could never sound in
+that session no matter how long it played, because nothing ever asked the
+timeline again.
+
+**The real constraint this fix has to respect.** `chroma-media` sits BELOW
+`chroma-timeline` in the D-039/D-146 layering and must not depend on it —
+`chroma::audio::resolve_sources_at` (the renamed, extracted body of the old
+`chroma_audio_play`) is what calls `chroma::edit::resolve_video_position` /
+`resolve_audio_track_positions`, and a media crate reaching for either would
+be reaching *up* a layer. So `run_session` cannot simply "call the timeline
+again" itself — it has to be handed something that can, without knowing what
+a timeline is.
+
+**The fix: `resolve_at`, a `Box<dyn Fn(u64) -> Result<Vec<AudioSourceSpec>,
+String>> + Send`, alongside the initial `sources`.** `chroma_audio_play` gives
+`chroma_media::audio::start` the SAME `resolve_sources_at` function it just
+called once for `start_frame`, boxed as a closure. `run_session` calls it
+again on its own thread, roughly every 100ms (`RESOLVE_INTERVAL_SECS`) —
+frequent enough that a clip starting later is audible within a tenth of a
+second of its own in-point, infrequent enough that a real timeline walk plus a
+probe-cache lookup per track is not paid 48 times a second in the mixing hot
+loop. This crate still never sees a timeline: it drives the closure with a
+frame number and reads back the exact same `AudioSourceSpec` shape `sources`
+already was.
+
+**Identifying "already open" needed a real field, not a coincidence.**
+Matching a fresh resolve's specs against what is already playing by
+`(path, start_secs)` does not work — an already-playing clip queried again
+LATER resolves to a LATER `start_secs` (the source second under the playhead
+NOW, not when it opened), so the same clip would look like a different source
+every single tick and get reopened — a real, audible glitch (a restart click,
+a re-seek) this fix cannot introduce while fixing the silence. Added
+`AudioSourceSpec::clip_id`, set to `chroma_timeline::Clip::id` at the one call
+site that can see a `Clip` (`resolve_sources_at`), carried as an opaque string
+this crate never interprets — the same "media fact vs. timeline fact" boundary
+every other field on this struct already draws. `newly_active_sources` is the
+pure diff: which of a fresh resolve's specs have a `clip_id` NOT already among
+the open ones. Unit-tested on its own (three cases: a clip that started later,
+a resolve that changed nothing, and the ordinary "still the same clips"
+steady state).
+
+**A second, less obvious correctness problem: envelopes share ONE session
+clock.** `SourceEnvelopes::apply`'s `session_frame` is the whole session's own
+elapsed sample count, and `FadeEnvelope`/`DuckEnvelope`/`LevelEnvelope` are all
+built (in `resolve_sources_at`, at whichever frame is being resolved) to
+expect "seconds since I opened" — true by construction for every source opened
+at session start (`session_frame == 0` there too), but wrong for a source this
+fix opens LATER: handing it the raw session-wide `pos_frames` would evaluate
+its fade/duck/level curve as if it had been playing since long before it
+actually started — a fade-out could read as already-silent the instant a late
+clip joins. Fixed with a fourth parallel vec, `opened_at` (the session's own
+`pos_frames` at the moment each source was opened, `0` for every source opened
+at session start), and `mix_chunk` now hands each source
+`pos_frames.saturating_sub(opened_at[i])`, never the raw session position.
+Proved against real decoded PCM (a locally-synthesized, lossless `pcm_s16le`
+sine — deliberately not the existing `synth_test_tone` AAC helper, whose
+encoder priming delay made this test's first version flake on chunk 0, caught
+live, not reasoned about in advance): the same tone decoded twice, once
+through `mix_chunk` with no envelope (the raw reference) and once with a 1s
+linear fade-in and `opened_at` set so the CURRENT position sits 0.5s into it —
+every sample, evaluated at its own per-output-frame `t` (a fade genuinely
+moves within a single ~21ms chunk, which the test's first draft also got
+wrong by comparing against one flat expected gain for the whole chunk), must
+equal the raw sample times that fade's own `gain_at`.
+
+**Refactor, not a new function shape.** The old `chroma_audio_play` body
+(resolve video position, resolve audio-track positions, build
+`AudioSourceSpec`s) is now `resolve_sources_at(frame: u64)`, parameterized on
+the frame it was always implicitly resolving at (`start_frame`) — the command
+itself shrinks to claiming the session, calling it once, and handing both the
+result and the function itself to `start`. No behavioural change for the
+frame-0 case: `resolve_sources_at(start_frame)` is byte-for-byte the same
+computation the old inline body did.
+
+**Known gap, stated rather than left to be discovered.** A session that
+starts with LITERALLY NOTHING active anywhere (`chroma_media::audio::start`'s
+`sources.is_empty()` early return) still never spawns the thread that could
+pick something up later — narrower than B-111's own reported symptom (which
+started already playing something), and a real, separate follow-up rather
+than folded in here. Also open, independently: B-97 (a pre-existing one-frame
+source-drift edge case, untouched) and reverse-playback preview performance
+(D-236/D-241's own named follow-up, untouched).
+
+**Not verified: on the real cpal device, out loud.** Every other audio bug
+fixed this session (B-102, B-106, B-110) was confirmed against real device
+output; this one is deliberately not, because doing so mid-session made
+unplanned sound the owner was actively working near — stated here rather than
+quietly skipped. The two tests above decode and inspect real PCM directly, in
+memory, which is the right rigor for the actual defect (a resolution-timing
+and per-source-clock bug, not a "does sound come out of the speaker at all"
+question B-102 already answered) — but a live confirmation is still the
+honest next step whenever that's not disruptive.
+
+**Verification.** `chroma-media`: 157/157 (4 new — the 3-case
+`newly_active_sources` diff and the real-PCM per-source-clock test).
+`cargo test --workspace`: every crate green except the known pre-existing
+B-097. `cargo fmt`/`clippy` clean on every file this touched. `tsc --noEmit`:
+zero errors (no frontend change — `chroma_audio_play`'s Tauri command
+signature is unchanged, so `useEditorControl.ts` needed nothing).

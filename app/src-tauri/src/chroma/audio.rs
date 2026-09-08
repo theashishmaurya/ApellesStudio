@@ -171,27 +171,25 @@ pub fn chroma_audio_scrub_end(seq: u64) {
     chroma_media::scrub::end(seq);
 }
 
-/// Seek-and-play in one call: resolve `start_frame` on the active timeline to
-/// every currently-active audio source — the video track's own embedded
-/// audio (D-050's original, still-default behaviour, unchanged: always at
-/// unity gain, resolved via the same [`super::edit::resolve_video_position`]
-/// lookup the video preview uses) **plus** (D-057, Phase C) any clip on a
-/// genuine `TrackKind::Audio` track that overlaps `start_frame`, each at its
-/// own track's gain — then hand them to `chroma_media::audio::start`, which
-/// decodes and mixes them together. No active source anywhere (no video clip
-/// at this position, or one with no audio stream, and no audio-track clip
-/// either) is **not** an error: it just means nothing plays, matching the
-/// video preview's own "blank frame past the end" behaviour.
+/// Resolve `frame` on the active timeline to every currently-active audio
+/// source at that instant — the video track's own embedded audio (D-050's
+/// original, still-default behaviour, unchanged: always at unity gain,
+/// resolved via the same [`super::edit::resolve_video_position`] lookup the
+/// video preview uses) **plus** (D-057, Phase C) any clip on a genuine
+/// `TrackKind::Audio` track that overlaps `frame`, each at its own track's
+/// gain. No active source anywhere (no video clip at this position, or one
+/// with no audio stream, and no audio-track clip either) is **not** an
+/// error: it just means nothing plays at `frame`, matching the video
+/// preview's own "blank frame past the end" behaviour.
 ///
 /// **This resolution is the whole reason `audio.rs` split rather than moved
-/// (D-146).** Everything below the two `edit::resolve_*` calls is
-/// `chroma-media`'s; the two calls themselves are `chroma-timeline`'s model
-/// seen through the Edit-tab bridge, and a media crate that reached for them
-/// would be reaching *up* a layer.
-///
-/// `(async)` (D-125): see [`chroma_audio_stop`] — same reason, and here it
-/// also means the command isn't itself queued behind a main-thread preview
-/// decode, which is precisely the latency the video clock does not wait for.
+/// (D-146).** Everything [`chroma_media::audio::run_session`] does with the
+/// `Vec` this returns is that crate's; the two `edit::resolve_*` calls here
+/// are `chroma-timeline`'s model seen through the Edit-tab bridge, and a
+/// media crate that reached for them would be reaching *up* a layer — which
+/// is exactly why this function is handed to `run_session` as a `Send`
+/// closure (B-111) rather than the crate calling back into `chroma::edit`
+/// itself.
 ///
 /// D-129 — a video clip carrying a `link_group` is **skipped** as an
 /// embedded-audio source: its sound now lives in a real, linked audio clip
@@ -201,21 +199,19 @@ pub fn chroma_audio_scrub_end(seq: u64) {
 /// clip. A pre-D-129 clip has no `link_group` and takes the unchanged
 /// D-050 path.
 ///
-/// `seq` (D-130) is the frontend's monotonic request stamp; a play that a newer
-/// request has already overtaken is dropped instead of starting a session from
-/// a stale `start_frame`.
-#[tauri::command(async)]
-pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
-    // Claims the transport and stamps the "the frontend asked for playback"
-    // instant the D-125 skew compensation measures against — deliberately
-    // before the resolution below, exactly as the pre-split code did.
-    let Some(session) = chroma_media::audio::begin_play(seq) else {
-        // Overtaken by a newer request before this task got a worker thread.
-        // Starting anyway would replay the timeline from a playhead the
-        // picture has already moved past (B-047).
-        return Ok(());
-    };
-
+/// **B-111 — called more than once per session.** [`chroma_audio_play`]
+/// calls this once, for its own `start_frame`, to build the session's
+/// initial `Vec`; `chroma_media::audio::start` is ALSO given this function
+/// itself (as `resolve_at`), and `run_session` calls it again periodically
+/// on its own thread as the timeline plays forward, so a clip that starts
+/// later than `start_frame` is discovered and opened when its own moment
+/// comes rather than never at all. Every `AudioSourceSpec` carries its
+/// [`chroma_timeline::Clip::id`] as `clip_id` so `run_session` can tell "this
+/// is the same clip, still playing" from "this is a clip that just started"
+/// across two calls at different frames — this function has no idea that
+/// matters, it just resolves `frame` fresh every time, exactly as if it were
+/// the only call.
+fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
     // B-079 — the active timeline's own rate, for every `end_frame_at(fps)`
     // out-point below (fps-naive `end_frame()` before this fix). A cheap
@@ -224,7 +220,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     let fps = super::edit::timeline_fps()?;
 
     if let Some((track_index, clip, source_frame, info)) =
-        super::edit::resolve_video_position(start_frame)?
+        super::edit::resolve_video_position(frame)?
     {
         if clip.link_group.is_some() {
             // D-129 — this video clip's audio has been externalized into a
@@ -253,13 +249,13 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // fps-naive `end_frame()`: a mixed-native-fps clip's real
             // out-point depends on its own `source_fps` against the
             // timeline's rate.
-            let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
+            let remaining_frames = (clip.end_frame_at(fps) - frame as i64).max(0) as u64;
             // D-242 — a ramped clip overrides the open point and the out-point
             // with the retime's own, because under a ramp the source second to
             // open at and the number of OUTPUT seconds left stop being the same
             // number. `None` (every un-ramped clip) leaves both exactly as the
             // two lines above computed them.
-            let speed = speed_for_clip(&clip, &info, start_frame as i64, fps);
+            let speed = speed_for_clip(&clip, &info, frame as i64, fps);
             sources.push(AudioSourceSpec {
                 path: PathBuf::from(&clip.source_path),
                 start_secs: speed
@@ -278,18 +274,18 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 // `chroma_timeline::Clip::fade_in_frames` and the plan doc §2);
                 // this is the "…and its sound" half of that, the compositor's
                 // `resolve_clip_transform` being the picture half.
-                fade: fade_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
+                fade: fade_for_clip(&clip, &info, frame as i64 - clip.start_frame),
                 // D-149 — a video track's embedded audio is a mixed source like
                 // any other, so it ducks like any other. Rare in practice (the
                 // thing you duck is a music bed, which lives on an audio track,
                 // and D-129 externalises new clips' audio anyway) but excluding
                 // it would be an asymmetry with no reason behind it.
-                duck: duck_for_track(track_index, start_frame, &info)?,
+                duck: duck_for_track(track_index, frame, &info)?,
                 // D-223 — a video clip's own Clip Volume / Clip Pan apply to
                 // its embedded audio, the one thing that clip contributes to
                 // the mix. (They have no picture meaning at all, unlike the
                 // fade above — see `Clip::volume`.)
-                level: level_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
+                level: level_for_clip(&clip, &info, frame as i64 - clip.start_frame),
                 // D-224 — and so does its EQ, for the same reason and on the
                 // same stream. Handed over verbatim: unlike the three above,
                 // an EQ band needs no frames→seconds conversion (hertz,
@@ -298,6 +294,10 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 // filter itself is built by `chroma_media`, at the output
                 // device's real sample rate, which only it knows.
                 eq_bands: clip.eq_bands.clone(),
+                // B-111 — see this function's own doc: the identity
+                // `run_session`'s periodic re-resolve matches "already open"
+                // sources against.
+                clip_id: clip.id.clone(),
             });
         } else {
             log::debug!(
@@ -308,7 +308,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     }
 
     for (track_index, clip, source_frame, info, gain) in
-        super::edit::resolve_audio_track_positions(start_frame)?
+        super::edit::resolve_audio_track_positions(frame)?
     {
         // B-079 — `source_frame` is now `resolve_audio_track_positions`'s own
         // fps-correct `Track::clip_at` result (passed through, no longer
@@ -318,12 +318,12 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         // `elapsed_frames` stays a plain TIMELINE-frame difference (both
         // operands already share that unit) — only `fade_for_clip` below
         // still needs it.
-        let elapsed_frames = start_frame as i64 - clip.start_frame;
-        let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
+        let elapsed_frames = frame as i64 - clip.start_frame;
+        let remaining_frames = (clip.end_frame_at(fps) - frame as i64).max(0) as u64;
         // D-242 — see the video-track source above; identical for the same
         // reason, since a ramp is a property of the clip and not of what kind
         // of track it sits on.
-        let speed = speed_for_clip(&clip, &info, start_frame as i64, fps);
+        let speed = speed_for_clip(&clip, &info, frame as i64, fps);
         sources.push(AudioSourceSpec {
             path: PathBuf::from(&clip.source_path),
             start_secs: speed
@@ -341,17 +341,58 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             fade: fade_for_clip(&clip, &info, elapsed_frames),
             // D-149 — the everyday ducking case: a music bed on this track,
             // ducked by whatever is on the dialogue track it points at.
-            duck: duck_for_track(track_index, start_frame, &info)?,
+            duck: duck_for_track(track_index, frame, &info)?,
             // D-223 — the everyday case: this clip's own level and stereo
             // position, independent of its track's fader.
             level: level_for_clip(&clip, &info, elapsed_frames),
             // D-224 — and its own EQ, verbatim (see the video-track source
             // above for why there is no conversion step for these).
             eq_bands: clip.eq_bands.clone(),
+            // B-111 — see this function's own doc.
+            clip_id: clip.id.clone(),
         });
     }
 
-    chroma_media::audio::start(session, sources)
+    Ok(sources)
+}
+
+/// Seek-and-play in one call: resolve `start_frame` via
+/// [`resolve_sources_at`] and hand the result to `chroma_media::audio::start`
+/// — which decodes and mixes it, AND (B-111) calls [`resolve_sources_at`]
+/// again on its own as playback continues, so a clip starting later than
+/// `start_frame` is not silent for the whole session. See
+/// [`resolve_sources_at`]'s own doc for the full story; this wrapper is only
+/// the Tauri command boundary and the D-125 session claim.
+///
+/// `(async)` (D-125): see [`chroma_audio_stop`] — same reason, and here it
+/// also means the command isn't itself queued behind a main-thread preview
+/// decode, which is precisely the latency the video clock does not wait for.
+///
+/// `seq` (D-130) is the frontend's monotonic request stamp; a play that a newer
+/// request has already overtaken is dropped instead of starting a session from
+/// a stale `start_frame`.
+#[tauri::command(async)]
+pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
+    // Claims the transport and stamps the "the frontend asked for playback"
+    // instant the D-125 skew compensation measures against — deliberately
+    // before the resolution below, exactly as the pre-split code did.
+    let Some(session) = chroma_media::audio::begin_play(seq) else {
+        // Overtaken by a newer request before this task got a worker thread.
+        // Starting anyway would replay the timeline from a playhead the
+        // picture has already moved past (B-047).
+        return Ok(());
+    };
+
+    let fps = super::edit::timeline_fps()?;
+    let sources = resolve_sources_at(start_frame)?;
+
+    chroma_media::audio::start(
+        session,
+        sources,
+        start_frame,
+        fps,
+        Box::new(resolve_sources_at),
+    )
 }
 
 /// Build the fade envelope for `clip`, or `None` if it has no fade — the
