@@ -1646,7 +1646,7 @@ status: fixed (2026-09-08, in D-236) · severity: medium (a real, visible export
 
 - **why it is a real bug and not just a D-236 design note:** it is wrong today, on the pre-D-236 flat `speedOverrides` path, in a shipped export, with no ramp involved. D-236 is what surfaced it, not what caused it.
 
-## B-113 — a placed marker had a Delete, but the only way to reach it was double-clicking a 9px flag: the list the user actually looks at offered jump and nothing else
+## B-114 — a placed marker had a Delete, but the only way to reach it was double-clicking a 9px flag: the list the user actually looks at offered jump and nothing else
 
 status: fixed (2026-09-08) · severity: low (nothing is lost or corrupted — but a marker is a *write into the edit*, and an edit you cannot undo by hand is a real dead end) · area: `packages/editor/src/TimelineMarkers.tsx` (`MarkerListMenu`)
 
@@ -1660,7 +1660,7 @@ status: fixed (2026-09-08) · severity: low (nothing is lost or corrupted — bu
 
 - **verification:** three new cases in `TimelinePane.markers.dom.test.tsx` (11-13) — one delete per row in frame order, a click writing the real `Timeline.markers` field through the real store *and* removing the flag from the strip, and the playhead provably not moving when a marker is deleted from the list. 13/13 in that file, `npm test --workspace @chroma/editor` 1450/1450.
 
-## B-114 — dropping a clip ABOVE the top track never created a track there: the top of the timeline was not the mirror of the bottom
+## B-115 — dropping a clip ABOVE the top track never created a track there: the top of the timeline was not the mirror of the bottom
 
 status: fixed (2026-09-08) · severity: medium (the native drop path did the wrong thing SILENTLY — it added the clip to the existing top track — and "put this above my video" is the reference gesture for a title, an overlay and an adjustment clip) · area: `packages/editor/src/TimelinePane.tsx` (`trackInsertBoundary`, `dndBoundary`)
 
@@ -1680,7 +1680,7 @@ status: fixed (2026-09-08) · severity: medium (the native drop path did the wro
 
 - **verification:** three new cases in the new `TimelinePane.drop.dom.test.tsx` (1-3) — a drop above the tracks producing a new topmost track with the two originals intact and pushed down, the live `dragover` preview pointing at that same boundary, and a mid-row drop still landing on the existing track. Plus cases 6 and 8 there for the generator path. `npm test --workspace @chroma/editor` 1450/1450.
 
-## B-115 — the timeline zoom had no anchor at all, so zooming pushed whatever you were looking at off screen
+## B-116 — the timeline zoom had no anchor at all, so zooming pushed whatever you were looking at off screen
 
 status: fixed (2026-09-08) · severity: medium (it makes zoom actively unpleasant to use on any timeline longer than the viewport, which is all of them; the owner called the result "random", which is exactly what an unanchored zoom looks like) · area: `packages/editor/src/TimelinePane.tsx` (the ctrl/pinch wheel handler, `zoomIn`/`zoomOut`) and the new `packages/editor/src/timelineZoom.ts`
 
@@ -1696,9 +1696,9 @@ status: fixed (2026-09-08) · severity: medium (it makes zoom actively unpleasan
 
 - **verification:** `timelineZoom.test.ts` — 11 cases including a round trip over every combination of 7 zoom levels × 4 scroll offsets × 5 anchor positions, asserting the anchored frame lands back at the same x to 6 decimal places (or pins to 0 where the clamp legitimately takes over). `TimelinePane.zoom.dom.test.tsx` — 8 real-DOM cases driving a real ctrl+wheel and the real toolbar buttons and measuring a marker flag's own `left`: it holds still when zoomed at, moves by exactly the zoom factor when zoomed elsewhere, the scroll provably moved (so the zoom is not a no-op passing by accident), and a plain non-ctrl wheel still pans rather than zooming.
 
-## B-116 — dragging a Title onto the timeline did nothing, because nothing in the app was a drag source for one
+## B-117 — dragging a Title onto the timeline did nothing, because nothing in the app was a drag source for one
 
-status: fixed (2026-09-08, in D-246) · severity: medium (a dead gesture: the user drags, nothing happens, and there is no feedback to say why) · area: `packages/editor/src/TimelinePane.tsx` (the Title/Adjust toolbar buttons, `onDrop`)
+status: fixed (2026-09-08, in D-248) · severity: medium (a dead gesture: the user drags, nothing happens, and there is no feedback to say why) · area: `packages/editor/src/TimelinePane.tsx` (the Title/Adjust toolbar buttons, `onDrop`)
 
 - **found:** 2026-09-08, reported live by the owner: dragging a Title onto the timeline did not place it properly.
 
@@ -1706,13 +1706,13 @@ status: fixed (2026-09-08, in D-246) · severity: medium (a dead gesture: the us
 
 - **why "add at the playhead" was the wrong primary gesture in the first place:** Resolve's own titles copy is explicit — *"open the effects library at the top left of the screen, find the text generator you want, and **drag it into the timeline** above your video tracks"* (`scratch/resolve-reference/resolve-edit-features.json`, `edit-titles`), and the same for adjustment clips (`edit-adjustments`). A generated clip is something you take out of a library and put *somewhere*; a button that teleports it to the playhead cannot express the "somewhere".
 
-- **fix (D-246):** a real left library rail (`EditLibraryRail.tsx`) whose Title and Adjustment-clip entries are genuine HTML5 drag sources carrying `CHROMA_GENERATOR_DRAG_MIME`, which `TimelinePane`'s existing drop handler now recognises alongside the media MIME and routes through the SAME placement code (`placeDroppedClip`) — so a dragged title snaps to an edge, ripples, and creates a track by exactly the rules a dragged source already does. Each entry keeps a click-to-add-at-the-playhead button too (that behaviour was not wrong, only insufficient), and that path now *reports* the silent refusal instead of looking like a dead button. A generator dropped on an audio or subtitle track is refused in words rather than placing an invisible clip.
+- **fix (D-248):** a real left library rail (`EditLibraryRail.tsx`) whose Title and Adjustment-clip entries are genuine HTML5 drag sources carrying `CHROMA_GENERATOR_DRAG_MIME`, which `TimelinePane`'s existing drop handler now recognises alongside the media MIME and routes through the SAME placement code (`placeDroppedClip`) — so a dragged title snaps to an edge, ripples, and creates a track by exactly the rules a dragged source already does. Each entry keeps a click-to-add-at-the-playhead button too (that behaviour was not wrong, only insufficient), and that path now *reports* the silent refusal instead of looking like a dead button. A generator dropped on an audio or subtitle track is refused in words rather than placing an invisible clip.
 
 - **verification:** six new cases in `TimelinePane.drop.dom.test.tsx` (4-9): the rail entry really is `draggable` and its `dragstart` writes the payload the drop reads; the drop produces a real text clip of the right default length and selects it; dropping above the top track makes a new **video** track; an audio-track drop is refused with a readable sentence; an adjustment clip goes by the same path; and a malformed payload is ignored rather than half-placing. `npm test --workspace @chroma/editor` 1450/1450.
 
-## B-117 — the preview/timeline header strip reserved 40px for the floating chip on its left and 12px for the identical one on its right
+## B-118 — the preview/timeline header strip reserved 40px for the floating chip on its left and 12px for the identical one on its right
 
-status: fixed (2026-09-08, in D-247) · severity: low (cosmetic, but it makes the whole tab read as unfinished, and anything placed in the strip's own right-hand slot was covered by the Inspector chip) · area: `packages/player/src/Player.tsx` (the title strip)
+status: fixed (2026-09-08, in D-249) · severity: low (cosmetic, but it makes the whole tab read as unfinished, and anything placed in the strip's own right-hand slot was covered by the Inspector chip) · area: `packages/player/src/Player.tsx` (the title strip)
 
 - **found:** 2026-09-08, from the owner's screenshot of the running Edit tab: the header row with the "Timeline" label and the panel-toggle icons had content flush against the edges and inconsistent spacing.
 

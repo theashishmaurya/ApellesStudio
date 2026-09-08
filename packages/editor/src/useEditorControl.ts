@@ -2011,7 +2011,7 @@ export function useEditorControl(): void {
         const requested = a?.trackKind;
         const trackKind =
           requested === 'audio' ? 'audio' : requested === 'subtitle' ? 'subtitle' : 'video';
-        // B-114 — an optional insertion INDEX, so an agent can add a track
+        // B-115 — an optional insertion INDEX, so an agent can add a track
         // above existing footage in one call, exactly as the human's
         // drag-above-the-top-track gesture now does. It is not a new
         // primitive: it runs the same `add_track` + `move_track` pair

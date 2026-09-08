@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's left library rail (D-246, roadmap item 27).
+ * @chroma/editor — the Edit tab's left library rail (D-248, roadmap item 27).
  *
  * **What it is.** A vertical strip of icon buttons down the left edge of the
  * Edit tab, each opening a small library popover: **Titles** and **Effects**
@@ -17,7 +17,7 @@
  * `scratch/resolve-reference/resolve-edit-features.json`, per CLAUDE.md's
  * research-the-real-pattern-first rule. So: a left-edge icon that opens a
  * library, and a DRAG out of it, not a toolbar button that teleports a clip to
- * the playhead. Before this, dragging a title did nothing at all (B-116) —
+ * the playhead. Before this, dragging a title did nothing at all (B-117) —
  * there was no drag source anywhere in the app for one.
  *
  * **The rail shape is this repo's own, not a new one.** The Colorist tab has
@@ -42,7 +42,7 @@
  * one are identical and both are one undo entry. It does not host the
  * transitions palette — a transition's only legal target is a CUT, resolved
  * through the timeline pane's own `DndContext`, so it stays in the timeline
- * toolbar where that context is (see D-246).
+ * toolbar where that context is (see D-248).
  */
 import { useState } from 'react';
 import { Captions, Type, Wand2, type LucideIcon } from 'lucide-react';
@@ -264,7 +264,7 @@ export function EditLibraryRail() {
         </RailButton>
 
         {/* D-243/D-238 moved here from the cramped inline strip above the
-            timeline (see D-246). Both of these create a whole subtitle TRACK,
+            timeline (see D-248). Both of these create a whole subtitle TRACK,
             which is a library-shaped action, not a per-clip toolbar one — and
             the owner named this rail as where they wanted them ("add caption
             from transcript / subtitle here"). Rendered as the components

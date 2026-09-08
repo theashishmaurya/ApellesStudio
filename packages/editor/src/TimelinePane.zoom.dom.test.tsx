@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for anchored timeline zoom (B-115).
+ * @chroma/editor — real-DOM coverage for anchored timeline zoom (B-116).
  *
  * **Why a DOM test on top of `timelineZoom.test.ts`.** That file proves the
  * arithmetic; this proves the WIRING, which is where the bug actually was. The
@@ -163,7 +163,7 @@ afterEach(() => {
   expect(errors, `console.error fired during the test:\n${errors.map((e) => e.join(' ')).join('\n')}`).toEqual([]);
 });
 
-describe('B-115 — the timeline zooms around a point, not around nothing', () => {
+describe('B-116 — the timeline zooms around a point, not around nothing', () => {
   it('1. the fixture starts where the untouched geometry says it should', async () => {
     await mountPane();
     // 144 frames == 6s == 540px at the default 90px/s, plus the 20px gutter.

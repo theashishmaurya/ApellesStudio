@@ -23020,11 +23020,11 @@ B-097. `cargo fmt`/`clippy` clean on every file this touched. `tsc --noEmit`:
 zero errors (no frontend change — `chroma_audio_play`'s Tauri command
 signature is unchanged, so `useEditorControl.ts` needed nothing).
 
-## D-246 — the Edit tab gets a left LIBRARY RAIL, and a generated clip becomes a real drag source
+## D-248 — the Edit tab gets a left LIBRARY RAIL, and a generated clip becomes a real drag source
 
 **Context.** The owner's live pass over the running Edit tab produced two
 findings that turn out to be one problem. Dragging a Title onto the timeline
-did nothing (B-116). And a screenshot of the app's far-left edge was annotated
+did nothing (B-117). And a screenshot of the app's far-left edge was annotated
 with three sketched boxes and the words *"Have a side panel here"* /
 *"Add caption from transcript / subtitle here"*.
 
@@ -23158,7 +23158,7 @@ refusal — silent before, and half of what the owner hit — now says so.
 `editor_import_subtitles`, `editor_generate_captions_from_transcript`); this
 pass was the GUI half catching up, which is the same parity rule read from the
 other direction. `editor_add_track` gained an optional `index` in the same pass
-— see B-114.
+— see B-115.
 
 **Verification.** `TimelinePane.drop.dom.test.tsx`, 9 new real-DOM cases (6 of
 them this decision's). `npm test --workspace @chroma/editor` 1450/1450 (72
@@ -23168,7 +23168,7 @@ D-208 make: a native HTML5 `dragstart` in a real WKWebView is a tier jsdom
 cannot reach, so the payload contract, the drop routing and every op that comes
 out of them are proven here and the real drag gesture is an owner check.
 
-## D-247 — Export moves to the Edit tab's top strip, and that strip gets its missing right-hand padding
+## D-249 — Export moves to the Edit tab's top strip, and that strip gets its missing right-hand padding
 
 **Context.** Two items from the same live pass, on the same strip. The owner
 drew an arrow from the Export button in the bottom timeline toolbar up to the
@@ -23181,7 +23181,7 @@ reasoning that it is "the other always-available, not-selection-scoped action
 on this strip". That was defensible then and is wrong now: delivering the
 finished cut is the tab's TERMINAL action, not one of the per-clip edit actions
 (Split / Remove / Close gap) that toolbar holds — and the same pass moved the
-library items out of it too (D-246), leaving that toolbar with a coherent
+library items out of it too (D-248), leaving that toolbar with a coherent
 identity it did not have before. It lands in `Player`'s existing `menu` slot,
 which is the top strip's own right-hand cluster, right beside the Inspector
 toggle. `PreviewPane` gained a `headerActions` prop rather than importing
@@ -23196,7 +23196,7 @@ putting it in the flow means it can never overlap the "Timeline" label at a
 narrow width — which is what a third floating chip in that corner would have
 guaranteed.
 
-**The padding half is B-117**, and it is the exact mirror of a fix this repo
+**The padding half is B-118**, and it is the exact mirror of a fix this repo
 already made: B-051/D-131 gave the strip `pl-10` to reserve the Sources chip's
 32px footprint on the left, D-118 then added the identical chip on the right,
 and the right padding stayed at `pr-3`. `pr-10` makes it symmetric. That change

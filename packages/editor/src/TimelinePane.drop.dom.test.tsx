@@ -1,19 +1,19 @@
 // @vitest-environment jsdom
 /**
  * @chroma/editor — real-DOM coverage for what happens when something is
- * DROPPED on the timeline: the library rail's generator drag (D-246 / B-116)
- * and the "create a new track above the top one" insertion boundary (B-114).
+ * DROPPED on the timeline: the library rail's generator drag (D-248 / B-117)
+ * and the "create a new track above the top one" insertion boundary (B-115).
  *
  * **Why this file exists.** Both defects were reported live by the owner
  * against the running app and both are pure wiring, not arithmetic — the kind
  * a pure-op test cannot see:
  *
- *   - **B-116** — dragging a Title onto the timeline did nothing, because
+ *   - **B-117** — dragging a Title onto the timeline did nothing, because
  *     nothing in the app was a drag source for one and `onDrop` had never
  *     heard of a generator payload. The op it must produce (`add_clip` with a
  *     text clip) was already correct and already tested; what was missing was
  *     that a `drop` carrying `CHROMA_GENERATOR_DRAG_MIME` reaches it at all.
- *   - **B-114** — dragging above the topmost track resolved to no insertion
+ *   - **B-115** — dragging above the topmost track resolved to no insertion
  *     boundary, so a native drop silently landed on the EXISTING top track
  *     instead of making a new one. The op sequence for a boundary drop
  *     (`add_track` + `move_track` + `add_clip`) was right; the y→boundary
@@ -129,7 +129,7 @@ function stubEditAreaRect(): HTMLElement {
 const rowY = (y: number) => AREA.top + RULER_AND_MARGIN_PX + y;
 
 /** `clientY` inside the ruler / marker strip — i.e. genuinely ABOVE every
- *  track row, which is the gesture B-114 is about. */
+ *  track row, which is the gesture B-115 is about. */
 const aboveTracksY = () => AREA.top + 4;
 
 function dragEvent(
@@ -210,7 +210,7 @@ afterEach(() => {
   expect(errors, `console.error fired during the test:\n${errors.map((e) => e.join(' ')).join('\n')}`).toEqual([]);
 });
 
-describe('B-114 — dragging ABOVE the top track creates a new track there', () => {
+describe('B-115 — dragging ABOVE the top track creates a new track there', () => {
   it('1. a media drop above the tracks inserts a NEW video track at index 0 and puts the clip on it', async () => {
     const area = await mountPane();
     expect(layout()).toEqual([
@@ -227,7 +227,7 @@ describe('B-114 — dragging ABOVE the top track creates a new track there', () 
 
     // A brand-new topmost track — index 0 is the top of the compositing stack
     // (D-086) — holding the dropped clip, with the two original tracks pushed
-    // down intact. Before B-114 this landed on the existing 'v' track.
+    // down intact. Before B-115 this landed on the existing 'v' track.
     const after = layout();
     expect(after).toHaveLength(3);
     expect(after[0].kind).toBe('video');
@@ -248,7 +248,7 @@ describe('B-114 — dragging ABOVE the top track creates a new track there', () 
     await waitFrames(2);
 
     // The pane draws a ghost row for a `new_track` insertion preview. Its
-    // presence at all is the assertion: before B-114, `dragover` above the
+    // presence at all is the assertion: before B-115, `dragover` above the
     // tracks cleared the preview and showed nothing, while a drop there still
     // did something — the exact "a real drop could land on a track the user
     // was never shown a preview for" hazard `dropTargetTrack`'s own comment
@@ -267,14 +267,14 @@ describe('B-114 — dragging ABOVE the top track creates a new track there', () 
     await waitFrames(2);
 
     // Still two tracks — the mid-row band is not an insertion boundary, and
-    // B-114 must not have widened it into one.
+    // B-115 must not have widened it into one.
     const after = layout();
     expect(after).toHaveLength(2);
     expect(after[0].clips).toHaveLength(2);
   });
 });
 
-describe('B-116 / D-246 — a Title is a real drag source and a real drop', () => {
+describe('B-117 / D-248 — a Title is a real drag source and a real drop', () => {
   it('4. the library rail exposes a draggable Title that carries the generator payload', async () => {
     actSync(() =>
       useEditorTimelineStore.setState({
@@ -296,7 +296,7 @@ describe('B-116 / D-246 — a Title is a real drag source and a real drop', () =
 
     const entry = document.querySelector<HTMLElement>('[data-chroma-library-entry="title"]');
     expect(entry, 'the Titles library holds a Title entry').not.toBeNull();
-    // The whole of B-116: it is actually draggable. It was not, anywhere.
+    // The whole of B-117: it is actually draggable. It was not, anywhere.
     expect(entry!.getAttribute('draggable')).toBe('true');
 
     // …and its `dragstart` writes the payload `TimelinePane`'s drop reads.

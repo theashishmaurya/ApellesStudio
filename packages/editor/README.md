@@ -30,7 +30,7 @@ dragging a pool item in from the shell's Sources panel.
   verbatim), `labelForOp` (D-051), and
   `CHROMA_MEDIA_DRAG_MIME`/`DraggedMedia`/`clipFromDraggedMedia` — the
   drag-to-track contract `TimelinePane`'s drop handler and the Sources
-  panel's drag source both implement — plus (D-246)
+  panel's drag source both implement — plus (D-248)
   `CHROMA_GENERATOR_DRAG_MIME`/`DraggedGenerator`/`clipFromDraggedGenerator`,
   the same contract for a *generated* clip (a title, an adjustment clip)
   dragged out of the left library rail.
@@ -241,7 +241,7 @@ track.
 
 Two things changed here in the same pass as the owner's live Edit-tab review:
 
-- **A generated clip is a drag source too (D-246, fixing B-116).**
+- **A generated clip is a drag source too (D-248, fixing B-117).**
   `EditLibraryRail.tsx` — a vertical icon rail down the left edge of the tab,
   Resolve's own "effects library icon at the top left" — carries a draggable
   Title and Adjustment clip that put `CHROMA_GENERATOR_DRAG_MIME` on the
@@ -254,7 +254,7 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   caption/subtitle entry points. The transitions palette stays in the timeline
   toolbar — its target is a *cut*, resolved through that pane's own
   `DndContext` (D-226).
-- **Above the top track is a real insertion boundary (B-114).**
+- **Above the top track is a real insertion boundary (B-115).**
   `trackInsertBoundary` used to refuse every `y < 0`, so "drop it above your
   video tracks" — the reference gesture for a title or an adjustment clip —
   quietly landed on the existing top track (native drop) or cancelled

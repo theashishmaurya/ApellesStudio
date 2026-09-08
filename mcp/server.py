@@ -2377,7 +2377,7 @@ def editor_add_track(track_kind: str = "video", index: int | None = None) -> str
     (D-086).** With `index` omitted this APPENDS at the highest index, i.e.
     the BOTTOM of the stack, which is NOT where a title/overlay wants to be.
 
-    `index` (B-114) puts the new track at an exact position instead: `0` is
+    `index` (B-115) puts the new track at an exact position instead: `0` is
     the top of the compositing stack (above all existing footage — what you
     want for a title, an overlay or an adjustment clip), and `len(tracks)` is
     the same append you get by omitting it. Anything outside `0..len(tracks)`

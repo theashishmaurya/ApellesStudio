@@ -334,7 +334,7 @@ describe('timeline markers — real DOM (D-222)', () => {
     expect(useEditorTimelineStore.getState().playhead).toBe(72);
   });
 
-  // ---- B-113: deleting a marker from the list ---------------------------- //
+  // ---- B-114: deleting a marker from the list ---------------------------- //
   //
   // The popover's own Delete (test 6 above) already existed and already
   // worked. What did not exist was any way to REACH a delete without knowing
@@ -342,7 +342,7 @@ describe('timeline markers — real DOM (D-222)', () => {
   // placed, reported "no way to remove a marker once placed" while looking at
   // this very list. These three cover the affordance that closes that gap.
 
-  it('11. B-113 — each row in the marker list carries its own Delete', async () => {
+  it('11. B-114 — each row in the marker list carries its own Delete', async () => {
     await mountWith(buildFixture());
     fireMouse(markerListTrigger(), 'click');
     await waitFrames(2);
@@ -354,7 +354,7 @@ describe('timeline markers — real DOM (D-222)', () => {
     ).toEqual(['earlier', 'later']);
   });
 
-  it('12. B-113 — clicking a row’s Delete writes the real remove_marker op', async () => {
+  it('12. B-114 — clicking a row’s Delete writes the real remove_marker op', async () => {
     await mountWith(buildFixture());
     fireMouse(markerListTrigger(), 'click');
     await waitFrames(2);
@@ -372,7 +372,7 @@ describe('timeline markers — real DOM (D-222)', () => {
     expect(flags().map((f) => f.dataset.chromaMarker)).toEqual(['later']);
   });
 
-  it('13. B-113 — a row’s Delete does NOT also jump the playhead to the marker it deleted', async () => {
+  it('13. B-114 — a row’s Delete does NOT also jump the playhead to the marker it deleted', async () => {
     await mountWith(buildFixture());
     expect(useEditorTimelineStore.getState().playhead).toBe(0);
     fireMouse(markerListTrigger(), 'click');

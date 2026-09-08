@@ -281,7 +281,7 @@ export function Player({
         // mounted) because the toggle is genuinely shell-level, not
         // Edit-tab-specific, so any tab embedding this shared component can
         // have it floating over this same corner.
-        // B-117 — the right end needed the mirror of `pl-10`, and never had
+        // B-118 — the right end needed the mirror of `pl-10`, and never had
         // it. D-118 put the Edit tab's Inspector toggle at `absolute top-2
         // right-2 h-6 w-6` — the same 8px-inset 24px chip as Sources' on the
         // left, so its LEFT edge lands 32px in from this strip's right edge —

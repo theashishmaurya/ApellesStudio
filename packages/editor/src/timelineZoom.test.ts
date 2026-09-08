@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — unit coverage for anchored timeline zoom (B-115).
+ * @chroma/editor — unit coverage for anchored timeline zoom (B-116).
  *
  * The invariant this feature IS: after a zoom, the frame that was under the
  * anchor is still under the anchor. That is a round-trip through the two

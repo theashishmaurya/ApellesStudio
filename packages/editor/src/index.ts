@@ -48,7 +48,7 @@ export {
 export type { PreviewTimingReport, ChannelTimingReport, PreviewTimingChannel } from './previewTiming';
 /** D-198 — the Edit tab's own Export button/dialog/queue. Exported for the
  *  same D-142 harness-mounting reason `TimelinePane` itself is, and for any
- *  call site that wants the button standalone. D-247 moved where the app
+ *  call site that wants the button standalone. D-249 moved where the app
  *  mounts it — `EditorTab` now hands it to the preview's own title strip
  *  (`PreviewPane`'s `headerActions` slot) rather than the timeline toolbar —
  *  but the component is unchanged. */

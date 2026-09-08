@@ -338,7 +338,7 @@ export interface MarkerListMenuProps {
   timeline: Timeline | null;
   fps: number;
   onJump: (frame: number) => void;
-  /** B-113 — commit a `remove_marker` for the row's own trash button. The
+  /** B-114 — commit a `remove_marker` for the row's own trash button. The
    *  same `onRemove` the strip's popover takes, so both delete affordances
    *  drive one `EditOp`. */
   onRemove: (id: string) => void;
@@ -355,7 +355,7 @@ export interface MarkerListMenuProps {
  * always-present, almost-always-empty menu is noise, the same call D-128's
  * Unlink button made.
  *
- * **B-113 — each row carries its own Delete.** D-222 did ship a real delete
+ * **B-114 — each row carries its own Delete.** D-222 did ship a real delete
  * (the strip popover's `Trash2`), but the ONLY way to reach it was a
  * double-click or right-click on the flag itself — a 9×12px glyph on a 16px
  * strip. The owner, testing live with a marker placed, reported "no way to

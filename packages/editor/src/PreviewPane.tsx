@@ -181,7 +181,7 @@ const PREVIEW_LONG_EDGE = 960;
 const PREVIEW_MIME = 'image/jpeg';
 
 export interface PreviewPaneProps {
-  /** D-247 — controls for the right-hand end of `Player`'s own title strip
+  /** D-249 — controls for the right-hand end of `Player`'s own title strip
    *  (its `menu` slot). The Edit tab passes its Export dialog here, having
    *  moved it out of the timeline toolbar. A slot rather than importing
    *  `EditorExportDialog` directly: this pane is also mounted standalone by

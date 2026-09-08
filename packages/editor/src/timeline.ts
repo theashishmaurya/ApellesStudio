@@ -684,7 +684,7 @@ export function newTextClipFields(
 }
 
 /**
- * D-246 — the `NewClipFields` for a generator (`DraggedGenerator`), at the
+ * D-248 — the `NewClipFields` for a generator (`DraggedGenerator`), at the
  * project's own rate.
  *
  * **The one place a generated clip is built**, shared by the library rail's
@@ -1625,7 +1625,7 @@ export const DEFAULT_FPS = 24;
 export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
 
 /**
- * D-246 — the `dataTransfer` MIME type a **generator** drag carries: a clip
+ * D-248 — the `dataTransfer` MIME type a **generator** drag carries: a clip
  * that has no media-pool item behind it because it is generated rather than
  * imported (a title, an adjustment clip). Read by `TimelinePane`'s own
  * `onDragOver`/`onDrop`, exactly alongside `CHROMA_MEDIA_DRAG_MIME`.
@@ -1648,7 +1648,7 @@ export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
  */
 export const CHROMA_GENERATOR_DRAG_MIME = 'application/x-chroma-generator';
 
-/** D-246 — what a generator drag carries. Deliberately just the discriminator:
+/** D-248 — what a generator drag carries. Deliberately just the discriminator:
  *  every other field of the resulting clip (duration, the default layer, the
  *  id) is built by the same `newTextLayer`/`newTextClipFields` /
  *  `newAdjustmentLayer`/`newAdjustmentClipFields` factories the click-to-add
@@ -1658,7 +1658,7 @@ export interface DraggedGenerator {
   kind: 'title' | 'adjustment';
 }
 
-/** D-246 — the human-readable name of each generator, shared by the rail's own
+/** D-248 — the human-readable name of each generator, shared by the rail's own
  *  entries and by the refusal messages, so a tooltip can never call a thing
  *  something the error does not. */
 export const GENERATOR_LABELS: Record<DraggedGenerator['kind'], string> = {

@@ -6,8 +6,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 - **2026-09-08** — **Edit tab, from the owner's live pass: a left library rail,
   a Title you can actually drag, a track above the top one, an anchored zoom,
-  Export at the top, and a marker you can delete (D-246, D-247; B-113 to
-  B-117).** Six defects reported hands-on against the real
+  Export at the top, and a marker you can delete (D-248, D-249; B-114 to
+  B-118).** Six defects reported hands-on against the real
   `perf-comparison-reel-v3` project, plus one design call the investigation
   changed: the three boxes sketched on the app's far-left edge were not a
   broken component — nothing rendered there at all — so the rail is a new

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — anchored timeline zoom (B-115).
+ * @chroma/editor — anchored timeline zoom (B-116).
  *
  * **What it is.** The two pure functions that make a timeline zoom keep
  * something still: `frameAtViewportX` (what timeline frame is currently under

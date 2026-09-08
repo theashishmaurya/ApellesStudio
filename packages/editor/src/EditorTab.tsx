@@ -147,7 +147,7 @@ export function EditorTab() {
 
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
-      {/* D-246 — the Edit tab's library rail. A plain fixed-width sibling of
+      {/* D-248 — the Edit tab's library rail. A plain fixed-width sibling of
           the resizable columns, not a `ResizablePanel`: it holds icon buttons
           and nothing else, which is exactly the case CLAUDE.md's
           resizable-panels rule exempts. Tab-local rather than in `Shell.tsx`
@@ -161,7 +161,7 @@ export function EditorTab() {
           <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">
             <div className="flex-1 min-h-0 flex flex-col relative">
               <PreviewPane
-                // B-117/D-247 — the top strip's own right-hand cluster. The
+                // B-118/D-249 — the top strip's own right-hand cluster. The
                 // Export dialog moved here out of the timeline toolbar (the
                 // owner drew an arrow from it to exactly this corner), and it
                 // is rendered INSIDE the strip's flow rather than floated over
@@ -204,7 +204,7 @@ export function EditorTab() {
           >
             {/* D-229/D-243 held the Captions panel and D-238's
                 transcript-driven alternative here, in a bare strip beside the
-                timeline switcher. D-246 moved both into the left library
+                timeline switcher. D-248 moved both into the left library
                 rail's Subtitles entry: they create a whole subtitle TRACK,
                 which is a library-shaped action rather than a per-timeline
                 one, and the owner asked for exactly that ("add caption from
