@@ -2012,6 +2012,16 @@ overnight pass as everything above.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
+**Deferred, not abandoned — build LAST, right before launch, per the owner's own
+sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
+a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in
+remote-GPU cloud fallback for the existing local AI sidecars, and the
+marketing website. Research-and-scope pass done, nothing built —
+`docs/notes/pre-launch-plan.md` has the full findings, provider comparisons,
+and — the one thing to resolve before starting the backend or the cloud
+sidecar — the real, currently-UNRESOLVED licensing question `D-002` already
+flagged ("Blocks a closed SaaS... Decide before: first public push").
+
 ---
 
 ## Risks & how we de-risk

@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Pre-launch plan researched: fal.ai media-gen, a lightweight
+  accounts/credits/payment backend, an opt-in cloud GPU fallback for the
+  existing local AI sidecars, and the website** (`docs/notes/pre-launch-plan.md`).
+  Owner's own sequencing: build these LAST, after the Resolve-parity backlog,
+  not now. Nothing built — real provider research only (fal.ai's queue+webhook
+  API and pricing; Supabase+Stripe as the concrete backend stack, with real
+  Tauri-desktop OAuth precedent; RunPod/Modal/Replicate/Baseten for GPU
+  hosting, including a real, specific blocker — `mlx-audiocraft` needs a
+  separate CUDA-native build for the cloud path, since Metal has no container
+  GPU passthrough). Surfaced the one thing to resolve before starting the
+  backend or the cloud sidecar: `D-002`'s own licensing question (AGPL "blocks
+  a closed SaaS") was already flagged unresolved and is now directly load-bearing
+  for two of these four items.
 - **2026-09-08** — **`PropertyRow` extracted to its own file (D-220,
   roadmap 27)** — the reusable Inspector row (label/field/keyframe-diamond/
   nav/reset) several upcoming features (per-clip audio pan/volume, EQ) will
