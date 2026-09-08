@@ -71,6 +71,11 @@ export interface PointerEventOptions {
   shiftKey?: boolean;
   ctrlKey?: boolean;
   metaKey?: boolean;
+  /** D-235 — Alt/Option, the modifier that arms the context-sensitive trim
+   *  tool (`trimMode.ts`). Added here rather than worked around in the test:
+   *  a gesture whose whole meaning comes from a modifier cannot be covered by
+   *  a harness that silently drops it. */
+  altKey?: boolean;
   pointerType?: string;
 }
 
@@ -117,11 +122,23 @@ export function firePointerEvent(
     shiftKey: opts.shiftKey ?? false,
     ctrlKey: opts.ctrlKey ?? false,
     metaKey: opts.metaKey ?? false,
+    altKey: opts.altKey ?? false,
     pointerType: opts.pointerType ?? 'mouse',
     isPrimary: true,
   };
+  const event = new PointerEvent(type, init);
+  // D-235 — jsdom leaves `pageX`/`pageY` at 0 no matter what `clientX`/
+  // `clientY` are set to; a real browser always derives them (`clientX +
+  // scrollX`). That gap is not cosmetic: `interact.js`, which drives the
+  // timeline library's own edge-resize handles, reads the page coordinates
+  // when it computes a drag's delta, so under an unpatched jsdom every resize
+  // gesture looks like it never moved. Defined here so a synthetic pointer
+  // event carries the same coordinate pair a real one would. The page has no
+  // scroll in these tests, so `page === client` exactly.
+  Object.defineProperty(event, 'pageX', { value: point.x, configurable: true });
+  Object.defineProperty(event, 'pageY', { value: point.y, configurable: true });
   act(() => {
-    target.dispatchEvent(new PointerEvent(type, init));
+    target.dispatchEvent(event);
   });
 }
 
@@ -249,6 +266,76 @@ export function stubOffsetMetrics(width = 1200, height = 600): () => void {
       if (original[i]) Object.defineProperty(proto, k, original[i]!);
       else delete proto[k];
     });
+  };
+}
+
+/** D-235 — the companion to [`stubOffsetMetrics`] for `getBoundingClientRect`,
+ *  which jsdom answers with an all-zero rect for every element because it has
+ *  no layout engine.
+ *
+ *  Needed because the context-sensitive trim tool reads a real box: which half
+ *  of a clip's row a press landed in is what separates a slip from a slide
+ *  (`trimMode.ts`), and against a zero-height rect every press is at ratio 0
+ *  and every gesture resolves to slip — a test on that geometry would pass
+ *  while proving nothing.
+ *
+ *  The rect is DERIVED, not invented: `@xzdarcy/react-timeline-editor`
+ *  absolutely-positions each clip with real inline `left`/`width`/`height`
+ *  styles (verified on the rendered DOM, e.g. `height: 52px; left: 20px;
+ *  width: 180px`), which is exactly what a browser's own layout would turn
+ *  into that element's rect. An element with no inline box of its own — the
+ *  library's own edge-resize handles, which are CSS-positioned inside their
+ *  clip — inherits the nearest ancestor that has one, which is the same box
+ *  the browser would give it modulo its own inset. `top` is taken from inline
+ *  `top` when present and 0 otherwise, so a test that cares about the vertical
+ *  band should use the first track's row; this helper does not attempt to
+ *  reconstruct the whole stacked-row layout, and says so rather than pretending.
+ *
+ *  Opt-in per test file (it mutates a shared prototype) and returns a restore
+ *  function; always call it in `afterEach`. */
+export function stubBoundingRectsFromInlineStyle(): () => void {
+  const proto = Element.prototype;
+  const original = proto.getBoundingClientRect;
+  const px = (v: string): number => {
+    const n = Number.parseFloat(v);
+    return v.endsWith('px') && Number.isFinite(n) ? n : Number.NaN;
+  };
+  /** The nearest self-or-ancestor with an inline width AND height, or null. */
+  const boxFor = (el: Element): { left: number; top: number; width: number; height: number } | null => {
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      if (!(node instanceof HTMLElement)) continue;
+      const width = px(node.style.width);
+      const height = px(node.style.height);
+      if (Number.isNaN(width) || Number.isNaN(height)) continue;
+      const left = px(node.style.left);
+      const top = px(node.style.top);
+      return {
+        left: Number.isNaN(left) ? 0 : left,
+        top: Number.isNaN(top) ? 0 : top,
+        width,
+        height,
+      };
+    }
+    return null;
+  };
+  proto.getBoundingClientRect = function (this: Element): DOMRect {
+    const box = boxFor(this);
+    if (!box) return original.call(this);
+    const { left, top, width, height } = box;
+    return {
+      x: left,
+      y: top,
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      toJSON: () => ({ x: left, y: top, left, top, width, height, right: left + width, bottom: top + height }),
+    } as DOMRect;
+  };
+  return () => {
+    proto.getBoundingClientRect = original;
   };
 }
 

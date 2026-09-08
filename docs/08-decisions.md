@@ -21512,3 +21512,143 @@ the error set against a clean HEAD worktree: byte-identical, 64 pre-existing
 **Not built, deliberately:** dragging a box does not re-time anything (the zoom
 always spans the whole clip, as in Resolve); there is no anchor point; and the
 ease is not persisted — see Decision 3's follow-up note.
+
+## D-235 — Context-sensitive trim: one Alt-armed gesture family, mode resolved by pointer position
+
+**Context.** Roadmap item 27, "Ripple/roll/slip/slide by pointer position, not a
+mode switch." The audit that started this pass found the gap is not the *ops* —
+it is that four of the five edits an NLE trims with had no gesture at all:
+
+| edit | data model before this pass | MCP before | GUI before |
+|---|---|---|---|
+| trim (head/tail) | `trim_start`/`trim_end`, non-rippling by construction (D-058) | `editor_trim_clip` | yes — the library's edge resize |
+| slip | `slip` `EditOp` (D-195) | `editor_slip_clip` | **none** |
+| ripple *shift* | `shiftClipsAtOrAfter` + `propagateSyncLockRipple` (D-106/B-033) | via add/move/remove-gap | drop-snap, move |
+| ripple *trim* | — | — | — |
+| roll | — | — | — |
+| slide | — | — | — |
+
+So `slip` was a shipped MCP tool with no human affordance — exactly the
+half-a-feature `CLAUDE.md`'s human-AND-AI rule names, from the AI side. This
+pass closes it in both directions and adds the three that were genuinely
+missing.
+
+**The reference.** `scratch/resolve-reference/trim.jpg` is literally the four
+cursors Resolve swaps between, and its own page copy (`resolve-edit-features
+.json`, `edit-trim`) states the rule: "The smart trim tool automatically
+switches between ripple, roll, slip and slide **based on the location of the
+mouse pointer**... you don't have to waste time going back and forth to switch
+trimming tools." Resolve's geometry, cross-checked against its own docs and two
+independent write-ups: ripple = "slightly in from the edge of the clip"; roll =
+"directly within an edit point... where one clip connects to another"; slip =
+over the thumbnails; slide = under the thumbnails, on the clip's title bar.
+Apple's Final Cut Pro help gives the same horizontal split and differs only on
+the last pair — with the Trim tool, dragging a clip's middle slips it and
+**Option**-dragging slides it. Premiere keeps them as separate tools but has the
+same instinct: a modifier converts the Selection tool into the Ripple Edit tool.
+All three agree on the horizontal axis; they disagree only on how slip and slide
+are told apart.
+
+**The choice.** Alt/Option **arms** the tool; while armed, position alone picks
+the mode.
+
+| pointer position | armed mode |
+|---|---|
+| clip edge that touches a neighbour (an edit point) | **roll** |
+| clip edge with free space beyond it | **ripple** |
+| upper half of the clip body | **slip** |
+| lower half of the clip body | **slide** |
+| any edge, + Shift | **ripple** (overrides roll) |
+
+Unarmed is untouched: a body drag is still `move` (D-100), an edge drag still
+the plain, gap-leaving trim (D-058).
+
+**Why an arm at all, when the roadmap says "not a mode switch."** Resolve and
+FCP both put these four behind a tool the user has *already switched into*
+(Resolve's Trim Edit Mode, `T`). Chroma has no tool palette, and the two plain
+gestures on this surface are already spoken for by shipped features that must
+not change meaning. A held key is not a mode: nothing is remembered between
+gestures, there is no state to get stuck in, and the thing the roadmap item is
+really asking for — that you never leave your hands to pick a tool, and the
+edit follows where you point — is exactly what this delivers. Alt is also the
+only modifier left free here: Cmd/Ctrl-click toggles a clip in the selection and
+Shift-click extends a range.
+
+**Why roll wins the unshifted edit point, with Shift for ripple.** Resolve
+separates these two *horizontally* — the cut itself versus a few pixels inside
+the clip. Chroma cannot: the timeline library gives one 10px handle per side, so
+the seam between two touching clips IS the boundary between those two handles,
+and "on the cut" and "just inside a clip" are the same pixels. Subdividing 10px
+further would make a target the owner's own widen-the-tight-target note
+(`INSERT_SNAP_PX`, D-100) is explicitly against. So the *fact* disambiguates
+instead: roll is the default at an edit point because roll has nowhere else it
+can live (there is no such thing as rolling a free edge), while ripple is
+reachable at every edge on the timeline, this one included, by adding Shift.
+
+**What was built vs. reused.** `slip` is reused verbatim — the gesture is new,
+the op is D-195's. Ripple trim is `trim_start`/`trim_end` with a new
+`ripple?: boolean`, *not* a new op kind, mirroring the `ripple` flag
+`add_clip`/`move` already carry, and reusing this file's one ripple-shift
+primitive (`shiftClipsAtOrAfter` + `propagateSyncLockRipple` + B-033's
+reject-on-straddle) rather than a second ripple concept. `roll` and `slide` are
+genuinely new `EditOp`s. All three share two new neighbour-free clamps
+(`headRoom`/`tailRoom`) — the existing trim clamps fold in a neighbour term that
+is not merely unnecessary for these modes but *wrong*, since it would clamp a
+ripple at the very cut it exists to push through. Roll and slide validate their
+own result with `hasOverlap` rather than enumerating every link-group member's
+neighbour bound up front, which is the kind of thing that is subtly wrong for
+exactly one topology. Rust `chroma-timeline` is untouched — it has no `slip`
+either (D-195 was TS-side only), so this follows that precedent rather than
+half-mirroring three ops.
+
+**The pure/shell split, forced by a real finding.** The timeline library's own
+resize callbacks carry no event at all (checked in its typings: action/row/
+start/end/dir, nothing else), so the modifier state has to be captured from the
+raw pointerdown by a capture-phase listener. More importantly, **that library's
+interact.js resize does not run under jsdom** — verified directly, not assumed:
+a full, correctly-targeted `PointerEvent` sequence on its own
+`.timeline-editor-action-right-stretch` handle, with real rects and real
+`pageX`/`pageY`, commits nothing, and that is equally true of the plain
+pre-D-235 trim. So the decision every edge drag turns on was extracted to
+`resizeEndOp` (pure, tested to the branch), leaving `onActionResizeEndCb` as a
+two-line adapter; `bodyDragOp` is its body-drag twin. Same pure-core/thin-shell
+split the repo is organised around (D-039), reached here for a testability
+reason that is really a design reason.
+
+**Affordance.** Resolve swaps four custom cursors; Chroma names the mode in the
+toolbar while armed ("Ripple" / "Roll" / "Slip" / "Slide"), which needs no
+cursor bitmaps, survives every zoom, and is readable by a screen reader. It is
+computed from the *same* `resolveTrimMode` call the commit paths use, so the
+hint can never promise an edit the press would not make. First written as an
+effect with a manual listener; that shape bailed the whole component out of the
+React Compiler via an `eslint-disable`, caught by this package's own
+`reactCompiler.test.ts` (D-201) — it is a plain `onPointerMove` prop now, inert
+on a boolean unless Alt is held.
+
+**MCP parity, same pass.** `editor_trim_clip` gains `ripple`; `editor_roll_edit`
+and `editor_slide_clip` are new; `editor_slip_clip` finally has the matching
+gesture it shipped without.
+
+**Verified.** 50 unit tests (`trimMode.test.ts`: every branch of the mode rule,
+both decision functions, and the three ops as real before/after timelines —
+clamps, link-group lockstep, locked tracks, sync-lock, B-033 straddle) plus 12
+real-DOM `PointerEvent` tests (`TimelinePane.trim.dom.test.tsx`: slip and slide
+committing through the real component and real store, the one-op-on-release
+rule, the source clamp, and all four modes' readouts). `@chroma/editor`
+1167/1167 green; `tsc` clean on the package and zero new errors repo-wide
+(64 pre-existing in the vendored `app/src`, none in `packages/`).
+
+**Harness fixes made rather than worked around** (`CLAUDE.md`'s fix-the-tool
+rule): `pointerHarness` had no `altKey` at all — a gesture whose whole meaning
+is a modifier cannot be tested by a harness that drops it — and left
+`pageX`/`pageY` at 0, which a real browser always derives. Added
+`stubBoundingRectsFromInlineStyle`, the `getBoundingClientRect` companion to the
+existing `stubOffsetMetrics`, deriving each clip's box from the inline
+`left`/`width`/`height` the library really writes; without it every press sits
+at ratio 0 and the slip/slide band is a constant rather than a test.
+
+**Not built, deliberately.** Dynamic (JKL) trimming during playback, asymmetric
+trim, and multi-clip/multi-track trim — all real Resolve features named on the
+same reference page, all separate scoped work. The armed body drag also shows no
+live preview: it suppresses the move path's landing ghost (which would promise a
+reposition that never happens) rather than drawing a slip/slide-specific one.

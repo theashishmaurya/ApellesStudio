@@ -2114,6 +2114,101 @@ function clampedSlipDelta(tr: Track, clipIdx: number, delta: number, fps: number
   return clampInt(delta, lowerBound, upperBound);
 }
 
+// --------------------------------------------------------------------------- //
+// D-235 — the shared, NEIGHBOUR-FREE trim bounds the context-sensitive trim
+// tool's three new modes (ripple trim, roll, slide) are all built from.
+//
+// `clampedTrimStartDelta`/`clampedTrimEndDuration` above each fold a neighbour
+// term into their clamp, because a plain trim leaves every other clip exactly
+// where it is (D-058) and therefore MUST refuse to cross one. Ripple, roll and
+// slide are precisely the modes that move the neighbour too, so that term is
+// not just unnecessary for them, it is wrong — it would clamp a ripple at the
+// very cut it is supposed to push through. These two helpers are the same
+// clamps with only the SOURCE-media half kept, which is what those three modes
+// share; they are deliberately separate functions rather than a boolean
+// parameter on the existing pair, so the plain-trim path this file has had
+// since D-058 is untouched, byte for byte.
+// --------------------------------------------------------------------------- //
+
+/** The TIMELINE-frame delta range (`[lo, hi]`, positive = later) within which
+ *  `c`'s HEAD (in-point) may move using only its own source media:
+ *  `source_start` stays ≥ 0 and at least one frame of the clip survives. The
+ *  clip's OUT point is held fixed, so `duration` absorbs the whole delta. */
+function headRoom(c: Clip, fps: number): [number, number] {
+  return [
+    sourceFramesToTimeline(c, -c.source_start, fps),
+    sourceFramesToTimeline(c, Math.max(c.duration - 1, 0), fps),
+  ];
+}
+
+/** [`headRoom`]'s counterpart for `c`'s TAIL (out-point), same convention:
+ *  `duration` may shrink to 1 and may grow until the source media runs out
+ *  (`source_start + duration <= source_len`). The clip's IN point is fixed. */
+function tailRoom(c: Clip, fps: number): [number, number] {
+  return [
+    sourceFramesToTimeline(c, 1 - c.duration, fps),
+    sourceFramesToTimeline(c, Math.max(c.source_len - c.source_start - c.duration, 0), fps),
+  ];
+}
+
+/** D-235 — every `[trackIdx, clipIdx]` a one-sided edit at `(track, clip)`
+ *  must apply to in lockstep: the clip itself, plus every other member of its
+ *  A/V link group (D-129). `null` means REJECT THE WHOLE OP — a member's track
+ *  is locked — which is the same reject-rather-than-desync discipline
+ *  `trim_start`/`trim_end`/`slip` each already implement inline; this is that
+ *  shared preamble, extracted so roll/slide/ripple-trim inherit it rather than
+ *  growing a fourth and fifth copy of it. */
+function lockstepTargets(tl: Timeline, track: number, clip: number): Array<[number, number]> | null {
+  const link = linkTargets(tl, track, clip);
+  if (!link) return [[track, clip]];
+  if (link.members.some(([ti]) => tl.tracks[ti]?.locked)) return null;
+  return link.members;
+}
+
+/** The intersection of `room` across every lockstep target — the delta range
+ *  EVERY member of the group can absorb. `lo > hi` means no delta at all works
+ *  and the caller must refuse, which is the range-valued form of the existing
+ *  ops' "if any member clamps differently, reject the whole op" rule: rather
+ *  than asking each member to clamp the raw delta and comparing the answers,
+ *  the group's shared range is computed once and the delta clamped into it, so
+ *  every member provably applies the identical on-screen delta. */
+function lockstepRoom(
+  tl: Timeline,
+  targets: Array<[number, number]>,
+  room: (c: Clip, fps: number) => [number, number],
+  fps: number,
+): [number, number] {
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const [ti, ci] of targets) {
+    const c = tl.tracks[ti]?.clips[ci];
+    if (!c) return [0, -1];
+    const [l, h] = room(c, fps);
+    lo = Math.max(lo, l);
+    hi = Math.min(hi, h);
+  }
+  return [lo, hi];
+}
+
+/** True when any two clips on `tr` overlap in time.
+ *
+ *  D-235 — the RESULT check `roll` and `slide` validate themselves with. Both
+ *  ops move two or three clips at once, and each of those clips may drag a
+ *  whole A/V link group on other tracks along with it, so the set of
+ *  neighbours that could be collided with is not knowable from the two or
+ *  three indices the op names. Enumerating every member's own neighbour bound
+ *  up front is the kind of thing that is subtly wrong for exactly one link
+ *  topology; checking the finished timeline instead is cheap (a track holds
+ *  tens of clips) and cannot be wrong. A failed check rejects the op whole —
+ *  the same no-partial-application contract every link-aware op here has. */
+function hasOverlap(tr: Track, fps: number): boolean {
+  const sorted = [...tr.clips].sort((a, b) => a.start_frame - b.start_frame);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start_frame < endFrame(sorted[i - 1], fps)) return true;
+  }
+  return false;
+}
+
 /** First unlocked audio track with room for `[startFrame, startFrame +
  *  duration)` (both timeline frames — B-077, unlike `Clip.duration` this is
  *  already a footprint on the timeline, e.g. `sourceFramesToTimeline`'s
@@ -2162,8 +2257,72 @@ export type EditOp =
    *  Kept for API completeness / bookkeeping; the timeline UI's clip-body
    *  drag uses `move`, below, not this. */
   | { kind: 'reorder'; track: number; from: number; to: number }
-  | { kind: 'trim_start'; track: number; clip: number; delta: number }
-  | { kind: 'trim_end'; track: number; clip: number; delta: number }
+  /** `ripple` (D-235) — the RIPPLE half of the context-sensitive trim tool
+   *  (roadmap item 27). Without it these are exactly what they have always
+   *  been since D-058: only this clip changes, and the gap the trim opens (or
+   *  the neighbour it refuses to cross) is real and stays on screen.
+   *
+   *  With `ripple: true` the trim additionally shifts every clip at/after this
+   *  clip's own CURRENT end frame on the same track by the amount the out
+   *  point moved, so no gap is opened and no neighbour blocks the trim —
+   *  Blackmagic's own definition, from the reference this was built against
+   *  (`scratch/resolve-reference/`, "Automatically Trim and Tighten"):
+   *  "Rippling will extend or shorten the beginning or end of a clip. When you
+   *  ripple an edit point, everything to the right of the edit is pushed down
+   *  the timeline or pulled in to accommodate the clip's new duration."
+   *
+   *  A rippled `trim_start` deliberately leaves `start_frame` ALONE (unlike
+   *  the plain one, which moves it and opens a gap before the clip): the head
+   *  is trimmed in place, the clip's END moves earlier by the same delta, and
+   *  everything downstream follows it. That is what makes a ripple leave no
+   *  gap on either side. The clamp drops the neighbour term the plain trims
+   *  carry — see `headRoom`/`tailRoom` — because the neighbour is exactly what
+   *  a ripple is allowed to move.
+   *
+   *  Reuses this file's ONE ripple-shift primitive (`shiftClipsAtOrAfter` +
+   *  `propagateSyncLockRipple`, and B-033's reject-on-straddle guard), the
+   *  same one `add_clip`/`move`/`remove_gap` already ripple with — not a
+   *  second ripple concept. */
+  | { kind: 'trim_start'; track: number; clip: number; delta: number; ripple?: boolean }
+  | { kind: 'trim_end'; track: number; clip: number; delta: number; ripple?: boolean }
+  /** D-235 — ROLL: drag the edit POINT between two touching clips, moving the
+   *  outgoing clip's out point and the incoming clip's in point together by
+   *  the same delta. `clip` is the OUTGOING (left) clip; the incoming one is
+   *  found by position — the clip on the same track whose `start_frame` is
+   *  exactly this clip's end frame. No edit point there (a gap, or the end of
+   *  the track) means there is nothing to roll and the op is refused: two
+   *  edges with space between them are two independent trims, which is a
+   *  different gesture and a different op.
+   *
+   *  The sequence's total duration is unchanged by construction — nothing but
+   *  those two clips' shared boundary moves — which is exactly what
+   *  distinguishes a roll from a ripple. Blackmagic's own words: "A roll trim
+   *  works on both the left and right sides of an edit at the same time. While
+   *  one side is shortened, the other side is extended by the same number of
+   *  frames so the overall length of your timeline remains the same."
+   *
+   *  Both sides roll their whole A/V link group in lockstep (D-129), and the
+   *  delta is clamped into the range EVERY member on BOTH sides can absorb, so
+   *  a roll either happens identically everywhere or not at all. */
+  | { kind: 'roll'; track: number; clip: number; delta: number }
+  /** D-235 — SLIDE: move a clip along the timeline WITHOUT changing its own
+   *  duration or its source window, letting its neighbours absorb the
+   *  movement — the previous clip's out point and the next clip's in point
+   *  each move by the same delta. Blackmagic again: "Sliding changes a clip's
+   *  position on the timeline without changing its length. The clips on the
+   *  left and right get shorter or longer as you slide the clip in the middle.
+   *  You can think of a slide like a roll between 3 clips."
+   *
+   *  A neighbour is a *touching* one (its end is exactly this clip's start, or
+   *  its start exactly this clip's end). With a touching neighbour on a side,
+   *  that neighbour absorbs the movement; with only free space there, the
+   *  clamp is that free space instead, so a slide at the head or tail of a
+   *  track still works and simply cannot push past whatever is really in the
+   *  way. With NO neighbour and no obstacle on either side the op is refused:
+   *  nothing would absorb anything and the gesture is a plain `move`, which is
+   *  a different op with different semantics (and its own overlap contract,
+   *  D-104). */
+  | { kind: 'slide'; track: number; clip: number; delta: number }
   /** D-195 — Task 1, `docs/notes/timeline-editing-feature-gap-analysis.md`
    *  item 1: slip a clip's SOURCE window in place — `start_frame` and
    *  `duration` are BOTH left untouched, only `source_start` moves. This is
@@ -2736,12 +2895,22 @@ export function labelForOp(op: EditOp, before: Timeline): string {
   switch (op.kind) {
     case 'reorder':
       return `Reorder ${clipLabel(before, op.track, op.from)}`;
+    // D-235 — a ripple trim says so: "Trim" and "Ripple" are two different
+    // edits to undo back past, and an entry that named only the clip would be
+    // indistinguishable from the plain trim right above it in the stack.
     case 'trim_start':
-      return `Trim ${clipLabel(before, op.track, op.clip)} (start)`;
+      return `${op.ripple ? 'Ripple' : 'Trim'} ${clipLabel(before, op.track, op.clip)} (start)`;
     case 'trim_end':
-      return `Trim ${clipLabel(before, op.track, op.clip)} (end)`;
+      return `${op.ripple ? 'Ripple' : 'Trim'} ${clipLabel(before, op.track, op.clip)} (end)`;
     case 'slip':
       return `Slip ${clipLabel(before, op.track, op.clip)}`;
+    // D-235 — a roll is named for the EDIT POINT it moved, not for one of its
+    // two clips: naming either half alone reads as a trim of that half, which
+    // is the one thing a roll is not.
+    case 'roll':
+      return `Roll edit after ${clipLabel(before, op.track, op.clip)}`;
+    case 'slide':
+      return `Slide ${clipLabel(before, op.track, op.clip)}`;
     case 'split':
       return `Split ${clipLabel(before, op.track, op.clip)}`;
     case 'remove':
@@ -2877,6 +3046,63 @@ export function trackIndexAfterMove(idx: number, from: number, to: number): numb
   if (idx === from) return to;
   if (from < to) return idx > from && idx <= to ? idx - 1 : idx;
   return idx >= to && idx < from ? idx + 1 : idx;
+}
+
+/** D-235 — the rippled branch of `trim_start`/`trim_end` (see that op's own
+ *  `ripple` doc for the semantics and the reference quote). Kept as one helper
+ *  rather than two `case` bodies because the head and tail forms differ in
+ *  exactly two expressions — which field absorbs the delta, and the sign of
+ *  the downstream shift — and writing them twice is how those two drift.
+ *
+ *  Refused (a no-op, `tl` back unchanged) when a member's track is locked,
+ *  when the group has no room for any delta at all, when the clamped delta is
+ *  zero, or when a sync-locked track has a clip straddling the ripple point
+ *  (B-033 — never auto-split; same guard `remove_gap` uses). */
+function applyRippleTrim(
+  tl: Timeline,
+  track: number,
+  clip: number,
+  delta: number,
+  edge: 'start' | 'end',
+  fps: number,
+): Timeline {
+  const c = tl.tracks[track]?.clips[clip];
+  if (!c) return tl;
+  const targets = lockstepTargets(tl, track, clip);
+  if (!targets) return tl;
+  const [lo, hi] = lockstepRoom(tl, targets, edge === 'start' ? headRoom : tailRoom, fps);
+  if (lo > hi) return tl;
+  const d = clampInt(delta, lo, hi);
+  if (d === 0) return tl;
+  // The ripple threshold is the clip's CURRENT end frame — everything at or
+  // after it closes up behind the new out point. A head ripple holds
+  // `start_frame` still and shortens from the left, so the clip's end moves by
+  // `-d`; a tail ripple moves it by `+d`. Clips downstream all shift by that
+  // same amount, which preserves any gaps already between them (a ripple
+  // re-times the sequence, it does not tidy it up).
+  const shift = edge === 'start' ? -d : d;
+  const threshold = endFrame(c, fps);
+  if (findStraddlingSyncLockedTrack(tl.tracks, track, threshold, fps) !== null) return tl;
+  const next = clone(tl);
+  for (const [ti, ci] of targets) {
+    const nc = next.tracks[ti].clips[ci];
+    // B-077 — each member converts the shared TIMELINE delta through its OWN
+    // `source_fps`, exactly as `trim_start`/`trim_end`/`slip` already do.
+    const dSource = timelineFramesToSource(nc, d, fps);
+    if (edge === 'start') {
+      nc.source_start += dSource;
+      nc.duration -= dSource;
+    } else {
+      nc.duration += dSource;
+    }
+  }
+  shiftClipsAtOrAfter(next.tracks[track], threshold, shift);
+  // D-106 — cross-track ripple is sync-lock's job, exactly as it is for
+  // `add_clip`/`move`/`remove_gap`; a linked member on a NON-sync-locked track
+  // has its own trim applied above but does not drag that track's downstream
+  // clips, which is that mechanism's documented boundary, not an omission.
+  propagateSyncLockRipple(next.tracks, track, threshold, shift);
+  return next;
 }
 
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
@@ -3643,6 +3869,10 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // timeline-native); `source_start`/`duration` shift by `d`'s SOURCE-
       // frame equivalent, per-clip (`timelineFramesToSource`) since a linked
       // pair's two members may in principle have different `source_fps`.
+      // D-235 — the rippled form is a genuinely different edit (no gap opens,
+      // the neighbour is pushed instead of blocking), so it branches before
+      // any of the plain-trim math below rather than post-processing it.
+      if (op.ripple) return applyRippleTrim(tl, op.track, op.clip, op.delta, 'start', fps);
       const c = tr.clips[op.clip];
       if (!c) return tl;
       const d = clampedTrimStartDelta(tr, op.clip, op.delta, fps);
@@ -3687,6 +3917,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // (a TIMELINE-frame delta, B-077) to `c`'s own source frames — `applied`
       // below is a `duration` (source-frame) delta throughout, needing no
       // further conversion.
+      // D-235 — see the matching branch in `trim_start` above.
+      if (op.ripple) return applyRippleTrim(tl, op.track, op.clip, op.delta, 'end', fps);
       const c = tr.clips[op.clip];
       if (!c) return tl;
       const newDur = clampedTrimEndDuration(tr, op.clip, op.delta, fps);
@@ -3737,6 +3969,121 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       for (const [ti, ci] of targets) {
         const nc = next.tracks[ti].clips[ci];
         nc.source_start += timelineFramesToSource(nc, d, fps);
+      }
+      return next;
+    }
+    case 'roll': {
+      // D-235 — see the op's own doc. `op.clip` is the OUTGOING clip; the
+      // incoming one is whichever clip on this track starts EXACTLY where it
+      // ends. Found by position, not by index+1: `Track.clips` is storage
+      // order (D-054), which this model explicitly does not tie to time order.
+      const left = tr.clips[op.clip];
+      if (!left) return tl;
+      const leftEnd = endFrame(left, fps);
+      const rightIdx = tr.clips.findIndex((o, i) => i !== op.clip && o.start_frame === leftEnd);
+      if (rightIdx < 0) return tl;
+      const leftTargets = lockstepTargets(tl, op.track, op.clip);
+      const rightTargets = lockstepTargets(tl, op.track, rightIdx);
+      if (!leftTargets || !rightTargets) return tl;
+      // A clip cannot be on both sides of its own edit point. This can only
+      // happen if the two sides share a link group, which would double-apply
+      // the delta below; refuse rather than corrupt.
+      if (leftTargets.some(([lt, lc]) => rightTargets.some(([rt, rc]) => lt === rt && lc === rc))) return tl;
+      const [tailLo, tailHi] = lockstepRoom(tl, leftTargets, tailRoom, fps);
+      const [headLo, headHi] = lockstepRoom(tl, rightTargets, headRoom, fps);
+      const lo = Math.max(tailLo, headLo);
+      const hi = Math.min(tailHi, headHi);
+      if (lo > hi) return tl;
+      const d = clampInt(op.delta, lo, hi);
+      if (d === 0) return tl;
+      const next = clone(tl);
+      for (const [ti, ci] of leftTargets) {
+        const nc = next.tracks[ti].clips[ci];
+        nc.duration += timelineFramesToSource(nc, d, fps);
+      }
+      for (const [ti, ci] of rightTargets) {
+        const nc = next.tracks[ti].clips[ci];
+        const dSource = timelineFramesToSource(nc, d, fps);
+        nc.source_start += dSource;
+        nc.duration -= dSource;
+        nc.start_frame += d;
+      }
+      // Result check rather than a per-member neighbour clamp — see
+      // `hasOverlap`'s own doc for why this shape, not that one.
+      const touched = new Set([...leftTargets, ...rightTargets].map(([ti]) => ti));
+      for (const ti of touched) {
+        if (hasOverlap(next.tracks[ti], fps)) return tl;
+      }
+      return next;
+    }
+    case 'slide': {
+      // D-235 — see the op's own doc. The clip keeps its duration AND its
+      // source window; only `start_frame` moves, and its touching neighbours
+      // absorb that movement at their own out/in points.
+      const c = tr.clips[op.clip];
+      if (!c) return tl;
+      const cEnd = endFrame(c, fps);
+      const prevIdx = tr.clips.findIndex((o, i) => i !== op.clip && endFrame(o, fps) === c.start_frame);
+      const nextIdx = tr.clips.findIndex((o, i) => i !== op.clip && o.start_frame === cEnd);
+      const selfTargets = lockstepTargets(tl, op.track, op.clip);
+      if (!selfTargets) return tl;
+      const prevTargets = prevIdx >= 0 ? lockstepTargets(tl, op.track, prevIdx) : null;
+      const nextTargets = nextIdx >= 0 ? lockstepTargets(tl, op.track, nextIdx) : null;
+      if ((prevIdx >= 0 && !prevTargets) || (nextIdx >= 0 && !nextTargets)) return tl;
+      let lo = -Infinity;
+      let hi = Infinity;
+      if (prevTargets) {
+        // The previous clip grows/shrinks at its tail by the same delta.
+        const [l, h] = lockstepRoom(tl, prevTargets, tailRoom, fps);
+        lo = Math.max(lo, l);
+        hi = Math.min(hi, h);
+      } else {
+        // Nothing touching on the left: the clamp is the real free space back
+        // to whatever IS there (or frame 0), so a slide at the head of a track
+        // still works and still cannot reverse into a neighbour.
+        const prevEnd = tr.clips.reduce(
+          (max, o, i) => (i === op.clip ? max : Math.max(max, endFrame(o, fps) <= c.start_frame ? endFrame(o, fps) : 0)),
+          0,
+        );
+        lo = Math.max(lo, prevEnd - c.start_frame);
+      }
+      if (nextTargets) {
+        // The next clip's head moves by the same delta.
+        const [l, h] = lockstepRoom(tl, nextTargets, headRoom, fps);
+        lo = Math.max(lo, l);
+        hi = Math.min(hi, h);
+      } else {
+        let nextStart = Infinity;
+        for (const [i, o] of tr.clips.entries()) {
+          if (i !== op.clip && o.start_frame >= cEnd) nextStart = Math.min(nextStart, o.start_frame);
+        }
+        hi = Math.min(hi, nextStart - cEnd);
+      }
+      // "A slide is a roll between 3 clips" — with neither a neighbour nor an
+      // obstacle on either side nothing bounds or absorbs the gesture, and it
+      // is a plain `move`, not a slide.
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return tl;
+      if (lo > hi) return tl;
+      const d = clampInt(op.delta, lo, hi);
+      if (d === 0) return tl;
+      const next = clone(tl);
+      for (const [ti, ci] of selfTargets) next.tracks[ti].clips[ci].start_frame += d;
+      for (const [ti, ci] of prevTargets ?? []) {
+        const nc = next.tracks[ti].clips[ci];
+        nc.duration += timelineFramesToSource(nc, d, fps);
+      }
+      for (const [ti, ci] of nextTargets ?? []) {
+        const nc = next.tracks[ti].clips[ci];
+        const dSource = timelineFramesToSource(nc, d, fps);
+        nc.source_start += dSource;
+        nc.duration -= dSource;
+        nc.start_frame += d;
+      }
+      const touchedTracks = new Set(
+        [...selfTargets, ...(prevTargets ?? []), ...(nextTargets ?? [])].map(([ti]) => ti),
+      );
+      for (const ti of touchedTracks) {
+        if (hasOverlap(next.tracks[ti], fps)) return tl;
       }
       return next;
     }

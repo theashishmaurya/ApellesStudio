@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
+  one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
+  the same drag becomes a different edit depending on where you point — an edge
+  that touches a neighbour rolls the cut, a free edge ripples, the upper half of
+  a clip slips its source window, the lower half slides it between its
+  neighbours (Shift forces a ripple at an edit point). Taken from Blackmagic's
+  own smart-trim copy and the four cursors in
+  `scratch/resolve-reference/trim.jpg`, cross-checked against Final Cut's and
+  Premiere's own help; the toolbar names the mode while armed, since Chroma
+  can't swap cursors. Unarmed gestures are untouched — a body drag is still a
+  move, an edge drag still the plain gap-leaving trim. The audit behind it found
+  `slip` had shipped as an MCP tool with **no** human gesture (D-195), the
+  human-AND-AI gap from the AI side; ripple trim is the existing
+  `trim_start`/`trim_end` with a `ripple` flag reusing the one ripple-shift
+  primitive, and only `roll`/`slide` are new ops. Both edge- and body-drag
+  decisions were extracted to pure functions after finding the timeline
+  library's interact.js resize does not run under jsdom at all. MCP:
+  `editor_roll_edit`, `editor_slide_clip`, and `ripple` on `editor_trim_clip`.
+  Harness fixes on the way: `altKey`, real `pageX`/`pageY`, and a
+  `getBoundingClientRect` stub so the slip/slide band is a real test.
+
 - **2026-09-08** — **Dynamic zoom: drag two boxes in the viewer instead of
   keying by hand (D-234, roadmap item 27).** Arm it from the Inspector and the
   preview shows a green START box and a dashed red END box over the selected
