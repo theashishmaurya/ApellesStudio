@@ -97,6 +97,27 @@
 //! why they are normalised to the source rather than pixels, and flat
 //! scalars rather than a nested rect.
 
+//! **Transitions (D-224, roadmap item 27, `docs/notes/transitions.md`):**
+//! [`Track::transitions`] — a [`Transition`] per edit point, naming the cut it
+//! straddles ([`Transition::at_frame`]), a shape ([`TransitionKind`]), a
+//! duration and an alignment. **The clips it joins stay abutting and
+//! non-overlapping**: this crate's "one clip per track per frame" invariant
+//! (`Track::clip_at`'s single-winner `find`, and every op that refuses an
+//! overlap — D-104) is completely unchanged, which is the whole point of
+//! D-224's choice. What a transition costs instead is **handle media** — for
+//! its own duration one of the two clips is shown at a position outside its own
+//! trimmed window ([`Clip::source_frame_at`] / [`Clip::clamped_source_frame_at`]).
+//!
+//! [`Timeline::resolve_visible_video_layers_at`] is where that surfaces: it now
+//! returns [`VisibleLayer`]s rather than bare tuples, because a track can
+//! contribute two of them (a cross dissolve's two clips) or a generated colour
+//! plate with no clip at all (a dip to colour). This crate still renders
+//! nothing — it carries the values and resolves *which* layers, at what alpha,
+//! from what source frame; `chroma::edit`'s compositor (`app/src-tauri`) and
+//! `@chroma/editor`'s ffmpeg compiler are the two consumers that turn that into
+//! pixels, exactly the division of labour every other compositing field here
+//! already has.
+//!
 //! **Timeline markers (D-222, roadmap item 27):** [`Timeline::markers`] — a
 //! flat list of [`Marker`]s, each an id + a TIMELINE frame + a colour + an
 //! optional name/note. They hang off the *timeline*, not off a [`Clip`],
@@ -365,6 +386,216 @@ pub struct Track {
     /// why this is a named default.
     #[serde(default = "default_duck_release_ms")]
     pub duck_release_ms: f32,
+    /// **Transitions at this track's edit points (D-224, roadmap item 27).**
+    /// Each [`Transition`] names one cut — the frame where one clip on THIS
+    /// track ends and the next begins — plus a shape, a duration and an
+    /// alignment. See [`Transition`] for the whole model and D-224 for why a
+    /// transition is its own object bridging two still-abutting clips rather
+    /// than a real overlap of the two.
+    ///
+    /// **On `Track`, not on `Clip` and not on `Timeline`.** A transition is a
+    /// property of an edit *point*, which is a track-level thing: it belongs to
+    /// neither clip alone (deleting either side leaves nothing to blend), and
+    /// two different tracks' cuts at the same frame are unrelated events. Same
+    /// "the owner is whichever level the thing is actually a property of"
+    /// reasoning [`Timeline::markers`] and [`Self::gain`] already record.
+    ///
+    /// **`#[serde(default)]`, bare, and that is correct** (like
+    /// [`Timeline::markers`], unlike [`Self::gain`]): `Vec::default()` is the
+    /// empty vec and "a project saved before transitions existed has none" is
+    /// exactly right — no migration, no behaviour change.
+    #[serde(default)]
+    pub transitions: Vec<Transition>,
+}
+
+/// Which blend a [`Transition`] performs (D-224).
+///
+/// Deliberately **two shapes in v1**, not a library. They are the two that
+/// exercise the two genuinely different mechanisms this feature needed to
+/// prove — [`Self::CrossDissolve`] blends TWO real clips at once (the
+/// two-clips-visible resolution plus handle media), [`Self::DipToColor`] blends
+/// ONE clip against a generated plate (no handles at all, so it is always
+/// available). Everything a bigger library would add — wipes, slides, pushes —
+/// is another generated matte over the same two mechanisms, which is why more
+/// types are additive later rather than a redesign. See D-224.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionKind {
+    /// The universal one: the incoming clip fades up over the still-opaque
+    /// outgoing clip, so the picture is `p·incoming + (1-p)·outgoing` at
+    /// progress `p`. Needs **handle media** on both sides (see
+    /// [`Transition::head_handle`] / [`Transition::tail_handle`]).
+    CrossDissolve,
+    /// Dip to a colour (black by default): a full-frame plate of
+    /// [`Transition::color`] fades up over the outgoing clip, peaks fully
+    /// opaque at the cut, and fades back down over the incoming clip. Needs
+    /// **no handle media at all** — each clip only ever shows its own real
+    /// frames, the plate does all the work.
+    DipToColor,
+}
+
+/// Where a [`Transition`]'s own window sits relative to the cut it is applied
+/// to (D-224) — Premiere Pro's own three, under its own names ("Center at
+/// Cut" / "Start at Cut" / "End at Cut", Adobe's *Align and reposition
+/// transitions* help page).
+///
+/// This is not cosmetic: it decides **which clip has to supply handle media**.
+/// A centered dissolve needs half its length of handle from each side; a
+/// `StartAtCut` one needs its whole length from the outgoing clip's tail and
+/// nothing from the incoming; `EndAtCut` is the mirror. So a cut where only
+/// one side has been trimmed still supports a dissolve, in the one alignment
+/// that asks for media that actually exists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionAlignment {
+    /// Straddles the cut, half on each side. The default, and every reference
+    /// NLE's own.
+    #[default]
+    CenterAtCut,
+    /// Begins at the cut and runs entirely into the incoming clip — so only
+    /// the OUTGOING clip's tail handle is consumed.
+    StartAtCut,
+    /// Ends at the cut, running entirely inside the outgoing clip — so only
+    /// the INCOMING clip's head handle is consumed.
+    EndAtCut,
+}
+
+/// One transition at one edit point (D-224, `docs/notes/transitions.md`).
+///
+/// **The clips it joins stay abutting and non-overlapping.** This object
+/// bridges the cut rather than the two clips overlapping in the stored model:
+/// [`Self::at_frame`] IS the cut (the outgoing clip's exclusive end and the
+/// incoming clip's `start_frame`, the same number), and the transition's own
+/// window is derived from that plus [`Self::duration`] and
+/// [`Self::alignment`]. Nothing about the timeline's "one clip per track per
+/// frame" invariant changes — see D-224 for the two real options that were
+/// weighed and why this one composes with this codebase's existing
+/// resolution / decode / export machinery while the other fights it.
+///
+/// **What it costs instead: handle media.** A cross dissolve shows both clips
+/// at once for [`Self::duration`] frames, so one of them must supply frames
+/// from outside its own trimmed window — the outgoing clip past its out-point
+/// ([`Self::tail_handle`]) and/or the incoming clip before its in-point
+/// ([`Self::head_handle`]). That is the same trade every real NLE makes, and
+/// the reason Premiere warns "Insufficient Media" on a cut with no handles.
+/// This crate only carries and derives the numbers; the callers that need real
+/// media (`chroma::edit`'s compositor, the ffmpeg export compiler, and
+/// `@chroma/editor`'s `checkTransition` precondition) are what verify the
+/// source actually has them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transition {
+    /// Stable id — how the `remove_transition` / `set_transition` edit ops name
+    /// one.
+    pub id: String,
+    pub kind: TransitionKind,
+    /// The TIMELINE frame of the cut: the outgoing clip's exclusive end and the
+    /// incoming clip's [`Clip::start_frame`], which for two abutting clips are
+    /// the same number. Not a range — the window is *derived* (see
+    /// [`Self::window`]) so that changing the duration or the alignment can
+    /// never leave the transition attached to a different cut than the one it
+    /// was dropped on.
+    pub at_frame: i64,
+    /// Length in TIMELINE frames. Always ≥ 1 for a transition that renders; a
+    /// stored 0 or negative simply resolves to an empty window and paints
+    /// nothing — the "the model stores what the UI wrote, the consumer decides
+    /// what it means" rule every other field here follows.
+    pub duration: i64,
+    #[serde(default)]
+    pub alignment: TransitionAlignment,
+    /// [`TransitionKind::DipToColor`] only — the plate's colour as `#RRGGBB`
+    /// (or `#RGB`). `None`/absent is black, by far the common case ("dip to
+    /// black"). A plain string rather than an enum for [`Marker::color`]'s own
+    /// reason: it is document content the user chose, an MCP caller may pass a
+    /// raw hex, and the palette can grow with no schema migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+impl Transition {
+    /// The `[start, end)` TIMELINE-frame window this transition actually paints
+    /// over, derived from its cut, duration and alignment. Empty (`start ==
+    /// end`) for a non-positive duration.
+    pub fn window(&self) -> (i64, i64) {
+        let d = self.duration.max(0);
+        match self.alignment {
+            // Integer halving floors, so an odd duration puts the extra frame
+            // AFTER the cut. Deterministic and stated rather than left to a
+            // rounding accident — every engine derives the window from this one
+            // piece of arithmetic (the TS mirror in `timeline.ts` included), so
+            // there is one answer, not two that agree by luck.
+            TransitionAlignment::CenterAtCut => {
+                let start = self.at_frame - d / 2;
+                (start, start + d)
+            }
+            TransitionAlignment::StartAtCut => (self.at_frame, self.at_frame + d),
+            TransitionAlignment::EndAtCut => (self.at_frame - d, self.at_frame),
+        }
+    }
+
+    /// Whether `pos` (a TIMELINE frame) falls inside this transition's window.
+    pub fn covers(&self, pos: i64) -> bool {
+        let (start, end) = self.window();
+        pos >= start && pos < end
+    }
+
+    /// Linear progress through the window at `pos`, in `0.0..1.0` — `0.0` on the
+    /// window's first frame, `(d-1)/d` on its last.
+    ///
+    /// **Exactly `(pos - start) / duration`, and that is a parity decision.**
+    /// ffmpeg's own time-based ramp expressions (the export path builds one per
+    /// transition) evaluate to precisely this at frame time `pos / fps`, so the
+    /// live preview and the exported file compute the same number for the same
+    /// frame by construction rather than by two implementations happening to
+    /// agree. A "nicer" centred sampling (`(pos - start + 0.5)/d`) would have
+    /// had to be mirrored into every ffmpeg expression as a fudge term.
+    pub fn progress_at(&self, pos: i64) -> f64 {
+        let (start, end) = self.window();
+        let d = end - start;
+        if d <= 0 {
+            return 0.0;
+        }
+        (((pos - start) as f64) / (d as f64)).clamp(0.0, 1.0)
+    }
+
+    /// How many TIMELINE frames of the INCOMING clip's **head handle** (media
+    /// before its own in-point) this transition needs — the part of the window
+    /// falling before the cut.
+    pub fn head_handle(&self) -> i64 {
+        let (start, _) = self.window();
+        (self.at_frame - start).max(0)
+    }
+
+    /// How many TIMELINE frames of the OUTGOING clip's **tail handle** (media
+    /// past its own out-point) this transition needs — the part of the window
+    /// falling at or after the cut.
+    pub fn tail_handle(&self) -> i64 {
+        let (_, end) = self.window();
+        (end - self.at_frame).max(0)
+    }
+
+    /// The dip plate's colour, `(r, g, b)`, defaulting to black for an absent or
+    /// unparseable value. Same degrade-don't-fail contract [`TextLayer::rgb`]
+    /// documents.
+    pub fn rgb(&self) -> (u8, u8, u8) {
+        self.color
+            .as_deref()
+            .and_then(parse_hex_rgb)
+            .unwrap_or((0, 0, 0))
+    }
+
+    /// The plate's alpha at `pos` for a [`TransitionKind::DipToColor`] — a
+    /// triangle peaking fully opaque in the middle of the window:
+    /// `1 - |2p - 1|`.
+    ///
+    /// This is what makes a dip need no handle media: the clip underneath is
+    /// simply whichever one [`Track::clip_at`] already resolves there (the
+    /// outgoing before the cut, the incoming after), each showing only its own
+    /// real frames, with the plate fully covering the swap at the moment it
+    /// happens.
+    pub fn dip_alpha_at(&self, pos: i64) -> f64 {
+        let p = self.progress_at(pos);
+        1.0 - (2.0 * p - 1.0).abs()
+    }
 }
 
 fn default_track_gain() -> f32 {
@@ -405,6 +636,7 @@ impl Default for Track {
             duck_db: 0.0,
             duck_attack_ms: default_duck_attack_ms(),
             duck_release_ms: default_duck_release_ms(),
+            transitions: Vec::new(),
         }
     }
 }
@@ -1143,6 +1375,50 @@ impl Clip {
         self.start_frame + source_frames_to_timeline(self.source_fps, self.duration, fps)
     }
 
+    /// D-224 — the SOURCE frame this clip shows at TIMELINE frame
+    /// `timeline_frame`, **without** [`Track::clip_at`]'s "is it inside this
+    /// clip's window" check: the identical arithmetic, extrapolated.
+    ///
+    /// Extracted and made `pub` because a transition genuinely needs the
+    /// extrapolation — for the length of a cross dissolve, one of the two clips
+    /// is being shown at a position OUTSIDE its own `[start_frame,
+    /// end_frame_at)` window and must display its **handle** media there (the
+    /// outgoing clip past its out-point, the incoming clip before its in-point).
+    /// `clip_at` cannot answer that by construction, and re-spelling its formula
+    /// at the transition call site is exactly the duplication this method
+    /// exists to prevent — `clip_at` now calls this too, so the in-window and
+    /// handle cases can never drift apart.
+    ///
+    /// The result may fall outside `[0, source_len)`; deciding what to do about
+    /// that is the consumer's (see [`Self::clamped_source_frame_at`]).
+    pub fn source_frame_at(&self, timeline_frame: i64, fps: f64) -> i64 {
+        self.source_start
+            + timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps)
+    }
+
+    /// D-224 — [`Self::source_frame_at`] pinned into the source's own real
+    /// extent, `[0, source_len)`.
+    ///
+    /// **The freeze-frame fallback, and it is deliberately the LAST line of
+    /// defence, not the feature.** `@chroma/editor`'s `checkTransition` refuses
+    /// a cross dissolve whose handles do not exist before one is ever written,
+    /// so a well-formed document never reaches this clamp. It exists because
+    /// `chroma_timeline_set` stores whatever it is handed (D-058) — a document
+    /// hand-edited, written by an older build, or left dangling by a later trim
+    /// can still ask for a frame that is not in the file, and holding the
+    /// nearest real frame is the only degrade that keeps rendering (it is also
+    /// exactly what Premiere Pro does on "Insufficient Media": "repeating the
+    /// end frames to form a freeze frame"). `source_len <= 0` (an unprobed
+    /// source) means "no known extent", so only the lower bound applies.
+    pub fn clamped_source_frame_at(&self, timeline_frame: i64, fps: f64) -> i64 {
+        let raw = self.source_frame_at(timeline_frame, fps).max(0);
+        if self.source_len > 0 {
+            raw.min(self.source_len - 1)
+        } else {
+            raw
+        }
+    }
+
     /// D-147 — this clip's fade multiplier `frames_into_clip` frames after its
     /// own in-point, in `0.0..=1.0`. Exactly `1.0`, with no arithmetic, for a
     /// clip with no fade configured — which is every clip in every pre-D-147
@@ -1199,6 +1475,73 @@ impl Clip {
             }
         }
     }
+}
+
+/// One thing the compositor has to paint for one timeline position (D-224) —
+/// what [`Timeline::resolve_visible_video_layers_at`] hands back.
+///
+/// Was a bare `(track, &Clip, source_frame)` tuple before transitions existed.
+/// It had to grow because a transition adds two facts a tuple cannot carry: a
+/// layer may be a **generated colour plate** with no clip behind it at all, and
+/// a layer may be drawn at a **blend alpha** that is a property of the
+/// transition rather than of the clip (so it must not be written into the
+/// clip's own `opacity`, which is real, persisted, user-authored document
+/// content).
+#[derive(Debug, Clone)]
+pub struct VisibleLayer<'a> {
+    /// The video track this layer came from — its index in [`Timeline::tracks`],
+    /// i.e. its compositing priority (lower = nearer the top).
+    pub track: usize,
+    pub source: LayerSource<'a>,
+    /// Extra alpha multiplier contributed by a [`Transition`], in `0.0..=1.0`;
+    /// exactly `1.0` for every layer outside one, which is every layer in every
+    /// pre-D-224 project. The consumer multiplies it into the layer's resolved
+    /// opacity **after** the clip's own static/keyframed opacity and its fade —
+    /// the same multiplicative composition D-147 established for fade × opacity,
+    /// so no one of the three silently overrides another.
+    pub alpha: f64,
+}
+
+/// What a [`VisibleLayer`]'s picture comes from (D-224).
+#[derive(Debug, Clone)]
+pub enum LayerSource<'a> {
+    /// A real clip on the track, at a resolved SOURCE frame.
+    Clip {
+        clip: &'a Clip,
+        source_frame: i64,
+        role: LayerRole,
+    },
+    /// A generated full-frame plate of a solid colour — a
+    /// [`TransitionKind::DipToColor`]'s dip. Carries no clip and no source
+    /// frame because it has neither: nothing is decoded for it.
+    Color { rgb: (u8, u8, u8) },
+}
+
+/// Which decode stream a [`LayerSource::Clip`] belongs to within its track
+/// (D-224).
+///
+/// **This exists for the decode pipe, and it is a real performance constraint,
+/// not bookkeeping.** `chroma_media::decode_pipe` keys one live `ffmpeg` process
+/// per slot, and two callers interleaving different sources or positions through
+/// one slot make each call restart the other's process (B-040 — it is what once
+/// reduced the multi-layer preview to ~0.85 fps). A cross dissolve is exactly
+/// that situation *within a single track*, which had never happened before, so
+/// the two clips need two slots.
+///
+/// The **outgoing** clip keeps the track's own primary slot and the **incoming**
+/// clip takes the partner slot, deliberately: at the moment a transition starts,
+/// the outgoing clip's pipe is already warm and mid-stream (that is the normal
+/// playback direction), so leaving it where it is means the transition does not
+/// stall the stream that is already playing. The incoming clip's pipe is a cold
+/// spawn either way, and migrates to the primary slot once at the window's end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerRole {
+    /// The track's ordinary layer — whatever [`Track::clip_at`] resolves there,
+    /// and the only role any layer has outside a transition.
+    Primary,
+    /// The second clip a [`TransitionKind::CrossDissolve`] needs visible at the
+    /// same time. Always the INCOMING clip; see the enum's own doc for why.
+    TransitionPartner,
 }
 
 /// Edit-op failures. All are caller errors (bad index, a trim that would empty
@@ -1325,7 +1668,12 @@ fn has_straddling_sync_locked_clip(tracks: &[Track], edited_track: usize, thresh
 /// a `locked` track being silently modified by someone else's ripple. Plain
 /// shift only (B-033) — callers MUST call `has_straddling_sync_locked_clip`
 /// first and reject the whole op if it returns `true`; this never splits.
-fn propagate_sync_lock_ripple(tracks: &mut [Track], edited_track: usize, threshold: i64, delta: i64) {
+fn propagate_sync_lock_ripple(
+    tracks: &mut [Track],
+    edited_track: usize,
+    threshold: i64,
+    delta: i64,
+) {
     for (i, t) in tracks.iter_mut().enumerate() {
         if i != edited_track && t.sync_locked && !t.locked {
             shift_clips_at_or_after(t, threshold, delta);
@@ -1502,14 +1850,27 @@ impl Timeline {
     /// consumer. A hidden track contributes nothing, silently, same
     /// "gap = nothing here, not an error" contract every other resolver in
     /// this crate already has.
-    pub fn resolve_visible_video_layers_at(&self, pos: i64) -> Vec<(usize, &Clip, i64)> {
+    ///
+    /// **D-224 — a track may now contribute TWO entries, not at most one**, and
+    /// an entry may be a generated colour plate rather than a clip: that is what
+    /// a [`Transition`] is. The per-track ordering follows the same
+    /// topmost-first rule as the across-track one, so a caller that already
+    /// painted this list in reverse needs no new ordering rule — see
+    /// [`Track::push_layers_at`], which owns the whole per-track decision. The
+    /// return type changed from a bare `(usize, &Clip, i64)` tuple to
+    /// [`VisibleLayer`] for exactly this: a plate has no clip and no source
+    /// frame, and a transition partner carries a real blend alpha and its own
+    /// decode-pipe role, none of which a three-tuple can say.
+    pub fn resolve_visible_video_layers_at(&self, pos: i64) -> Vec<VisibleLayer<'_>> {
         let fps = self.fps();
-        self.tracks
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.kind == TrackKind::Video && !t.hidden)
-            .filter_map(|(i, t)| t.clip_at(pos, fps).map(|(c, sf)| (i, c, sf)))
-            .collect()
+        let mut out: Vec<VisibleLayer<'_>> = Vec::new();
+        for (i, track) in self.tracks.iter().enumerate() {
+            if track.kind != TrackKind::Video || track.hidden {
+                continue;
+            }
+            track.push_layers_at(i, pos, fps, &mut out);
+        }
+        out
     }
 
     /// Reconstruct real positions for any clip loaded from pre-D-054 JSON
@@ -1926,8 +2287,9 @@ impl Timeline {
         // B-033 — same reject-on-straddle now also covers every OTHER
         // sync-locked track this move's ripple would touch, checked before
         // any mutation.
-        let sync_straddles =
-            overlaps && ripple && has_straddling_sync_locked_clip(&self.tracks, to_track, to_start_frame);
+        let sync_straddles = overlaps
+            && ripple
+            && has_straddling_sync_locked_clip(&self.tracks, to_track, to_start_frame);
         if overlaps && (!ripple || straddles || sync_straddles) {
             return Err(TimelineError::Overlap(to_track, to_start_frame));
         }
@@ -2400,17 +2762,136 @@ impl Track {
         self.clips
             .iter()
             .find(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame_at(fps))
-            .map(|c| {
-                (
-                    c,
-                    c.source_start
-                        + timeline_frames_to_source(
-                            c.source_fps,
-                            timeline_frame - c.start_frame,
-                            fps,
-                        ),
-                )
-            })
+            // D-224 — the arithmetic moved to `Clip::source_frame_at`, which a
+            // transition's handle lookup also needs (unbounded by this
+            // method's own window check). Byte-identical result here.
+            .map(|c| (c, c.source_frame_at(timeline_frame, fps)))
+    }
+
+    /// D-224 — append everything this track contributes at TIMELINE frame
+    /// `pos` to `out`, **topmost first** (the same ordering
+    /// [`Timeline::resolve_visible_video_layers_at`] uses across tracks, so a
+    /// caller painting the flat list in reverse needs no per-track special
+    /// case).
+    ///
+    /// Three cases, and only the first one existed before transitions:
+    ///
+    /// 1. **No transition covering `pos`** — at most one layer, exactly
+    ///    [`Self::clip_at`]'s answer at full alpha. Byte-identical to the
+    ///    pre-D-224 behaviour for every project that has no transitions.
+    /// 2. **[`TransitionKind::DipToColor`]** — the plate on top (alpha
+    ///    [`Transition::dip_alpha_at`]) and, underneath it, the ordinary
+    ///    `clip_at` layer. Needs no handle media and no second decode: the clip
+    ///    below is simply whichever one is naturally there, and the plate is
+    ///    fully opaque at the instant the two swap.
+    /// 3. **[`TransitionKind::CrossDissolve`]** — the INCOMING clip on top at
+    ///    alpha `p` over the still-opaque OUTGOING clip, so the picture is
+    ///    `p·incoming + (1-p)·outgoing` under ordinary source-over compositing.
+    ///    Whichever of the two is outside its own window at `pos` is read at its
+    ///    **handle** frame via [`Clip::clamped_source_frame_at`].
+    ///
+    /// A transition missing one of its two clips (dangling after a trim or a
+    /// delete) degrades to case 1 rather than erroring — same "gap = nothing
+    /// here, not an error" contract every resolver in this crate has.
+    pub fn push_layers_at<'a>(
+        &'a self,
+        track: usize,
+        pos: i64,
+        fps: f64,
+        out: &mut Vec<VisibleLayer<'a>>,
+    ) {
+        let primary = self.clip_at(pos, fps);
+        let plain = |c: &'a Clip, sf: i64| VisibleLayer {
+            track,
+            source: LayerSource::Clip {
+                clip: c,
+                source_frame: sf,
+                role: LayerRole::Primary,
+            },
+            alpha: 1.0,
+        };
+
+        let Some(transition) = self.transition_at(pos) else {
+            if let Some((c, sf)) = primary {
+                out.push(plain(c, sf));
+            }
+            return;
+        };
+
+        match transition.kind {
+            TransitionKind::DipToColor => {
+                out.push(VisibleLayer {
+                    track,
+                    source: LayerSource::Color {
+                        rgb: transition.rgb(),
+                    },
+                    alpha: transition.dip_alpha_at(pos),
+                });
+                if let Some((c, sf)) = primary {
+                    out.push(plain(c, sf));
+                }
+            }
+            TransitionKind::CrossDissolve => {
+                let (outgoing, incoming) = self.transition_clips(transition.at_frame, fps);
+                let (Some(outgoing), Some(incoming)) = (outgoing, incoming) else {
+                    // Dangling — one side was trimmed or deleted out from under
+                    // it. Nothing to blend against, so render the cut plainly.
+                    if let Some((c, sf)) = primary {
+                        out.push(plain(c, sf));
+                    }
+                    return;
+                };
+                out.push(VisibleLayer {
+                    track,
+                    source: LayerSource::Clip {
+                        clip: incoming,
+                        source_frame: incoming.clamped_source_frame_at(pos, fps),
+                        role: LayerRole::TransitionPartner,
+                    },
+                    alpha: transition.progress_at(pos),
+                });
+                out.push(VisibleLayer {
+                    track,
+                    source: LayerSource::Clip {
+                        clip: outgoing,
+                        source_frame: outgoing.clamped_source_frame_at(pos, fps),
+                        role: LayerRole::Primary,
+                    },
+                    alpha: 1.0,
+                });
+            }
+        }
+    }
+
+    /// D-224 — the [`Transition`] on this track whose window covers
+    /// `timeline_frame`, if any.
+    ///
+    /// First match in stored order, not "the best" one: `checkTransition`
+    /// (`@chroma/editor`) refuses to write two transitions whose windows
+    /// overlap, so at most one can legitimately cover a frame. Picking the
+    /// first deterministically is the safe degrade for a document that got
+    /// there anyway — the same "walk a `Vec` in its stored order every time, no
+    /// hidden iteration-order dependency" discipline
+    /// [`Timeline::resolve_video_clip_at`] already states.
+    pub fn transition_at(&self, timeline_frame: i64) -> Option<&Transition> {
+        self.transitions.iter().find(|t| t.covers(timeline_frame))
+    }
+
+    /// D-224 — the two clips a transition at `at_frame` joins: the one whose
+    /// exclusive end IS that frame (outgoing) and the one whose `start_frame`
+    /// is (incoming). Either may be absent — a transition left dangling by a
+    /// later trim/delete is a real, reachable state, and every consumer degrades
+    /// rather than erroring on it.
+    ///
+    /// Matched on **exact** frame equality, which is the same fact `at_frame`'s
+    /// own doc states the field means. A cut that has drifted (one side
+    /// trimmed) therefore stops resolving that side, which is the correct
+    /// outcome: there is no longer an edit point there to blend across.
+    pub fn transition_clips(&self, at_frame: i64, fps: f64) -> (Option<&Clip>, Option<&Clip>) {
+        (
+            self.clips.iter().find(|c| c.end_frame_at(fps) == at_frame),
+            self.clips.iter().find(|c| c.start_frame == at_frame),
+        )
     }
 
     /// D-149 — the `[start, end)` timeline-frame spans this track's clips
@@ -3092,7 +3573,10 @@ mod tests {
         assert_eq!(t.tracks[0].gap_at(10), Some((0, 200)));
         t.remove_gap(0, 10).unwrap();
         let a = t.tracks[0].clips.iter().find(|c| c.name == "A").unwrap();
-        assert_eq!(a.start_frame, 0, "everything shifts left by the gap's 200 frames");
+        assert_eq!(
+            a.start_frame, 0,
+            "everything shifts left by the gap's 200 frames"
+        );
     }
 
     #[test]
@@ -3198,7 +3682,11 @@ mod tests {
         // onto track 1 at frame 0 too — directly overlapping B's [0,50).
         let err = t.move_clip(0, 1, 1, 0, false).unwrap_err();
         assert_eq!(err, TimelineError::Overlap(1, 0));
-        assert_eq!(t.tracks[1].clips.len(), 1, "the overlapping move was rejected");
+        assert_eq!(
+            t.tracks[1].clips.len(),
+            1,
+            "the overlapping move was rejected"
+        );
     }
 
     #[test]
@@ -3217,9 +3705,17 @@ mod tests {
         t.move_clip(0, 1, 1, 0, false).unwrap(); // B -> track 1 @ [0,50)
         t.move_clip(0, 1, 1, 0, true).unwrap(); // C -> track 1 @ [0,200), ripples B later
         let starts: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.start_frame).collect();
-        assert_eq!(starts, vec![200, 0], "B shifted to make room for C, not overlapped");
+        assert_eq!(
+            starts,
+            vec![200, 0],
+            "B shifted to make room for C, not overlapped"
+        );
         let durations: Vec<i64> = t.tracks[1].clips.iter().map(|c| c.duration).collect();
-        assert_eq!(durations, vec![50, 200], "only start_frame moved, durations untouched");
+        assert_eq!(
+            durations,
+            vec![50, 200],
+            "only start_frame moved, durations untouched"
+        );
 
         // Same-track: a fresh timeline has A[0,100) B[100,150) C[150,350) on
         // track 0. Rippling A onto B's exact start (100) should shift BOTH
@@ -3233,7 +3729,10 @@ mod tests {
             .collect();
         assert_eq!(by_name["A"], 100, "A landed at the requested frame");
         assert_eq!(by_name["B"], 200, "B rippled later by A's duration");
-        assert_eq!(by_name["C"], 250, "C rippled later too, still after B's new start");
+        assert_eq!(
+            by_name["C"], 250,
+            "C rippled later too, still after B's new start"
+        );
     }
 
     #[test]
@@ -3252,7 +3751,11 @@ mod tests {
         // straddling B's [50,100) span.
         let err = t.move_clip(0, 0, 1, 70, true).unwrap_err();
         assert_eq!(err, TimelineError::Overlap(1, 70));
-        assert_eq!(t.tracks[1].clips.len(), 1, "the straddling ripple attempt was rejected, nothing moved");
+        assert_eq!(
+            t.tracks[1].clips.len(),
+            1,
+            "the straddling ripple attempt was rejected, nothing moved"
+        );
     }
 
     #[test]
@@ -3289,12 +3792,18 @@ mod tests {
     #[test]
     fn move_clip_rejects_out_of_range_and_negative_position() {
         let mut t = Timeline::from_shots(&shots());
-        assert_eq!(t.move_clip(9, 0, 0, 0, false), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(
+            t.move_clip(9, 0, 0, 0, false),
+            Err(TimelineError::NoSuchTrack(9))
+        );
         assert_eq!(
             t.move_clip(0, 9, 0, 0, false),
             Err(TimelineError::NoSuchClip(9, 0))
         );
-        assert_eq!(t.move_clip(0, 0, 9, 0, false), Err(TimelineError::NoSuchTrack(9)));
+        assert_eq!(
+            t.move_clip(0, 0, 9, 0, false),
+            Err(TimelineError::NoSuchTrack(9))
+        );
         assert_eq!(
             t.move_clip(0, 0, 0, -1, false),
             Err(TimelineError::NegativePosition(-1))
@@ -3312,11 +3821,18 @@ mod tests {
         let mut t = Timeline::from_shots(&shots()); // track 0: A, B, C
         t.add_track(TrackKind::Video); // track 1, empty
         t.move_clip(0, 0, 1, 0, false).unwrap(); // A -> track 1; track 0 still has B, C
-        assert_eq!(t.tracks.len(), 2, "moving one of three clips off does not prune");
+        assert_eq!(
+            t.tracks.len(),
+            2,
+            "moving one of three clips off does not prune"
+        );
         t.remove(0, 0).unwrap(); // remove B (now index 0 on track 0)
         t.remove(0, 0).unwrap(); // remove C — track 0 now has zero clips
         assert_eq!(t.tracks.len(), 1, "the now-empty track 0 was pruned");
-        assert_eq!(t.tracks[0].clips[0].name, "A", "surviving track renumbers to index 0");
+        assert_eq!(
+            t.tracks[0].clips[0].name, "A",
+            "surviving track renumbers to index 0"
+        );
     }
 
     #[test]
@@ -3332,7 +3848,11 @@ mod tests {
         let mut t = Timeline::from_shots(&shots());
         t.add_track(TrackKind::Video); // track 1, deliberately empty, untouched by this op
         t.remove(0, 0).unwrap(); // track 0 still has B, C left — not pruned either
-        assert_eq!(t.tracks.len(), 2, "the unrelated empty track survives — only the directly-edited track prunes");
+        assert_eq!(
+            t.tracks.len(),
+            2,
+            "the unrelated empty track survives — only the directly-edited track prunes"
+        );
     }
 
     #[test]
@@ -3345,15 +3865,27 @@ mod tests {
         t.move_clip(0, 0, 1, 200, false).unwrap();
         assert_eq!(t.tracks.len(), 2, "still one clip left on track 0");
         t.move_clip(0, 0, 1, 500, false).unwrap(); // the last one — track 0 is now empty
-        assert_eq!(t.tracks.len(), 1, "source track pruned once it lost its last clip");
-        assert_eq!(t.tracks[0].clips.len(), 3, "all three landed on the surviving track");
+        assert_eq!(
+            t.tracks.len(),
+            1,
+            "source track pruned once it lost its last clip"
+        );
+        assert_eq!(
+            t.tracks[0].clips.len(),
+            3,
+            "all three landed on the surviving track"
+        );
     }
 
     #[test]
     fn move_clip_same_track_never_prunes() {
         let mut t = Timeline::from_shots(&shots());
         t.move_clip(0, 0, 0, 1000, false).unwrap(); // reposition within the same track
-        assert_eq!(t.tracks.len(), 1, "clip count on the track is unchanged by a same-track move");
+        assert_eq!(
+            t.tracks.len(),
+            1,
+            "clip count on the track is unchanged by a same-track move"
+        );
     }
 
     // --- opaque top-wins video-track resolution (D-056, Phase B1) -----------
@@ -3721,7 +4253,12 @@ mod tests {
     #[test]
     fn from_shots_clips_are_fully_opaque() {
         let t = Timeline::from_shots(&shots());
-        assert!(t.tracks[0].clips.iter().all(|c| c.opacity == 1.0 && c.scale == 1.0));
+        assert!(
+            t.tracks[0]
+                .clips
+                .iter()
+                .all(|c| c.opacity == 1.0 && c.scale == 1.0)
+        );
     }
 
     #[test]
@@ -3755,7 +4292,10 @@ mod tests {
     fn clip_json_without_crop_fields_loads_uncropped() {
         let json = r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,"source_len":10,"start_frame":0,"opacity":1.0,"position_x":0.0,"position_y":0.0,"scale":1.0,"rotation":0.0}"#;
         let c: Clip = serde_json::from_str(json).unwrap();
-        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.0, 0.0, 0.0, 0.0));
+        assert_eq!(
+            (c.crop_left, c.crop_top, c.crop_right, c.crop_bottom),
+            (0.0, 0.0, 0.0, 0.0)
+        );
     }
 
     /// `Clip::default()` (the `..Default::default()` every construction site
@@ -3766,11 +4306,16 @@ mod tests {
     #[test]
     fn clip_default_is_uncropped() {
         let c = Clip::default();
-        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.0, 0.0, 0.0, 0.0));
-        assert!(Timeline::from_shots(&shots()).tracks[0]
-            .clips
-            .iter()
-            .all(|c| c.crop_left == 0.0 && c.crop_bottom == 0.0));
+        assert_eq!(
+            (c.crop_left, c.crop_top, c.crop_right, c.crop_bottom),
+            (0.0, 0.0, 0.0, 0.0)
+        );
+        assert!(
+            Timeline::from_shots(&shots()).tracks[0]
+                .clips
+                .iter()
+                .all(|c| c.crop_left == 0.0 && c.crop_bottom == 0.0)
+        );
     }
 
     /// A real crop survives a full `Timeline` → JSON → `Timeline` round trip
@@ -3787,7 +4332,10 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: Timeline = serde_json::from_str(&json).unwrap();
         let c = &back.tracks[0].clips[0];
-        assert_eq!((c.crop_left, c.crop_top, c.crop_right, c.crop_bottom), (0.25, 0.1, 0.5, 0.0));
+        assert_eq!(
+            (c.crop_left, c.crop_top, c.crop_right, c.crop_bottom),
+            (0.25, 0.1, 0.5, 0.0)
+        );
         // and the untouched clip beside it is still uncropped
         assert!(back.tracks[0].clips[1].crop_left == 0.0);
     }
@@ -3916,10 +4464,12 @@ mod tests {
     fn migrating_an_unoffset_clip_changes_nothing() {
         let mut tl = Timeline::from_shots(&shots());
         tl.normalise_legacy_positions(3840.0, 2160.0);
-        assert!(tl.tracks[0]
-            .clips
-            .iter()
-            .all(|c| c.position_x == 0.0 && c.position_y == 0.0));
+        assert!(
+            tl.tracks[0]
+                .clips
+                .iter()
+                .all(|c| c.position_x == 0.0 && c.position_y == 0.0)
+        );
     }
 
     /// Keyframed positions are in the same old unit and must migrate with the
@@ -3954,7 +4504,12 @@ mod tests {
     fn migration_refuses_a_degenerate_composition() {
         let mut tl = Timeline::from_shots(&shots());
         tl.tracks[0].clips[0].position_x = 200.0;
-        for (w, h) in [(0.0, 1080.0), (1920.0, 0.0), (-1.0, -1.0), (f64::NAN, 1080.0)] {
+        for (w, h) in [
+            (0.0, 1080.0),
+            (1920.0, 0.0),
+            (-1.0, -1.0),
+            (f64::NAN, 1080.0),
+        ] {
             tl.normalise_legacy_positions(w, h);
             assert_eq!(tl.tracks[0].clips[0].position_x, 200.0);
         }
@@ -3983,16 +4538,39 @@ mod tests {
         assert_eq!(t.move_track(0, 0), Ok(()));
     }
 
+    /// D-224 — the clip behind a [`VisibleLayer`], for tests that only care
+    /// about which clip resolved. Panics for a generated colour plate, which is
+    /// the right failure for a test that did not expect one.
+    fn layer_clip<'a>(l: &VisibleLayer<'a>) -> &'a Clip {
+        match l.source {
+            LayerSource::Clip { clip, .. } => clip,
+            LayerSource::Color { .. } => panic!("expected a clip layer, got a colour plate"),
+        }
+    }
+
+    /// D-224 — the resolved SOURCE frame behind a [`VisibleLayer`]. Same
+    /// panic-on-a-plate contract as [`layer_clip`].
+    fn layer_source_frame(l: &VisibleLayer<'_>) -> i64 {
+        match l.source {
+            LayerSource::Clip { source_frame, .. } => source_frame,
+            LayerSource::Color { .. } => panic!("expected a clip layer, got a colour plate"),
+        }
+    }
+
     #[test]
     fn resolve_visible_video_layers_at_returns_every_track_with_content_not_just_the_top() {
         let t = two_video_track_timeline(); // track0: A[0,100); track1: B[0,50) C[100,300)
         // frame 10: both tracks have content.
         let layers = t.resolve_visible_video_layers_at(10);
         assert_eq!(layers.len(), 2);
-        assert_eq!(layers[0].0, 0);
-        assert_eq!(layers[0].1.name, "A");
-        assert_eq!(layers[1].0, 1);
-        assert_eq!(layers[1].1.name, "B");
+        assert_eq!(layers[0].track, 0);
+        assert_eq!(layer_clip(&layers[0]).name, "A");
+        assert_eq!(layers[1].track, 1);
+        assert_eq!(layer_clip(&layers[1]).name, "B");
+        assert!(
+            layers.iter().all(|l| l.alpha == 1.0),
+            "no transition — every layer is fully opaque, exactly as before D-224"
+        );
     }
 
     #[test]
@@ -4001,7 +4579,7 @@ mod tests {
         // frame 60: track0 has A still; track1's B ended at 50, C starts at 100 — a gap.
         let layers = t.resolve_visible_video_layers_at(60);
         assert_eq!(layers.len(), 1);
-        assert_eq!(layers[0].0, 0);
+        assert_eq!(layers[0].track, 0);
     }
 
     #[test]
@@ -4010,7 +4588,7 @@ mod tests {
         t.tracks[1].hidden = true;
         let layers = t.resolve_visible_video_layers_at(10);
         assert_eq!(layers.len(), 1);
-        assert_eq!(layers[0].0, 0);
+        assert_eq!(layers[0].track, 0);
     }
 
     #[test]
@@ -4018,7 +4596,10 @@ mod tests {
         let t = three_video_track_timeline(); // track0[0,50) track1[0,30) track2[0,200+)
         let layers = t.resolve_visible_video_layers_at(10);
         assert_eq!(layers.len(), 3);
-        assert_eq!(layers.iter().map(|(i, ..)| *i).collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            layers.iter().map(|l| l.track).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
     }
 
     fn locked_two_track_timeline() -> Timeline {
@@ -4060,14 +4641,20 @@ mod tests {
     #[test]
     fn move_clip_refuses_when_the_source_track_is_locked() {
         let mut t = locked_two_track_timeline();
-        assert_eq!(t.move_clip(0, 0, 1, 200, false), Err(TimelineError::TrackLocked(0)));
+        assert_eq!(
+            t.move_clip(0, 0, 1, 200, false),
+            Err(TimelineError::TrackLocked(0))
+        );
     }
 
     #[test]
     fn move_clip_refuses_when_the_destination_track_is_locked() {
         let mut t = two_video_track_timeline();
         t.tracks[1].locked = true;
-        assert_eq!(t.move_clip(0, 0, 1, 200, false), Err(TimelineError::TrackLocked(1)));
+        assert_eq!(
+            t.move_clip(0, 0, 1, 200, false),
+            Err(TimelineError::TrackLocked(1))
+        );
     }
 
     /// A locked track's clips can't be edited, but the track LIST itself —
@@ -4116,7 +4703,10 @@ mod tests {
     fn sync_locked_defaults_true_on_a_pre_d106_track() {
         let j = r#"{"kind":"video","clips":[]}"#;
         let t: Track = serde_json::from_str(j).unwrap();
-        assert!(t.sync_locked, "a track with no sync_locked key defaults ON, matching Resolve/Palmier");
+        assert!(
+            t.sync_locked,
+            "a track with no sync_locked key defaults ON, matching Resolve/Palmier"
+        );
     }
 
     /// A move ripple on track 0 shifts an unrelated clip on sync-locked
@@ -4140,9 +4730,15 @@ mod tests {
         t.tracks[0].clips.push(c("new", 300, 30)); // parked clip to move
         t.move_clip(0, 2, 0, 50, true).unwrap(); // land at 50, ripple b and x
         let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
-        assert_eq!(track0_b.start_frame, 80, "b shifted by the new clip's own 30-frame duration");
+        assert_eq!(
+            track0_b.start_frame, 80,
+            "b shifted by the new clip's own 30-frame duration"
+        );
         let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
-        assert_eq!(track1_x.start_frame, 230, "sync-locked track 1's clip shifted by the same 30 frames");
+        assert_eq!(
+            track1_x.start_frame, 230,
+            "sync-locked track 1's clip shifted by the same 30 frames"
+        );
     }
 
     #[test]
@@ -4157,9 +4753,15 @@ mod tests {
         t.tracks[0].clips.push(c("new", 300, 30));
         t.move_clip(0, 2, 0, 50, true).unwrap();
         let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
-        assert_eq!(track0_b.start_frame, 80, "ripple genuinely fired on track 0");
+        assert_eq!(
+            track0_b.start_frame, 80,
+            "ripple genuinely fired on track 0"
+        );
         let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
-        assert_eq!(track1_x.start_frame, 200, "sync_locked: false — untouched by the other track's ripple");
+        assert_eq!(
+            track1_x.start_frame, 200,
+            "sync_locked: false — untouched by the other track's ripple"
+        );
     }
 
     #[test]
@@ -4169,9 +4771,15 @@ mod tests {
         t.tracks[0].clips.push(c("new", 300, 30));
         t.move_clip(0, 2, 0, 50, true).unwrap();
         let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
-        assert_eq!(track0_b.start_frame, 80, "ripple genuinely fired on track 0");
+        assert_eq!(
+            track0_b.start_frame, 80,
+            "ripple genuinely fired on track 0"
+        );
         let track1_x = t.tracks[1].clips.iter().find(|c| c.id == "x").unwrap();
-        assert_eq!(track1_x.start_frame, 200, "locked overrides sync_locked — protected from a foreign ripple too");
+        assert_eq!(
+            track1_x.start_frame, 200,
+            "locked overrides sync_locked — protected from a foreign ripple too"
+        );
     }
 
     /// B-033 — REVERTED from auto-split to reject-on-straddle. Auto-split
@@ -4193,8 +4801,15 @@ mod tests {
         let track0_b = t.tracks[0].clips.iter().find(|c| c.id == "b").unwrap();
         assert_eq!(track0_b.start_frame, 80, "rejected: edited track untouched");
         let track1 = &t.tracks[1];
-        assert_eq!(track1.clips.len(), 1, "rejected: no split, no fragment, x untouched");
-        assert_eq!((track1.clips[0].start_frame, track1.clips[0].duration), (20, 180));
+        assert_eq!(
+            track1.clips.len(),
+            1,
+            "rejected: no split, no fragment, x untouched"
+        );
+        assert_eq!(
+            (track1.clips[0].start_frame, track1.clips[0].duration),
+            (20, 180)
+        );
     }
 
     /// Real regression for B-033: applying the same rejected op repeatedly
@@ -4206,7 +4821,11 @@ mod tests {
         for _ in 0..5 {
             assert!(t.remove_gap(0, 60).is_err());
         }
-        assert_eq!(t.tracks[1].clips.len(), 1, "still exactly one clip, no cascade of fragments");
+        assert_eq!(
+            t.tracks[1].clips.len(),
+            1,
+            "still exactly one clip, no cascade of fragments"
+        );
         assert_eq!(t.tracks[1].clips[0].id, "x");
     }
 
@@ -4220,7 +4839,10 @@ mod tests {
         let mut t = two_track(vec![c("a", 0, 50), c("b", 80, 50)], vec![c("y", 90, 20)]);
         t.remove_gap(0, 60).unwrap();
         let track1_y = t.tracks[1].clips.iter().find(|c| c.id == "y").unwrap();
-        assert_eq!(track1_y.start_frame, 60, "y (start 90, at/after the gap's own end 80) shifted -30, no gap needed on track 1");
+        assert_eq!(
+            track1_y.start_frame, 60,
+            "y (start 90, at/after the gap's own end 80) shifted -30, no gap needed on track 1"
+        );
     }
 
     // -------------------------------------------------------------------- //
@@ -4305,7 +4927,12 @@ mod tests {
                 for clip in &track.clips {
                     clips_seen += 1;
                     assert_eq!(
-                        (clip.crop_left, clip.crop_top, clip.crop_right, clip.crop_bottom),
+                        (
+                            clip.crop_left,
+                            clip.crop_top,
+                            clip.crop_right,
+                            clip.crop_bottom
+                        ),
                         (0.0, 0.0, 0.0, 0.0),
                         "every pre-D-132 clip loads uncropped — no picture change for this project"
                     );
@@ -4748,14 +5375,24 @@ mod tests {
     fn link_assigns_a_shared_group_indistinguishable_from_the_drop_paths_own() {
         let mut t = unlinked_pair();
         let group = t.link((0, 0), (1, 0)).unwrap();
-        assert_eq!(t.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
-        assert_eq!(t.tracks[1].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(
+            t.tracks[0].clips[0].link_group.as_deref(),
+            Some(group.as_str())
+        );
+        assert_eq!(
+            t.tracks[1].clips[0].link_group.as_deref(),
+            Some(group.as_str())
+        );
         assert_eq!(t.link_group_members(&group), vec![(0, 0), (1, 0)]);
         // Every existing link-aware op treats it exactly like a drop-created
         // group — no parallel mechanism, no special-casing by origin.
         t.move_clip(0, 0, 0, 40, false).unwrap();
         assert_eq!(start_of(&t, 0, "v"), Some(40));
-        assert_eq!(start_of(&t, 1, "a"), Some(40), "linked sibling followed the move in lockstep");
+        assert_eq!(
+            start_of(&t, 1, "a"),
+            Some(40),
+            "linked sibling followed the move in lockstep"
+        );
     }
 
     #[test]
@@ -4776,7 +5413,10 @@ mod tests {
         let mut t = unlinked_pair();
         t.tracks[0].clips.push(c("v2", 200, 50));
         assert_eq!(t.link((0, 0), (0, 1)), Err(TimelineError::LinkKindMismatch));
-        assert_eq!(t.tracks[0].clips[0].link_group, None, "rejected — nothing mutated");
+        assert_eq!(
+            t.tracks[0].clips[0].link_group, None,
+            "rejected — nothing mutated"
+        );
     }
 
     #[test]
@@ -4805,7 +5445,10 @@ mod tests {
         assert_eq!(t.link((0, 9), (1, 0)), Err(TimelineError::NoSuchClip(9, 0)));
         t.tracks[1].locked = true;
         assert_eq!(t.link((0, 0), (1, 0)), Err(TimelineError::TrackLocked(1)));
-        assert_eq!(t.tracks[0].clips[0].link_group, None, "rejected — nothing mutated");
+        assert_eq!(
+            t.tracks[0].clips[0].link_group, None,
+            "rejected — nothing mutated"
+        );
     }
 
     #[test]
@@ -4827,6 +5470,289 @@ mod tests {
     // clip's own source frames, and every 1 source frame is 0.5 timeline
     // frames — chosen for exact, non-rounded expected numbers.
     // ----------------------------------------------------------------- //
+    /// D-224 — the transition model itself: window arithmetic per alignment,
+    /// the handle split that arithmetic implies, and what
+    /// [`Timeline::resolve_visible_video_layers_at`] hands the compositor
+    /// inside a transition window. The pixels those layers turn into are
+    /// `chroma::edit`'s own tests (`app/src-tauri`) — this crate does no
+    /// rendering, so what it owns is exactly the numbers below.
+    mod d224_transitions {
+        use super::*;
+
+        /// Two 48-frame clips, cut at frame 48, each with 48 frames of handle
+        /// on both sides (`source_len` 144, in-point 48) — the shape a razor
+        /// split of a long source produces, which is the common case for a
+        /// transition and the one that has handles by construction.
+        fn cut_timeline() -> Timeline {
+            let clip = |name: &str, start: i64| Clip {
+                id: name.into(),
+                name: name.into(),
+                source_path: format!("/{name}.mov"),
+                source_start: 48,
+                duration: 48,
+                source_len: 144,
+                start_frame: start,
+                ..Default::default()
+            };
+            Timeline {
+                rate: Some(Rational { num: 24, den: 1 }),
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips: vec![clip("A", 0), clip("B", 48)],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }
+        }
+
+        fn transition(kind: TransitionKind, alignment: TransitionAlignment) -> Transition {
+            Transition {
+                id: "tr1".into(),
+                kind,
+                at_frame: 48,
+                duration: 12,
+                alignment,
+                color: None,
+            }
+        }
+
+        #[test]
+        fn window_and_handles_per_alignment() {
+            let center = transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            );
+            assert_eq!(center.window(), (42, 54));
+            assert_eq!((center.head_handle(), center.tail_handle()), (6, 6));
+
+            let start = transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::StartAtCut,
+            );
+            assert_eq!(start.window(), (48, 60));
+            assert_eq!(
+                (start.head_handle(), start.tail_handle()),
+                (0, 12),
+                "start-at-cut consumes only the OUTGOING clip's tail"
+            );
+
+            let end = transition(TransitionKind::CrossDissolve, TransitionAlignment::EndAtCut);
+            assert_eq!(end.window(), (36, 48));
+            assert_eq!(
+                (end.head_handle(), end.tail_handle()),
+                (12, 0),
+                "end-at-cut consumes only the INCOMING clip's head"
+            );
+        }
+
+        #[test]
+        fn progress_is_zero_on_the_first_window_frame_and_never_reaches_one() {
+            let t = transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            );
+            assert_eq!(t.progress_at(42), 0.0);
+            assert_eq!(t.progress_at(48), 0.5, "the cut is the midpoint");
+            assert_eq!(t.progress_at(53), 11.0 / 12.0);
+            assert!(!t.covers(54), "the window is half-open");
+        }
+
+        #[test]
+        fn a_cross_dissolve_resolves_both_clips_with_the_incoming_one_on_top() {
+            let mut tl = cut_timeline();
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            ));
+
+            // Before the cut: A is inside its own window, B is reading HEAD
+            // handle media (frames before its own in-point).
+            let layers = tl.resolve_visible_video_layers_at(45);
+            assert_eq!(layers.len(), 2);
+            assert_eq!(layer_clip(&layers[0]).name, "B", "incoming paints on top");
+            assert_eq!(layers[0].alpha, 3.0 / 12.0);
+            assert_eq!(
+                layer_source_frame(&layers[0]),
+                45,
+                "B's in-point is source 48 at timeline 48, so timeline 45 is source 45 — a real head-handle frame"
+            );
+            assert_eq!(layer_clip(&layers[1]).name, "A");
+            assert_eq!(layers[1].alpha, 1.0, "the outgoing clip stays opaque");
+            assert_eq!(layer_source_frame(&layers[1]), 93);
+
+            // After the cut: the mirror — A is now reading TAIL handle media.
+            let layers = tl.resolve_visible_video_layers_at(51);
+            assert_eq!(layer_clip(&layers[0]).name, "B");
+            assert_eq!(layers[0].alpha, 9.0 / 12.0);
+            assert_eq!(layer_clip(&layers[1]).name, "A");
+            assert_eq!(
+                layer_source_frame(&layers[1]),
+                99,
+                "A's out-point is source 96; timeline 51 is source 99 — three frames of tail handle"
+            );
+        }
+
+        #[test]
+        fn a_cross_dissolve_role_gives_the_two_clips_separate_decode_slots() {
+            let mut tl = cut_timeline();
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            ));
+            let layers = tl.resolve_visible_video_layers_at(45);
+            let roles: Vec<LayerRole> = layers
+                .iter()
+                .map(|l| match l.source {
+                    LayerSource::Clip { role, .. } => role,
+                    LayerSource::Color { .. } => panic!("no plate in a cross dissolve"),
+                })
+                .collect();
+            assert_eq!(
+                roles,
+                vec![LayerRole::TransitionPartner, LayerRole::Primary],
+                "the INCOMING clip is the partner — see LayerRole's own doc for why"
+            );
+        }
+
+        #[test]
+        fn a_handle_beyond_the_source_is_held_on_the_nearest_real_frame() {
+            // Two clips with NO handles at all (whole source, in-point 0).
+            let clip = |name: &str, start: i64| Clip {
+                id: name.into(),
+                name: name.into(),
+                source_path: format!("/{name}.mov"),
+                source_start: 0,
+                duration: 48,
+                source_len: 48,
+                start_frame: start,
+                ..Default::default()
+            };
+            let mut tl = Timeline {
+                rate: Some(Rational { num: 24, den: 1 }),
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips: vec![clip("A", 0), clip("B", 48)],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            ));
+            // `checkTransition` refuses to WRITE this, but a document that got
+            // here anyway must still render — freezing on the nearest real
+            // frame, exactly Premiere's own "Insufficient Media" degrade.
+            let layers = tl.resolve_visible_video_layers_at(45);
+            assert_eq!(
+                layer_source_frame(&layers[0]),
+                0,
+                "B has no head handle — held on its own first frame"
+            );
+            let layers = tl.resolve_visible_video_layers_at(51);
+            assert_eq!(
+                layer_source_frame(&layers[1]),
+                47,
+                "A has no tail handle — held on its own last frame"
+            );
+        }
+
+        #[test]
+        fn a_dip_to_color_needs_no_second_clip_and_peaks_opaque_at_the_cut() {
+            let mut tl = cut_timeline();
+            let mut t = transition(TransitionKind::DipToColor, TransitionAlignment::CenterAtCut);
+            t.color = Some("#204080".into());
+            tl.tracks[0].transitions.push(t);
+
+            let at_cut = tl.resolve_visible_video_layers_at(48);
+            assert_eq!(at_cut.len(), 2);
+            assert!(
+                matches!(at_cut[0].source, LayerSource::Color { rgb } if rgb == (0x20, 0x40, 0x80)),
+                "the plate paints on top, in the stored colour"
+            );
+            assert_eq!(at_cut[0].alpha, 1.0, "fully opaque exactly at the cut");
+            assert_eq!(
+                layer_clip(&at_cut[1]).name,
+                "B",
+                "underneath is simply whatever clip_at already resolves — no handle media"
+            );
+            assert_eq!(
+                layer_source_frame(&at_cut[1]),
+                48,
+                "B's own first real frame, not a handle"
+            );
+
+            let edge = tl.resolve_visible_video_layers_at(42);
+            assert_eq!(
+                edge[0].alpha, 0.0,
+                "no dip at all on the window's first frame"
+            );
+            assert_eq!(layer_clip(&edge[1]).name, "A");
+        }
+
+        #[test]
+        fn an_absent_color_dips_to_black() {
+            let t = transition(TransitionKind::DipToColor, TransitionAlignment::CenterAtCut);
+            assert_eq!(t.rgb(), (0, 0, 0));
+        }
+
+        #[test]
+        fn a_dangling_transition_renders_the_cut_plainly_rather_than_erroring() {
+            let mut tl = cut_timeline();
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            ));
+            // The incoming clip is moved away — the cut no longer exists.
+            tl.tracks[0].clips[1].start_frame = 200;
+            let layers = tl.resolve_visible_video_layers_at(45);
+            assert_eq!(layers.len(), 1);
+            assert_eq!(layer_clip(&layers[0]).name, "A");
+            assert_eq!(layers[0].alpha, 1.0);
+        }
+
+        #[test]
+        fn a_frame_outside_every_window_is_untouched_by_transitions() {
+            let mut tl = cut_timeline();
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            ));
+            let layers = tl.resolve_visible_video_layers_at(20);
+            assert_eq!(layers.len(), 1);
+            assert_eq!(layer_clip(&layers[0]).name, "A");
+            assert_eq!(layers[0].alpha, 1.0);
+        }
+
+        #[test]
+        fn transitions_round_trip_through_serde_and_a_legacy_track_has_none() {
+            let mut tl = cut_timeline();
+            tl.tracks[0].transitions.push(transition(
+                TransitionKind::DipToColor,
+                TransitionAlignment::EndAtCut,
+            ));
+            let json = serde_json::to_string(&tl).unwrap();
+            assert!(
+                json.contains("\"dip_to_color\""),
+                "snake_case on the wire: {json}"
+            );
+            assert!(json.contains("\"end_at_cut\""));
+            let back: Timeline = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.tracks[0].transitions, tl.tracks[0].transitions);
+
+            // A pre-D-224 track has no `transitions` key at all.
+            let legacy: Track = serde_json::from_str(r#"{"kind":"video","clips":[]}"#).unwrap();
+            assert!(legacy.transitions.is_empty());
+            // …and an alignment-less transition defaults to centre-at-cut.
+            let t: Transition = serde_json::from_str(
+                r#"{"id":"x","kind":"cross_dissolve","at_frame":10,"duration":4}"#,
+            )
+            .unwrap();
+            assert_eq!(t.alignment, TransitionAlignment::CenterAtCut);
+            assert_eq!(t.window(), (8, 12));
+        }
+    }
+
     mod b079_mixed_native_fps {
         use super::*;
 
@@ -4944,7 +5870,8 @@ mod tests {
             let layers = t.resolve_visible_video_layers_at(10);
             assert_eq!(layers.len(), 1);
             assert_eq!(
-                layers[0].2, 20,
+                layer_source_frame(&layers[0]),
+                20,
                 "same fps-converted source frame clip_at gives directly"
             );
         }
@@ -5061,7 +5988,7 @@ mod text_layer_tests {
         });
         let layers = tl.resolve_visible_video_layers_at(30);
         assert_eq!(layers.len(), 1, "a text clip is a real visible video layer");
-        assert!(layers[0].1.is_text());
+        assert!(matches!(layers[0].source, LayerSource::Clip { clip, .. } if clip.is_text()));
         assert_eq!(tl.duration(), 72, "24 + 48");
         assert!(tl.resolve_visible_video_layers_at(100).is_empty());
     }

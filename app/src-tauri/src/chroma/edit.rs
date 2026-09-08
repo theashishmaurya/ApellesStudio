@@ -23,7 +23,19 @@
 //!   mixer.
 //! What it does NOT do: no `wgpu`, no colour grade — the editor preview is
 //!   deliberately independent of the Colorist's `AppState`/GPU render path.
-//!   Still no transitions / transcript cut / OTIO export / MCP.
+//!   Still no transcript cut / OTIO export.
+//!   **Transitions ARE here as of D-224** (roadmap item 27,
+//!   `docs/notes/transitions.md`): a `chroma_timeline::Transition` bridges a cut
+//!   without the two clips ever overlapping, so
+//!   `Timeline::resolve_visible_video_layers_at` can now hand this module TWO
+//!   layers from one track (a cross dissolve's two clips, the incoming one
+//!   carrying a real blend alpha) or a generated colour plate with no clip at
+//!   all (a dip to colour). `composite_video_frame` grew one arm for the plate
+//!   and one multiply (`with_transition_alpha`) for the blend; everything else
+//!   about the compositor — paint order, geometry, the fade/opacity
+//!   composition — is unchanged. The second clip decodes through its own
+//!   `PipeSlot::TrackTransition` slot, because two sources interleaved through
+//!   one slot is exactly B-040's measured failure mode.
 //!   `resolve_video_position` (used by Colorist's active-clip resolution and
 //!   the embedded-audio baseline, `chroma::audio` — genuinely single-clip
 //!   concerns, unchanged) resolves **N video tracks under opaque, top-wins
@@ -64,7 +76,7 @@ use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use serde::Serialize;
 
-use chroma_timeline::{Clip, Timeline, TrackKind};
+use chroma_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, VisibleLayer};
 
 use super::state;
 use super::video::VideoInfo;
@@ -714,18 +726,30 @@ pub(crate) fn timeline_frame_image(
     // source" filter (which exists to drop an empty/offline media clip) has
     // to make an exception for it, or a title would resolve, be discarded
     // here, and silently never appear.
-    let layers: Vec<(usize, &Clip, i64)> = timeline
+    //
+    // D-224 — a `LayerSource::Color` plate (a dip-to-colour transition) is
+    // likewise generated and has no `source_path`, so the same exception
+    // applies to it; the filter below only ever discards an EMPTY-source media
+    // clip, which is what it was always for.
+    let layers: Vec<VisibleLayer<'_>> = timeline
         .resolve_visible_video_layers_at(pos as i64)
         .into_iter()
-        .filter(|(_, c, _)| c.is_text() || !c.source_path.is_empty())
+        .filter(|l| match &l.source {
+            LayerSource::Clip { clip, .. } => clip.is_text() || !clip.source_path.is_empty(),
+            LayerSource::Color { .. } => true,
+        })
         .collect();
 
-    // Release the decode pipe of any track that is no longer a visible layer
+    // Release the decode pipe of any slot that is no longer a visible layer
     // here (hidden, deleted, or just a gap under the playhead) before decoding
     // — D-125: pipes are per track index now, and each one owns a live ffmpeg
-    // process, so the set has to track what's actually on screen.
-    let visible_tracks: Vec<usize> = layers.iter().map(|(i, _, _)| *i).collect();
-    decode_pipe::retain_track_slots(&visible_tracks);
+    // process, so the set has to track what's actually on screen. D-224: keyed
+    // by real `PipeSlot`, since a transition's partner clip holds a second slot
+    // on the same track whose lifetime is the transition window, not the
+    // track's.
+    let visible_slots: Vec<decode_pipe::PipeSlot> =
+        layers.iter().filter_map(layer_pipe_slot).collect();
+    decode_pipe::retain_pipe_slots(&visible_slots);
 
     if layers.is_empty() {
         return Ok(None);
@@ -743,12 +767,34 @@ pub(crate) fn timeline_frame_image(
     // D-136 it filled the preview edge to edge, which is the same class of
     // defect as B-043's position drift and would have made the transform
     // overlay draw a box in a place the picture disagrees with.
+    //
+    // D-224 — a layer carrying a transition alpha below 1.0 never takes it
+    // either, for exactly D-132/B-053's reason: the alpha is a real blend the
+    // plain decode cannot express, so a fast path that ignored it would show a
+    // hard cut where the document says there is a dissolve. (A cross dissolve
+    // resolves two layers and so already fails the single-layer arm; this guard
+    // is what covers the one-sided cases — a dangling transition, or a dip whose
+    // plate has been filtered away.)
     let single_plain = match layers.as_slice() {
         // D-211 — a lone TEXT clip never takes the plain-decode fast path:
         // there is no source to decode, and its whole picture comes from the
         // compositor's own rasterise-and-blend step.
-        [(_, clip, _)] if clip.is_text() => false,
-        [(_, clip, source_frame)] => {
+        [l] if l.alpha < 1.0 => false,
+        [
+            VisibleLayer {
+                source: LayerSource::Clip { clip, .. },
+                ..
+            },
+        ] if clip.is_text() => false,
+        [
+            VisibleLayer {
+                source:
+                    LayerSource::Clip {
+                        clip, source_frame, ..
+                    },
+                ..
+            },
+        ] => {
             let info = probe_cached(&PathBuf::from(&clip.source_path))?;
             resolve_clip_transform(clip, *source_frame).is_identity()
                 && (info.resolution.width, info.resolution.height) == comp
@@ -758,7 +804,18 @@ pub(crate) fn timeline_frame_image(
 
     let img = match layers.as_slice() {
         [] => return Ok(None),
-        [(track, clip, source_frame)] if single_plain => {
+        [
+            VisibleLayer {
+                track,
+                source:
+                    LayerSource::Clip {
+                        clip,
+                        source_frame,
+                        role,
+                    },
+                ..
+            },
+        ] if single_plain => {
             // Fast path: exactly one visible layer, with nothing to apply to
             // it, needs no compositing at all.
             //
@@ -779,19 +836,37 @@ pub(crate) fn timeline_frame_image(
             let scale = max_long_edge.and_then(|le| {
                 decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
             });
-            decode_pipe::playback_frame_scaled(
-                decode_pipe::PipeSlot::Track(*track),
-                &path,
-                &info,
-                frame,
-                scale,
-            )
-            .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
+            decode_pipe::playback_frame_scaled(pipe_slot(*track, *role), &path, &info, frame, scale)
+                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
         }
         _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
 
     Ok(Some(img))
+}
+
+/// D-224 — the decode-pipe slot a clip layer belongs in: the track's own slot
+/// for an ordinary layer, its transition-partner slot for the second clip of a
+/// cross dissolve. See `chroma_timeline::LayerRole` for why the two must not
+/// share (B-040).
+fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
+    match role {
+        LayerRole::Primary => decode_pipe::PipeSlot::Track(track),
+        LayerRole::TransitionPartner => decode_pipe::PipeSlot::TrackTransition(track),
+    }
+}
+
+/// D-224 — the slot a layer will decode through, or `None` for one that decodes
+/// nothing (a generated text clip, a dip-to-colour plate). Drives the per-frame
+/// `retain_pipe_slots` release so a slot whose layer went away frees its
+/// `ffmpeg` process the same frame.
+fn layer_pipe_slot(layer: &VisibleLayer<'_>) -> Option<decode_pipe::PipeSlot> {
+    match &layer.source {
+        LayerSource::Clip { clip, role, .. } if !clip.is_text() => {
+            Some(pipe_slot(layer.track, *role))
+        }
+        _ => None,
+    }
 }
 
 /// One clip's placement geometry in composition space — what an on-canvas
@@ -1152,6 +1227,47 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
     }
 }
 
+/// D-224 — fold a [`VisibleLayer`]'s transition alpha into an already-resolved
+/// [`ClipTransform`]'s opacity.
+///
+/// **Multiplied in last, after the clip's own static/keyframed opacity and its
+/// D-147 fade** — the same multiplicative composition, and for the same reason:
+/// a clip that is 50% opaque, half way through its own fade-out, and half way
+/// through a dissolve is all three at once, and any ordering where one silently
+/// replaces another would make two of the three controls appear broken. A layer
+/// outside a transition has `alpha == 1.0` and this is exactly a no-op, so every
+/// pre-D-224 frame is byte-identical.
+fn with_transition_alpha(mut t: ClipTransform, alpha: f64) -> ClipTransform {
+    t.opacity *= alpha.clamp(0.0, 1.0);
+    t
+}
+
+/// D-224 — the transform for a dip-to-colour **plate**: identity geometry (it
+/// is generated at exactly canvas size and covers the frame), carrying only the
+/// transition's own alpha as its opacity.
+///
+/// Pinned rather than derived for [`resolve_text_clip_transform`]'s reason: a
+/// plate has no clip behind it, so there is no `position`/`scale`/`crop` to
+/// resolve, and the export path compiles it to a `color` source overlaid at
+/// full frame — stating the identity here is what keeps the two engines
+/// producing the same picture instead of one of them acquiring geometry the
+/// other cannot express.
+fn plate_transform(alpha: f64) -> ClipTransform {
+    ClipTransform {
+        opacity: alpha.clamp(0.0, 1.0),
+        position_x: 0.0,
+        position_y: 0.0,
+        scale: 1.0,
+        box_width: None,
+        box_height: None,
+        rotation: 0.0,
+        crop_left: 0.0,
+        crop_top: 0.0,
+        crop_right: 0.0,
+        crop_bottom: 0.0,
+    }
+}
+
 /// Decode every layer (already visible + non-empty-source, see the caller)
 /// and alpha-composite them onto one canvas. Paint order: `layers` arrives
 /// in `resolve_visible_video_layers_at`'s index-ascending order (index 0 =
@@ -1184,7 +1300,7 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
 /// quality up to resampling. Preview scale is a render-quality knob and
 /// nothing else, which is what it always claimed to be.
 fn composite_video_frame(
-    layers: &[(usize, &Clip, i64)],
+    layers: &[VisibleLayer<'_>],
     max_long_edge: Option<u32>,
     comp: (u32, u32),
 ) -> Result<DynamicImage, String> {
@@ -1213,7 +1329,35 @@ fn composite_video_frame(
     let render_scale = canvas_w as f64 / comp_w as f64;
 
     let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
-    for (track, clip, source_frame) in layers {
+    for layer in layers {
+        // D-224 — a generated full-frame plate: a dip-to-colour transition's
+        // colour, at the canvas's own size, with the transition's own alpha as
+        // its opacity. Structurally the same "generated layer" case D-211's text
+        // clip already established (`natural` is the canvas, no resize step
+        // runs), which is why it needs no new step in the paint loop below —
+        // only its own way of producing a buffer.
+        if let LayerSource::Color { rgb } = layer.source {
+            let (r, g, b) = rgb;
+            decoded.push(Decoded {
+                img: std::sync::Arc::new(image::ImageBuffer::from_pixel(
+                    canvas_w,
+                    canvas_h,
+                    image::Rgba([r, g, b, 255]),
+                )),
+                transform: plate_transform(layer.alpha),
+                natural: (canvas_w as f64, canvas_h as f64),
+            });
+            continue;
+        }
+        let LayerSource::Clip {
+            clip,
+            source_frame,
+            role,
+        } = &layer.source
+        else {
+            unreachable!("the Color arm returns above");
+        };
+        let track = layer.track;
         // D-211 — a text clip's layer is GENERATED, not decoded: rasterise it
         // at the canvas's own size (so `natural` is the canvas and no resize
         // step runs) and let everything downstream — the paint order, the
@@ -1221,10 +1365,13 @@ fn composite_video_frame(
         // a decoded one. `resolve_text_clip_transform` is what keeps that
         // "exactly like" honest by zeroing the fields the export path cannot
         // reproduce; see its own doc.
-        if let Some(layer) = &clip.text {
+        if let Some(text_layer) = &clip.text {
             decoded.push(Decoded {
-                img: text::render_text_layer(layer, canvas_w, canvas_h)?,
-                transform: resolve_text_clip_transform(clip, *source_frame),
+                img: text::render_text_layer(text_layer, canvas_w, canvas_h)?,
+                transform: with_transition_alpha(
+                    resolve_text_clip_transform(clip, *source_frame),
+                    layer.alpha,
+                ),
                 natural: (canvas_w as f64, canvas_h as f64),
             });
             continue;
@@ -1232,23 +1379,24 @@ fn composite_video_frame(
         let path = PathBuf::from(&clip.source_path);
         let info = probe_cached(&path)?;
         let frame = (*source_frame).max(0) as u64;
-        let scale = max_long_edge
-            .and_then(|le| decode_pipe::scale_target(info.resolution.width, info.resolution.height, le));
+        let scale = max_long_edge.and_then(|le| {
+            decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
+        });
         // One decode pipe per track (D-125/B-040) — sharing a single global
         // pipe across layers made every layer after the first respawn ffmpeg
         // (different path, or the same path stepping backwards), which is what
-        // reduced this whole path to ~0.85 fps.
-        let img = decode_pipe::playback_frame_scaled(
-            decode_pipe::PipeSlot::Track(*track),
-            &path,
-            &info,
-            frame,
-            scale,
-        )
-        .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
+        // reduced this whole path to ~0.85 fps. D-224 — and one more per track
+        // while a cross dissolve is running there, for that same reason applied
+        // within a single track; see `pipe_slot`.
+        let img =
+            decode_pipe::playback_frame_scaled(pipe_slot(track, *role), &path, &info, frame, scale)
+                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
         decoded.push(Decoded {
             img: std::sync::Arc::new(img.to_rgba8()),
-            transform: resolve_clip_transform(clip, *source_frame),
+            transform: with_transition_alpha(
+                resolve_clip_transform(clip, *source_frame),
+                layer.alpha,
+            ),
             // The layer's **source** size, not its decoded size — that is the
             // whole point: the decoded size follows the preview quality, the
             // source size does not.
@@ -1641,7 +1789,11 @@ mod composite_tests {
         };
         // halfway between the two keys -> linear interpolation -> ~0.5
         let t = resolve_clip_transform(&clip, 50);
-        assert!((t.opacity - 0.5).abs() < 0.01, "expected ~0.5, got {}", t.opacity);
+        assert!(
+            (t.opacity - 0.5).abs() < 0.01,
+            "expected ~0.5, got {}",
+            t.opacity
+        );
         // before the first key -> held at the first key's value (0.0)
         let t0 = resolve_clip_transform(&clip, 0);
         assert_eq!(t0.opacity, 0.0);
@@ -1886,7 +2038,10 @@ mod composite_tests {
         let mut canvas = flat(4, 4, [10, 20, 30, 255]);
         let before = canvas.clone();
         let layer = flat(4, 4, [255, 255, 255, 255]);
-        let t = ClipTransform { opacity: 0.0, ..identity_transform() };
+        let t = ClipTransform {
+            opacity: 0.0,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(canvas, before);
     }
@@ -1897,7 +2052,12 @@ mod composite_tests {
     fn composite_layer_onto_full_opacity_fully_replaces() {
         let mut canvas = flat(4, 4, [10, 20, 30, 255]);
         let layer = flat(4, 4, [200, 100, 50, 255]);
-        composite_layer_onto(&mut canvas, &layer, &identity_transform(), natural_of(&layer));
+        composite_layer_onto(
+            &mut canvas,
+            &layer,
+            &identity_transform(),
+            natural_of(&layer),
+        );
         assert_eq!(*canvas.get_pixel(2, 2), Rgba([200, 100, 50, 255]));
     }
 
@@ -1909,7 +2069,10 @@ mod composite_tests {
     fn composite_layer_onto_partial_opacity_blends_strictly_between() {
         let mut canvas = flat(4, 4, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 255, 255, 255]);
-        let t = ClipTransform { opacity: 0.5, ..identity_transform() };
+        let t = ClipTransform {
+            opacity: 0.5,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         let r = canvas.get_pixel(2, 2)[0];
         assert!(r > 20 && r < 235, "expected a real mid-blend, got {r}");
@@ -1924,7 +2087,10 @@ mod composite_tests {
         let layer = flat(2, 2, [255, 0, 0, 255]);
         // centered would place the 2x2 layer at (4,4)-(5,5); shift +0.3 of
         // the canvas width = +3 px, +0 (D-136 — a FRACTION, not pixels).
-        let t = ClipTransform { position_x: 0.3, ..identity_transform() };
+        let t = ClipTransform {
+            position_x: 0.3,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(7, 4), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(4, 4), Rgba([0, 0, 0, 255])); // the un-shifted spot is untouched
@@ -1936,7 +2102,10 @@ mod composite_tests {
     fn composite_layer_onto_respects_scale() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
-        let t = ClipTransform { scale: 3.0, ..identity_transform() }; // -> 12x12, centered at (4,4)-(15,15)
+        let t = ClipTransform {
+            scale: 3.0,
+            ..identity_transform()
+        }; // -> 12x12, centered at (4,4)-(15,15)
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
         assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
@@ -2308,7 +2477,11 @@ mod composite_tests {
     fn position_is_normalised_per_axis() {
         let layer = flat(2, 2, [255, 255, 255, 255]);
         let mut canvas = flat(200, 100, [0, 0, 0, 255]);
-        let t = ClipTransform { position_x: 0.25, position_y: 0.25, ..identity_transform() };
+        let t = ClipTransform {
+            position_x: 0.25,
+            position_y: 0.25,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, (2.0, 2.0));
         // centre (100,50) → top-left (99,49), + 0.25 × 200 = +50 px in x,
         // + 0.25 × 100 = +25 px in y → the 2×2 covers (149,74)-(150,75).
@@ -2325,7 +2498,11 @@ mod composite_tests {
     /// x ∈ [25, 100), y ∈ [0, 50).
     #[test]
     fn crop_pixel_rect_converts_normalised_insets_to_pixels() {
-        let t = ClipTransform { crop_left: 0.25, crop_bottom: 0.5, ..identity_transform() };
+        let t = ClipTransform {
+            crop_left: 0.25,
+            crop_bottom: 0.5,
+            ..identity_transform()
+        };
         assert_eq!(crop_pixel_rect(100, 100, &t), Some((25, 0, 100, 50)));
     }
 
@@ -2336,7 +2513,10 @@ mod composite_tests {
     /// rect would keep a different fraction at each one.
     #[test]
     fn crop_is_invariant_under_the_decode_scale() {
-        let t = ClipTransform { crop_left: 0.5, ..identity_transform() };
+        let t = ClipTransform {
+            crop_left: 0.5,
+            ..identity_transform()
+        };
         let big = crop_pixel_rect(960, 540, &t).unwrap();
         let small = crop_pixel_rect(640, 360, &t).unwrap();
         let frac = |(x0, _, x1, _): (u32, u32, u32, u32), w: u32| (x1 - x0) as f64 / w as f64;
@@ -2349,7 +2529,11 @@ mod composite_tests {
     /// than panicking on an empty rect or painting the un-cropped layer.
     #[test]
     fn a_degenerate_crop_paints_nothing() {
-        let t = ClipTransform { crop_left: 0.7, crop_right: 0.7, ..identity_transform() };
+        let t = ClipTransform {
+            crop_left: 0.7,
+            crop_right: 0.7,
+            ..identity_transform()
+        };
         assert_eq!(crop_pixel_rect(100, 100, &t), None);
         let mut canvas = flat(4, 4, [10, 20, 30, 255]);
         let before = canvas.clone();
@@ -2363,9 +2547,15 @@ mod composite_tests {
     /// crop, `> 1.0` is the whole edge.
     #[test]
     fn crop_insets_are_clamped_by_the_consumer() {
-        let neg = ClipTransform { crop_left: -0.5, ..identity_transform() };
+        let neg = ClipTransform {
+            crop_left: -0.5,
+            ..identity_transform()
+        };
         assert_eq!(crop_pixel_rect(100, 100, &neg), Some((0, 0, 100, 100)));
-        let over = ClipTransform { crop_left: 4.0, ..identity_transform() };
+        let over = ClipTransform {
+            crop_left: 4.0,
+            ..identity_transform()
+        };
         assert_eq!(crop_pixel_rect(100, 100, &over), None);
     }
 
@@ -2379,7 +2569,10 @@ mod composite_tests {
     fn composite_layer_onto_crops_in_place_without_recentring() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(10, 10, [255, 0, 0, 255]);
-        let t = ClipTransform { crop_left: 0.5, ..identity_transform() };
+        let t = ClipTransform {
+            crop_left: 0.5,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         // cropped-away left half: the canvas shows through, untouched
         assert_eq!(*canvas.get_pixel(1, 5), Rgba([0, 0, 0, 255]));
@@ -2396,7 +2589,11 @@ mod composite_tests {
     fn composite_layer_onto_crops_each_edge_independently() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(10, 10, [255, 0, 0, 255]);
-        let t = ClipTransform { crop_top: 0.3, crop_right: 0.2, ..identity_transform() };
+        let t = ClipTransform {
+            crop_top: 0.3,
+            crop_right: 0.2,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(5, 1), Rgba([0, 0, 0, 255])); // cropped top
         assert_eq!(*canvas.get_pixel(9, 5), Rgba([0, 0, 0, 255])); // cropped right
@@ -2412,7 +2609,11 @@ mod composite_tests {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
         // scale 2 -> an 8x8 footprint centred at (6,6)-(13,13); left half cropped
-        let t = ClipTransform { scale: 2.0, crop_left: 0.5, ..identity_transform() };
+        let t = ClipTransform {
+            scale: 2.0,
+            crop_left: 0.5,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(*canvas.get_pixel(7, 10), Rgba([0, 0, 0, 255])); // cropped (left) half
         assert_eq!(*canvas.get_pixel(12, 10), Rgba([255, 0, 0, 255])); // kept (right) half
@@ -2426,9 +2627,18 @@ mod composite_tests {
     fn an_uncropped_layer_is_unchanged_by_the_crop_pass() {
         let layer = flat(6, 6, [3, 200, 40, 255]);
         let mut with_zero_insets = flat(10, 10, [0, 0, 0, 255]);
-        composite_layer_onto(&mut with_zero_insets, &layer, &identity_transform(), natural_of(&layer));
+        composite_layer_onto(
+            &mut with_zero_insets,
+            &layer,
+            &identity_transform(),
+            natural_of(&layer),
+        );
         let mut with_negative_insets = flat(10, 10, [0, 0, 0, 255]);
-        let t = ClipTransform { crop_left: -1.0, crop_bottom: -1.0, ..identity_transform() };
+        let t = ClipTransform {
+            crop_left: -1.0,
+            crop_bottom: -1.0,
+            ..identity_transform()
+        };
         composite_layer_onto(&mut with_negative_insets, &layer, &t, natural_of(&layer));
         assert_eq!(with_zero_insets, with_negative_insets);
     }
@@ -2447,16 +2657,29 @@ mod composite_tests {
             ..Default::default()
         };
         let t = resolve_clip_transform(&clip, 50);
-        assert!((t.crop_left - 0.5).abs() < 0.01, "expected ~0.5, got {}", t.crop_left);
+        assert!(
+            (t.crop_left - 0.5).abs() < 0.01,
+            "expected ~0.5, got {}",
+            t.crop_left
+        );
     }
 
     /// D-132 — the static crop fields are read straight off the clip when
     /// it isn't keyframed, the same way the D-082 five already are.
     #[test]
     fn resolve_clip_transform_reads_static_crop_fields() {
-        let clip = Clip { crop_left: 0.1, crop_top: 0.2, crop_right: 0.3, crop_bottom: 0.4, ..Default::default() };
+        let clip = Clip {
+            crop_left: 0.1,
+            crop_top: 0.2,
+            crop_right: 0.3,
+            crop_bottom: 0.4,
+            ..Default::default()
+        };
         let t = resolve_clip_transform(&clip, 0);
-        assert_eq!((t.crop_left, t.crop_top, t.crop_right, t.crop_bottom), (0.1, 0.2, 0.3, 0.4));
+        assert_eq!(
+            (t.crop_left, t.crop_top, t.crop_right, t.crop_bottom),
+            (0.1, 0.2, 0.3, 0.4)
+        );
     }
 
     /// B-053 — the predicate `timeline_frame`'s single-layer fast path is
@@ -2468,18 +2691,48 @@ mod composite_tests {
     fn only_a_genuinely_untransformed_clip_takes_the_fast_path() {
         assert!(resolve_clip_transform(&Clip::default(), 0).is_identity());
         for clip in [
-            Clip { crop_left: 0.01, ..Default::default() },
-            Clip { crop_bottom: 0.5, ..Default::default() },
-            Clip { opacity: 0.5, ..Default::default() },
-            Clip { position_x: 4.0, ..Default::default() },
-            Clip { scale: 1.5, ..Default::default() },
-            Clip { rotation: 90.0, ..Default::default() },
+            Clip {
+                crop_left: 0.01,
+                ..Default::default()
+            },
+            Clip {
+                crop_bottom: 0.5,
+                ..Default::default()
+            },
+            Clip {
+                opacity: 0.5,
+                ..Default::default()
+            },
+            Clip {
+                position_x: 4.0,
+                ..Default::default()
+            },
+            Clip {
+                scale: 1.5,
+                ..Default::default()
+            },
+            Clip {
+                rotation: 90.0,
+                ..Default::default()
+            },
         ] {
-            assert!(!resolve_clip_transform(&clip, 0).is_identity(), "{clip:?} should not be identity");
+            assert!(
+                !resolve_clip_transform(&clip, 0).is_identity(),
+                "{clip:?} should not be identity"
+            );
         }
         // a negative inset changes no pixel, so it must not force the slow
         // path either — the predicate has to agree with `crop_pixel_rect`.
-        assert!(resolve_clip_transform(&Clip { crop_top: -0.2, ..Default::default() }, 0).is_identity());
+        assert!(
+            resolve_clip_transform(
+                &Clip {
+                    crop_top: -0.2,
+                    ..Default::default()
+                },
+                0
+            )
+            .is_identity()
+        );
     }
 
     // ----------------------------------------------------------------- //
@@ -2769,7 +3022,10 @@ mod preview_text_tests {
                 y1 = y1.max(y + 1);
             }
         }
-        assert!(lit > 50, "expected real white glyph pixels in the preview, got {lit}");
+        assert!(
+            lit > 50,
+            "expected real white glyph pixels in the preview, got {lit}"
+        );
         let cx = (x0 + x1) as f64 / 2.0;
         let cy = (y0 + y1) as f64 / 2.0;
         // Printed (visible under `--nocapture`) so a preview/export parity
@@ -2781,14 +3037,23 @@ mod preview_text_tests {
             x1 - x0,
             y1 - y0
         );
-        assert!((cx - W as f64 / 2.0).abs() <= 4.0, "title not centred, cx={cx}");
-        assert!((cy - H as f64 / 2.0).abs() <= 4.0, "title not centred, cy={cy}");
+        assert!(
+            (cx - W as f64 / 2.0).abs() <= 4.0,
+            "title not centred, cx={cx}"
+        );
+        assert!(
+            (cy - H as f64 / 2.0).abs() <= 4.0,
+            "title not centred, cy={cy}"
+        );
 
         // The corners are black video, untouched by the title. JPEG at q80 is
         // lossy, so this is "still dark", not "exactly 0".
         for (x, y) in [(2, 2), (W - 3, 2), (2, H - 3), (W - 3, H - 3)] {
             let p = frame.get_pixel(x, y);
-            assert!(p[0] < 60, "corner ({x},{y}) should still be the black clip, got {p:?}");
+            assert!(
+                p[0] < 60,
+                "corner ({x},{y}) should still be the black clip, got {p:?}"
+            );
         }
     }
 
@@ -2843,6 +3108,269 @@ mod preview_text_tests {
             "expected the title to move ~{}px right, it moved {moved}px",
             0.25 * W as f64
         );
+    }
+}
+
+/// **D-224 — real, end-to-end preview pixels for a transition.**
+///
+/// The whole feature's claim is that a cut with a transition on it renders as a
+/// real BLEND rather than a hard cut, and only a decoded pixel from the middle
+/// of the transition can tell those two apart: both produce a perfectly valid
+/// frame of exactly the right size at exactly the right moment. So these go
+/// through the real `timeline_frame` command against real solid-colour media on
+/// disk — the same shape `preview_text_tests` above uses, and the deliberate
+/// mirror of `packages/editor/src/timelineExportTransitions.ffmpeg.test.ts` on
+/// the export side. The two files together are what make "the preview matches
+/// the export" a checked claim rather than an assertion.
+///
+/// Solid colours, not a test pattern: "what colour is on screen half way
+/// through the blend" is the question, and it is unanswerable against moving
+/// content.
+#[cfg(test)]
+mod preview_transition_tests {
+    use chroma_timeline::{
+        Clip, Timeline, Track, TrackKind, Transition, TransitionAlignment, TransitionKind,
+    };
+
+    use super::super::PROJECT_STATE_LOCK;
+
+    const W: u32 = 320;
+    const H: u32 = 180;
+    /// A JPEG round trip at the preview's own quality moves a flat colour by a
+    /// few codes, and a 50% blend of two primaries by a few more. Far tighter
+    /// than the thing being distinguished (a real blend, ~128, from a hard cut,
+    /// 0 or 255).
+    const TOL: i32 = 26;
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// 96 frames (4s at 24fps) of one flat colour, so a decoded pixel at any
+    /// time IS the layer's own identity.
+    fn flat_clip(path: &std::path::Path, color: &str) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color={color}:size={W}x{H}:rate=24:duration=4"),
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(ok.success(), "generating the {color} fixture clip failed");
+    }
+
+    /// Two abutting 48-frame clips cut at frame 48, each trimmed INSIDE its own
+    /// 96-frame source so real handle media exists on both sides — the shape a
+    /// razor split produces, and the one a cross dissolve needs.
+    fn open_cut_project(
+        red: &std::path::Path,
+        blue: &std::path::Path,
+        transitions: Vec<Transition>,
+    ) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("Cut.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let clip = |id: &str, path: &std::path::Path, source_start: i64, start_frame: i64| Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: path.to_string_lossy().into_owned(),
+            source_fps: Some(24.0),
+            source_start,
+            duration: 48,
+            source_len: 96,
+            start_frame,
+            ..Default::default()
+        };
+
+        let settings = super::project::ProjectSettings {
+            width: Some(W),
+            height: Some(H),
+            ..Default::default()
+        };
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "Cut".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings,
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "Cut".into(),
+                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips: vec![clip("A", red, 0, 0), clip("B", blue, 24, 48)],
+                    transitions,
+                    ..Default::default()
+                }],
+                markers: Vec::new(),
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "Cut".into(),
+        }));
+        tmp
+    }
+
+    fn transition(kind: TransitionKind, alignment: TransitionAlignment) -> Transition {
+        Transition {
+            id: "tr".into(),
+            kind,
+            at_frame: 48,
+            duration: 24,
+            alignment,
+            color: None,
+        }
+    }
+
+    /// The centre pixel of the real preview frame at timeline position `pos`,
+    /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
+    /// preview `<img>` shows.
+    fn centre_pixel(pos: u64) -> [u8; 3] {
+        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        let img = image::load_from_memory(&jpeg)
+            .expect("decode jpeg")
+            .to_rgba8();
+        assert_eq!(img.dimensions(), (W, H));
+        let p = img.get_pixel(W / 2, H / 2);
+        [p[0], p[1], p[2]]
+    }
+
+    fn assert_near(actual: u8, expected: i32, what: &str) {
+        assert!(
+            (actual as i32 - expected).abs() <= TOL,
+            "{what}: got {actual}, expected ~{expected}"
+        );
+    }
+
+    #[test]
+    fn a_cross_dissolve_really_blends_both_clips_in_the_live_preview() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (red, blue) = (tmp.path().join("red.mp4"), tmp.path().join("blue.mp4"));
+        flat_clip(&red, "red");
+        flat_clip(&blue, "blue");
+
+        // The CONTROL first, through the same command and the same fixtures:
+        // without a transition this cut is hard, so every assertion below would
+        // also pass on a build that never blends.
+        let _project = open_cut_project(&red, &blue, Vec::new());
+        super::decode_pipe::reset();
+        let before = centre_pixel(46);
+        let after = centre_pixel(50);
+        assert_near(before[0], 255, "control: R two frames before the cut");
+        assert_near(before[2], 0, "control: B two frames before the cut");
+        assert_near(after[2], 255, "control: B two frames after the cut");
+        assert_near(after[0], 0, "control: R two frames after the cut");
+        drop(_project);
+
+        // Now the same cut with a centred 24-frame dissolve — window [36, 60),
+        // so frame 48 is progress 0.5 exactly.
+        let _project = open_cut_project(
+            &red,
+            &blue,
+            vec![transition(
+                TransitionKind::CrossDissolve,
+                TransitionAlignment::CenterAtCut,
+            )],
+        );
+        super::decode_pipe::reset();
+
+        let start = centre_pixel(36);
+        assert_near(
+            start[0],
+            255,
+            "R at the window's first frame (pure outgoing)",
+        );
+        assert_near(start[2], 0, "B at the window's first frame");
+
+        let mid = centre_pixel(48);
+        eprintln!("preview mid-dissolve centre pixel = {mid:?}");
+        assert_near(mid[0], 128, "R at the midpoint of the dissolve");
+        assert_near(mid[2], 128, "B at the midpoint of the dissolve");
+        // The load-bearing assertion: this is NEITHER source clip. A hard cut
+        // would put one of these at 0 and the other at 255.
+        assert!(
+            mid[0] > 60 && mid[2] > 60,
+            "mid-dissolve must be a real blend of both clips, got {mid:?}"
+        );
+
+        let three_quarters = centre_pixel(54);
+        assert_near(three_quarters[2], 191, "B at 75% through the dissolve");
+        assert!(
+            three_quarters[2] > mid[2] && three_quarters[0] < mid[0],
+            "the blend must progress: {mid:?} then {three_quarters:?}"
+        );
+
+        // Past the window: pure incoming, at its own real frames.
+        let done = centre_pixel(70);
+        assert_near(done[2], 255, "B past the window (pure incoming)");
+        assert_near(done[0], 0, "R past the window");
+    }
+
+    #[test]
+    fn a_dip_to_colour_covers_the_cut_with_its_own_plate() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (red, blue) = (tmp.path().join("red.mp4"), tmp.path().join("blue.mp4"));
+        flat_clip(&red, "red");
+        flat_clip(&blue, "blue");
+
+        let mut dip = transition(TransitionKind::DipToColor, TransitionAlignment::CenterAtCut);
+        dip.color = Some("#00FF00".into());
+        let _project = open_cut_project(&red, &blue, vec![dip]);
+        super::decode_pipe::reset();
+
+        let at_cut = centre_pixel(48);
+        assert_near(at_cut[1], 255, "G at the peak of a dip-to-green");
+        assert_near(at_cut[0], 0, "R at the peak of a dip-to-green");
+        assert_near(at_cut[2], 0, "B at the peak of a dip-to-green");
+
+        let start = centre_pixel(36);
+        assert_near(
+            start[0],
+            255,
+            "R at the window start — the dip has not begun",
+        );
+        let past = centre_pixel(61);
+        assert_near(past[2], 255, "B past the window end — the dip is over");
+
+        // Half way IN, the outgoing clip is still there at half strength under
+        // a half-strength plate — which is the whole difference between a dip
+        // and a cut to a colour and back.
+        let half_in = centre_pixel(42);
+        assert_near(half_in[0], 128, "R half way into the dip");
+        assert_near(half_in[1], 128, "G half way into the dip");
     }
 }
 
@@ -3015,7 +3543,7 @@ mod preview_throughput_tests {
             "one pipe per layer"
         );
 
-        super::decode_pipe::retain_track_slots(&[0]);
+        super::decode_pipe::retain_pipe_slots(&[super::decode_pipe::PipeSlot::Track(0)]);
         assert_eq!(
             super::decode_pipe::open_pipe_count(),
             1,

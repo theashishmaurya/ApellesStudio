@@ -1145,6 +1145,25 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   of D-218 possible at all. No backend change of any kind: a viewport zoom is
   display-only and the compositor never learns about it.
 
+- **2026-09-08** — **Transitions (D-224/D-225) + B-102** · **zero upstream-file
+  edits.** Everything inside the fork is in Chroma's own `src/chroma/edit.rs`
+  (the `VisibleLayer`-shaped layer list, the colour-plate arm and the
+  `with_transition_alpha` multiply in `composite_video_frame`, the `pipe_slot`
+  helper, and a new `preview_transition_tests` module). No `generate_handler!`
+  line changed: the four `editor_*_transition` ops are frontend control-bridge
+  ops (`@chroma/editor`'s `useEditorControl.ts`), not Tauri commands, so
+  `lib.rs` is untouched. The rest is Chroma-owned crates
+  (`crates/chroma-timeline`'s `Transition`/`VisibleLayer`,
+  `crates/chroma-media`'s `PipeSlot::TrackTransition` +
+  `retain_track_slots` → `retain_pipe_slots`) and `packages/editor/*`
+  (`timeline.ts`, `timelineExport.ts`, `editorExport.ts`, `TimelinePane.tsx`,
+  the new `TimelineTransitions.tsx`) plus `mcp/server.py`. No new dependency:
+  `Cargo.toml` and the lock are untouched. **The three Rust files touched here
+  were also `cargo fmt`-normalised**, which reformats some pre-existing code in
+  them — the tree was not rustfmt-clean at HEAD under the current toolchain, so
+  formatting only the new code was not possible without leaving those files
+  non-conformant; no other file was reformatted.
+
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

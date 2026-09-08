@@ -47,6 +47,18 @@
  * `editor_set_preview_zoom` (D-218), which write store-only view state, these
  * write real document content: a marker is persisted into `project.json` and
  * undone by the ordinary shared undo stack.
+ *
+ * **D-224 — transitions.** `editor_list_transitions` / `_add_transition` /
+ * `_set_transition` / `_remove_transition`, driving the same
+ * `add_transition`/`set_transition`/`remove_transition` `EditOp`s the
+ * timeline's own palette drag and badge popover do. Every one takes a `track`
+ * (unlike the marker ops above): a transition lives at a cut on ONE track.
+ * `transitionDto` reports each one's DERIVED window and handle split alongside
+ * its stored fields, and `editor_list_transitions` also reports each video
+ * track's real `cuts` — an agent's first question is "where can one go", and
+ * neither answer is obvious from the raw fields. Every write runs the same
+ * `checkTransition` the GUI does first, so an agent gets the real reason a
+ * human would rather than a silent no-op from the reducer.
  */
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -74,12 +86,24 @@ import {
   resolveMarkerColor,
   timelineFps,
   trackIndexAfterMove,
+  checkTransition,
+  cutFrames,
+  newTransition,
+  transitionHandles,
+  transitionWindow,
+  transitionsOf,
+  TRANSITION_ALIGNMENTS,
+  TRANSITION_KINDS,
+  DEFAULT_TRANSITION_FRAMES,
   type FadeCurve,
   type Clip,
   type Marker,
   type NewClipFields,
   type TextLayer,
   type Timeline,
+  type Transition,
+  type TransitionAlignment,
+  type TransitionKind,
 } from './timeline';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
@@ -262,6 +286,9 @@ function timelineDto(tl: Timeline) {
       duckDb: t.duck_db ?? 0,
       duckAttackMs: t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
       duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
+      // D-224 — this track's transitions, in cut order, alongside its clips so
+      // `editor_get_timeline` stays one call for "what is on this timeline".
+      transitions: transitionsOf(t).map(transitionDto),
       clips: t.clips.map((c, ci) => ({
         index: ci,
         id: c.id,
@@ -331,6 +358,43 @@ function markerDto(m: Marker) {
  *  that guessed or held a stale id can recover in one round trip. Mirrors
  *  `resolveClip`'s own "no track N (0..M)" convention of naming the valid
  *  range in the error itself. */
+/** D-224 — one transition, in the same camelCase-ish shape every `editor_*`
+ *  response uses, with its DERIVED window and handle split reported alongside
+ *  the stored fields.
+ *
+ *  Deriving them here rather than leaving an agent to redo
+ *  `transitionWindow`/`transitionHandles` from `atFrame`/`duration`/`alignment`
+ *  is the whole point: those three numbers do not obviously add up to "which
+ *  frames does this cover and which clip pays for it", and an agent that
+ *  guessed would guess the integer halving wrong. One function, so
+ *  `editor_get_timeline`, `editor_list_transitions` and each mutating op can
+ *  never report it differently. */
+function transitionDto(t: Transition) {
+  const { start, end } = transitionWindow(t);
+  const { head, tail } = transitionHandles(t);
+  return {
+    id: t.id,
+    kind: t.kind,
+    atFrame: t.at_frame,
+    duration: t.duration,
+    alignment: t.alignment ?? 'center_at_cut',
+    color: t.color ?? null,
+    windowStartFrame: start,
+    windowEndFrame: end,
+    headHandleFrames: head,
+    tailHandleFrames: tail,
+  };
+}
+
+/** D-224 — "no transition with that id on this track", with the ids that DO
+ *  exist. Same one-round-trip-recovery convention `markerNotFound` uses. */
+function transitionNotFound(tl: Timeline, track: number, id: string): string {
+  const ids = (tl.tracks[track]?.transitions ?? []).map((t) => t.id);
+  return ids.length === 0
+    ? `no transition "${id}" — track ${track} has none`
+    : `no transition "${id}" on track ${track} — existing ids: ${ids.join(', ')}`;
+}
+
 function markerNotFound(tl: Timeline, id: string): string {
   const ids = (tl.markers ?? []).map((m) => m.id);
   return ids.length === 0
@@ -1435,6 +1499,172 @@ export function useEditorControl(): void {
         useEditorTimelineStore.getState().applyOp({ kind: 'set_marker', id, patch });
         const after = useEditorTimelineStore.getState().timeline?.markers?.find((m) => m.id === id);
         return { ok: true, marker: after ? markerDto(after) : null };
+      },
+
+      // ---- transitions (D-224, roadmap item 27) ---------------------------
+      //
+      // The agent half of `Track.transitions`. All four drive the exact same
+      // `add_transition`/`set_transition`/`remove_transition` `EditOp`s the
+      // timeline's own palette drag and badge popover do
+      // (`TimelineTransitions.tsx`), through the same `applyOp` — so a
+      // transition an agent drops is persisted, rendered and undoable
+      // identically to one a human dropped, and there is no second write path
+      // to keep in step (CLAUDE.md's human+AI parity rule).
+      //
+      // Every one of these takes a `track`, unlike the marker ops above: a
+      // transition lives at a cut on ONE track (see `Track.transitions`).
+
+      editor_list_transitions: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const fps = timelineFps(tl);
+        const tracks =
+          a?.track == null
+            ? tl.tracks.map((_, i) => i)
+            : [Math.round(Number(a.track))];
+        const out = tracks
+          .filter((i) => tl.tracks[i])
+          .map((i) => ({
+            track: i,
+            kind: tl.tracks[i].kind,
+            // The legal drop targets, reported alongside what is already
+            // there: "where CAN one go" is the question an agent has before
+            // `editor_add_transition`, and it is not derivable from the clip
+            // list without re-implementing `cutFrames`' own end==start match.
+            cuts: tl.tracks[i].kind === 'video' ? cutFrames(tl.tracks[i], fps) : [],
+            transitions: transitionsOf(tl.tracks[i]).map(transitionDto),
+          }));
+        return {
+          tracks: out,
+          kinds: TRANSITION_KINDS.map((k) => ({ value: k.value, label: k.label, needs: k.blurb })),
+          alignments: TRANSITION_ALIGNMENTS.map((x) => x.value),
+          defaultDurationFrames: DEFAULT_TRANSITION_FRAMES,
+        };
+      },
+
+      editor_add_transition: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const fps = timelineFps(tl);
+        const track = Math.round(Number(a?.track));
+        if (!Number.isFinite(track) || !tl.tracks[track]) {
+          return { error: `track must be 0..${tl.tracks.length - 1}` };
+        }
+        const kind = String(a?.kind ?? 'cross_dissolve') as TransitionKind;
+        // `atFrame` defaults to the cut nearest the playhead — the same
+        // "act where the user is looking" default `editor_add_marker` takes,
+        // so "put a dissolve on this cut" needs no arithmetic once the agent
+        // has seeked. Reported explicitly in the response so the agent knows
+        // which cut it actually got.
+        const cuts = cutFrames(tl.tracks[track], fps);
+        let atFrame: number;
+        if (a?.atFrame == null) {
+          const playhead = useEditorTimelineStore.getState().playhead;
+          if (cuts.length === 0) {
+            return { error: `track ${track} has no cut — a transition needs two clips touching end to start` };
+          }
+          atFrame = cuts.reduce((best, c) =>
+            Math.abs(c - playhead) < Math.abs(best - playhead) ? c : best,
+          );
+        } else {
+          atFrame = Math.round(Number(a.atFrame));
+        }
+        const built = newTransition(
+          kind,
+          atFrame,
+          a?.durationFrames == null ? DEFAULT_TRANSITION_FRAMES : Math.round(Number(a.durationFrames)),
+          (a?.alignment == null ? 'center_at_cut' : String(a.alignment)) as TransitionAlignment,
+          a?.color == null ? null : String(a.color),
+        );
+        if ('error' in built) return built;
+        // The SAME precondition the GUI drop runs, so an agent gets the same
+        // real reason a human would ("insufficient media … try End at Cut")
+        // rather than a silent no-op from the reducer.
+        const check = checkTransition(tl, track, built, fps);
+        if (!check.ok) return { error: check.reason ?? 'that transition cannot go there' };
+        useEditorTimelineStore.getState().applyOp({ kind: 'add_transition', track, transition: built });
+        return { ok: true, track, transition: transitionDto(built) };
+      },
+
+      editor_set_transition: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const fps = timelineFps(tl);
+        const track = Math.round(Number(a?.track));
+        const id = String(a?.id ?? '');
+        const current = (tl.tracks[track]?.transitions ?? []).find((t) => t.id === id);
+        if (!current) return { error: transitionNotFound(tl, track, id) };
+
+        const patch: {
+          kind?: TransitionKind;
+          duration?: number;
+          alignment?: TransitionAlignment;
+          color?: string | null;
+        } = {};
+        if (a?.kind != null) {
+          const k = String(a.kind);
+          if (!TRANSITION_KINDS.some((x) => x.value === k)) {
+            return { error: `unknown kind "${k}" — one of ${TRANSITION_KINDS.map((x) => x.value).join(' | ')}` };
+          }
+          patch.kind = k as TransitionKind;
+        }
+        if (a?.durationFrames != null) {
+          const d = Math.round(Number(a.durationFrames));
+          if (!Number.isFinite(d) || d < 1) return { error: 'durationFrames must be at least 1' };
+          patch.duration = d;
+        }
+        if (a?.alignment != null) {
+          const al = String(a.alignment);
+          if (!TRANSITION_ALIGNMENTS.some((x) => x.value === al)) {
+            return { error: `unknown alignment "${al}" — one of ${TRANSITION_ALIGNMENTS.map((x) => x.value).join(' | ')}` };
+          }
+          patch.alignment = al as TransitionAlignment;
+        }
+        // An explicit empty string clears the colour back to black (the
+        // model's own default), matching `editor_set_marker`'s own
+        // ""-clears-a-field convention.
+        if (a?.color !== undefined) {
+          if (a.color === null || a.color === '') patch.color = null;
+          else {
+            const hex = resolveMarkerColor(String(a.color));
+            if (typeof hex !== 'string') return hex;
+            patch.color = hex;
+          }
+        }
+        if (Object.keys(patch).length === 0) {
+          return { error: 'nothing to set — pass at least one of kind, durationFrames, alignment, color' };
+        }
+        // Validated against the MERGED shape, exactly as the reducer does, so
+        // a refusal explains itself instead of silently no-op-ing.
+        const merged: Transition = {
+          ...current,
+          ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
+          ...(patch.duration !== undefined ? { duration: patch.duration } : {}),
+          ...(patch.alignment !== undefined ? { alignment: patch.alignment } : {}),
+          ...(patch.color !== undefined
+            ? patch.color === null
+              ? { color: undefined }
+              : { color: patch.color }
+            : {}),
+        };
+        const check = checkTransition(tl, track, merged, fps);
+        if (!check.ok) return { error: check.reason ?? 'that change is not legal here' };
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_transition', track, id, patch });
+        const after = useEditorTimelineStore
+          .getState()
+          .timeline?.tracks[track]?.transitions?.find((t) => t.id === id);
+        return { ok: true, track, transition: after ? transitionDto(after) : null };
+      },
+
+      editor_remove_transition: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        const id = String(a?.id ?? '');
+        const hit = (tl.tracks[track]?.transitions ?? []).find((t) => t.id === id);
+        if (!hit) return { error: transitionNotFound(tl, track, id) };
+        useEditorTimelineStore.getState().applyOp({ kind: 'remove_transition', track, id });
+        return { ok: true, track, removed: transitionDto(hit) };
       },
 
       // ---- media understanding (D-189) — read-only analysis of a file ----

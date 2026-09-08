@@ -33,10 +33,17 @@ import {
   timelineDuration,
   trackDuration,
   trackIndexAfterMove,
+  checkTransition,
+  cutFrames,
+  newTransition,
+  transitionHandles,
+  transitionWindow,
+  transitionsOf,
   type Clip,
   type Marker,
   type Timeline,
   type Track,
+  type Transition,
 } from './timeline';
 
 function clip(id: string, name: string, overrides: Partial<Clip> = {}): Clip {
@@ -2571,5 +2578,184 @@ describe('add_marker / remove_marker / set_marker ops (D-222)', () => {
     expect(labelForOp({ kind: 'add_marker', marker: mk('c', 5) }, before)).toBe('Add marker at 5');
     expect(labelForOp({ kind: 'remove_marker', id: 'a' }, before)).toBe('Remove marker "sync"');
     expect(labelForOp({ kind: 'set_marker', id: 'b', patch: { color: 'red' } }, before)).toBe('Edit marker at 90');
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-224 — transitions: the derived window/handle arithmetic, the placement
+// preconditions, and the three ops. The PIXELS these produce are
+// `timelineExportTransitions.ffmpeg.test.ts` (export) and `chroma::edit`'s own
+// `preview_transition_tests` (preview); what is checked here is the model.
+// --------------------------------------------------------------------------- //
+
+describe('D-224 transitions — model', () => {
+  /** Two abutting 48-frame clips cut at frame 48, each trimmed INSIDE its own
+   *  144-frame source so real handle media exists on both sides — the shape a
+   *  razor split produces, and the one a cross dissolve needs. */
+  function cutTimeline(): Timeline {
+    const mk = (id: string, start: number): Clip => ({
+      id,
+      name: id,
+      source_path: `/media/${id}.mov`,
+      source_start: 48,
+      duration: 48,
+      source_len: 144,
+      start_frame: start,
+    });
+    return { id: 't1', name: 'T', tracks: [{ kind: 'video', clips: [mk('A', 0), mk('B', 48)] }] };
+  }
+
+  const tr = (over: Partial<Transition> = {}): Transition => ({
+    id: 'x',
+    kind: 'cross_dissolve',
+    at_frame: 48,
+    duration: 24,
+    alignment: 'center_at_cut',
+    ...over,
+  });
+
+  it('derives the window and the handle split from the alignment', () => {
+    expect(transitionWindow(tr())).toEqual({ start: 36, end: 60 });
+    expect(transitionHandles(tr())).toEqual({ head: 12, tail: 12 });
+    expect(transitionWindow(tr({ alignment: 'start_at_cut' }))).toEqual({ start: 48, end: 72 });
+    expect(transitionHandles(tr({ alignment: 'start_at_cut' }))).toEqual({ head: 0, tail: 24 });
+    expect(transitionWindow(tr({ alignment: 'end_at_cut' }))).toEqual({ start: 24, end: 48 });
+    expect(transitionHandles(tr({ alignment: 'end_at_cut' }))).toEqual({ head: 24, tail: 0 });
+    // An odd duration puts the extra frame AFTER the cut — the same integer
+    // halving `chroma_timeline::Transition::window` does, stated so the two
+    // engines agree by construction rather than by luck.
+    expect(transitionWindow(tr({ duration: 5 }))).toEqual({ start: 46, end: 51 });
+  });
+
+  it('cutFrames finds only real end-to-start touches, not every clip edge', () => {
+    const t = cutTimeline();
+    expect(cutFrames(t.tracks[0], 24)).toEqual([48]);
+    // Open a gap: the cut is gone.
+    t.tracks[0].clips[1].start_frame = 60;
+    expect(cutFrames(t.tracks[0], 24)).toEqual([]);
+  });
+
+  it('checkTransition accepts a well-handled cross dissolve and adds it', () => {
+    const before = cutTimeline();
+    expect(checkTransition(before, 0, tr(), 24)).toEqual({ ok: true });
+    const after = applyOp(before, { kind: 'add_transition', track: 0, transition: tr() });
+    expect(after.tracks[0].transitions).toHaveLength(1);
+    expect(after.tracks[0].clips).toEqual(before.tracks[0].clips); // no clip was re-trimmed
+  });
+
+  it('refuses a frame that is not a real cut, naming the cuts that ARE there', () => {
+    const before = cutTimeline();
+    const check = checkTransition(before, 0, tr({ at_frame: 30 }), 24);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain('cuts are at 48');
+    expect(applyOp(before, { kind: 'add_transition', track: 0, transition: tr({ at_frame: 30 }) })).toBe(before);
+  });
+
+  it('refuses a cross dissolve with no handle media — and names the alignment that would fit', () => {
+    // Two WHOLE files butted together: no head handle on B, no tail on A.
+    const before: Timeline = {
+      id: 't1',
+      name: 'T',
+      tracks: [
+        {
+          kind: 'video',
+          clips: [
+            { id: 'A', name: 'A', source_path: '/a.mov', source_start: 0, duration: 48, source_len: 48, start_frame: 0 },
+            { id: 'B', name: 'B', source_path: '/b.mov', source_start: 0, duration: 48, source_len: 48, start_frame: 48 },
+          ],
+        },
+      ],
+    };
+    const check = checkTransition(before, 0, tr(), 24);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain('insufficient media');
+    expect(check.reason).toContain('Dip to Color');
+
+    // Only the head is missing -> "Start at Cut" is the named fix.
+    before.tracks[0].clips[0].source_len = 144; // A now has a real tail handle
+    const headOnly = checkTransition(before, 0, tr(), 24);
+    expect(headOnly.reason).toContain('Start at Cut');
+
+    // …and a DIP needs no handles at all, so the same cut takes one.
+    expect(checkTransition(before, 0, tr({ kind: 'dip_to_color' }), 24)).toEqual({ ok: true });
+  });
+
+  it('refuses a window that would swallow a neighbouring clip whole', () => {
+    const before = cutTimeline(); // each clip is 48 frames long
+    const check = checkTransition(before, 0, tr({ duration: 120 }), 24);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain('past the start of "A"');
+  });
+
+  it('refuses a second transition whose window overlaps the first', () => {
+    const before = applyOp(cutTimeline(), { kind: 'add_transition', track: 0, transition: tr() });
+    const check = checkTransition(before, 0, tr({ id: 'y' }), 24);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain('overlaps the transition already at frame 48');
+  });
+
+  it('refuses a locked track and a non-video track', () => {
+    const locked = cutTimeline();
+    locked.tracks[0].locked = true;
+    expect(checkTransition(locked, 0, tr(), 24).reason).toContain('locked');
+    const audio = cutTimeline();
+    audio.tracks[0].kind = 'audio';
+    expect(checkTransition(audio, 0, tr(), 24).reason).toContain('video tracks only');
+  });
+
+  it('set_transition patches, re-validates the MERGED shape, and clears a colour with null', () => {
+    const withDip = applyOp(cutTimeline(), {
+      kind: 'add_transition',
+      track: 0,
+      transition: tr({ kind: 'dip_to_color', color: '#123456' }),
+    });
+    // Shortening is always fine.
+    const shorter = applyOp(withDip, { kind: 'set_transition', track: 0, id: 'x', patch: { duration: 8 } });
+    expect(shorter.tracks[0].transitions?.[0].duration).toBe(8);
+    expect(shorter.tracks[0].transitions?.[0].color).toBe('#123456'); // untouched by the patch
+    // `null` clears the colour back to the default (black).
+    const cleared = applyOp(shorter, { kind: 'set_transition', track: 0, id: 'x', patch: { color: null } });
+    expect(cleared.tracks[0].transitions?.[0].color).toBeUndefined();
+    // Lengthening past what the clips allow is refused — the merged shape is
+    // what gets checked, not just the patch.
+    expect(applyOp(shorter, { kind: 'set_transition', track: 0, id: 'x', patch: { duration: 500 } })).toBe(shorter);
+  });
+
+  it('remove_transition deletes it and touches no clip; an unknown id is a no-op', () => {
+    const before = applyOp(cutTimeline(), { kind: 'add_transition', track: 0, transition: tr() });
+    const after = applyOp(before, { kind: 'remove_transition', track: 0, id: 'x' });
+    expect(after.tracks[0].transitions).toEqual([]);
+    expect(after.tracks[0].clips).toEqual(before.tracks[0].clips);
+    expect(applyOp(before, { kind: 'remove_transition', track: 0, id: 'nope' })).toBe(before);
+  });
+
+  it('newTransition owns id generation and colour resolution, and rejects a bad kind', () => {
+    const t = newTransition('dip_to_color', 48, 24, 'center_at_cut', 'red');
+    expect('error' in t).toBe(false);
+    if ('error' in t) return;
+    expect(t.id).toMatch(/^transition-/);
+    expect(t.color).toBe('#D9434E'); // the shared MARKER_COLORS palette's own red
+    expect(newTransition('wipe' as never, 48)).toEqual({
+      error: expect.stringContaining('unknown transition kind'),
+    });
+  });
+
+  it('labelForOp names the transition shape and its cut for all three ops', () => {
+    const before = applyOp(cutTimeline(), { kind: 'add_transition', track: 0, transition: tr() });
+    expect(labelForOp({ kind: 'add_transition', track: 0, transition: tr() }, before)).toBe(
+      'Add Cross Dissolve at 48',
+    );
+    expect(labelForOp({ kind: 'remove_transition', track: 0, id: 'x' }, before)).toBe(
+      'Remove transition Cross Dissolve at 48',
+    );
+    expect(labelForOp({ kind: 'set_transition', track: 0, id: 'x', patch: { duration: 8 } }, before)).toBe(
+      'Edit transition Cross Dissolve at 48',
+    );
+  });
+
+  it('a track written before transitions existed reads back as having none', () => {
+    const legacy = cutTimeline();
+    expect(legacy.tracks[0].transitions).toBeUndefined();
+    expect(transitionsOf(legacy.tracks[0])).toEqual([]);
   });
 });

@@ -795,4 +795,53 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     const tail = volumeStats(out, 3.4, 0.5).mean;
     expect(tail - head).toBeGreaterThan(10);
   });
+
+  it('B-102: a clip at start_frame > 0 renders its OWN REAL FRAMES at its own position — not its last frame, frozen', () => {
+    // The bug, exactly: every `-i` decodes to a stream whose timestamps start
+    // at ~0, and `overlay` pairs its inputs BY TIMESTAMP, so a clip placed
+    // later on the timeline had its real frames consumed against the base
+    // stream's opening seconds — where its own `enable='between(t,…)'` gate was
+    // still shut — and then showed nothing but its LAST frame repeated for the
+    // whole of its actual window (`overlay`'s default `eof_action=repeat`).
+    //
+    // Undetectable with a flat colour or a clip at frame 0, which is every
+    // fixture the rest of this file uses; this one needs a source whose content
+    // CHANGES over its own length. Two 1s halves, red then lime, concatenated:
+    // if the clip is placed correctly the export shows red in its first second
+    // and lime in its second. Under the bug it was lime throughout.
+    const rgSrc = join(dir, 'redlime.mp4');
+    const redPart = join(dir, 'redpart.mp4');
+    const limePart = join(dir, 'limepart.mp4');
+    execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=red:size=320x240:rate=24:d=1', '-pix_fmt', 'yuv420p', redPart]);
+    execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=lime:size=320x240:rate=24:d=1', '-pix_fmt', 'yuv420p', limePart]);
+    execFileSync('ffmpeg', [
+      '-y', '-i', redPart, '-i', limePart,
+      '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[o]',
+      '-map', '[o]', '-pix_fmt', 'yuv420p', rgSrc,
+    ]);
+
+    // Placed at timeline frame 48 (2s at 24fps), 48 frames long (2s).
+    const placed = clip('placed', {
+      source_path: rgSrc,
+      source_fps: 24,
+      source_start: 0,
+      duration: 48,
+      source_len: 48,
+      start_frame: 48,
+    });
+    const out = join(dir, 'placed.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('video', [placed])]), out, { fps: 24, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    // Its own first half — RED. This is the assertion the bug failed.
+    const firstHalf = pixelAt(out, 2.4, 160, 120);
+    expect(firstHalf[0], `R in the clip's own first second: ${firstHalf}`).toBeGreaterThan(200);
+    expect(firstHalf[1], `G in the clip's own first second: ${firstHalf}`).toBeLessThan(60);
+    // Its own second half — LIME.
+    const secondHalf = pixelAt(out, 3.4, 160, 120);
+    expect(secondHalf[1], `G in the clip's own second second: ${secondHalf}`).toBeGreaterThan(200);
+    expect(secondHalf[0], `R in the clip's own second second: ${secondHalf}`).toBeLessThan(60);
+    // And nothing at all before it starts — the black base, not an early clip.
+    const before = pixelAt(out, 1.0, 160, 120);
+    expect(Math.max(...before), `the gap before the clip must be black: ${before}`).toBeLessThan(40);
+  });
 });

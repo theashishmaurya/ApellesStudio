@@ -1382,3 +1382,52 @@ status: open, deliberately (found and measured while building D-223; the fix bel
 - **the two real fixes**, neither taken here because both are wider than the feature that found this: (1) make `adapt_channels`' mono→stereo case power-preserving (`* FRAC_1_SQRT_2`), which changes the level of EVERY mono source in live playback — a real, audible change to existing behaviour that wants the owner's ear, not a subagent's judgement; or (2) plumb the probed `audio_channels` through `MediaVideoInfo` → the media pool DTO → `TimelineExportOptions`, and emit `pan=stereo|c0=c0|c1=c0` (a unity duplicate) for a known-mono source instead of `aformat` — exact, but it threads a new fact through the media pool and its Rust DTO for one edge case.
 - **workaround meanwhile:** none needed for stereo sources. For a mono one, raise that clip's own `volume` by 3 dB (×1.41) if the export must match the preview exactly.
 - **documented at the point of use:** `editor_get_capabilities`' `export.per_clip_level` entry states it, so an agent reading the capabilities before an export is told rather than left to measure it.
+
+## B-102 — the ffmpeg export compiler never placed a clip in TIME: any clip at `start_frame > 0` rendered its last frame, frozen, for its whole window
+
+**Status: fixed, 2026-09-08 (found while building D-224's transitions).**
+
+**What was wrong.** `timelineExport.ts` gives every clip its own `-i` (with
+`-ss`/`-t`) and composites it with
+`overlay … enable='between(t, startSec, endSec)'` onto a shared `[base]`. Each
+input decodes to a stream whose own timestamps start at ~0, and `overlay` pairs
+its two inputs **by timestamp** (ffmpeg's `framesync`) — nothing ever shifted a
+clip's stream to where that clip actually sits on the timeline. So a clip at
+`start_frame > 0` had its real frames consumed against the base stream's opening
+seconds, where its own `enable` gate was still shut, and then — once the gate
+opened — showed nothing but its **last frame, repeated** for the rest of its
+window (`overlay`'s default `eof_action=repeat`).
+
+The second half of the same mistake: `overlay`'s `x`/`y` expressions run on the
+main stream's clock (timeline seconds), but a clip's position keyframes were
+emitted in **clip-relative** seconds, so a position animation on a clip at
+`start_frame > 0` ran `start_frame / fps` seconds early.
+
+**Why it survived this long.** The audio half of the same compiler always did
+place its sources (`timelineExportAudio.ts`'s `adelay`, D-197) — only video
+never grew the equivalent. And every existing real-ffmpeg test placed its clips
+at frame 0, or used a flat colour, or a single clip: with either, a frozen frame
+and the right frame are the same pixels. The pure argv tests string-match a
+filtergraph and cannot see it at all. Confirmed live before fixing, not reasoned
+about: a two-colour source (red for its first second, lime for its second)
+placed at t=2 rendered **lime, frozen, for its whole window**.
+
+**Fix.** `setpts=PTS[/speed]+<inputStart>/TB` at the **head** of every clip's
+filter chain — timestamps only, no frames generated, no decode cost, the video
+equivalent of `adelay`. Putting it first gives the whole chain one time base
+(timeline seconds), which is what the two-time-bases confusion caused in the
+first place; every expression authored against the clip's own in-point (its
+keyframes, its D-147 fade, `overlay`'s `x`/`y`) is now explicitly re-based
+through `(t − clipStartSec)` / `(T − clipStartSec)`, the exact re-basing
+`buildTextDrawtextStep` already did for a title.
+
+**Regression test.** `timelineExport.ffmpeg.test.ts` — "B-102: a clip at
+start_frame > 0 renders its OWN REAL FRAMES at its own position". It builds the
+two-colour source deliberately, because that is the only fixture shape that can
+see this: it asserts red in the clip's own first second, lime in its second, and
+black in the gap before it. The whole rest of the suite (856 TS tests) passes
+unchanged, and the compiled argv is byte-identical for a clip at frame 0.
+
+**Severity.** Real and silent for any sequential edit — which is the ordinary
+use of an NLE. Masked in practice because the exporter's heaviest real use so
+far has been stacked comparison reels, where both clips start at frame 0.
