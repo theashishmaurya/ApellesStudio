@@ -53,8 +53,10 @@ interface PlayerProps {
   onFullscreen?: () => void;             // omit → button hidden
   rate?: number;                          // e.g. 1 — omit → rate control hidden
   onRateChange?: (rate: number) => void;
-  zoom?: 'fit' | number;                  // 'fit' or a percentage — omit → zoom control hidden
-  onZoomChange?: (zoom: 'fit' | number) => void;
+  zoom?: number;                          // viewport magnification, 1 = fit — omit → zoom cluster hidden
+  onZoomIn?: () => void;                  // omit → the + button renders disabled
+  onZoomOut?: () => void;                 // omit → the − button renders disabled
+  onZoomReset?: () => void;               // omit → the `{pct}%` readout stays a plain label
 
   className?: string;
 }
@@ -68,7 +70,16 @@ without the Editor's choices constraining them. Exceptions, by design:
 - `rate` / `zoom` are display **and** control together — if the value prop
   (`rate`/`zoom`) is given but its setter isn't, the readout still renders
   (as plain text, not a button) rather than disappearing, since the caller
-  clearly has a rate/zoom concept even if it hasn't wired the setter yet.
+  clearly has a rate/zoom concept even if it hasn't wired the setter yet. For
+  `zoom` the two +/− buttons render **disabled** rather than hidden when their
+  callback is missing (D-218) — that is how a caller expresses "already at
+  min/max", and a control that vanished at a bound would make the cluster
+  jump around under the pointer.
+- **`zoom` carries no math** (D-218). It is a multiplier where `1` = fit,
+  shown as a percentage; the three callbacks are pure intent ("in" / "out" /
+  "back to fit") and the tab owns its own bounds, step and clamping, since
+  only the tab knows what its `surface` is. `@chroma/editor`'s
+  `previewZoom.ts` is the reference implementation.
 - `onStep`, `onPlayPause`, `frame`, `total`, `playing` are not optional — the
   ±1 step buttons and play/pause are always shown; there is no "not a
   playable surface" tab in the current design.
@@ -76,7 +87,9 @@ without the Editor's choices constraining them. Exceptions, by design:
 Icons (all `lucide-react`): skip-to-start/end use `SkipBack`/`SkipForward`;
 the ±1 step buttons use the distinct `StepBack`/`StepForward` so the two
 concepts never look the same control. Nav uses `ChevronLeft`/`ChevronRight`.
-Snapshot `Camera`, fullscreen `Maximize`, zoom `Search`.
+Snapshot `Camera`, fullscreen `Maximize`, zoom `ZoomOut`/`ZoomIn` (the same
+pair `TimelinePane`'s own timeline-zoom cluster uses — one tab, one zoom
+idiom).
 
 Nothing throws when `total`/`fps` are `0` — `fmtTimecode` (also exported,
 single source of truth, `@chroma/editor` imports it from here) falls back to

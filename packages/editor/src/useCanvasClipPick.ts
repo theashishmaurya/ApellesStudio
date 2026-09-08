@@ -71,12 +71,12 @@
  *     affordance to weigh, not a freebie.
  */
 import { useEffect } from 'react';
-import { useContentBox } from '@chroma/player';
 
 import { pickTopmostLayer, visibleVideoLayersAt, type PickCandidate } from './canvasPick';
 import { screenToFraction } from './transformGeometry';
 import { useEditorTimelineStore } from './timelineStore';
 import { clipGeometryKey, useClipGeometries } from './useClipGeometry';
+import { usePreviewContentBox } from './usePreviewContentBox';
 import type { CompositionSize } from './useCompositionSize';
 
 /**
@@ -89,9 +89,11 @@ import type { CompositionSize } from './useCompositionSize';
  *
  * Measures its own content box from that container, exactly as
  * `CanvasBoundary` and `TransformOverlay` each already do: all three derive
- * it from the same element and the same (width, height) pair, so they agree
- * pixel-for-pixel by construction rather than by being handed one value (see
- * `CanvasBoundary`'s own note on that).
+ * it from the same element and the same (width, height) pair — since D-218
+ * through the one shared `usePreviewContentBox`, which also applies the
+ * preview's viewport zoom/pan — so they agree pixel-for-pixel by construction
+ * rather than by being handed one value (see `CanvasBoundary`'s own note on
+ * that).
  *
  * Renders nothing and returns nothing: the only observable effect is on the
  * store's `selection`/`selectedGap`.
@@ -112,7 +114,12 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
     size ? `${size.width}x${size.height}` : null,
   );
 
-  const contentBox = useContentBox(container, size);
+  // D-218 — the ZOOMED content box (the fit box with the preview viewport's
+  // zoom/pan composed on top), so a press is hit-tested against where the
+  // picture actually IS on screen, not where it would be at fit. Same hook
+  // `TransformOverlay` and `CanvasBoundary` read, so all three still agree by
+  // construction — see `usePreviewContentBox`'s own doc.
+  const contentBox = usePreviewContentBox(container, size);
   const ready = !!size && contentBox.width > 0 && contentBox.height > 0;
 
   useEffect(() => {

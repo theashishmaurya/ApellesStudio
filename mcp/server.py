@@ -612,6 +612,25 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "tells you whether that condition now holds; `trackLocked` on a "
             "selected clip means the box draws but the drag handles do not."
         ),
+        "preview_viewport_zoom": (
+            "D-218: the preview has its own VIEWPORT zoom + pan "
+            "(editor_set_preview_zoom; reported by editor_get_state as "
+            "`previewZoom`). It is display-only — it is NOT a clip's "
+            "scale/position and changes nothing about what renders or "
+            "exports. Two things follow for you. (1) READ it before "
+            "interpreting a debug_screenshot of the preview: at a non-fit "
+            "view the picture on screen is a magnified CROP of the frame, so "
+            "a clip that looks off-centre may just be being looked at from "
+            "off-centre. (2) USE it when checking fine detail: at fit the "
+            "preview is a ~960px-long-edge proxy of the whole frame, so a "
+            "thin edge, a small title or a colour boundary is a handful of "
+            "pixels; zoom to 200-400% and pan to the area first. Set it back "
+            "to \"fit\" when you are done so the user does not find their "
+            "viewer left magnified into a corner. 100% means FIT, not 1:1 "
+            "with the output resolution — and because the preview IS a "
+            "capped proxy, magnifying it enlarges proxy pixels rather than "
+            "revealing full-resolution detail."
+        ),
     },
     "export": {
         "v1_scope": (
@@ -755,7 +774,14 @@ def editor_get_state() -> str:
     `selectedGap`. Cheap, read-only — call before anything else if you don't
     already know a project is open, to confirm which project the Edit tab is
     actually on after an `open_project`/`new_project` switch, or to see what
-    the user currently has selected."""
+    the user currently has selected.
+
+    Also reports `previewZoom` (D-218) — the preview VIEWPORT's own zoom/pan
+    (`zoom`, `pct`, `panX`, `panY`, `fit`). Read it before interpreting a
+    `debug_screenshot` of the preview: at a non-fit view the picture on screen
+    is a magnified crop of the frame, so a clip that looks off-centre may
+    simply be being looked at from off-centre. `editor_set_preview_zoom` is
+    the write half."""
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)
@@ -853,6 +879,58 @@ def editor_set_selection(
     if gap is not None:
         args["gap"] = gap
     return json.dumps(_op("editor_set_selection", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_preview_zoom(
+    zoom: float | str,
+    pan_x: float | None = None,
+    pan_y: float | None = None,
+) -> str:
+    """Zoom and pan the Edit tab's PREVIEW VIEWPORT — how big the composited
+    frame is drawn on screen (D-218, roadmap item 25). The GUI half is the
+    `−  100%  +` cluster at the right of the preview's transport bar, and
+    ctrl/pinch-scroll over the picture.
+
+    **This is display-only. It is NOT a clip's transform.** It changes nothing
+    about what renders or exports — no `Clip.scale`, no `position_x`/
+    `position_y`, no composition size. If you want the PICTURE to be bigger in
+    the finished video, that is `editor_set_clip_transform`. This tool only
+    magnifies your own view of the frame, exactly like zooming a photo viewer.
+
+    **Why you would call it**: to inspect detail in a `debug_screenshot`. At
+    fit, the preview is a ~960px-long-edge proxy of the whole frame, so a thin
+    edge, a small title, or a colour boundary is a handful of pixels. Zoom to
+    200-400% and pan to the area first and the same screenshot shows it
+    legibly. Also worth setting back to `"fit"` when you are done, so the user
+    does not find their viewer left magnified into a corner.
+
+    `zoom`: a multiplier where **1 = fit** (the whole frame visible, the
+    default), 2 = twice that size, 0.5 = half. Range 0.25-8; outside it the
+    value is clamped and the response says so in `note`. Pass the string
+    `"fit"` to reset zoom AND pan in one call — the same thing clicking the
+    percentage readout does.
+
+    `pan_x` / `pan_y`: which part of the picture the viewport looks at, as a
+    fraction of the FITTED picture's width/height offset from centre —
+    `0` is centred, positive moves the picture right/down (i.e. reveals what
+    is to its left/top). Omitted → the current pan is kept. The legal range is
+    `±(zoom - 1) / 2`, which is `0` at or below fit (there is nothing
+    off-screen to pan to) and is reported back as `panLimit`.
+
+    Not undoable, by design (same reasoning as `editor_set_selection`, D-216):
+    a viewport zoom is UI state, not part of the `Timeline` document, so it is
+    never persisted and never sits between the user and their last real edit
+    on an undo. `editor_get_state` reports the current view as
+    `previewZoom`."""
+    import json
+
+    args: dict = {"zoom": zoom}
+    if pan_x is not None:
+        args["panX"] = pan_x
+    if pan_y is not None:
+        args["panY"] = pan_y
+    return json.dumps(_op("editor_set_preview_zoom", **args), indent=2, default=str)
 
 
 @mcp.tool()

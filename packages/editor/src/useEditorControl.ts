@@ -71,6 +71,15 @@ import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 import { loadTextFonts, textFontsSync } from './textFonts';
+import {
+  clampPreviewZoom,
+  FIT_ZOOM,
+  isFitView,
+  MAX_PREVIEW_ZOOM,
+  MIN_PREVIEW_ZOOM,
+  panLimit,
+  previewZoomPct,
+} from './previewZoom';
 
 const EDITOR_OP_PREFIX = 'editor_';
 
@@ -365,6 +374,19 @@ export function useEditorControl(): void {
           // D-216 — `editor_set_selection` is the write half of this pair.
           selection: s.selection,
           selectedGap: s.selectedGap,
+          // D-218 — the preview's VIEWPORT zoom/pan. Reported because a
+          // screenshot of the preview is uninterpretable without it: at a
+          // non-fit view the picture on screen is a crop of the composition,
+          // so "the clip is off the left edge" may mean the clip moved or may
+          // mean the viewport is panned. Display-only — it is not any clip's
+          // `scale`/`position_*` and changes nothing about what renders.
+          previewZoom: {
+            zoom: s.previewView.zoom,
+            pct: previewZoomPct(s.previewView.zoom),
+            panX: s.previewView.panX,
+            panY: s.previewView.panY,
+            fit: isFitView(s.previewView),
+          },
         };
       },
 
@@ -495,6 +517,64 @@ export function useEditorControl(): void {
           // clip whose track is `trackLocked` still gets the box but no
           // draggable corner handles.
           singleClipSelected: after.selection.length === 1,
+        };
+      },
+
+      // D-218 (roadmap item 25) — the AI half of the preview's viewport zoom,
+      // landed in the same pass as its GUI half (CLAUDE.md: a GUI-only
+      // control is half a feature). Same store action the toolbar buttons and
+      // the ctrl-wheel gesture drive, so there is one clamping rule and one
+      // source of truth, not a parallel path.
+      //
+      // **Display-only, and NOT undoable** — exactly D-216's reasoning for
+      // `editor_set_selection`: `previewView` is a field of the STORE, not of
+      // `Timeline`, so it never reaches `project.json` and D-051's
+      // whole-`Timeline` undo snapshots have never carried it. A zoom that
+      // sat on the undo stack would put itself between the user and their
+      // last real edit on the next cmd-Z.
+      editor_set_preview_zoom: (a) => {
+        const raw = a?.zoom;
+        // `"fit"` is accepted as a name for the default view because that is
+        // what the GUI's own reset control is called; it is exactly
+        // `zoom: 1, panX: 0, panY: 0`, not a separate mode.
+        const wantsFit = raw === 'fit' || raw === null;
+        const zoom = wantsFit ? FIT_ZOOM : Number(raw);
+        if (raw === undefined) return { error: 'pass zoom (a multiplier, 1 = fit) or zoom="fit"' };
+        if (!Number.isFinite(zoom) || zoom <= 0) {
+          return { error: `zoom must be a positive multiplier (1 = fit, ${MIN_PREVIEW_ZOOM}..${MAX_PREVIEW_ZOOM}) or "fit"` };
+        }
+        const clamped = clampPreviewZoom(zoom);
+        // Report a request that was out of range rather than silently
+        // honouring something else — the same "never a silent no-op" bar
+        // every other op here holds to (B-053's shape).
+        const clampedNote =
+          clamped !== zoom
+            ? `zoom ${zoom} is outside ${MIN_PREVIEW_ZOOM}..${MAX_PREVIEW_ZOOM} and was clamped to ${clamped}`
+            : undefined;
+
+        // Pan defaults to "keep looking at the same place", except on an
+        // explicit fit, which recentres — that is what "fit" means.
+        const prev = useEditorTimelineStore.getState().previewView;
+        const panX = wantsFit ? 0 : a?.panX !== undefined ? Number(a.panX) : prev.panX;
+        const panY = wantsFit ? 0 : a?.panY !== undefined ? Number(a.panY) : prev.panY;
+        if (!Number.isFinite(panX) || !Number.isFinite(panY)) {
+          return { error: 'panX/panY must be finite numbers (fractions of the fitted picture, 0 = centred)' };
+        }
+
+        useEditorTimelineStore.getState().setPreviewView({ zoom: clamped, panX, panY });
+        const after = useEditorTimelineStore.getState().previewView;
+        return {
+          ok: true,
+          zoom: after.zoom,
+          pct: previewZoomPct(after.zoom),
+          panX: after.panX,
+          panY: after.panY,
+          fit: isFitView(after),
+          // The pan a given zoom actually permits, so a caller that wants to
+          // look at a corner can compute a legal pan instead of guessing and
+          // being clamped.
+          panLimit: panLimit(after.zoom),
+          note: clampedNote,
         };
       },
 

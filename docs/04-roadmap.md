@@ -1356,9 +1356,59 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       watch the GUI's own "Close Gap" action appear. Only the POINTER tier (a
       real mouse drag on a handle) is still unreached, for the unrelated
       screen-recording/Accessibility reason. Full transcript in D-216.
-    - **No canvas/preview zoom control** — the timeline already has one (the
-      `100%` +/- next to Export); the preview pane has none. Reference: Resolve's
-      own viewer zoom control, top-left of the timeline viewer.
+    - ~~**No canvas/preview zoom control**~~ — **BUILT, 2026-09-08 (D-218).**
+      The original entry: the timeline already has one (the `100%` +/- next to
+      Export); the preview pane has none. Reference: Resolve's own viewer zoom
+      control, top-left of the timeline viewer. **What shipped**, and the one
+      place it deliberately diverges from that reference:
+      - A `−  100%  +` cluster at the right of the preview's transport bar,
+        shaped exactly like `TimelinePane`'s own (same lucide icons, same ghost
+        buttons, same `1.2` step, same percentage readout) — the primary
+        reference for the WIDGET is this codebase's own already-shipped control,
+        not a re-derivation, per CLAUDE.md's "don't guess, and don't reinvent
+        what's already solved here." Bounds 25%–800%, preview-scoped constants
+        (NOT shared with `ruler.ts`'s timeline zoom bounds — two unrelated
+        axes). The percentage readout is itself the **reset to fit** button,
+        which is the one thing Resolve's control has that the timeline's does
+        not need (the preview can be panned; the timeline cannot get lost).
+      - **Ctrl/pinch-wheel zooms** (anchored at the pointer), **plain wheel
+        pans** — the identical split `TimelinePane`'s own wheel listener already
+        makes, including its `ctrlKey`-not-a-Ctrl-key reasoning and its
+        native-non-passive listener requirement.
+      - **100% means FIT, not 1:1** — deliberate; see D-218. The preview is a
+        960px-long-edge proxy, so a "100%" claiming one output pixel per screen
+        pixel would be claiming fidelity that is not in the payload.
+      - The mechanism is a mathematical transform of the `useContentBox` rect
+        (plus one CSS transform on the `<img>`), NOT `overflow: auto` scrolling
+        — chosen so `TransformOverlay`/`useCanvasClipPick`/`CanvasBoundary`'s
+        coordinate math is untouched AND provable in jsdom. D-218 records the
+        full weighing.
+      - **Both interfaces in the same pass**: `editor_set_preview_zoom` +
+        `editor_get_state`'s new `previewZoom` block, driving the same clamped
+        store action the buttons and the wheel do. Display-only and not
+        undoable, on D-216's own reasoning.
+      - **Verified**: 22 pure + 24 real-DOM cases, including click-to-select and
+        both drag gestures proven correct at 200%-and-panned against a point
+        where the pre-zoom mapping gives a different answer; all five
+        pre-existing preview suites pass unmodified. `npm test --workspace
+        @chroma/editor` 766/766, `tsc` clean. **And in a real browser** —
+        D-142's Chromium harness, with real layout and real
+        `document.elementFromPoint` hit-testing: the same screen point selects
+        the background at fit and the PIP at 200%-panned, a real 200px drag
+        commits `-0.21824` (the zoom-aware value) not `-0.13648`, and the wheel
+        split prevents-default exactly where it should. Getting there needed
+        **B-099 fixed first** — D-217 had left the harness page throwing at
+        module load, so that whole tier had been silently dead. **Not verified
+        in a real Tauri/WKWebView window** — the remaining tier, the same one
+        D-216 reached with `debug_screenshot`; a second instance needs its own
+        full Rust build and the owner's dev server was live.
+      - ⬜ **Follow-up, deliberately not attempted:** fetch a
+        higher-resolution preview frame while zoomed past ~200% and paused, so
+        magnification shows real detail rather than an enlarged proxy. It walks
+        straight into D-125's trap (a different `PREVIEW_LONG_EDGE` respawns
+        every ffmpeg decode pipe and keyframe-seeks it), so it needs that
+        solved first — the same precondition the "lower long edge while
+        playing" item above carries.
     - ~~**Three panels reported not resizable**~~ — **audited and closed,
       2026-09-08 (B-096).** `EditorTab.tsx`'s Inspector column was ALREADY a
       real `ResizablePanel` (264–420px, user-draggable) — the reported "content

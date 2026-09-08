@@ -88,12 +88,37 @@
  * an overlay div: a full-bleed hit layer under `TransformOverlay` cannot work,
  * because a full-frame clip's own transform box is full-bleed too and would
  * swallow every press. See that hook's own doc.
+ *
+ * Preview viewport zoom + pan (D-218, roadmap item 25's "No canvas/preview
+ * zoom control"; owner, live, with a screenshot: "i should be able to zoom in
+ * the canvas also"): a DISPLAY-only magnification of the composited frame —
+ * it touches no `Clip.scale`/`position_*` and no composition size. The state
+ * is `timelineStore`'s `previewView` (UI state, like `selection`, and for
+ * D-216's reasons: not undoable, not persisted), the math is
+ * `previewZoom.ts`, and it is applied in exactly TWO places, which is what
+ * keeps the picture and the overlays from ever disagreeing:
+ *   1. **the `<img>`** — a CSS `translate(...) scale(...)` about its own
+ *      centre. A compositor-only transform, so a zoom or a pan costs no
+ *      layout, no re-decode and no IPC (the picture is a server-rendered
+ *      JPEG — see `docs/notes/on-canvas-transform.md`'s "no cheap live
+ *      re-render" finding, which is exactly why zoom must not be a re-render).
+ *   2. **`usePreviewContentBox`** — the same transform, arithmetically, on
+ *      the `useContentBox` fit rect all three overlays measure against.
+ * `zoomedContentBox`'s output is precisely the `<img>`'s own transformed box,
+ * so `TransformOverlay`'s handles, `CanvasBoundary`'s frame and
+ * `useCanvasClipPick`'s hit test all stay correct at every zoom level and pan
+ * offset with no change to any of their own fraction<->pixel math.
+ *
+ * The gesture split mirrors `TimelinePane.tsx`'s own, deliberately, so muscle
+ * memory transfers within the tab: **ctrl/pinch-wheel zooms** (anchored at the
+ * pointer), a **plain wheel pans**. See `onWheel` below for why `ctrlKey` is
+ * the right test and why the listener has to be a native non-passive one.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2 } from 'lucide-react';
-import { Player } from '@chroma/player';
+import { Player, useContentBox } from '@chroma/player';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
@@ -102,6 +127,15 @@ import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { CanvasSettingsPopover } from './CanvasSettingsPopover';
 import { useCompositionSize } from './useCompositionSize';
+import {
+  fitPointAt,
+  FIT_VIEW,
+  MAX_PREVIEW_ZOOM,
+  MIN_PREVIEW_ZOOM,
+  isFitView,
+  pannedByPixels,
+  steppedZoom,
+} from './previewZoom';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -243,6 +277,91 @@ export function PreviewPane() {
   // hook's own doc for why no z-ordered overlay div can make that call
   // correctly.
   useCanvasClipPick(surfaceEl, compSize);
+
+  // ---- D-218: preview viewport zoom + pan --------------------------------
+  //
+  // The FIT box — `useContentBox` with no zoom applied. Deliberately the raw
+  // fit rect and not `usePreviewContentBox`'s zoomed one: everything below
+  // converts a SCREEN delta into `previewZoom.ts`'s fit-box fractions, and
+  // the fit box is the fixed reference frame those fractions are defined
+  // against (see that module's own units note). Same element + same size the
+  // three overlays measure, so it is the same rect by construction.
+  const fitBox = useContentBox(surfaceEl, compSize);
+  const previewView = useEditorTimelineStore((s) => s.previewView);
+  const setPreviewView = useEditorTimelineStore((s) => s.setPreviewView);
+
+  // The wheel listener below is registered once per surface element and reads
+  // both of these through refs rather than closing over them, so a zoom, a
+  // pan or a panel resize never tears down and re-adds a listener on the
+  // preview's hottest surface. (`useCanvasClipPick` re-registering per render
+  // is a known, separately-tracked cost — roadmap item 25; this does not add
+  // a second one.)
+  const fitRef = useRef(fitBox);
+  const viewRef = useRef(previewView);
+  useEffect(() => {
+    fitRef.current = fitBox;
+    viewRef.current = previewView;
+  }, [fitBox, previewView]);
+
+  /** The `<img>`'s own CSS transform — the picture half of the zoom. A
+   *  `translate` + `scale` about the element's default centre origin, which
+   *  is exactly what `zoomedContentBox` computes arithmetically for the
+   *  overlays, so the two cannot drift. `undefined` at fit so the common case
+   *  sets no transform at all. */
+  const imageTransform = isFitView(previewView)
+    ? undefined
+    : `translate(${previewView.panX * fitBox.width}px, ${previewView.panY * fitBox.height}px) scale(${previewView.zoom})`;
+
+  const zoomBy = useCallback(
+    (direction: 'in' | 'out', anchor: { x: number; y: number }) => {
+      setPreviewView((prev) => steppedZoom(prev, anchor, direction));
+    },
+    [setPreviewView],
+  );
+
+  // The toolbar buttons have no pointer to anchor to, so they zoom about the
+  // fit box's centre — `{x: 0, y: 0}` in fit-relative space.
+  const zoomIn = useCallback(() => zoomBy('in', { x: 0, y: 0 }), [zoomBy]);
+  const zoomOut = useCallback(() => zoomBy('out', { x: 0, y: 0 }), [zoomBy]);
+  const zoomReset = useCallback(() => setPreviewView(FIT_VIEW), [setPreviewView]);
+
+  // Scroll-wheel zoom / pan — the same split, for the same reasons, as
+  // `TimelinePane.tsx`'s own (read its comment; this is the deliberate mirror
+  // of it, not a second invention):
+  //   - A native, NON-PASSIVE listener rather than React's `onWheel`, which
+  //     React attaches passively by default and which therefore silently
+  //     ignores `preventDefault()` — without that call the webview runs its
+  //     own ctrl+wheel PAGE zoom on top of ours.
+  //   - `ctrlKey` is the test, not a physical Ctrl key: a trackpad PINCH and
+  //     an explicit Ctrl+scroll both arrive as a `wheel` with `ctrlKey: true`,
+  //     synthesized by the browser itself, while a plain two-finger scroll
+  //     arrives with `ctrlKey: false`. So pinch/Ctrl = zoom, plain = pan,
+  //     which is the standard web/canvas convention and the one the timeline
+  //     already trained the user on.
+  //   - `preventDefault` only when the gesture actually does something: at
+  //     fit there is nothing to pan to (`clampPreviewView` pins the pan to
+  //     zero), so a plain scroll is left entirely alone rather than being
+  //     swallowed.
+  useEffect(() => {
+    const el = surfaceEl;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const fit = fitRef.current;
+      if (fit.width <= 0 || fit.height <= 0) return;
+      const rect = el.getBoundingClientRect();
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const anchor = fitPointAt({ x: e.clientX - rect.left, y: e.clientY - rect.top }, fit);
+        setPreviewView((prev) => steppedZoom(prev, anchor, e.deltaY < 0 ? 'in' : 'out'));
+        return;
+      }
+      if (viewRef.current.zoom <= 1) return;
+      e.preventDefault();
+      setPreviewView((prev) => pannedByPixels(prev, fit, e.deltaX, e.deltaY));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [surfaceEl, setPreviewView]);
 
   /** Put one freshly-fetched frame's bytes on screen, releasing the previous
    *  frame's object URL (D-217 — see `frameUrl`'s own note). */
@@ -474,6 +593,16 @@ export function PreviewPane() {
         onVolumeChange={setVolume}
         onFullscreen={toggleFullscreen}
         isFullscreen={isFullscreen}
+        // D-218 — the zoom cluster, mirroring the timeline toolbar's own. A
+        // bound is expressed by withholding that direction's callback, which
+        // `Player` renders as a disabled button (its own documented
+        // contract) — the same information the timeline conveys by its
+        // `clampPxPerSec` simply not moving, made visible here because a
+        // preview zoom has a reset the timeline's does not.
+        zoom={previewView.zoom}
+        onZoomIn={previewView.zoom < MAX_PREVIEW_ZOOM ? zoomIn : undefined}
+        onZoomOut={previewView.zoom > MIN_PREVIEW_ZOOM ? zoomOut : undefined}
+        onZoomReset={isFitView(previewView) ? undefined : zoomReset}
         surface={
           // D-062: a plain "no frame" text was doing double duty for two very
           // different states — "still waiting on the first frame" (normal,
@@ -490,12 +619,29 @@ export function PreviewPane() {
           decodeErr ? (
             <div className="text-sm text-text-secondary">preview error: {decodeErr}</div>
           ) : frameSrc ? (
+            // D-218 — `overflow-hidden`: a zoomed-in picture (and the
+            // overlay boxes drawn over it) is larger than this surface, and
+            // must be clipped at the surface's own edge rather than spilling
+            // over the transport bar. It cannot introduce a scrollbar and so
+            // cannot change what `useContentBox` measures here — the pan is a
+            // transform, never real scroll (see D-218 for why that
+            // distinction is the whole design).
             <div
               ref={setSurfaceEl}
               data-preview-surface
-              className="relative flex h-full w-full items-center justify-center"
+              className="relative flex h-full w-full items-center justify-center overflow-hidden"
             >
-              <img src={frameSrc} alt="" draggable={false} className="max-h-full max-w-full object-contain" />
+              <img
+                src={frameSrc}
+                alt=""
+                draggable={false}
+                className="max-h-full max-w-full object-contain"
+                // D-218 — the picture half of the viewport zoom. Compositor-
+                // only, so a zoom/pan costs no layout and no re-decode; the
+                // overlays get the arithmetically identical transform through
+                // `usePreviewContentBox`. See this module's own doc.
+                style={{ transform: imageTransform }}
+              />
               <CanvasBoundary container={surfaceEl} size={compSize} />
               <TransformOverlay container={surfaceEl} />
             </div>

@@ -1129,6 +1129,22 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   bytes to keep modelling the real backend. No new dependency, so `Cargo.toml`
   and the lock are untouched.
 
+- **2026-09-08** — **Preview viewport zoom (D-218) + B-099** · **zero upstream-
+  file edits, zero Rust edits.** All of the behaviour is in `packages/editor/*`
+  (`previewZoom.ts`, `usePreviewContentBox.ts`, `PreviewPane.tsx`,
+  `TransformOverlay.tsx`, `CanvasBoundary.tsx`, `useCanvasClipPick.ts`,
+  `timelineStore.ts`, `useEditorControl.ts`) and `packages/player/*`
+  (`Player.tsx`'s zoom prop set). The only file touched inside the fork is
+  `app/src/harness-main.tsx` — the Chroma-owned browser harness again (see the
+  two entries above), and this time as a **bug fix, B-099**: the entry
+  immediately above switched its `chroma_timeline_frame` stub to
+  `atob(STUB_FRAME_BASE64)` but left the `data:image/jpeg;base64,` prefix on
+  that constant, so `atob` threw at module load and the whole harness page
+  mounted nothing. The prefix is now gone (the constant is the bare payload its
+  own name always claimed), which is what made the real-Chromium verification
+  of D-218 possible at all. No backend change of any kind: a viewport zoom is
+  display-only and the compositor never learns about it.
+
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

@@ -44,9 +44,9 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 29 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214)
+## Edit tab / multi-track NLE — CLOSED, 31 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218)
 
-<!-- The count above is the real one, checked 2026-09-08 against
+<!-- The count above is the real one, re-counted 2026-09-08 against
      `grep -oE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck)\(' mcp/server.py`
      minus the 4 media-understanding tools listed in their own section below.
      It replaces two contradictory headings (“23 tools” and “22 tools”) that had
@@ -72,9 +72,10 @@ zero.**
 > | Tool | What it does |
 > |---|---|
 > | `get_timeline` | Read-only. Every track and clip, with the `index` mutating tools address a clip by and the `id` that survives a reorder. Reports fades + ducking. |
-> | `editor_get_state` | Read-only. Project-open + WHICH project (`openProject`, B-083)/load-status/playhead/playing/has-timeline, plus the current `selection` (`[{track, id}]`) and `selectedGap` (2026-09-07, B-085 follow-up — selection was previously invisible to everything outside the webview, so a selection bug could only be caught by eyeballing the window). |
+> | `editor_get_state` | Read-only. Project-open + WHICH project (`openProject`, B-083)/load-status/playhead/playing/has-timeline, plus the current `selection` (`[{track, id}]`) and `selectedGap` (2026-09-07, B-085 follow-up — selection was previously invisible to everything outside the webview, so a selection bug could only be caught by eyeballing the window), plus `previewZoom` (D-218 — the preview VIEWPORT's own zoom/pan; read it before interpreting a `debug_screenshot` of the preview, since at a non-fit view the picture on screen is a magnified crop of the frame). |
 > | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
 > | `editor_set_selection` (D-216, 2026-09-08) | The WRITE half of `editor_get_state`'s `selection`/`selectedGap` — `clips=[{track, clip}]` or `[{track, clipId}]` (an array, so the GUI's real D-107 multi-select is reachable; `[]` clears), or `gap={track, frame}`, the two mutually exclusive exactly as in the store (D-105). **Why it matters, given that every editing tool already takes an explicit `track`/`clip` and needs no selection:** the Edit tab has surfaces that exist only FOR a selection — `TransformOverlay`'s on-canvas box and corner handles, and the Inspector's clip form, both gated on EXACTLY ONE clip being selected — and until this op nothing but a human's mouse could reach them, which is why every on-canvas fix (D-136, D-204, B-085, B-092, D-209) had to be verified by the owner clicking, or not at all. Pair it with `debug_screenshot` to actually see the box land. Validates every entry against the live timeline (a bad index or unknown id is a real error, never a stored selection of nothing) and a gap with the same `gapAt` the GUI's own empty-area click uses. **Not undoable** — see below. |
+> | `editor_set_preview_zoom` (D-218, 2026-09-08) | Zoom/pan the preview VIEWPORT — `zoom` a multiplier where `1` = fit (0.25–8, clamped with the clamp reported in `note`), `"fit"` to reset zoom AND pan, optional `pan_x`/`pan_y` as fractions of the fitted picture offset from centre (legal range `±(zoom-1)/2`, reported back as `panLimit`). **Display-only — it is NOT a clip's transform**: nothing about the render or the export changes, only how large the frame is drawn on screen. Its use is inspection: at fit the preview is a ~960px-long-edge proxy of the whole frame, so a thin edge or a small title is a handful of pixels in a `debug_screenshot`; zoom to 200-400% and pan first and the same screenshot shows it. `editor_get_state`'s new `previewZoom` block is the read half, and reading it is what makes a preview screenshot interpretable at all (at a non-fit view the picture on screen is a magnified crop of the frame). **Not undoable** — same reasoning as `editor_set_selection`, see below. |
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
 > | `editor_remove_media` (2026-09-07, roadmap item 23) | Remove one or more items from the media pool by id — the pool's only correction mechanism today (no re-probe/expiry yet). Wraps the same `chroma_media_remove` the GUI's Sources panel already used; a clip on the timeline still referencing a removed item keeps playing/exporting fine (`Clip.source_path` is an independent copy, never re-read from the pool), only its `media_id` back-link goes stale — reported back in `stillReferencedBy`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
@@ -95,15 +96,17 @@ zero.**
 > equivalent real store action), so an agent's edit lands on the same undo stack
 > a human's does — D-140's rule, restated in `mcp-architecture.md`.
 >
-> **`editor_set_selection` is the one tool that deliberately pushes nothing onto
-> that stack** (D-216), and it is not an exception to D-140 so much as outside
-> its subject: `selection`/`selectedGap` are fields of the STORE, not of
+> **`editor_set_selection` and `editor_set_preview_zoom` are the two tools that
+> deliberately push nothing onto
+> that stack** (D-216, D-218), and neither is an exception to D-140 so much as outside
+> its subject: `selection`/`selectedGap`/`previewView` are fields of the STORE, not of
 > `Timeline`, so D-051's whole-`Timeline` undo snapshots have never carried
-> selection, nothing persists it to `project.json`, and every GUI selection path
-> (`TimelinePane`'s clip click, its marquee, its gap click, `useCanvasClipPick`)
-> pushes nothing either. An MCP selection that WAS undoable would behave
+> them, nothing persists them to `project.json`, and every GUI path that writes
+> them (`TimelinePane`'s clip click, its marquee, its gap click,
+> `useCanvasClipPick`; the preview's own zoom buttons and ctrl-wheel) pushes
+> nothing either. An MCP selection or zoom that WAS undoable would behave
 > differently from the identical human click and would sit between the user and
-> their last real edit on the next cmd-Z. It drives the same two store actions
+> their last real edit on the next cmd-Z. Both drive the same store actions
 > those paths call, which is the half of D-140 that does apply.
 
 **Net effect: an agent can now drive essentially the whole Edit tab** — import

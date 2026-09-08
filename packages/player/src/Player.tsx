@@ -25,7 +25,6 @@ import {
   Minimize,
   Pause,
   Play,
-  Search,
   SkipBack,
   SkipForward,
   StepBack,
@@ -33,6 +32,8 @@ import {
   Volume1,
   Volume2,
   VolumeX,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { Button, Slider, cn } from '@chroma/ui';
 
@@ -89,23 +90,44 @@ export interface PlayerProps {
   /** e.g. 1 — omit → rate control hidden. */
   rate?: number;
   onRateChange?: (rate: number) => void;
-  /** 'fit' or a percentage — omit → zoom control hidden. */
-  zoom?: 'fit' | number;
-  onZoomChange?: (zoom: 'fit' | number) => void;
+
+  /**
+   * Viewport magnification of whatever the tab renders into `surface`, as a
+   * multiplier where `1` means "fit the viewport" — shown as a percentage
+   * (`1` → `100%`).
+   *
+   * **Presentational only, and deliberately step-less** (D-218). This
+   * component owns no zoom math at all: no bounds, no step factor, no
+   * clamping, no notion of what the picture even is. The three callbacks
+   * below are pure intent — "the user asked to go in / out / back to fit" —
+   * and the tab decides what that means for its own surface, which is the
+   * only place that CAN decide (the Edit tab's own zoom composes with a
+   * `useContentBox`-derived coordinate space that this package hands out but
+   * knows nothing about). Omit `zoom` → the whole cluster is hidden, matching
+   * every other optional control here.
+   *
+   * Shape mirrors `TimelinePane.tsx`'s own already-shipped timeline zoom
+   * control exactly — a ghost `ZoomOut` button, a `{pct}%` readout, a ghost
+   * `ZoomIn` button — so the two zooms in one tab read as the same kind of
+   * control. `onZoomReset` additionally makes the readout itself clickable
+   * (the timeline's is a plain `<span>`, having no pan to get lost in).
+   */
+  zoom?: number;
+  /** Omit → the zoom-in button is rendered disabled (e.g. at max zoom). */
+  onZoomIn?: () => void;
+  /** Omit → the zoom-out button is rendered disabled (e.g. at min zoom). */
+  onZoomOut?: () => void;
+  /** Omit → the percentage readout stays a plain, non-interactive label. */
+  onZoomReset?: () => void;
 
   className?: string;
 }
 
 const RATE_STEPS = [0.5, 1, 2] as const;
-const ZOOM_STEPS: ReadonlyArray<'fit' | number> = ['fit', 50, 100, 200];
 
 function cycle<T>(steps: readonly T[], current: T): T {
   const i = steps.indexOf(current);
   return steps[(i + 1) % steps.length] ?? steps[0];
-}
-
-function formatZoom(zoom: 'fit' | number): string {
-  return zoom === 'fit' ? 'Fit' : `${Math.round(zoom)}%`;
 }
 
 export function Player({
@@ -133,7 +155,9 @@ export function Player({
   rate,
   onRateChange,
   zoom,
-  onZoomChange,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
   className,
 }: PlayerProps) {
   const showTitleStrip = Boolean(title || onPrev || onNext || menu);
@@ -321,21 +345,52 @@ export function Player({
               <span className="px-2 text-xs tabular-nums text-text-secondary">{rate}×</span>
             ))}
 
-          {zoom !== undefined &&
-            (onZoomChange ? (
+          {/* D-218 — the preview's own zoom cluster, shaped exactly like the
+              one `TimelinePane.tsx`'s toolbar already ships for the timeline
+              (ghost ZoomOut / `{pct}%` / ghost ZoomIn, same lucide icons,
+              same `w-10 tabular-nums` readout), so the two controls in this
+              tab read as the same kind of control rather than two inventions.
+              All the math is the caller's — see `PlayerProps.zoom`. */}
+          {zoom !== undefined && (
+            <div className="flex items-center gap-0.5">
               <Button
                 variant="ghost"
-                size="sm"
-                onClick={() => onZoomChange(cycle(ZOOM_STEPS, zoom))}
-                title="Zoom"
-                aria-label="Zoom"
+                size="icon-sm"
+                onClick={onZoomOut}
+                disabled={!onZoomOut}
+                title="Zoom out (or ctrl/pinch-scroll over the preview)"
+                aria-label="Zoom out"
               >
-                <Search />
-                {formatZoom(zoom)}
+                <ZoomOut />
               </Button>
-            ) : (
-              <span className="px-2 text-xs text-text-secondary">{formatZoom(zoom)}</span>
-            ))}
+              {onZoomReset ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-10 px-0 text-[11px] tabular-nums text-text-secondary/70"
+                  onClick={onZoomReset}
+                  title="Reset to fit (100%)"
+                  aria-label="Reset zoom to fit"
+                >
+                  {Math.round(zoom * 100)}%
+                </Button>
+              ) : (
+                <span className="w-10 text-center text-[11px] tabular-nums text-text-secondary/70">
+                  {Math.round(zoom * 100)}%
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onZoomIn}
+                disabled={!onZoomIn}
+                title="Zoom in (or ctrl/pinch-scroll over the preview)"
+                aria-label="Zoom in"
+              >
+                <ZoomIn />
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </div>

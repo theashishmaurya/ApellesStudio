@@ -22,13 +22,17 @@
  * transform handles are the more specific, actionable affordance and should
  * never be visually competing with a static reference frame.
  *
- * Same `useContentBox` letterbox math `TransformOverlay.tsx` already uses —
- * the composition boundary and the picture's own `object-contain` box are
- * computed from the exact same (width, height) pair by construction, so they
- * always agree pixel-for-pixel; this is not a second, independently-derived
- * rectangle that could drift from what the picture actually shows.
+ * Same `usePreviewContentBox` letterbox math `TransformOverlay.tsx` already
+ * uses — the composition boundary and the picture's own `object-contain` box
+ * are computed from the exact same (width, height) pair by construction, so
+ * they always agree pixel-for-pixel; this is not a second,
+ * independently-derived rectangle that could drift from what the picture
+ * actually shows. D-218 — that hook is `@chroma/player`'s `useContentBox`
+ * with the preview's viewport zoom/pan composed on top, so this rectangle
+ * keeps tracking the picture's real edges at any zoom level, which is exactly
+ * what makes it the reference frame it claims to be.
  */
-import { useContentBox } from '@chroma/player';
+import { usePreviewContentBox } from './usePreviewContentBox';
 import type { CompositionSize } from './useCompositionSize';
 
 const LABEL_MARGIN = 4;
@@ -40,7 +44,7 @@ export function CanvasBoundary({
   container: HTMLElement | null;
   size: CompositionSize | null;
 }) {
-  const contentBox = useContentBox(container, size);
+  const contentBox = usePreviewContentBox(container, size);
   if (!size || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
   return (
