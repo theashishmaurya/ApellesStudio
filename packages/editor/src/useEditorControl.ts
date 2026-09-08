@@ -1446,8 +1446,55 @@ export function useEditorControl(): void {
         if (!edge) return { error: `edge must be "start" or "end"` };
         const delta = Math.round(Number(a?.delta));
         if (!Number.isFinite(delta)) return { error: 'delta must be a finite number of frames' };
-        useEditorTimelineStore.getState().applyOp({ kind: edge, track: found.track, clip: found.clip, delta });
+        // D-235 — `ripple` is the MCP half of the context-sensitive trim
+        // tool's ripple mode, the same `EditOp` field the GUI's armed edge
+        // drag sets. Absent/false is the pre-D-235 behaviour byte for byte.
+        useEditorTimelineStore
+          .getState()
+          .applyOp({ kind: edge, track: found.track, clip: found.clip, delta, ripple: a?.ripple === true });
         return { ok: true, track: found.track };
+      },
+
+      // D-235 — roll and slide, the two genuinely new ops of the
+      // context-sensitive trim tool (roadmap item 27). Exposed here in the
+      // same pass as the GUI gesture, per CLAUDE.md's human-AND-AI rule:
+      // `slip` already had an MCP tool and no gesture (D-195), which is the
+      // same half-a-feature gap from the other side.
+      editor_roll_edit: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const delta = Math.round(Number(a?.delta));
+        if (!Number.isFinite(delta)) return { error: 'delta must be a finite number of frames' };
+        useEditorTimelineStore.getState().applyOp({ kind: 'roll', track: found.track, clip: found.clip, delta });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          // The out point of the outgoing clip IS the edit point that moved —
+          // reporting it back is what lets a caller confirm the roll landed
+          // where it asked, including when the clamp shortened it.
+          duration: after?.clips[found.clip]?.duration ?? found.c.duration,
+        };
+      },
+
+      editor_slide_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const delta = Math.round(Number(a?.delta));
+        if (!Number.isFinite(delta)) return { error: 'delta must be a finite number of frames' };
+        useEditorTimelineStore.getState().applyOp({ kind: 'slide', track: found.track, clip: found.clip, delta });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          startFrame: after?.start_frame ?? found.c.start_frame,
+        };
       },
 
       // D-195 — Task 1 (docs/notes/timeline-editing-feature-gap-analysis.md

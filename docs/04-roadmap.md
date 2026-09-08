@@ -1506,8 +1506,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       job), more transition types, audio transitions, and combining a
       transition with an export-time speed override (refused with a named
       reason).
-    - ⬜ Context-sensitive trim tool — ripple/roll/slip/slide by pointer
-      position, not a mode switch.
+    - ~~Context-sensitive trim tool — ripple/roll/slip/slide by pointer
+      position, not a mode switch~~ — **DONE, 2026-09-08 (D-235).** Alt/Option
+      arms the tool and the pointer's position picks the edit: an edge that
+      touches a neighbour rolls that cut, a free edge ripples, a clip's upper
+      half slips, its lower half slides (Shift forces ripple at an edit point).
+      Resolve's own four-way rule, from `scratch/resolve-reference/trim.jpg` and
+      its own page copy, cross-checked against FCP's and Premiere's help. A held
+      key is the arm rather than a tool palette, because the two plain gestures
+      here are already `move` (D-100) and the gap-leaving trim (D-058) and must
+      not change meaning — nothing is remembered between gestures.
+      **The audit found `slip` had shipped MCP-only with no gesture (D-195)** —
+      the human-AND-AI gap from the AI side. Ripple trim is `trim_start`/
+      `trim_end` + a `ripple` flag over this file's one ripple-shift primitive;
+      `roll` and `slide` are the only new ops. MCP: `editor_roll_edit`,
+      `editor_slide_clip`, `ripple` on `editor_trim_clip`. 50 unit + 12 real-DOM
+      tests. **Deferred, deliberately:** dynamic (JKL) trimming during playback,
+      asymmetric trim, and multi-clip/multi-track trim — all named on the same
+      reference page, all separately scoped.
     - ⬜ Speed ramp curve — variable speed over time, not a flat export-time
       override.
     - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /

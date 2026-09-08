@@ -1723,13 +1723,73 @@ def editor_remove_gap(track: int, frame: int) -> str:
 
 
 @mcp.tool()
-def editor_trim_clip(track: int, clip: int, edge: str, delta: int) -> str:
+def editor_trim_clip(track: int, clip: int, edge: str, delta: int, ripple: bool = False) -> str:
     """Trim a clip's `edge` ("start" or "end") by `delta` frames — positive
     shortens the clip, negative extends it back into previously-trimmed
-    source material (up to the source's own bounds)."""
+    source material (up to the source's own bounds).
+
+    `ripple=False` (the default, and the behaviour this tool has always had):
+    only this clip changes. Shortening leaves a real gap; extending is refused
+    outright if the neighbour is in the way.
+
+    `ripple=True` (D-235): everything after this clip on the SAME track shifts
+    to follow the new out point, so no gap is opened and a neighbour no longer
+    blocks the trim — it gets pushed instead. A head ripple leaves the clip's
+    `start_frame` where it is and pulls the rest of the track in behind it.
+    Sync-locked tracks ripple with it; a clip straddling the ripple point on
+    one of them refuses the whole op rather than being split (B-033).
+
+    This is the same edit the GUI's Alt/Option-drag on a clip edge performs
+    (D-235's context-sensitive trim tool)."""
     import json
 
-    return json.dumps(_op("editor_trim_clip", track=track, clip=clip, edge=edge, delta=delta), indent=2, default=str)
+    return json.dumps(
+        _op("editor_trim_clip", track=track, clip=clip, edge=edge, delta=delta, ripple=ripple),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_roll_edit(track: int, clip: int, delta: int) -> str:
+    """Roll the edit point at the END of `clip`: move the outgoing clip's out
+    point and the incoming clip's in point together by `delta` TIMELINE frames
+    (positive = later), so one side lengthens by exactly what the other loses
+    and the sequence's total duration does not change (D-235).
+
+    `clip` is the OUTGOING side — the clip BEFORE the cut. There must be a clip
+    butted exactly against its end; across a gap there is no edit point to roll
+    and the call does nothing. Clamped to whichever side runs out of source
+    media first, and refused whole if neither side can absorb the delta.
+
+    A/V link groups on either side roll in lockstep. This is the same edit the
+    GUI performs when you Alt/Option-drag an edge that IS an edit point."""
+    import json
+
+    return json.dumps(_op("editor_roll_edit", track=track, clip=clip, delta=delta), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_slide_clip(track: int, clip: int, delta: int) -> str:
+    """Slide a clip along the timeline by `delta` TIMELINE frames WITHOUT
+    changing its own duration or its source window — its neighbours absorb the
+    movement instead: the clip before it lengthens/shortens at its out point,
+    the clip after it at its in point (D-235). "A slide is a roll between 3
+    clips."
+
+    Contrast the two neighbouring tools: `editor_move_clip` changes where the
+    clip is and leaves the neighbours alone (opening or closing real gaps);
+    `editor_slip_clip` changes what the clip SHOWS and moves nothing. A slide
+    changes only where it sits between untouched cuts on either side.
+
+    A side with no touching neighbour is clamped by the real free space there
+    instead, so a slide still works at the head or tail of a track. Refused if
+    there is neither a neighbour nor an obstacle on either side — that is a
+    plain move, so use `editor_move_clip`. This is the same edit the GUI
+    performs when you Alt/Option-drag the LOWER half of a clip's body."""
+    import json
+
+    return json.dumps(_op("editor_slide_clip", track=track, clip=clip, delta=delta), indent=2, default=str)
 
 
 @mcp.tool()

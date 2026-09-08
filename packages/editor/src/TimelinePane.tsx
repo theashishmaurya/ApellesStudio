@@ -6,7 +6,9 @@
  * `@xzdarcy/react-timeline-editor` with one row PER TRACK (D-080 — was one
  * fixed row, the video track, before this pass). Each clip is an "action".
  * Drag the body → `move` (same-track only, see below); drag an edge →
- * `trim_start` / `trim_end`; "Split at playhead" → `split`; select + Delete
+ * `trim_start` / `trim_end` (or, held with Alt/Option, the context-sensitive
+ * ripple/roll/slip/slide of D-235 — see its own note below); "Split at
+ * playhead" → `split`; select + Delete
  * / × → `remove`; drop a Sources-panel pool item onto a lane → `add_clip`
  * on that lane's track. Every edit goes through the store (`applyOp` →
  * debounced `chroma_timeline_set` → `chroma_timeline_get` refetch). Time in
@@ -181,6 +183,26 @@
  * `pointer-events-none`, so an ordinary press in that band still reaches the
  * library beneath it.
  *
+ * D-235 (context-sensitive trim, roadmap item 27) — a FIFTH gesture family, and
+ * the only one that adds no new pointer listener at all. Holding Alt/Option
+ * ARMS the smart trim tool; while armed, the two drags this pane already has
+ * mean something else, chosen by where the pointer is: an edge that touches a
+ * neighbour ROLLS that edit point, a free edge RIPPLES, the upper half of a
+ * clip's body SLIPS its source window, the lower half SLIDES it between its
+ * neighbours (Shift forces ripple at an edit point). Unarmed, both drags are
+ * exactly what they were — `move` (D-100) and the plain gap-leaving trim
+ * (D-058) — so this is additive, not a re-mapping.
+ *
+ * It therefore cannot collide with D-137's marquee, D-207's fades or D-222's
+ * markers for a reason none of those needed: it never competes for a press.
+ * Nothing about how a drag STARTS changes; only which op is committed at the
+ * END of one. The mode rule itself, and the Resolve/FCP/Premiere research
+ * behind it, is `trimMode.ts` — pure and unit-tested, including `resizeEndOp`/
+ * `bodyDragOp`, which the two commit handlers here are thin adapters over
+ * (that split is load-bearing: the timeline library's own interact.js resize
+ * does not run under jsdom at all, so the edge decision is only testable as a
+ * pure function — see `TimelinePane.trim.dom.test.tsx`'s header).
+ *
  * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
  * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
  * tick density) via `getScaleRender`, and the labeled-tick interval
@@ -353,6 +375,15 @@ import {
   type Timeline,
   type Track,
 } from './timeline';
+import {
+  bodyDragOp,
+  edgeIsEditPoint,
+  resizeEndOp,
+  resolveTrimMode,
+  trimModeLabel,
+  type TrimMode,
+  type TrimZone,
+} from './trimMode';
 import { adjustmentSummary } from './adjustment';
 import {
   canStartMarquee,
@@ -953,6 +984,15 @@ function ClipBody({
       // see that module's doc, and D-094–D-100 for why this file does not
       // settle two drag systems on one element any other way.
       data-chroma-clip-drag=""
+      // D-235 — which clip this body belongs to, readable from the DOM. The
+      // smart trim tool's hover affordance has to answer "which mode would a
+      // press right here commit?" from a raw `pointermove` whose target may be
+      // the library's own stretch handle (a sibling of this element, rendered
+      // outside this component), so it resolves the action wrapper first and
+      // looks this pair up inside it. dnd-kit's own `id` already encodes the
+      // same pair, but it is not exposed on the DOM node in any documented way.
+      data-chroma-track={track}
+      data-chroma-clip-id={clipId}
       className={className + ' cursor-grab active:cursor-grabbing ' + (isDragging ? 'opacity-30' : '')}
       style={style}
       {...attributes}
@@ -1204,6 +1244,137 @@ export function TimelinePane() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // --------------------------------------------------------------------- //
+  // D-235 — the context-sensitive trim tool (roadmap item 27). A FIFTH
+  // gesture family on this surface, and like D-137's marquee and D-207's fade
+  // handles it earns a note here because the coexistence story is the whole
+  // design. It does NOT add a sixth pointer listener: it re-reads the two
+  // drags this pane already has (the library's edge resize, and `ClipBody`'s
+  // dnd-kit drag) and, when armed, commits a different op at the end of the
+  // same gesture. Nothing about how a drag STARTS changes, so nothing it
+  // could collide with changes either.
+  //
+  // The mode rule itself lives in `trimMode.ts` (pure, unit-tested) together
+  // with the reference research behind it. Two things have to be captured here
+  // that the pure part cannot see for itself:
+  //
+  //   1. `trimArmed` — whether Alt/Option is held RIGHT NOW, for the hover
+  //      affordance (the readable stand-in for Resolve's four swapped
+  //      cursors). Purely cosmetic; no gesture reads it.
+  //   2. `trimPressRef` — the modifiers and the in-row Y position of the press
+  //      a gesture actually began from. The timeline library's resize
+  //      callbacks hand back no event at all (checked in its own typings:
+  //      `onActionResizeStart/Resizing/ResizeEnd` carry only action/row/start/
+  //      end/dir), so the modifier state HAS to be captured from the raw
+  //      pointerdown. A capture-phase listener on the edit area sees that
+  //      press before either drag system claims it, and cannot swallow it —
+  //      it only reads.
+  //
+  // Resolved at PRESS time, not continuously, and deliberately: Resolve
+  // resolves its own mode from where the pointer is before the click (the
+  // cursor tells you which trim you are about to get), and a mode that could
+  // change halfway through a drag would mean the op committed was not the one
+  // the user aimed at.
+  const [trimArmed, setTrimArmed] = useState(false);
+  const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number } | null>(null);
+
+  useEffect(() => {
+    // `e.altKey` rather than `e.key === 'Alt'`: the same read works for
+    // keydown and keyup, and it stays correct if the key is released while the
+    // window is unfocused (the next event carries the real state). Gated to
+    // only dispatch on a real change — D-083's per-tick discipline applies to
+    // key repeat exactly as it does to pointer moves.
+    const onKey = (e: KeyboardEvent) => setTrimArmed((prev) => (prev === e.altKey ? prev : e.altKey));
+    const disarm = () => setTrimArmed((prev) => (prev ? false : prev));
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    window.addEventListener('blur', disarm);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+      window.removeEventListener('blur', disarm);
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = editAreaRef.current;
+    if (!el) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      // The library's own action wrapper — the one element whose rect is the
+      // clip's real on-screen row box, which is what Resolve's slip-above /
+      // slide-below split needs. Its class name was read out of the library's
+      // bundled CSS (`.timeline-editor-action`), not guessed.
+      const action = target?.closest('.timeline-editor-action');
+      const rect = action?.getBoundingClientRect();
+      trimPressRef.current = {
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        bodyYRatio: rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0,
+      };
+    };
+    el.addEventListener('pointerdown', onPointerDown, true);
+    return () => el.removeEventListener('pointerdown', onPointerDown, true);
+  }, []);
+
+  /** D-235 — which mode a press at this pointer position would commit, or
+   *  `null` when it is not over a clip at all. The hover affordance's whole
+   *  job, and deliberately built on the SAME `resolveTrimMode` call the two
+   *  commit paths use — a hint that could disagree with the op that actually
+   *  fires would be worse than no hint. */
+  const trimModeAtPointer = (e: PointerEvent): TrimMode | null => {
+    if (!timeline) return null;
+    const target = e.target instanceof Element ? e.target : null;
+    const action = target?.closest('.timeline-editor-action');
+    if (!action) return null;
+    const body = action.querySelector<HTMLElement>('[data-chroma-clip-drag]');
+    const ti = Number(body?.dataset.chromaTrack);
+    const clipId = body?.dataset.chromaClipId;
+    if (!clipId || !Number.isInteger(ti)) return null;
+    const i = idxOf(ti, clipId);
+    if (i < 0) return null;
+    const zone: TrimZone = target?.closest('.timeline-editor-action-left-stretch')
+      ? 'edge-start'
+      : target?.closest('.timeline-editor-action-right-stretch')
+        ? 'edge-end'
+        : 'body';
+    const rect = action.getBoundingClientRect();
+    return resolveTrimMode({
+      zone,
+      altKey: true,
+      shiftKey: e.shiftKey,
+      atEditPoint: zone !== 'body' && edgeIsEditPoint(timeline, ti, i, zone === 'edge-start' ? 'start' : 'end'),
+      bodyYRatio: rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0,
+    });
+  };
+
+  // D-235 — the hover affordance. Resolve swaps between four custom cursors
+  // (`scratch/resolve-reference/trim.jpg` is literally those four glyphs);
+  // Chroma names the mode in the toolbar instead, which needs no cursor
+  // bitmaps, survives every zoom level, and is legible to a screen reader.
+  //
+  // A React `onPointerMove` prop on the edit area (see the JSX below), NOT a
+  // manually-bound listener in an effect. That was the first shape tried and
+  // it was wrong twice over: `trimModeAtPointer` closes over `timeline`, so an
+  // honest dependency array re-binds the listener on every render, and a
+  // dishonest one silenced with an eslint-disable bails the WHOLE component
+  // out of the React Compiler — caught by this package's own
+  // `reactCompiler.test.ts` (D-201), which is exactly the regression that test
+  // exists to catch. As a plain prop there is no dependency array to get
+  // wrong, and no bailout.
+  //
+  // D-083's per-pointer-move discipline still applies and is still met: the
+  // handler returns on a boolean before touching the DOM unless Alt is
+  // actually held, and `setHoverTrimMode` is change-gated so a pointer
+  // sweeping a clip's body dispatches once, not once per pixel.
+  const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
+  const onTrimHoverMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!trimArmed) return;
+    const next = trimModeAtPointer(e.nativeEvent);
+    setHoverTrimMode((prev) => (prev === next ? prev : next));
+  };
+  const onTrimHoverLeave = () => setHoverTrimMode((prev) => (prev === null ? prev : null));
 
   // Ripple visual feedback (D-051) — diff each clip id's timeline start frame
   // against the previous render; anything that moved (chiefly a `move` now,
@@ -2247,15 +2418,24 @@ export function TimelinePane() {
   }) => {
     const ti = Number(row.id);
     const i = idxOf(ti, action.id);
-    if (i < 0) return;
-    const c = clipsOf(ti)[i];
-    if (dir === 'left') {
-      const delta = s2f(start) - c.start_frame;
-      if (delta !== 0) applyOp({ kind: 'trim_start', track: ti, clip: i, delta });
-    } else {
-      const delta = s2f(end) - endFrame(c, fps);
-      if (delta !== 0) applyOp({ kind: 'trim_end', track: ti, clip: i, delta });
-    }
+    if (i < 0 || !timeline) return;
+    // D-235 — which edit this edge drag really was is decided by `resizeEndOp`
+    // (pure, exhaustively unit-tested — see its own doc for why the decision
+    // lives there rather than inline here). Unarmed, it returns exactly the two
+    // ops this handler has always built: the plain, gap-leaving trim of D-058,
+    // unchanged. Armed, the same drag becomes a roll at a real edit point or a
+    // ripple anywhere else. The modifiers come from `trimPressRef` because the
+    // library's resize callbacks carry no event at all (see that ref's doc).
+    const op = resizeEndOp({
+      tl: timeline,
+      track: ti,
+      clip: i,
+      dir,
+      startFrame: s2f(start),
+      endFrame: s2f(end),
+      press: trimPressRef.current,
+    });
+    if (op) applyOp(op);
   };
 
   // D-080: split now requires a selection — with N tracks, "at the
@@ -2648,6 +2828,17 @@ export function TimelinePane() {
         setInsertPreview((prev) => (prev === null ? prev : null));
         return;
       }
+      // D-235 — an armed drag is a slip or a slide, and neither one moves the
+      // clip anywhere. Showing the move path's landing ghost for it would
+      // promise a reposition that is never going to happen, so the preview is
+      // suppressed for the whole gesture rather than left to contradict the op
+      // that actually commits (`onDndDragEnd`).
+      const armedActivator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
+      if (armedActivator?.altKey || trimPressRef.current?.altKey) {
+        setClipDragPreview((prev) => (prev === null ? prev : null));
+        setInsertPreview((prev) => (prev === null ? prev : null));
+        return;
+      }
       if (!overData || overData.type !== 'track') {
         // Not over an existing track's droppable — check whether this is a
         // real track-insertion boundary (same helper the Sources-panel add
@@ -2779,6 +2970,51 @@ export function TimelinePane() {
       const { track: fromTrack, clipId } = data;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
+
+      // D-235 — the body half of the context-sensitive trim tool. Armed with
+      // Alt/Option, this same drag is a slip (upper band) or a slide (lower
+      // band) instead of a move, per Resolve's own over-the-thumbnails /
+      // under-the-thumbnails split — see `trimMode.ts` for the rule and its
+      // provenance. Checked BEFORE any of the landing math below, because a
+      // slip and a slide are not landings: neither one is allowed to change
+      // which track the clip is on, so `event.over` is deliberately not
+      // consulted at all.
+      //
+      // `event.activatorEvent` is the original pointerdown dnd-kit started
+      // from, which is where its modifiers really are; `trimPressRef` supplies
+      // the in-row Y that only the raw press knows. Both are read, rather than
+      // either alone, so this agrees exactly with the edge path above about
+      // what "armed" means.
+      const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
+      const captured = trimPressRef.current;
+      const press = captured && {
+        // The activator is dnd-kit's own record of the press it started from,
+        // and is authoritative for the modifiers; `trimPressRef` is the only
+        // source for the in-row Y. Reading both, rather than either alone, is
+        // what keeps this in exact agreement with the edge path about what
+        // "armed" means.
+        altKey: activator?.altKey ?? captured.altKey,
+        shiftKey: activator?.shiftKey ?? captured.shiftKey,
+        bodyYRatio: captured.bodyYRatio,
+      };
+      if (timeline) {
+        const op = bodyDragOp({
+          tl: timeline,
+          track: fromTrack,
+          clip: i,
+          delta: Math.round((event.delta.x / pxPerSec) * fps),
+          press,
+        });
+        // `null` means "not armed" — fall through to the unchanged move path.
+        if (op || press?.altKey) {
+          if (op) applyOp(op);
+          // Same "a drag also selects what it edited" rule the move path below
+          // ends with — a slip/slide is still a pick.
+          setSelection([{ track: fromTrack, id: clipId }]);
+          return;
+        }
+      }
+
       const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
       if (!overData || overData.type !== 'track') {
         setInsertPreview((prev) => (prev === null ? prev : null));
@@ -3056,6 +3292,22 @@ export function TimelinePane() {
               into the edit", none is scoped to the current selection. The drag
               itself starts inside its popover — see `TimelineTransitions.tsx`. */}
           <TransitionsPaletteButton />
+          {/* D-235 — the context-sensitive trim tool's readout. Resolve tells
+              you which of the four trims you are about to get by swapping the
+              cursor (`scratch/resolve-reference/trim.jpg`); this names it. Only
+              present while Alt/Option is actually held, so it is a hint during
+              the gesture rather than permanent toolbar furniture — and it says
+              the arm key when nothing is hovered yet, which is the only
+              discoverability this feature has. */}
+          {trimArmed && (
+            <span
+              data-chroma-trim-hint=""
+              role="status"
+              className="rounded border border-border-color bg-surface px-2 py-1 text-[10px] text-text-secondary"
+            >
+              {hoverTrimMode ? (trimModeLabel(hoverTrimMode) ?? 'Trim') : 'Trim: hover a clip'}
+            </span>
+          )}
           {transitionDropError && (
             <button
               type="button"
@@ -3341,6 +3593,10 @@ export function TimelinePane() {
             // trailing empty space past the last clip, or below every track
             // row) still falls through to a plain clear, same as before.
             onPointerDown={onEditAreaPointerDown}
+            // D-235 — the smart trim tool's "which mode am I about to get?"
+            // readout. Inert unless Alt/Option is held; see `onTrimHoverMove`.
+            onPointerMove={onTrimHoverMove}
+            onPointerLeave={onTrimHoverLeave}
             onClick={(e) => {
               // D-137 — the click that terminates a real marquee drag must not
               // also run the clear-selection branch below and undo what the
