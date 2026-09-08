@@ -123,6 +123,30 @@ export interface Rational {
   den: number;
 }
 
+/**
+ * One entry of a clip's `chroma_keyframes` array — mirrors
+ * `chroma::keyframes::Keyframe` (Rust) entry-for-entry.
+ *
+ * `frame` is in the clip's **own source frames**, the same axis
+ * `Clip.source_start`/`duration` are in (see `clipSourceFrame`). `params` is
+ * a loose `name -> value` map because different entries legitimately name
+ * different subsets of properties — per-property keyframing (D-208) is
+ * exactly that, and every reader filters by name before bracketing.
+ *
+ * `ease` (D-233) is the optional per-param easing of the segment that STARTS
+ * at this key; see `Clip.chroma_keyframes`' own doc for the shape and
+ * `chroma::keyframes::interpolate_param` for the semantics. It lives on the
+ * model type here, beside `Clip`, rather than in `clipKeyframes.ts` where the
+ * pre-D-233 version of this interface sat: three modules now read it
+ * (`clipKeyframes.ts` to author and resolve, `timelineExport.ts` to compile,
+ * `curveEditor.ts` to draw), and a shared model type belongs with the model.
+ */
+export interface ClipKeyframe {
+  frame: number;
+  params: Record<string, unknown>;
+  ease?: Record<string, EaseCurve>;
+}
+
 /** Mirrors `chroma_timeline::Clip` (serde snake_case). */
 export interface Clip {
   id: string;
@@ -227,8 +251,21 @@ export interface Clip {
    *  for mask/relight-light keyframes, reused verbatim rather than a
    *  second keyframe shape. `chroma::keyframes`'s D-034 engine
    *  (Rust-side) interpolates it at render time relative to the clip's own
-   *  source frame — this file never interpolates it itself. */
-  chroma_keyframes?: Array<{ frame: number; params: Record<string, unknown> }>;
+   *  source frame — this file never interpolates it itself.
+   *
+   *  **D-233 — the optional `ease` map.** `{"<param>": {x1,y1,x2,y2}}`, naming
+   *  per param the [`EaseCurve`] that shapes the segment running from THIS key
+   *  to that param's NEXT key. Absent (the default, and every pre-D-233 key)
+   *  means linear, so nothing about an existing project's stored shape or
+   *  resolved values changed. It sits beside `params` rather than inside it
+   *  because `params` is a flat `name -> number` map that three separate
+   *  readers iterate with `Object.keys` to discover which properties are
+   *  animated (`paramTrackIndex` here, `keyframeExprAt` in the exporter,
+   *  `interpolate_param` in Rust) — a curve smuggled in under a mangled key
+   *  would show up in all three as a phantom animated property. See
+   *  `chroma::keyframes::interpolate_param` for why the curve is owned by the
+   *  segment's start key rather than split into per-key in/out handles. */
+  chroma_keyframes?: ClipKeyframe[];
   /** Fade in / out (D-147) — mirrors `chroma_timeline::Clip::fade_in_frames`
    *  / `fade_out_frames` / `fade_in_curve` / `fade_out_curve`.
    *
@@ -246,8 +283,8 @@ export interface Clip {
    *  other number on this type is in. */
   fade_in_frames?: number;
   fade_out_frames?: number;
-  fade_in_curve?: FadeCurve;
-  fade_out_curve?: FadeCurve;
+  fade_in_curve?: EaseCurve;
+  fade_out_curve?: EaseCurve;
   /** Per-clip audio level (D-223) — mirrors `chroma_timeline::Clip::volume` /
    *  `pan`, this clip's OWN contribution to the mix, independent of
    *  `Track.gain`'s whole-track fader.
@@ -773,25 +810,33 @@ export function panGains(pan: number): [number, number] {
   return [Math.SQRT2 * Math.cos(theta), Math.SQRT2 * Math.sin(theta)];
 }
 
-/** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147) — mirrors
- *  `chroma_timeline::FadeCurve`. `P0 = (0,0)` and `P3 = (1,1)` are implicit;
- *  `x` is normalised progress through the fade window, `y` the multiplier at
- *  that progress.
+/** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147, generalised by D-233) —
+ *  mirrors `chroma_types::EaseCurve`. `P0 = (0,0)` and `P3 = (1,1)` are
+ *  implicit; `x` is normalised progress through *something*, `y` is how far
+ *  through the change you are at that progress.
+ *
+ *  **Two consumers, one type** (this is why D-233 renamed it off `FadeCurve`):
+ *  a clip's `fade_in_curve`/`fade_out_curve` shape a fade window's gain ramp,
+ *  and a keyframe entry's `ease` shapes the segment between two of one
+ *  property's keyframes. The curve itself knows about neither — see
+ *  `easeCurve.ts` for the evaluator and `chroma_types::ease` for the Rust
+ *  original.
  *
  *  **No preset name is stored** — the four control points are the only truth,
- *  and [`fadePresetName`] matches a curve back to a label for display.
+ *  and [`easePresetName`] matches a curve back to a label for display.
  *  Storing both would be two sources of truth that disagree the moment a
- *  custom curve is authored (which MCP can already do — D-147's known UI
- *  gap is the editor widget, not the model). */
-export interface FadeCurve {
+ *  custom curve is authored, which both the curve editor (D-233) and MCP can
+ *  do. */
+export interface EaseCurve {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
 }
 
-/** The four curve presets the Inspector offers, as real control points —
- *  mirroring `chroma_timeline::FadeCurve`'s own constants exactly.
+/** The four curve presets the fade Inspector and the keyframe curve editor
+ *  both offer, as real control points — mirroring `chroma_types::EaseCurve`'s
+ *  own constants exactly.
  *
  *  `linear` is `(1/3, 2/3)` rather than CSS's `(0,0,1,1)`. Both trace the same
  *  straight line — any control points on the `y = x` diagonal do — but
@@ -799,25 +844,25 @@ export interface FadeCurve {
  *  for the Rust-side solver. See that constant's own doc for the full
  *  reasoning; this list must stay in step with it, or a preset picked here
  *  would round-trip back as "custom". */
-export const FADE_PRESETS: ReadonlyArray<{ name: string; curve: FadeCurve }> = [
+export const EASE_PRESETS: ReadonlyArray<{ name: string; curve: EaseCurve }> = [
   { name: 'linear', curve: { x1: 1 / 3, y1: 1 / 3, x2: 2 / 3, y2: 2 / 3 } },
   { name: 'ease-in', curve: { x1: 0.42, y1: 0, x2: 1, y2: 1 } },
   { name: 'ease-out', curve: { x1: 0, y1: 0, x2: 0.58, y2: 1 } },
   { name: 'ease-in-out', curve: { x1: 0.42, y1: 0, x2: 0.58, y2: 1 } },
 ];
 
-/** `linear` — what an absent curve means, matching Rust's `FadeCurve::default()`. */
-export const DEFAULT_FADE_CURVE: FadeCurve = FADE_PRESETS[0].curve;
+/** `linear` — what an absent curve means, matching Rust's `EaseCurve::default()`. */
+export const DEFAULT_EASE_CURVE: EaseCurve = EASE_PRESETS[0].curve;
 
 /** The preset `c` exactly matches, or `null` for a custom curve. An absent
  *  curve is `linear`, matching the server-side default. Exact comparison, the
- *  same call Rust's `FadeCurve::preset_name` makes and for the same reason:
+ *  same call Rust's `EaseCurve::preset_name` makes and for the same reason:
  *  these values come from the preset list itself, so "the user picked ease-in"
  *  really is the exact literal, and a tolerance would invent a second notion
  *  of identity. */
-export function fadePresetName(c: FadeCurve | undefined | null): string | null {
-  if (!c) return FADE_PRESETS[0].name;
-  const hit = FADE_PRESETS.find(
+export function easePresetName(c: EaseCurve | undefined | null): string | null {
+  if (!c) return EASE_PRESETS[0].name;
+  const hit = EASE_PRESETS.find(
     (p) => p.curve.x1 === c.x1 && p.curve.y1 === c.y1 && p.curve.x2 === c.x2 && p.curve.y2 === c.y2,
   );
   return hit ? hit.name : null;
@@ -2347,7 +2392,15 @@ export type EditOp =
       kind: 'set_clip_keyframes';
       track: number;
       clip: number;
-      keyframes: Array<{ frame: number; params: Record<string, unknown> }>;
+      /** D-233 — [`ClipKeyframe`], so an entry's optional `ease` map rides
+       *  along. This op stays the ONE write for every keyframe change the app
+       *  makes (a per-property diamond, "key all properties", a delete, and now
+       *  a curve drag): the array is the unit of truth, `clipKeyframes.ts`
+       *  computes the next one, and this writes it. A separate
+       *  `set_keyframe_ease` op would have been a second writer to the same
+       *  field with its own locked-track/normalisation rules to keep in step,
+       *  for no expressiveness the array does not already have. */
+      keyframes: ClipKeyframe[];
     }
   /** D-147 — set a clip's fade in/out durations and curve shapes. Refused
    *  (no-op) if the clip's track is locked, same as every other per-clip op.
@@ -2374,8 +2427,8 @@ export type EditOp =
       clip: number;
       fade_in_frames: number;
       fade_out_frames: number;
-      fade_in_curve?: FadeCurve;
-      fade_out_curve?: FadeCurve;
+      fade_in_curve?: EaseCurve;
+      fade_out_curve?: EaseCurve;
     }
   /** D-223 — set a clip's OWN audio level: linear `volume` and normalised
    *  `pan`. Refused (no-op) if the clip's track is locked, same as every other
@@ -3193,8 +3246,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // user placed.
     nc.fade_in_frames = Math.max(0, Math.floor(op.fade_in_frames || 0));
     nc.fade_out_frames = Math.max(0, Math.floor(op.fade_out_frames || 0));
-    nc.fade_in_curve = op.fade_in_curve ?? DEFAULT_FADE_CURVE;
-    nc.fade_out_curve = op.fade_out_curve ?? DEFAULT_FADE_CURVE;
+    nc.fade_in_curve = op.fade_in_curve ?? DEFAULT_EASE_CURVE;
+    nc.fade_out_curve = op.fade_out_curve ?? DEFAULT_EASE_CURVE;
     return next;
   }
   if (op.kind === 'set_clip_audio') {

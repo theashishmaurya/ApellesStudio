@@ -191,7 +191,8 @@ use caption::{CaptionCue, CaptionStyle};
 // dependency graph is one-way — so the shared half sits below both. Re-exported
 // here because `Clip`'s own fade fields are typed by it, and a caller working
 // in the timeline model should not have to know which crate the type came from.
-pub use chroma_types::fade::{self, FadeCurve, fade_gain};
+pub use chroma_types::ease::EaseCurve;
+pub use chroma_types::fade::{self, fade_gain};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type
 // and the Audio EQ Cookbook biquad math behind it live in `chroma-types` (L0)
@@ -1257,17 +1258,17 @@ pub struct Clip {
     #[serde(default)]
     pub fade_out_frames: i64,
     /// The shape of the fade-in ramp — a `cubic-bezier(x1,y1,x2,y2)` curve
-    /// (see [`FadeCurve`]). Defaults to [`FadeCurve::LINEAR`], the exact
+    /// (see [`EaseCurve`]). Defaults to [`EaseCurve::LINEAR`], the exact
     /// identity, for a missing key AND for `Clip::default()`.
     #[serde(default)]
-    pub fade_in_curve: FadeCurve,
+    pub fade_in_curve: EaseCurve,
     /// The shape of the fade-out ramp. Separate from `fade_in_curve` because
     /// both references let you shape each handle independently, and it costs
     /// one field. Note the ramp is evaluated on *distance from the
     /// out-point*, so this curve's `x = 0` is the very end of the clip — an
     /// `ease-in` fade-out is slow near silence, matching an `ease-in` fade-in.
     #[serde(default)]
-    pub fade_out_curve: FadeCurve,
+    pub fade_out_curve: EaseCurve,
 
     // --- Per-clip audio level (D-223) ------------------------------------- //
     // This clip's OWN contribution to the mix, independent of the track it
@@ -1517,13 +1518,13 @@ impl Default for Clip {
             // `opacity`/`scale` these two need no non-zero migration default.
             fade_in_frames: 0,
             fade_out_frames: 0,
-            // …but the curves DO: `FadeCurve`'s own `Default` is `LINEAR`,
+            // …but the curves DO: `EaseCurve`'s own `Default` is `LINEAR`,
             // not the type's zero value, which is a real, badly-behaved curve
             // (see that impl). Spelled out here rather than relying on it
             // implicitly, since this whole `impl Default` exists because a
             // derived one got exactly this class of thing wrong.
-            fade_in_curve: FadeCurve::LINEAR,
-            fade_out_curve: FadeCurve::LINEAR,
+            fade_in_curve: EaseCurve::LINEAR,
+            fade_out_curve: EaseCurve::LINEAR,
             // D-223 — `volume` needs the non-zero default for `opacity`'s own
             // reason (the type's zero is silence); `pan`'s zero really IS
             // centre, so it takes the type's own.

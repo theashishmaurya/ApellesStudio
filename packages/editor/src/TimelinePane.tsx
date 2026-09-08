@@ -257,6 +257,7 @@ import {
   Unlink2,
   Unlock,
   Volume2,
+  Spline,
   VolumeX,
   ZoomIn,
   ZoomOut,
@@ -286,6 +287,8 @@ import {
 } from '@chroma/ui';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
+import { animatedParams } from './clipKeyframes';
+import { ClipCurveEditor } from './ClipCurveEditor';
 import {
   AddMarkerButton,
   MarkerListMenu,
@@ -407,6 +410,28 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
  *  reduces to `/ pxPerSec` since `scaleWidth = tickSeconds * pxPerSec` —
  *  checked against its bundled source, not guessed). */
 const START_LEFT_PX = 20;
+
+/** D-233 — below this clip width (px) the curve button is not drawn.
+ *
+ *  Same rule, and same reason, as D-207's fade handles disappearing under
+ *  36px: on a zoomed-out timeline a clip is a sliver, and a button pinned to
+ *  its corner would cover the whole thing — including the edge-trim zones
+ *  underneath it. A little wider than the fade threshold because this target
+ *  is inset past the right trim zone rather than sitting on a corner. */
+const CURVE_BUTTON_MIN_CLIP_PX = 48;
+
+/** D-233 — the curve lane's default and minimum heights, px.
+ *
+ *  The default is a little over three track rows, which is the smallest lane
+ *  in which a full-range ease reads as a curve rather than as a slightly bent
+ *  line — below roughly this, a `ease-in-out`'s two shoulders are a couple of
+ *  pixels apart and there is nothing to aim a handle at. The minimum keeps the
+ *  header strip and a usable plot on screen when the user drags the split
+ *  right down; it is a floor on the pane, NOT a fixed size — the whole point
+ *  of the resizable split is that a user authoring a delicate ease can give it
+ *  half the timeline. */
+const CURVE_LANE_HEIGHT = 180;
+const CURVE_LANE_MIN_HEIGHT = 96;
 /** D-128 — how coarsely the horizontal scroll position is bucketed before it
  *  reaches the filmstrip. `getActionRender` below rebuilds every clip's DOM
  *  when its inputs change, and this file's own module doc already flags that
@@ -1042,6 +1067,11 @@ export function TimelinePane() {
    *  keyboard action. */
   const selectedGap = useEditorTimelineStore((s) => s.selectedGap);
   const setSelectedGap = useEditorTimelineStore((s) => s.setSelectedGap);
+  // D-233 — the curve editor's target lives in the store, not here, because
+  // two other surfaces open it: the Inspector's per-property curve button and
+  // `editor_set_curve_editor` over MCP.
+  const curveEditor = useEditorTimelineStore((s) => s.curveEditor);
+  const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [rippled, setRippled] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
@@ -1064,6 +1094,29 @@ export function TimelinePane() {
   const fps = timelineFps(timeline);
   const tracks = timeline?.tracks ?? [];
   const labels = useMemo(() => (timeline ? trackLabels(timeline) : []), [timeline]);
+
+  /**
+   * D-233 — the curve lane's target, resolved from the store's `{track, id,
+   * param}` to the actual clip and its INDEX (which `set_clip_keyframes`
+   * addresses).
+   *
+   * `null` — so the lane does not render at all — whenever the target no
+   * longer makes sense: the clip was deleted or moved to another track, or
+   * the property it named stopped being animated (turning a stopwatch off
+   * while its curve is open). Resolving to `null` rather than rendering an
+   * empty lane is deliberate: a lane with nothing in it is a panel claiming
+   * to be about a clip it cannot find.
+   */
+  const curveEditorClip = useMemo(() => {
+    if (!curveEditor) return null;
+    const tr = tracks[curveEditor.track];
+    if (!tr) return null;
+    const index = tr.clips.findIndex((c) => c.id === curveEditor.id);
+    if (index < 0) return null;
+    const clip = tr.clips[index];
+    if (!animatedParams(clip.chroma_keyframes).includes(curveEditor.param)) return null;
+    return { clip, index, track: curveEditor.track, param: curveEditor.param };
+  }, [curveEditor, tracks]);
 
   // Owner, 2026-09-04: "for sync when i select one is should see all the
   // sync selected" — every clip on another sync-locked track that a ripple
@@ -1862,6 +1915,12 @@ export function TimelinePane() {
       // linked half is genuinely part of what the user has hold of — it will
       // move, trim and delete with the selection.
       const isAvLinked = !isSel && avLinkedIds.has(action.id);
+      // D-233 — which property the curve button would open, and whether this
+      // clip's lane is the one currently open. `animatedParams` is served off
+      // `clipKeyframes.ts`'s per-array `WeakMap` index (D-209), so asking it
+      // once per clip per render is a map lookup, not a re-scan.
+      const curveParam = clip ? (animatedParams(clip.chroma_keyframes)[0] ?? null) : null;
+      const curveOpenHere = curveEditor?.track === ti && curveEditor?.id === action.id;
       // Owner, 2026-09-04: "for locked show muted color on clip" — the same
       // `opacity-60` treatment the track-header row already gets when
       // `track.locked` (D-080/D-090-era), extended to the clip bodies
@@ -2069,6 +2128,44 @@ export function TimelinePane() {
               pxPerSec={pxPerSec}
               disabled={isLockedTrack}
             />
+          )}
+          {/* D-233 — the curve-editor toggle, at the clip's top-right, which
+              is where Resolve puts its own (`scratch/resolve-reference/
+              curve.jpg`: a curve glyph and a keyframe glyph on the clip's
+              name bar). Shown only on a clip that ACTUALLY animates
+              something: a button that opens an empty lane is a button that
+              teaches the user it does nothing.
+
+              Same hit-target discipline the fade handles (D-207) and the move
+              grip (D-094) already follow, and for the same B-013 reason: it
+              is a small, bounded, `z-20` target that `stopPropagation`s, so
+              dnd-kit's clip-move drag and the library's own right-edge trim
+              zone both keep every pixel this button does not occupy. It sits
+              inset from the right edge past that 10px trim zone. */}
+          {clip && curveParam && pxWidth >= CURVE_BUTTON_MIN_CLIP_PX && (
+            <button
+              type="button"
+              className="absolute right-3 top-0.5 z-20 rounded p-0.5 text-button-text/80 hover:bg-black/25 hover:text-button-text"
+              title={
+                curveOpenHere
+                  ? 'Close the curve editor'
+                  : `Edit ${clip.name || 'this clip'}'s ease curves`
+              }
+              aria-label="Toggle the curve editor for this clip"
+              aria-pressed={curveOpenHere}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Toggling off when it is already this clip's lane; otherwise
+                // open on the clip's first animated property (declaration
+                // order — see `animatedParams`), which the lane's own header
+                // then lets you change.
+                setCurveEditor(curveOpenHere ? null : { track: ti, id: action.id, param: curveParam });
+              }}
+            >
+              <Spline size={11} />
+            </button>
           )}
           <div className="relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none text-button-text">
             {clip?.name ?? action.id}
@@ -3205,6 +3302,20 @@ export function TimelinePane() {
         <ResizableHandle />
 
         <ResizablePanel className="relative min-h-0 overflow-hidden">
+          {/* D-233 — the edit area and the curve lane are a real vertical
+              `ResizablePanelGroup`, per CLAUDE.md's standing "every
+              resizable-by-nature pane must actually be resizable" rule: how
+              tall the lane is IS how finely you can author an ease.
+
+              Nested inside this panel rather than beside the whole
+              header/edit-area group on purpose — that makes the lane inherit
+              the edit area's exact horizontal extent, so a keyframe dot lands
+              under the frame of the clip above it with no second alignment
+              calculation to drift (see `ClipCurveEditor`'s own module doc),
+              and it leaves the track-header column full height where it
+              belongs. */}
+          <ResizablePanelGroup orientation="vertical" className="h-full min-h-0">
+            <ResizablePanel className="relative min-h-0 overflow-hidden">
           <div
             ref={editAreaRef}
             data-bench-id="timeline-edit-area"
@@ -3484,6 +3595,32 @@ export function TimelinePane() {
               />
             )}
           </div>
+            </ResizablePanel>
+
+            {curveEditorClip && (
+              <>
+                <ResizableHandle />
+                <ResizablePanel
+                  defaultSize={CURVE_LANE_HEIGHT}
+                  minSize={CURVE_LANE_MIN_HEIGHT}
+                  className="relative min-h-0 overflow-hidden border-t border-border-color"
+                >
+                  <ClipCurveEditor
+                    clip={curveEditorClip.clip}
+                    track={curveEditorClip.track}
+                    clipIndex={curveEditorClip.index}
+                    param={curveEditorClip.param}
+                    fps={fps}
+                    pxPerSec={pxPerSec}
+                    scrollLeft={scrollLeft}
+                    startLeftPx={START_LEFT_PX}
+                    disabled={!!tracks[curveEditorClip.track]?.locked}
+                    onClose={() => setCurveEditor(null)}
+                  />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
       </div>

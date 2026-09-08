@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildExportFfmpegArgs } from './timelineExport';
-import { DEFAULT_FADE_CURVE, applyOp, eqResponseDb } from './timeline';
+import { DEFAULT_EASE_CURVE, applyOp, eqResponseDb } from './timeline';
 import type { Clip, EqBand, Timeline, Track } from './timeline';
 import { eqFilterChain } from './timelineExportAudio';
 import { pxToFadeFrames } from './clipFade';
@@ -584,8 +584,8 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
       clip: 0,
       fade_in_frames: dragged,
       fade_out_frames: dragged,
-      fade_in_curve: DEFAULT_FADE_CURVE,
-      fade_out_curve: DEFAULT_FADE_CURVE,
+      fade_in_curve: DEFAULT_EASE_CURVE,
+      fade_out_curve: DEFAULT_EASE_CURVE,
     });
     // The op really stored what the drag computed — not silently clamped or
     // dropped on the way through.

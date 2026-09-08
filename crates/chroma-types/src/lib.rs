@@ -93,12 +93,19 @@ pub enum ChromaError {
 /// Convenience alias.
 pub type Result<T, E = ChromaError> = std::result::Result<T, E>;
 
-/// Cubic-bezier fade curves + the fade multiplier (D-147). Pure, unit-agnostic
-/// math — see the module doc for why it is L0 rather than living beside the
-/// timeline model whose `Clip` fields are typed by it.
+/// The cubic-bezier easing curve every ramp in this project is shaped by
+/// (D-147, moved out of [`fade`] by D-233 once keyframe easing became its
+/// second consumer). Pure math — see the module doc for why it is L0.
+pub mod ease;
+
+pub use ease::EaseCurve;
+
+/// The per-clip fade envelope, built over [`ease::EaseCurve`] (D-147). Pure,
+/// unit-agnostic math — see the module doc for why it is L0 rather than living
+/// beside the timeline model whose `Clip` fields are typed by it.
 pub mod fade;
 
-pub use fade::{FadeCurve, fade_gain};
+pub use fade::fade_gain;
 
 /// The per-clip stereo pan law + the clip-volume guard (D-223). Pure math,
 /// here rather than beside `chroma_timeline::Clip`'s own `pan`/`volume` fields

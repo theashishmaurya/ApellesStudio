@@ -38,7 +38,7 @@
  * Pure presentation, like the panel it came from: no store access, no
  * `Clip` knowledge, nothing beyond the props below.
  */
-import { ChevronLeft, ChevronRight, Diamond, RotateCcw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Diamond, RotateCcw, Spline } from 'lucide-react';
 import { Button, Input } from '@chroma/ui';
 
 const row = 'flex items-center justify-between gap-2';
@@ -88,7 +88,8 @@ export function staticPropertyState(value: number): PropertyState {
 }
 
 /** One Transform/Crop-shaped row: label, value field, that property's own
- *  keyframe nav + stopwatch diamond, and its own reset (D-208).
+ *  keyframe nav + stopwatch diamond, its own reset (D-208), and — when it is
+ *  animated — the button that opens its ease curve on the timeline (D-233).
  *
  *  `TParam` is whatever the caller's own property-name type is
  *  (`ClipTransformParam` for the Transform/Crop/Audio rows, an EQ band's own
@@ -114,6 +115,8 @@ export function PropertyRow<TParam extends string>({
   onKeyframeToggle,
   onKeyframeNav,
   onReset,
+  onOpenCurve,
+  curveOpen = false,
 }: {
   label: string;
   param: TParam;
@@ -126,6 +129,16 @@ export function PropertyRow<TParam extends string>({
   onKeyframeToggle?: (param: TParam) => void;
   onKeyframeNav?: (param: TParam, dir: -1 | 1) => void;
   onReset: (param: TParam) => void;
+  /** D-233 — open (or close) this property's curve in the timeline's curve
+   *  editor lane. Optional for the same reason the keyframe trio is: a
+   *  property this app deliberately does not animate (D-224's EQ fields) has
+   *  no curve, and a permanently-dead button advertises an affordance that
+   *  does not exist. Omit it and no curve button is rendered at all. */
+  onOpenCurve?: (param: TParam) => void;
+  /** Whether the lane is currently showing THIS property — the button's
+   *  pressed state, so the row says which curve is open rather than the user
+   *  having to look at the timeline to find out. */
+  curveOpen?: boolean;
 }) {
   // Both together or neither — a row with nav arrows but no diamond (or the
   // reverse) is not a state any caller wants, and this keeps the three buttons
@@ -201,6 +214,29 @@ export function PropertyRow<TParam extends string>({
               <ChevronRight size={12} />
             </Button>
           </>
+        )}
+        {/* D-233 — only on an ANIMATED property. An ease curve is the shape
+            BETWEEN two keyframes, so a static property has nothing to shape;
+            showing the button anyway would open an empty lane. The row's own
+            diamond is how you get from static to animated, and it is
+            immediately to the left. */}
+        {onOpenCurve && state.animated && (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            disabled={disabled}
+            className={curveOpen ? 'text-accent' : undefined}
+            onClick={() => onOpenCurve(param)}
+            title={
+              curveOpen
+                ? `Close ${label}'s ease curve`
+                : `Edit ${label}'s ease curves on the timeline`
+            }
+            aria-label={`Edit ${label} ease curve`}
+            aria-pressed={curveOpen}
+          >
+            <Spline size={11} />
+          </Button>
         )}
         <Button
           variant="ghost"

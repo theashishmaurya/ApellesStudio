@@ -66,7 +66,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { useHistoryStore } from '@chroma/history';
 
-import { applyOp as applyOpPure, labelForOp, timelineDuration, type EditOp, type Timeline } from './timeline';
+import {
+  applyOp as applyOpPure,
+  labelForOp,
+  timelineDuration,
+  type ClipKeyframeParam,
+  type EditOp,
+  type Timeline,
+} from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -116,6 +123,28 @@ export interface SelectedGap {
   frame: number;
 }
 
+/**
+ * Which clip's animation the timeline curve editor is open on, and which of
+ * its properties is being plotted (D-233).
+ *
+ * `track` + `id` addresses the clip the same way [`Selection`] does — by the
+ * clip's own stable id, not its index, so an edit elsewhere on the track
+ * (a ripple delete, an insert) does not silently repoint the editor at a
+ * different clip. `param` is the property whose curve is drawn; a clip can
+ * animate nine of them, and Resolve's own editor likewise shows one lane at a
+ * time under the clip.
+ *
+ * UI state, deliberately — exactly like `selection` and `previewView`, and for
+ * D-216's reasons: it is not part of `Timeline`, so it never reaches
+ * `project.json`, and `cmd-Z` after opening a curve must undo the last real
+ * EDIT rather than the act of looking at one.
+ */
+export interface CurveEditorTarget {
+  track: number;
+  id: string;
+  param: ClipKeyframeParam;
+}
+
 /** B-034/D-112 — the Edit tab's real load state, as an explicit machine.
  *  Previously this was inferred from a `loaded: boolean` + `timeline: null`
  *  pair, which cannot tell "no project is open" apart from "a project is open
@@ -154,6 +183,9 @@ interface EditorTimelineState {
   selection: Selection[];
   /** the current gap selection (D-105), mutually exclusive with `selection` */
   selectedGap: SelectedGap | null;
+  /** D-233 — the timeline curve editor's target, or `null` when the lane is
+   *  closed. See [`CurveEditorTarget`]. */
+  curveEditor: CurveEditorTarget | null;
   /** D-218 — the preview pane's VIEWPORT zoom + pan (`previewZoom.ts`).
    *
    *  UI state, exactly like `selection` above and for exactly D-216's
@@ -234,6 +266,11 @@ interface EditorTimelineState {
    *  site to be rewritten to close over the store's `get()` instead. */
   setSelection: (selection: Selection[] | ((prev: Selection[]) => Selection[])) => void;
   setSelectedGap: (gap: SelectedGap | null) => void;
+  /** D-233 — open the curve editor on one clip property, or close it with
+   *  `null`. The one writer for the timeline's own curve button, the
+   *  Inspector's per-property one, and `editor_set_curve_editor` over MCP —
+   *  the same human-and-agent pairing CLAUDE.md requires of every feature. */
+  setCurveEditor: (target: CurveEditorTarget | null) => void;
   /** D-218 — set the preview viewport's zoom/pan. Always clamped through
    *  `clampPreviewView`, so no caller (the toolbar buttons, the wheel
    *  gesture, or `editor_set_preview_zoom` over MCP) can leave the picture
@@ -320,6 +357,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   timelines: [],
   selection: [],
   selectedGap: null,
+  curveEditor: null,
   previewView: FIT_VIEW,
   // D-118 shipped the Inspector open; keep that default now the flag lives here.
   inspectorOpen: true,
@@ -444,6 +482,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     })),
 
   setSelectedGap: (gap) => set({ selectedGap: gap, selection: gap ? [] : get().selection }),
+  setCurveEditor: (target) => set({ curveEditor: target }),
 
   setPreviewView: (view) =>
     set((s) => ({
@@ -487,6 +526,15 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
       set((s) => ({
         selection: s.selection.map((sel) => ({ ...sel, track: locate(sel.id) })).filter((sel) => sel.track >= 0),
         selectedGap: null,
+        // D-233 — the curve editor follows its clip by id through a prune,
+        // exactly as `selection` does above, and closes if that clip is gone.
+        // Leaving a stale `track` here would point the lane at a different
+        // clip's animation while still letting the user drag its handles.
+        curveEditor: s.curveEditor
+          ? locate(s.curveEditor.id) >= 0
+            ? { ...s.curveEditor, track: locate(s.curveEditor.id) }
+            : null
+          : null,
       }));
     }
 

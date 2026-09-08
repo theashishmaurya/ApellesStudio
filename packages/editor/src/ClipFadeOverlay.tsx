@@ -86,7 +86,7 @@ import {
   pxToFadeFrames,
   type FadeSide,
 } from './clipFade';
-import { DEFAULT_FADE_CURVE, type Clip } from './timeline';
+import { DEFAULT_EASE_CURVE, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 
 /** How opaque the wash over the attenuated part of the clip is. Painted in the
@@ -231,8 +231,8 @@ export function ClipFadeOverlay({
         // is a whole-fade op, not a patch (see its own doc in `timeline.ts`).
         fade_in_frames: g.side === 'in' ? frames : committedIn,
         fade_out_frames: g.side === 'out' ? frames : committedOut,
-        fade_in_curve: clip.fade_in_curve ?? DEFAULT_FADE_CURVE,
-        fade_out_curve: clip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+        fade_in_curve: clip.fade_in_curve ?? DEFAULT_EASE_CURVE,
+        fade_out_curve: clip.fade_out_curve ?? DEFAULT_EASE_CURVE,
       });
     };
 
@@ -265,8 +265,8 @@ export function ClipFadeOverlay({
 
   if (!(widthPx > 0) || !(heightPx > 0)) return null;
 
-  const pathsIn = fadeRampPaths('in', widthPx, heightPx, rampInPx, clip.fade_in_curve ?? DEFAULT_FADE_CURVE);
-  const pathsOut = fadeRampPaths('out', widthPx, heightPx, rampOutPx, clip.fade_out_curve ?? DEFAULT_FADE_CURVE);
+  const pathsIn = fadeRampPaths('in', widthPx, heightPx, rampInPx, clip.fade_in_curve ?? DEFAULT_EASE_CURVE);
+  const pathsOut = fadeRampPaths('out', widthPx, heightPx, rampOutPx, clip.fade_out_curve ?? DEFAULT_EASE_CURVE);
   const unity = pathsIn || pathsOut ? fadeUnityLinePath(widthPx, heightPx, rampInPx, rampOutPx) : null;
   const showHandles = !disabled && widthPx >= FADE_MIN_HANDLE_CLIP_PX;
 

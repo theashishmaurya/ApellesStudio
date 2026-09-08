@@ -27,6 +27,25 @@ One or two lines per session. Detail lives in the decision it references.
   on the way: B-106** — the three live-device playback tests read a
   once-per-second meter after 1.5 s, so they could fail for having nothing to
   read rather than nothing to hear.
+- **2026-09-08** — **Timeline curve editor: real bezier ease curves on any keyframed
+  property (D-233, roadmap 27).** Keyframe segments were all linear — the biggest
+  reason a generated move looks generated. Each segment now carries an optional
+  cubic-bezier `ease`, authored by dragging its two control points in a resizable
+  lane docked under the timeline (built from Resolve's own `curve.jpg`), by four
+  preset buttons, from the Inspector's per-property curve button, or over MCP
+  (`editor_set_keyframe_ease` + `editor_set_curve_editor`; 102 → 104 tools). Not a
+  new curve concept: D-147's `FadeCurve` became `EaseCurve` in its own
+  `chroma_types::ease` module and is now shared by fades and keyframes, one solver
+  across both languages. Absent `ease` = linear, so existing projects resolve
+  bit-identically and export byte-identically. Preview and export agree exactly at
+  every authored key and by a measured 1.4e-3 between them, proven by a real-ffmpeg
+  pixel test that was checked to fail when the curve is dropped. Two bugs found on
+  the way: **B-108** (open) — the export spins a seam-crossing `rotation` the long
+  way round while the preview takes the short arc; **B-107** (fixed here) —
+  `chroma::audio`'s tests guarded the process-global open project with a mutex of
+  their own instead of the shared `PROJECT_STATE_LOCK`, so they cleared it out from
+  under `chroma::edit`'s adjustment-preview tests. Two locks over one global is not
+  mutual exclusion; B-105 fixed the same shape one file over.
 - **2026-09-08** — **Docs reconciliation, round 2 (D-231).** Docs-only. The product
   docs had drifted on *feature status*, not framing: `01-prd.md` still called Edit a
   single-track MVP and Motion a placeholder tab, `02-scope.md` listed shipped features

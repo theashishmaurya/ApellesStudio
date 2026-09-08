@@ -64,14 +64,14 @@ export type {
   VideoAnalysis,
   VideoEvent,
 } from './mediaUnderstandingStore';
-export type { Timeline, Track, Clip, EditOp, DraggedMedia, FadeCurve } from './timeline';
+export type { Timeline, Track, Clip, EditOp, DraggedMedia, EaseCurve } from './timeline';
 export {
   // D-147 — fade curve presets + the curve→preset-name match, exported for
   // the MCP bridge: `useChromaControl`'s `set_clip_fade` accepts a preset name
   // and `get_timeline` reports one back.
-  FADE_PRESETS,
-  DEFAULT_FADE_CURVE,
-  fadePresetName,
+  EASE_PRESETS,
+  DEFAULT_EASE_CURVE,
+  easePresetName,
   // D-147 — `get_timeline` reports the timeline's own duration.
   timelineDuration,
   // D-149 — the ducking migration defaults, exported for the MCP bridge:

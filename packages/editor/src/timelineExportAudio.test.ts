@@ -13,14 +13,14 @@ import {
   clipAudioParam,
   dbToLinear,
   duckGainExpr,
-  fadeCurveEval,
   fadeGainAt,
   fadeGainExpr,
   panGainExprs,
   resolveDuckForTrack,
   type DuckSegment,
 } from './timelineExportAudio';
-import { FADE_PRESETS, panGains } from './timeline';
+import { EASE_PRESETS, panGains } from './timeline';
+import { easeCurveEval } from './easeCurve';
 import type { Clip, Timeline, Track } from './timeline';
 
 /** A tiny ffmpeg-expression interpreter for the subset this module emits
@@ -54,8 +54,8 @@ function evalExpr(expr: string, t: number): number {
   return fn(t, iff, between, lt, exp, clipFn, cos, sin, max, PI) as number;
 }
 
-const LINEAR = FADE_PRESETS.find((p) => p.name === 'linear')!.curve;
-const EASE_IN = FADE_PRESETS.find((p) => p.name === 'ease-in')!.curve;
+const LINEAR = EASE_PRESETS.find((p) => p.name === 'linear')!.curve;
+const EASE_IN = EASE_PRESETS.find((p) => p.name === 'ease-in')!.curve;
 
 function clip(id: string, overrides: Partial<Clip> = {}): Clip {
   return {
@@ -78,20 +78,20 @@ function timeline(tracks: Track[]): Timeline {
   return { id: 'tl', name: 'tl', tracks };
 }
 
-describe('fadeCurveEval', () => {
+describe('easeCurveEval', () => {
   it('linear is the exact identity, y = x, at every x', () => {
     for (const x of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
-      expect(fadeCurveEval(LINEAR, x)).toBeCloseTo(x, 9);
+      expect(easeCurveEval(LINEAR, x)).toBeCloseTo(x, 9);
     }
   });
 
   it('is exact at both endpoints regardless of the curve', () => {
-    expect(fadeCurveEval(EASE_IN, 0)).toBe(0);
-    expect(fadeCurveEval(EASE_IN, 1)).toBe(1);
+    expect(easeCurveEval(EASE_IN, 0)).toBe(0);
+    expect(easeCurveEval(EASE_IN, 1)).toBe(1);
   });
 
   it('ease-in is slow-start (below the diagonal early on)', () => {
-    expect(fadeCurveEval(EASE_IN, 0.25)).toBeLessThan(0.25);
+    expect(easeCurveEval(EASE_IN, 0.25)).toBeLessThan(0.25);
   });
 });
 

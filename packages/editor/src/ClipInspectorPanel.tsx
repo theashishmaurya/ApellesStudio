@@ -149,10 +149,10 @@ import {
   EQ_MAX_Q,
   EQ_MIN_FREQ_HZ,
   EQ_MIN_Q,
-  FADE_PRESETS,
+  EASE_PRESETS,
   eqBandsForDisplay,
   eqKindUsesGain,
-  fadePresetName,
+  easePresetName,
   hasActiveEq,
   type Clip,
   type ClipAudioParam,
@@ -160,7 +160,7 @@ import {
   type ClipTransformParam,
   type EqBand,
   type EqBandKind,
-  type FadeCurve,
+  type EaseCurve,
 } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 import type { ClipGeometry } from './useClipGeometry';
@@ -186,8 +186,8 @@ export type TransformPatch = Partial<{
 export type FadePatch = Partial<{
   fade_in_frames: number;
   fade_out_frames: number;
-  fade_in_curve: FadeCurve;
-  fade_out_curve: FadeCurve;
+  fade_in_curve: EaseCurve;
+  fade_out_curve: EaseCurve;
 }>;
 
 /** The two fade rows, each a duration + a curve, sharing one layout.
@@ -335,6 +335,8 @@ export function ClipInspectorPanel({
   onKeyframeToggle,
   onKeyframeNav,
   onResetParam,
+  onOpenCurve,
+  openCurveParam,
   onUpsertKeyframe,
   onRemoveKeyframeHere,
   onClearKeyframes,
@@ -372,6 +374,14 @@ export function ClipInspectorPanel({
   onKeyframeToggle: (param: ClipKeyframeParam) => void;
   onKeyframeNav: (param: ClipKeyframeParam, dir: -1 | 1) => void;
   onResetParam: (param: ClipKeyframeParam) => void;
+  /** D-233 — open (or close) one property's ease curve in the timeline's
+   *  curve editor lane. Passed straight through to every keyframeable
+   *  `PropertyRow`; the rows themselves decide whether to render the button
+   *  (only an animated property has a curve — see `PropertyRow`). */
+  onOpenCurve: (param: ClipKeyframeParam) => void;
+  /** Which property's curve is open right now, or `null`. Drives the pressed
+   *  state of exactly one row's button. */
+  openCurveParam: ClipKeyframeParam | null;
   onUpsertKeyframe: () => void;
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
@@ -483,6 +493,8 @@ export function ClipInspectorPanel({
               onKeyframeToggle={onKeyframeToggle}
               onKeyframeNav={onKeyframeNav}
               onReset={onResetParam}
+              onOpenCurve={onOpenCurve}
+              curveOpen={openCurveParam === param}
             />
           ))}
 
@@ -583,6 +595,8 @@ export function ClipInspectorPanel({
                 onKeyframeToggle={onKeyframeToggle}
                 onKeyframeNav={onKeyframeNav}
                 onReset={onResetParam}
+                onOpenCurve={onOpenCurve}
+                curveOpen={openCurveParam === key}
               />
             ))}
           </InspectorSection>
@@ -604,7 +618,7 @@ export function ClipInspectorPanel({
             a silent picture fade as a bug. See the plan doc §2. */}
         <InspectorSection label="Fade">
           {FADE_FIELDS.map(({ label, durationKey, curveKey }) => {
-            const preset = fadePresetName(clip[curveKey]);
+            const preset = easePresetName(clip[curveKey]);
             return (
               <div className="flex flex-col gap-1" key={durationKey}>
                 <label className={row}>
@@ -628,7 +642,7 @@ export function ClipInspectorPanel({
                   <Select
                     value={preset ?? CUSTOM_CURVE}
                     onValueChange={(v) => {
-                      const hit = FADE_PRESETS.find((p) => p.name === v);
+                      const hit = EASE_PRESETS.find((p) => p.name === v);
                       // `custom` is display-only — it names a curve MCP
                       // authored that this panel has no editor for, so
                       // selecting it must not overwrite that curve with
@@ -641,7 +655,7 @@ export function ClipInspectorPanel({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {FADE_PRESETS.map((p) => (
+                      {EASE_PRESETS.map((p) => (
                         <SelectItem key={p.name} value={p.name}>
                           {p.name}
                         </SelectItem>
@@ -692,6 +706,8 @@ export function ClipInspectorPanel({
                 onKeyframeToggle={onKeyframeToggle}
                 onKeyframeNav={onKeyframeNav}
                 onReset={onResetParam}
+                onOpenCurve={onOpenCurve}
+                curveOpen={openCurveParam === param}
               />
             ))}
             {/* Not decoration, for the same reason the Fade note isn't: the
