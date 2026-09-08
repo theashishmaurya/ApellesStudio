@@ -229,7 +229,7 @@ parse one), and `.xml` (which in Resolve's list means TTML by another name).
 
 **Inline formatting** (`<i>`, `<b>`, `<u>`, `<font …>`, WebVTT's `<c>`/`<v>`)
 is **stripped, not rendered**, and XML entities are decoded. The text reaches
-the screen correct; the emphasis is dropped. **D-239** removed the original
+the screen correct; the emphasis is dropped. **D-240** removed the original
 cause (the shared font catalogue now has real italic/bold faces,
 `caption_render.rs` already resolves through `chroma::text`'s catalogue
 unchanged) but per-RUN emphasis inside one cue's text is still not attempted —
@@ -265,7 +265,7 @@ Tracked here so the next pass has the list, not hidden:
 - **TTML import/export** — see §5. The reason is written down; do it properly
   or not at all.
 - **Embedded MXF/IMF subtitle extraction.**
-- ~~**Italic/bold rendering**~~ — **done, D-239.** A whole cue/style can be
+- ~~**Italic/bold rendering**~~ — **done, D-240.** A whole cue/style can be
   bold/italic (Bold/Italic toggle buttons in the Caption Inspector's Track
   Style section, `bold`/`italic` on `editor_set_caption_style`/
   `editor_import_subtitles`). What is still NOT attempted: per-run emphasis

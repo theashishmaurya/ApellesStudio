@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @chroma/editor — real-DOM coverage for the Caption Inspector's Bold/Italic
- * toggle buttons (D-239, roadmap item 27).
+ * toggle buttons (D-240, roadmap item 27).
  *
  * The same rule `TextClipInspectorPanel.dom.test.tsx` proves for a title's
  * `TextLayer.font`, proved here for a subtitle TRACK's `CaptionStyle.font` —
@@ -106,7 +106,7 @@ async function render() {
   await waitFrames(2);
 }
 
-describe('the Caption Inspector’s Bold/Italic toggles (D-239)', () => {
+describe('the Caption Inspector’s Bold/Italic toggles (D-240)', () => {
   it('reads pressed/unpressed off the TRACK style’s current font', async () => {
     useEditorTimelineStore.setState({ timeline: fixture('sans-bold') });
     await render();

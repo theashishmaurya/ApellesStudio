@@ -1691,7 +1691,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         properly (full timebase + region/style resolution) or not at all.
       - ⬜ Auto-captioning from the D-189 transcript — the timed words already
         exist; turning them into cues is the obvious high-value follow-up.
-      - ✅ Italic/bold rendering — **D-239**. `chroma::text`'s catalogue grew
+      - ✅ Italic/bold rendering — **D-240**. `chroma::text`'s catalogue grew
         italic/bold-italic faces for every family that has them (no new font —
         the same macOS system families D-212 already references); Bold/Italic
         toggle buttons in the Title/Caption Inspectors and `bold`/`italic` MCP

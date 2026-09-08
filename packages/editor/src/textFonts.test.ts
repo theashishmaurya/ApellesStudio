@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — unit tests for the D-239 Bold/Italic style-axis helpers
+ * @chroma/editor — unit tests for the D-240 Bold/Italic style-axis helpers
  * (`baseFontFamilies`, `fontStyleOf`, `composeFontStyleKey`).
  *
  * Pure, no Tauri, no DOM — these three functions are plain lookups over a
@@ -33,14 +33,14 @@ const FONTS: TextFont[] = [
   { key: 'impact', label: 'Impact', path: '/f/Impact.ttf', group: null, bold: false, italic: false },
 ];
 
-describe('baseFontFamilies (D-239)', () => {
+describe('baseFontFamilies (D-240)', () => {
   it('lists exactly one row per group (its regular member) plus every standalone entry', () => {
     const bases = baseFontFamilies(FONTS).map((f) => f.key);
     expect(bases).toEqual(['sans', 'mono', 'impact']);
   });
 });
 
-describe('fontStyleOf (D-239)', () => {
+describe('fontStyleOf (D-240)', () => {
   it('reads group/bold/italic straight off the matching catalogue entry', () => {
     expect(fontStyleOf(FONTS, 'sans-bold-italic')).toEqual({ group: 'sans', bold: true, italic: true });
     expect(fontStyleOf(FONTS, 'impact')).toEqual({ group: null, bold: false, italic: false });
@@ -55,7 +55,7 @@ describe('fontStyleOf (D-239)', () => {
   });
 });
 
-describe('composeFontStyleKey (D-239)', () => {
+describe('composeFontStyleKey (D-240)', () => {
   it('composes the exact sibling for every (bold, italic) pair in a complete group', () => {
     expect(composeFontStyleKey(FONTS, 'sans', false, false)).toBe('sans');
     expect(composeFontStyleKey(FONTS, 'sans', true, false)).toBe('sans-bold');

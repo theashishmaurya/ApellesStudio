@@ -1,12 +1,12 @@
 // @chroma/editor — REAL ffmpeg-execution, PIXEL-level export-parity test for
-// D-239's italic/bold faces (roadmap item 27).
+// D-240's italic/bold faces (roadmap item 27).
 //
 // D-212 measured, once, that `ab_glyph`'s em-sized `PxScale` and `drawtext`'s
 // ascender-descender-sized `fontsize` disagree by a fixed ratio per FACE
 // (`freetype_equivalent_scale`, computed from that face's own `units_per_em`/
 // `height_unscaled` — never hardcoded to Arial Bold's specific numbers). This
 // file is the empirical check that the SAME generalisation actually holds for
-// the new italic/bold-italic faces catalogued in D-239, not just the
+// the new italic/bold-italic faces catalogued in D-240, not just the
 // regular/bold faces D-212 originally measured — "verify empirically" per
 // this repo's own established practice (D-212/D-224/D-236), not "assume the
 // formula generalises because it looks generic".
@@ -15,7 +15,7 @@
 // `italic_and_bold_italic_faces_render_visible_ink`/
 // `italic_cap_height_is_close_to_its_upright_sibling` Rust tests with
 // `--nocapture`, and this file's own real-ffmpeg render) are written into
-// D-239 in `docs/08-decisions.md`, not duplicated here as a comment that
+// D-240 in `docs/08-decisions.md`, not duplicated here as a comment that
 // could silently drift out of sync with a future re-run — this file's own
 // assertions are the checked, currently-true claim; the decision doc is the
 // one-time "here is what we measured" record.
@@ -41,7 +41,7 @@ function hasBinary(name: string): boolean {
   }
 }
 
-/** The real D-239 catalogue candidates for the `sans` group, checked here
+/** The real D-240 catalogue candidates for the `sans` group, checked here
  *  rather than imported (this package has no access to the Rust crate — in
  *  the app the real path always comes from `chroma_text_fonts`). */
 const FONT_FILES: Record<string, string[]> = {
@@ -124,7 +124,7 @@ function inkBounds(
   return any ? { x0, y0, x1: x1 + 1, y1: y1 + 1 } : null;
 }
 
-describe.skipIf(!AVAILABLE)('D-239: italic/bold export parity — real ffmpeg render', () => {
+describe.skipIf(!AVAILABLE)('D-240: italic/bold export parity — real ffmpeg render', () => {
   let dir: string;
   let out: string;
 

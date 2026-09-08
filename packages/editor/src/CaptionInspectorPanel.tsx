@@ -232,7 +232,7 @@ export function CaptionInspectorPanel() {
                   value={fontStyleOf(fonts, style.font).group ?? style.font}
                   disabled={trackLocked || fonts.length === 0}
                   // Changing FAMILY keeps whatever Bold/Italic is currently on
-                  // (D-239), composed via the family's own `group`.
+                  // (D-240), composed via the family's own `group`.
                   onValueChange={(v: string | null) => {
                     if (!v) return;
                     const cur = fontStyleOf(fonts, style.font);
@@ -253,7 +253,7 @@ export function CaptionInspectorPanel() {
                     ))}
                   </SelectContent>
                 </Select>
-                {/* D-239 — the same Bold/Italic toggle pair as the Title
+                {/* D-240 — the same Bold/Italic toggle pair as the Title
                     Inspector's Font row; see `TextClipInspectorPanel.tsx` for
                     why buttons rather than a combined dropdown. */}
                 {(() => {

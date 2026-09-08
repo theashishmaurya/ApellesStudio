@@ -529,7 +529,7 @@ interface ImportedCaption {
 /** `currentFont` is the style's font BEFORE this patch — the track's own for
  *  a new import, or the resolved (cue-or-track) font for an existing style —
  *  so `bold`/`italic` alone (no `font`) composes against what is already
- *  there rather than against nothing. See D-239's `composeFontStyleKey`. */
+ *  there rather than against nothing. See D-240's `composeFontStyleKey`. */
 function captionStylePatch(a: any, currentFont: string): Partial<CaptionStyle> {
   const patch: Partial<CaptionStyle> = {};
   if (a?.font !== undefined) patch.font = String(a.font);
@@ -549,7 +549,7 @@ function captionStylePatch(a: any, currentFont: string): Partial<CaptionStyle> {
   }
   if (a?.positionX !== undefined) patch.position_x = Number(a.positionX);
   if (a?.positionY !== undefined) patch.position_y = Number(a.positionY);
-  // D-239 — `bold`/`italic` are composed into `font` HERE, the one place a
+  // D-240 — `bold`/`italic` are composed into `font` HERE, the one place a
   // caption style patch is built for both the GUI and every MCP caller
   // (`editor_import_subtitles`, `editor_set_caption_style`). Neither survives
   // as its own stored field — see `textFonts.ts::composeFontStyleKey`.
@@ -1049,7 +1049,7 @@ export function useEditorControl(): void {
         const defaults = newTextLayer({});
         return {
           ok: true,
-          // D-239 — `group`/`bold`/`italic` let a caller see which keys are
+          // D-240 — `group`/`bold`/`italic` let a caller see which keys are
           // siblings without guessing from the label string; most callers
           // won't need this and should just pass `bold`/`italic` on
           // `editor_add_text_clip`/`editor_set_text_clip` directly.
@@ -1069,7 +1069,7 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
 
-        // D-239 — `bold`/`italic` compose into `font` HERE, before
+        // D-240 — `bold`/`italic` compose into `font` HERE, before
         // `newTextLayer` ever sees it: neither survives as its own field on
         // `TextLayer` (D-212's `font` stays the one stored catalogue key).
         let font = a?.font !== undefined ? String(a.font) : undefined;
@@ -1152,7 +1152,7 @@ export function useEditorControl(): void {
         if (a?.font !== undefined) patch.font = String(a.font);
         if (a?.size !== undefined) patch.size = Number(a.size);
         if (a?.color !== undefined) patch.color = String(a.color);
-        // D-239 — `bold`/`italic` compose against whatever `font` this patch
+        // D-240 — `bold`/`italic` compose against whatever `font` this patch
         // is about to set, or the clip's CURRENT font if this patch does not
         // touch `font` at all — never against nothing, since a
         // bold-only patch on an existing title must not reset its family.

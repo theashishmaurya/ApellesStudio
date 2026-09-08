@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @chroma/editor — real-DOM coverage for the Title Inspector's Bold/Italic
- * toggle buttons (D-239, roadmap item 27).
+ * toggle buttons (D-240, roadmap item 27).
  *
  * `textFonts.test.ts` proves `composeFontStyleKey`/`fontStyleOf` in
  * isolation; this proves the half a human actually touches — that the
@@ -31,7 +31,7 @@ import { newTextClipFields, newTextLayer, type Clip, type Timeline } from './tim
 import type { TextFont } from './textFonts';
 
 /** The same catalogue shape `chroma_text_fonts` resolves on a real machine
- *  (D-239): four `sans` siblings, one standalone `impact` with no italic. */
+ *  (D-240): four `sans` siblings, one standalone `impact` with no italic. */
 const FONTS: TextFont[] = [
   { key: 'sans', label: 'Sans', path: '/fonts/Arial.ttf', group: 'sans', bold: false, italic: false },
   { key: 'sans-bold', label: 'Sans Bold', path: '/fonts/Arial Bold.ttf', group: 'sans', bold: true, italic: false },
@@ -110,7 +110,7 @@ async function render() {
   await waitFrames(2);
 }
 
-describe('the Title Inspector’s Bold/Italic toggles (D-239)', () => {
+describe('the Title Inspector’s Bold/Italic toggles (D-240)', () => {
   it('reads pressed/unpressed off the CURRENT font, not a separate stored field', async () => {
     useEditorTimelineStore.setState({ timeline: fixture('sans-bold-italic') });
     await render();
@@ -124,7 +124,7 @@ describe('the Title Inspector’s Bold/Italic toggles (D-239)', () => {
     click(boldButton());
     expect(currentClip().text?.font).toBe('sans-bold');
     // The layer itself never grew a `bold` field — `font` is still the ONE
-    // stored key (D-212/D-239).
+    // stored key (D-212/D-240).
     expect(Object.keys(currentClip().text ?? {})).not.toContain('bold');
   });
 

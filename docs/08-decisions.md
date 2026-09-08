@@ -21838,7 +21838,7 @@ tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
 
-## D-239 — Italic/bold caption/title rendering: no new font, a toggle that composes existing catalogue keys
+## D-240 — Italic/bold caption/title rendering: no new font, a toggle that composes existing catalogue keys
 
 **Context.** Roadmap item 27's last open sub-item: `chroma::text`'s catalogue
 (D-212) had eight keys, none italic, and "bold" existed only as separate,

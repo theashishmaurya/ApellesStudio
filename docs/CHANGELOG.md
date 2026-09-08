@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Italic/bold caption/title rendering (D-239, roadmap item
+- **2026-09-08** — **Italic/bold caption/title rendering (D-240, roadmap item
   27).** `chroma::text`'s catalogue gained italic/bold-italic faces for every
   family that has them on macOS (sans/condensed/serif/mono) — no new font, the
   same system families D-212 already references. Bold/Italic toggle buttons

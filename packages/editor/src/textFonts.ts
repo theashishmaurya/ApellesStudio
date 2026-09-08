@@ -24,7 +24,7 @@
  * exported title disagree with the preview — the whole point of D-212 is that
  * both renderers read the SAME file).
  *
- * **D-239 — [`composeFontStyleKey`].** Bold/Italic are exposed as TOGGLES in
+ * **D-240 — [`composeFontStyleKey`].** Bold/Italic are exposed as TOGGLES in
  * the Inspector and as `bold`/`italic` MCP parameters, but neither `TextLayer`
  * nor `CaptionStyle` grew a new stored field for them: `font` remains the
  * ONE flat catalogue key both structs have always stored (D-212), and a
@@ -47,13 +47,13 @@ export interface TextFont {
   /** The absolute font file, or `null` if none of this family's candidate
    *  paths exist on this machine. */
   path: string | null;
-  /** D-239 — the style-axis group this entry belongs to (e.g. `"sans"`), or
+  /** D-240 — the style-axis group this entry belongs to (e.g. `"sans"`), or
    *  `null` for a standalone design with no bold/italic siblings in the
    *  catalogue (`impact`, `sans-black`). See [`composeFontStyleKey`]. */
   group: string | null;
-  /** D-239 — whether this entry IS its group's bold face. */
+  /** D-240 — whether this entry IS its group's bold face. */
   bold: boolean;
-  /** D-239 — whether this entry IS its group's italic (or bold-italic) face. */
+  /** D-240 — whether this entry IS its group's italic (or bold-italic) face. */
   italic: boolean;
 }
 
@@ -124,7 +124,7 @@ export function useTextFonts(): TextFont[] {
   return fonts;
 }
 
-// ---- D-239: the Bold/Italic style axis --------------------------------- //
+// ---- D-240: the Bold/Italic style axis --------------------------------- //
 //
 // A `TextLayer`/`CaptionStyle` still stores exactly one flat `font` key
 // (D-212) — nothing below adds a stored field. What Bold/Italic toggle is

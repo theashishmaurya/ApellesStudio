@@ -1164,7 +1164,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   formatting only the new code was not possible without leaving those files
   non-conformant; no other file was reformatted.
 
-- **2026-09-08** — **Italic/bold faces + a Bold/Italic style toggle (D-239)**
+- **2026-09-08** — **Italic/bold faces + a Bold/Italic style toggle (D-240)**
   · **zero upstream-file edits.** Everything lands inside the same
   already-Chroma-owned `app/src-tauri/src/chroma/text.rs` D-212 created (10 new
   `TEXT_FONTS` entries + `group`/`bold`/`italic` metadata on `FontFamily`/

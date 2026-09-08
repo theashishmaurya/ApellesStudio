@@ -159,7 +159,7 @@ one-line-per-row follow-up. Tracked in roadmap item 24.
   face 0, so a single-face file is the only shape where "both renderers read
   the same file" also means "both read the same *face*". That is why the
   obvious macOS picks (Helvetica, Avenir, SF) are absent — they ship only as
-  `.ttc`. **D-239** grew the catalogue from 8 to 18 entries — every family
+  `.ttc`. **D-240** grew the catalogue from 8 to 18 entries — every family
   with a real italic/bold-italic sibling on disk (`sans`/`condensed`/
   `serif`/`mono`) now lists all four, each also carrying `group`/`bold`/
   `italic` metadata that `@chroma/editor`'s `composeFontStyleKey` uses to turn

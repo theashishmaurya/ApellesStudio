@@ -1,4 +1,4 @@
-//! Text/title rasterisation for the Edit tab (D-211/D-212/D-239,
+//! Text/title rasterisation for the Edit tab (D-211/D-212/D-240,
 //! `docs/notes/text-title-clips.md`).
 //!
 //! **What it is:** the media-layer half of the text/title clip primitive —
@@ -16,13 +16,13 @@
 //!   Inspector's font picker lists it, and `@chroma/editor`'s export compiler
 //!   reads the SAME resolved `path` into `drawtext`'s `fontfile=`, which is
 //!   the whole reason live preview and export draw the same glyphs (D-212).
-//!   Each entry also carries D-239's `group`/`bold`/`italic` metadata, which
+//!   Each entry also carries D-240's `group`/`bold`/`italic` metadata, which
 //!   is what a Bold/Italic TOGGLE composes across — the composition itself
 //!   lives once in `@chroma/editor`'s `textFonts.ts`, not here or duplicated
 //!   in the MCP layer (see [`FontFamily`]'s own doc).
 //! - [`render_text_layer`] — rasterise one `TextLayer` into a canvas-sized
 //!   `RgbaImage`, the text centred, transparent everywhere else. Unchanged by
-//!   D-239: an italic/bold face is just another catalogue key to this
+//!   D-240: an italic/bold face is just another catalogue key to this
 //!   function, resolved and rasterised exactly like any other.
 //!
 //! **What it does NOT do:** no compositing (that is `chroma::edit`'s
@@ -71,7 +71,7 @@ use serde::Serialize;
 /// trailing Linux candidates are a courtesy for a dev box, not a support
 /// claim.
 ///
-/// **`group`/`bold`/`italic` (D-239)** are the style axis a Bold/Italic
+/// **`group`/`bold`/`italic` (D-240)** are the style axis a Bold/Italic
 /// TOGGLE composes across, on top of the flat `key` a `TextLayer`/
 /// `CaptionStyle` actually stores. A family belongs to a `group` — a real
 /// type design with regular/bold/italic/bold-italic siblings ALSO in this
@@ -110,7 +110,7 @@ pub struct FontFamily {
 /// renderers read the same *face*". That is why the obvious macOS choices
 /// (Helvetica, Avenir, SF) are absent — they ship only as `.ttc`.
 ///
-/// **Italic/bold faces (D-239, roadmap item 27).** Every family that has a
+/// **Italic/bold faces (D-240, roadmap item 27).** Every family that has a
 /// real regular/bold/italic/bold-italic quartet on disk now lists all four,
 /// sharing a `group`: `sans` (Arial), `condensed` (Arial Narrow), `serif`
 /// (Georgia, falling back to Times New Roman), `mono` (Courier New). **No new
@@ -118,7 +118,7 @@ pub struct FontFamily {
 /// families D-212 already relies on (candidate absolute paths on this
 /// machine, never a file vendored into the repo), so D-212's license
 /// reasoning (Apple-supplied, referenced not shipped) covers these entries
-/// unchanged; see D-239 for why that means no new licensing question. `impact`
+/// unchanged; see D-240 for why that means no new licensing question. `impact`
 /// and `sans-black` stay standalone (`group: None`): Impact and Arial Black
 /// ship no italic face on macOS, and both are already at a design's own
 /// maximum weight, so a Bold toggle has nothing to switch to either — see
@@ -343,13 +343,13 @@ pub struct ResolvedFont {
     /// the GUI can grey out a family instead of silently offering a shorter
     /// list than the one a stored `TextLayer::font` may name.
     pub path: Option<String>,
-    /// D-239 — the style-axis group this entry belongs to (`Some("sans")`,
+    /// D-240 — the style-axis group this entry belongs to (`Some("sans")`,
     /// …), or `None` for a standalone design with no bold/italic siblings.
     /// See [`FontFamily::group`].
     pub group: Option<String>,
-    /// D-239 — whether THIS entry is its group's bold face.
+    /// D-240 — whether THIS entry is its group's bold face.
     pub bold: bool,
-    /// D-239 — whether THIS entry is its group's italic (or bold-italic)
+    /// D-240 — whether THIS entry is its group's italic (or bold-italic)
     /// face.
     pub italic: bool,
 }
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(a.as_raw(), cold.as_raw());
     }
 
-    // ---- D-239: italic/bold faces --------------------------------------
+    // ---- D-240: italic/bold faces --------------------------------------
 
     /// Every `group`ed entry has a real sibling — the composer in
     /// `@chroma/editor`'s `textFonts.ts` assumes a group is never a group of
@@ -849,12 +849,12 @@ mod tests {
         }
     }
 
-    /// Every italic/bold-italic entry added for D-239 resolves to a real file
+    /// Every italic/bold-italic entry added for D-240 resolves to a real file
     /// on this machine AND rasterises visible ink — a font that merely
     /// resolves but fails to outline any glyph would still be a broken
     /// picker entry. Also the source of the ink-width numbers cross-checked
     /// against the export side's real-ffmpeg measurement in
-    /// `textItalicBold.ffmpeg.test.ts` (D-239's own empirical parity check,
+    /// `textItalicBold.ffmpeg.test.ts` (D-240's own empirical parity check,
     /// the same "print it, cross-reference it" methodology
     /// `text_is_drawn_centred_on_its_own_ink_box` and D-212/D-229 already
     /// use).
@@ -892,7 +892,7 @@ mod tests {
         }
     }
 
-    /// D-239's actual empirical claim: `freetype_equivalent_scale` (D-212) is
+    /// D-240's actual empirical claim: `freetype_equivalent_scale` (D-212) is
     /// computed from each face's OWN `units_per_em`/`height_unscaled`, not
     /// hardcoded to Arial Bold's measured ratio — so it should keep the
     /// preview's ink height consistent with the export's for an italic face
@@ -939,7 +939,7 @@ mod tests {
     }
 
     /// `chroma_text_fonts` — the Tauri command both the Inspector and the MCP
-    /// `editor_text_fonts` tool read — actually carries the D-239 metadata a
+    /// `editor_text_fonts` tool read — actually carries the D-240 metadata a
     /// caller needs to compose a styled key, not just the flat list D-212
     /// shipped.
     #[test]

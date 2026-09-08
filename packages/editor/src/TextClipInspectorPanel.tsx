@@ -145,7 +145,7 @@ export function TextClipInspectorPanel() {
                 // Base UI's `Select` can hand back `null` (a cleared value);
                 // this one has no clear affordance, so ignore it rather than
                 // writing an empty font key. Changing FAMILY keeps whatever
-                // Bold/Italic is currently on (D-239) — composed via the
+                // Bold/Italic is currently on (D-240) — composed via the
                 // family's own `group`, from a base row keyed by group.
                 onValueChange={(v: string | null) => {
                   if (!v) return;
@@ -168,7 +168,7 @@ export function TextClipInspectorPanel() {
                   ))}
                 </SelectContent>
               </Select>
-              {/* D-239 — Bold/Italic toggle buttons next to the family picker,
+              {/* D-240 — Bold/Italic toggle buttons next to the family picker,
                   the universal text-editor convention (Word, Resolve's Text+,
                   Premiere's Essential Graphics, Final Cut's Titles all put
                   B/I buttons beside the font family rather than a combined
