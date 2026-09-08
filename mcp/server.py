@@ -2493,7 +2493,11 @@ def editor_set_clip_eq(
     asked for.
 
     Undoable: same store action and same undo stack the GUI's own Inspector EQ
-    section writes to, so a human can Cmd+Z it."""
+    section writes to, so a human can Cmd+Z it -- including a human dragging a
+    band's own point on the Inspector's response graph (D-237), which writes
+    through this exact op. `responseDb` is the same curve that graph draws
+    (both read `eqResponseDb`), so it's the fastest way to check a drag or a
+    call landed the same shape without a screenshot."""
     import json
 
     args: dict = {"track": track, "clip": clip}

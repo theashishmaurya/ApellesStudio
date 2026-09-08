@@ -110,16 +110,22 @@
  * all real and every row inherits the field layout and per-field reset the
  * Transform rows already have.
  *
- * Two deliberate differences from those rows, both stated in D-224 rather than
- * accidents. (1) **No keyframe diamond**: an EQ here is static, because
- * ffmpeg's biquad filters parse their parameters once as numbers, so an
- * animated EQ is not expressible in the export at all — and `PropertyRow` now
- * renders no keyframe controls when handed none rather than three dead
- * buttons. (2) **No response CURVE**: the reference's ±24 dB graph with four
- * draggable points is a real UI project of its own (log frequency axis,
- * hit-testing, drag-to-shape) and is explicitly deferred — the model, the
- * math (`eqResponseDb`) and both engines are already in place for it. Hidden
+ * One deliberate difference from those rows, stated in D-224 rather than an
+ * accident: **no keyframe diamond** — an EQ here is static, because ffmpeg's
+ * biquad filters parse their parameters once as numbers, so an animated EQ is
+ * not expressible in the export at all, and `PropertyRow` now renders no
+ * keyframe controls when handed none rather than three dead buttons. Hidden
  * for a text clip, exactly as Audio and Crop are.
+ *
+ * **D-237 — the response CURVE**, the one half of D-224 deliberately deferred
+ * there: `EqResponseGraph` (its own file) renders above these four band
+ * blocks, matching the reference's own stacking order (graph, then `Band
+ * 1`…`4`). A numbered, draggable point per band on the ±24 dB / log-frequency
+ * plot, plus the whole strip's combined response as a filled/stroked line —
+ * every dB value still comes from `eqResponseDb` (`./eq`), never re-derived.
+ * The graph and these `PropertyRow`s write the SAME `onEqBandChange`, so a
+ * drag and a typed value can never disagree about what a band's own numbers
+ * are.
  *
  * **Roadmap 25 — `PropertyRow`/`PropertyState` now live in their own file**
  * (`PropertyRow.tsx`), generalised over any param-name type rather than
@@ -145,6 +151,11 @@ import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 // resolved segments, the retime curve) rather than being a row of inputs.
 import { SpeedRampEditor } from './SpeedRampEditor';
 import type { SpeedPoint } from './speedRamp';
+// D-237 — the EQ section's own response graph, in its own file for the same
+// reason `SpeedRampEditor` is: it owns real derived geometry (the sampled
+// curve, each band's screen point, its own pointer-drag/wheel gesture state)
+// rather than being a row of inputs.
+import { EqResponseGraph } from './EqResponseGraph';
 import {
   EQ_BAND_KINDS,
   EQ_BAND_KIND_LABELS,
@@ -884,13 +895,14 @@ export function ClipInspectorPanel({
             **Four bands, laid out as Resolve lays them out**: that reference
             shows `Band 1`…`Band 4`, each a name button that doubles as the
             band's enable toggle plus a shape dropdown, over a ±24 dB response
-            graph. The four bands and the ±24 dB range are matched exactly; the
-            graph is deliberately NOT built in this pass (D-224 — an
-            interactive, log-scaled, drag-the-point curve is a real UI project
-            of its own, and half a curve renderer is worse than none). Each
-            band's Freq/Gain/Q are real `PropertyRow`s instead, so the numbers
-            are all authorable and every row gets the same field layout and
-            reset the Transform rows have.
+            graph. The four bands and the ±24 dB range are matched exactly, and
+            (D-237) so is the graph itself now — `EqResponseGraph` below,
+            rendered first so the section reads graph-then-bands exactly as the
+            reference does. Each band's Freq/Gain/Q are still real
+            `PropertyRow`s underneath it, so the numbers are all authorable and
+            every row gets the same field layout and reset the Transform rows
+            have — the graph is an ADDITIONAL affordance over the same
+            `onEqBandChange`, not a replacement for typing an exact value.
 
             The rows carry NO keyframe diamond, and that is a decision rather
             than an oversight: an EQ here is static (see `Clip.eq_bands` and
@@ -902,6 +914,7 @@ export function ClipInspectorPanel({
             Hidden for a TEXT clip, exactly as Audio and Crop are. */}
         {!clip.text && (
           <InspectorSection label="EQ">
+            <EqResponseGraph bands={eqBands} disabled={trackLocked} onBandChange={onEqBandChange} />
             {eqBands.map((band, index) => (
               <div className="flex flex-col gap-1.5 border-l border-border-color pl-2" key={index}>
                 <div className={row}>

@@ -21837,3 +21837,144 @@ none needs a schema change):
 tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
+
+## D-237 — The EQ response graph: log-frequency/±24 dB, SAMPLED not solved, Q on the scroll wheel
+
+**Context.** Roadmap item 27's last open half, and D-224's own explicitly
+deferred piece: a per-clip parametric EQ (`Clip::eq_bands`, four Resolve-shaped
+bands, real Audio EQ Cookbook biquads in both engines) shipped with real
+Freq/Gain/Q `PropertyRow`s but no way to SEE or DRAG the curve those numbers
+describe. D-224's own words: "Resolve's graph is a log-frequency ±24 dB plot
+with four draggable, hit-tested points; that is a real UI project of its own,
+and a half-built curve renderer is worse than none... Everything it needs is
+already in place and tested: `eq_response_db` (Rust) / `eqResponseDb` (TS) give
+the exact dB curve at any frequency, and both are already pinned by
+measurement." This decision is that UI project.
+
+The reference, unchanged from D-224's own: Resolve's own Clip Equalizer
+(`scratch/resolve-reference/soundtrack.jpg`) — a ±24 dB / 20 Hz–16 kHz graph
+with four numbered points over the `Band 1`…`4` blocks. Read again for this
+pass specifically: the reference's points carry no colour distinction between
+bands (all four are the same cyan, distinguished only by their number), and
+the graph shows no visible secondary gesture for Q at all — no second handle,
+no visible modifier hint. Both of those absences shaped a real decision below.
+
+**Four decisions worth recording.**
+
+### 1. The curve is SAMPLED, not solved — a real, deliberate difference from `curveEditor.ts`
+
+`ClipCurveEditor.tsx`'s own bezier curve (D-233) is drawn as an exact SVG `C`
+segment because a cubic bezier has a closed form that maps directly onto one.
+A biquad cascade's magnitude response has no such closed form in screen space —
+it is `20·log10` of a ratio of two trigonometric sums, evaluated per frequency —
+so there is no small set of control points that traces it exactly the way a
+bezier's four points do. `eqCurve.ts`'s `eqCurveSamples` therefore samples
+`eqResponseDb` at 128 points, LOG-spaced in frequency (matching the axis
+itself, so resolution is even across the whole plot rather than wasted at the
+top of a linear sampling), and draws a polyline through them. This is the same
+choice every DAW's own EQ curve makes, and at this density the polyline and a
+true smooth curve are visually identical. The response function itself is
+never re-derived: every dB value comes from the existing `eqResponseDb`
+(`chroma_types::eq`'s TS mirror), imported as-is.
+
+### 2. Points, not a fixed shape per band — position encodes what a drag means
+
+A band's own point sits at `(freqToX(freq_hz), dbToY(gain_db))` for the three
+gain-using kinds (`low_shelf`/`peak`/`high_shelf`), and at `(freqToX(freq_hz),
+dbToY(0))` — the 0 dB line — for the two pass kinds, which
+`EqBandKind::uses_gain` already says have no meaningful gain. This mirrors
+`PropertyRow`'s own existing posture on a pass filter's Gain row (disabled,
+not hidden, so the three rows never jump around as a kind changes): the point
+still marks WHERE the filter acts on the frequency axis, just carries no
+vertical information for a filter that has none. A drag of a pass filter's
+point therefore writes only `freq_hz` — never a `gain_db` it would silently
+carry until the kind changed back to something that uses it (`eqPointDragPatch`
+asserts this by shape: the returned patch object has no `gain_db` key at all
+for a pass kind, not merely a `gain_db: undefined`).
+
+Numbered rather than colour-coded, matching the reference re-read above
+exactly rather than inventing a per-band colour palette: this app's own token
+set (CLAUDE.md's "one token source" rule) has exactly one accent colour and no
+second hue to spend on band identity without introducing a magic literal the
+standing rule forbids. A bypassed band's point is drawn at reduced opacity
+(`strokeOpacity`/`fillOpacity` 0.4 vs 1), the same enabled/muted distinction
+the `Band N` button below it already uses — so "off" reads as visibly
+different from "on" without a colour this token set does not have.
+
+### 3. Q is a scroll-wheel-over-the-point gesture, checked against Logic Pro's own convention
+
+The one real gap in the reference: Resolve's own screenshot shows no visible
+secondary drag axis or modifier hint for Q at all, so this could not be "build
+what the picture shows" the way frequency/gain could. Per CLAUDE.md's
+research-first rule, this was cross-checked against Apple's own "Channel EQ
+parameters" Logic Pro guide, which documents multiple real conventions
+including "adjust the Q value by scrolling with the mouse wheel while
+hovering over a band." Scroll-wheel was chosen over Logic's other options
+(dragging a second, separate handle; an Option-Command modifier drag) for two
+reasons: this app's own `PreviewPane`/`TimelinePane` already train a user to
+reach for the scroll wheel as a secondary axis on exactly this kind of
+control (their own zoom gestures), so the affordance is discoverable rather
+than hidden behind a modifier key nobody would try by accident; and a second
+draggable handle per point would be a new visual element the reference does
+not show at all, whereas a wheel gesture adds no new geometry to the plot.
+
+`eqQAfterWheel` steps Q **multiplicatively** (a constant ~1.08× per wheel
+notch), not additively — `Q` spans two orders of magnitude
+(`EQ_MIN_Q..EQ_MAX_Q`, 0.1..20), so a fixed additive step would be inert at
+the narrow end and useless at the wide end, the same reasoning the log
+frequency axis itself is built on.
+
+**Debounced to one commit per gesture**, not per wheel tick. A pointer drag
+has a natural "release" event to commit on (`ClipCurveEditor`/`ClipFadeOverlay`
+/`TransformOverlay`'s own established convention, followed here too — draft
+state during the gesture, one `onBandChange` on pointer-up, nothing committed
+by a drag that ends where it began, Escape cancels); a wheel gesture has no
+such event — a real trackpad fires many `wheel` events per finger swipe. The
+first implementation committed inside a `setQDraft` functional updater, which
+React 18 StrictMode's own double-invoke-to-check-purity behaviour caught
+immediately as a real bug (an updater must be pure; this one had a side
+effect, so it fired the commit twice under StrictMode) — fixed by capturing
+the pending Q directly in the timeout's closure instead of re-reading it from
+state, which is simpler besides. `EQ_Q_WHEEL_COMMIT_MS` (250 ms) collapses a
+whole scroll gesture into the same one-commit-per-real-edit shape the pointer
+drag already has.
+
+### 4. No new MCP tool — the graph is a GUI affordance over the existing one
+
+Per this repo's own D-214 precedent (a GUI control need not always pair with a
+NEW tool when an existing one already covers the capability structurally):
+`editor_set_clip_eq` already accepts a per-band `freq_hz`/`gain_db`/`q` patch
+and already returns `responseDb` (the resolved curve at nine standard
+frequencies) plus the stored bands and `eqActive`. A drag on the graph and a
+typed `PropertyRow` value both resolve to exactly that same op
+(`onEqBandChange` → `applyOp({ kind: 'set_clip_eq', ... })`), so there is
+nothing for a new MCP parameter to add — an agent reading `responseDb` back
+already sees the identical curve this graph draws, computed by the identical
+function (`eqResponseDb`/`eq_response_db`).
+
+**Verification.** `eqCurve.test.ts` (28 tests): the log-frequency/±24 dB axis
+round-trips and clamps correctly, every sampled curve point's own dB is
+asserted EQUAL to `eqResponseDb`'s own value at that exact frequency (not
+merely "renders"), checked again at seven named standard frequencies, a
+disabled band contributes nothing to the sampled curve, a pass filter's drag
+patch carries no `gain_db` key at all, and the wheel-to-Q mapping is checked
+for direction, clamping and round-trip stability. `EqResponseGraph.dom.test
+.tsx` (10 tests, real `PointerEvent`/`WheelEvent`s per `pointerHarness.ts`):
+one point per band, a bypassed band visibly dimmer, a drag committing exactly
+one patch with both freq/gain (or freq alone for a pass filter), a same-start
+drag committing nothing, Escape cancelling in flight, a locked/disabled graph
+ignoring both press and wheel, and a multi-tick wheel gesture collapsing to
+one commit after the debounce settles. `ClipInspectorPanel.eq.dom.test.tsx`
+gained 3 more (real store, real `EditorInspectorPanel`): the graph renders
+above the band blocks in DOM order matching the reference's own stacking, a
+graph drag writes through the identical `set_clip_eq` op and leaves every
+other band's own frequency untouched, and a locked track's graph does not
+respond to a drag at all. `npx tsc --noEmit -p packages/editor` clean. No
+Rust changed — `eq_response_db`/`eqResponseDb` were consumed as-is, per this
+decision's own point 1.
+
+**Not verified: seen in the running app.** Same honest gap several sessions
+before this one have recorded (D-223/D-224/D-232) — this environment cannot
+launch the Tauri window, so this is `vitest`/jsdom evidence of the authoring
+contract and the drawn geometry, not a screenshot of the real graph rendering
+in a real browser paint.

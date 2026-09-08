@@ -877,16 +877,20 @@ real-DOM Inspector, 12 model/reducer, 5 real-ffmpeg).
    environment cannot launch the Tauri window, so the live mixer's half is
    `cargo test` evidence and the export's half is real measured ffmpeg output.
    Neither is a demonstration that it *sounds* right.
-2. **No response CURVE in the Inspector** — the one thing deliberately scoped
-   out. Resolve's ±24 dB / log-frequency graph with four draggable, hit-tested
-   points is a real UI project of its own, and half a curve renderer is worse
-   than none. Everything it needs already exists and is already pinned by
-   measurement: `eq_response_db` (Rust) and `eqResponseDb` (TS) give the exact
-   dB curve at any frequency, and the MCP tool already reports it at nine
-   standard frequencies. Tracked in `docs/04-roadmap.md` item 27.
-3. **No frequency-log drag.** The Freq field steps linearly by 10 Hz, which is a
-   useful nudge in the low-mids and a poor one at 8 kHz. A log-scaled drag
-   belongs with the curve UI above, not before it.
+2. ~~**No response CURVE in the Inspector**~~ — **DONE, 2026-09-08 (D-237).**
+   `EqResponseGraph.tsx`: Resolve's ±24 dB / log-frequency graph, a numbered
+   draggable point per band (horizontal = frequency log-scaled, vertical =
+   gain for the gain-using kinds), the combined response as a filled/stroked
+   curve sampled from `eqResponseDb` itself, and Q on a scroll-wheel-over-the-
+   point gesture (checked against Logic Pro's own Channel EQ convention —
+   Resolve's own reference shows no secondary axis for Q). This also closes
+   gap 3 below: a point's horizontal drag IS the log-scaled frequency drag,
+   so the Freq `PropertyRow`'s own linear 10 Hz step is no longer the only way
+   to move it.
+3. ~~**No frequency-log drag.**~~ — **DONE, 2026-09-08 (D-237)**, by the graph
+   above rather than a change to the Freq field itself (which still steps
+   linearly for precise nudging — the two controls are complementary, not one
+   replacing the other).
 4. **No pitch control.** The same Resolve Inspector shows Clip Pitch
    (semitones + cents) between Pan and the Equalizer. Not built, not started —
    it needs real time-domain pitch shifting in the live mixer, which is a

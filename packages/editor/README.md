@@ -78,6 +78,20 @@ dragging a pool item in from the shell's Sources panel.
   preview-vs-render divergence. The two are pinned by one shared response table
   that each side measures through its own engine. `timeline.ts` re-exports the
   type and the helpers, so nothing else has to know which file they came from.
+- `eqCurve.ts` + `EqResponseGraph.tsx` (D-237, roadmap item 27) — the response
+  graph D-224 deliberately deferred: Resolve's ±24 dB / log-frequency plot,
+  with a numbered, draggable point per band and the combined response drawn as
+  a filled/stroked line, rendered above the Inspector's four EQ band blocks.
+  `eqCurve.ts` is the pure geometry (log-frequency/±24 dB screen mapping, the
+  sampled curve, a band's own point, drag-to-patch, the scroll-wheel-to-Q
+  mapping) — it computes no response value itself, importing `eqResponseDb`
+  from `eq.ts` rather than re-deriving it, the same pure/wiring split
+  `curveEditor.ts` + `ClipCurveEditor.tsx` use. `EqResponseGraph.tsx` is the
+  component: pointer drag for freq/gain (overlay-draft-then-commit-on-release,
+  this package's own established convention), scroll wheel for Q (debounced to
+  one commit per gesture). Writes through the same `onEqBandChange` the
+  Freq/Gain/Q `PropertyRow`s already do — no new MCP surface, since
+  `editor_set_clip_eq` already reports the same `responseDb`.
 - `TimelineMarkers.tsx` (D-222, roadmap item 27) — timeline markers: the flag
   strip drawn in the band between the ruler's ticks and track 0 (Resolve's own
   placement), the marker editor popover, the jump-to dropdown and the toolbar's

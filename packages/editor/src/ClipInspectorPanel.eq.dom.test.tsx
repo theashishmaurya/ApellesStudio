@@ -24,6 +24,12 @@
  * nothing about what is heard; that is `chroma-media`'s own measured cascade
  * tests and `timelineExport.ffmpeg.test.ts`'s real-ffmpeg response
  * measurement.
+ *
+ * **D-237** adds one more thing this tier is the only place that can prove:
+ * that `EqResponseGraph` — otherwise covered on its own, with its drag/wheel
+ * gestures, by `EqResponseGraph.dom.test.tsx` — is really wired to the SAME
+ * `onEqBandChange`/`applyOp` path as the `PropertyRow`s below it, through the
+ * real `EditorInspectorPanel`/store, not merely unit-tested in isolation.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -31,11 +37,15 @@ import React from 'react';
 
 import {
   actSync,
+  dragPointer,
   installResizeObserverStub,
+  linearPath,
   mount,
+  stubOffsetMetrics,
   waitFrames,
   type MountedComponent,
 } from './testUtils/pointerHarness';
+import { dbToY, freqToX } from './eqCurve';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: async (cmd: string) => {
@@ -81,9 +91,20 @@ function currentClip(): Clip {
 
 let mounted: MountedComponent | null = null;
 let restoreResizeObserver: (() => void) | null = null;
+// D-237 — gives the new response graph a real, fixed pixel size to compute
+// its screen mapping against (jsdom has no layout engine, so an unstubbed
+// `clientWidth` is always 0 and the graph would draw nothing at all). Global
+// for the whole file rather than per-graph-test only: every other assertion
+// here reads DOM values/attributes, not geometry, so a fixed offset size is
+// harmless to them.
+let restoreOffsetMetrics: (() => void) | null = null;
+
+const EQ_GRAPH_WIDTH = 280;
+const EQ_GRAPH_HEIGHT = 92;
 
 beforeEach(() => {
   restoreResizeObserver = installResizeObserverStub();
+  restoreOffsetMetrics = stubOffsetMetrics(EQ_GRAPH_WIDTH, EQ_GRAPH_HEIGHT);
   useEditorTimelineStore.setState({
     timeline: fixture(),
     status: 'ready',
@@ -100,6 +121,8 @@ afterEach(() => {
   mounted = null;
   restoreResizeObserver?.();
   restoreResizeObserver = null;
+  restoreOffsetMetrics?.();
+  restoreOffsetMetrics = null;
 });
 
 /** Every band's own container, in render order — found by the band-number
@@ -257,5 +280,68 @@ describe('the Inspector EQ section (D-224)', () => {
     expect(bandButton(0).disabled).toBe(true);
     expect(bandField(0, 'Freq').disabled).toBe(true);
     expect(bandField(0, 'Gain').disabled).toBe(true);
+  });
+
+  describe('the response graph (D-237)', () => {
+    it('renders above the four band blocks, one point per band', async () => {
+      await render();
+      const graph = mounted?.container.querySelector('[data-chroma-eq-graph]');
+      expect(graph).not.toBeNull();
+      expect(graph?.querySelectorAll('[data-chroma-eq-point]')).toHaveLength(EQ_BAND_COUNT);
+      // Above, not below — matches the reference's own stacking order.
+      const firstBandBlock = bandBlocks()[0];
+      expect(
+        graph!.compareDocumentPosition(firstBandBlock) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it('dragging a band’s point writes through the SAME onEqBandChange path a typed PropertyRow value does', async () => {
+      await render();
+      const point = mounted?.container.querySelector('[data-chroma-eq-point="2"]') as SVGCircleElement;
+      if (!point) throw new Error('no graph point for band 3');
+      const startFreq = 2_500; // band 3's own default (see fourBands' fixture)
+      const startX = freqToX(startFreq, EQ_GRAPH_WIDTH);
+      const startY = dbToY(0, EQ_GRAPH_HEIGHT);
+      const targetX = freqToX(6_000, EQ_GRAPH_WIDTH);
+      const targetY = dbToY(-8, EQ_GRAPH_HEIGHT);
+
+      await dragPointer(point, linearPath({ x: startX, y: startY }, { x: targetX, y: targetY }, 4), {
+        moveTarget: window,
+      });
+
+      // The real store, through the real `set_clip_eq` op — not a callback
+      // spy — which is what proves the graph and the Inspector's own
+      // Freq/Gain PropertyRows are two views of the identical write.
+      const bands = currentClip().eq_bands;
+      expect(bands?.[2].freq_hz).toBe(6_000);
+      expect(bands?.[2].gain_db).toBe(-8);
+      // …and every OTHER band's own frequency is untouched — a graph drag is
+      // as scoped to its one band as a typed field already is.
+      expect(bands?.[0].freq_hz).toBe(120);
+      expect(bands?.[1].freq_hz).toBe(500);
+      expect(bands?.[3].freq_hz).toBe(8_000);
+    });
+
+    it('a locked track’s graph does not respond to a drag', async () => {
+      useEditorTimelineStore.setState({
+        timeline: {
+          ...fixture(),
+          tracks: [{ kind: 'video', locked: true, clips: fixture().tracks[0].clips }],
+        } as unknown as Timeline,
+      });
+      await render();
+      const point = mounted?.container.querySelector('[data-chroma-eq-point="0"]') as SVGCircleElement;
+      if (!point) throw new Error('no graph point for band 1');
+      await dragPointer(
+        point,
+        linearPath(
+          { x: freqToX(120, EQ_GRAPH_WIDTH), y: dbToY(0, EQ_GRAPH_HEIGHT) },
+          { x: freqToX(4_000, EQ_GRAPH_WIDTH), y: dbToY(10, EQ_GRAPH_HEIGHT) },
+          4,
+        ),
+        { moveTarget: window },
+      );
+      expect(currentClip().eq_bands).toBeUndefined();
+    });
   });
 });
