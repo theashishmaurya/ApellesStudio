@@ -19473,3 +19473,181 @@ and conclude the transform is broken.
   Accessibility window, so there is nothing to aim a synthetic click at. What
   is now covered is everything up to that: real app, real WKWebView, real
   control server, real compositor, and a picture of the result.
+
+---
+
+## D-218 — Preview viewport zoom: a mathematical transform of the content box, not a scrolled container
+
+**Context.** Roadmap item 25, reported live by the owner with a screenshot of the
+Edit tab: *"i should be able to zoom in the canvas also."* The timeline has had a
+real zoom control since D-051 (`ZoomOut` / `{pct}%` / `ZoomIn`, plus ctrl-wheel);
+the preview pane had none, so the composited frame could only ever be looked at
+at whatever size the panel happened to be — no way to magnify an edge, a title,
+or a colour boundary for close inspection.
+
+**The reference is this repo's own timeline control, deliberately, not an
+external scrape.** CLAUDE.md's "research the real pattern first" rule exists to
+stop bespoke UI guessing where a proven pattern already exists — and one does,
+already shipped and tested, in this exact tab. So the widget is
+`TimelinePane.tsx`'s own cluster verbatim in shape: the same two lucide icons,
+the same ghost buttons, the same `w-10 tabular-nums` percentage readout, the same
+`1.2` step, and the same ctrl/pinch-vs-plain wheel split (whose own comment
+already worked out why `ctrlKey` — not a physical Ctrl key — is the correct test,
+and why the listener has to be native and non-passive). Consistency inside one
+tab beats matching Resolve's viewer dropdown exactly; the one addition Resolve's
+control has that the timeline's does not is a **reset**, which the preview needs
+because it can be panned and the timeline cannot get lost, so the percentage
+readout is itself the reset button.
+
+**The real decision: how the zoom is applied.** Three surfaces already convert
+between screen pixels and composition fractions through `@chroma/player`'s
+`useContentBox` — `TransformOverlay` (D-136), `useCanvasClipPick`/`canvasPick`
+(D-204), `CanvasBoundary` (D-199) — and that coordinate contract is exactly where
+B-085, B-092, B-093, D-209 and D-216 were all fought. `useContentBox`'s own
+documented assumption is that its container fills the space the `object-contain`
+picture is centred within, i.e. a viewport-filling FIT layout. Two options:
+
+- **(a) CSS `overflow: auto` on the container + a real scroll offset.** The
+  browser does the panning. But `useContentBox` would then be measuring a
+  viewport that is no longer the picture's frame: `clientWidth` excludes a
+  scrollbar (changing the letterboxing), the scroll offset is DOM state that
+  changes without a React render, and every one of the three consumers would
+  have to add `scrollLeft`/`scrollTop` to its own conversions and subscribe to
+  `scroll`. Done "properly" — an inner content div sized to the zoomed picture,
+  with the overlays inside it — the consumers need no arithmetic change at all,
+  which is genuinely attractive. It was rejected anyway for one decisive reason:
+  **it moves the correctness into the browser's layout engine, which this
+  repo's test tier cannot see.** `packages/editor`'s DOM suites run in jsdom,
+  which has no layout, no scrolling and a zero `getBoundingClientRect` — so
+  "click-to-select still lands on the right clip at 200%, panned" would have
+  been unprovable by anything but a human looking at the window. Given that the
+  three surfaces at risk have between them needed five live bug fixes already,
+  shipping their most invasive change yet with no automated coverage was not a
+  trade worth making.
+- **(b) Chosen: keep the DOM at fit size and transform the box arithmetically.**
+  `useContentBox` still measures exactly what it always measured, its own
+  contract stays true, and the zoom is applied strictly AFTER it by
+  `previewZoom.ts`'s `zoomedContentBox`. The picture gets the identical
+  transform as one CSS `translate(...) scale(...)` on the `<img>`
+  (compositor-only: no layout, no re-decode, no IPC — which matters, since the
+  preview frame is a server-rendered JPEG, `docs/notes/on-canvas-transform.md`'s
+  "no cheap live re-render" finding). The three consumers change by exactly one
+  line each — `useContentBox` → `usePreviewContentBox` — because **a zoomed
+  content box is still a content box**: every fraction↔pixel conversion in
+  `transformGeometry.ts` keeps its meaning, and a drag at 200% correctly commits
+  half the fraction delta the same screen-pixel drag commits at 100%.
+
+The one shared hook matters as much as the math: before this, the three surfaces
+each called `useContentBox` independently and so agreed pixel-for-pixel *by
+construction* rather than by being handed a value. `usePreviewContentBox` keeps
+that property (one derivation, three callers) instead of leaving three places
+that each have to remember to multiply.
+
+**Units — pan is a fraction of the FIT box, not screen pixels.** `zoom` is a
+multiplier on the fit size (`1` = fit); `panX`/`panY` are the picture centre's
+offset from the fit box's centre, in fit-box widths/heights. Two consequences,
+both the reason for it: clamping is then pure — the picture may pan until its own
+edge reaches the fit box's edge, which in these units is exactly
+`|pan| <= (zoom - 1) / 2`, needing no DOM measurement, which is what makes every
+function in `previewZoom.ts` unit-testable in this package's `node` vitest; and a
+pan survives a panel resize instead of sliding the picture.
+
+**100% means FIT, not 1:1.** Resolve and Premiere both mean "one output pixel per
+screen pixel" by 100%. Chroma deliberately does not, for two reasons: the
+timeline's own `zoomPct` already means "relative to the default view" and the two
+readouts sit in one tab; and the preview is a resolution-capped proxy
+(`PREVIEW_LONG_EDGE = 960`), so a "100%" claiming 1:1 would be claiming fidelity
+for pixels that are not in the payload. Magnification beyond fit therefore
+enlarges the proxy — real for inspecting placement, alignment and colour
+boundaries, not a replacement for a full-resolution render. Fetching a
+higher-resolution frame while zoomed is the obvious follow-up and is deliberately
+NOT attempted here: it walks straight into D-125's trap (a different long edge
+respawns every ffmpeg decode pipe), and is logged as its own roadmap line rather
+than smuggled in.
+
+**Scope decisions worth stating.** The zoom is display-only and touches no
+`Clip.scale`/`position_*` and no composition size — different concepts, kept in
+different units so they cannot be confused. It is **store UI state, not
+undoable**, on exactly D-216's reasoning: `previewView` is a field of the store,
+not of `Timeline`, so it never reaches `project.json`, D-051's whole-`Timeline`
+snapshots have never carried it, and a zoom on the undo stack would sit between
+the user and their last real edit. It resets on a **project change** (a different
+composition, possibly a different aspect ratio) but deliberately NOT on a
+selection change or a timeline switch — a viewer zoom is a persistent viewing
+preference in every reference NLE, and one that reset on every clip click would
+be useless for the inspection it exists for.
+
+**Both interfaces, same pass** (CLAUDE.md's standing rule): the GUI cluster and
+the ctrl-wheel gesture, and `editor_set_preview_zoom` + `editor_get_state`'s new
+`previewZoom` block over MCP, all driving the one clamped `setPreviewView` store
+action. The read half matters on its own: a `debug_screenshot` of the preview is
+uninterpretable without knowing the view, since at a non-fit view the picture on
+screen is a magnified crop of the frame.
+
+**`@chroma/player`'s `zoom` prop was reshaped, not added.** `Player` already
+carried an unused `zoom?: 'fit' | number` + `onZoomChange` pair rendering a
+`Search`-icon cycling button through `['fit', 50, 100, 200]` — no caller, in any
+tab. Rather than leave that beside a second, differently-shaped preview zoom, it
+became the timeline-shaped cluster: `zoom?: number` (1 = fit) plus
+`onZoomIn`/`onZoomOut`/`onZoomReset`, carrying **no math at all** — no bounds, no
+step, no clamping. That keeps the package presentational per its own contract
+(only a tab knows what its `surface` is) and lets Motion/Colorist adopt the same
+control later without inheriting the Edit tab's bounds.
+
+**Verified.** `previewZoom.test.ts` — 22 pure cases (clamping, the pan limit
+proved as "edge meets edge" through the box itself, zoom-about-anchor invariance,
+the round trip of a composition fraction through the zoomed box, and the
+same-pixels-fewer-fractions property a broken zoom would violate).
+`PreviewPane.zoom.dom.test.tsx` — 24 real-DOM cases on the real component tree:
+click-to-select resolving the correct clip at 200%-and-panned through a point
+chosen so the fit mapping would resolve a DIFFERENT clip (both halves asserted,
+so a regression fails for the real reason); a body drag at 200% committing `0.1`
+and explicitly not the pre-zoom `0.2`; a corner drag while zoomed AND panned;
+the box, the canvas boundary and the `<img>` transform all at the zoomed rect;
+the wheel split including `preventDefault` actually happening; the whole
+`editor_set_preview_zoom` op driven through the real `chroma://request` pair with
+its DOM consequence asserted, and zero pushes onto the undo stack. The four
+pre-existing preview suites (`pick`, `transform`, `selection`, `staleness`, plus
+`TransformOverlay.textClip`) pass **unmodified** — their fixtures assume the fit
+view, which is exactly the default. `npm test --workspace @chroma/editor`
+766/766; `tsc` clean for `@chroma/editor` and `@chroma/player`; the React
+Compiler guard passes for all three new files.
+
+**And verified in a real browser** — D-142's permanent Chromium harness
+(`app/harness.html?mode=preview`), the tier jsdom explicitly cannot reach: real
+layout, real paint, real hit-testing. Getting there required fixing the harness
+first (**B-099**: D-217 left a `data:` prefix on the string it started passing to
+`atob`, so the page had been throwing at module load and mounting nothing ever
+since — the whole real-browser tier was silently dead). What it then showed, on
+a real 1280×688 viewport with a 1920×1080 composition:
+
+1. **One screen point, two answers, both correct.** A press at `(457, 270)`
+   dispatched at whatever `document.elementFromPoint` really returns — not a
+   target the test chose — selects the **background** at fit and the **PIP** at
+   200%-with-a-quarter-pan, because that point is composition fraction 0.35 in
+   one mapping and 0.30 in the other. At zoom the real browser routed it to the
+   selected clip's own full-bleed `DIV.absolute` overlay and D-204's
+   capture-phase decision still picked correctly through it — B-085's exact
+   hazard, now checked at zoom.
+2. **The overlays land on the picture.** The transform box measured
+   `{-94, -69, 612, 344}` against a computed expectation of `{-94, -69, 612,
+   344}`, and the `<img>`'s real computed transform was
+   `matrix(2, 0, 0, 2, 305.778, 172)` against an expected
+   `translate(0.25 × 1223.11, 0.25 × 688) scale(2)`.
+3. **A real drag commits the zoom-aware value.** A 200 px × 100 px pointer drag
+   on the box body at 200% committed `position_x = -0.21824128` against the
+   zoom-aware `-0.21824116` (7 decimal places; the residue is the drag path's
+   sub-pixel steps) and NOT the fit mapping's `-0.13648`.
+4. **The gesture split behaves.** Plain wheel at fit: not prevented, view
+   unchanged. Ctrl/pinch wheel: prevented (so the webview's own page zoom cannot
+   fire) and 100% → 120%. Plain wheel once zoomed: prevented, and pans.
+5. **The control looks right.** Screenshots at 100% and 207% show the cluster
+   sitting where the timeline's does, the readout tracking, and the boundary +
+   transform box magnifying together. Zero console errors beyond a pre-existing
+   `favicon.ico` 404.
+
+Not verified in a real Tauri/WKWebView window this pass (a second instance needs
+its own full Rust build, and the owner's own dev server was live) — the same
+last tier D-216 reached with `debug_screenshot`, and the same honest caveat every
+harness-verified entry since D-125 carries: Chromium is a different engine from
+WKWebView.

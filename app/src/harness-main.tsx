@@ -158,9 +158,16 @@ const HARNESS_PROJECT_KEY = '/harness/fake.chroma';
  *  real command answers with a `tauri::ipc::Response`, which reaches the
  *  frontend as an `ArrayBuffer`, and `PreviewPane` wraps that in a `Blob`
  *  object URL. A harness that still returned a `data:` URL would no longer be
- *  modelling the backend it exists to stand in for. */
+ *  modelling the backend it exists to stand in for.
+ *
+ *  **B-099 — this is the bare base64 payload, with no `data:image/jpeg;base64,`
+ *  prefix, and it has to stay that way.** D-217 rewrote the line below to
+ *  `atob(...)` but left the prefix on the string, so `atob` threw
+ *  `InvalidCharacterError` at module load and this whole page mounted
+ *  nothing — the real-Chromium tier was silently dead from that commit until
+ *  it was next opened. See B-099. */
 const STUB_FRAME_BASE64 =
-  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAJABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAJABADASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
 
 /** `STUB_FRAME_BASE64` as the bytes the real command returns. Decoded once,
  *  at module load, and handed out as a fresh copy per call — `Blob` does not

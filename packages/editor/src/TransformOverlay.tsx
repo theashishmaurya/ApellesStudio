@@ -111,8 +111,8 @@
  * teaching this component (or the store reducer) to refuse mid-drag.
  */
 import { useEffect, useRef, useState } from 'react';
-import { useContentBox } from '@chroma/player';
 
+import { usePreviewContentBox } from './usePreviewContentBox';
 import {
   clipSourceFrame,
   hasParamKeyframes,
@@ -181,7 +181,12 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
 
   const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
 
-  const contentBox = useContentBox(
+  // D-218 — the picture's real on-screen rect, i.e. the `object-contain` fit
+  // box with the preview's own viewport zoom/pan composed on top. Every
+  // fraction<->pixel conversion below (`localPoint`, `boxToScreenRect`) is
+  // unchanged and stays correct at any zoom: the box just maps a fraction
+  // onto more (or fewer) screen pixels. See `usePreviewContentBox`'s doc.
+  const contentBox = usePreviewContentBox(
     container,
     geometry ? { width: geometry.compWidth, height: geometry.compHeight } : null,
   );

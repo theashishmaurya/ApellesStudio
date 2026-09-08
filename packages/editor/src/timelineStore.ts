@@ -67,6 +67,7 @@ import { create } from 'zustand';
 import { useHistoryStore } from '@chroma/history';
 
 import { applyOp as applyOpPure, labelForOp, timelineDuration, type EditOp, type Timeline } from './timeline';
+import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -153,6 +154,21 @@ interface EditorTimelineState {
   selection: Selection[];
   /** the current gap selection (D-105), mutually exclusive with `selection` */
   selectedGap: SelectedGap | null;
+  /** D-218 — the preview pane's VIEWPORT zoom + pan (`previewZoom.ts`).
+   *
+   *  UI state, exactly like `selection` above and for exactly D-216's
+   *  reasons: it is not part of `Timeline`, so it never reaches
+   *  `project.json`, D-051's whole-`Timeline` undo snapshots have never
+   *  carried it, and a `cmd-Z` after zooming must undo the user's last real
+   *  EDIT, not their last look at the picture. It lives in the store rather
+   *  than in `PreviewPane`'s own `useState` for the same reason `selection`
+   *  was lifted here: more than one surface needs it (the pane, its three
+   *  overlays, and `editor_set_preview_zoom` over MCP), and a module-level
+   *  zustand store is reachable from the control bridge without any ref
+   *  plumbing (`useEditorControl.ts`'s own module doc).
+   *
+   *  Nothing here is a clip's `scale`/`position_*` — see `previewZoom.ts`. */
+  previewView: PreviewView;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -189,6 +205,13 @@ interface EditorTimelineState {
    *  site to be rewritten to close over the store's `get()` instead. */
   setSelection: (selection: Selection[] | ((prev: Selection[]) => Selection[])) => void;
   setSelectedGap: (gap: SelectedGap | null) => void;
+  /** D-218 — set the preview viewport's zoom/pan. Always clamped through
+   *  `clampPreviewView`, so no caller (the toolbar buttons, the wheel
+   *  gesture, or `editor_set_preview_zoom` over MCP) can leave the picture
+   *  out of range or panned off into nothing. Accepts a `useState`-style
+   *  updater as well as a value, matching `setSelection` above — the wheel
+   *  and button handlers each derive the next view from the current one. */
+  setPreviewView: (view: PreviewView | ((prev: PreviewView) => PreviewView)) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -261,6 +284,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   timelines: [],
   selection: [],
   selectedGap: null,
+  previewView: FIT_VIEW,
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -295,6 +319,16 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
       timelines: [],
       selection: [],
       selectedGap: null,
+      // D-218 — a project switch resets the preview view, for the same reason
+      // it resets the playhead just above: the zoom/pan the user left behind
+      // was a look at a DIFFERENT composition (possibly a different aspect
+      // ratio entirely), so carrying it over would open the new project
+      // already magnified into a corner of a frame nobody has seen yet. It
+      // deliberately does NOT reset on a selection change or a timeline
+      // switch within one project — a viewer zoom is a persistent viewing
+      // preference in every reference NLE, and losing it on every clip click
+      // would make it useless for the inspection it exists for.
+      previewView: FIT_VIEW,
     });
 
     if (key === null) return;
@@ -370,6 +404,11 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     })),
 
   setSelectedGap: (gap) => set({ selectedGap: gap, selection: gap ? [] : get().selection }),
+
+  setPreviewView: (view) =>
+    set((s) => ({
+      previewView: clampPreviewView(typeof view === 'function' ? view(s.previewView) : view),
+    })),
 
   applyOp: (op) => {
     const before = get().timeline;

@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **The preview canvas can be zoomed and panned (D-218,
+  roadmap 25).** Owner, live: *"i should be able to zoom in the canvas also."*
+  A `−  100%  +` cluster shaped exactly like the timeline's own (same icons,
+  same step, same ctrl/pinch-wheel split; the readout doubles as reset-to-fit),
+  25%–800%, `editor_set_preview_zoom` + `editor_get_state.previewZoom` in the
+  same pass. Zoom is a mathematical transform of the `useContentBox` rect, not
+  `overflow: auto` scrolling — chosen so the three on-canvas surfaces
+  (`TransformOverlay`, `useCanvasClipPick`, `CanvasBoundary`) need no change to
+  their coordinate math AND stay provable in jsdom: 46 new tests, including
+  click-to-select and both drag gestures proven correct at 200%-and-panned, plus
+  a real-Chromium pass with real hit-testing. 100% means fit, not 1:1 — the
+  preview is a capped proxy; D-218 says why. **B-099 fixed on the way**: D-217
+  had left `app/src/harness-main.tsx` calling `atob` on a string that still
+  carried its `data:` prefix, so the real-browser harness threw at module load
+  and mounted nothing — that verification tier had been silently dead since.
 - **2026-09-08** — **B-098 fixed: `editor_export` now animates keyframed crop
   insets too.** The last of the nine keyframeable transform properties to
   reach the export compiler — all nine now animate identically in the
