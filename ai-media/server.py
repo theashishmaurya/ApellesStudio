@@ -60,6 +60,7 @@ from pydantic import BaseModel
 
 import transcribe as transcribe_mod
 import video_understand as vu_mod
+from errors import UserFacingError
 
 app = FastAPI(title="chroma-ai-media")
 
@@ -139,10 +140,18 @@ def _snapshot(job_id: str) -> dict:
 def _run_job(job_id: str, fn) -> None:
     """Every worker body: hold the GPU lock, run, record the outcome. A failure
     is recorded on the job (so the poller sees a real message) rather than
-    raised into a daemon thread where nothing would ever read it."""
+    raised into a daemon thread where nothing would ever read it.
+
+    B-119 — a `UserFacingError` is recorded as its message ALONE. This string
+    is what the Edit tab's own error line displays verbatim, so the class-name
+    prefix below (right for an unexpected `KeyError`, where it is real
+    diagnostic information) is exactly wrong for a fault we predicted and wrote
+    a sentence about. See `errors.py`."""
     try:
         with _GPU:
             _finish(job_id, result=fn())
+    except UserFacingError as e:
+        _finish(job_id, error=str(e))
     except Exception as e:  # noqa: BLE001 — the job record IS the error channel
         _finish(job_id, error=f"{type(e).__name__}: {e}")
 

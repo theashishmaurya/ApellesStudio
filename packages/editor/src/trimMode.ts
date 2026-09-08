@@ -273,3 +273,79 @@ export function trimModeLabel(mode: TrimMode): string | null {
       return null;
   }
 }
+
+/**
+ * What the mode about to fire actually DOES to the timeline, in one clause
+ * (D-250). `null` for the two unarmed modes, exactly as [`trimModeLabel`].
+ *
+ * A name alone is not an affordance for someone who does not already know
+ * these four edits apart — "Slide" and "Slip" in particular are a pair whose
+ * names carry no hint of which is which. Blackmagic's own page copy is the
+ * source for each clause (`scratch/resolve-reference/resolve-edit-features
+ * .json`, `edit-trim`): "A roll trim works on both the left and right sides of
+ * an edit at the same time... the overall length of your timeline remains the
+ * same"; "Rippling will extend or shorten the beginning or end of a clip...
+ * everything to the right of the edit is pushed down the timeline or pulled
+ * in"; "Slipping changes the portion of a clip that you see in the timeline by
+ * moving its" [source in and out points together]. Slide's clause is the
+ * remaining one, and is what `applyOp`'s own `slide` case does.
+ */
+export function trimModeHint(mode: TrimMode): string | null {
+  switch (mode) {
+    case 'ripple':
+      return 'trim this edge, push everything after it';
+    case 'roll':
+      return 'move the cut, both clips keep their length';
+    case 'slip':
+      return 'change what is shown, keep the clip where it is';
+    case 'slide':
+      return 'move the clip, its neighbours absorb it';
+    default:
+      return null;
+  }
+}
+
+/**
+ * The `cursor` a clip shows while armed (D-250) — the half of Resolve's own
+ * affordance that Chroma CAN reproduce.
+ *
+ * The reference's rule is that the signal lives at the pointer: "You'll see the
+ * cursor change to different types of trim tools as you move your mouse. This
+ * is known as context sensitive trimming" (`edit-trim`). D-235 read that and
+ * shipped a toolbar readout, because reproducing the four glyphs in
+ * `trim.jpg` means shipping four cursor bitmaps. This is the middle ground: the
+ * STANDARD cursor keywords, which need no assets and which every platform
+ * already draws — a horizontal double-arrow for the two edge edits (the same
+ * cursor the plain trim already uses, because they are the same kind of
+ * gesture) and a move cursor for the two body edits, so the pointer at least
+ * changes the moment the tool arms. The two that the keywords cannot tell apart
+ * (slip vs. slide) are named by the badge instead; nothing here is the only
+ * signal for any mode.
+ */
+export function trimModeCursor(mode: TrimMode): string {
+  switch (mode) {
+    case 'ripple':
+    case 'roll':
+    case 'trim':
+      return 'ew-resize';
+    case 'slip':
+    case 'slide':
+      return 'grabbing';
+    default:
+      return 'grab';
+  }
+}
+
+/** The one sentence that teaches the arm key exists at all (D-250).
+ *
+ *  D-235 shipped four real edits reachable ONLY by already knowing to hold
+ *  Alt/Option, with no on-screen sign anywhere that the key does anything —
+ *  its readout appears only once the key is already down. Resolve does not
+ *  have this problem because its trim tool is a visible button in a visible
+ *  toolbar ("Select the trim icon in the toolbar, then click anywhere inside a
+ *  clip"); Chroma has no tool palette, so the key itself has to be announced.
+ *  This goes on every clip's own tooltip — visible on dwell, invisible the
+ *  rest of the time, which is the right cost for a hint you need exactly once.
+ */
+export const TRIM_ARM_HINT =
+  'Hold ⌥ Option and drag: an edge rolls or ripples, the top half slips, the bottom half slides.';

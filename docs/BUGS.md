@@ -1779,3 +1779,69 @@ status: fixed (2026-09-08, in D-249) · severity: low (cosmetic, but it makes th
 - **cause.** B-051/D-131 fixed exactly this on the LEFT: `@chroma/shell`'s Sources toggle is `absolute top-2 left-2 h-6 w-6`, so its right edge lands 32px in, and the strip was given `pl-10` (40px) to clear it. D-118 then put the Edit tab's Inspector toggle at `absolute top-2 right-2 h-6 w-6` — the same chip, mirrored — and the strip's right padding stayed at the default `pr-3` (12px). The result is a strip with 40px of clearance on one side and 12px on the other, with a floating control overlapping the short side. Nothing was in the `menu` slot at the time, which is why it read as "no padding / not aligned" rather than as an overlap.
 
 - **fix:** `pr-10`, the same 40px reservation for the same 24px chip, so the strip is symmetric and nothing in it can be covered. `min-h-8` gives the strip a stable height whether or not it has any `menu` content, so the label does not shift vertically when an action appears beside it, and the `menu` slot is wrapped in its own `shrink-0` flex row so several controls line up rather than stretching. Applies to every tab that embeds `Player`, which is correct — the Sources chip is shell-level and floats over all of them, and D-131 made the left-hand half unconditional for exactly that reason.
+
+## B-119 — "Captions from Transcript" on a clip with no audio showed the raw `CalledProcessError` from an ffmpeg subprocess, argv and temp path and all
+
+status: fixed (2026-09-08) · severity: medium (not a wrong pixel — an unusable error. The one thing the message did not say is the one thing that was wrong, and it names a `/tmp` path the user has never seen) · area: `app/src-tauri/src/chroma/media_understanding.rs`, `ai-media/transcribe.py`, `ai-media/server.py`, `ai-media/errors.py`
+
+- **found:** 2026-09-08, owner-reported live while working in `perf-comparison-reel-v3` — clicking **Captions from Transcript** on a screen recording put this in the Edit tab's error line:
+
+  `CalledProcessError: Command ['ffmpeg', '-y', '-i', '/Users/…/after-1.08.16pm.mov', '-ar', '16000', '-ac', '1', '/tmp/….wav'] returned non-zero exit status 234.`
+
+- **repro:** select a clip whose source has a video stream and **no audio stream at all** (any screen recording captured without audio — the owner's reel is made of them), then click Captions from Transcript.
+
+- **expected:** "this clip has no audio to transcribe", in words, immediately.
+
+- **actual:** the string above, ~200 characters of subprocess argv, after the sidecar had already spun up.
+
+- **cause — and ffmpeg is not the one at fault.** `transcribe.py`'s `extract_audio` shells out to `ffmpeg -i <source> -ar 16000 -ac 1 out.wav` with `check=True`. On a source with no audio stream ffmpeg is *correct* to fail — reproduced directly on the owner's own file: `Output file does not contain any stream` / `Error opening output file`. It is being asked to write a WAV containing an audio stream that does not exist. The defect is entirely on our side of that call, in two places at once:
+  1. nothing anywhere on the path asked whether the source had audio before trying, even though the app already answers exactly that question elsewhere (`chroma_media::VideoInfo::has_audio`, which gates `chroma_audio_play`'s embedded-audio resolution and makes `waveform_peaks` return an empty envelope);
+  2. `server.py`'s job runner records every failure as `f"{type(e).__name__}: {e}"`, and a `CalledProcessError`'s `str()` *is* the argv. That format is right for an unexpected fault (a `KeyError`'s class name is real information) and exactly wrong for a predicted one. The job record is handed to the Tauri bridge, the bridge to `mediaUnderstandingStore`, the store to `CaptionsFromTranscriptButton`'s `setError` — which was already rendering it perfectly reasonably. It was a good error line displaying a terrible string.
+
+- **fix, in the two places the two causes are:**
+  - **The app refuses before the job starts.** `chroma_transcribe` calls a new `no_audio_message(path)`, which probes through the same disk-backed `probe_cached` (D-128) every other clip fact on this surface comes from and returns a sentence when `has_audio` is false. One probe, one answer to "does this file have sound" — not a second implementation beside the existing one. It also means the refusal is instant instead of arriving after a ~3 GB whisper subprocess has loaded. A path that cannot be probed is deliberately **not** refused: an unprobeable container is not evidence of silence, and the sidecar stays the backstop.
+  - **The sidecar is correct on its own.** `extract_audio` no longer uses `check=True`. It reads ffmpeg's stderr, recognises the no-stream markers, and raises `errors.UserFacingError` — a new one-class module meaning "this message is already written for a human". `_run_job` reports that class as its message alone; everything else keeps the `ClassName:` prefix it should have. Any *other* ffmpeg failure now reports ffmpeg's own last stderr line, which is the diagnostic, instead of a repeat of the argv.
+
+- **MCP half:** none needed. `editor_get_transcript` / `editor_generate_captions_from_transcript` already surface the job's `error` verbatim, so the agent-facing message improves with the human-facing one, from the same change — which is the point of there being one string.
+
+- **regression tests:** 3 in `app/src-tauri/src/chroma/media_understanding.rs` against real ffmpeg-synthesized files (a video-only `-an` clip is refused, in words, with no `CalledProcessError` / `exit status` / `ffmpeg` / `/tmp` anywhere in the message; a clip with a real `sine` audio stream is *not* refused; an unprobeable path is not refused), and `ai-media/test_transcribe_errors.py`, a runnable script in `ai/test_depth_track.py`'s convention which additionally proves the message survives `_run_job` **verbatim** and that an ordinary `KeyError` still keeps its class name. All synthesize their own fixtures via `ffmpeg` and skip cleanly when it is absent.
+
+## B-120 — the waveform envelope was time-stretched whenever the peaks request ran past the end of the file, so the viewer's scrub strip drew the sound in the wrong place
+
+status: fixed (2026-09-08) · severity: high (the waveform is a *positioning* aid; one that points at the wrong second is worse than none. On any source shorter than 12 s — which the owner's whole reel is — the scrub strip was wrong everywhere, and on every source it was wrong in its final tile) · area: `crates/chroma-media/src/audio.rs` (`cached_peaks`, `decode_mono_range`, new `envelope_over`)
+
+- **found:** 2026-09-08, investigating the owner's live report on D-232's scrub strip — *"idk what is this audio waveform but it seems broken"*. Found by reading the peaks path rather than from the screenshot, then reproduced with a real synthesized fixture.
+
+- **repro (as a test, `a_request_past_the_end_of_a_real_file_keeps_the_sound_where_it_is`):** synthesize a 4-second file whose only sound is a 1-second tone gated to source seconds 1–2 (`aevalsrc=…*between(t,1,2)`). Ask `waveform_peaks` for `[0, 8)` at 10 buckets/s.
+
+- **expected:** the tone in buckets ~10–20 (seconds 1–2), and real silence past bucket 40 (the file's end).
+
+- **actual, measured:** the tone in buckets **20–40** — seconds **2.00–4.00**. Every transient at exactly twice its true offset, and nothing marking where the file ends.
+
+- **cause:** `peaks_from_samples` divides whatever samples it is handed into `bucket_count` equal groups — it maps the last sample to the last bucket *whatever the samples are*. That is right only if the decode returned the whole range asked for, and `decode_mono_range` explicitly does not promise that: its own loop breaks with the comment "source shorter than the requested range — return what we have". `cached_peaks` fed the short read straight in with a bucket count derived from the *requested* duration, so the envelope was silently stretched to fill it. Nothing detected the mismatch because `decode_mono_range` returned a bare `Vec<f32>` — the sample rate never came back with it, so "how many seconds did I actually get" was not a question any caller could ask.
+
+  It was not an edge case. `ScrubWaveform` fetches three 4-second tiles at a time (`waveformTileFor`, D-232's own cache-miss avoidance), so **every** source under 12 s overran EOF at every playhead position, and every source overran it in its last tile.
+
+- **fix:** `decode_mono_range` returns `(samples, sample_rate)`, and a new pure `envelope_over(samples, rate, duration_secs, buckets)` buckets only the buckets the decoded audio really covers and pads the remainder with `(0.0, 0.0)`. Bucket `i` therefore always means `start + i/buckets × duration` of source, which is what every caller's index arithmetic already assumed. Silence past the end of a file is also simply the honest picture. A full-length read takes the identical path it always did — asserted, not assumed, so the common case is provably unchanged.
+
+- **regression tests:** 3 in `crates/chroma-media/src/audio.rs`. The real-media one above fails against the pre-fix code with exactly the 20..40 measurement quoted here (verified by reverting the one call and re-running), plus two unit tests for `envelope_over`'s head-and-pad behaviour and its degenerate cases (empty samples, zero buckets, unknown rate → falls back rather than inventing a coverage number).
+
+- **the other half of what the owner saw, which was NOT this bug.** Their reel's sources genuinely have no audio stream (the same fact behind B-119), and for those the strip drew a flat centre line — correctly. But it drew the *same* flat line for "still fetching" and for "no source resolved here", so the one state a user must be able to tell apart from a defect was indistinguishable from one. `ScrubWaveform` now labels it: "This clip has no audio" / "No audio at the playhead", and **no label at all** while peaks are in flight, so a slow fetch can never claim silence. Pinned by a real-DOM test that drives all three states.
+
+- **honest limit:** the owner's exact screenshot could not be reproduced without the running app, which an agent does not have. What is claimed here is what was measured: a real, provable positioning error in the envelope, fixed, plus an ambiguity in how emptiness was drawn, removed. Whether the strip now reads correctly to their eye on that project is theirs to confirm.
+
+## B-121 — the Captions panel was correctly wired, correctly rendering, and unfindable: its button still said "Subtitles", exactly like the file-picker it had replaced
+
+status: fixed (2026-09-08) · severity: low (nothing is broken — a shipped feature is simply unreachable in practice, which is the same outcome) · area: `packages/editor/src/CaptionPanel.tsx`
+
+- **found:** 2026-09-08, owner-reported live — they could not find the styled caption preset library D-243/D-244 shipped, in a running app that was rendering it.
+
+- **not** a wiring fault, checked first: `<CaptionPanel />` is mounted in `EditorTab.tsx`'s timeline sub-toolbar beside `<CaptionsFromTranscriptButton />`, behind no conditional, and its own DOM tests were passing.
+
+- **cause:** D-243 replaced D-229's "Subtitles" button — which went straight to a file picker — with this panel, and kept that button's exact label, icon and flat ghost styling. So the control that used to open a file dialog looked identical afterwards, and a user who had already learned what it does has no reason to click it again. Its own module doc even opened with "what clicking *Subtitles* opens". The feature was findable only by clicking a button whose label said it was something else.
+
+- **fix:** the trigger is labelled **Captions** — what the feature is called everywhere else in it (`CaptionPanel`, `captionPresets.ts`, `editor_add_caption_preset`, `CaptionInspectorPanel`) — with a chevron, the standard sign that a control opens a panel rather than a dialog. "Subtitles" now names only the `.srt`/`.vtt` tab inside, which is the one thing it still describes accurately.
+
+- **regression test:** `CaptionPanel.dom.test.tsx` asserts the trigger is in the DOM, reads "Captions", does **not** read "Subtitles", and carries a disclosure affordance.
+
+- **left to the left-rail work, deliberately:** the owner's own annotation on this screenshot proposed moving caption actions into a left icon rail, which a sibling pass is designing. This change does not move anything — it makes the control in its current home say what it is, which is worth doing whether or not it later relocates.

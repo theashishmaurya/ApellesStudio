@@ -49,6 +49,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from errors import UserFacingError
+
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 DEFAULT_MODEL = "large-v3"
@@ -66,16 +68,64 @@ MLX_MODEL_REPOS = {
 }
 
 
+# What `ffmpeg` prints when the INPUT has no audio stream to map into the WAV
+# output. It is not a distinct exit code — the process exits non-zero the same
+# way an unreadable file does — so the stderr text is the only signal available.
+# Both spellings are real: ffmpeg 7 says "Output file does not contain any
+# stream", earlier builds number it ("Output file #0 ...").
+_NO_STREAM_MARKERS = (
+    "does not contain any stream",
+    "Output file is empty",
+)
+
+
+def _last_ffmpeg_error(stderr: str) -> str:
+    """The last non-empty stderr line — ffmpeg's own summary of what went
+    wrong, without the several screens of stream metadata above it."""
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    return lines[-1] if lines else "ffmpeg failed with no output"
+
+
 def extract_audio(video_path: str) -> str:
     """16 kHz mono WAV in a temp file — whisper's own native input rate, so the
-    model never has to resample."""
+    model never has to resample.
+
+    **Raises [`UserFacingError`] rather than `CalledProcessError`** (B-119).
+    A source with no audio stream is not an exceptional condition — a screen
+    recording captured without audio is an ordinary file to drop on a timeline —
+    but `ffmpeg` can only report it as a failed run, and before this the
+    resulting `CalledProcessError: Command ['ffmpeg', '-y', '-i', '/Users/…',
+    …] returned non-zero exit status 234.` travelled through the job record and
+    the Tauri bridge into the Edit tab's own error line, naming a temp path the
+    user has never seen. Every other failure is reported as ffmpeg's own last
+    line, which is the diagnostic, instead of a repeat of the argv.
+
+    The app refuses this case one layer earlier and never gets here
+    (`chroma::media_understanding::no_audio_message`, which reuses the app's own
+    `VideoInfo::has_audio` probe). This translation exists so the sidecar is
+    correct on its own — for its CLI, and for any caller that is not that app.
+    """
     tmp = tempfile.mktemp(suffix=".wav")
-    subprocess.run(
+    proc = subprocess.run(
         ["ffmpeg", "-y", "-i", video_path, "-ar", "16000", "-ac", "1", tmp],
-        check=True,
         capture_output=True,
     )
-    return tmp
+    if proc.returncode == 0:
+        return tmp
+
+    # ffmpeg leaves a 0-byte (or partial) WAV behind on a failed run.
+    Path(tmp).unlink(missing_ok=True)
+    stderr = proc.stderr.decode("utf-8", errors="replace")
+    name = Path(video_path).name
+    if any(marker in stderr for marker in _NO_STREAM_MARKERS):
+        raise UserFacingError(
+            f"“{name}” has no audio to transcribe — this file has no audio stream at "
+            "all, so there is nothing to turn into words. Use a clip that was "
+            "recorded with sound."
+        )
+    raise UserFacingError(
+        f"could not read the audio of “{name}”: {_last_ffmpeg_error(stderr)}"
+    )
 
 
 def transcribe(

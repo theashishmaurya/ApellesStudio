@@ -452,6 +452,64 @@ pub(crate) fn peaks_from_samples(samples: &[f32], bucket_count: usize) -> Vec<(f
     out
 }
 
+/// [`peaks_from_samples`], but over a fixed SPAN OF TIME rather than over
+/// whatever samples happened to decode — the difference B-120 was (D-232).
+///
+/// **The defect this exists to prevent.** `peaks_from_samples` divides the
+/// samples it is given into `bucket_count` equal groups, so it maps sample 0 to
+/// bucket 0 and the last sample to the last bucket *whatever the samples are*.
+/// That is right only when the decode returned the whole range that was asked
+/// for. [`decode_mono_range`] deliberately does not guarantee that — it returns
+/// what it has when the source ends first ("source shorter than the requested
+/// range — return what we have") — so a request that overruns the end of the
+/// file had its envelope silently **time-stretched** to fill the requested
+/// duration: 6 s of real audio drawn across a 12 s window, every transient at
+/// twice its true offset, the waveform no longer lining up with the picture.
+///
+/// It was not a rare edge: `ScrubWaveform`'s tiles are always three 4-second
+/// tiles wide (`waveformTileFor`), so *every* source shorter than 12 s was
+/// stretched everywhere, and every source at all was stretched in its final
+/// tile.
+///
+/// **The fix.** Bucket only the buckets the decoded audio really covers, then
+/// pad the remainder with silence. Bucket `i` therefore always means
+/// `start + i/bucket_count × duration_secs` of source, which is exactly what
+/// every caller's index arithmetic already assumed. Silence past the end of a
+/// file is also the honest picture: there is no sound there.
+pub(crate) fn envelope_over(
+    samples: &[f32],
+    sample_rate: u32,
+    duration_secs: f64,
+    bucket_count: usize,
+) -> Vec<(f32, f32)> {
+    if bucket_count == 0 {
+        return Vec::new();
+    }
+    if samples.is_empty() {
+        // Same contract `peaks_from_samples` has always had for no samples at
+        // all: nothing to draw, not a window of zeroes. `waveform_peaks`'s own
+        // callers already read an empty envelope as "no audio here".
+        return Vec::new();
+    }
+    // An unknown rate or a nonsense duration cannot tell us what fraction of
+    // the window decoded, so fall back to the old whole-span behaviour rather
+    // than inventing a coverage number. `is_finite` rather than a negated
+    // comparison because a `NaN` duration must take this branch too, and
+    // `!(x > 0.0)` says that only by accident.
+    if sample_rate == 0 || !duration_secs.is_finite() || duration_secs <= 0.0 {
+        return peaks_from_samples(samples, bucket_count);
+    }
+
+    let decoded_secs = samples.len() as f64 / sample_rate as f64;
+    let covered = ((decoded_secs / duration_secs) * bucket_count as f64).round() as usize;
+    // At least one bucket for any audio at all (a sub-bucket sliver of sound is
+    // still not silence), never more than the window has.
+    let covered = covered.clamp(1, bucket_count);
+    let mut peaks = peaks_from_samples(samples, covered);
+    peaks.resize(bucket_count, (0.0, 0.0));
+    peaks
+}
+
 /// Smooth soft-knee limiter (D-057, Phase C mixing) — `tanh(x)`. Guarantees
 /// `|soft_limit(x)| <= 1.0` for any finite `x` (mathematically `|tanh(x)| <
 /// 1` strictly; at `f32` precision an extreme `x` — far beyond anything a
@@ -1875,10 +1933,15 @@ fn cached_peaks(path: &Path, start_secs: f64, duration_secs: f64) -> Result<Peak
     }
 
     let began = std::time::Instant::now();
-    let samples = decode_mono_range(path, start_secs.max(0.0), duration_secs)?;
+    let (samples, sample_rate) = decode_mono_range(path, start_secs.max(0.0), duration_secs)?;
     let cached_buckets = ((duration_secs.max(0.0) * CACHED_PEAKS_PER_SEC).ceil() as usize)
         .clamp(1, MAX_CACHED_PEAKS);
-    let peaks = Arc::new(peaks_from_samples(&samples, cached_buckets));
+    let peaks = Arc::new(envelope_over(
+        &samples,
+        sample_rate,
+        duration_secs,
+        cached_buckets,
+    ));
     // Same discipline D-124 established for the filmstrip: a real decode
     // leaves a trace, a cache hit does not. The whole reason that feature
     // took three rounds to diagnose was that a slow decode and an absent one
@@ -1980,6 +2043,9 @@ pub async fn waveform(
 /// mixed down to mono `f32` at the source's native sample rate — no
 /// resampling, since [`peaks_from_samples`]'s bucket reduction only needs
 /// enough samples per bucket to be representative, not a fixed output rate.
+/// Returns `(samples, that native rate)`; **the returned span can be shorter
+/// than `duration_secs`** when the source ends first, which is why the rate
+/// comes back with it — see [`envelope_over`] (B-120).
 /// A one-shot batch read for [`waveform`]; **not** shared with
 /// [`run_session`] despite overlapping symphonia setup (open → probe → find
 /// audio track → make decoder → seek) — deliberately duplicated rather than
@@ -1991,7 +2057,11 @@ pub async fn waveform(
 /// helper into `run_session`'s already-verified (D-050) playback path for a
 /// ~20-line dedup — judged not worth the risk of touching tested, working
 /// code for this pass.
-fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result<Vec<f32>, String> {
+fn decode_mono_range(
+    path: &Path,
+    start_secs: f64,
+    duration_secs: f64,
+) -> Result<(Vec<f32>, u32), String> {
     let file = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -2093,7 +2163,11 @@ fn decode_mono_range(path: &Path, start_secs: f64, duration_secs: f64) -> Result
         }
     }
 
-    Ok(mono)
+    // The rate comes back with the samples (B-120): `mono.len()` alone cannot
+    // say how many SECONDS decoded, and how many seconds decoded is exactly
+    // what `envelope_over` needs to know in order not to stretch a short read
+    // across the whole requested window.
+    Ok((mono, src_rate))
 }
 
 // --------------------------------------------------------------------------- //
@@ -4647,6 +4721,153 @@ mod tests {
         assert_eq!(peaks_from_samples(&[0.1, 0.2], 0), Vec::new());
     }
 
+    // --- B-120 — a short read must not be time-stretched -------------------
+
+    /// The unit statement of the defect: 1 s of audio asked for as a 4 s window
+    /// must occupy the FIRST quarter of the buckets and leave the rest silent.
+    /// Before this it filled all four quarters, which is the same envelope
+    /// drawn at a quarter of its true rate.
+    #[test]
+    fn envelope_over_puts_a_short_read_at_the_head_and_pads_the_rest() {
+        // 1 s of full-scale square wave at a nominal 100 Hz "rate".
+        let samples: Vec<f32> = (0..100)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let env = envelope_over(&samples, 100, 4.0, 40);
+
+        assert_eq!(env.len(), 40, "the envelope always spans the WINDOW");
+        for (i, &(lo, hi)) in env.iter().enumerate().take(10) {
+            assert!(
+                hi > 0.9 && lo < -0.9,
+                "bucket {i} covers real audio and must carry it: {lo}..{hi}"
+            );
+        }
+        for (i, &(lo, hi)) in env.iter().enumerate().skip(10) {
+            assert_eq!(
+                (lo, hi),
+                (0.0, 0.0),
+                "bucket {i} is past the end of the audio and must be silent"
+            );
+        }
+    }
+
+    /// The guard rails around the same function: a full-length read is
+    /// untouched (no behaviour change for the overwhelmingly common case), no
+    /// samples is still an empty envelope, and an unknown rate falls back
+    /// rather than inventing a coverage number.
+    #[test]
+    fn envelope_over_leaves_a_full_read_and_the_degenerate_cases_alone() {
+        let samples: Vec<f32> = (0..100)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        assert_eq!(
+            envelope_over(&samples, 100, 1.0, 20),
+            peaks_from_samples(&samples, 20),
+            "a read that covers the whole window must be exactly what it always was"
+        );
+        assert_eq!(envelope_over(&[], 100, 1.0, 20), Vec::new());
+        assert_eq!(envelope_over(&samples, 100, 1.0, 0), Vec::new());
+        assert_eq!(
+            envelope_over(&samples, 0, 1.0, 20),
+            peaks_from_samples(&samples, 20),
+            "an unknown sample rate cannot say what fraction decoded — fall back"
+        );
+    }
+
+    /// **The real-media half**, and the one that would actually have caught
+    /// this in the app: a synthesized file whose sound sits in a KNOWN second,
+    /// asked for over a window twice its length — the shape `ScrubWaveform`'s
+    /// 12-second tiles put every short source into, every frame.
+    ///
+    /// The fixture is 4 s: silence, then a 1 s tone from 1.0 s to 2.0 s, then
+    /// silence. Requested as `[0, 8)` at 10 buckets/s, the tone must land in
+    /// buckets 10..20 (source seconds 1..2). Under the stretch it landed in
+    /// buckets 20..40 — seconds 2..4 — i.e. the waveform pointed at the wrong
+    /// part of the clip by a factor of two.
+    #[test]
+    fn a_request_past_the_end_of_a_real_file_keeps_the_sound_where_it_is() {
+        let Ok(tmp) = tempfile::tempdir() else {
+            eprintln!("skip: no tempdir");
+            return;
+        };
+        let src = tmp.path().join("tone-in-the-middle.m4a");
+        // `aevalsrc`'s `between(t,1,2)` gate is what makes the tone's position
+        // a FACT of the fixture rather than something the test has to trust.
+        let Ok(status) = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg("aevalsrc=0.8*sin(2*PI*440*t)*between(t\\,1\\,2):s=48000:d=4:c=stereo")
+            .args(["-c:a", "aac", "-b:a", "192k"])
+            .arg(&src)
+            .status()
+        else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        if !status.success() || !src.exists() {
+            eprintln!("skip: ffmpeg could not synthesize the fixture");
+            return;
+        }
+
+        const BUCKETS_PER_SEC: usize = 10;
+        const WINDOW_SECS: f64 = 8.0;
+        let buckets = BUCKETS_PER_SEC * WINDOW_SECS as usize;
+        let peaks = waveform_peaks(&src.to_string_lossy(), 0.0, WINDOW_SECS, buckets)
+            .expect("peaks for a real synthesized file");
+        assert_eq!(peaks.len(), buckets, "the envelope must span the window");
+
+        // Where the sound actually is, as bucket indices. Asserted as a BAND
+        // rather than as a single loudest bucket: the tone is flat-topped, so
+        // "the maximum" is a tie across ten buckets and which one wins is an
+        // implementation detail of `max_by`. The band's two ends are the real
+        // measurement, and they are what a stretch moves.
+        let level = |&(lo, hi): &(f32, f32)| lo.abs().max(hi.abs());
+        let loud: Vec<usize> = peaks
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| level(p) > 0.4)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            !loud.is_empty(),
+            "the fixture's tone must be audible at all"
+        );
+        let (first, last) = (loud[0], loud[loud.len() - 1]);
+        let at = |b: usize| b as f64 / BUCKETS_PER_SEC as f64;
+        assert!(
+            (9..=11).contains(&first) && (19..=21).contains(&last),
+            "the tone is at source seconds 1..2, so the loud band must run from \
+             bucket ~10 to ~20 of an 8 s / {buckets}-bucket window — got {first}..{last} \
+             ({:.2}s..{:.2}s). A band ending near bucket 40 is the short read stretched \
+             to fill the window (B-120).",
+            at(first),
+            at(last),
+        );
+        assert!(
+            loud.len() <= 12,
+            "a 1-second tone must stay one second wide: {} buckets is stretched",
+            loud.len()
+        );
+
+        // And the window past the end of the 4 s file is genuinely silent, not
+        // a second copy of the tone dragged along by the stretch.
+        for (i, p) in peaks.iter().enumerate().skip(4 * BUCKETS_PER_SEC) {
+            assert_eq!(
+                *p,
+                (0.0, 0.0),
+                "bucket {i} ({:.2}s) is past the file's 4 s end and must be padded silence",
+                at(i)
+            );
+        }
+    }
+
     #[test]
     fn peaks_from_samples_covers_every_sample_exactly_once() {
         // an odd sample count that doesn't divide evenly into the bucket
@@ -5132,8 +5353,8 @@ mod tests {
             return;
         };
         let path = PathBuf::from(&video_path);
-        let head = decode_mono_range(&path, 0.0, 0.5).expect("decode the head");
-        let later = decode_mono_range(&path, 60.0, 0.5).expect("decode a minute in");
+        let (head, _) = decode_mono_range(&path, 0.0, 0.5).expect("decode the head");
+        let (later, _) = decode_mono_range(&path, 60.0, 0.5).expect("decode a minute in");
         assert!(
             head.iter().any(|s| s.abs() > 1e-4) || later.iter().any(|s| s.abs() > 1e-4),
             "at least one of the two ranges must be non-silent for this comparison to mean \
@@ -5220,9 +5441,10 @@ mod tests {
         let tone_path = synth_test_tone(tmp.path(), 440, 2.0, 48_000);
 
         let dur = 2.0;
-        let video_mono =
+        let (video_mono, _) =
             decode_mono_range(Path::new(&video_path), 0.0, dur).expect("decode video audio");
-        let tone_mono = decode_mono_range(&tone_path, 0.0, dur).expect("decode synthesized tone");
+        let (tone_mono, _) =
+            decode_mono_range(&tone_path, 0.0, dur).expect("decode synthesized tone");
         assert!(
             tone_mono.iter().any(|s| s.abs() > 0.01),
             "the synthesized tone itself must be genuinely non-silent"

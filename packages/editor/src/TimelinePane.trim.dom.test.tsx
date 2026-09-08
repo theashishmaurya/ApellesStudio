@@ -69,6 +69,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
+import { TRIM_ARM_HINT } from './trimMode';
 import type { Timeline } from './timeline';
 
 const FPS = 24;
@@ -383,5 +384,147 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
 
     await setAlt(false);
     expect(hintText()).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-250 — the affordance AT THE POINTER, and the unarmed hint that teaches
+// the arm key exists at all
+// --------------------------------------------------------------------------- //
+
+/** The pointer-adjacent badge, or `null` when it is not showing. `hidden` is
+ *  how it is suppressed (it stays mounted so its own width can be measured for
+ *  the edge clamp), so a hidden badge must read as absent here. */
+function badge(): HTMLElement | null {
+  const el = mounted!.container.querySelector<HTMLElement>('[data-chroma-trim-badge]');
+  return el && !el.hidden ? el : null;
+}
+
+function editArea(): HTMLElement {
+  return mounted!.container.querySelector('[data-bench-id="timeline-edit-area"]') as HTMLElement;
+}
+
+describe('pointer-adjacent mode badge (D-250)', () => {
+  it('13. does not show until the tool is armed AND the pointer is over a clip', async () => {
+    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+
+    // Unarmed, over a clip: nothing. The plain gestures are untouched, so
+    // there is nothing to announce.
+    firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 });
+    await nextFrame();
+    expect(badge()).toBeNull();
+
+    // Armed but not over a clip: still nothing AT THE POINTER — there is no
+    // resolved mode to name. (The toolbar readout covers that state; see 12.)
+    await setAlt(true);
+    firePointerEvent(editArea(), 'pointermove', { x: 900, y: 300 }, { altKey: true });
+    await nextFrame();
+    expect(badge()).toBeNull();
+
+    // Armed, over a clip: the badge.
+    firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
+    await nextFrame();
+    expect(badge()).not.toBeNull();
+  });
+
+  it('14. names each of the four modes, and says what each one does', async () => {
+    await setAlt(true);
+    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+    const first = bodies()[0].closest('.timeline-editor-action') as HTMLElement;
+
+    // Every case mirrors one row of D-235's own mode table, so a change to the
+    // rule that this badge did not follow shows up here as a failure.
+    const cases: Array<[HTMLElement, { x: number; y: number }, Record<string, boolean>, string, string]> = [
+      [action, { x: 200, y: ROW_HEIGHT_PX * 0.2 }, {}, 'Slip', 'change what is shown'],
+      [action, { x: 200, y: ROW_HEIGHT_PX * 0.8 }, {}, 'Slide', 'neighbours absorb it'],
+      [
+        action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement,
+        { x: 199, y: 26 },
+        {},
+        'Roll',
+        'both clips keep their length',
+      ],
+      [
+        first.querySelector('.timeline-editor-action-left-stretch') as HTMLElement,
+        { x: 21, y: 26 },
+        {},
+        'Ripple',
+        'push everything after it',
+      ],
+      [
+        action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement,
+        { x: 199, y: 26 },
+        { shiftKey: true },
+        'Ripple',
+        'push everything after it',
+      ],
+    ];
+
+    for (const [target, at, mods, label, gloss] of cases) {
+      firePointerEvent(target, 'pointermove', at, { altKey: true, ...mods });
+      await nextFrame();
+      const text = badge()?.textContent ?? '';
+      expect(text, `${label} badge`).toContain(label);
+      // The name alone is not an affordance for someone who does not already
+      // know slip from slide — the gloss is the half that teaches it.
+      expect(text, `${label} gloss`).toContain(gloss);
+    }
+  });
+
+  it('15. agrees with the toolbar readout, because both read one resolution', async () => {
+    await setAlt(true);
+    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+
+    firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.8 }, { altKey: true });
+    await nextFrame();
+    // D-235's whole reason for computing its hint from `resolveTrimMode`: a
+    // hint that could promise an edit the press would not make is worse than
+    // no hint. Two hints that could disagree with each OTHER would be worse
+    // still, so this pins them to one answer.
+    expect(hintText()).toBe('Slide');
+    expect(badge()?.textContent ?? '').toContain('Slide');
+  });
+
+  it('16. follows the pointer, and swaps the cursor with the mode', async () => {
+    await setAlt(true);
+    const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
+
+    firePointerEvent(action, 'pointermove', { x: 200, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
+    await nextFrame();
+    const near = badge()!.style.transform;
+
+    firePointerEvent(action, 'pointermove', { x: 260, y: ROW_HEIGHT_PX * 0.2 }, { altKey: true });
+    await nextFrame();
+    expect(
+      badge()!.style.transform,
+      'the badge must track the pointer — a fixed position is the toolbar readout again',
+    ).not.toBe(near);
+
+    // The cursor half of the same affordance: a body mode gets a move cursor,
+    // an edge mode a horizontal resize (D-250 — Resolve's own signal IS the
+    // cursor; these are the standard keywords standing in for its bitmaps).
+    expect(editArea().style.cursor).toBe('grabbing');
+    const right = action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement;
+    firePointerEvent(right, 'pointermove', { x: 199, y: 26 }, { altKey: true });
+    await nextFrame();
+    expect(editArea().style.cursor).toBe('ew-resize');
+
+    // Disarming puts every cursor on this surface back exactly as it was.
+    await setAlt(false);
+    expect(editArea().style.cursor).toBe('');
+  });
+
+  it('17. every clip carries the hint that the arm key exists at all', async () => {
+    // The gap the owner actually hit: with nothing held, D-235's four edits
+    // had no on-screen sign anywhere that a key would reach them. This is the
+    // unarmed half of the affordance, and it belongs on the clips themselves —
+    // the thing the gesture acts on.
+    for (const body of bodies()) {
+      expect(body.getAttribute('title')).toBe(TRIM_ARM_HINT);
+    }
+    expect(TRIM_ARM_HINT).toMatch(/Option|Alt/);
+    for (const mode of ['roll', 'ripple', 'slip', 'slide']) {
+      expect(TRIM_ARM_HINT.toLowerCase()).toContain(mode);
+    }
   });
 });

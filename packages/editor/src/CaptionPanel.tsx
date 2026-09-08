@@ -2,7 +2,7 @@
  * @chroma/editor — the Edit tab's **Captions panel** (D-243,
  * `docs/notes/caption-presets.md`).
  *
- * **What it is:** what clicking "Subtitles" opens. Two tabs:
+ * **What it is:** what clicking "Captions" opens. Two tabs:
  * - **Import** — the D-229 `.srt`/`.vtt` flow, unchanged, moved in here.
  * - **Styles** — a library of caption presets, each with a live thumbnail,
  *   that drop onto the timeline in one click.
@@ -29,7 +29,7 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { Captions, FileUp } from 'lucide-react';
+import { Captions, ChevronDown, FileUp } from 'lucide-react';
 import {
   Button,
   Popover,
@@ -238,11 +238,30 @@ export function CaptionPanel() {
 
   return (
     <Popover open={open_} onOpenChange={setOpen}>
+      {/* B-121 — labelled "Captions", not "Subtitles", and it says it opens
+          something. D-243 replaced D-229's straight-to-a-file-picker
+          "Subtitles" button with this panel but kept that button's exact
+          label, icon and flat styling, so from the toolbar the styled preset
+          library was indistinguishable from the import button it had replaced
+          — the owner looked for the caption styles in a live session and
+          could not find them, having already learned that this control opens
+          a file picker. "Captions" is also what every other surface in this
+          feature calls it (`CaptionPanel`, `captionPresets`,
+          `editor_add_caption_preset`, `CaptionInspectorPanel`); "Subtitles"
+          now names only the `.srt`/`.vtt` tab inside, which is the one thing
+          it still accurately describes. */}
       <PopoverTrigger
         render={
-          <Button variant="ghost" size="xs" disabled={!timeline} title="Captions and subtitles">
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={!timeline}
+            data-testid="caption-panel-trigger"
+            title="Caption styles, and subtitle import"
+          >
             <Captions className="size-3.5" />
-            <span className="ml-1">Subtitles</span>
+            <span className="ml-1">Captions</span>
+            <ChevronDown className="ml-0.5 size-3 opacity-60" />
           </Button>
         }
       />
