@@ -87,6 +87,11 @@ vi.mock('@tauri-apps/api/core', () => ({
     chroma_audio_scrub_end: () => undefined,
     chroma_audio_waveform: (args: Record<string, unknown> | undefined) => {
       invoked.waveform.push(args ?? {});
+      // B-115 — a source with no audio stream comes back as an EMPTY envelope,
+      // not as an error and not as zeroes: that is `waveform_peaks`'s real
+      // contract for `!VideoInfo::has_audio`. One fixture path opts into it so
+      // the strip's "why am I empty" branch is driven by the real shape.
+      if (String(args?.sourcePath ?? '').includes('silent')) return [];
       // Two buckets, both non-silent — enough to be a real answer without
       // pretending this tier can check the drawing.
       return [
@@ -209,6 +214,13 @@ function strip(): HTMLElement | null {
   return (mounted?.container.querySelector('[data-scrub-waveform]') as HTMLElement | null) ?? null;
 }
 
+/** B-115 — the strip's own explanation of why it is empty, or `null` when it
+ *  is drawing real peaks (or still fetching them). */
+function emptyLabel(): string | null {
+  const el = mounted?.container.querySelector('[data-scrub-waveform-empty]');
+  return el?.textContent ?? null;
+}
+
 /** The transport's own toggle button, by the accessible name it exposes. */
 function toggleButton(): HTMLElement | null {
   return (
@@ -283,6 +295,46 @@ describe('the viewer waveform strip (D-232)', () => {
     await waitFrames(3);
     expect(off.ok).toBe(true);
     expect(strip()).toBeNull();
+  });
+
+  /** **B-115 — "idk what is this audio waveform but it seems broken."**
+   *
+   *  The owner opened this strip on a reel of screen recordings that genuinely
+   *  have no audio stream, and read the flat centre line as a bug. They were
+   *  right to: that same line was what this drew for silence, for "still
+   *  fetching" and for "nothing resolved here", so the one state a user has to
+   *  be able to tell apart from a defect looked exactly like one. The line is
+   *  still the honest picture of silence; the label is what makes it legible. */
+  it('says WHY it is empty, rather than drawing a line that could be a bug', async () => {
+    await mountHarness();
+    await act(async () => {
+      useEditorTimelineStore.setState({ waveformView: true });
+    });
+    await waitFrames(3);
+
+    // A source with real peaks draws them and explains nothing.
+    expect(strip()).not.toBeNull();
+    expect(emptyLabel()).toBeNull();
+
+    // A clip whose source has no audio stream at all — an empty envelope from
+    // `waveform_peaks`, which is exactly what a screen recording returns.
+    await act(async () => {
+      const tl = fixtureTimeline();
+      tl.tracks[0].clips[0].source_path = '/silent-screen-recording.mov';
+      useEditorTimelineStore.setState({ timeline: tl });
+    });
+    await waitFrames(4);
+    expect(emptyLabel()).toBe('This clip has no audio');
+
+    // In a GAP there is no source to resolve at all — a different empty for a
+    // different reason, and it says so rather than reusing one vague message.
+    await act(async () => {
+      const tl = fixtureTimeline();
+      tl.tracks[0].clips[0].start_frame = 500; // the playhead (125) is before it
+      useEditorTimelineStore.setState({ timeline: tl });
+    });
+    await waitFrames(4);
+    expect(emptyLabel()).toBe('No audio at the playhead');
   });
 
   it('rejects a call with no open flag rather than guessing', async () => {

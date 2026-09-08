@@ -1671,3 +1671,27 @@ status: fixed (2026-09-08) · severity: medium (not a wrong pixel — an unusabl
 - **MCP half:** none needed. `editor_get_transcript` / `editor_generate_captions_from_transcript` already surface the job's `error` verbatim, so the agent-facing message improves with the human-facing one, from the same change — which is the point of there being one string.
 
 - **regression tests:** 3 in `app/src-tauri/src/chroma/media_understanding.rs` against real ffmpeg-synthesized files (a video-only `-an` clip is refused, in words, with no `CalledProcessError` / `exit status` / `ffmpeg` / `/tmp` anywhere in the message; a clip with a real `sine` audio stream is *not* refused; an unprobeable path is not refused), and `ai-media/test_transcribe_errors.py`, a runnable script in `ai/test_depth_track.py`'s convention which additionally proves the message survives `_run_job` **verbatim** and that an ordinary `KeyError` still keeps its class name. All synthesize their own fixtures via `ffmpeg` and skip cleanly when it is absent.
+
+## B-115 — the waveform envelope was time-stretched whenever the peaks request ran past the end of the file, so the viewer's scrub strip drew the sound in the wrong place
+
+status: fixed (2026-09-08) · severity: high (the waveform is a *positioning* aid; one that points at the wrong second is worse than none. On any source shorter than 12 s — which the owner's whole reel is — the scrub strip was wrong everywhere, and on every source it was wrong in its final tile) · area: `crates/chroma-media/src/audio.rs` (`cached_peaks`, `decode_mono_range`, new `envelope_over`)
+
+- **found:** 2026-09-08, investigating the owner's live report on D-232's scrub strip — *"idk what is this audio waveform but it seems broken"*. Found by reading the peaks path rather than from the screenshot, then reproduced with a real synthesized fixture.
+
+- **repro (as a test, `a_request_past_the_end_of_a_real_file_keeps_the_sound_where_it_is`):** synthesize a 4-second file whose only sound is a 1-second tone gated to source seconds 1–2 (`aevalsrc=…*between(t,1,2)`). Ask `waveform_peaks` for `[0, 8)` at 10 buckets/s.
+
+- **expected:** the tone in buckets ~10–20 (seconds 1–2), and real silence past bucket 40 (the file's end).
+
+- **actual, measured:** the tone in buckets **20–40** — seconds **2.00–4.00**. Every transient at exactly twice its true offset, and nothing marking where the file ends.
+
+- **cause:** `peaks_from_samples` divides whatever samples it is handed into `bucket_count` equal groups — it maps the last sample to the last bucket *whatever the samples are*. That is right only if the decode returned the whole range asked for, and `decode_mono_range` explicitly does not promise that: its own loop breaks with the comment "source shorter than the requested range — return what we have". `cached_peaks` fed the short read straight in with a bucket count derived from the *requested* duration, so the envelope was silently stretched to fill it. Nothing detected the mismatch because `decode_mono_range` returned a bare `Vec<f32>` — the sample rate never came back with it, so "how many seconds did I actually get" was not a question any caller could ask.
+
+  It was not an edge case. `ScrubWaveform` fetches three 4-second tiles at a time (`waveformTileFor`, D-232's own cache-miss avoidance), so **every** source under 12 s overran EOF at every playhead position, and every source overran it in its last tile.
+
+- **fix:** `decode_mono_range` returns `(samples, sample_rate)`, and a new pure `envelope_over(samples, rate, duration_secs, buckets)` buckets only the buckets the decoded audio really covers and pads the remainder with `(0.0, 0.0)`. Bucket `i` therefore always means `start + i/buckets × duration` of source, which is what every caller's index arithmetic already assumed. Silence past the end of a file is also simply the honest picture. A full-length read takes the identical path it always did — asserted, not assumed, so the common case is provably unchanged.
+
+- **regression tests:** 3 in `crates/chroma-media/src/audio.rs`. The real-media one above fails against the pre-fix code with exactly the 20..40 measurement quoted here (verified by reverting the one call and re-running), plus two unit tests for `envelope_over`'s head-and-pad behaviour and its degenerate cases (empty samples, zero buckets, unknown rate → falls back rather than inventing a coverage number).
+
+- **the other half of what the owner saw, which was NOT this bug.** Their reel's sources genuinely have no audio stream (the same fact behind B-114), and for those the strip drew a flat centre line — correctly. But it drew the *same* flat line for "still fetching" and for "no source resolved here", so the one state a user must be able to tell apart from a defect was indistinguishable from one. `ScrubWaveform` now labels it: "This clip has no audio" / "No audio at the playhead", and **no label at all** while peaks are in flight, so a slow fetch can never claim silence. Pinned by a real-DOM test that drives all three states.
+
+- **honest limit:** the owner's exact screenshot could not be reproduced without the running app, which an agent does not have. What is claimed here is what was measured: a real, provable positioning error in the envelope, fixed, plus an ambiguity in how emptiness was drawn, removed. Whether the strip now reads correctly to their eye on that project is theirs to confirm.

@@ -32,6 +32,15 @@
  * Fixed height, deliberately: this is a readout strip in a transport bar, not a
  * content pane, so the resizable-panes rule (CLAUDE.md) does not apply to it —
  * there is nothing more of it to show.
+ *
+ * **It says WHY it is empty (B-115).** The owner opened this on a reel of
+ * screen recordings that genuinely have no audio stream and reported it as
+ * "idk what is this audio waveform but it seems broken" — and they were right
+ * to: a flat centre line is what this drew for "silent here", for "still
+ * fetching", and for "nothing resolved at all", so the one state a user needs
+ * to be able to tell apart from a bug looked exactly like one. The line stays
+ * (it is the honest picture of silence); a short label now says which of the
+ * three it is, and no label at all means peaks are still in flight.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -65,6 +74,20 @@ export function ScrubWaveform() {
   const source = scrubSourceAt(timeline, playhead);
   const tile = source ? waveformTileFor(source.sourceSecs) : null;
   const window_ = source ? waveformWindowAt(source, fps) : null;
+
+  // Why the strip is empty, in the user's words — or `null` while peaks are
+  // still in flight, which must NOT claim silence (B-115). `peaks` is `null`
+  // until a fetch resolves and `[]` when the backend really had nothing:
+  // `waveform_peaks` returns an empty envelope for a source whose
+  // `VideoInfo::has_audio` is false, which is exactly the "this screen
+  // recording was captured without sound" case.
+  const emptyReason: string | null = !source
+    ? 'No audio at the playhead'
+    : peaks === null
+      ? null
+      : peaks.length === 0
+        ? 'This clip has no audio'
+        : null;
 
   // The strip is full-bleed in a flexible transport bar, so its pixel width is
   // whatever the window/panel layout leaves it — measured, not assumed. A
@@ -174,6 +197,14 @@ export function ScrubWaveform() {
         className="text-text-primary"
         style={{ width: '100%', height: STRIP_HEIGHT, display: 'block' }}
       />
+      {emptyReason && (
+        <span
+          data-scrub-waveform-empty=""
+          className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] uppercase tracking-wide text-text-secondary"
+        >
+          {emptyReason}
+        </span>
+      )}
     </div>
   );
 }
