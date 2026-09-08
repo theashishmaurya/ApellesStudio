@@ -164,7 +164,13 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // stable across renders (unlike `m`, a plain object literal returned fresh
   // every render), so no `mRef`-style per-render re-sync is needed for
   // these; see `useMotionControl.ts`'s own module doc comment.
-  useMotionControl(m, { playerRef, measureApiRef, setSelections });
+  // D-255 — `selections` (the live value, not just the setter) is now passed
+  // too: it is the READ half `motion_get_state` returns and the value
+  // `motion_set_selection` replaces, the Motion analogue of D-216's
+  // `editor_get_state`/`editor_set_selection` pair. It changes every render,
+  // so the hook re-syncs it into a ref exactly the way it already does for
+  // `m`; the other three are stable identities and need no re-sync.
+  useMotionControl(m, { playerRef, measureApiRef, setSelections, selections });
 
   // D-158 — keeps `selections` pointing at the right layers as the STABLE
   // manifest changes underneath it (a commit, a catalog insert, a hand-edit

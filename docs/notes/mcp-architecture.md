@@ -185,15 +185,43 @@ step, that is itself the signal something has been missed, not a green light to
 build one — everything this app exposes to an agent goes through the one server
 and the one control-server bridge above.
 
-## A half-finished example, worth knowing about rather than copying blind
+## ~~A half-finished example~~ — finished 2026-09-09 (D-255), with one correction
 
-Motion's frontend half (`useMotionControl.ts`, `motion_*` prefix) is real and
-complete — `docs/08-decisions.md`'s D-167/D-170/D-171 entries. Its Python half is
-not: zero `motion_*` tools exist in `mcp/server.py` today
-(`docs/notes/mcp-tool-coverage.md`'s "Gap: Motion tab — 0 tools" is still
-accurate as of this doc). An agent can technically reach those ops by POSTing
-`{op: "motion_get_manifest", args: {}}` to the control server directly, but has no
-MCP tool to do it through — step 2 of the recipe above was never done for that
-tab. Closing it is a real, scoped follow-up (not attempted by D-183, which is
-Edit-tab-only) — it is exactly Step 2 above, nothing more, since Step 1 already
-shipped.
+This section used to describe Motion as the cautionary half-finished case: its
+frontend half (`useMotionControl.ts`, `motion_*` prefix) real and complete
+(D-167/D-170/D-171), its Python half entirely absent — zero `motion_*` tools in
+`mcp/server.py`, so an agent could only reach those ops by POSTing to the control
+server by hand. **D-255 closed it: 32 `motion_*` tools now exist**, and
+`docs/notes/mcp-tool-coverage.md`'s "Gap: Motion tab — 0 tools" heading is gone.
+
+Two things that pass learned, worth keeping here since this doc is the recipe:
+
+1. **"It is exactly Step 2, nothing more" was right about the mechanism and
+   optimistic about the scope.** Wrapping the 18 existing ops was indeed
+   mechanical. But a tab's op surface can itself be *behind* its GUI: eight
+   shipped gestures (add a scene, reorder layers, set scale/rotation/opacity,
+   retime a camera key, ease one key, edit a card, multi-select field edits, read
+   the selection) had no op to wrap at all, because they were built after the op
+   surface was. **So Step 1 is not "is there a hook?" but "does the hook cover
+   every gesture the tab ships today?"** — check the tab's real store/edit
+   functions against its op list, not just for the hook's existence. Fourteen of
+   the 32 were new ops.
+2. **A hand-copied GUI handler will drift, and only a test catches it.**
+   `motion_select` was written to mirror `MotionTab.tsx`'s `onSelect` and did,
+   exactly — until `onSelect` gained two refinements (D-173, D-176) that the op
+   never received, leaving the op silently wrong for two decisions' worth of
+   time (B-125). The rule "a mutating op calls the same store action a GUI click
+   does" protects against this only when the op literally *calls* that function;
+   where an op re-implements a component-local handler (because the handler
+   closes over component state, as this one does), add a test that compares the
+   two behaviours. That is what found it.
+
+**Step 5, added by that pass: test the ops.** If a tab's registry is declared
+inside a `useEffect` closed over React refs, no test can reach one op without
+rendering the hook — which is why Motion's whole surface shipped untested. Split
+the registry into a pure factory (`motionOps.ts`'s `createMotionOps(ctx)`, taking
+accessor *functions* so nothing goes stale) and leave the hook as a thin shell
+owning only the listener, the prefix filter and the `emit`. Then every op is
+directly callable against a hand-built context, and the assertion that matters is
+cheap: run the op, run the real edit function the GUI gesture calls, assert the
+two results are identical.
