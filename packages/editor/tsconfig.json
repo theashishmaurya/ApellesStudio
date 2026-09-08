@@ -8,7 +8,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": []
+    // D-218 — `previewTiming.ts`'s call sites in `PreviewPane.tsx` are gated
+    // on `import.meta.env.DEV`, which is Vite's own build-time constant; its
+    // type comes from `vite/client` (the same entry `app/tsconfig.json`
+    // already lists), not from anything hand-declared.
+    "types": ["vite/client"]
   },
   "include": ["src"]
 }

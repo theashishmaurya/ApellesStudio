@@ -57,6 +57,7 @@ import { useChromaControl } from './hooks/useChromaControl';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import { useDebugScreenshot } from './hooks/useDebugScreenshot';
+import { useDebugControl } from '@chroma/debug';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
@@ -175,6 +176,14 @@ function App() {
   // D-210: Cmd/Ctrl+Shift+D screenshots the webview to a PNG — the human half
   // of the same capture the MCP `debug_screenshot` tool takes.
   useDebugScreenshot();
+  // D-218: the `debug_*` UI-state / DOM-tree / frame-timing op registry —
+  // the other half of the same "an agent can drive and inspect the real app"
+  // loop D-210's screenshot started. Dev builds only: the hook's whole body
+  // is behind `import.meta.env.DEV` and the registry itself is a dynamic
+  // import inside that branch, so a production build drops it (see
+  // `@chroma/debug`'s README). Mounted here, next to the three above, for the
+  // same "reachable regardless of which tab is active" reason.
+  useDebugControl();
 
   const { multiSelectedPaths } = useLibraryStore(
     useShallow((state) => ({

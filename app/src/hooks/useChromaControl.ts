@@ -1458,7 +1458,18 @@ export function useChromaControl() {
       // `editor_set_clip_fade`, so this skip is also what stops this file
       // from answering "unknown op" for its own former ops under their new
       // names.
-      if (typeof op === 'string' && (op.startsWith('motion_') || op.startsWith('editor_'))) return;
+      // D-218 — `debug_*` gets the same treatment for the same reason: the
+      // internal debug UI-state/DOM ops are `@chroma/debug`'s registry
+      // (`useDebugControl`, dev builds only). Without this skip they would
+      // land here as "unknown op" and race that registry for the one-shot
+      // response slot. Note `debug_screenshot`/`debug_sample_pixel` (D-210)
+      // never reach any frontend listener at all — `control.rs` answers those
+      // natively — so this skip covers exactly the frontend ones.
+      if (
+        typeof op === 'string' &&
+        (op.startsWith('motion_') || op.startsWith('editor_') || op.startsWith('debug_'))
+      )
+        return;
       const respond = (body: any) => emit(`chroma://response/${id}`, body);
 
       const fn = OPS[op];

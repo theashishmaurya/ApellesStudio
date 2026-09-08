@@ -13,6 +13,23 @@ a real compile-time gate (`#[cfg(debug_assertions)]`, a Cargo feature, or equiva
 so there is no path for one of these to ship. These are for us, not for an end user's
 build of Chroma.
 
+**How that gate is actually implemented** (D-218; the Rust half was missing until
+then — **B-099**):
+
+- **Rust.** `#[cfg(debug_assertions)]` on `chroma::debug_capture` (the whole module),
+  on each command *inside* `tauri::generate_handler!` (the macro parses an outer
+  attribute per command and re-emits it on that command's match arm — verified in
+  `tauri-macros` 2.6.3's `command/handler.rs`, so the IPC name genuinely does not
+  exist in a release build), and on `control.rs`'s `native_op`, which has a
+  `None`-returning release twin so its call site reads the same either way.
+- **Frontend.** `import.meta.env.DEV` — Vite substitutes the literal `false` in a
+  production build — **plus** a dynamic `import()` of the op registry inside that
+  branch, so Rollup drops the whole chunk rather than merely leaving it unreachable.
+  `@chroma/debug`'s barrel exports exactly one value (the hook) so nothing else is in
+  the app's static import graph.
+- **Checked, not assumed.** See "Gate verification" at the bottom for the real
+  `vite build` + bundle grep.
+
 ## Why this exists (the real, repeated problem)
 
 Every agent this session that tried to live-verify a UI fix hit the same wall: this
@@ -31,42 +48,69 @@ several rounds of the owner's own screenshots before an agent could even confirm
    permission wall entirely, doesn't need it) plus an MCP tool wrapping it, so an
    agent can call the tool, get a real PNG path, and `Read` it to actually see current
    state. Status/branch: see `docs/CHANGELOG.md`'s dated entry once it lands.
-2. **UI state open/close/select debug actions** — scoped, not started. Deterministic,
-   non-pixel-coordinate ways to drive the UI for testing: open/close a specific panel
-   (Inspector, Sources, a modal), select a tab/timeline/clip, trigger a specific state
-   transition — through the same store actions a human's click already goes through,
-   not a parallel simulation of one. Exposed as MCP tools, matching the screenshot
-   tool's own naming/registration convention once that lands (dispatched right after,
-   deliberately not in parallel — both would touch the same Tauri command-registration
-   file and `mcp/server.py`, guaranteeing a merge conflict).
-3. **Pixel/color inspection** — scoped alongside the screenshot tool: sample a real
-   RGB value at given (x, y) from a captured screenshot, for the "color placement,
-   pixel alignment" checks the owner named directly.
-4. **DOM tree capture** — scoped, not started (owner, 2026-09-08: "build tools to
-   capture the dom tree and other things which help you visualize, be smart about
-   it"). A way to dump the running webview's real DOM structure (element hierarchy,
-   computed styles, bounding rects) — not just pixels, so an agent can answer "why
-   is this element positioned/sized/styled this way" directly instead of guessing
-   from a screenshot alone. Likely a small in-page JS snippet invoked the same way
-   the screenshot tool is invoked (a Tauri command that evaluates JS in the webview
-   and returns the result — check what Tauri's own `eval`/`webview.eval` API already
-   offers before building a custom bridge). Dispatch AFTER the screenshot tool lands
-   (same Tauri-command-registration and `mcp/server.py` territory — parallel
-   dispatch would just conflict).
+2. **UI state open/close/select debug actions** — **DONE (D-218, 2026-09-08).**
+   Deterministic, non-pixel-coordinate ways to drive the UI, through the same store
+   actions a human's click goes through: `debug_set_active_tab` (Edit/Motion/
+   Colorist), `debug_set_sources_panel`, `debug_set_editor_inspector`, plus the read
+   half `debug_ui_state` (every flag above, the Edit selection/playhead, and the
+   dialogs the DOM actually has open). Explicit named ops per real UI state — **not**
+   a generic "set any field" backdoor and **not** a synthesised click; D-218 has the
+   full reasoning and the one refactor it forced (the Edit Inspector's flag lifted
+   out of `EditorTab.tsx`'s `useState` into `useEditorTimelineStore`, so one piece of
+   state sits under both the human's button and the op).
+   **Remaining gap, deliberately:** the **Colorist tab's** own panel/visibility/
+   settings state (`app/src/store/useUIStore.ts` — `setPanel`, `uiVisibility`,
+   `isSettingsOpen`). It lives in the vendored fork, i.e. the *app* layer, and
+   `@chroma/debug` is a package; reaching up would invert D-039's dependency
+   direction. Closing it properly means either moving that UI state into a package or
+   having the app register its own named ops into the registry — a real design call,
+   not a line of code, so it is stated here rather than half-done.
+3. **Pixel/color inspection** — **DONE, in D-210** (it shipped alongside the
+   screenshot tool, not after it). `debug_sample_pixel(path, x, y)` reads the exact
+   RGBA + hex out of **any** saved PNG, including one written long before the app's
+   current state, and refuses an out-of-bounds coordinate with the real image size.
+   Re-checked against this piece's own wording during D-218 and found already
+   complete — nothing was rebuilt. The one thing worth knowing when using it with
+   piece 4: its coordinates are **device** pixels, `debug_dom_tree`'s rects are
+   **CSS** pixels, so multiply by the screenshot's `scaleFactor`.
+4. **DOM tree capture** — **DONE (D-218, 2026-09-08).** `debug_dom_tree
+   {selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` returns the
+   real hierarchy under a selector: tag/id/classes, the semantic attributes
+   (`data-*`, `aria-*`, `role`, …), each element's `getBoundingClientRect()`, and a
+   chosen set of computed styles.
+   **Tauri has no eval-with-result** — `WebviewWindow::eval()` returns `Result<()>`
+   in 2.11 (checked, not assumed), so the choice was "a custom event bridge around an
+   untyped JS string" vs. "an ordinary frontend op." It is a frontend op
+   (`@chroma/debug`'s `domTree.ts`), which is what D-020 already prescribes and which
+   makes the serialiser real TypeScript with a jsdom unit suite.
+   **Bounded three ways** (selector root, `maxDepth` 12, `maxNodes` 300/ceiling 5000,
+   plus per-node class/text caps) and **every bound reports itself** —
+   `childrenTruncated: "depth"|"nodes"|"invisible"` on the node, `truncated` on the
+   result — so a clipped dump can never be mistaken for a complete one. A `0×0`
+   element is flagged `zeroArea` but is **never** pruned: a zero-size parent whose
+   children still render is exactly the bug this is for.
+   Stable query hooks exist on the two big panels: `[data-chroma-panel=
+   "editor-inspector"]`, `[data-chroma-panel="sources"]`.
 
-5. **Preview frame-timing readout** — scoped, not started (found needed by D-217,
-   2026-09-08). "Report the last N frame-to-frame intervals `PreviewPane` actually
-   painted", as a debug op + MCP tool. D-217 fixed the Edit-tab preview's dominant
-   per-frame cost (42.7 → 14.0 ms) and could measure that precisely in Rust, but
-   **could not measure the thing the owner actually reported** — perceived playback
-   smoothness — because there is no way to see webview-side paint timing. Two
-   blockers found while trying, both worth knowing: a second app instance needs the
-   `identifier` overridden (`tauri-plugin-single-instance`), and a **background**
-   window's `requestAnimationFrame` is throttled to a stop, so the play loop does
-   not tick at all in a non-frontmost instance. A frame-interval readout sidesteps
-   both: the app measures itself and an agent reads the numbers. Same
-   registration/naming convention as the screenshot tool, same
-   `#[cfg(debug_assertions)]` gate as everything else here.
+5. **Preview frame-timing readout** — **DONE (D-218, 2026-09-08)** (found needed by
+   D-217). `debug_frame_timing {limit?, reset?}` reports the real frame-to-frame
+   intervals on **two independent channels**: `paint` (frames actually put on screen)
+   and `raf` (how often the play loop got to run at all), each with
+   min/median/p95/max/fps and a `hitches` count (intervals over *twice the median* —
+   a fixed ms threshold would call every interval a hitch on a 24 fps timeline).
+   D-217 fixed the preview's dominant per-frame cost (42.7 → 14.0 ms) and could
+   measure that precisely in Rust, but **could not measure the thing the owner
+   actually reported** — perceived playback smoothness. Two blockers were found
+   trying, both still true and both sidestepped by measuring in-app: a second app
+   instance needs the `identifier` overridden (`tauri-plugin-single-instance`), and a
+   **background** window's `requestAnimationFrame` is throttled to a stop. That
+   second one is now *diagnosable* rather than merely fatal — a dead `raf` channel
+   next to a healthy `paint` one is the signature of a throttled window, so the
+   readout tells you you are measuring the wrong thing instead of quietly reporting
+   0 fps.
+   Measure properly: `debug_frame_timing(reset=True)` → `editor_set_playing(True)` →
+   wait → `editor_set_playing(False)` → read. Without the reset, scrub frames are
+   mixed in with playback.
 
 ## Two different levels — don't conflate them
 
@@ -88,7 +132,127 @@ several rounds of the owner's own screenshots before an agent could even confirm
   a human's click would, then screenshot to confirm what actually rendered — not two
   independent tools used separately.
 
+## The loop, concretely (this is what all five pieces are FOR)
+
+```
+debug_ui_state()                             # what's open right now
+debug_set_active_tab("edit")                 # → useShellStore.setActiveTab
+debug_set_editor_inspector(open=True)        # → useEditorTimelineStore.setInspectorOpen
+debug_screenshot()                           # → a real PNG path; Read it, look at it
+debug_dom_tree('[data-chroma-panel="editor-inspector"]', max_depth=3)
+                                             # → its REAL rect + computed styles
+debug_sample_pixel(shot_path, x, y)          # ← rect.x * scaleFactor, inside the panel
+```
+
+Coordinate spaces: `debug_dom_tree` rects are **CSS** pixels, `debug_screenshot` /
+`debug_sample_pixel` are **device** pixels. Multiply by the screenshot's `scaleFactor`
+(the same number as the DOM result's `viewport.devicePixelRatio`) to cross over. Getting
+this wrong reads as a wrong colour rather than as an error, so it is worth checking the
+two numbers against each other once per session.
+
+### That loop, actually run (2026-09-08, D-218's own verification)
+
+A real `tauri dev` instance from an isolated worktree (`CHROMA_CONTROL_PORT=19791`,
+vite on 1421), a real project, a real 4K clip on the timeline. Numbers, not claims:
+
+- `debug_ui_state` on a fresh boot: `activeTab: "edit"`, `projectOpen: false`,
+  `timelineStatus: "idle"`, `openDialogs: []`. After opening a project:
+  `projectOpen: true`, `timelineStatus: "ready"`.
+- `debug_set_editor_inspector(open=False)` → `{inspectorOpen: false}`, and
+  `debug_dom_tree('[data-chroma-panel="editor-inspector"]')` then returned
+  `root: null` — the panel is genuinely **unmounted**, not merely hidden.
+- `debug_set_editor_inspector(open=True)` → the same query returned a real node:
+  rect `x 960, y 40, 320 × 680` CSS px in a `1280 × 720` viewport,
+  `background-color: rgb(28, 28, 28)`, `width: "320px"` — which independently
+  confirms D-118's `INSPECTOR_DEFAULT_WIDTH = 320`.
+- `debug_screenshot` → `2560 × 1440`, `scaleFactor 2.0`. Read and looked at: the
+  Inspector really is the right-hand column, "Select a clip to edit its properties."
+- **DOM and pixels agree**: `debug_sample_pixel` at device `(2000, 600)` — i.e. CSS
+  `(1000, 300)`, inside that rect — read `#1c1c1c` = `rgb(28, 28, 28)`, exactly the
+  computed `background-color` the DOM reported. 50 CSS px to the left, outside the
+  panel, read `#0e0e0e`. That is the whole point of the initiative in two numbers.
+- `debug_set_sources_panel(open=True)` → a second screenshot shows the Sources column
+  really opened; `debug_dom_tree` puts it at `x 0, 288 × 680` (matching
+  `SOURCES_PANEL_DEFAULT_WIDTH = 288`).
+- Bounds, live: `maxNodes: 12` returned exactly 12 nodes with
+  `childrenTruncated: "nodes"`; `maxDepth: 0` returned 1 node with
+  `childrenTruncated: "depth"`; a Tailwind button reported `classesTruncated: true`.
+  An inactive tab panel came back `invisible: true`, `zeroArea: true`,
+  `display: "none"`, `childrenTruncated: "invisible"` — which is also why a full-body
+  dump is only ~375 nodes rather than thousands.
+- Refusals, live: `tab: "edti"` → *unknown tab "edti" — expected one of edit, motion,
+  colorist*; `tab: 9` → *tab index 9 is out of range — 1..3 (…)*; a missing `open` →
+  *'open' is required (true or false)*; `selector: "<<<"` → *invalid selector: '<<<' is
+  not a valid selector.* (distinct from a no-match, which is `root: null`);
+  `limit: 0` → *'limit' must be a positive integer*.
+- Routing: `debug_nonesuch` → *unknown debug op: debug_nonesuch* while `nonesuch` →
+  *unknown op: nonesuch*, so the `debug_` prefix really is claimed by the new registry
+  and the Colorist catch-all really does still answer everything else. No response-slot
+  race.
+- **`debug_frame_timing`, and the throttling blocker it was built for.** Reset, then
+  `editor_set_playing(true)` for ~6 s, then read: **`raf.samples: 0`, `paint.samples:
+  0`** — the play loop never ticked once, because the instance was not frontmost.
+  That is D-217's blocker (2) reproduced exactly, and it is now *diagnosable in one
+  call* instead of looking like a frozen playhead of unknown cause. Scrubbing needs no
+  rAF, and the paint channel does record on that path: seven `editor_set_playhead`
+  calls produced `paint.samples: 2`, one 90 ms interval, `fps 11.11` — two, not seven,
+  because `fetchFrame` coalesces while a request is in flight (D-125/D-201), so the
+  readout is correctly counting frames that *reached the screen* rather than requests
+  made.
+- **Not live-exercised:** the positive `openDialogs` case. Nothing in the op surface
+  opens a modal today, so live only ever showed `[]` (correct for the state). The
+  detection itself is unit-tested in jsdom, including the `display:none` rejection.
+  Also not exercised: a real pointer drag — same standing limit as D-216's own note
+  (no Screen Recording / Accessibility permission, and a `decorations: false` window
+  exposes no Accessibility target).
+
+## Running a second instance (for an agent, alongside the owner's own app)
+
+Recorded because two separate agents have now had to rediscover it. No committed file
+changes are needed:
+
+```
+npx vite --port 1421 --strictPort            # in app/, its own dev server
+CHROMA_CONTROL_PORT=19791 npx tauri dev --no-watch --config \
+  '{"build":{"beforeDevCommand":"","devUrl":"http://localhost:1421"},
+    "identifier":"io.chroma.debugtools.worktree"}'
+```
+
+The `identifier` override is what `tauri-plugin-single-instance` keys on — without it
+the second launch just focuses the first app's window and exits. `--no-watch` stops the
+dev watcher from rebuilding under the running instance. A worktree also needs its own
+`node_modules` (`npm install` in the worktree), or Node resolution walks up and serves
+the *shared* checkout's `@chroma/*` — see D-216's own note about that exact trap.
+
+**Then always kill it by PID**, never by process name: `pkill RapidRAW` or
+`pkill node` will take the owner's app and dev server down with it, which has
+already happened once (2026-09-07).
+
+## Gate verification — the numbers, not the claim
+
+Re-run these whenever a debug tool is added; a gate that is asserted rather than
+checked is how B-099 happened in the first place.
+
+- **Frontend.** `npm run build --workspace app`, then grep `app/dist/` for every debug
+  op name. Run 2026-09-08 on D-218's tree: `debug_get_ui_state`, `debug_set_active_tab`,
+  `debug_set_sources_panel`, `debug_set_editor_inspector`, `debug_dom_tree`,
+  `debug_frame_timing`, `debug_screenshot`, `debug_sample_pixel`,
+  `chroma_debug_screenshot`, `chroma_debug_sample_pixel`, plus the internal symbols
+  `serializeDomTree`, `describeOpenDialogs`, `previewTimingReport`,
+  `recordPreviewTiming` — **0 occurrences each**, and no separate `debugOps` chunk was
+  emitted (one `index-*.js`). The control-server op `editor_set_selection` was grepped
+  in the same pass as a control and found **1** occurrence, so the grep was reading a
+  real bundle.
+- **Rust.** `cargo check -p RapidRAW --release --lib` compiles clean with the whole
+  `debug_capture` module and both commands cfg'd out (release turns `debug_assertions`
+  off), which also proves nothing outside the gate still references them.
+
 ## Status
+
+Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-218 for 2, 4, 5; B-099
+for the gate). The one stated remaining gap is the **Colorist tab's** own panel /
+visibility / settings state — see piece 2 above for why it is a real design call rather
+than a missing line of code.
 
 Check `docs/CHANGELOG.md` (search "debug" or the date) for what has actually landed —
 this file is the scope/tracker, not a live status board.
