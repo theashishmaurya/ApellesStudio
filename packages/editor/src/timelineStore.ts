@@ -76,6 +76,7 @@ import {
   type Timeline,
 } from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
+import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -215,6 +216,26 @@ interface EditorTimelineState {
    *  deliberately not an `EditOp` (D-216's rule): it is store state, never
    *  part of `Timeline`, so it is neither persisted nor undoable. */
   inspectorOpen: boolean;
+  /** D-246 — which of the clip Inspector's tabs (Video / Audio) is showing.
+   *
+   *  In the store rather than in `ClipInspectorPanel`'s own `useState` for
+   *  two independent reasons, either of which would be enough. First, the
+   *  same one `inspectorOpen` above has: `debug_set_inspector_tab` drives it
+   *  from outside React and must drive the SAME state the human's own click
+   *  drives rather than simulate a click. Second, that panel is deliberately
+   *  remounted on every clip selection (`key={clip.id}` in
+   *  `EditorInspectorPanel.tsx`, D-193), so component-local state here would
+   *  reset the tab on every selection change — the panel would silently jump
+   *  back to Video every time the user picked a different clip while working
+   *  through a mix.
+   *
+   *  Session chrome, not project data: never persisted, never undoable
+   *  (D-216's rule), and not cleared by `setOpenProject`. A tab this clip has
+   *  no content for is resolved away at render time by
+   *  `resolveClipInspectorTab` WITHOUT writing here, so the user's own choice
+   *  survives selecting a title (which has no Audio tab) and comes back when
+   *  they select a clip that does. */
+  inspectorTab: ClipInspectorTab;
   /** D-232 — whether the viewer shows its audio waveform strip (`ScrubWaveform`,
    *  the "waveform toggle" half of roadmap item 27).
    *
@@ -304,6 +325,9 @@ interface EditorTimelineState {
   /** D-219 — show/hide the Inspector column. The one writer for both the
    *  human's toggle button (`EditorTab.tsx`) and the debug op. */
   setInspectorOpen: (open: boolean) => void;
+  /** D-246 — switch the clip Inspector's Video/Audio tab. The one writer for
+   *  both the human's tab click (`ClipInspectorPanel`) and the debug op. */
+  setInspectorTab: (tab: ClipInspectorTab) => void;
   /** D-232 — show/hide the viewer's waveform strip. The one writer for both the
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
@@ -389,6 +413,9 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   previewView: FIT_VIEW,
   // D-118 shipped the Inspector open; keep that default now the flag lives here.
   inspectorOpen: true,
+  // D-246 — Video: the tab every clip type has, and where the geometry a
+  // user reaches for first lives. Sticky from there; see the field's doc.
+  inspectorTab: DEFAULT_CLIP_INSPECTOR_TAB,
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
@@ -524,6 +551,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     })),
 
   setInspectorOpen: (open) => set({ inspectorOpen: open }),
+
+  setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setWaveformView: (open) => set({ waveformView: open }),
 

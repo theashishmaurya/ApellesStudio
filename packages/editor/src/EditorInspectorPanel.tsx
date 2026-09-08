@@ -113,6 +113,12 @@ export function EditorInspectorPanel() {
   // by `DynamicZoomOverlay`. Store state, never persisted — see its field doc.
   const dynamicZoom = useEditorTimelineStore((s) => s.dynamicZoom);
   const setDynamicZoom = useEditorTimelineStore((s) => s.setDynamicZoom);
+  // D-246 — which Inspector tab is showing. Store state, not this component's
+  // own `useState`, for the two reasons its field doc gives: the panel below
+  // is remounted per clip selection, and the debug op drives the same state
+  // the human's click does.
+  const inspectorTab = useEditorTimelineStore((s) => s.inspectorTab);
+  const setInspectorTab = useEditorTimelineStore((s) => s.setInspectorTab);
 
   // Same Phase 1 multi-select fallback `TimelinePane.tsx` already uses for
   // every single-clip-only consumer (docs/notes/multi-select.md): a
@@ -498,6 +504,8 @@ export function EditorInspectorPanel() {
       onDynamicZoomArm={armDynamicZoom}
       onDynamicZoomEase={setDynamicZoomEase}
       onDynamicZoomSwap={swapDynamicZoom}
+      tab={inspectorTab}
+      onTabChange={setInspectorTab}
     />
   );
 }

@@ -243,7 +243,7 @@ control. Lower value for an agent than the above (an agent driving edits doesn't
 obviously need to literally press play), but genuinely zero coverage; noted for
 completeness rather than urgency.
 
-## Debug / UI verification — CLOSED, 8 tools (D-210 + D-219, 2026-09-08)
+## Debug / UI verification — CLOSED, 9 tools (D-210 + D-219, 2026-09-08; +1, D-246)
 
 `debug_screenshot`, `debug_sample_pixel`. Not a *product* capability like
 everything above — an agent-tooling one, and the reason it belongs in this doc
@@ -270,6 +270,7 @@ DOM behind the pixels:
 | `debug_set_active_tab` | Edit / Motion / Colorist, through `useShellStore.setActiveTab` — the function the tab button's own onClick calls. |
 | `debug_set_sources_panel` | the shell's docked Sources column, through its own store action. |
 | `debug_set_editor_inspector` | the Edit tab's Inspector column, ditto. |
+| `debug_set_inspector_tab` | that Inspector's own Video/Audio tab (D-246), through `useEditorTimelineStore.setInspectorTab` — the action the tab button's own onClick calls. Only one tab renders at a time, so this is what puts the half you want to look at on screen before a screenshot or a DOM dump. |
 | `debug_dom_tree` | bounded JSON of the real DOM under a selector: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles. The "why is it positioned like that" answer a screenshot cannot give. |
 | `debug_frame_timing` | the preview's real rAF/paint intervals — the webview-side smoothness measurement D-217 needed and had no way to take. |
 

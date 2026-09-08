@@ -23019,3 +23019,94 @@ honest next step whenever that's not disruptive.
 B-097. `cargo fmt`/`clippy` clean on every file this touched. `tsc --noEmit`:
 zero errors (no frontend change — `chroma_audio_play`'s Tauri command
 signature is unchanged, so `useEditorControl.ts` needed nothing).
+## D-246 — The clip Inspector splits into Video / Audio tabs, matching Resolve's own Inspector; the tab is store state, and cross-domain sections file under Video
+
+**Context.** The owner worked a real project through the Edit tab and reported
+this live, with a screenshot of the Inspector open on a real video clip: every
+property is one vertically-scrolling column. Transform (Opacity, Position X/Y,
+Scale, Rotation, Width/Height), Crop (four insets), Dynamic Zoom, Speed, Fade,
+Volume/Pan (D-223), a four-band EQ with its response graph (D-224/D-237), and
+the whole-clip Keyframes actions. That is eight sections and ~30 controls in a
+264–420px column: the audio half is below the fold on any realistic Inspector
+height, and finding a clip's Volume means scrolling past its geometry every
+time. The ask was explicit — separate Video and Audio properties into tabs.
+
+**The reference, checked first (CLAUDE.md's standing "research the real
+pattern" rule).** `scratch/resolve-reference/` — this repo's own scrape of
+DaVinci Resolve's Edit page, the same material D-208 (`animate.jpg`), D-223 and
+D-224/D-237 (`soundtrack.jpg`) were built from. Resolve's Inspector is already
+a tabbed strip — Video / Audio / Effects / Transition / Image / File — with
+Transform, Cropping, Dynamic Zoom and Speed Change under Video and Clip Volume,
+Clip Pan, Clip Pitch and the Clip Equalizer under Audio. Our own sections were
+built one at a time against that reference's individual screenshots, so they
+already sit in Resolve's groups; what was missing was the container. Nothing
+here is invented: the split, the tab order (Video before Audio) and the
+per-tab section membership are the reference's own.
+
+**Options.**
+1. *Collapsible sections instead of tabs.* Cheaper, and `@chroma/ui` has a
+   `collapsible`. But it does not answer the ask (the column is still one
+   column, now with more state to manage), and every section would need a
+   remembered open/closed flag to avoid re-collapsing constantly.
+2. *A separate Audio Inspector panel.* Two panels competing for the same
+   column, or a second column in a tab that is already tight on width.
+3. *Tabs, in the panel, on `@chroma/ui`'s existing Base UI `Tabs`.* Chosen.
+   The reference's own answer, the canonical primitive already in the kit
+   (`tabs.tsx`, D-042 — not a new one), and it costs no vertical space beyond
+   the bar itself.
+
+**Choice, and the three decisions inside it.**
+
+- **Which sections go where.** Video: Transform, Crop, Dynamic Zoom, Speed,
+  Fade, Keyframes. Audio: Volume/Pan, EQ. Fade and Speed are genuinely
+  cross-domain — one fade drives a clip's picture and its sound together (the
+  section's own note says so), and a retime moves both — so they had no
+  obviously-correct home. They file under Video because they are properties of
+  the clip's EXTENT rather than of its sound, which is also where Resolve
+  files Speed Change; Keyframes joins them because "Key all properties" keys
+  transform and crop only (D-223's own scoping call). Stated here rather than
+  left to be inferred, because it is the one part of the split a reasonable
+  person could have drawn differently — and if the owner wants Fade mirrored
+  onto Audio, that is a small, contained change to one JSX block.
+- **A clip type with nothing in a tab does not get that tab.** A generated
+  title has no audio stream, and its Volume/Pan/EQ sections were already
+  hidden (D-211/D-223/D-224). Rather than restating that `!clip.text` gate on
+  each section AND on the tab, it is stated once in `clipInspectorTabs.ts`,
+  the sections' own gates are gone, and a one-tab panel renders no tab bar at
+  all — so a title's Inspector is byte-for-byte the single scrolling column it
+  was before this existed. One tab is not a tab bar.
+- **The selected tab is store state (`timelineStore.inspectorTab`), not the
+  panel's own `useState`.** Two independent reasons, either sufficient. The
+  panel is deliberately remounted per clip selection (`key={clip.id}`, D-193),
+  so local state would silently reset the tab every time the user picked a
+  different clip — exactly the wrong behaviour for someone working through a
+  mix clip by clip. And CLAUDE.md's human-AND-AI rule wants one action under
+  both interfaces: `debug_set_inspector_tab` (new, `@chroma/debug`) drives the
+  same `setInspectorTab` the tab button's own click drives, never a simulated
+  click, and `debug_ui_state` reports it. That op is the right MCP surface
+  here *because* a tab is a view, not a capability: every control on both tabs
+  already had its own editing tool (`editor_set_clip_transform`,
+  `set_clip_audio`, `set_clip_eq`, …) which works whichever tab is showing —
+  what an agent gained no way to do is SEE the half that is off screen, and
+  the `debug_*` family is exactly where that belongs (it is compiled out of
+  production, D-219).
+
+The tab is sticky across selections and resolved, not rewritten, when a clip
+lacks it: selecting a title while Audio is open shows the title's Video tab
+and remembers Audio for the next clip that has one. Session chrome, so never
+persisted and never undoable (D-216).
+
+**What did NOT change.** Every section, every control, every op, every gate
+and the section order within each tab. This is a layout reorganisation; the
+DOM test asserts it as one — the union of the two tabs is exactly the section
+set the single scroll had, with no section on both.
+
+**Verification.** `packages/editor`: `clipInspectorTabs.test.ts` (9, the pure
+model) and `ClipInspectorPanel.tabs.dom.test.tsx` (9, real components + real
+store: default tab, click, keyboard roving focus, no section lost or
+duplicated, an edit and the panel's own local ratio-lock state surviving a tab
+round trip, stickiness with fallback, undo unaffected and the tab itself not
+undoable). Three existing DOM suites were updated to say which tab they are
+on — the audio ones now select Audio, which is the honest change a tab split
+forces on them. Full suite: 73 files, 1452 passed, 0 failed. `tsc --noEmit` clean on
+`@chroma/editor`, `@chroma/ui` and `@chroma/debug`.

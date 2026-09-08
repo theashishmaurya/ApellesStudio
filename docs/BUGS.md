@@ -1645,3 +1645,63 @@ status: fixed (2026-09-08, in D-236) · severity: medium (a real, visible export
 - **fix:** all three quantities now go through one function — `outputAtSourceFrame(speedSegments, sourceFrame) / clipFps`, the D-236 ramp's own forward map — so the clip's length, its fade-in and its fade-out are obtained the same way and cannot drift again. For an un-sped clip that map is the identity and the emitted expression is byte-identical to before, which is why the whole existing export suite passes unchanged; for a flat-sped clip it is the division that was missing; and for a D-236 ramp it is correct by construction rather than by a second special case. A fade is authored as a number of SOURCE frames from the clip's in/out point, so under a ramp its real on-screen length is however long those frames take to play — a 12-frame fade-in on a 0.5x head is a full second.
 
 - **why it is a real bug and not just a D-236 design note:** it is wrong today, on the pre-D-236 flat `speedOverrides` path, in a shipped export, with no ramp involved. D-236 is what surfaced it, not what caused it.
+## B-113 — the Inspector's crop values were unreadable: the native spinner arrows sat on top of the digits, and the raw float was too long for the field either way
+
+**Symptom (owner, live, with a screenshot).** The Crop section's Left/Right/
+Top/Bottom fields read `0.0` with the up/down spinner arrows drawn over the
+rest of the number. The stored value was `0.052212`. The Transform rows above
+them looked fine in the same screenshot, which made it look crop-specific.
+
+**Root cause — two independent faults, and the second is why it looked
+crop-specific.**
+
+1. **No space was reserved for the native spinner.** `PropertyRow`'s field was
+   `h-7 w-16 text-right` over `@chroma/ui`'s `Input` base `px-3`: 64px wide,
+   40px of content box, and nothing at all set aside for
+   `::-webkit-inner-spin-button`. WebKit — which is what Tauri renders in on
+   macOS — paints that control inside the field's right edge WITHOUT giving it
+   layout space, so a right-aligned value is drawn underneath it. Every
+   `type="number"` input in the app had this, not just these four.
+2. **The row rendered the raw stored float at full precision.** `0.052212` is
+   eight characters, ~62px at `text-sm`; it could not fit 40px at any padding,
+   so the text overflowed and the browser scrolled it, leaving the visible
+   `0.0` with the arrows over the rest. The Transform rows only looked healthy
+   because their values happened to be short that day — `position_x` from an
+   on-canvas drag is the same full float, and the crop insets are simply the
+   fields most often written by a drag rather than typed.
+
+**Fix.**
+
+- The spinner's strip is now reserved by `@chroma/ui`'s `Input` itself for
+  every `type="number"` (`NUMBER_INPUT_SPINNER_RESERVE` — `pr-5`, plus
+  `tabular-nums`), not by each call site. The defect is a property of "a
+  number input", so fixing it at one call site would have left it live
+  everywhere else; this closes it app-wide, in the component that owns it.
+- `packages/editor/src/numericField.ts` (new) holds the Inspector field's
+  geometry as one class string paired with the px values those exact
+  utilities resolve to, plus the display rounding. The field is one step wider
+  (`w-20`) and `shrink-0` — load-bearing, not tidiness: it sits in a `flex-1`
+  label, so without it a narrow Inspector squeezes it and puts the digits back
+  under the arrows.
+- A resting field shows the value rounded to a precision derived from that
+  row's own `step` (one decimal finer than a hand nudge, capped at 3), and the
+  exact value returns the moment the field is focused, with the full-precision
+  number in its `title`. So typing, spinner steps and arrow-key nudges are
+  byte-for-byte what they were — the rounding is display-only and never
+  touches what is stored, which the tests assert directly against the clip.
+
+**Verification.** `numericField.test.ts` (9) pins the precision rule and the
+fit budget, including that the raw `0.052212` does NOT fit — the regression
+itself, kept as an assertion. `PropertyRow.numericField.dom.test.tsx` (6)
+renders the real Inspector on a clip carrying the owner's own value and
+asserts what is actually on screen: the rendered string fits the field's usable
+width (the width left once the spinner reserve is taken out), the rendered
+element really carries the reserve and cannot shrink, focus restores the exact
+value, the tooltip carries it, and typing still writes full precision.
+
+**Honest limit.** jsdom has no layout engine — `getBoundingClientRect()` is
+zeros there — so no test at this tier can literally measure two boxes
+overlapping, and one claiming to would be measuring nothing. What is asserted
+is the rendered value string against the field's own declared geometry, which
+is the same thing one step earlier. The visual confirmation on the running app
+is the owner's.

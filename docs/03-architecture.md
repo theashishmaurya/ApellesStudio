@@ -9,7 +9,7 @@ marked **future** and pointed at `docs/04-roadmap.md`, not described as live.
 > 2026-09-02 version of this file was structurally right and factually six days out of
 > date: it said only 3 crates existed (8 do), that the Editor was a single-track MVP (it's a
 > multi-track NLE), that Motion was a placeholder tab with no UI (it's a real authoring tab
-> with a keyframe timeline), and that there were 38 MCP tools (there are 95). Every count
+> with a keyframe timeline), and that there were 38 MCP tools (there are 115). Every count
 > and status claim in this file was re-derived on 2026-09-08 from `crates/*/README.md`,
 > `packages/*/README.md`, `mcp/server.py` and `docs/04-roadmap.md` — not carried forward.
 
@@ -60,7 +60,7 @@ supersedes `docs/00-vision.md`'s old "not an NLE" clause.
           ┌─────────▼─────────┐                    ┌────────▼──────────┐   ┌──────────────┐
           │  ffmpeg / ffprobe │                    │  mcp/server.py    │   │  ai/ sidecar │
           │  decode·probe·    │                    │  (Python stdio    │◄─►│  FastAPI     │
-          │  encode, spawned  │                    │  MCP, 95 tools)   │   │  :8765, SAM2/│
+          │  encode, spawned  │                    │  MCP, 115 tools)  │   │  :8765, SAM2/│
           │  as a subprocess  │                    └────────┬───────────┘   │  ViTMatte/   │
           └───────────────────┘                             │               │  VDA depth,  │
                                                     ┌────────▼──────────┐    │  Rust-       │
@@ -101,7 +101,7 @@ chroma/
                              + video understanding (Qwen3-VL). A separate process on purpose:
                              D-189 rejected bolting these onto `ai/` (different model stack,
                              different failure modes, different memory profile)
-  mcp/                    ← the Python MCP server — 95 tools across Colorist, Edit and debug
+  mcp/                    ← the Python MCP server — 115 tools across Colorist, Edit and debug
   eval/                   ← the agent grading eval harness (D-035) — offline, CI-able
   docs/  scratch/
 ```
@@ -410,7 +410,7 @@ reads it from, and moving it would be invasive. So AI grading works through an *
 control server**, not headless `render_core` (that stays reserved for export/batch):
 
 ```
-mcp/server.py (Python stdio, 95 tools)
+mcp/server.py (Python stdio, 115 tools)
    │  HTTP POST /op {op, args}
    ▼
 app/src-tauri/src/chroma/control.rs (tiny_http, :19788, spawned in .setup())
@@ -486,7 +486,7 @@ both mutate and the renderer only reads.
 | AI models | SAM 2.1 + ViTMatte + MoGe-2 normals (sidecar), Video Depth Anything-vits (sidecar), Depth Anything V2 (in-process ONNX), mlx-whisper + Qwen3-VL (`ai-media/` sidecar) | D-009/D-012/D-016/D-018/D-036/D-078/D-189 |
 | Grade doc | JSON, git-tracked, versioned (`chroma.grade/1`) | D-025 |
 | Project format | a `<name>.chroma` directory of plain JSON | D-037 |
-| Agent bridge | in-app HTTP control server ⇄ 4 prefixed frontend op registries ⇄ Python MCP (stdio) | D-020/D-183, **95 tools** |
+| Agent bridge | in-app HTTP control server ⇄ 4 prefixed frontend op registries ⇄ Python MCP (stdio) | D-020/D-183, **115 tools** |
 | Frontend UI kit | shadcn/ui on Base UI (`@base-ui/react`) | D-042 |
 | Edit-tab timeline UI | `@xzdarcy/react-timeline-editor` (control surface only, no video through it) + `@dnd-kit` for every drag | D-041, D-100 |
 | Edit-tab audio | `symphonia` → `rubato` → `dasp_sample` → `cpal`; cookbook biquads for EQ | D-050, D-224 |

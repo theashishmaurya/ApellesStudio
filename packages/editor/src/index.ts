@@ -33,6 +33,18 @@ export { TimelinePane } from './TimelinePane';
 export { PreviewPane } from './PreviewPane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
+// D-246 — the clip Inspector's tab model. Exported for `@chroma/debug`'s
+// `debug_set_inspector_tab`, which validates against the same list the panel
+// renders rather than restating it.
+export {
+  CLIP_INSPECTOR_TABS,
+  CLIP_INSPECTOR_TAB_LABELS,
+  DEFAULT_CLIP_INSPECTOR_TAB,
+  clipInspectorTabs,
+  parseClipInspectorTab,
+  resolveClipInspectorTab,
+} from './clipInspectorTabs';
+export type { ClipInspectorTab } from './clipInspectorTabs';
 export type { TimelineSummary } from './timelineStore';
 /** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
  *  buffers. Exported for `@chroma/debug`'s `debug_frame_timing` op, which

@@ -31,6 +31,7 @@
  *   `debug_set_active_tab`        — Edit / Motion / Colorist.
  *   `debug_set_sources_panel`     — the shell's docked Sources column.
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
+ *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
  *                                   intervals (see `@chroma/editor`'s
@@ -44,7 +45,13 @@
  */
 
 import { useShellStore } from '@chroma/shell';
-import { useEditorTimelineStore, previewTimingReport, resetPreviewTiming } from '@chroma/editor';
+import {
+  useEditorTimelineStore,
+  previewTimingReport,
+  resetPreviewTiming,
+  CLIP_INSPECTOR_TABS,
+  parseClipInspectorTab,
+} from '@chroma/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
@@ -72,6 +79,13 @@ function uiStateSnapshot() {
     },
     editor: {
       inspectorOpen: editor.inspectorOpen,
+      // D-246 — the tab the user last chose. The tab actually SHOWING can
+      // differ for a clip that has no such tab (a title has no audio); the
+      // panel resolves that at render time without writing here, so this is
+      // the choice, not the resolution — `debug_dom_tree` on
+      // `[data-chroma-panel="clip-inspector"]` is what answers the latter.
+      inspectorTab: editor.inspectorTab,
+      inspectorTabs: CLIP_INSPECTOR_TABS,
       projectOpen: editor.openProjectKey !== null,
       timelineStatus: editor.status,
       selection: editor.selection,
@@ -109,6 +123,18 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     // The same action the Inspector toggle's `onClick` calls (`EditorTab.tsx`).
     useEditorTimelineStore.getState().setInspectorOpen(open.value);
     return { ok: true, inspectorOpen: useEditorTimelineStore.getState().inspectorOpen };
+  },
+
+  debug_set_inspector_tab: (a) => {
+    const tab = parseClipInspectorTab(a?.tab);
+    // D-216's rule: recognise or refuse by name — never accept a typo, do
+    // nothing and answer `ok`.
+    if (tab === null) {
+      return { error: `unknown tab ${JSON.stringify(a?.tab)} — expected one of ${CLIP_INSPECTOR_TABS.join(', ')}` };
+    }
+    // The same action the tab button's own click calls (`ClipInspectorPanel`).
+    useEditorTimelineStore.getState().setInspectorTab(tab);
+    return { ok: true, inspectorTab: useEditorTimelineStore.getState().inspectorTab };
   },
 
   debug_dom_tree: (a) => {
