@@ -1,0 +1,219 @@
+---
+/**
+ * Tabs.astro — the three tabs, each given the shape its own material wants
+ * (D-255).
+ *
+ * Deliberately NOT a three-card grid. Edit has a real screenshot, so it breaks
+ * wide and leads with the picture. Motion and Colorist have no capture yet, so
+ * they are set as dense capability columns instead of a fabricated image — the
+ * absence is stated in the markup rather than papered over.
+ */
+import { TABS } from '../data/product.ts';
+
+const edit = TABS.find((t) => t.id === 'edit');
+const rest = TABS.filter((t) => t.id !== 'edit');
+---
+
+<section class="tabs section" id="tabs">
+  <div class="shell intro">
+    <p class="eyebrow">Three tabs, one window</p>
+    <h2>The whole post-production loop, without leaving the app.</h2>
+    <p class="lede">
+      Cut, motion-graphic and grade are three tabs over one project — not three programs and an
+      export in between. Everything listed below is built and shipping today.
+    </p>
+  </div>
+
+  {
+    edit && (
+      <div class="lead">
+        <div class="wide">
+          <figure class="frame">
+            <img
+              src={edit.shot?.src}
+              alt={edit.shot?.alt}
+              width={edit.shot?.width}
+              height={edit.shot?.height}
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+        </div>
+        <div class="shell lead-txt">
+          <div class="lead-head">
+            <span class="dot" style={`--tone:var(--marker-${edit.signal})`} />
+            <h3>{edit.name}</h3>
+            <p class="line">{edit.line}</p>
+          </div>
+          <ul class="caps">
+            {edit.shipped.map((s) => (
+              <li>{s}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    )
+  }
+
+  <div class="shell pair">
+    {
+      rest.map((t) => (
+        <article class="col">
+          <header>
+            <span class="dot" style={`--tone:var(--marker-${t.signal})`} />
+            <h3>{t.name}</h3>
+          </header>
+          <p class="line">{t.line}</p>
+          <ul class="caps tight">
+            {t.shipped.map((s) => (
+              <li>{s}</li>
+            ))}
+          </ul>
+          {t.shotNote && <p class="nocap">{t.shotNote}</p>}
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .intro h2 {
+    font-size: var(--step-4);
+    font-weight: 300;
+    margin: 1rem 0 1.5rem;
+    max-width: 20ch;
+  }
+
+  /* ---- Edit: the wide breakout ---------------------------------------- */
+
+  .lead {
+    margin-top: clamp(3rem, 2rem + 4vw, 5rem);
+  }
+
+  /* Escapes the shell and runs to the viewport edges — the one full-bleed
+     element on the page, so the picture reads as the product, not a thumbnail. */
+  .wide {
+    padding-inline: var(--gutter);
+  }
+
+  .frame {
+    margin: 0 auto;
+    max-width: 1600px;
+    border: 1px solid var(--color-border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--color-surface);
+    box-shadow: 0 30px 90px -40px rgb(0 0 0 / 0.85);
+  }
+
+  .frame img {
+    width: 100%;
+    height: auto;
+  }
+
+  .lead-txt {
+    margin-top: 2.5rem;
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: clamp(1.5rem, 1rem + 3vw, 4rem);
+    align-items: start;
+  }
+
+  .lead-head h3 {
+    font-size: var(--step-3);
+    font-weight: 400;
+    margin: 0.5rem 0 0.75rem;
+  }
+
+  .line {
+    color: var(--color-text-secondary);
+    max-width: 46ch;
+  }
+
+  .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 1px;
+    background: var(--tone);
+  }
+
+  /* Capability lists are set as data, not as bullets with icons: a mono index
+     column and a hairline per row, the way the app lists tracks and tools. */
+  .caps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: cap;
+  }
+
+  .caps li {
+    counter-increment: cap;
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 0.75rem;
+    padding: 0.7rem 0;
+    border-top: 1px solid var(--color-border-color);
+    font-size: var(--step--1);
+    color: var(--color-text-primary);
+    line-height: 1.55;
+  }
+
+  .caps li::before {
+    content: counter(cap, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    padding-top: 0.15em;
+  }
+
+  .caps li:last-child {
+    border-bottom: 1px solid var(--color-border-color);
+  }
+
+  /* ---- Motion + Colorist: two quiet columns --------------------------- */
+
+  .pair {
+    margin-top: clamp(3.5rem, 2rem + 5vw, 6rem);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: clamp(2rem, 1rem + 4vw, 5rem);
+  }
+
+  .col header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .col h3 {
+    font-size: var(--step-2);
+    font-weight: 400;
+  }
+
+  .col .line {
+    margin-bottom: 1.5rem;
+  }
+
+  .caps.tight li {
+    padding: 0.55rem 0;
+  }
+
+  /* The honest note where a screenshot would otherwise sit. */
+  .nocap {
+    margin-top: 1rem;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: var(--color-text-secondary);
+    border-left: 1px solid var(--color-border-color);
+    padding-left: 0.9rem;
+  }
+
+  @media (max-width: 900px) {
+    .lead-txt,
+    .pair {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

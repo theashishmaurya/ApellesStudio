@@ -1,0 +1,377 @@
+---
+/**
+ * docs/mcp.astro — how to connect an MCP client to Chroma (D-255).
+ *
+ * Every command, path, port, tool name and error string on this page is
+ * transcribed from real repo sources: mcp/server.py, mcp/README.md,
+ * app/src-tauri/src/chroma/control.rs's documented contract, and
+ * docs/notes/mcp-tool-coverage.md. Nothing here is an invented API shape.
+ */
+import Base from '../../layouts/Base.astro';
+import { TOOL_GROUPS, TOOL_TOTALS, MOTION_GAP, CONNECTION, VERIFIED_ON } from '../../data/mcp.ts';
+
+const sections = [
+  { id: 'how', label: 'How it works' },
+  { id: 'install', label: 'Install' },
+  { id: 'connect', label: 'Connect a client' },
+  { id: 'first', label: 'First calls' },
+  { id: 'tools', label: 'The tools' },
+  { id: 'http', label: 'The HTTP surface' },
+  { id: 'trouble', label: 'Troubleshooting' },
+];
+---
+
+<Base
+  title="Connect an agent to Chroma — MCP setup"
+  description="Real setup instructions for driving Chroma from Claude Code or any MCP client: install the stdio server, connect it, and call the 106 shipped tools across the editor and the colorist."
+>
+  <article class="doc">
+    <header class="shell hd">
+      <p class="eyebrow">Documentation</p>
+      <h1>Connect an agent</h1>
+      <p class="lede">
+        Chroma ships a stdio MCP server. Point any MCP client at it and that client can drive the
+        running desktop app — {TOOL_TOTALS.shipped} tools across the editor and the colorist, every
+        one of them going through the same store action the GUI button calls.
+      </p>
+    </header>
+
+    <div class="shell layout">
+      <nav class="toc" aria-label="On this page">
+        <p class="eyebrow">On this page</p>
+        {sections.map((s) => <a href={`#${s.id}`}>{s.label}</a>)}
+      </nav>
+
+      <div class="prose">
+        <section id="how">
+          <h2>How it works</h2>
+          <p>
+            The server itself holds no grading or editing logic. Each tool posts one op to a small
+            HTTP control server running inside the app, which forwards it to the frontend, which
+            applies it through the identical store action a button press would. That is why an
+            agent's edit moves real sliders, lands on the same undo stack, and why reading state
+            back reflects whatever you changed by hand a moment ago.
+          </p>
+          <pre class="mono diagram"><code>Claude (MCP client)
+  │  stdio
+{CONNECTION.serverPath}
+  │  HTTP  POST /op {`{op, args}`}
+{CONNECTION.controlServerPath}   (control server, in the app, port {CONNECTION.defaultPort})
+  │  Tauri events
+app/src/hooks/useChromaControl.ts   (frontend — owns the state)
+  │  the SAME store actions the GUI buttons call
+render  →  {`{ rendered frame, histogram, adjustments }`}</code></pre>
+          <p class="note">
+            Mutating Colorist tools return the re-rendered frame, its histogram and a compact scope
+            summary — the new measurement, for free, after the change.
+          </p>
+        </section>
+
+        <section id="install">
+          <h2>Install</h2>
+          <p>From a clone of the repository:</p>
+          <pre class="mono"><code>cd mcp
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt</code></pre>
+          <p>
+            You also need the Chroma desktop app running. The control server binds when the app
+            starts, and the bridge is live while a project is open.
+          </p>
+        </section>
+
+        <section id="connect">
+          <h2>Connect a client</h2>
+          <h3>Claude Code</h3>
+          <pre class="mono"><code>claude mcp add chroma -- \
+  /ABS/PATH/chroma/mcp/.venv/bin/python \
+  /ABS/PATH/chroma/mcp/server.py</code></pre>
+
+          <h3>Any client that takes a JSON config</h3>
+          <p>
+            The server is an ordinary stdio MCP server, so the standard client config shape works
+            unchanged — the command is the virtualenv's Python, the argument is the server file:
+          </p>
+          <pre class="mono"><code>{`{
+  "mcpServers": {
+    "chroma": {
+      "command": "/ABS/PATH/chroma/mcp/.venv/bin/python",
+      "args": ["/ABS/PATH/chroma/mcp/server.py"]
+    }
+  }
+}`}</code></pre>
+
+          <h3>A non-default port</h3>
+          <p>
+            The control server listens on <code class="mono">{CONNECTION.defaultPort}</code> unless
+            you override it. If you changed it on the app side, set the same value in the server's
+            environment:
+          </p>
+          <pre class="mono"><code>{CONNECTION.portEnvVar}=19999</code></pre>
+        </section>
+
+        <section id="first">
+          <h2>First calls</h2>
+          <p>
+            Two calls are worth making before anything else, and both are cheap:
+          </p>
+          <dl class="defs">
+            <dt class="mono">get_state</dt>
+            <dd>
+              What is loaded, the current primary adjustments, a mask summary, the multi-shot
+              session and the open project. It reflects manual edits, so it is also how you check
+              what the human just did.
+            </dd>
+            <dt class="mono">editor_get_capabilities</dt>
+            <dd>
+              Static reference data with no round trip to the app — the non-obvious compositing
+              rules, the per-property rule that a keyframe silently beats a transform written for
+              the same property, and the known rough edges. Read it once per session before your
+              first transform, keyframe or export.
+            </dd>
+          </dl>
+        </section>
+
+        <section id="tools">
+          <h2>The tools</h2>
+          <p>
+            Counted directly from <code class="mono">mcp/server.py</code> on {VERIFIED_ON}:
+            {TOOL_TOTALS.all} tool definitions exist, of which {TOOL_TOTALS.debugOnly} are
+            development-only and compiled out of a production build, leaving
+            {' '}{TOOL_TOTALS.shipped} that ship.
+          </p>
+
+          {
+            TOOL_GROUPS.map((g) => (
+              <div class="grp">
+                <h3>
+                  {g.name} <span class="cnt mono" style={`--tone:var(--marker-${g.signal})`}>{g.count}</span>
+                </h3>
+                <p>{g.blurb}</p>
+                <ul class="names mono">
+                  {g.sample.map((n) => (
+                    <li>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          }
+
+          <div class="grp">
+            <h3>
+              Motion <span class="cnt mono zero">{MOTION_GAP.count}</span>
+            </h3>
+            <p>{MOTION_GAP.note}</p>
+          </div>
+        </section>
+
+        <section id="http">
+          <h2>The HTTP surface</h2>
+          <p>
+            You do not need this to use the MCP server, but it is what the server talks to and it
+            is worth knowing it exists. The control server accepts one endpoint:
+          </p>
+          <pre class="mono"><code>POST http://127.0.0.1:{CONNECTION.defaultPort}/op
+Content-Type: application/json
+
+{`{ "op": "get_state", "args": {} }`}</code></pre>
+          <p>
+            It is bound to loopback only. A request that the app cannot answer within its bridge
+            timeout comes back as a <code class="mono">504</code>, which the MCP server turns into a
+            readable error rather than a hang — long-running work (a depth track, a transcript, a
+            video analysis) is always start-then-poll for exactly this reason.
+          </p>
+        </section>
+
+        <section id="trouble">
+          <h2>Troubleshooting</h2>
+          <dl class="defs">
+            <dt>“Cannot reach the Chroma control server”</dt>
+            <dd>
+              The app is not running, or it is on another port. Start it, or set
+              <code class="mono"> {CONNECTION.portEnvVar}</code> to match.
+            </dd>
+            <dt>“The Chroma app did not respond”</dt>
+            <dd>
+              A 504 from the bridge: the window is closed, or nothing is open. The bridge only runs
+              while the editor view is mounted.
+            </dd>
+            <dt>A response with a histogram but no image</dt>
+            <dd>
+              A known limitation, not a failure. The app renders to a native GPU surface, so the
+              returned frame is a best-effort headless re-render. The histogram, scopes and
+              adjustments are always accurate.
+            </dd>
+          </dl>
+        </section>
+      </div>
+    </div>
+  </article>
+</Base>
+
+<style>
+  .hd {
+    padding-top: clamp(3rem, 2rem + 4vw, 5rem);
+    padding-bottom: clamp(2rem, 1.5rem + 2vw, 3rem);
+    border-bottom: 1px solid var(--color-border-color);
+  }
+
+  h1 {
+    font-size: var(--step-4);
+    font-weight: 300;
+    margin: 1rem 0 1.25rem;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: clamp(2rem, 1rem + 4vw, 5rem);
+    padding-top: 3rem;
+    padding-bottom: 5rem;
+    align-items: start;
+  }
+
+  .toc {
+    position: sticky;
+    top: 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    align-items: start;
+  }
+  .toc .eyebrow {
+    margin-bottom: 0.35rem;
+  }
+  .toc a {
+    font-size: var(--step--1);
+    color: var(--color-text-secondary);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .toc a:hover {
+    color: var(--color-text-primary);
+  }
+
+  .prose {
+    max-width: 74ch;
+  }
+
+  .prose section + section {
+    margin-top: 3.5rem;
+  }
+
+  .prose h2 {
+    font-size: var(--step-2);
+    font-weight: 400;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-border-color);
+    margin-bottom: 1.25rem;
+  }
+
+  .prose h3 {
+    font-size: var(--step-0);
+    font-weight: 500;
+    margin: 2rem 0 0.75rem;
+  }
+
+  .prose p {
+    color: var(--color-text-secondary);
+    margin-bottom: 1rem;
+  }
+
+  .prose pre {
+    margin: 0 0 1.25rem;
+    padding: 1rem 1.1rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-color);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    font-size: 0.78rem;
+    line-height: 1.8;
+    color: var(--color-text-primary);
+  }
+
+  .diagram {
+    line-height: 1.7;
+    color: var(--color-text-secondary);
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--color-text-primary);
+  }
+
+  .note {
+    border-left: 1px solid var(--color-border-color);
+    padding-left: 0.9rem;
+    font-size: var(--step--1);
+  }
+
+  .defs {
+    margin: 0;
+  }
+  .defs dt {
+    font-weight: 500;
+    color: var(--color-text-primary);
+    font-size: var(--step--1);
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--color-border-color);
+  }
+  .defs dd {
+    margin: 0.4rem 0 0.9rem;
+    color: var(--color-text-secondary);
+    font-size: var(--step--1);
+  }
+
+  .grp {
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-border-color);
+    margin-top: 1.5rem;
+  }
+  .grp h3 {
+    margin-top: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    font-size: var(--step-1);
+    font-weight: 400;
+  }
+  .cnt {
+    color: var(--tone);
+    font-size: var(--step-0);
+    font-variant-numeric: tabular-nums;
+  }
+  .cnt.zero {
+    color: var(--color-text-secondary);
+  }
+
+  .names {
+    list-style: none;
+    margin: 0.9rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .names li {
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-color);
+    border-radius: 4px;
+    padding: 0.15rem 0.4rem;
+  }
+
+  @media (max-width: 860px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .toc {
+      position: static;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+    }
+    .toc .eyebrow {
+      width: 100%;
+    }
+  }
+</style>

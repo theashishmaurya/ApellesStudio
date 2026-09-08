@@ -23873,3 +23873,174 @@ the fork's own default dark theme. `ClipInspectorPanel.tabChrome.dom.test.tsx`
 (5) pins the class/attribute contract; `@chroma/editor` 1513/1513 green
 (78 files), `@chroma/debug` 32/32, `tsc --noEmit` clean on `packages/editor` and
 `packages/ui`.
+
+---
+
+## D-255 — the marketing website, built now instead of last, in `website/` as an independent Astro project derived from the app's own tokens
+
+**Context.** `docs/notes/pre-launch-plan.md` (item 4) and `docs/04-roadmap.md`
+both carry a standing sequencing decision from the owner, 2026-09-08: the six
+launch-adjacent items — fal.ai generation, the accounts/credits backend, the
+remote-GPU sidecar, **the marketing website**, the Windows port, and Python
+sidecar hosting — are to be built **last, right before launch**, explicitly not
+interleaved with the Edit-tab build-out. Research-and-scope was done; nothing
+was built.
+
+On 2026-09-09 the owner explicitly overrode that sequencing and asked for the
+website now. **This entry is that reversal, recorded rather than silently
+performed**, plus the real design and technical decisions the build made.
+
+The reversal is also cheaper than it looks, and that is part of why it is
+defensible: `pre-launch-plan.md` §0 flags the unresolved AGPL/licensing question
+(D-002) as blocking items 2 and 3, and names items 1 and 4 as the two that
+**do not depend on it** — "a cloud media-gen call and a marketing site carry no
+comparable AGPL exposure either way." So building the site now unblocks nothing
+and commits nothing. What it *does* cost is that the site describes a moving
+target, which is what the tests below exist to contain.
+
+### 1. Positioning: what the site is allowed to claim
+
+The owner supplied the sharpened positioning from a competitive read done the
+same night: **local-first with no cloud in the render path, fully free with no
+paywall, a deeper and more-verified MCP surface than competitors,
+non-editor-friendly, lightweight and fast.** The read's own finding is that
+DaVinci Resolve 21.1 shipped an MCP-server AI integration, so "first AI-native
+NLE" is no longer defensible; "the one that is actually local, actually
+verified, free, and usable by non-editors" is.
+
+Feature copy is taken **only** from ✅ items in `docs/02-scope.md` (reconciled
+2026-09-08 by D-231), never from 🔨 ones. There are no testimonials, user
+counts, download figures or "trusted by" logos, because there are no users — the
+site says `Pre-release` instead, and a test asserts none of those patterns
+appear.
+
+### 2. Astro, in a top-level `website/`, outside the npm workspace
+
+**Options.**
+1. *Add `website` to the root `package.json` workspaces array.* Rejected. Its
+   dependency graph (Astro 5) shares nothing with the app's (React 19 + Tauri +
+   Remotion), and hoisting it would put marketing-site dependencies into the
+   lockfile that a desktop build depends on. Release cadence differs too — the
+   site ships when copy changes.
+2. *A separate repository.* Rejected: the site's accuracy depends on reading
+   real repo files (theme tokens, `mcp/server.py`), which a split repo turns
+   into a manual sync problem — exactly the drift `CLAUDE.md`'s cardinal rule
+   exists to prevent.
+3. **Chosen:** a top-level `website/` sibling with its own `package.json` and
+   lockfile, matching the convention `ai/`, `ai-media/`, `mcp/` and `eval/`
+   already set — in the tree, out of the workspace.
+
+Astro itself was the owner's instruction; `pre-launch-plan.md` §4 had already
+named it as an acceptable choice and noted this item does not need the rigor of
+the backend ones.
+
+### 3. Token derivation: the site's palette IS the app's palette, enforced by a test
+
+`CLAUDE.md`'s one-token-source rule ("all theming flows from RapidRAW's existing
+`--color-*` CSS vars") is written for the app, but a marketing site that invents
+its own "premium" palette would make the product look like something it isn't —
+the exact failure the rule exists to prevent, one directory over.
+
+`website/src/styles/tokens.css` is therefore a **verbatim transcription** of
+`app/src/utils/themes.ts`'s `Theme.Dark` block, with the same `--app-*` →
+`--color-*` aliasing `app/src/styles.css` performs. The display and body face is
+**Poppins**, because that is the app's own default
+(`app/src/hooks/useAppInitialization.ts`), loaded through the same Google-Fonts
+preconnect pattern `app/index.html` already uses.
+
+The one chromatic addition is the **real shipped 16-swatch `MARKER_COLORS`
+palette** from `packages/editor/src/timeline.ts` (D-222), used the way the app
+uses it — as categorical signals against a neutral ground (the MCP tool-group
+counts, the hero's timeline markers), never as a gradient and never as a brand
+colour. The app's actual brand accent is white, and stays white.
+
+**This is enforced, not merely intended.** `website/tests/tokens.test.ts` reads
+both real app source files and fails if any value drifts, if a colour literal
+appears that came from neither source, or if the display face stops being
+Poppins.
+
+### 4. "Feels like using the editor": a working miniature, not a parallax scroll
+
+The owner asked for motion where "it feels like I'm actually working with the
+editor." The generic reading of that is scroll-triggered parallax and fade-ins,
+which was explicitly rejected mid-build after a course-correction warning about
+AI-default design tells.
+
+**Chosen instead:** the hero *is* a working miniature of the Edit tab. A real
+draggable playhead scrubs a filmstrip of real screenshots, driving a real
+tabular timecode readout; two numeric fields implement **D-253's own
+drag-to-scrub spec** — 8px of travel per declared `step`, Shift ×10, Cmd/Ctrl
+÷10, a 4px click/drag threshold — against the preview's live scale and opacity.
+Keyboard-operable (`role="slider"`, arrows step a frame, Shift steps a second),
+pointer-captured, and reduced-motion respected.
+
+The reasoning: the distinctive physical sensation of using this app is
+**dragging** — a playhead, a value. Reproducing that is specific to Chroma in a
+way a parallax scroll is not. Boldness is spent there and nowhere else; every
+section below the hero is deliberately quiet, and there is no scroll-fade-in
+anywhere on the page.
+
+### 5. Honesty about what does not exist
+
+Three absences are stated on the page rather than papered over, and each is
+pinned by a test so it cannot be quietly deleted while still true:
+
+- **No Motion-tab or Colorist-tab screenshots exist.** All 31 captures in the
+  debug-screenshot directory are the Edit tab or the project launcher. Those two
+  sections therefore carry no image and say so, listing real capabilities
+  instead. (A subagent's catalogue of those screenshots was found to be wrong on
+  at least three files — a launcher labelled as a Sources panel, an Inspector
+  labelled as audio fades, a Transitions toolbar labelled as a captions
+  feature — so every image used was opened and confirmed by hand before use.
+  Worth remembering: a vision-pass over many images is a lead, not a fact.)
+- **No demo video exists.** The hero is captioned "Chroma has no recorded
+  product demo yet," and `website/TODO-DEMO-VIDEO.md` records what to record and
+  what not to fake.
+- **The Motion tab has 0 MCP tools**, printed beside the other counts rather
+  than omitted from the total.
+
+### 6. The beta signup's placeholder endpoint
+
+The owner chose a Formspree-style endpoint. Creating a third-party account on
+the owner's behalf is outside what the agent building this may do, so the form
+is **fully built** — validation, in-flight disabling, success and error states,
+a honeypot — against a deliberately obvious placeholder
+(`https://formspree.io/f/YOUR_FORM_ID`) in **one named constant**,
+`website/src/data/beta.ts`.
+
+The form **detects the placeholder and refuses to post**, telling the visitor
+plainly that signup is not open, rather than firing a request at a URL that does
+not exist or silently swallowing an address. `website/BETA_SIGNUP_SETUP.md` is
+the three-step handover. A test asserts the placeholder is still a placeholder,
+so a real endpoint cannot be assumed and a fake one cannot ship.
+
+### 7. Numbers are counted, never estimated
+
+Every MCP figure on the site is produced by counting `@mcp.tool()` definitions
+in `mcp/server.py`: **115 total, 9 `debug_*` (compiled out of a production
+build), 106 shipped** — 60 Edit, 42 Colorist, 4 media-understanding, 0 Motion.
+`website/tests/mcp-data.test.ts` re-counts on every run and asserts every tool
+name printed on the site actually exists. **It immediately caught a fabricated
+name** (`editor_set_clip_speed`; the real tool is the unprefixed
+`set_clip_speed`) during the build, which is the clearest argument for the test.
+
+The same pass found `mcp/README.md`'s own heading stale — "94 (plus 8
+debug-build-only)" and "48 `editor_*` tools" against a real 115/9/60 — and
+corrected it in this commit, per the cardinal rule.
+
+**Verification.** `astro check` 0 errors / 0 warnings / 0 hints; `astro build`
+3 pages, no warnings; **141 tests green** across 5 files, including a
+broken-link and anchor check over the built `dist/`, an unused-asset check, and
+assertions that no `TODO`, `console.*` or fabricated social proof reaches the
+output. The rendered result was screenshotted with headless Chrome and reviewed
+section by section — which is how two real defects were caught and fixed: a CSS
+class collision (`.head` was both the hero's headline wrapper and the timeline
+playhead, so the playhead's `position:absolute; width:2px; background:white`
+collapsed the headline into a white bar) and a broken `og:image` left pointing
+at a renamed screenshot. The link test was extended to cover `<head>` image
+references, which is the gap that let the second one through.
+
+**Deliberately deferred.** A real demo video (§5); the real Formspree endpoint
+(§6); a domain and any deployment (`astro.config.mjs`'s `site` is a
+placeholder); download links, which wait on real installers; a public changelog
+page; and Motion/Colorist screenshots, which wait on captures existing.

@@ -192,7 +192,27 @@ staying the default — never a replacement for local sidecars once it exists.
 
 ---
 
-## 4. Website
+## 4. Website — ✅ BUILT 2026-09-09 (D-255), out of sequence
+
+> **This item is done.** The owner explicitly overrode this note's own
+> "build last, right before launch" sequencing on 2026-09-09 and asked for the
+> website then. It lives in a new top-level `website/` — Astro, its own
+> project, outside the npm workspace — and it covers the minimum scope this
+> section names below, except downloads (no installers exist yet) and a
+> user-facing changelog page. The AGPL/source notice named below **is** there.
+> Note that §0 of this same document had already identified the website as one
+> of the two items that do not depend on the unresolved D-002 licensing
+> question, so building it early cost nothing and committed nothing.
+>
+> What it added beyond this scope: a real MCP setup/docs page grounded in
+> `mcp/server.py`, and a pre-launch beta signup (real form, placeholder
+> endpoint — `website/BETA_SIGNUP_SETUP.md`).
+>
+> Read **D-255** before changing it. Still open: a demo video, the real form
+> endpoint, a domain and deployment, download links, and Motion/Colorist
+> screenshots.
+
+### Original scope, as researched
 
 Not deeply researched (lower-risk, well-understood category) — scoped from
 this project's own existing positioning docs (`docs/00-vision.md`,

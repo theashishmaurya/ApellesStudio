@@ -1,0 +1,26 @@
+---
+/**
+ * index.astro — the home page (D-255).
+ *
+ * Section order is a deliberate argument: what it is (hero) -> what it does
+ * (tabs) -> how an agent reaches it (MCP) -> why it is built this way
+ * (local-first) -> ask (beta).
+ */
+import Base from '../layouts/Base.astro';
+import Hero from '../components/Hero.astro';
+import Tabs from '../components/Tabs.astro';
+import Mcp from '../components/Mcp.astro';
+import LocalFirst from '../components/LocalFirst.astro';
+import Beta from '../components/Beta.astro';
+---
+
+<Base
+  title="Chroma — the local, open-source video editor an agent can drive"
+  description="An AI-native, local-first video tool. Multi-track editing, motion graphics and real colour grading in one window, with 106 verified MCP tools an agent can drive. Free, open source, no cloud in the render path."
+>
+  <Hero />
+  <Tabs />
+  <Mcp />
+  <LocalFirst />
+  <Beta />
+</Base>

@@ -1,0 +1,129 @@
+---
+/**
+ * Footer.astro — licence, source, and the honest state of the project (D-255).
+ *
+ * The AGPL notice and source link are required regardless of how Chroma's own
+ * licensing question resolves, since the vendored engine is AGPL either way
+ * (D-002 / D-003, and docs/notes/pre-launch-plan.md item 4).
+ */
+const year = new Date().getFullYear();
+---
+
+<footer class="ft">
+  <div class="shell inner">
+    <div class="brand">
+      <span class="mark">Chroma</span>
+      <p>An AI-native, local, open-source video tool. Edit, Motion and Colorist in one window.</p>
+    </div>
+
+    <nav aria-label="Footer">
+      <h2>Site</h2>
+      <a href="/#tabs">Product</a>
+      <a href="/#mcp">MCP</a>
+      <a href="/docs/mcp/">Connect an agent</a>
+      <a href="/#beta">Beta access</a>
+    </nav>
+
+    <div class="legal">
+      <h2>Licence</h2>
+      <p>
+        Chroma is free software released under the <span class="mono">AGPL-3.0</span>, and is a
+        fork of <a href="https://github.com/CyberTimon/RapidRAW">RapidRAW</a>, which is licensed
+        the same way.
+      </p>
+    </div>
+  </div>
+
+  <div class="shell bot">
+    <span class="mono">&copy; {year} Chroma</span>
+    <span class="mono dim">Pre-release &middot; macOS (Apple Silicon)</span>
+  </div>
+</footer>
+
+<style>
+  .ft {
+    border-top: 1px solid var(--color-border-color);
+    padding-top: clamp(3rem, 2rem + 3vw, 4.5rem);
+    padding-bottom: 2rem;
+  }
+
+  .inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr);
+    gap: clamp(2rem, 1rem + 4vw, 5rem);
+    padding-bottom: 2.5rem;
+  }
+
+  .mark {
+    font-size: var(--step--1);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+
+  .brand p {
+    margin-top: 0.9rem;
+    color: var(--color-text-secondary);
+    font-size: var(--step--1);
+    max-width: 38ch;
+  }
+
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+    font-weight: 400;
+    margin-bottom: 0.9rem;
+  }
+
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: start;
+  }
+
+  nav a {
+    font-size: var(--step--1);
+    color: var(--color-text-secondary);
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  nav a:hover {
+    color: var(--color-text-primary);
+  }
+
+  .legal p {
+    font-size: var(--step--1);
+    color: var(--color-text-secondary);
+    max-width: 40ch;
+  }
+  .legal a {
+    color: var(--color-text-primary);
+    border-bottom: 1px solid var(--color-border-color);
+    transition: border-color var(--dur-slow) var(--ease-out);
+  }
+  .legal a:hover {
+    border-color: var(--color-accent);
+  }
+
+  .bot {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--color-border-color);
+    padding-top: 1.25rem;
+    font-size: 0.6875rem;
+  }
+  .dim {
+    color: var(--color-text-secondary);
+  }
+
+  @media (max-width: 800px) {
+    .inner {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
