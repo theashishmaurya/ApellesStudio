@@ -380,7 +380,10 @@ import {
   edgeIsEditPoint,
   resizeEndOp,
   resolveTrimMode,
+  trimModeCursor,
+  trimModeHint,
   trimModeLabel,
+  TRIM_ARM_HINT,
   type TrimMode,
   type TrimZone,
 } from './trimMode';
@@ -413,6 +416,10 @@ const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
 /** how long a rippled clip's highlight stays visible (ms) */
 const RIPPLE_FLASH_MS = 550;
+/** D-247 — how far below-right of the pointer the armed trim-mode badge sits.
+ *  Clear of a standard macOS cursor's own ~16px glyph, so the badge never
+ *  covers the thing it is annotating. */
+const TRIM_BADGE_OFFSET_PX = 16;
 /** Track header sidebar default width (D-080; widened D-090 for the lock/
  *  hide/rearrange row) — now the `ResizablePanel`'s `defaultSize` (D-094:
  *  the sidebar became genuinely resizable, per the owner's standing
@@ -993,6 +1000,16 @@ function ClipBody({
       // same pair, but it is not exposed on the DOM node in any documented way.
       data-chroma-track={track}
       data-chroma-clip-id={clipId}
+      // D-247 — where the smart trim tool is announced when it is NOT armed.
+      // D-235's four edits are reachable only by already knowing to hold
+      // Alt/Option, and its readout appears only once that key is down, so
+      // nothing on this surface ever said the key does anything — the owner
+      // asked "how to toggle between roll/slip/ripple etc?" with the feature
+      // shipped. A `title` is the right cost for a hint you need exactly once:
+      // it is on the thing the gesture acts on, it costs no pixels, and it is
+      // read out by a screen reader. The badge (armed) and this (unarmed) are
+      // the two halves of one affordance.
+      title={TRIM_ARM_HINT}
       className={className + ' cursor-grab active:cursor-grabbing ' + (isDragging ? 'opacity-30' : '')}
       style={style}
       {...attributes}
@@ -1279,14 +1296,31 @@ export function TimelinePane() {
   const [trimArmed, setTrimArmed] = useState(false);
   const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number } | null>(null);
 
+  // Declared beside `trimArmed` because disarming has to clear it (see below).
+  const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
+
   useEffect(() => {
     // `e.altKey` rather than `e.key === 'Alt'`: the same read works for
     // keydown and keyup, and it stays correct if the key is released while the
     // window is unfocused (the next event carries the real state). Gated to
     // only dispatch on a real change — D-083's per-tick discipline applies to
     // key repeat exactly as it does to pointer moves.
-    const onKey = (e: KeyboardEvent) => setTrimArmed((prev) => (prev === e.altKey ? prev : e.altKey));
-    const disarm = () => setTrimArmed((prev) => (prev ? false : prev));
+    //
+    // D-247 — disarming clears the resolved mode too, not just the arm.
+    // Caught by that pass's own test 16, on real DOM: the mode is only ever
+    // recomputed by a pointer MOVE, so a stale one survived a keyup, and once
+    // the mode drove a `cursor` (rather than only a readout that hid itself
+    // with the arm) that left the timeline stuck showing `ew-resize` after the
+    // key came up, until the pointer happened to move again.
+    // Two change-gated updates rather than one updater with a side effect in
+    // it: an updater must stay pure, and React really does call them twice
+    // under StrictMode (which this component's own DOM tests mount with).
+    const setArmed = (armed: boolean) => {
+      setTrimArmed((prev) => (prev === armed ? prev : armed));
+      if (!armed) setHoverTrimMode((prev) => (prev === null ? prev : null));
+    };
+    const onKey = (e: KeyboardEvent) => setArmed(e.altKey);
+    const disarm = () => setArmed(false);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
     window.addEventListener('blur', disarm);
@@ -1368,11 +1402,41 @@ export function TimelinePane() {
   // handler returns on a boolean before touching the DOM unless Alt is
   // actually held, and `setHoverTrimMode` is change-gated so a pointer
   // sweeping a clip's body dispatches once, not once per pixel.
-  const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
+  // D-247 — the badge that follows the pointer. Its POSITION is written
+  // straight to the node, never through state: this runs on every pointermove
+  // of an armed hover, and a `setState` per pixel would re-render a component
+  // that renders every clip, every filmstrip and every waveform on the
+  // timeline (CLAUDE.md's performance-first rule — a badge that makes the
+  // timeline janky is worse than no badge). Only the mode NAME is state, and
+  // it is change-gated, so React re-renders once per band crossed.
+  const trimBadgeRef = useRef<HTMLDivElement>(null);
+  const placeTrimBadge = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const badge = trimBadgeRef.current;
+    const area = editAreaRef.current;
+    if (!badge || !area) return;
+    const rect = area.getBoundingClientRect();
+    // Below-right of the pointer, the side a cursor's own hotspot leaves free.
+    const x = e.clientX - rect.left + TRIM_BADGE_OFFSET_PX;
+    const y = e.clientY - rect.top + TRIM_BADGE_OFFSET_PX;
+    // Clamped so a badge raised near the pane's right or bottom edge stays
+    // readable instead of being clipped away by the area's `overflow-hidden`
+    // — but only when the pane can actually be measured. An unmeasurable box
+    // (a pane laid out to nothing, and every jsdom test tier) would otherwise
+    // clamp every position to the corner, which is worse than not clamping:
+    // the badge would stop following the pointer entirely.
+    const measurable = rect.width > 0 && rect.height > 0;
+    const maxX = rect.width - badge.offsetWidth - TRIM_BADGE_OFFSET_PX;
+    const maxY = rect.height - badge.offsetHeight - TRIM_BADGE_OFFSET_PX;
+    const left = measurable ? Math.min(x, Math.max(0, maxX)) : x;
+    const top = measurable ? Math.min(y, Math.max(0, maxY)) : y;
+    badge.style.transform = `translate(${left}px, ${top}px)`;
+  };
+
   const onTrimHoverMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!trimArmed) return;
     const next = trimModeAtPointer(e.nativeEvent);
     setHoverTrimMode((prev) => (prev === next ? prev : next));
+    if (next) placeTrimBadge(e);
   };
   const onTrimHoverLeave = () => setHoverTrimMode((prev) => (prev === null ? prev : null));
 
@@ -3572,6 +3636,16 @@ export function TimelinePane() {
             ref={editAreaRef}
             data-bench-id="timeline-edit-area"
             className="relative h-full overflow-hidden"
+            // D-247 — the cursor half of Resolve's own context-sensitive trim
+            // affordance ("You'll see the cursor change to different types of
+            // trim tools as you move your mouse"), with the standard keywords
+            // rather than the four bitmaps `trim.jpg` shows. On the AREA, not
+            // on each clip: the two edge modes are resolved over the library's
+            // own stretch handles, which are rendered by the library and are
+            // not ours to style. `undefined` when nothing is armed leaves every
+            // existing cursor (`ClipBody`'s `cursor-grab`, the handles' own)
+            // exactly as it was.
+            style={hoverTrimMode ? { cursor: trimModeCursor(hoverTrimMode) } : undefined}
             // D-100 — owner: "clicking outside does not make it
             // undeselected." A click anywhere in this area that ISN'T on a
             // clip (`.timeline-editor-action`, the library's own class for
@@ -3670,6 +3744,32 @@ export function TimelinePane() {
               onChange={() => false}
               onActionResizeEnd={onActionResizeEndCb}
             />
+            {/* D-247 — the armed trim mode, named AT THE POINTER. Resolve's own
+                copy for this feature is explicit that the signal belongs there
+                ("You'll see the cursor change to different types of trim tools
+                as you move your mouse"); D-235 could not ship its four cursor
+                bitmaps and put the readout in the toolbar instead, which is the
+                right information in a place the eye is not — the owner, editing
+                live, asked "how to toggle between roll/slip/ripple etc?" with
+                that readout already shipped. Same `resolveTrimMode` call the two
+                commit paths use (via `hoverTrimMode`), so it still cannot
+                promise an edit the press would not make.
+
+                `pointer-events-none` so it can never eat the very gesture it is
+                describing, and its position is written imperatively — see
+                `placeTrimBadge`. */}
+            <div
+              ref={trimBadgeRef}
+              data-chroma-trim-badge=""
+              role="status"
+              hidden={!hoverTrimMode}
+              className="pointer-events-none absolute left-0 top-0 z-40 whitespace-nowrap rounded border border-border-color bg-surface px-1.5 py-1 text-[10px] leading-tight text-text-primary shadow-md"
+            >
+              <span className="font-medium">{hoverTrimMode ? trimModeLabel(hoverTrimMode) : ''}</span>
+              {hoverTrimMode && trimModeHint(hoverTrimMode) && (
+                <span className="ml-1.5 text-text-secondary">{trimModeHint(hoverTrimMode)}</span>
+              )}
+            </div>
             {/* D-095/D-096/D-097 — the live drop-preview overlay: an
                 insertion line snapped to a clip edge, or a ghost row at a
                 track-insertion boundary. `pointer-events-none` so it never

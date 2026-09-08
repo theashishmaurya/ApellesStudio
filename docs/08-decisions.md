@@ -23019,3 +23019,124 @@ honest next step whenever that's not disruptive.
 B-097. `cargo fmt`/`clippy` clean on every file this touched. `tsc --noEmit`:
 zero errors (no frontend change — `chroma_audio_play`'s Tauri command
 signature is unchanged, so `useEditorControl.ts` needed nothing).
+
+---
+
+## D-247 — Where the smart trim tool announces itself: at the pointer, on the clip, and only where the reference actually puts it
+
+**decided (2026-09-08)**
+
+**Context.** The owner, editing live in `perf-comparison-reel-v3`, asked *"how
+to toggle between roll/slip/ripple etc?"* — about a feature that had already
+shipped, complete, in D-235. That is a discoverability defect, not a missing
+capability, and it is worth a decision entry precisely because the affordance
+D-235 built was reasoned about carefully and still did not work.
+
+**What D-235 shipped, and why it wasn't enough.** Alt/Option arms the tool and
+pointer position picks the mode; while armed, a chip in the *timeline toolbar*
+names the resolved mode ("Ripple" / "Roll" / "Slip" / "Slide"). Two gaps, and
+they are different in kind:
+
+1. **Nothing announced the arm key.** The readout appears only once Alt is
+   already held, so its entire discoverability was circular: you learn the key
+   exists by pressing the key. Nothing on the surface, at any time, hinted that
+   four more edits were reachable. This is the gap the owner actually hit.
+2. **The readout is in the wrong place.** It is in the toolbar; the pointer is
+   on a clip, often hundreds of pixels away, during a gesture that demands the
+   eye be exactly where the edit will land.
+
+**The reference says where the signal goes, and D-235 read it right but could
+not act on it.** Blackmagic's own copy for this feature
+(`scratch/resolve-reference/resolve-edit-features.json`, `edit-trim`):
+*"You'll see the **cursor change** to different types of trim tools as you move
+your mouse. This is known as context sensitive trimming."* And
+`scratch/resolve-reference/trim.jpg` is literally the four glyphs it swaps
+between. Premiere and FCP do the same thing — the signal lives at the pointer,
+in all three. D-235's own note is explicit that it put the name in the toolbar
+because Chroma "cannot reproduce [the cursors] without shipping four custom
+cursor bitmaps", which was an honest constraint and the wrong conclusion: the
+constraint is on the *glyphs*, not on the *location*.
+
+**Options.**
+
+- **(a) Ship four cursor bitmaps** (or `cursor: url(data:image/svg+xml,…)`).
+  Truest to the reference. Rejected: SVG-cursor support is uneven, nothing in
+  this tier can test what a WKWebView actually paints, and it would add the
+  repo's first cursor assets for a hint.
+- **(b) Leave the toolbar chip, add a keyboard-shortcut list somewhere.** Does
+  not fix either gap — a shortcut list is a thing you consult, and this is a
+  thing you need mid-gesture.
+- **(c) Move the information to the pointer, and announce the key on the clip.**
+
+**Choice: (c), as two halves of one affordance.**
+
+- **Armed** — a small badge follows the pointer, naming the resolved mode *and
+  saying what it does* ("Slide — move the clip, its neighbours absorb it").
+  The gloss is not padding: "Slip" and "Slide" are a pair whose names carry no
+  hint of which is which, and each clause is taken from Blackmagic's own
+  description of that edit on the page above. Alongside it, the `cursor`
+  changes with the mode using the **standard keywords** — `ew-resize` for the
+  two edge edits, `grabbing` for the two body edits. Not the four glyphs, but
+  it is the part of the reference's behaviour that matters most: the pointer
+  visibly changes the instant the tool arms.
+- **Unarmed** — every clip carries the arm hint in its own `title`: *"Hold ⌥
+  Option and drag: an edge rolls or ripples, the top half slips, the bottom
+  half slides."* A tooltip is the right cost for a hint you need exactly once —
+  it is on the thing the gesture acts on, it costs no pixels during real
+  editing (unlike a badge that would follow every ordinary hover), and a screen
+  reader gets it.
+
+The toolbar chip **stays**. It answers a question the badge cannot — "did my
+Alt press register at all?" — when the pointer is not over a clip, which is
+exactly when there is no mode to name at the pointer. A test pins the two to
+the same answer, since two hints that could disagree with each other would be
+worse than either alone.
+
+**Built on the same one resolution.** The badge reads `hoverTrimMode`, which is
+the same `resolveTrimMode` call D-235's readout and both commit paths use. A
+hint that could promise an edit the press would not make was D-235's own stated
+reason for that structure; this adds a second consumer, not a second rule.
+
+**Performance, and why the position is written imperatively.** This runs on
+every pointer move of an armed hover, inside a component that renders every
+clip, every filmstrip and every waveform on the timeline. The badge's
+*position* is therefore written straight to the node through a ref; only the
+mode *name* is React state, and it is change-gated, so a pointer sweeping a
+clip's body dispatches one render, not one per pixel. Same D-083 per-move
+discipline D-235 followed, extended to the new work rather than exempted from
+it. `reactCompiler.test.ts` (D-201) still passes for `TimelinePane.tsx` — an
+imperative write inside an event handler is not a bailout, but that is
+asserted, not assumed.
+
+**A real bug found by the new test, not by inspection.** Test 16 caught that
+releasing Alt cleared the *arm* but not the resolved *mode* — harmless while
+the only consumer was a readout that hid itself with the arm, and immediately
+visible once a mode drove a `cursor`: the timeline stayed stuck showing
+`ew-resize` after the key came up, until the pointer happened to move again.
+Disarming now clears both, as two change-gated updates rather than a side
+effect inside a state updater (updaters must stay pure; React really does call
+them twice under the StrictMode these tests mount with). Not filed as a B-NNN —
+it never landed.
+
+**No MCP surface, deliberately.** This is a hover hint. The *capabilities* it
+points at are already fully agent-reachable — `editor_trim_clip(ripple)`,
+`editor_roll_edit`, `editor_slip_clip`, `editor_slide_clip`, all shipped by
+D-235 in the same pass as the gestures. CLAUDE.md's human-AND-AI rule is about
+capabilities, and an agent does not need to be told which key a human would
+hold. Same reasoning D-232 used for not shipping an `editor_scrub`.
+
+**Verified.** 5 new real-DOM `PointerEvent` tests in
+`TimelinePane.trim.dom.test.tsx` (17 total in that file, all green): the badge
+is absent unarmed and absent armed-but-not-over-a-clip; it names and glosses
+all four modes, each case mirroring one row of D-235's own mode table
+including Shift-forces-Ripple; it agrees with the toolbar chip; it tracks the
+pointer and swaps the cursor per mode and restores it on disarm; and every clip
+carries the arm hint. `@chroma/editor` 1424/1424. `tsc --noEmit -p
+packages/editor` clean.
+
+**Not built, deliberately.** The four real cursor glyphs (option (a) above) —
+if the app ever grows a cursor-asset story, that is where they belong, and this
+badge would stay as the thing that tells slip from slide. Nothing here touches
+where these controls live: the left-icon-rail redesign the owner sketched on
+the same screenshot is a separate, concurrent pass, and this change is
+deliberately position-neutral so it survives whatever that lands.
