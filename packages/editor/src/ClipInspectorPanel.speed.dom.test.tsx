@@ -125,6 +125,13 @@ function removeButtons(): HTMLButtonElement[] {
   ) as HTMLButtonElement[];
 }
 
+/** D-241 — the per-run Reverse buttons, in run order. */
+function reverseButtons(): HTMLButtonElement[] {
+  return [...(mounted?.container.querySelectorAll('button') ?? [])].filter((b) =>
+    (b.getAttribute('aria-label') ?? '').startsWith('Reverse the run starting at source frame'),
+  ) as HTMLButtonElement[];
+}
+
 function click(el: HTMLElement) {
   actSync(() => {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -224,8 +231,62 @@ describe('the Inspector Speed section (D-236)', () => {
     await render();
     expect(speedFields()[0].disabled).toBe(true);
     expect(addPointButton()?.disabled).toBe(true);
+    expect(reverseButtons()[0].disabled).toBe(true);
     // ...and the reducer refuses the write even if the control were driven.
     type(speedFields()[0], 200);
     expect(currentClip().speed_points).toBeUndefined();
+  });
+});
+
+describe('the Inspector Speed section — reverse (D-241)', () => {
+  it('the Reverse button flips the run\'s sign and stores a real negative speed', async () => {
+    await render();
+    expect(reverseButtons()).toHaveLength(1);
+    expect(reverseButtons()[0].textContent).toBe('Reverse');
+    click(reverseButtons()[0]);
+    // The same model an MCP `speed=-1` writes — one point at the in-point.
+    expect(currentClip().speed_points).toEqual([{ source_frame: 0, speed: -1 }]);
+    // Reversing changes DIRECTION, not LENGTH: the clip still ends where it did,
+    // which is what stops a sign flip from disturbing a neighbour.
+    expect(endFrame(currentClip(), 24)).toBe(240);
+    // ...and the control now reads back as reversed, both as a label and as a
+    // real pressed state for a screen reader.
+    expect(reverseButtons()[0].textContent).toBe('Reversed');
+    expect(reverseButtons()[0].getAttribute('aria-pressed')).toBe('true');
+    expect(speedFields()[0].value).toBe('-100');
+  });
+
+  it('reversing is an exact round trip — the magnitude survives the flip', async () => {
+    await render();
+    type(speedFields()[0], 37);
+    click(reverseButtons()[0]);
+    expect(currentClip().speed_points).toEqual([{ source_frame: 0, speed: -0.37 }]);
+    click(reverseButtons()[0]);
+    // Back to exactly 0.37 — which typing a minus sign into the field could not
+    // give you, since it loses the digits you had.
+    expect(currentClip().speed_points).toEqual([{ source_frame: 0, speed: 0.37 }]);
+  });
+
+  it('typing a negative percentage works too — the way both Resolve and Premiere spell it', async () => {
+    await render();
+    type(speedFields()[0], -200);
+    expect(currentClip().speed_points).toEqual([{ source_frame: 0, speed: -2 }]);
+    // Backwards at double speed still occupies half the timeline, exactly as
+    // forwards at double speed does.
+    expect(endFrame(currentClip(), 24)).toBe(120);
+  });
+
+  it('reverse is PER RUN — a ramp can mix directions', async () => {
+    setUp(fixture({ speed_points: [{ source_frame: 96, speed: 2 }] }));
+    await render();
+    expect(reverseButtons()).toHaveLength(2);
+    // Reverse only the second run; the first is untouched.
+    click(reverseButtons()[1]);
+    expect(currentClip().speed_points).toEqual([{ source_frame: 96, speed: -2 }]);
+    expect(reverseButtons()[0].textContent).toBe('Reverse');
+    expect(reverseButtons()[1].textContent).toBe('Reversed');
+    // 96 source frames forwards at 1x + 144 backwards at 2x = 96 + 72 = 168,
+    // exactly what the same ramp forwards would occupy.
+    expect(endFrame(currentClip(), 24)).toBe(168);
   });
 });

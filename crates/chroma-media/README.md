@@ -24,8 +24,12 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     `write_blob`, LRU `prune_to_budget`.
   - `audio` — the Edit-tab playback engine (symphonia → rubato → dasp_sample →
     cpal, D-049/D-050/D-057), its per-source gain envelopes (fade D-147, duck
-    D-149, level D-223, EQ D-224), the single transport's generation/`seq`
-    ordering protocol (D-130), and the waveform-envelope path (D-051/D-128).
+    D-149, level D-223, EQ D-224), its per-source **speed retime** (D-242 — a
+    variable-rate reader that varispeeds a ramped clip's sound to match its
+    picture, reverse included; the export's pitch-preserving `atempo` is
+    deliberately NOT mirrored here, see D-242), the single transport's
+    generation/`seq` ordering protocol (D-130), and the waveform-envelope path
+    (D-051/D-128).
   - `scrub` — **tape-style audio scrubbing (D-232)**: the *position-driven*
     playback mode, beside `audio`'s time-driven one. Given a path and a source
     second that the caller updates at pointer-move rate, it repeatedly emits a
@@ -52,8 +56,13 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   gain and (D-147) a fade envelope in seconds; it never works one out.
   `audio::AudioSourceSpec` is that boundary, and every field on it is a
   *media* fact stated in seconds — which is why D-147's `audio::FadeEnvelope`
-  is seconds too, and why the frames→seconds conversion that needs a `Clip`
-  stays app-side, in `chroma::audio::fade_for_clip`. The curve math the
+  is seconds too, why D-242's `audio::AudioSpeedSegment` is seconds too, and
+  why the frames→seconds conversion that needs a `Clip` stays app-side, in
+  `chroma::audio::fade_for_clip` / `chroma::audio::speed_for_clip`. **This is
+  also why D-242's retime resolves a speed ramp it is handed rather than one it
+  looks up**: `speed_ramp::segments_from_output`, which answers "which runs are
+  still ahead of the playhead", lives in `chroma-timeline` — one layer up — and
+  the app converts its answer to seconds before this crate sees it. The curve math the
   envelope evaluates (`chroma_types::fade_gain`) is in **L0** for the same
   reason: it is shared with `chroma-timeline`'s compositor-side fade without
   this crate depending on `chroma-timeline`.

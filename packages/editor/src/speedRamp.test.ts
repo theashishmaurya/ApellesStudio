@@ -21,13 +21,17 @@ import { describe, expect, it } from 'vitest';
 import {
   clampSpeed,
   flatSpeedOf,
+  hasReverseSegments,
   hasSpeedRamp,
   isFlatSegments,
   MAX_SPEED,
   MIN_SPEED,
   normalizeSpeedPoints,
   outputAtSourceFrame,
-  rampAudioSegments,
+  outputSpanOfLeadingSource,
+  outputSpanOfTrailingSource,
+  quantizedSourceFrameAtOutput,
+  rampSegmentSeconds,
   rampOutputSourceFrames,
   rampSetptsSecondsExpr,
   resolveSpeedSegments,
@@ -84,11 +88,18 @@ describe('clampSpeed', () => {
   it('keeps a real speed and refuses everything that would break the remap', () => {
     expect(clampSpeed(2)).toBe(2);
     expect(clampSpeed(0.5)).toBe(0.5);
-    // Zero, negative (reverse — deliberately out of scope) and non-finite all
-    // resolve to the identity rather than to an infinite or backwards remap.
-    for (const bad of [0, -2, NaN, Infinity]) expect(clampSpeed(bad)).toBe(1);
+    // Zero and non-finite resolve to the identity rather than to an infinite
+    // remap or a clip collapsed to a single instant.
+    for (const bad of [0, NaN, Infinity, -Infinity]) expect(clampSpeed(bad)).toBe(1);
     expect(clampSpeed(1e6)).toBe(MAX_SPEED);
     expect(clampSpeed(1e-6)).toBe(MIN_SPEED);
+  });
+
+  it('D-241 — keeps the SIGN and clamps only the magnitude', () => {
+    expect(clampSpeed(-2)).toBe(-2);
+    expect(clampSpeed(-0.5)).toBe(-0.5);
+    expect(clampSpeed(-1e6)).toBe(-MAX_SPEED);
+    expect(clampSpeed(-1e-6)).toBe(-MIN_SPEED);
   });
 });
 
@@ -256,11 +267,11 @@ describe('rampSetptsSecondsExpr — the exporter\'s own expression', () => {
   });
 });
 
-describe('rampAudioSegments', () => {
+describe('rampSegmentSeconds', () => {
   it('gives each segment its source window in seconds from the clip\'s in-point', () => {
     // `atempo` takes a constant, so this list IS the audio implementation of a
     // ramp — see `buildRampedAtempoSteps`.
-    expect(rampAudioSegments(resolveSpeedSegments(clip({ speed_points: RAMP })), FPS)).toEqual([
+    expect(rampSegmentSeconds(resolveSpeedSegments(clip({ speed_points: RAMP })), FPS)).toEqual([
       { startSec: 0, endSec: 0.75, speed: 0.5 },
       { startSec: 0.75, endSec: 2.75, speed: 2 },
       { startSec: 2.75, endSec: 4, speed: 1.25 },
@@ -315,7 +326,7 @@ describe('rampAudioSegments', () => {
 
   it('is rebased on the clip\'s own in-point, not the file\'s start', () => {
     const segs = resolveSpeedSegments(clip({ source_start: 24, duration: 48, speed_points: RAMP }));
-    expect(rampAudioSegments(segs, FPS)[0].startSec).toBe(0);
+    expect(rampSegmentSeconds(segs, FPS)[0].startSec).toBe(0);
   });
 });
 
@@ -393,5 +404,181 @@ describe('the timeline model reads the ramp through one definition', () => {
     expect(hasSpeedRamp(clip({ speed_points: [{ source_frame: 0, speed: 1 }] }))).toBe(false);
     expect(hasSpeedRamp(clip({ speed_points: [{ source_frame: 40, speed: 1 }] }))).toBe(false);
     expect(hasSpeedRamp(clip({ speed_points: RAMP }))).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-241 — reverse (negative) speed
+// --------------------------------------------------------------------------- //
+
+/** Forward, then backwards at 2x, then forward again:
+ *   source [0, 24)  at  1x  -> 24 output
+ *   source [24, 72) at -2x  -> 24 output (played 71 -> 24)
+ *   source [72, 96) at  1x  -> 24 output
+ *  = 72 output frames. The same ramp `speedRampReverse.ffmpeg.test.ts` proves
+ *  against real decoded pixels, so the fast unit loop and the slow pixel proof
+ *  are talking about exactly one thing. */
+const MIXED_REVERSE: SpeedPoint[] = [
+  { source_frame: 0, speed: 1 },
+  { source_frame: 24, speed: -2 },
+  { source_frame: 72, speed: 1 },
+];
+
+describe('D-241 — a reversed run', () => {
+  it('resolves with its sign intact and occupies the SAME output as its forward twin', () => {
+    const back = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: -2 }] }));
+    const fwd = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: 2 }] }));
+    expect(back[0].speed).toBe(-2);
+    // The invariant that lets a sign flip never move a neighbouring clip.
+    expect(rampOutputSourceFrames(back)).toBe(rampOutputSourceFrames(fwd));
+    expect(rampOutputSourceFrames(back)).toBe(48);
+  });
+
+  it('is never "flat", even alone — the pre-D-236 constant path cannot express it', () => {
+    const back = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: -2 }] }));
+    expect(isFlatSegments(back)).toBe(false);
+    expect(hasReverseSegments(back)).toBe(true);
+    // ...so no `setpts` slope is ever generated for it. A negative slope is a
+    // filtergraph ffmpeg happily accepts and that reverses nothing.
+    expect(rampSetptsSecondsExpr(back, FPS)).toBeNull();
+    // A forward ramp is untouched by the new guard.
+    expect(hasReverseSegments(resolveSpeedSegments(clip({ speed_points: RAMP })))).toBe(false);
+  });
+
+  it('starts at its END and walks DOWN to its start', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: -1 }] }));
+    // Continuous: output 0 sits at source 96 (the exclusive end), output 96 at 0.
+    expect(sourceFrameAtOutput(segs, 0)).toBe(96);
+    expect(sourceFrameAtOutput(segs, 96)).toBe(0);
+    // Quantised — the `ceil - 1` mirror rule. The first FRAME shown is 95, not
+    // 96 (which is not in the clip at all), and the last is 0, not -1.
+    expect(quantizedSourceFrameAtOutput(segs, 0)).toBe(95);
+    expect(quantizedSourceFrameAtOutput(segs, 0.5)).toBe(95);
+    expect(quantizedSourceFrameAtOutput(segs, 1)).toBe(94);
+    expect(quantizedSourceFrameAtOutput(segs, 95)).toBe(0);
+  });
+
+  it('quantises FORWARD runs exactly as before — `floor`, unchanged', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: RAMP }));
+    for (let out = 0; out < 84; out++) {
+      expect(quantizedSourceFrameAtOutput(segs, out)).toBe(
+        Math.floor(sourceFrameAtOutput(segs, out)),
+      );
+    }
+  });
+
+  it('the two maps stay exact inverses across a mixed forward/reverse ramp', () => {
+    // The single most important property in this file, now with a sign in it:
+    // `outputAtSourceFrame` is what the exporter is built from and
+    // `sourceFrameAtOutput` is what the preview decodes with, so a
+    // disagreement here IS a preview/export divergence.
+    const segs = resolveSpeedSegments(clip({ speed_points: MIXED_REVERSE }));
+    for (let i = -20; i < 140; i++) {
+      const x = i * 0.7;
+      expect(outputAtSourceFrame(segs, sourceFrameAtOutput(segs, x))).toBeCloseTo(x, 9);
+    }
+  });
+
+  it('a mixed ramp resolves to the runs and the length it should', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: MIXED_REVERSE }));
+    expect(segs).toEqual([
+      { startSourceFrame: 0, endSourceFrame: 24, speed: 1 },
+      { startSourceFrame: 24, endSourceFrame: 72, speed: -2 },
+      { startSourceFrame: 72, endSourceFrame: 96, speed: 1 },
+    ]);
+    expect(rampOutputSourceFrames(segs)).toBe(72);
+    expect(endFrame(clip({ speed_points: MIXED_REVERSE }), FPS)).toBe(72);
+  });
+
+  it('the preview resolves the reversed run descending, and the seams exactly', () => {
+    const c = clip({ speed_points: MIXED_REVERSE });
+    // Forward head.
+    expect(clipSourceFrameAt(c, 0, FPS)).toBe(0);
+    expect(clipSourceFrameAt(c, 23, FPS)).toBe(23);
+    // The seam INTO the reversed run: it enters at the run's last frame, 71.
+    expect(clipSourceFrameAt(c, 24, FPS)).toBe(71);
+    // ...and descends at 2 source frames per output frame.
+    expect(clipSourceFrameAt(c, 25, FPS)).toBe(69);
+    expect(clipSourceFrameAt(c, 47, FPS)).toBe(25);
+    // The seam OUT of it, back to forward at the run's own start.
+    expect(clipSourceFrameAt(c, 48, FPS)).toBe(72);
+    expect(clipSourceFrameAt(c, 71, FPS)).toBe(95);
+  });
+
+  it('the audio chain reverses with `areverse` and a POSITIVE atempo, never a negative one', () => {
+    const c = clip({ speed_points: MIXED_REVERSE });
+    const chain = buildAudioSourceChain({
+      srcRef: '[0:a]',
+      clip: c,
+      clipFps: FPS,
+      gain: 1,
+      speedSegments: resolveSpeedSegments(c),
+      startSec: 0,
+      duck: null,
+      idLabel: 'au0',
+    });
+    const graph = chain.steps.join(' ');
+    expect(graph).toContain('areverse');
+    expect(graph).toContain('atempo=2');
+    // `atempo` has no negative form at all — it is rejected outright — so the
+    // sign must live entirely in the `areverse` node.
+    expect(graph).not.toContain('atempo=-');
+  });
+
+  it('a WHOLLY reversed clip needs no asplit/concat — one run has nothing to rejoin', () => {
+    const c = clip({ speed_points: [{ source_frame: 0, speed: -1 }] });
+    const chain = buildAudioSourceChain({
+      srcRef: '[0:a]',
+      clip: c,
+      clipFps: FPS,
+      gain: 1,
+      speedSegments: resolveSpeedSegments(c),
+      startSec: 0,
+      duck: null,
+      idLabel: 'au0',
+    });
+    const graph = chain.steps.join(' ');
+    expect(graph).toContain('areverse');
+    expect(graph).not.toContain('asplit');
+    expect(graph).not.toContain('concat=n=1');
+  });
+});
+
+describe('D-241 — fades are measured in PLAYBACK order, not by mapping a source endpoint', () => {
+  it('a forward ramp is algebraically unchanged — the B-112 spelling, same numbers', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: RAMP }));
+    // What B-112 computed: `outputAtSourceFrame(source_start + n)` for the
+    // fade-in, and `total - outputAtSourceFrame(end - n)` for the fade-out.
+    for (const n of [0, 6, 12, 18, 24, 40]) {
+      expect(outputSpanOfLeadingSource(segs, n)).toBeCloseTo(outputAtSourceFrame(segs, 0 + n), 9);
+      expect(outputSpanOfTrailingSource(segs, n)).toBeCloseTo(
+        rampOutputSourceFrames(segs) - outputAtSourceFrame(segs, 96 - n),
+        9,
+      );
+    }
+  });
+
+  it('a REVERSED clip fades in at the start of what the viewer sees, not the end', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: -1 }] }));
+    // The old spelling would have said the fade-in is `outputAtSourceFrame(0)`
+    // = 96 (the whole clip!) and that the clip's length is
+    // `outputAtSourceFrame(96)` = 0 — a fade expression that then divides by
+    // zero. This is exactly why those three quantities moved.
+    expect(outputAtSourceFrame(segs, 0)).toBe(96);
+    expect(outputAtSourceFrame(segs, 96)).toBe(0);
+    // What the playback-order spelling says instead, and it is simply right:
+    // a 12-frame fade-in occupies the first 12 output frames.
+    expect(outputSpanOfLeadingSource(segs, 12)).toBe(12);
+    expect(outputSpanOfTrailingSource(segs, 12)).toBe(12);
+    expect(rampOutputSourceFrames(segs)).toBe(96);
+  });
+
+  it('saturates rather than running off the end of the ramp', () => {
+    const segs = resolveSpeedSegments(clip({ speed_points: RAMP }));
+    const total = rampOutputSourceFrames(segs);
+    expect(outputSpanOfLeadingSource(segs, 10_000)).toBe(total);
+    expect(outputSpanOfTrailingSource(segs, 10_000)).toBe(total);
+    expect(outputSpanOfLeadingSource(segs, 0)).toBe(0);
+    expect(outputSpanOfLeadingSource(segs, -5)).toBe(0);
   });
 });

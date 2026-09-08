@@ -442,19 +442,23 @@ def set_clip_speed(
 
     * `speed` -- one multiplier for the whole clip. `2.0` plays it twice as
       fast in half the timeline space, `0.5` half as fast in twice the space,
-      `1.0` clears any ramp back to normal. Range 0.05-20; a value outside it
-      is REFUSED, not clamped, so a typo cannot silently retime to something
-      else.
+      `1.0` clears any ramp back to normal. NEGATIVE plays it BACKWARDS at that
+      rate: `-1.0` is the plain "reverse this clip", `-2.0` is backwards at
+      double speed. Magnitude 0.05-20, either sign; a value outside that is
+      REFUSED, not clamped, so a typo cannot silently retime to something else.
+      `0` is refused too -- that is not slow, it is a clip that never advances.
     * `points` -- a ramp, as a list of `{"source_frame": int, "speed": float}`.
       Each point means "from this SOURCE frame onward, play at this speed", so
       the clip becomes a run of constant-speed segments. Source frames are
       absolute in the file (the same space as a clip's `source_start` and a
       keyframe's `frame`), NOT clip-relative and NOT timeline frames -- which
       is what makes a ramp survive a later trim: the speed stays on the moment
-      in the footage you put it on. Points are sorted and de-duplicated on the
-      way in, and a point that does not change the speed already in force is
-      dropped, so the stored list may be shorter than what you sent. `[]`
-      clears the ramp.
+      in the footage you put it on. Points are sorted on the way in and only
+      ONE is kept per source frame (last wins), so the stored list may be
+      shorter than what you sent. A point that merely restates the speed
+      already in force is deliberately KEPT, not tidied away -- it is a real
+      split you can then give its own speed, which is the normal authoring
+      order. `[]` clears the ramp.
 
     Five things worth knowing before you use it:
 
@@ -466,16 +470,28 @@ def set_clip_speed(
        do NOT move, so speeding a clip up opens a gap and slowing it down
        overlaps its neighbour. Close it yourself (editor_remove_gap, or
        editor_move_clip). This matches Resolve with ripple off.
-    3. **Picture and sound are retimed together**, with the audio pitch
-       preserved (an `atempo` chain per segment). A clip's own fades, volume
-       and pan automation follow the retime too -- a key stays on the source
-       moment you authored it against.
+    3. **Picture and sound are retimed together.** In the EXPORT the audio
+       pitch is preserved (an `atempo` chain per segment); in the live PREVIEW
+       it is not -- the mixer varispeeds, so a sped-up clip previews
+       chipmunked and a reversed one previews backwards, like tape (D-242).
+       Timing matches either way, which is the thing you are editing to.
+       A clip's own fades, volume and pan automation follow the retime too --
+       a key stays on the source moment you authored it against, and a fade is
+       measured in PLAYBACK order, so a reversed clip's fade-in is still at the
+       start of what the viewer sees.
     4. **The preview and the export agree frame for frame.** Both read the same
        remap; `editor_get_state` and the exported file will show the same
        source frame at the same timeline position.
-    5. **Reverse (negative) speed and smoothed S-curve speed transitions are
-       not supported yet** -- a speed change is a step, and every segment plays
-       forwards. A gradual ramp can be approximated by adding more points.
+    5. **Reverse is per RUN, not per clip** (D-241). A ramp may mix forward and
+       reversed segments -- `[{0, 1.0}, {48, -2.0}, {96, 1.0}]` plays forwards,
+       then whips backwards at 2x, then forwards again. Reversing does not
+       change how long a run occupies: `-2.0` and `2.0` take exactly the same
+       timeline space, so flipping a sign never moves the clip's out-point.
+       Reverse costs REAL MEMORY at export (ffmpeg buffers the reversed run's
+       frames), bounded to that run rather than the whole source file.
+    6. **Smoothed S-curve speed transitions are still not supported** -- a
+       speed change is a step. A gradual ramp can be approximated by adding
+       more points.
 
     Returns the stored points, the RESOLVED segments (which is what actually
     plays -- after a trim, some of your points may no longer bite), and the

@@ -32,11 +32,18 @@
  * `atempo` chain (see [`isFlatSegments`]) so no existing export changes by a
  * byte.
  *
+ * **Reverse (negative) speed — D-241.** A speed may now be NEGATIVE, meaning
+ * that run plays its own source range backwards. It is not a second model: a
+ * segment `[a, b)` at speed `-s` occupies exactly the same `(b-a)/s` of
+ * output a `+s` segment would, it just walks the source from `b` down to `a`
+ * instead of `a` up to `b`. The whole generalisation is one `anchor` term in
+ * [`outputAtSourceFrame`] / [`sourceFrameAtOutput`] (the segment's END rather
+ * than its start is the source position at its output start) plus `|speed|`
+ * wherever an output LENGTH is computed. The remap stays piecewise linear and
+ * stays a bijection — it simply stops being monotonic, which nothing in this
+ * module ever needed.
+ *
  * **What it does NOT do.**
- * - **Reverse (negative) speed.** Every speed is clamped `> 0`. Playing a
- *   clip backwards needs ffmpeg's whole-stream-buffering `reverse` filter and
- *   a backwards decode in the preview — a genuinely separate feature, named
- *   as a follow-up in `docs/04-roadmap.md`, not a degraded case of this one.
  * - **Smoothed (S-curve) speed transitions.** Resolve's optional "smooth" on
  *   a speed point makes the speed itself ease between two segments, which
  *   makes the remap piecewise *quadratic* and has no `atempo` equivalent at
@@ -67,7 +74,9 @@ export interface SpeedPoint {
   source_frame: number;
   /** Playback speed from here on: source frames consumed per output frame.
    *  `2` is double speed (half the output length), `0.5` is half speed
-   *  (double the output length). Always `> 0` — see the module doc. */
+   *  (double the output length). **Negative is REVERSE** (D-241): `-1` plays
+   *  this run backwards at its recorded rate, `-2` backwards at double speed.
+   *  Never `0` — see [`clampSpeed`]. */
   speed: number;
 }
 
@@ -78,7 +87,36 @@ export interface SpeedSegment {
   startSourceFrame: number;
   /** Exclusive, absolute SOURCE frame. */
   endSourceFrame: number;
+  /** Negative = this run plays `[startSourceFrame, endSourceFrame)` BACKWARDS
+   *  (D-241). Its output length is unchanged — `len / |speed|`. */
   speed: number;
+}
+
+/** The SOURCE position a segment sits at when its own OUTPUT run begins: its
+ *  start when it plays forwards, its **end** when it plays in reverse.
+ *
+ *  This one term is the entire negative-speed generalisation (D-241). With it,
+ *  `output = acc + (source - anchor) / speed` and `source = anchor + (output -
+ *  acc) * speed` are each other's exact inverse for either sign, so both maps
+ *  below are written once and branch nowhere. */
+function anchorSourceFrame(s: SpeedSegment): number {
+  return s.speed > 0 ? s.startSourceFrame : s.endSourceFrame;
+}
+
+/** A segment's OUTPUT length, in the same source-frame units its endpoints are
+ *  in — `len / |speed|`. The absolute value is the only place the sign of a
+ *  reversed run is discarded: playing a range backwards takes exactly as long
+ *  as playing it forwards. */
+function segmentOutputLength(s: SpeedSegment): number {
+  return Math.max(0, s.endSourceFrame - s.startSourceFrame) / Math.abs(s.speed);
+}
+
+/** Does any run of this ramp play backwards (D-241)? The branch every
+ *  compiler takes: a reversed run cannot be expressed as a `setpts` slope or
+ *  an `atempo` factor at all — it needs ffmpeg's frame-buffering
+ *  `reverse`/`areverse`, which is a different filtergraph shape entirely. */
+export function hasReverseSegments(segments: readonly SpeedSegment[]): boolean {
+  return segments.some((s) => s.speed < 0);
 }
 
 /** The speed range a ramp point is clamped into on the way in.
@@ -92,13 +130,19 @@ export interface SpeedSegment {
 export const MIN_SPEED = 0.05;
 export const MAX_SPEED = 20;
 
-/** `speed` pinned into `[MIN_SPEED, MAX_SPEED]`, with every non-finite or
- *  non-positive input (including `0`, `NaN`, a negative "reverse" request the
- *  module doc rules out) resolving to `1` — never to a value that would make
- *  the remap non-monotonic or infinite. */
+/** `speed` with its MAGNITUDE pinned into `[MIN_SPEED, MAX_SPEED]` and its
+ *  SIGN preserved (D-241: a negative speed is a real, supported reverse run).
+ *  Every non-finite input and exact `0` resolves to `1` — the two values that
+ *  would make the remap infinite or collapse the clip to a single instant.
+ *
+ *  Note what is deliberately NOT clamped away: `-0.5` stays `-0.5`. Before
+ *  D-241 this function's whole job was to erase a negative, and the one-line
+ *  change here is what unlocks reverse everywhere downstream, because every
+ *  authored point in both languages goes through it. */
 export function clampSpeed(speed: number): number {
-  if (!Number.isFinite(speed) || speed <= 0) return 1;
-  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed));
+  if (!Number.isFinite(speed) || speed === 0) return 1;
+  const magnitude = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.abs(speed)));
+  return speed < 0 ? -magnitude : magnitude;
 }
 
 /** Normalise an authored point list: drop non-finite frames, clamp every
@@ -213,15 +257,23 @@ export function resolveSpeedSegments(
     : [{ startSourceFrame: start, endSourceFrame: end, speed: headSpeed }];
 }
 
-/** Is this clip's playback speed CONSTANT — i.e. is it something a pre-D-236
- *  consumer could already express? Every compiler in this package branches on
- *  this to keep the flat path byte-identical to what it emitted before ramps
- *  existed.
+/** Is this clip's playback speed CONSTANT **and FORWARD** — i.e. is it
+ *  something a pre-D-236 consumer could already express as one `PTS/<speed>`
+ *  and one `atempo` factor? Every compiler in this package branches on this to
+ *  keep the flat path byte-identical to what it emitted before ramps existed.
  *
  *  Equal speeds, not one segment: a clip split by a speed point whose runs all
  *  play at the same rate is flat in every way that matters to a renderer, and
- *  compiling it as a ramp would emit a needless expression for an identity. */
+ *  compiling it as a ramp would emit a needless expression for an identity.
+ *
+ *  **D-241 — a reversed run is never "flat", even alone.** A single segment at
+ *  `-2` is perfectly constant, but `setpts=PTS/-2` and `atempo=-2` are not
+ *  what plays it backwards (the first emits descending timestamps, the second
+ *  is rejected outright), so it must not take the constant path. "Flat" here
+ *  has always meant *expressible by the pre-D-236 compiler*, and that is the
+ *  meaning kept. */
 export function isFlatSegments(segments: readonly SpeedSegment[]): boolean {
+  if (hasReverseSegments(segments)) return false;
   return segments.length <= 1 || segments.every((s) => s.speed === segments[0].speed);
 }
 
@@ -237,13 +289,16 @@ export function flatSpeedOf(segments: readonly SpeedSegment[]): number {
  * to timeline frames with the project's rate — exactly what an un-ramped
  * clip's `duration` already is).
  *
- * `Σ len_i / speed_i` — the one place the "a 2x segment occupies half as much
- * output" rule is written down.
+ * `Σ len_i / |speed_i|` — the one place the "a 2x segment occupies half as
+ * much output" rule is written down. The magnitude (D-241) is what makes a
+ * reversed run take exactly as long as the same range played forwards, which
+ * is the whole reason reverse needed no schema change: a clip's footprint on
+ * the timeline never depends on the DIRECTION it plays.
  */
 export function rampOutputSourceFrames(segments: readonly SpeedSegment[]): number {
   let total = 0;
   for (const s of segments) {
-    total += Math.max(0, s.endSourceFrame - s.startSourceFrame) / s.speed;
+    total += segmentOutputLength(s);
   }
   return total;
 }
@@ -266,20 +321,22 @@ export function rampOutputSourceFrames(segments: readonly SpeedSegment[]): numbe
  */
 export function outputAtSourceFrame(segments: readonly SpeedSegment[], sourceFrame: number): number {
   if (segments.length === 0) return 0;
-  const first = segments[0];
-  if (sourceFrame <= first.startSourceFrame) {
-    return (sourceFrame - first.startSourceFrame) / first.speed;
-  }
   let acc = 0;
-  for (const s of segments) {
-    const len = Math.max(0, s.endSourceFrame - s.startSourceFrame);
-    if (sourceFrame < s.endSourceFrame) {
-      return acc + (sourceFrame - s.startSourceFrame) / s.speed;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    // The last segment also absorbs everything past the ramp — that IS the
+    // documented "extrapolate at the last segment's own speed" rule, and
+    // writing it as a fall-through rather than a separate tail case is what
+    // makes the head, the body and the tail one formula. (Before D-241 the
+    // head and tail were spelled out separately; they are algebraically the
+    // same expression, which is why collapsing them changed no forward-ramp
+    // result — pinned by the untouched D-236 tests.)
+    if (sourceFrame < s.endSourceFrame || i === segments.length - 1) {
+      return acc + (sourceFrame - anchorSourceFrame(s)) / s.speed;
     }
-    acc += len / s.speed;
+    acc += segmentOutputLength(s);
   }
-  const last = segments[segments.length - 1];
-  return acc + (sourceFrame - last.endSourceFrame) / last.speed;
+  return acc;
 }
 
 /**
@@ -292,18 +349,122 @@ export function outputAtSourceFrame(segments: readonly SpeedSegment[], sourceFra
  */
 export function sourceFrameAtOutput(segments: readonly SpeedSegment[], outputPos: number): number {
   if (segments.length === 0) return 0;
-  const first = segments[0];
-  if (outputPos <= 0) return first.startSourceFrame + outputPos * first.speed;
   let acc = 0;
-  for (const s of segments) {
-    const outLen = Math.max(0, s.endSourceFrame - s.startSourceFrame) / s.speed;
-    if (outputPos < acc + outLen) {
-      return s.startSourceFrame + (outputPos - acc) * s.speed;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const outLen = segmentOutputLength(s);
+    // Same fall-through as `outputAtSourceFrame`: the first segment covers
+    // everything before the ramp and the last everything after it.
+    if (outputPos < acc + outLen || i === segments.length - 1) {
+      return anchorSourceFrame(s) + (outputPos - acc) * s.speed;
     }
     acc += outLen;
   }
-  const last = segments[segments.length - 1];
-  return last.endSourceFrame + (outputPos - acc) * last.speed;
+  return 0;
+}
+
+/**
+ * [`sourceFrameAtOutput`] quantised to the integer SOURCE FRAME actually shown
+ * — the form the live preview decodes with (`Clip::source_frame_at` and
+ * `clipSourceFrameAt` are both exactly this).
+ *
+ * **The rounding rule depends on the direction of travel, and that is not a
+ * detail.** A frame owns the half-open source interval `[n, n+1)`:
+ *
+ * - Playing FORWARD, output sweeps that interval upward, so `floor` is the
+ *   frame on screen — and `setpts` floors by construction, which is why D-236
+ *   pinned this rule after a test failure rather than by reasoning.
+ * - Playing in REVERSE (D-241), a segment `[a, b)` is entered at source `b`
+ *   and swept DOWN to `a`, so the continuous position ranges over `(a, b]` —
+ *   the mirror interval. `floor` there would show frame `b` (one past the
+ *   segment's own end) at the very first output frame and frame `a-1` at the
+ *   last. The mirror of `floor` is **`ceil - 1`**, which maps `(a, b]` onto
+ *   exactly `[a, b-1]` — the same frames, in the opposite order.
+ *
+ * That is also precisely what the export produces: ffmpeg's `reverse` emits
+ * the trimmed window's real decoded frames last-to-first, i.e. `b-1 … a`. The
+ * two agree by construction, and `speedRamp.ffmpeg.test.ts` proves it against
+ * decoded pixels.
+ */
+export function quantizedSourceFrameAtOutput(
+  segments: readonly SpeedSegment[],
+  outputPos: number,
+): number {
+  const raw = sourceFrameAtOutput(segments, outputPos);
+  return segmentSpeedAtOutput(segments, outputPos) < 0 ? Math.ceil(raw) - 1 : Math.floor(raw);
+}
+
+/** Which segment's speed governs OUTPUT position `outputPos` — the sign the
+ *  quantiser above needs. Outside the ramp the first/last segment governs, for
+ *  the same reason both maps extrapolate there. */
+function segmentSpeedAtOutput(segments: readonly SpeedSegment[], outputPos: number): number {
+  if (segments.length === 0) return 1;
+  let acc = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const outLen = segmentOutputLength(s);
+    if (outputPos < acc + outLen || i === segments.length - 1) return s.speed;
+    acc += outLen;
+  }
+  return segments[segments.length - 1].speed;
+}
+
+/**
+ * How much OUTPUT the ramp's **first** `sourceFrames` source frames occupy, in
+ * playback order — the length of a fade-in, in the axis the fade actually runs
+ * on.
+ *
+ * **Why this is not `outputAtSourceFrame(source_start + n)` (D-241).** That
+ * spelling — which is what B-112 correctly introduced — asks "when does the
+ * ramp REACH this source frame". For a forward ramp the frame `n` past the
+ * in-point is the frame `n` past the playback start, so the two questions have
+ * the same answer and this function returns exactly what B-112's expression
+ * did (pinned by the whole pre-D-241 fade suite passing unchanged).
+ *
+ * Under a REVERSED run they are different questions with different answers.
+ * A clip playing wholly backwards *starts* on its last source frame, so
+ * `outputAtSourceFrame(source_start)` is the clip's END, and using it would
+ * put the fade-in at the tail and collapse `lenSec` to zero — a fade
+ * expression that divides by it then produces a silently broken export. A fade
+ * is a window on what the viewer sees, so it is measured in playback order,
+ * which is what this walks.
+ *
+ * A count past the whole ramp saturates at the ramp's own output length.
+ */
+export function outputSpanOfLeadingSource(
+  segments: readonly SpeedSegment[],
+  sourceFrames: number,
+): number {
+  let remaining = Math.max(0, sourceFrames);
+  let out = 0;
+  for (const s of segments) {
+    const len = Math.max(0, s.endSourceFrame - s.startSourceFrame);
+    const take = Math.min(remaining, len);
+    out += take / Math.abs(s.speed);
+    remaining -= take;
+    if (remaining <= 0) break;
+  }
+  return out;
+}
+
+/** The mirror of [`outputSpanOfLeadingSource`]: how much OUTPUT the ramp's
+ *  **last** `sourceFrames` source frames occupy, in playback order — the
+ *  length of a fade-out. Same argument, walked from the far end. */
+export function outputSpanOfTrailingSource(
+  segments: readonly SpeedSegment[],
+  sourceFrames: number,
+): number {
+  let remaining = Math.max(0, sourceFrames);
+  let out = 0;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const s = segments[i];
+    const len = Math.max(0, s.endSourceFrame - s.startSourceFrame);
+    const take = Math.min(remaining, len);
+    out += take / Math.abs(s.speed);
+    remaining -= take;
+    if (remaining <= 0) break;
+  }
+  return out;
 }
 
 // --------------------------------------------------------------------------- //
@@ -334,12 +495,24 @@ function sec(value: number): number {
  * A flat ramp returns `null`: the caller keeps its pre-D-236 `PTS/<speed>`
  * form, which is both shorter and byte-identical to what every existing
  * export already produces.
+ *
+ * **A ramp containing a REVERSED run also returns `null` (D-241)**, and for a
+ * reason of a different kind: no `setpts` expression plays a clip backwards.
+ * `setpts` only relabels the timestamp of a frame the decoder already handed
+ * over in decode order, so a descending slope emits descending timestamps and
+ * the encoder either drops or reorders them — the frames themselves are never
+ * reversed. That needs ffmpeg's `reverse` filter, which buffers a window and
+ * re-emits it last-to-first, i.e. a different filtergraph SHAPE rather than a
+ * different expression. `buildClipFilterChain` checks
+ * [`hasReverseSegments`] first and takes that path; this function is only
+ * reached for a forward ramp, and the guard here is a second lock on the same
+ * door rather than a case anyone relies on.
  */
 export function rampSetptsSecondsExpr(
   segments: readonly SpeedSegment[],
   clipFps: number,
 ): string | null {
-  if (isFlatSegments(segments)) return null;
+  if (isFlatSegments(segments) || hasReverseSegments(segments)) return null;
   const origin = segments[0].startSourceFrame;
   // The knots of the piecewise-linear forward map, in SECONDS on both axes:
   // `inSec` is the decoded frame's own source time relative to the clip's
@@ -372,19 +545,35 @@ export function rampSetptsSecondsExpr(
   return expr;
 }
 
-/** The per-segment `atempo` factor chains an audio ramp needs, paired with
- *  the source window (in SECONDS, relative to the clip's own in-point) each
- *  one applies to. The export splices these into
- *  `atrim`/`asetpts`/`atempo`/`concat` — see `timelineExportAudio.ts`'s
- *  `buildRampedAtempoChain`, which is the only consumer.
+/** One resolved run, restated in SECONDS relative to the clip's own in-point
+ *  — the unit both ffmpeg `trim`/`atrim` and `chroma_media`'s live mixer take.
+ *  `speed` carries its sign, so a negative entry is a reversed run. */
+export interface SpeedSegmentSeconds {
+  startSec: number;
+  endSec: number;
+  speed: number;
+}
+
+/** The ramp's runs as SECONDS windows relative to the clip's own in-point,
+ *  each paired with the (signed) speed that plays it.
  *
- *  This is the reason the whole model is piecewise CONSTANT: `atempo` takes a
- *  number, not an expression, so a time-varying tempo can only ever be
+ *  Consumed by all three retiming compilers, which is why it is not named for
+ *  any one of them: `timelineExportAudio.ts`'s `atrim`/`atempo`/`areverse`/
+ *  `concat` chain, `timelineExport.ts`'s `trim`/`reverse`/`setpts`/`concat`
+ *  chain for a reversed picture (D-241), and `chroma::audio`'s live
+ *  `AudioSpeedSegment` list for the preview mixer (D-242).
+ *
+ *  The seconds axis is the SOURCE one — the input has been `-ss`-trimmed to
+ *  the clip's in-point, so source second `0` is `source_start`, and the live
+ *  mixer's own source is opened at the same place.
+ *
+ *  This shape is the reason the whole model is piecewise CONSTANT: `atempo`
+ *  takes a number, not an expression, so a time-varying tempo can only ever be
  *  expressed as a concatenation of constant-tempo runs. */
-export function rampAudioSegments(
+export function rampSegmentSeconds(
   segments: readonly SpeedSegment[],
   clipFps: number,
-): Array<{ startSec: number; endSec: number; speed: number }> {
+): SpeedSegmentSeconds[] {
   const origin = segments[0]?.startSourceFrame ?? 0;
   return segments.map((s) => ({
     startSec: sec((s.startSourceFrame - origin) / clipFps),

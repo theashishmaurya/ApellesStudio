@@ -149,6 +149,29 @@ import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSo
 // D-236 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
 // with Rust so an agent, the Inspector and the preview all agree on the range.
 import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
+
+/** D-236/D-241 — is this a speed an agent may store?
+ *
+ *  Refused, not clamped: a speed outside the range is a request the caller got
+ *  wrong, and silently retiming to 20x instead of the 200x it asked for is
+ *  worse than saying so. (The MODEL still clamps — `chroma_timeline_set`
+ *  stores whatever it is handed, so a document reaching the store another way
+ *  must degrade safely; see `clampSpeed`.)
+ *
+ *  D-241 — the range is on the MAGNITUDE and either sign is accepted, which is
+ *  the whole difference between "this tool cannot reverse a clip" and "it can".
+ *  `0` is still refused: it is not slow, it is a clip that never advances. */
+function isAcceptableSpeed(speed: number): boolean {
+  if (!Number.isFinite(speed)) return false;
+  const magnitude = Math.abs(speed);
+  return magnitude >= MIN_SPEED && magnitude <= MAX_SPEED;
+}
+
+/** The one sentence every speed refusal above ends with, so the flat and the
+ *  ramped path cannot describe the same range two different ways. */
+const SPEED_RANGE_HELP =
+  `must be between ${MIN_SPEED} and ${MAX_SPEED}, or between -${MAX_SPEED} and -${MIN_SPEED} ` +
+  `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
@@ -2418,7 +2441,7 @@ export function useEditorControl(): void {
         };
       },
 
-      // ---- speed ramp (D-236) -------------------------------------------- //
+      // ---- speed ramp (D-236, reverse D-241) ----------------------------- //
       //
       // The AI half of the Inspector's own Speed section, over the same
       // `set_clip_speed` op and the same `Clip.speed_points` — CLAUDE.md's
@@ -2459,16 +2482,16 @@ export function useEditorControl(): void {
             // 200x it asked for is worse than saying so. (The MODEL still
             // clamps — `chroma_timeline_set` stores whatever it is handed, so
             // a document reaching the store another way must degrade safely.)
-            if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
-              return { error: `points[${i}].speed must be between ${MIN_SPEED} and ${MAX_SPEED} (1 = normal)` };
+            if (!isAcceptableSpeed(speed)) {
+              return { error: `points[${i}].speed ${SPEED_RANGE_HELP}` };
             }
             parsed.push({ source_frame: Math.round(frame), speed });
           }
           next = parsed;
         } else if (a?.speed !== undefined) {
           const speed = Number(a.speed);
-          if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
-            return { error: `speed must be between ${MIN_SPEED} and ${MAX_SPEED} (1 = normal)` };
+          if (!isAcceptableSpeed(speed)) {
+            return { error: `speed ${SPEED_RANGE_HELP}` };
           }
           next = [{ source_frame: c.source_start, speed }];
         } else {

@@ -262,10 +262,13 @@ measured cross-engine verification (D-224's shared EQ response table, D-226's mi
 pixel measurement, D-223's `volumedetect` on real exported files) rather than a unit test
 alone. A drift between the two is a real defect class, not a theoretical one.
 
-**Not built:** GPU compositing, grade-in-preview, OTIO export, adjustment clips, speed
-*ramps* (a flat export-time override exists), a transcript-driven cut. Roadmap item 27
-tracks the list. (Subtitles/captions were on this list and landed as D-229 while this pass
-was being written — a fair illustration of why these docs drift.)
+**Not built:** GPU compositing, grade-in-preview, OTIO export, a transcript-driven cut.
+Roadmap item 27 tracks the list. (Subtitles/captions were on this list and landed as D-229
+while this pass was being written — a fair illustration of why these docs drift. Adjustment
+clips followed as D-230; **speed ramps** as D-236, and their reverse and live-audio-retime
+follow-ups as D-241/D-242 — that entry is a good example of the drift being *specific*:
+the list said "a flat export-time override exists", which was true of D-183 and stopped
+being true the moment `Clip.speed_points` landed.)
 
 ### Motion — a real authoring tab
 
