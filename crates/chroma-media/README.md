@@ -8,6 +8,11 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   `once_cell`, `image`, `base64`, `blake3` + `walkdir` + `filetime` (the disk
   cache). **No `tauri`, no `wgpu`, no `chroma-timeline`, no fork types.**
 - **Modules**, one per source file it was extracted from:
+  - `conform` — the single definition of what "source frame `N`" means (*the
+    picture at `N / source_fps` seconds*), expressed as the `ffmpeg` options
+    that deliver it. Every decode path below builds its command through it, so
+    they cannot disagree about a frame index the way they did in B-103
+    (D-224). Not extracted from the fork — new with that decision.
   - `video` — `ffprobe` metadata (`probe`, incl. D-049's audio-stream facts),
     single-frame `ffmpeg` decode (`decode_frame`), thumbnail/filmstrip
     extraction (`extract_thumb`, `extract_thumb_strip`, `extract_thumb_chunk`)

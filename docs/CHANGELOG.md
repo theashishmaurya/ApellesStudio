@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Fix B-103: the on-canvas transform box detached from the
+  picture and drifted worse the longer playback ran (D-224).** Owner-reported
+  on a real macOS screen recording — a genuinely variable-frame-rate source.
+  Root cause was not the probe but three decoders each meaning something
+  different by "source frame N": the model says *the picture at `N/source_fps`
+  seconds*, while `decode_pipe` and the exporter counted **coded** frames after
+  a single seek, which on VFR footage walks away from the model without bound
+  (measured up to **4.07 s**, ≈180 frames, on the owner's own clip) and resets
+  only on a scrub. New `chroma_media::conform` states the invariant once and
+  builds the ffmpeg arguments for it (`fps=…:start_time=0:round=up` under
+  `-copyts`, `-noaccurate_seek`); the pipe, `decode_frame`, the thumbnail strip
+  and `export::spawn_decoder` all go through it. No transcode, no proxy, no
+  schema change, no migration — and free on CFR footage (2.51 → 2.50 ms/frame
+  measured). Verified against the owner's real file with an `ffprobe`-PTS
+  oracle, plus 6 new tests on a synthesized VFR fixture (3 confirmed failing
+  pre-fix) and 8 on the argument construction.
 - **2026-09-08** — **Fix B-102: total silence during live preview playback.**
   `symphonia` was never built with MP3 decode support (`isomp4`/`aac`/`alac`/
   `aiff` were explicitly enabled; `mp3` — the one common format symphonia keeps

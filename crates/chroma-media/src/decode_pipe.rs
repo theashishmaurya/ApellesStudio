@@ -14,6 +14,16 @@
 //!   fall back to `video::decode_frame`. The pipe is a fast path, never a new
 //!   failure mode.
 //!
+//! ## Frame `N` means the same thing here as everywhere else (D-224, B-103)
+//!
+//! Every spawn is built through [`crate::conform`], so "frame `N`" is the
+//! picture at `N / source_fps` seconds — the same definition the timeline, the
+//! keyframes, the audio clock, the export and `video::decode_frame` use. That
+//! is a real constraint on this module in particular: it is the only decoder
+//! that keeps reading *without* re-seeking, so it is the only one where a
+//! per-frame error could accumulate. It no longer can — see B-103 for what
+//! happened when it did.
+//!
 //! ## Why a pool of pipes and not one (D-125, B-040)
 //!
 //! D-030 kept exactly one process-global pipe, which was correct while the only
@@ -126,10 +136,17 @@ impl Drop for FramePipe {
 
 impl FramePipe {
     /// Spawn ffmpeg decoding `path` from absolute frame `start` to EOF as a raw
-    /// rgb24 stream. `-ss (start-0.5)/fps` before `-i` is an accurate seek that
-    /// lands exactly on `start` for CFR footage (verified, D-030); the half-frame
-    /// margin always points backward so an `avg`-vs-`r` frame-rate rounding
-    /// wobble can't skip a frame forward.
+    /// rgb24 stream, **conformed to the source's nominal frame grid**
+    /// ([`crate::conform`], D-224) so the `n`th frame out of this pipe is source
+    /// frame `start + n` as the rest of Chroma defines it — the picture at
+    /// `(start + n) / source_fps` seconds.
+    ///
+    /// B-103: this used to be `-ss (start-0.5)/fps` + `-fps_mode passthrough`,
+    /// i.e. seek once by time and then **count coded frames**. That is only the
+    /// same thing on CFR footage. On a variable-frame-rate source the two
+    /// diverge without bound between respawns — measured at up to 4.07 s on the
+    /// owner's own screen recording — which is what detached the on-canvas
+    /// transform box from the picture it was drawn over.
     #[allow(dead_code)] // native-size wrapper; production path is `open_scaled`
     pub fn open(path: &Path, info: &VideoInfo, start: u64) -> Result<Self> {
         Self::open_scaled(path, info, start, None)
@@ -160,10 +177,19 @@ impl FramePipe {
     ) -> Result<Self> {
         let fps = info.fps();
         if fps <= 0.0 || info.resolution.width == 0 || info.resolution.height == 0 {
-            return Err(anyhow!("decode pipe needs a probed CFR video (fps + dimensions)"));
+            // "a nominal rate", not "a CFR source": since D-224 a
+            // variable-frame-rate source is decoded through this pipe just
+            // like any other — it is conformed to the rate `probe` measured.
+            // What is still required is that there BE a rate and a picture
+            // size, i.e. a real probed video rather than an audio-only or
+            // unprobeable file.
+            return Err(anyhow!(
+                "decode pipe needs a probed video (a nominal frame rate + dimensions)"
+            ));
         }
-        let seek = ((start as f64 - 0.5) / fps).max(0.0);
         let (out_w, out_h) = scale.unwrap_or((info.resolution.width, info.resolution.height));
+        let grid = crate::conform::from_frame(info, start);
+        let own_scale = scale.map(|(sw, sh)| format!("scale={sw}:{sh}:flags=fast_bilinear"));
 
         let mut cmd = Command::new(ffmpeg_bin());
         cmd.args(["-hide_banner", "-loglevel", "error"]);
@@ -174,14 +200,13 @@ impl FramePipe {
             // byte-identical on both this project's HEVC and H.264 sources.
             cmd.args(["-hwaccel", "videotoolbox"]);
         }
-        cmd.arg("-ss")
-            .arg(format!("{seek:.6}"))
-            .arg("-i")
-            .arg(path)
-            .args(["-an", "-sn"]);
-        if let Some((sw, sh)) = scale {
-            cmd.args(["-vf", &format!("scale={sw}:{sh}:flags=fast_bilinear")]);
+        cmd.args(&grid.input_args).arg("-i").arg(path).args(["-an", "-sn"]);
+        if let Some(vf) = grid.vf(own_scale.as_deref()) {
+            cmd.args(["-vf", &vf]);
         }
+        // `passthrough` is correct *because* the conform above already put the
+        // stream on the grid — one output frame per grid slot. It is what stops
+        // ffmpeg adding a second, redundant rate conversion of its own.
         cmd.args([
             "-fps_mode",
             "passthrough",
@@ -503,6 +528,443 @@ mod tests {
         // a scale change forces a respawn (native size back)
         let native = pipe.frame_scaled(&vid, &info, 203, None).expect("native frame").to_rgb8();
         assert_eq!(native.dimensions(), (info.resolution.width, info.resolution.height));
+    }
+
+    // ----------------------------------------------------------------- //
+    // B-103 / D-224 — the nominal frame grid, on a real VFR source.
+    //
+    // These synthesize their own footage with `ffmpeg` (the same technique
+    // `audio.rs`'s tests use for test tones) rather than gating on
+    // `CHROMA_TEST_VIDEO`, because the property under test needs a source
+    // whose frame timing is KNOWN, not merely real.
+    //
+    // The fixture: `testsrc` at 30 fps for 4 s (120 frames, every frame
+    // visibly different), with coded frames 30..=89 dropped and the survivors'
+    // timestamps left untouched. That is 60 coded frames over 4.000 s, so
+    // `avg_frame_rate` — and therefore `source_fps` — is exactly 15, while the
+    // real picture holds still from t=0.9667 to t=3.0.
+    //
+    // On the 15 fps nominal grid that hold is unambiguous:
+    //   slot 14 -> t=0.9333 -> coded frame 28
+    //   slot 15 -> t=1.0000 -> coded frame 29   <-- hold starts
+    //   slot 44 -> t=2.9333 -> coded frame 29   <-- hold ends
+    //   slot 45 -> t=3.0000 -> coded frame 30
+    // so slots 15..=44 MUST be one still picture and slots 14/45 MUST differ
+    // from it. Pre-fix the pipe returned coded frames 15..=44 for those slots
+    // — thirty different pictures, wandering up to 2 s away from the instant
+    // the index names. That is B-103 in miniature.
+    // ----------------------------------------------------------------- //
+
+    /// 30 fps `testsrc`, coded frames 30..=89 dropped, timestamps preserved =>
+    /// a genuine VFR source with `avg_frame_rate` 15 and one long hold.
+    fn synth_vfr_with_a_hold(dir: &Path) -> PathBuf {
+        let out = dir.join("vfr_hold.mp4");
+        let status = Command::new(ffmpeg_bin())
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=size=160x120:rate=30:duration=4")
+            .args([
+                "-vf",
+                "select='not(between(n,30,89))'",
+                "-fps_mode",
+                "passthrough",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&out)
+            .status()
+            .expect("running ffmpeg to synthesize the VFR fixture");
+        assert!(status.success(), "ffmpeg could not build the VFR fixture");
+        out
+    }
+
+    /// Open a pipe with hardware decode **off**.
+    ///
+    /// These tests are about which *frame* a nominal index resolves to, and
+    /// `videotoolbox` is a confound for that: on this synthetic h264 it returns
+    /// the correct frame with slightly different pixels than the software
+    /// decoder (measured mean|Δ| ≈ 1.8 — larger than the ≈ 0.5 between two
+    /// adjacent `testsrc` frames), so a pixel threshold could not tell "wrong
+    /// frame" from "different decoder". Forcing software makes the comparison
+    /// exact. `pipe_matches_single_frame_decode` above still exercises the
+    /// hardware path, on real footage, at the tolerance that difference needs.
+    fn open_software(path: &Path, info: &VideoInfo, start: u64) -> FramePipe {
+        FramePipe::open_with_hwaccel(path, info, start, None, false).expect("open pipe")
+    }
+
+    /// Plain 30 fps `testsrc` — the control, to prove the conform changes
+    /// nothing for footage that already sits on its own grid.
+    fn synth_cfr(dir: &Path) -> PathBuf {
+        let out = dir.join("cfr.mp4");
+        let status = Command::new(ffmpeg_bin())
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=size=160x120:rate=30:duration=3")
+            .args(["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p"])
+            .arg(&out)
+            .status()
+            .expect("running ffmpeg to synthesize the CFR fixture");
+        assert!(status.success(), "ffmpeg could not build the CFR fixture");
+        out
+    }
+
+    /// The fixture is only a fixture if it really is variable-rate — assert the
+    /// shape the other tests reason from, so a future ffmpeg that silently
+    /// re-times it fails HERE rather than as a confusing failure downstream.
+    #[test]
+    fn the_vfr_fixture_really_is_variable_rate() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_vfr_with_a_hold(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+        assert_eq!((info.fps_num, info.fps_den), (15, 1), "avg_frame_rate");
+        assert_eq!(info.frame_count, 60, "coded frames");
+        assert!(
+            (info.duration_secs - 4.0).abs() < 0.05,
+            "{}",
+            info.duration_secs
+        );
+        // 60 coded frames over 4 s is 15/s on AVERAGE — which is exactly what
+        // makes this fixture dangerous, and exactly why `probe` preferring
+        // `avg_frame_rate` is not the bug. The average is *right*; the source's
+        // real tick is 30/s with a 2 s gap in it, so no single scalar rate can
+        // describe where its frames actually are. That the average is
+        // self-consistent is asserted here so the number is not mistaken for a
+        // probe error later.
+        assert!(
+            (info.fps() * info.duration_secs - info.frame_count as f64).abs() < 1.0,
+            "avg rate x duration should reproduce the coded frame count"
+        );
+    }
+
+    /// **The B-103 regression test.** Across a hold, consecutive nominal frames
+    /// name the same instant-range and must therefore be the same picture.
+    #[test]
+    fn a_held_frame_is_held_for_every_grid_slot_it_covers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_vfr_with_a_hold(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        // Walk the pipe forward exactly as playback does — no seeking.
+        let mut pipe = open_software(&vid, &info, 0);
+        let mut frames = Vec::new();
+        for n in 0..=46u64 {
+            frames.push(pipe.frame(&vid, &info, n).expect("frame").to_rgb8());
+        }
+
+        // Inside the hold every slot resolves to the SAME coded frame, so this
+        // is byte equality, not a tolerance.
+        for n in 16..=44usize {
+            let d = mean_abs_diff(&frames[15], &frames[n]);
+            assert_eq!(
+                d, 0.0,
+                "grid slot {n} is inside the hold that slot 15 starts, so it must be the \
+                 identical picture — mean|Δ| {d}. Anything non-zero here is B-103: the pipe \
+                 is counting coded frames again instead of nominal ones."
+            );
+        }
+
+        // ...and the hold really is a hold, not a source that never changes.
+        // `testsrc`'s adjacent frames sit ≈ 0.5 apart, so 0.1 is a comfortable
+        // floor for "these are genuinely different pictures" while staying well
+        // above the 0.0 the hold itself produces.
+        const DISTINCT: f64 = 0.1;
+        let before = mean_abs_diff(&frames[14], &frames[15]);
+        let after = mean_abs_diff(&frames[44], &frames[45]);
+        assert!(
+            before > DISTINCT,
+            "slot 14 precedes the hold and must differ from it ({before})"
+        );
+        assert!(
+            after > DISTINCT,
+            "slot 45 follows the hold and must differ from it ({after})"
+        );
+        // Guard the guard: if the fixture ever became a still image, every
+        // assertion above would pass vacuously.
+        assert!(
+            mean_abs_diff(&frames[0], &frames[1]) > DISTINCT,
+            "the fixture's own frames must differ, or this test proves nothing"
+        );
+    }
+
+    /// A nominal frame index names one picture, no matter where the decoder
+    /// happened to be opened. This is the property the live preview actually
+    /// depends on: a scrub respawns the pipe, playback does not, and before
+    /// D-224 those two routes to the same index returned different pictures —
+    /// which is why the drift *snapped back* whenever the owner scrubbed.
+    #[test]
+    fn a_frame_is_the_same_picture_wherever_the_pipe_was_opened() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_vfr_with_a_hold(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        for target in [5u64, 15, 30, 44, 45, 55] {
+            // reached by reading forward from the very start
+            let mut seq = open_software(&vid, &info, 0);
+            let mut walked = None;
+            for n in 0..=target {
+                walked = Some(seq.frame(&vid, &info, n).expect("walk").to_rgb8());
+            }
+            let walked = walked.expect("at least one frame");
+
+            // reached by opening the pipe directly on it
+            let opened = open_software(&vid, &info, target)
+                .frame(&vid, &info, target)
+                .expect("direct")
+                .to_rgb8();
+
+            let d = mean_abs_diff(&walked, &opened);
+            assert_eq!(
+                d, 0.0,
+                "frame {target}: sequential vs. respawn differ, mean|Δ| {d}"
+            );
+        }
+    }
+
+    /// The pipe and the single-frame decoder are the same answer to the same
+    /// question — including on VFR footage, where they used to disagree. The
+    /// pipe falls back to `decode_frame` on any error, so a disagreement here
+    /// would show up live as the picture jumping at a random moment.
+    #[test]
+    fn pipe_and_single_frame_decode_agree_on_a_vfr_source() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_vfr_with_a_hold(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        let mut pipe = open_software(&vid, &info, 0);
+        for n in [0u64, 7, 15, 29, 44, 45, 58] {
+            let piped = pipe.frame(&vid, &info, n).expect("pipe").to_rgb8();
+            let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
+                .expect("decode_frame")
+                .to_rgb8();
+            let d = mean_abs_diff(&piped, &one);
+            assert_eq!(d, 0.0, "frame {n}: pipe vs decode_frame mean|Δ| {d}");
+        }
+    }
+
+    /// The same agreement stated the other way round, on the axis that matters
+    /// most: a `FramePos::Secs` question and a `FramePos::Index` question about
+    /// the same instant must land on the same grid slot.
+    #[test]
+    fn a_time_query_and_a_frame_query_land_on_the_same_grid_slot() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_vfr_with_a_hold(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+
+        for n in [3u64, 20, 40, 50] {
+            let by_index =
+                crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
+                    .expect("by index")
+                    .to_rgb8();
+            // anywhere strictly inside slot `n`'s own span
+            let secs = info.frame_to_secs(n) + 0.4 / info.fps();
+            let by_time =
+                crate::video::decode_frame(&vid, crate::video::FramePos::Secs(secs), &info)
+                    .expect("by time")
+                    .to_rgb8();
+            assert_eq!(
+                mean_abs_diff(&by_index, &by_time),
+                0.0,
+                "slot {n} via secs {secs}"
+            );
+        }
+    }
+
+    /// The control. On footage that is already on its grid the conform must be
+    /// a no-op: every consecutive frame still advances (nothing is spuriously
+    /// duplicated) and the two decode paths still agree.
+    #[test]
+    fn a_cfr_source_is_unaffected_by_the_conform() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_cfr(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+        assert_eq!((info.fps_num, info.fps_den), (30, 1));
+        reset();
+
+        let mut pipe = open_software(&vid, &info, 0);
+        let mut prev: Option<RgbImage> = None;
+        for n in 0..12u64 {
+            let f = pipe.frame(&vid, &info, n).expect("frame").to_rgb8();
+            if let Some(p) = &prev {
+                assert!(
+                    mean_abs_diff(p, &f) > 0.1,
+                    "frame {n} duplicates {}: the conform must not stall a CFR source",
+                    n - 1
+                );
+            }
+            let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
+                .expect("decode_frame")
+                .to_rgb8();
+            assert_eq!(
+                mean_abs_diff(&f, &one),
+                0.0,
+                "frame {n}: pipe vs decode_frame"
+            );
+            prev = Some(f);
+        }
+    }
+
+    /// The same property as the synthetic tests, against a **real** VFR source,
+    /// checked with an oracle that shares no code with the thing under test:
+    /// `ffprobe`'s own PTS list says which coded frame is on screen at
+    /// `n / source_fps`, and that frame is decoded by coded index.
+    ///
+    /// Env-gated (`CHROMA_TEST_VFR_VIDEO`) the same way
+    /// [`pipe_matches_single_frame_decode`] is — real footage lives outside the
+    /// repo. Run against the clip B-103 was reported on:
+    ///
+    /// ```text
+    /// CHROMA_TEST_VFR_VIDEO=scratch/reel-src/before-1.09.51pm.mov \
+    ///   cargo test -p chroma-media the_real_vfr_source
+    /// ```
+    #[test]
+    fn the_real_vfr_source_resolves_every_index_to_the_picture_on_screen() {
+        let Some(vid) = std::env::var("CHROMA_TEST_VFR_VIDEO")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+        else {
+            eprintln!("skip: set CHROMA_TEST_VFR_VIDEO to a real variable-frame-rate clip");
+            return;
+        };
+        let info = crate::video::probe(&vid).expect("probe");
+        let fps = info.fps();
+        assert!(fps > 0.0, "the fixture needs a real frame rate");
+
+        // The oracle: every coded frame's presentation time, straight from
+        // ffprobe. Nothing in `conform`/`decode_pipe` contributes to this.
+        let out = Command::new(crate::video::ffprobe_bin())
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&vid)
+            .output()
+            .expect("ffprobe frame list");
+        let mut pts: Vec<f64> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim().trim_end_matches(',').parse::<f64>().ok())
+            .collect();
+        pts.sort_by(|a, b| a.partial_cmp(b).expect("no NaN in a PTS list"));
+        assert!(pts.len() > 1, "need a real frame list");
+
+        // Only meaningful on footage that is actually variable-rate: if index
+        // and time already agree everywhere, the test proves nothing.
+        let worst = pts
+            .iter()
+            .enumerate()
+            .map(|(k, p)| (p - k as f64 / fps).abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            worst > 1.0 / fps,
+            "CHROMA_TEST_VFR_VIDEO is effectively constant-rate (worst drift {worst:.4}s) — \
+             point it at a screen recording or phone clip to exercise B-103"
+        );
+        eprintln!(
+            "{} — {:.4} fps nominal, {} coded frames, worst index-vs-time drift {worst:.3}s",
+            vid.display(),
+            fps,
+            pts.len()
+        );
+
+        // Reach each index the way playback does: one respawn, then sequential
+        // reads. That is the arrangement in which B-103's error accumulated.
+        let probes: Vec<u64> = [20u64, 208, 500, 866, 1020, 1228, 1600, 1948]
+            .into_iter()
+            .filter(|n| (*n as usize) < pts.len())
+            .collect();
+        let start = probes[0].saturating_sub(5);
+        let mut pipe = open_software(&vid, &info, start);
+
+        // Which coded frame did we get? Asked as "which of the candidates is
+        // closest", not "is the residual zero".
+        //
+        // On real footage the residual against the right frame is small but not
+        // always exactly zero: the pipe decodes forward from a seek, the oracle
+        // decodes from frame 0, and H.264 recovery points that are not IDRs let
+        // those two arrive at very slightly different pixels. That is an ffmpeg
+        // property, not a frame mismatch — and it is exactly why this asserts
+        // the ARGMIN over a neighbourhood. A wrong frame loses to the right one
+        // by orders of magnitude; decoder noise does not move the argmin at all.
+        for n in probes {
+            let got = pipe.frame(&vid, &info, n).expect("pipe frame").to_rgb8();
+
+            // truth: the last coded frame at or before n / fps
+            let t = n as f64 / fps;
+            let j = pts.partition_point(|p| *p <= t + 1e-9).saturating_sub(1);
+
+            let here = mean_abs_diff(&got, &decode_coded_frame(&vid, j as u64));
+            assert!(
+                here < 1.0,
+                "nominal frame {n} (t={t:.4}s) is not coded frame {j} (pts {:.4}) at all — \
+                 mean|Δ| {here}",
+                pts[j]
+            );
+            for k in 1..=3usize {
+                for other in [j.checked_sub(k), (j + k < pts.len()).then_some(j + k)]
+                    .into_iter()
+                    .flatten()
+                {
+                    let d = mean_abs_diff(&got, &decode_coded_frame(&vid, other as u64));
+                    assert!(
+                        d > here,
+                        "nominal frame {n} (t={t:.4}s) resolved closer to coded frame {other} \
+                         (pts {:.4}, mean|Δ| {d}) than to coded frame {j} (pts {:.4}, \
+                         mean|Δ| {here}) — the grid is off",
+                        pts[other],
+                        pts[j]
+                    );
+                }
+            }
+            eprintln!(
+                "  frame {n:>5} (t={t:>8.4}s) -> coded {j:>5} (pts {:>8.4}) ok",
+                pts[j]
+            );
+        }
+    }
+
+    /// Decode one frame **by coded index**, bypassing the nominal grid entirely
+    /// — the independent oracle the real-file test compares against. Test-only
+    /// on purpose: nothing in the app should ever address a source this way,
+    /// which is the whole point of `conform`.
+    fn decode_coded_frame(path: &Path, coded: u64) -> RgbImage {
+        let out = Command::new(ffmpeg_bin())
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(path)
+            .args([
+                "-vf",
+                &format!("select=eq(n\\,{coded})"),
+                "-fps_mode",
+                "passthrough",
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "-pix_fmt",
+                "rgb24",
+                "-",
+            ])
+            .output()
+            .expect("ffmpeg oracle decode");
+        assert!(
+            out.status.success(),
+            "oracle decode of coded frame {coded} failed"
+        );
+        image::load_from_memory(&out.stdout)
+            .expect("oracle PNG")
+            .to_rgb8()
     }
 
     fn mean_abs_diff(a: &RgbImage, b: &RgbImage) -> f64 {

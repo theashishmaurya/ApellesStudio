@@ -20137,3 +20137,110 @@ channel at unity. So an exported panned mono clip sits 3 dB below what the
 preview played. Stereo sources are unaffected (`aformat` is a verified no-op
 for them). Not fixed here because the fix belongs to the mono-adaptation layer,
 not to this feature — see B-101 for the two real options.
+
+## D-224 — One definition of "source frame N": conform every decode onto the source's nominal grid, rather than proxy-transcoding VFR footage or making the model PTS-aware
+
+**Context (B-103).** The owner reported, live, that the Edit tab's on-canvas
+transform box "IS DETACHED AND LAGGING" from the picture under it on one real
+clip — and got *worse* the longer playback ran, snapping back on a scrub. The
+clip is a macOS screen recording, which is genuinely **variable frame rate**:
+`ffprobe` reports `avg_frame_rate` 126780/2873 ≈ 44.128 over 2112 coded frames
+in 47.86 s, but its real tick base is 1/60 s with 47 holds of up to 0.567 s
+where the screen simply did not change.
+
+The root cause was not the probe. `video::probe` prefers `avg_frame_rate`, and
+that is the right scalar to prefer — it is the only one that makes
+`nb_frames`, `duration` and `Clip::duration` mutually consistent. The bug was
+that **the decoders did not agree with the model, or with each other**, about
+what a frame index means:
+
+- the model (`timeline_frames_to_source`, keyframes, the audio clock,
+  `resolve_clip_transform`) says frame `N` is **the picture at `N/source_fps`
+  seconds**;
+- `decode_pipe` and `export::spawn_decoder` seeked by time *once* and then
+  emitted **one output frame per coded frame** (`-fps_mode passthrough`);
+- `video::decode_frame` and the filmstrip chunk path seeked by time *per call*.
+
+On CFR footage those are the same thing, which is why this survived 200
+decisions. On this file, coded frame `k` and nominal frame `k` are **up to
+4.07 s apart** (≈180 frames, at k=866; measured from the file's own PTS list).
+The transform box is evaluated at the nominal index and the picture came off
+the coded index, so they detached — and since the error only accumulates while
+the pipe reads *without* re-seeking, it grew during playback and reset on every
+scrub, exactly as reported.
+
+**Options considered.**
+
+1. **Conform VFR sources to a CFR proxy at import** — what Resolve ("optimized
+   media") and Premiere (ingest/conform) actually do. Correct, and it fixes
+   every consumer at once. Rejected for *this* codebase: it is a whole new
+   subsystem (proxy generation, path mapping, cache invalidation, relink,
+   offline handling, a UI for it), it re-encodes the owner's pixels, it costs a
+   full transcode at import, and it puts a generated artefact between
+   `project.json` + the original file and the rendered result — weakening the
+   determinism invariant this repo holds. A large, hard-to-reverse answer to a
+   problem that does not need one.
+2. **Make the whole frame-index↔time mapping PTS-aware end to end** — store a
+   per-source PTS table and have `Clip::source_start`/`duration`, keyframes and
+   every decoder address real coded frames. Rejected: it makes a keyframe's
+   position depend on the source's coded timing, so "frame 40" would move in
+   time; it changes the meaning of every stored `Clip` field (a migration of
+   every existing project); and it buys nothing, because a timeline is CFR and
+   what it needs to ask a source is always *"what was on screen at this
+   instant"* — a time query, not a coded-frame query.
+3. **Chosen: state the invariant, and make every decoder honour it.**
+
+**Decision.** `crates/chroma-media/src/conform.rs` is now the single place that
+turns "I want source frame `N`" into ffmpeg arguments, and it encodes one rule:
+
+> **source frame `N` is the picture on screen at `N / source_fps` seconds** —
+> the last coded frame whose PTS is `<= N / source_fps` (hold semantics).
+
+Mechanically that is `fps=<num>/<den>:start_time=0:round=up` under `-copyts`,
+with `-noaccurate_seek` and a `select=gte(t,…)` half a frame before the target.
+`decode_pipe`, `video::decode_frame`, `video::extract_thumb_strip` and
+`export::spawn_decoder` all build their commands through it, so they cannot
+drift apart again. Nothing is transcoded, nothing is cached, no field changes,
+no project migrates — the conform is computed fresh per decode, so
+`project.json` + the original file remain the only inputs to a render.
+
+**Three details that are load-bearing, not defaults.**
+
+- **`round=up`.** The `fps` filter assigns an input frame at PTS `p` to output
+  slot `round(p·fps)`, and that frame then holds. `ceil` is what makes slot `k`
+  hold the last frame with `p <= k/fps`. Measured against the real file's own
+  PTS oracle over 49 grid indices: `round=up` 0 mismatches, `near` (ffmpeg's
+  default) 20, `down` 29.
+- **`-copyts`.** Keeps PTS source-absolute so a grid slot means the same
+  instant no matter where the decoder was opened. Without it `-ss` rebases to
+  zero and the grid would be relative to the seek point — i.e. the pipe's
+  answer would depend on when it last respawned, which is the bug.
+- **`-noaccurate_seek`.** The `fps` filter must *see* the held frame to
+  duplicate it onto the grid, and an accurate seek discards exactly that frame
+  when the hold began before the seek point. Starting at the keyframe
+  at-or-before costs nothing (an accurate seek decodes from there anyway) and
+  removes the need for a pre-roll constant — export's hand-rolled 1 s guess is
+  deleted, since no fixed guess can be known to exceed a file's longest hold.
+
+**Applied unconditionally, not behind a "looks VFR" branch.** Measured over 200
+frames with hardware decode at the preview cap: CFR 1920×1080@30 goes 2.51 →
+2.50 ms/frame (free — the filter is a passthrough when the input is already on
+the grid), and the real VFR file 4.33 → 5.59 ms/frame, which is the conform
+doing real work. Both are far inside the 17–31 ms/frame `decode_pipe`'s own doc
+budgets, and one code path exercised by every source is worth more than 1.26 ms
+on the footage that needs it.
+
+**`probe` is deliberately unchanged.** Switching to `r_frame_rate` would change
+`source_fps` for every source and therefore the meaning of every stored
+`Clip::source_start`/`duration` — a migration, to trade one scalar for another
+that is no more able to describe unevenly-spaced frames. The average is the
+right scalar; the decoders just had to honour it.
+
+**Verification.** Six new tests in `decode_pipe`, over an ffmpeg-synthesized
+VFR fixture with a known 2 s hold (`testsrc` at 30 fps with coded frames 30–89
+dropped ⇒ `avg_frame_rate` exactly 15), plus a CFR control and an env-gated
+(`CHROMA_TEST_VFR_VIDEO`) test against the owner's own clip that checks each
+index against `ffprobe`'s PTS list — an oracle sharing no code with the thing
+under test. Three of them were confirmed to **fail** against the pre-D-224
+behaviour and pass after; the CFR control passes both ways, which is the point.
+See B-103.
