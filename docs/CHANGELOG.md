@@ -17,6 +17,30 @@ One or two lines per session. Detail lives in the decision it references.
   cannot import that barrel); migrated every real numeric field in the Edit and
   Motion Inspectors.
 
+- **2026-09-09** — **B-124: the clip Inspector's Video/Audio tabs looked inert
+  because BOTH panels painted at once, stacked** — Base UI's `Tabs.Panel` hides
+  a deselected panel by unmounting it, and that unmount waits on a
+  `requestAnimationFrame` a non-frontmost window never fires (this repo's own
+  `previewTiming.ts` documents that throttling), so the Audio content rendered
+  1076px below the fold under a Video panel that never left. Fixed with two CSS
+  rules on `TabsContent` in `@chroma/ui` (`[&[inert]]:hidden` — `inert` is
+  render-derived, so it is correct with no frame at all — plus
+  `[&[hidden]]:hidden`, since a UA `[hidden]` rule loses to any author `display`
+  utility). Found in the same pass: `data-selected:` matched nothing (Base UI
+  emits `data-active`), so no tab in the app had ever shown a selected state,
+  `TimelineSwitcher`'s active-timeline underline included. Proven in real
+  Chromium with rAF stubbed dead; jsdom is documented as structurally unable to
+  see this one.
+
+- **2026-09-09** — **D-254: the Inspector tab bar now draws Chroma's own
+  selected state, and every section seam has a real rule** — the owner's
+  "doesn't look like our design system" turned out to be a control with no
+  selected state at all (B-124); with that fixed, the bar moves off shadcn's
+  pill onto the kit's `line` variant plus the same accent underline
+  `Shell.tsx`'s Edit/Motion/Colorist switcher and `TimelineSwitcher` already
+  use. All six section seams get a hairline, not just the Crop → Dynamic Zoom
+  one that was screenshotted. `app/harness.html` gained a `?mode=inspector`.
+
 - **2026-09-09** — **D-251: Export moved again, out of the Edit tab entirely,
   to `@chroma/shell`'s own chrome bar beside the tab switcher** — the owner's
   live follow-up to D-249. `ShellTab` gained a `headerAction` slot, rendered

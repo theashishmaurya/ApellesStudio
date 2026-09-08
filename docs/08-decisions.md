@@ -23111,6 +23111,14 @@ on — the audio ones now select Audio, which is the honest change a tab split
 forces on them. Full suite: 73 files, 1452 passed, 0 failed. `tsc --noEmit` clean on
 `@chroma/editor`, `@chroma/ui` and `@chroma/debug`.
 
+**Superseded in part, 2026-09-09.** Everything above still stands — the split,
+the tab set, the membership, the store-state model. What this entry could not
+know is that none of it was VISIBLE: the deselected panel kept painting
+(**B-124**) and the selected tab had no selected state to read (**B-124**, and
+the retheming that followed, **D-254**). The verification quoted here is real
+and still passes; it is also jsdom, which B-124's entry explains is
+structurally unable to see either defect.
+
 ## D-248 — the Edit tab gets a left LIBRARY RAIL, and a generated clip becomes a real drag source
 
 **Context.** The owner's live pass over the running Edit tab produced two
@@ -23769,3 +23777,99 @@ files this pass never touched. No Rust changes. **Honest limit:** jsdom has no
 layout engine and no pointer capture, so this tier asserts the gesture's
 decisions, not pixels — that the arrows are visually gone and the resize cursor
 paints is the owner's own check against the running app.
+## D-254 — the clip Inspector's tab bar draws Chroma's own selected state (accent underline), and every adjacent section is separated by a real rule
+
+**Context.** Two of the owner's three live findings on the D-246 Inspector were
+visual, and both turned out to have a concrete defect behind them rather than a
+taste disagreement:
+
+- *"see if we are using right component for tab does not look like our design
+  system."*
+- A screenshot of the Crop → Dynamic Zoom seam with a line drawn on it: they
+  want a divider there.
+
+**Finding 1 — the tab bar had no selected state at all, in any browser.**
+Before deciding anything about styling, the actual rendered result was measured
+on the real running app (`debug_dom_tree`, computed styles). The selected
+trigger and the unselected trigger were byte-identical: `background-color:
+rgba(0, 0, 0, 0)`, `color: oklab(0.936 … / 0.6)`, `box-shadow: none`. The cause
+is B-124's second half — `@chroma/ui`'s `tabs.tsx` styled `data-selected:`,
+Base UI's `Tabs.Tab` emits `data-active`. So the owner was not reacting to a
+pill they disliked; they were reacting to a control with **no** selected state,
+which is why it read as not-ours. Fixed as a bug (B-124), and it independently
+restored `TimelineSwitcher`'s active-timeline underline, dead for the same
+one-word reason.
+
+**Finding 2 — and the pill was genuinely not this app's tab language either.**
+With the selected state restored, the shadcn `default` variant would have drawn
+a light filled pill. Chroma already had a tab language, in the two places it
+already had tabs, and both agree:
+
+| control | selected state |
+|---|---|
+| `Shell.tsx` — Edit / Motion / Colorist | `bg-accent` 2px bar under the label, `text-text-primary`; inactive `text-text-secondary` |
+| `TimelineSwitcher.tsx` (D-060) — the Edit tab's own timelines | `border-b-2 … data-active:border-b-accent` |
+| `ClipInspectorPanel` (D-246) — Video / Audio | shadcn's untouched pill: `bg-muted` list, `data-*:bg-background … shadow-sm` |
+
+The reference agrees too: Resolve's own Inspector (`scratch/resolve-reference/`,
+the same scrape D-246 was built from) presents Video / Audio / Effects / File as
+an underlined text strip, not a segmented pill.
+
+**Options.**
+1. *Leave the pill, now that it actually highlights.* Cheapest, and defensible
+   in isolation — but it leaves three tab controls in one app with two
+   different selected-state languages, and the owner had already said this one
+   reads as foreign.
+2. *Push Chroma's underline into `@chroma/ui`'s `default` variant.* Rejected:
+   the kit's `default` is shadcn's segmented control, `CaptionPanel`'s
+   Styles / Import tabs use it as one deliberately (a compact toggle inside a
+   380px popover, where an underline strip would be the wrong shape), and
+   silently redefining a kit variant is how a component library stops being
+   predictable.
+3. *Use the kit's existing `line` variant at the call site, with the app's own
+   accent underline stated there.* **Chosen.** `line` is already in
+   `tabsListVariants` for exactly this — no pill, no filled background — and
+   the underline itself is the same `border-b-2 … data-active:border-b-accent`
+   idiom `TimelineSwitcher` already uses, written in the `editor` layer where
+   `accent`/`text-primary` are the established vocabulary. The generic kit
+   stays generic; the app-specific look stays in the app.
+
+**Finding 3 — the divider, applied to every seam rather than the one drawn on.**
+No section transition in this panel had a rule: not Transform → Crop, not
+Crop → Dynamic Zoom (the one screenshotted), not Dynamic Zoom → Speed,
+Speed → Fade, Fade → Keyframes, nor Audio → EQ on the other tab. Six identical
+seams, six identical absences. All six get the rule — one hairline in one of
+six identical seams would be worse than none.
+
+It is expressed as a between-children rule (`[&>*+*]:border-t
+[&>*+*]:border-border-color [&>*+*]:pt-4`) on the two tab panels, not as six
+interleaved `<Separator />`s and not as a border baked into
+`@chroma/inspector`'s shared `InspectorSection`. The first is six things to keep
+in sync and one more to forget when a seventh section lands. The second would
+reach into Motion's Inspector too, where the same component is returned as the
+root of a dozen different subcomponents and `:first-child` means something
+different in each — out of scope, and not obviously right there. `* + *` is
+inherently correct as sections come and go: never above the first, never below
+the last, no bookkeeping. `pt-4` balances the `gap-4` the panel already sets, so
+the rule sits centred in 16px of air rather than crowding the heading beneath it.
+
+**One token source.** Nothing here introduces a colour. Verified by setting the
+fork's own vars to distinctive values in a real browser and reading the computed
+result back: `--app-accent: rgb(255,0,128)` → active underline
+`rgb(255, 0, 128)`; `--app-text-primary: rgb(10,255,10)` → active label
+`rgb(10, 255, 10)`; `--app-border-color: rgb(0,200,255)` → section rule
+`rgb(0, 200, 255)`. The inactive tab's underline stays `rgba(0, 0, 0, 0)`.
+
+**What did NOT change.** Every section, every control, every op, every gate, the
+tab set, the section membership, and D-246's store-state/stickiness model. This
+is chrome.
+
+**Verification.** Real Chromium over CDP against `app/harness.html`'s new
+`?mode=inspector` (see B-124 for why a real browser was mandatory here): exactly
+one panel with a box per state, the underline present on the active trigger and
+transparent on the other and following the tab, five rules on the Video tab's
+six sections and one on the Audio tab's two, and screenshots of both tabs under
+the fork's own default dark theme. `ClipInspectorPanel.tabChrome.dom.test.tsx`
+(5) pins the class/attribute contract; `@chroma/editor` 1513/1513 green
+(78 files), `@chroma/debug` 32/32, `tsc --noEmit` clean on `packages/editor` and
+`packages/ui`.
