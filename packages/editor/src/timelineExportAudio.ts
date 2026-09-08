@@ -85,7 +85,10 @@ import {
   flatSpeedOf,
   isFlatSegments,
   outputAtSourceFrame,
-  rampAudioSegments,
+  outputSpanOfLeadingSource,
+  outputSpanOfTrailingSource,
+  rampOutputSourceFrames,
+  rampSegmentSeconds,
   type SpeedSegment,
 } from './speedRamp';
 
@@ -519,8 +522,9 @@ export function eqFilterChain(
  * documented `[0.5, 2.0]` per-instance range — the standard, real technique
  * (ffmpeg's own FAQ recommends exactly this) for a speed change outside that
  * single-filter range, not a workaround invented here. `speed` is assumed
- * `> 0` (every real caller already validates this the same way
- * `speedOverrides` itself does).
+ * `> 0` — D-240's reversed runs pass their MAGNITUDE and carry the sign in a
+ * separate `areverse` node, because `atempo` has no negative form at all (see
+ * [`rampSegmentChain`]).
  */
 export function atempoFactors(speed: number): number[] {
   const MIN = 0.5;
@@ -576,22 +580,58 @@ export function buildRampedAtempoSteps(
   idLabel: string,
 ): { steps: string[]; label: string } {
   const steps: string[] = [];
+  // D-240 — a ONE-run ramp reaches here now (a wholly reversed clip is a
+  // single segment that is nonetheless not "flat", see `isFlatSegments`), and
+  // it needs neither `asplit` nor `concat`: those exist only to rejoin runs,
+  // and there is nothing to rejoin. Mirrors `buildReversibleRampSteps`'s own
+  // single-run case exactly. A forward ramp always has ≥ 2 runs, so this
+  // branch is unreachable for one and no existing filtergraph changes.
+  if (segments.length === 1) {
+    const out = `rc${idLabel}`;
+    steps.push(`${srcRef}${rampSegmentChain(segments[0])}[${out}]`);
+    return { steps, label: `[${out}]` };
+  }
   const splitLabels = segments.map((_, i) => `rs${idLabel}_${i}`);
   steps.push(`${srcRef}asplit=${segments.length}${splitLabels.map((l) => `[${l}]`).join('')}`);
 
   const partLabels: string[] = [];
   segments.forEach((seg, i) => {
     const part = `rp${idLabel}_${i}`;
-    steps.push(
-      `[${splitLabels[i]}]atrim=start=${seg.startSec}:end=${seg.endSec},asetpts=PTS-STARTPTS,` +
-        `${atempoFilterChain(seg.speed)}[${part}]`,
-    );
+    steps.push(`[${splitLabels[i]}]${rampSegmentChain(seg)}[${part}]`);
     partLabels.push(part);
   });
 
   const out = `rc${idLabel}`;
   steps.push(`${partLabels.map((l) => `[${l}]`).join('')}concat=n=${segments.length}:v=0:a=1[${out}]`);
   return { steps, label: `[${out}]` };
+}
+
+/** One resolved run's own filter fragment (no input/output labels): trim to
+ *  its source window, re-base to zero for `concat`, reverse it if it plays
+ *  backwards, then set its tempo.
+ *
+ *  **D-240 — `areverse` is a node, not a factor.** `atempo` takes a positive
+ *  number and rejects a negative one outright, so a reversed run's `-2` is
+ *  split into two independent statements: `areverse` (which buffers the
+ *  trimmed window and re-emits its samples last-to-first) and `atempo=2` (the
+ *  magnitude). The picture half does the identical two-part split with
+ *  `reverse` + `setpts` — see `timelineExport.ts`'s `buildReversibleRampSteps`
+ *  — which is what keeps the two in sync under reverse without either knowing
+ *  about the other.
+ *
+ *  `areverse` before `atempo`, deliberately: `atempo`'s WSOLA windows are
+ *  built from the signal it is handed, so reversing afterwards would reverse
+ *  those windows too and put each one's overlap seam on the wrong side of its
+ *  own transient. Reversing the raw trimmed audio first means `atempo` sees
+ *  exactly the signal it will actually be stretching. */
+function rampSegmentChain(seg: { startSec: number; endSec: number; speed: number }): string {
+  const parts = [`atrim=start=${seg.startSec}:end=${seg.endSec}`, 'asetpts=PTS-STARTPTS'];
+  if (seg.speed < 0) parts.push('areverse');
+  // `Math.abs`, and the `atempo` node is emitted even at 1x — that is what a
+  // forward ramp has always produced here, and this fragment stays
+  // byte-identical to the pre-D-240 one for every such segment.
+  parts.push(atempoFilterChain(Math.abs(seg.speed)));
+  return parts.join(',');
 }
 
 // --------------------------------------------------------------------------- //
@@ -706,7 +746,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   // none at all) rather than an `asplit`/`concat` that reassembles the
   // identity.
   if (!isFlatSegments(speedSegments)) {
-    const ramped = buildRampedAtempoSteps(ref, rampAudioSegments(speedSegments, clipFps), idLabel);
+    const ramped = buildRampedAtempoSteps(ref, rampSegmentSeconds(speedSegments, clipFps), idLabel);
     steps.push(...ramped.steps);
     ref = ramped.label;
     hasFilter = true;
@@ -742,10 +782,16 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   // its real on-screen length is however long those frames take to play — a
   // 12-frame fade-in on a 0.5x head is a full second, not half of one, and it
   // has to land on exactly the frames the picture's own fade lands on.
-  const clipEndSourceFrame = clip.source_start + clip.duration;
-  const lenSec = outSec(clipEndSourceFrame);
-  const fadeInSec = outSec(clip.source_start + (clip.fade_in_frames ?? 0));
-  const fadeOutSec = lenSec - outSec(clipEndSourceFrame - (clip.fade_out_frames ?? 0));
+  //
+  // D-240 — asked in PLAYBACK order rather than by mapping a source endpoint
+  // forward, exactly as `buildClipFilterChain`'s picture half now is and for
+  // the identical reason (see `outputSpanOfLeadingSource`): under a reversed
+  // run the clip's in-point is the last thing heard, so the old spelling put
+  // the fade-in at the tail and made `lenSec` zero. Algebraically unchanged
+  // for every forward ramp.
+  const lenSec = rampOutputSourceFrames(speedSegments) / clipFps;
+  const fadeInSec = outputSpanOfLeadingSource(speedSegments, clip.fade_in_frames ?? 0) / clipFps;
+  const fadeOutSec = outputSpanOfTrailingSource(speedSegments, clip.fade_out_frames ?? 0) / clipFps;
   const fadeExpr =
     fadeInSec > 0 || fadeOutSec > 0
       ? fadeGainExpr(lenSec, fadeInSec, fadeOutSec, clip.fade_in_curve ?? DEFAULT_EASE_CURVE, clip.fade_out_curve ?? DEFAULT_EASE_CURVE, 't')

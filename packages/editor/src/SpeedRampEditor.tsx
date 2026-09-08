@@ -22,6 +22,17 @@
  * read-only SVG plot of the actual remap. A speed point is added at the
  * playhead (Resolve's own gesture) and removed from its row.
  *
+ * **Reverse (D-240), and its shape is also read, not invented.** Both real
+ * references express reverse as a **negative percentage on the same speed
+ * number**, and both give it a command as well as a typed sign: Resolve's
+ * Retime Controls has *Reverse Segment*, which "reverses the speed of the
+ * entire clip or between two speed points" (i.e. per RUN, exactly this
+ * model's unit), and Premiere's Speed/Duration dialog has a *Reverse Speed*
+ * checkbox after which "the clip will show a -100% label on it, denoting both
+ * the speed and direction". So this section takes both: the percentage field
+ * accepts a negative, and each run carries a Reverse button that flips its own
+ * sign without disturbing its magnitude.
+ *
  * **What it does NOT do.** It is not the draggable on-clip bar itself: this
  * pass puts the whole model behind a real, complete Inspector control rather
  * than a partial timeline-overlay gesture. Dragging a speed point directly on
@@ -38,7 +49,6 @@ import { InspectorSection } from '@chroma/inspector';
 import {
   clampSpeed,
   MAX_SPEED,
-  MIN_SPEED,
   normalizeSpeedPoints,
   outputAtSourceFrame,
   rampOutputSourceFrames,
@@ -176,7 +186,13 @@ export function SpeedRampEditor({
               <Input
                 type="number"
                 step={5}
-                min={Math.round(MIN_SPEED * 100)}
+                // D-240 — the range is symmetric about zero, because a
+                // negative percentage IS how both Resolve and Premiere spell
+                // reverse (`-100%` = backwards at recorded speed). `clampSpeed`
+                // pins the magnitude and keeps the sign, so a typed `0` (which
+                // is not slow, it is a clip that never advances) still resolves
+                // to 1x rather than to an infinite remap.
+                min={-Math.round(MAX_SPEED * 100)}
                 max={Math.round(MAX_SPEED * 100)}
                 disabled={trackLocked}
                 className="h-7 w-20 text-xs"
@@ -185,6 +201,22 @@ export function SpeedRampEditor({
                 onChange={(e) => setSegmentSpeed(seg.startSourceFrame, Number(e.target.value) / 100)}
               />
               <span className="text-text-secondary/70 text-[11px]">%</span>
+              {/* D-240 — Resolve's own "Reverse Segment" command, per run.
+                  Flips the SIGN and leaves the magnitude alone, so reversing a
+                  37% run gives -37% and reversing it back gives 37% — the
+                  round trip is exact, which typing a minus sign into the field
+                  above is not (it loses the digits you had). */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                disabled={trackLocked}
+                aria-pressed={seg.speed < 0}
+                aria-label={`Reverse the run starting at source frame ${seg.startSourceFrame}`}
+                onClick={() => setSegmentSpeed(seg.startSourceFrame, -seg.speed)}
+              >
+                {seg.speed < 0 ? 'Reversed' : 'Reverse'}
+              </Button>
               <span className="grow" />
               {removable && (
                 <Button

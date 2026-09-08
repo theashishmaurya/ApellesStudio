@@ -937,6 +937,51 @@ pub struct AudioSourceSpec {
     /// and `level_for_clip`: a band is already in the only units it has
     /// (hertz, decibels, Q), none of which are frames.
     pub eq_bands: Vec<chroma_types::EqBand>,
+    /// D-241 — this clip's SPEED RAMP, as the runs still ahead of the
+    /// playhead, or **empty** when it plays at its recorded rate (every clip in
+    /// every pre-D-236 project, and the common case now). Empty is not "a ramp
+    /// that does nothing": [`open_source`] attaches no [`Retime`] stage at all
+    /// for it, so an un-ramped source decodes through exactly the arithmetic it
+    /// always did — no interpolation, no extra buffer, not one added
+    /// multiplication in the hot loop.
+    ///
+    /// **Seconds relative to [`Self::start_secs`]**, like [`Self::fade`] and
+    /// for the same reason: turning a clip's speed *frames* into seconds needs
+    /// a `chroma_timeline::Clip` and its probed rate, which this crate
+    /// deliberately cannot see. The caller converts, in `app/src-tauri`'s
+    /// `chroma::audio::speed_for_clip` — the exact mirror of `@chroma/editor`'s
+    /// `rampSegmentSeconds`, which is what the EXPORT compiles its
+    /// `atrim`/`atempo`/`areverse` chain from.
+    ///
+    /// **When this is non-empty, [`Self::start_secs`] and
+    /// [`Self::duration_secs`] each mean the one thing they always meant, but
+    /// the two stop being the same number.** `start_secs` is where the source
+    /// window OPENS — the lowest source second this session will read, which
+    /// under a reversed run is *ahead* of the playhead in the file rather than
+    /// under it, because symphonia decodes forwards and the retime plays that
+    /// buffer backwards. `duration_secs` is, as ever, how many OUTPUT seconds
+    /// this source contributes; for an un-retimed source one source second is
+    /// one output second, which is why the distinction never had to be drawn
+    /// before.
+    pub speed: Vec<AudioSpeedSegment>,
+}
+
+/// One constant-speed run of a clip's ramp, as the live mixer takes it
+/// (D-241). The exact counterpart of `@chroma/editor`'s
+/// `SpeedSegmentSeconds`, which is what the exporter builds its per-segment
+/// `atrim`/`atempo`/`areverse` chain from — the two are the same list, handed
+/// to two different renderers, which is this feature's whole preview/export
+/// parity argument.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AudioSpeedSegment {
+    /// Inclusive, in SOURCE seconds relative to [`AudioSourceSpec::start_secs`].
+    pub start_secs: f64,
+    /// Exclusive, same axis.
+    pub end_secs: f64,
+    /// Source seconds consumed per output second. **Negative plays this run
+    /// backwards** (D-240); its output length is `(end - start) / |speed|`
+    /// either way.
+    pub speed: f64,
 }
 
 /// One clip's fade envelope, in **seconds** (D-147).
@@ -2171,27 +2216,436 @@ pub(crate) struct DecodedSource {
     /// [`StartTrim`] for why a source cannot simply trust that the seek in
     /// [`open_source`] put it in the right place.
     start_trim: Option<StartTrim>,
+    /// D-241 — this source's speed ramp, or `None` when it plays at its
+    /// recorded rate (every clip in every pre-D-236 project, and the common
+    /// case). `None` is not "a ramp that returns its own input": [`Self::ensure`]
+    /// takes a different branch entirely for it, so an un-ramped source decodes
+    /// through exactly the loop it always did.
+    retime: Option<Retime>,
+}
+
+/// How many OUTPUT frames a retimed source produces per pass through
+/// [`Retime::plan`]. Bounded so the position buffer and the input window each
+/// pass needs stay small and cache-friendly; the mixer's own chunk is the same
+/// order of magnitude, so this is almost always one pass.
+const RETIME_CHUNK_FRAMES: usize = 1024;
+
+/// One resolved run, in the only unit this stage works in: **input sample
+/// FRAMES at the session's own output rate.** Seconds are converted away once,
+/// in [`Retime::new`], so the per-frame hot loop never touches a rate again.
+#[derive(Debug, Clone, Copy)]
+struct RetimeRun {
+    /// Inclusive input frame this run covers.
+    start: f64,
+    /// Exclusive input frame this run covers.
+    end: f64,
+    /// Signed; negative plays `[start, end)` backwards (D-240).
+    speed: f64,
+}
+
+impl RetimeRun {
+    /// The INPUT position this run sits at when its own output begins: its
+    /// start forwards, its **end** in reverse. The exact counterpart of
+    /// `chroma_timeline::speed_ramp::SpeedSegment::anchor_source_frame` — the
+    /// same one-term generalisation, in sample frames rather than video frames.
+    fn anchor(&self) -> f64 {
+        if self.speed > 0.0 {
+            self.start
+        } else {
+            self.end
+        }
+    }
+
+    /// This run's OUTPUT length in frames, `len / |speed|`.
+    fn out_len(&self) -> f64 {
+        (self.end - self.start).max(0.0) / self.speed.abs()
+    }
+}
+
+/// The output frames one [`Retime::plan`] pass will produce, as the INPUT
+/// positions they read from — a plain `Vec<f64>` of fractional input frames,
+/// one per output frame, plus the range they span.
+struct RetimePlan {
+    /// Fractional input frame per output frame, in output order.
+    positions: Vec<f64>,
+    /// The highest input frame any of them reads (already including the `+1`
+    /// the linear interpolation needs), so the caller knows how far to decode.
+    highest: f64,
+}
+
+impl RetimePlan {
+    fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+
+    fn highest_input_frame(&self) -> f64 {
+        self.highest
+    }
+}
+
+/// D-241 — the live mixer's RETIME stage: one clip's speed ramp applied to its
+/// already-decoded, already-resampled, already-channel-adapted audio, so the
+/// preview's sound advances through the source at the same rate its picture
+/// does.
+///
+/// **What it is.** A variable-rate reader over a window of the source's output
+/// stream. `chroma_timeline::speed_ramp` answers "which SOURCE frame does this
+/// clip show at this OUTPUT position" for the picture; this asks the identical
+/// question of the same ramp at *sample* resolution and reads the buffer
+/// there, interpolating between the two neighbouring input frames.
+///
+/// **Why a resampler and not `atempo`.** The EXPORT preserves pitch, because
+/// ffmpeg hands it a WSOLA implementation for free. The live mixer deliberately
+/// does not: it VARISPEEDS, like tape — a 2x clip previews an octave up, a
+/// reversed one previews backwards. That is a real, stated asymmetry with the
+/// export (see D-241), not an oversight, and it is the same choice Premiere
+/// makes by default ("Maintain Audio Pitch" is a checkbox you turn ON, not the
+/// default). Two reasons it is the right one here: a phase vocoder or WSOLA is
+/// a whole DSP subsystem with its own latency and artefacts to get wrong on the
+/// real-time thread, where this is a multiply-add per sample; and what an
+/// editor is checking when they scrub a ramp is *timing* — whether the hit
+/// lands on the beat — which varispeed gets exactly right.
+///
+/// **What it does NOT do.** No pitch correction (above). No filtering beyond
+/// the linear interpolation, so a heavily slowed run is soft rather than
+/// aliased and a heavily sped-up one can alias — audible only above ~4x, and
+/// the preview is a preview. It does not decode: it is handed input by
+/// [`DecodedSource::ensure_retimed`] and only ever asks for more.
+struct Retime {
+    /// The ramp, in input frames at the session's output rate.
+    runs: Vec<RetimeRun>,
+    /// Total output frames this ramp produces — where the source falls silent.
+    total_out_frames: f64,
+    /// Interleaved input samples at the session's `(out_rate, out_channels)`.
+    ///
+    /// A `VecDeque` because a forward run consumes it from the front while more
+    /// arrives at the back. A REVERSED run never drops anything: it enters at
+    /// the run's last input frame and walks down, so it must hold the whole run
+    /// at once. That is the real memory cost of live reverse, and it is small
+    /// where the picture's is not — a 30-second reversed run at 48 kHz stereo
+    /// is ~11 MB of `f32`, against the ~5 GB of raw frames the same 30 seconds
+    /// of 1080p would be.
+    input: VecDeque<f32>,
+    /// The input frame index of `input`'s first frame — what makes the window
+    /// slide without renumbering the positions the plan is expressed in.
+    input_base: u64,
+    /// Output frames produced so far; the plan's own clock.
+    out_frame: u64,
+    /// Channel count every buffer here is interleaved at.
+    channels: usize,
+}
+
+impl Retime {
+    /// Build the stage for `segments` (SOURCE seconds relative to the source's
+    /// own open point) at the session's output rate, or `None` when there is
+    /// nothing to retime — no segments at all, or a single forward 1x run,
+    /// which is the identity and must not cost a resample.
+    fn new(segments: &[AudioSpeedSegment], out_rate: u32, channels: usize) -> Option<Self> {
+        if segments.is_empty() {
+            return None;
+        }
+        let rate = out_rate as f64;
+        let runs: Vec<RetimeRun> = segments
+            .iter()
+            .filter(|s| s.speed.is_finite() && s.speed != 0.0 && s.end_secs > s.start_secs)
+            .map(|s| RetimeRun {
+                start: s.start_secs * rate,
+                end: s.end_secs * rate,
+                speed: s.speed,
+            })
+            .collect();
+        if runs.is_empty() {
+            return None;
+        }
+        // The identity, spelled out: one forward run at exactly 1x reads its
+        // input frame for frame, so attaching the stage would only add an
+        // interpolation that returns its own input. Deliberately the same
+        // "flat is not a second concept" rule `segments_are_flat` encodes on
+        // the model side — a REVERSED single run is not identity and does not
+        // take this exit.
+        if runs.len() == 1 && runs[0].speed == 1.0 {
+            return None;
+        }
+        let total_out_frames = runs.iter().map(RetimeRun::out_len).sum();
+        Some(Self {
+            runs,
+            total_out_frames,
+            input: VecDeque::new(),
+            input_base: 0,
+            out_frame: 0,
+            channels: channels.max(1),
+        })
+    }
+
+    /// The fractional INPUT frame this ramp reads at OUTPUT frame `out_pos` —
+    /// the sample-resolution twin of
+    /// `chroma_timeline::speed_ramp::source_frame_at_output`, written the same
+    /// way against the same anchor so the sound cannot drift from the picture.
+    fn input_frame_at(&self, out_pos: f64) -> f64 {
+        let mut acc = 0.0;
+        for (i, run) in self.runs.iter().enumerate() {
+            let out_len = run.out_len();
+            if out_pos < acc + out_len || i + 1 == self.runs.len() {
+                return run.anchor() + (out_pos - acc) * run.speed;
+            }
+            acc += out_len;
+        }
+        0.0
+    }
+
+    /// Plan the next `frames` output frames, truncated at the ramp's own end.
+    fn plan(&self, frames: usize) -> RetimePlan {
+        let remaining = (self.total_out_frames - self.out_frame as f64).floor();
+        let take = if remaining <= 0.0 {
+            0
+        } else {
+            frames.min(remaining as usize)
+        };
+        let mut positions = Vec::with_capacity(take);
+        let mut highest = f64::NEG_INFINITY;
+        for k in 0..take {
+            let p = self.input_frame_at((self.out_frame + k as u64) as f64);
+            highest = highest.max(p);
+            positions.push(p);
+        }
+        RetimePlan {
+            positions,
+            // `+ 1` because the interpolation reads the frame after the one it
+            // lands in; without it a run's very last output frame would blend
+            // against a zero that has not been decoded yet and click.
+            highest: highest + 1.0,
+        }
+    }
+
+    /// Has the input window been decoded far enough to serve a plan reaching
+    /// `frame`?
+    fn covers_input_frame(&self, frame: f64, channels: usize) -> bool {
+        let have = self.input_base + (self.input.len() / channels.max(1)) as u64;
+        (have as f64) > frame
+    }
+
+    /// Append freshly decoded output-rate samples to the input window.
+    fn push_input(&mut self, interleaved: &[f32]) {
+        self.input.extend(interleaved.iter().copied());
+    }
+
+    /// One interpolated input frame's `channel`-th sample.
+    ///
+    /// Before the window, or more than one frame past what the decoder
+    /// produced, this is silence: a source that ran out really has nothing
+    /// there, and holding a sample for seconds would be an audible DC step
+    /// rather than an end.
+    ///
+    /// **The one-frame grace at the top is not slack, it is the exclusive
+    /// end.** A reversed run's very first output frame sits at its range's
+    /// EXCLUSIVE end — input frame `N` of an `N`-frame file — which by
+    /// definition has not been decoded and never will be. Returning silence
+    /// there puts a single-sample click at the head of every reversed clip.
+    /// Holding the last real sample for that one frame is exactly right: it is
+    /// the signal, one sample early.
+    fn sample_at(&self, position: f64, channel: usize) -> f32 {
+        let base = position.floor();
+        if base < self.input_base as f64 {
+            return 0.0;
+        }
+        let frames = self.input.len() / self.channels;
+        let idx = (base as u64 - self.input_base) as usize;
+        if idx >= frames {
+            return if idx == frames && frames > 0 {
+                self.input
+                    .get((frames - 1) * self.channels + channel)
+                    .copied()
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+        }
+        let frac = (position - base) as f32;
+        let a = self.input.get(idx * self.channels + channel).copied();
+        let b = self.input.get((idx + 1) * self.channels + channel).copied();
+        match (a, b) {
+            (Some(a), Some(b)) => a + (b - a) * frac,
+            // The very last decoded frame has no successor to blend toward;
+            // holding it is right there (it IS the signal).
+            (Some(a), None) => a,
+            _ => 0.0,
+        }
+    }
+
+    /// Produce this plan's output frames, advance the clock, and release the
+    /// input the ramp can no longer reach.
+    fn emit(&mut self, plan: &RetimePlan, channels: usize) -> Vec<f32> {
+        let channels = channels.max(1);
+        let mut out = Vec::with_capacity(plan.positions.len() * channels);
+        for &position in &plan.positions {
+            for c in 0..channels {
+                out.push(self.sample_at(position, c));
+            }
+        }
+        self.out_frame += plan.positions.len() as u64;
+
+        // Release the input this ramp can never reach again — the lowest input
+        // frame any REMAINING output frame will read, not the lowest this pass
+        // happened to touch.
+        //
+        // The distinction is the whole correctness of reverse, and getting it
+        // wrong is not subtle: a reversed run's first pass reads the TOP of its
+        // range, so "drop below this pass's lowest position" throws away the
+        // entire rest of the run before it has played a sample of it. Caught by
+        // `a_reversed_clip_previews_its_audio_running_backwards`, which read
+        // silence.
+        let keep_from = self.min_future_input_frame().floor();
+        if keep_from.is_finite() && keep_from > self.input_base as f64 {
+            let available = (self.input.len() / channels) as u64;
+            let drop_frames = (keep_from as u64 - self.input_base).min(available);
+            self.input.drain(0..(drop_frames as usize * channels));
+            self.input_base += drop_frames;
+        }
+        out
+    }
+
+    /// The lowest INPUT frame any output frame from here to the end of the ramp
+    /// will read — the retention floor for [`Self::emit`]'s window.
+    ///
+    /// Per remaining run: a run not yet started can be entered anywhere in its
+    /// range, so its floor is its own start. A run IN PROGRESS depends on which
+    /// way it travels — a forward one will only ever climb from where it is, so
+    /// its floor is the current position and the window really does slide; a
+    /// reversed one is heading DOWN to its start, so its floor is that start
+    /// and nothing is released until it finishes. That last case is why live
+    /// reverse holds its whole run in memory, and why the doc on
+    /// [`Retime::input`] states the size.
+    fn min_future_input_frame(&self) -> f64 {
+        let current = self.out_frame as f64;
+        let mut acc = 0.0;
+        let mut lowest = f64::INFINITY;
+        for run in &self.runs {
+            let out_end = acc + run.out_len();
+            if out_end <= current {
+                acc = out_end;
+                continue; // wholly played
+            }
+            let floor_for_run = if current <= acc {
+                run.start // not entered yet
+            } else if run.speed > 0.0 {
+                run.anchor() + (current - acc) * run.speed // climbing from here
+            } else {
+                run.start // descending toward here
+            };
+            lowest = lowest.min(floor_for_run);
+            acc = out_end;
+        }
+        lowest
+    }
+
+    /// Has this ramp produced its whole output?
+    fn is_finished(&self) -> bool {
+        (self.out_frame as f64) >= self.total_out_frames
+    }
 }
 
 impl DecodedSource {
     /// Decode further packets until `carry` holds at least `want` samples or
     /// this source hits EOF (setting `exhausted`, after which `carry` may
     /// stay short of `want` forever — that's fine, [`Self::take`] pads).
+    ///
+    /// D-241 — a source carrying a [`Retime`] takes the second branch: the
+    /// decoded stream feeds the retime's own input window instead of `carry`,
+    /// and `carry` is filled from what the retime resamples out of it. An
+    /// un-retimed source (every clip in every pre-D-236 project) runs the first
+    /// branch, which is the original loop, unchanged.
     fn ensure(&mut self, want: usize, out_channels: usize) -> Result<(), String> {
-        while self.carry.len() < want && !self.exhausted {
+        if self.retime.is_none() {
+            while self.carry.len() < want && !self.exhausted {
+                match self.decode_chunk(out_channels)? {
+                    Some(chunk) => self.carry.extend(chunk),
+                    None => break,
+                }
+            }
+            return Ok(());
+        }
+        self.ensure_retimed(want, out_channels)
+    }
+
+    /// [`Self::ensure`]'s retimed branch (D-241).
+    ///
+    /// Three steps per pass, in this order because each needs the previous
+    /// one's answer: **plan** the output frames' input positions, **feed** the
+    /// decoder until the input window covers them, then **emit**. Planning
+    /// first is what makes reverse work at all — the highest input frame a
+    /// backwards run needs is the one it starts on, so the retime has to say
+    /// how far ahead to decode before anything can be produced.
+    fn ensure_retimed(&mut self, want: usize, out_channels: usize) -> Result<(), String> {
+        let channels = out_channels.max(1);
+        while self.carry.len() < want {
+            let Some(retime) = self.retime.as_ref() else {
+                return Ok(());
+            };
+            let frames = want
+                .saturating_sub(self.carry.len())
+                .div_ceil(channels)
+                .clamp(1, RETIME_CHUNK_FRAMES);
+            let plan = retime.plan(frames);
+            if plan.is_empty() {
+                // The ramp has produced its whole output. Everything past it is
+                // silence, exactly as running off the end of the file is.
+                self.exhausted = true;
+                return Ok(());
+            }
+            let need_through = plan.highest_input_frame();
+
+            // Feed. `decode_chunk` returning `Some(empty)` is normal, not EOF —
+            // rubato only emits once it has accumulated a full chunk — so the
+            // loop is bounded by the decoder reaching EOF, not by any one pass
+            // producing samples.
+            while !self.exhausted {
+                let covered = match self.retime.as_ref() {
+                    Some(r) => r.covers_input_frame(need_through, channels),
+                    None => true,
+                };
+                if covered {
+                    break;
+                }
+                match self.decode_chunk(out_channels)? {
+                    Some(chunk) => {
+                        if let Some(r) = self.retime.as_mut() {
+                            r.push_input(&chunk);
+                        }
+                    }
+                    None => break,
+                }
+            }
+
+            if let Some(r) = self.retime.as_mut() {
+                self.carry.extend(r.emit(&plan, channels));
+            }
+        }
+        Ok(())
+    }
+
+    /// Decode the next packet into interleaved samples at the session's own
+    /// `(out_rate, out_channels)` — the body of the pre-D-241 `ensure` loop,
+    /// lifted verbatim into its own step so the plain and the retimed paths can
+    /// share one decoder without either re-spelling it.
+    ///
+    /// `Ok(None)` means EOF (and sets `exhausted`, as the loop always did);
+    /// `Ok(Some(empty))` means "nothing came out of the resampler this time",
+    /// which is routine and not an end.
+    fn decode_chunk(&mut self, out_channels: usize) -> Result<Option<Vec<f32>>, String> {
+        loop {
             let packet = match self.format.next_packet() {
                 Ok(Some(p)) => p,
                 Ok(None) => {
                     self.exhausted = true;
-                    break;
+                    return Ok(None);
                 }
                 Err(SymError::ResetRequired) => {
                     self.exhausted = true;
-                    break;
+                    return Ok(None);
                 }
                 Err(SymError::IoError(_)) => {
                     self.exhausted = true;
-                    break;
+                    return Ok(None);
                 }
                 Err(e) => return Err(format!("next_packet ({}): {e}", self.label)),
             };
@@ -2227,10 +2681,8 @@ impl DecodedSource {
             decoded.copy_to_slice_interleaved(&mut interleaved);
             let head = (head_drop_frames * self.src_channels).min(interleaved.len());
             let adapted = adapt_channels(&interleaved[head..], self.src_channels, out_channels);
-            let resampled = self.resample.push(&adapted)?;
-            self.carry.extend(resampled);
+            return Ok(Some(self.resample.push(&adapted)?));
         }
-        Ok(())
     }
 
     /// Pop exactly `want` interleaved samples — decoding more first via
@@ -2263,8 +2715,18 @@ impl DecodedSource {
     /// `run_session`'s whole-session-done check (every source, not just
     /// one) is `.all(DecodedSource::is_done)`. Reaching the clip's out-point
     /// counts as done just as much as reaching the file's end (B-048).
+    ///
+    /// D-241 — a RETIMED source is not done just because its decoder hit EOF:
+    /// a reversed run has by then buffered the whole range it is about to play
+    /// backwards, and a slowed one still has most of its output ahead of it. So
+    /// the retime gets a say, and the real bound stays [`Self::remaining`] (the
+    /// clip's OUTPUT length), which counts down on every `take` either way.
     pub(crate) fn is_done(&self) -> bool {
-        self.remaining == Some(0) || (self.exhausted && self.carry.is_empty())
+        if self.remaining == Some(0) {
+            return true;
+        }
+        let retime_done = self.retime.as_ref().is_none_or(Retime::is_finished);
+        self.exhausted && self.carry.is_empty() && retime_done
     }
 }
 
@@ -2341,7 +2803,30 @@ pub(crate) fn open_source(
         // B-052 / D-133 — the seek above is an optimisation, not the thing that
         // establishes where playback starts; this is.
         start_trim: start_trim(track.time_base, start_secs, src_rate),
+        // D-241 — attached separately, by `DecodedSource::with_speed`, so this
+        // function keeps the signature its five other callers already use.
+        retime: None,
     })
+}
+
+impl DecodedSource {
+    /// D-241 — attach this source's speed ramp, if it has one.
+    ///
+    /// Separate from [`open_source`] rather than a sixth parameter on it: the
+    /// ramp needs the session's real `out_rate`, which is the same thing
+    /// `open_source` needs, but every other caller of that function
+    /// (`crate::scrub`, and the crate's own device tests) has no ramp to give
+    /// and should not have to say so. `None`/an identity ramp leaves the source
+    /// exactly as opened — see [`Retime::new`].
+    pub(crate) fn with_speed(
+        mut self,
+        segments: &[AudioSpeedSegment],
+        out_rate: u32,
+        out_channels: usize,
+    ) -> Self {
+        self.retime = Retime::new(segments, out_rate, out_channels);
+        self
+    }
 }
 
 /// How many interleaved output samples a clip of `duration_secs` covers at the
@@ -2503,7 +2988,10 @@ fn run_session(
             out_channels,
         ) {
             Ok(ds) => {
-                decoded.push(ds);
+                // D-241 — the ramp is attached here, not inside `open_source`,
+                // because it needs `out_rate` (the device's, only known now)
+                // and because no other caller of `open_source` has one.
+                decoded.push(ds.with_speed(&spec.speed, out_rate, out_channels));
                 gains.push(spec.gain);
                 // D-147/D-149 — index-parallel with `decoded`/`gains`, which is
                 // why it is pushed in the same arm: a source that failed to
@@ -4384,5 +4872,387 @@ mod tests {
             muted_video, tone_mono,
             "muting the video track (gain=0.0) must equal the tone alone"
         );
+    }
+
+    // ---------------------------------------------------------------------- //
+    // D-241 — live-preview audio retiming
+    // ---------------------------------------------------------------------- //
+
+    /// Synthesize a WAV whose **sample VALUE encodes its own source time**:
+    /// `x(t) = t / duration`, a slow linear ramp from 0 to ~1.
+    ///
+    /// The audio counterpart of `speedRamp.ffmpeg.test.ts`'s "every frame is a
+    /// distinct grey" fixture, and it exists for exactly the same reason: it
+    /// turns "which part of the source is playing right now" from a question
+    /// you have to infer from an envelope or a spectrum into a number you can
+    /// read straight off one sample. A retime that plays the wrong part of the
+    /// source, at the wrong rate, or in the wrong direction is then off by an
+    /// amount the assertion can state in seconds.
+    ///
+    /// `pcm_s16le` (not a lossy codec) so the value that goes in is the value
+    /// that comes back, to within 1/32768 — three orders of magnitude finer
+    /// than the tolerances below.
+    fn synth_position_ramp_wav(dir: &Path, duration_secs: f64, rate: u32) -> PathBuf {
+        let out = dir.join("position-ramp.wav");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("aevalsrc=t/{duration_secs}:s={rate}:d={duration_secs}"),
+                "-c:a",
+                "pcm_s16le",
+                "-ac",
+                "1",
+            ])
+            .arg(&out)
+            .status()
+            .expect("spawn ffmpeg to synthesize a position-ramp fixture");
+        assert!(status.success(), "ffmpeg fixture synthesis failed");
+        out
+    }
+
+    /// Decode `path` through the real `open_source`/`with_speed`/`take` path
+    /// and return the retimed OUTPUT as mono samples.
+    fn retimed_output(
+        path: &Path,
+        segments: &[AudioSpeedSegment],
+        output_secs: f64,
+        rate: u32,
+    ) -> Vec<f32> {
+        let mut ds = open_source(path, 0.0, Some(output_secs), rate, 1)
+            .expect("open the position-ramp fixture")
+            .with_speed(segments, rate, 1);
+        let mut out = Vec::new();
+        // Pulled in the same fixed-size windows `run_session`'s mixing loop
+        // uses, so the chunk-boundary behaviour under test is the real one.
+        let chunk = 2048;
+        while out.len() < (output_secs * rate as f64) as usize {
+            let got = ds.take(chunk, 1).expect("take a retimed chunk");
+            out.extend(got);
+            if ds.is_done() {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The source second the sample at output second `u` came from, recovered
+    /// from its own value — the inverse of the fixture's `x(t) = t/duration`.
+    fn source_secs_of(sample: f32, duration_secs: f64) -> f64 {
+        sample as f64 * duration_secs
+    }
+
+    /// **An INDEPENDENT oracle** for the mixed ramp the two tests below use:
+    /// source `[0,1)` forwards, `[1,3)` backwards at 2x, `[3,4)` forwards.
+    ///
+    /// Hand-written arithmetic rather than a call into the ramp code, and
+    /// deliberately so. `chroma-media` sits BELOW `chroma-timeline` in the
+    /// D-039 layering and must not depend on it even in a test — but the
+    /// stronger reason is that checking [`Retime`] against a second copy of
+    /// the same algorithm would prove only that the copy was faithful. Three
+    /// lines of "where is playback at second `u`" that anyone can verify by
+    /// eye is a real oracle; the shared-definition claim is then carried by
+    /// this agreeing with what `speedRampReverse.ffmpeg.test.ts` measures out
+    /// of real exported pixels for the identically-shaped ramp.
+    fn mixed_ramp_oracle(out_secs: f64) -> f64 {
+        if out_secs < 1.0 {
+            out_secs // forwards from 0
+        } else if out_secs < 2.0 {
+            3.0 - (out_secs - 1.0) * 2.0 // entered at 3.0, descending at 2x
+        } else {
+            3.0 + (out_secs - 2.0) // forwards again from 3.0
+        }
+    }
+
+    /// **The headline live-retiming proof (D-241): a ramped clip's preview
+    /// audio advances through the source at the rate its PICTURE does.**
+    ///
+    /// Before D-241 this was a stated asymmetry — the picture previewed a ramp
+    /// and the mixer played the sound at its recorded rate, so at output second
+    /// 1.0 of a 2x clip the picture showed source second 2.0 and the sound was
+    /// still at 1.0. This decodes real audio through the real source path and
+    /// reads, from the samples themselves, which source second is actually
+    /// sounding.
+    #[test]
+    fn a_sped_up_clip_previews_its_audio_at_the_ramps_own_rate() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let dur = 4.0;
+        let wav = synth_position_ramp_wav(dir.path(), dur, rate);
+
+        // The whole 4 seconds at 2x = 2 seconds of output.
+        let segs = [AudioSpeedSegment {
+            start_secs: 0.0,
+            end_secs: dur,
+            speed: 2.0,
+        }];
+        let out = retimed_output(&wav, &segs, 2.0, rate);
+        assert!(
+            out.len() >= (1.9 * rate as f64) as usize,
+            "expected ~2s of retimed output, got {} samples",
+            out.len()
+        );
+
+        let mut worst: f64 = 0.0;
+        for out_secs in [0.05, 0.25, 0.5, 0.9, 1.0, 1.4, 1.75, 1.9] {
+            let idx = (out_secs * rate as f64) as usize;
+            let measured = source_secs_of(out[idx], dur);
+            // The picture's own answer, from the same model: at 2x, output
+            // second u shows source second 2u.
+            let expected = out_secs * 2.0;
+            worst = worst.max((measured - expected).abs());
+        }
+        // 2 ms — a twentieth of a video frame at 24 fps. Generous on purpose:
+        // the actual measured error is under 50 MICROseconds (the fixture's own
+        // s16 quantisation), and the tolerance is set at the level below which
+        // nothing is audible rather than at the level the implementation
+        // happens to hit. None of the ways this could really be wrong is
+        // anywhere near it: no retime at all is 1.9 s out at the end (see the
+        // negative control below), half the rate is 0.95 s out, and the wrong
+        // direction is 3.8 s out.
+        assert!(
+            worst < 0.002,
+            "retimed audio is {worst:.4}s away from the source second the picture shows"
+        );
+    }
+
+    /// The **negative control** for the test above: with the retime removed,
+    /// the same fixture and the same assertions must be wrong by a lot. Without
+    /// this, "within 2 ms" proves nothing — a broken measurement that always
+    /// returned the expected value would pass just as well.
+    #[test]
+    fn the_unretimed_path_is_wrong_by_seconds_which_is_what_d239_fixed() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let dur = 4.0;
+        let wav = synth_position_ramp_wav(dir.path(), dur, rate);
+
+        // No `with_speed` at all — the pre-D-241 mixer, which is also exactly
+        // what an un-ramped clip still does today.
+        let mut ds = open_source(&wav, 0.0, Some(2.0), rate, 1).expect("open");
+        let mut out = Vec::new();
+        while out.len() < 2 * rate as usize {
+            out.extend(ds.take(2048, 1).expect("take"));
+            if ds.is_done() {
+                break;
+            }
+        }
+        let idx = (1.9 * rate as f64) as usize;
+        let measured = source_secs_of(out[idx], dur);
+        // The picture at 2x is showing source second 3.8 here; the old mixer
+        // plays 1.9. That 1.9-second gap IS the bug D-241 closes.
+        assert!(
+            (measured - 3.8).abs() > 1.5,
+            "the un-retimed path should be ~1.9s behind the picture, but read {measured:.3}s"
+        );
+    }
+
+    /// Reverse (D-240) in the live mixer: the sound must run BACKWARDS through
+    /// the source, which is the case a forward-streaming decoder cannot do
+    /// without the retime's buffered window.
+    #[test]
+    fn a_reversed_clip_previews_its_audio_running_backwards() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let dur = 4.0;
+        let wav = synth_position_ramp_wav(dir.path(), dur, rate);
+
+        let segs = [AudioSpeedSegment {
+            start_secs: 0.0,
+            end_secs: dur,
+            speed: -1.0,
+        }];
+        let out = retimed_output(&wav, &segs, dur, rate);
+        assert!(
+            out.len() >= (3.9 * rate as f64) as usize,
+            "expected ~4s out"
+        );
+
+        let mut worst: f64 = 0.0;
+        let mut previous = f64::INFINITY;
+        for out_secs in [0.05, 0.5, 1.0, 2.0, 3.0, 3.5, 3.9] {
+            let idx = (out_secs * rate as f64) as usize;
+            let measured = source_secs_of(out[idx], dur);
+            worst = worst.max((measured - (dur - out_secs)).abs());
+            // ...and it must be strictly DESCENDING, which is the property a
+            // merely-mis-scaled forward read could still fail.
+            assert!(
+                measured < previous,
+                "reversed audio must descend through the source: {measured:.3}s after {previous:.3}s"
+            );
+            previous = measured;
+        }
+        assert!(
+            worst < 0.002,
+            "reversed audio is {worst:.4}s from where the picture is"
+        );
+    }
+
+    /// A MIXED ramp — forward, backwards at 2x, forward — through the real
+    /// decode path, checked against `chroma_timeline`'s own remap rather than
+    /// against a formula re-spelled here. This is the audio half of what
+    /// `speedRampReverse.ffmpeg.test.ts` proves for the picture, on the same
+    /// shape of ramp, so a divergence between the two renderers shows up as one
+    /// of these two tests failing rather than as a silent desync.
+    #[test]
+    fn a_mixed_forward_reverse_ramp_tracks_the_picture_run_for_run() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rate = 48_000u32;
+        let dur = 4.0;
+        let wav = synth_position_ramp_wav(dir.path(), dur, rate);
+
+        // source [0, 1) forwards, [1, 3) backwards at 2x, [3, 4) forwards
+        // -> 1 + 1 + 1 = 3 seconds of output.
+        let segs = [
+            AudioSpeedSegment {
+                start_secs: 0.0,
+                end_secs: 1.0,
+                speed: 1.0,
+            },
+            AudioSpeedSegment {
+                start_secs: 1.0,
+                end_secs: 3.0,
+                speed: -2.0,
+            },
+            AudioSpeedSegment {
+                start_secs: 3.0,
+                end_secs: 4.0,
+                speed: 1.0,
+            },
+        ];
+        let out = retimed_output(&wav, &segs, 3.0, rate);
+        assert!(
+            out.len() >= (2.9 * rate as f64) as usize,
+            "expected ~3s out"
+        );
+
+        let mut worst: f64 = 0.0;
+        for out_secs in [0.1, 0.5, 0.95, 1.05, 1.5, 1.95, 2.05, 2.5, 2.9] {
+            let idx = (out_secs * rate as f64) as usize;
+            let measured = source_secs_of(out[idx], dur);
+            worst = worst.max((measured - mixed_ramp_oracle(out_secs)).abs());
+        }
+        assert!(
+            worst < 0.002,
+            "live audio is {worst:.4}s from the source position the picture shows"
+        );
+
+        // And the reversed middle really descends, rather than being a forward
+        // read that happens to land near the right values at the sample points.
+        let at = |s: f64| source_secs_of(out[(s * rate as f64) as usize], dur);
+        assert!(
+            at(1.1) > at(1.4) && at(1.4) > at(1.9),
+            "the middle run must descend"
+        );
+        assert!(
+            at(2.1) < at(2.5) && at(2.5) < at(2.9),
+            "the tail run must ascend again"
+        );
+    }
+
+    /// An un-ramped source must be left **completely** alone: no retime stage,
+    /// so not one interpolation, not one extra buffer. This is the property
+    /// that keeps every pre-D-236 project's mix byte-identical, and it is
+    /// cheap enough to assert directly.
+    #[test]
+    fn an_identity_ramp_builds_no_retime_stage_at_all() {
+        assert!(Retime::new(&[], 48_000, 2).is_none());
+        // One forward run at exactly 1x is the identity — it would only add an
+        // interpolation that returns its own input.
+        assert!(
+            Retime::new(
+                &[AudioSpeedSegment {
+                    start_secs: 0.0,
+                    end_secs: 3.0,
+                    speed: 1.0,
+                }],
+                48_000,
+                2
+            )
+            .is_none()
+        );
+        // A REVERSED run at 1x is NOT the identity and must build one.
+        assert!(
+            Retime::new(
+                &[AudioSpeedSegment {
+                    start_secs: 0.0,
+                    end_secs: 3.0,
+                    speed: -1.0,
+                }],
+                48_000,
+                2
+            )
+            .is_some()
+        );
+        // Nonsense in, nothing out — never a stage that divides by zero.
+        assert!(
+            Retime::new(
+                &[AudioSpeedSegment {
+                    start_secs: 0.0,
+                    end_secs: 3.0,
+                    speed: 0.0,
+                }],
+                48_000,
+                2
+            )
+            .is_none()
+        );
+    }
+
+    /// The retime's own map, in isolation and at sample resolution, against
+    /// the independent oracle above. Pure arithmetic — no decode, no ffmpeg,
+    /// so it runs everywhere and pins the map even where the fixtures cannot
+    /// be built.
+    #[test]
+    fn the_retimes_map_is_the_pictures_map_at_sample_resolution() {
+        let rate = 48_000u32;
+        let segs = [
+            AudioSpeedSegment {
+                start_secs: 0.0,
+                end_secs: 1.0,
+                speed: 1.0,
+            },
+            AudioSpeedSegment {
+                start_secs: 1.0,
+                end_secs: 3.0,
+                speed: -2.0,
+            },
+            AudioSpeedSegment {
+                start_secs: 3.0,
+                end_secs: 4.0,
+                speed: 1.0,
+            },
+        ];
+        let retime = Retime::new(&segs, rate, 1).expect("a real ramp builds a stage");
+        // Its output length is direction-independent: 1 + 2/2 + 1 = 3 seconds.
+        assert_eq!(retime.total_out_frames, 3.0 * rate as f64);
+
+        for k in (0..(3 * rate as usize)).step_by(97) {
+            let out_secs = k as f64 / rate as f64;
+            let mine = retime.input_frame_at(k as f64) / rate as f64;
+            let expected = mixed_ramp_oracle(out_secs);
+            assert!(
+                (mine - expected).abs() < 1e-9,
+                "output second {out_secs}: retime reads source {mine}, expected {expected}"
+            );
+        }
     }
 }

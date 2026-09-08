@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Reverse speed, and the live preview's audio finally
+  retimes (D-240, D-241 — D-236's two named speed-ramp follow-ups).** A clip, or
+  any single run of a ramp, can now play BACKWARDS: a negative percentage in the
+  Inspector or a per-run **Reverse** button (both references spell it that way),
+  and negatives on `editor_set_clip_speed`. It needed no schema change — a
+  reversed run occupies exactly the output its forward twin would, so a sign
+  flip never moves a neighbouring clip — but it did need a different filtergraph
+  *shape*: `trim`/`reverse`/`concat` per run and `areverse`+`atempo=|s|` for the
+  sound, because a negative `setpts` slope is a graph ffmpeg happily runs and
+  which reverses nothing. The "backwards preview decode" D-236 flagged as
+  blocking turned out not to exist — `decode_pipe` already handles a backward
+  step. Separately, the live mixer now retimes its audio through the same ramp
+  the picture uses, closing D-236's stated asymmetry: a 2x clip's preview sound
+  was 1.9 s adrift from its picture and is now within 50 µs. It varispeeds
+  (pitch moves with speed, like tape and like Premiere's default) where the
+  export preserves pitch — deliberate, and stated in the MCP tool's own
+  docstring. Verified against real decoded pixels and real decoded audio, both
+  with negative controls. Also fixed, in passing and never reachable before:
+  fade windows are now measured in PLAYBACK order, which a reversed clip needs
+  and which is algebraically identical for every forward ramp.
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge

@@ -21837,3 +21837,249 @@ none needs a schema change):
 tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
+
+---
+
+## D-240 — Reverse speed is a SIGN on the existing ramp, and a different filtergraph SHAPE
+
+**Context.** The first of D-236's own named follow-ups. Its note said reverse
+"needs ffmpeg's whole-stream-buffering `reverse` filter and a backwards decode
+in the preview — a separate feature, not a degraded case of this one." Half of
+that turned out to be right and half of it turned out to be wrong, and which
+half is which is the decision.
+
+### The model needed no new concept — one `anchor` term
+
+A segment `[a, b)` at speed `-s` occupies **exactly the same** `(b-a)/s` of
+output that `+s` would; it just walks the source from `b` down to `a`. So the
+whole generalisation of both maps is one term: the source position a run sits
+at when its output begins is its **start** forwards and its **end** in reverse.
+With that, `output = acc + (source - anchor)/speed` and `source = anchor +
+(output - acc)*speed` stay exact inverses for either sign, and every other line
+of `speedRamp.ts` / `speed_ramp.rs` is unchanged except `|speed|` wherever an
+output LENGTH is computed. The remap stays piecewise linear and stays a
+bijection; it merely stops being *monotonic*, which nothing ever needed.
+
+Two consequences worth stating because they are what made this cheap:
+
+- **No schema change, and no clip ever moves.** A clip's timeline footprint is
+  direction-independent, so flipping a sign never opens a gap or overlaps a
+  neighbour. `clampSpeed` went from erasing negatives to preserving the sign and
+  clamping the magnitude — that one line is what unlocks reverse everywhere,
+  because every authored point in both languages already flowed through it.
+- **`0` is now the only refused speed**, and is refused in both languages: it is
+  not "slow", it is a clip that never advances.
+
+### The quantisation rule MIRRORS, and a test found it, not reasoning
+
+A frame owns the half-open source interval `[n, n+1)`. Playing forward, output
+sweeps that interval upward and `floor` is the frame on screen — D-236 pinned
+that. Playing in reverse, a run is entered at source `b` and swept DOWN to `a`,
+so the continuous position ranges over `(a, b]` — the **mirror** interval.
+`floor` there shows frame `b` (one past the run's own end, which is not in the
+clip) on the very first output frame, and `a-1` on the last. The mirror of
+`floor` is **`ceil - 1`**, which maps `(a, b]` onto exactly `[a, b-1]` — the
+same frames, opposite order. That is now
+`quantizedSourceFrameAtOutput` / `quantized_source_frame_at_output`, one
+function both languages call, rather than a bare `.floor()` at two call sites.
+
+It is also exactly what the export produces, which is the point: ffmpeg's
+`reverse` emits the trimmed window's real decoded frames last-to-first, `b-1 …
+a`. The two agree by construction rather than by coincidence.
+
+### Decision — reverse is a filtergraph SHAPE, not an expression
+
+**This is the load-bearing finding.** Every other speed case compiles to a
+`setpts` slope. A *negative* slope is a filtergraph ffmpeg accepts, runs, and
+which **reverses nothing** — `setpts` only relabels the timestamp of a frame
+the decoder already handed over in decode order, so it emits descending
+timestamps over frames still in forward order. That failure is invisible to any
+argv assertion: the file is the right length, the seams are right, and the
+middle simply still counts upward.
+
+So a reversed run compiles to `trim` → `reverse` → `setpts=(PTS-STARTPTS)/|s|`,
+one branch per run, `split` in and `concat` out — structurally the *audio*
+side's existing `asplit`/`atrim`/`concat` construction, not the picture side's
+expression. The audio half is the same split: `areverse` as a node plus
+`atempo=|s|` as the factor, because `atempo` has no negative form at all.
+`isFlatSegments` therefore now returns false for a reversed run **even when it
+is alone and perfectly constant** — "flat" has always meant *expressible by the
+pre-D-236 compiler*, and that meaning is kept.
+
+**The memory question, which was D-236's real worry.** `reverse` buffers its
+window as raw frames. Two things already bound it and both are load-bearing:
+the clip's input is opened `-ss`/`-t` to exactly its own trim window, so the
+rest of the source file can never be buffered (a 4-second clip out of a
+two-hour master buffers four seconds); and each branch `trim`s to ONE run
+before reversing, so a ramp that reverses only its middle second buffers only
+that second, and forward runs get no `reverse` node at all. What is left — a
+fully-reversed clip buffers itself — is what reverse costs in every NLE.
+
+### The "backwards preview decode" D-236 feared does not exist
+
+Investigated rather than assumed, which is the other half of D-236's note being
+wrong: `crates/chroma-media/src/decode_pipe.rs` **already** handles a backward
+step. Its own doc says so — "a change of `path` or `scale`, a **backward step**,
+or a forward jump past `MAX_FORWARD_SKIP` forces a keyframe-seek respawn" — and
+that is the same path every scrub backwards already takes. So the preview needed
+no new decode mechanism at all; `Clip::source_frame_at` returning a descending
+frame number is a request the pipe already knows how to serve. What it costs is
+a respawn per frame, i.e. reverse *playback* is as expensive as scrubbing
+backwards is today. That is a real performance item, named in the roadmap, and
+deliberately not solved here — it is a decode-pipe caching question, not a
+speed-ramp one.
+
+### Both interfaces, and the shape is read not invented
+
+Per CLAUDE.md's human-AND-AI rule and its research-the-real-pattern rule. Both
+references spell reverse as a **negative percentage on the same speed number**
+and both also give it a command: Resolve's Retime Controls has *Reverse
+Segment*, which reverses "the entire clip or between two speed points" — i.e.
+per RUN, exactly this model's unit — and Premiere's Speed/Duration dialog has a
+*Reverse Speed* checkbox after which "the clip will show a -100% label on it,
+denoting both the speed and direction". Chroma takes both: the Inspector's
+percentage field accepts a negative, and each run has a **Reverse** button that
+flips its own sign without disturbing its magnitude (a round trip typing a minus
+sign does not give you, since it loses the digits). `editor_set_clip_speed`
+accepts the same negatives on both `speed` and `points`, refused rather than
+clamped when out of range.
+
+### A real bug this surfaced, fixed in the same pass
+
+Under a reversed run, D-236/B-112's fade spelling —
+`outputAtSourceFrame(source_start + n)` — asks "when does the ramp REACH this
+source frame", and a reversed clip *starts* on its last source frame. So it put
+the fade-in at the tail and made the clip's own `lenSec` **zero**, which the
+fade expression then divides by. Fixed by asking all three quantities in
+PLAYBACK order instead (`rampOutputSourceFrames`,
+`outputSpanOfLeadingSource`/`outputSpanOfTrailingSource`), which is
+algebraically the identical expression for every forward ramp — pinned by the
+entire pre-existing fade and export suite passing unchanged — and simply right
+for a reversed one. Not filed as a `B-NNN`: it was never reachable before this
+commit, because a negative speed could not be stored.
+
+**Verification.** `speedRampReverse.ffmpeg.test.ts` — a real ffmpeg export of
+the "every frame is a distinct grey" fixture, decoded back frame by frame. A
+wholly reversed clip: output frame `f` decodes source `95-f`, **12 of 14
+sampled frames exact, 2 off by exactly one** (boundary rounding, within the
+stated ±1). A mixed `1x → -2x → 1x` ramp: **11 of 12 exact, 1 off by one**, with
+the reversed middle measured descending `71 → 59 → 47 → 35 → 25` and both seams
+exact. The negative control — reading the reversed export against the forward
+expectation — is off by **up to 95 frames**, so the ±1 tolerance genuinely
+discriminates. Plus a filtergraph-shape assertion (one `reverse` node, on the
+one reversed run) so a future refactor reintroducing a negative slope fails
+without needing ffmpeg.
+
+---
+
+## D-241 — Live-preview audio retiming: the mixer VARISPEEDS, and that asymmetry with the export is the choice
+
+**Context.** D-236's other named follow-up, and the one it called out as a
+"stated asymmetry rather than left to be discovered": a ramped clip's picture
+previewed the ramp, and the live mixer played its sound at the recorded rate.
+At output second 1.0 of a 2x clip the picture showed source second 2.0 and the
+sound was still at 1.0 — a second of drift, growing.
+
+### Decision 1 — a variable-rate READER, not a tempo filter
+
+The export preserves pitch because ffmpeg hands it a WSOLA implementation
+(`atempo`) for free. **The live mixer deliberately does not**: it varispeeds,
+like tape. A 2x clip previews an octave up; a reversed one previews backwards.
+
+Rejected: implementing WSOLA or a phase vocoder in the mixer. It is a whole DSP
+subsystem — its own latency, its own windowing artefacts, its own state to get
+wrong on the real-time thread — against a multiply-add per sample for the
+alternative. Two things make varispeed the right call rather than a shortcut:
+what an editor is checking when they scrub a ramp is **timing**, whether the hit
+lands on the beat, and varispeed gets that exactly right; and this is the
+default the reference tools ship — Premiere's "Maintain Audio Pitch" is a
+checkbox you turn ON, not the behaviour you get. The asymmetry is real, is
+stated in the MCP tool's own docstring so an agent is not surprised by it, and
+is the kind that costs nothing an editor is looking for.
+
+So `Retime` is a variable-rate reader over a window of the source's
+already-decoded, already-resampled, already-channel-adapted output: it asks
+`speed_ramp`'s own question at *sample* resolution — "which source position is
+this output position" — and linearly interpolates the two neighbouring input
+frames there. Its map is the same piecewise-linear one the picture decodes with,
+written the same way against the same `anchor`, so the sound cannot drift from
+the picture.
+
+### Decision 2 — the stage is opt-in, so an un-ramped clip is untouched
+
+`AudioSourceSpec.speed` empty (every clip in every pre-D-236 project) builds no
+`Retime` at all, and `DecodedSource::ensure` takes a different branch entirely —
+not one interpolation, not one extra buffer, not one added multiply in the hot
+loop. A single forward run at exactly 1x is also the identity and also builds
+nothing. A single **reversed** run at 1x is not the identity and does. This is
+the same "flat is not a second concept, but it must cost nothing" rule the whole
+D-236 feature is built on, applied one layer down.
+
+### Decision 3 — `start_secs` and `duration_secs` stop being the same number
+
+The subtlety that shaped the contract. `symphonia` decodes **forwards**. A run
+playing in reverse is entered at its highest source second and walks down, so
+opening the file where the playhead sits would open it past everything the run
+is about to play. A retimed source therefore opens at the **lowest** source
+second any remaining run touches, and `duration_secs` carries the **OUTPUT**
+length. Both fields kept the meaning they always had — it is only that for an
+un-retimed source one source second is one output second, which is why the
+distinction never had to be drawn before. Documented on the fields themselves.
+
+The "runs still ahead of the playhead" question is answered by
+`speed_ramp::segments_from_output`, in `chroma-timeline` beside the rest of the
+ramp rather than re-spelled in `chroma::audio` — the mixer has no notion of a
+clip and cannot re-derive it. Its truncation is sign-aware and that is the whole
+subtlety: what remains of a **forward** run is `[current, end)` (its start
+moves), and of a **reversed** run is `[start, current)` (its end moves).
+Backwards, a half-played reversed run replays the half it just finished.
+
+### The bug the tests caught, recorded because reasoning did not
+
+The window-release rule. "Drop input below the lowest position this pass
+touched" is correct for forward playback and **catastrophically wrong for
+reverse**: a reversed run's first pass reads the TOP of its range, so that rule
+throws away the entire rest of the run before a sample of it has played. The
+test read pure silence. The correct floor is the lowest input frame any
+*remaining* output frame will read — the current position for a forward run in
+progress, and the run's own **start** for a reversed one, which is why live
+reverse holds its whole run in memory. That is cheap where the picture's is not:
+a 30-second reversed run at 48 kHz stereo is ~11 MB of `f32`, against the ~5 GB
+of raw frames the same 30 seconds of 1080p would be. This is why reverse is
+affordable in the live *mixer* and expensive in the live *picture*.
+
+A second one-line finding, same shape: a reversed run's first output frame sits
+at its range's **exclusive** end — input frame `N` of an `N`-frame file, which
+by definition was never decoded. Returning silence there puts a single-sample
+click at the head of every reversed clip; holding the last real sample for that
+one frame is exactly right.
+
+### Interaction with B-111, which is open and NOT touched here
+
+B-111 (the audio session's source set is frozen at the moment Play is pressed)
+is open and being tracked separately; this pass deliberately does not fix it.
+The two do interact, in a way worth recording for whoever does:
+`speed_for_clip` resolves the remaining ramp **from the frame Play was pressed
+at**, exactly as `fade_for_clip`, `level_for_clip` and `duck_for_track` already
+resolve their own envelopes from that frame. So a ramped clip inherits B-111's
+existing limitation and adds nothing new to it — it is silent-until-replayed for
+the same reason every other clip is, not for a retiming reason. When B-111 is
+fixed by re-resolving the source list as playback continues, `speed_for_clip` is
+already shaped to be called again at the new frame and needs no change; it is a
+pure function of `(clip, info, frame, fps)`.
+
+**Verification.** Real decoded audio, not "it sounds right". The fixture is the
+audio counterpart of D-236's grey-ramp video fixture: a WAV whose sample VALUE
+encodes its own source time (`x(t) = t/duration`), so which part of the source
+is sounding is a number read off one sample. Through the real
+`open_source`/`with_speed`/`take` path: a 2x clip and a fully reversed clip each
+land within **50 microseconds** of the source second the picture shows, and a
+mixed `1x → -2x → 1x` ramp within **0.1 ms** (tolerance set at 2 ms — the
+threshold below which nothing is audible — not at what the implementation
+happens to hit). The negative control, the same fixture with the retime removed,
+is **1.9 seconds** out at the same point, which is the drift D-241 closes.
+Reverse is additionally asserted strictly descending, and the mixed ramp is
+checked against a hand-written three-line oracle rather than a second copy of
+the ramp code — `chroma-media` sits *below* `chroma-timeline` in the D-039
+layering and must not depend on it, and an independent oracle is the stronger
+check anyway.

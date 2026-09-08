@@ -37,7 +37,9 @@
 
 use std::path::PathBuf;
 
-use chroma_media::audio::{AudioSourceSpec, DuckEnvelope, FadeEnvelope, LevelEnvelope};
+use chroma_media::audio::{
+    AudioSourceSpec, AudioSpeedSegment, DuckEnvelope, FadeEnvelope, LevelEnvelope,
+};
 use chroma_media::scrub::ScrubSource;
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
@@ -252,10 +254,23 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // out-point depends on its own `source_fps` against the
             // timeline's rate.
             let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
+            // D-241 — a ramped clip overrides the open point and the out-point
+            // with the retime's own, because under a ramp the source second to
+            // open at and the number of OUTPUT seconds left stop being the same
+            // number. `None` (every un-ramped clip) leaves both exactly as the
+            // two lines above computed them.
+            let speed = speed_for_clip(&clip, &info, start_frame as i64, fps);
             sources.push(AudioSourceSpec {
                 path: PathBuf::from(&clip.source_path),
-                start_secs: info.frame_to_secs(source_frame),
-                duration_secs: Some(info.frame_to_secs(remaining_frames)),
+                start_secs: speed
+                    .as_ref()
+                    .map_or_else(|| info.frame_to_secs(source_frame), |s| s.open_secs),
+                duration_secs: Some(
+                    speed
+                        .as_ref()
+                        .map_or_else(|| info.frame_to_secs(remaining_frames), |s| s.output_secs),
+                ),
+                speed: speed.map(|s| s.segments).unwrap_or_default(),
                 gain: 1.0,
                 // D-147 — a fade on a VIDEO clip fades its embedded audio too,
                 // not just its picture. One fade handle per clip, whose meaning
@@ -305,10 +320,21 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         // still needs it.
         let elapsed_frames = start_frame as i64 - clip.start_frame;
         let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
+        // D-241 — see the video-track source above; identical for the same
+        // reason, since a ramp is a property of the clip and not of what kind
+        // of track it sits on.
+        let speed = speed_for_clip(&clip, &info, start_frame as i64, fps);
         sources.push(AudioSourceSpec {
             path: PathBuf::from(&clip.source_path),
-            start_secs: info.frame_to_secs(source_frame),
-            duration_secs: Some(info.frame_to_secs(remaining_frames)),
+            start_secs: speed
+                .as_ref()
+                .map_or_else(|| info.frame_to_secs(source_frame), |s| s.open_secs),
+            duration_secs: Some(
+                speed
+                    .as_ref()
+                    .map_or_else(|| info.frame_to_secs(remaining_frames), |s| s.output_secs),
+            ),
+            speed: speed.map(|s| s.segments).unwrap_or_default(),
             gain,
             // D-147 — an audio clip's fade is a gain fade, the direct
             // counterpart of the opacity fade a video clip's picture gets.
@@ -348,6 +374,86 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 /// out-point arithmetic (B-048/D-130) already uses a few lines up at each call
 /// site — so this inherits the model's existing assumption that a clip's source
 /// fps is its timeline fps rather than introducing a second one.
+/// D-241 — this clip's speed ramp as the live mixer takes it: where in the
+/// source to OPEN, how many OUTPUT seconds are left, and the runs themselves in
+/// seconds relative to that open point. `None` when the clip plays at its
+/// recorded rate, which is every clip in every pre-D-236 project — and `None`
+/// is what keeps their mix byte-identical, because it leaves the two fields it
+/// would otherwise override exactly as they were.
+///
+/// **This is the timeline→media half of D-241, which is why it is app-side**,
+/// exactly like [`fade_for_clip`] and [`level_for_clip`] and for the same
+/// reason: an [`AudioSpeedSegment`] is seconds and a number — media facts —
+/// while "this clip's speed runs, in its own source-frame space, from the
+/// playhead on" needs a `chroma_timeline::Clip` and its probed
+/// [`super::video::VideoInfo`], which a media crate reaching for would be
+/// reaching *up* a layer (D-039/D-146).
+///
+/// **Why `open_secs` is not simply the source second under the playhead.**
+/// `symphonia` decodes forwards. A run playing in REVERSE is entered at its
+/// highest source second and walks down, so opening the file where the
+/// playhead is would open it past everything the run is about to play. The
+/// open point is therefore the LOWEST source frame any remaining run touches,
+/// and the retime reads the buffer that fills from there in whichever
+/// direction each run travels. For an all-forward ramp that lowest frame IS
+/// the frame under the playhead, so nothing changes.
+fn speed_for_clip(
+    clip: &chroma_timeline::Clip,
+    info: &super::video::VideoInfo,
+    start_frame: i64,
+    fps: f64,
+) -> Option<ClipSpeed> {
+    if clip.speed_points.is_empty() {
+        return None;
+    }
+    let (runs, out_source_frames) = clip.remaining_speed_segments(start_frame, fps);
+    if runs.is_empty() {
+        return None;
+    }
+    let open_frame = runs
+        .iter()
+        .map(|r| r.start_source_frame)
+        .min()
+        .unwrap_or(clip.source_start)
+        .max(0);
+    let open_secs = info.frame_to_secs(open_frame as u64);
+    // Relative to the open point, in the clip's OWN native rate — the same
+    // conversion `@chroma/editor`'s `rampSegmentSeconds` makes for the
+    // exporter, so the live chain and the ffmpeg chain are built from the same
+    // numbers.
+    let segments = runs
+        .iter()
+        .map(|r| AudioSpeedSegment {
+            start_secs: info.frame_to_secs((r.start_source_frame - open_frame).max(0) as u64),
+            end_secs: info.frame_to_secs((r.end_source_frame - open_frame).max(0) as u64),
+            speed: r.speed,
+        })
+        .collect();
+    Some(ClipSpeed {
+        open_secs,
+        // OUTPUT seconds, which under a ramp is NOT the source span — that is
+        // the whole distinction `AudioSourceSpec::duration_secs` documents.
+        output_secs: if info.fps() > 0.0 {
+            out_source_frames.max(0.0) / info.fps()
+        } else {
+            0.0
+        },
+        segments,
+    })
+}
+
+/// What [`speed_for_clip`] resolves to: the three values a ramped clip's
+/// [`AudioSourceSpec`] needs that an un-ramped one gets from the playhead
+/// directly.
+struct ClipSpeed {
+    /// Absolute source seconds to open the file at.
+    open_secs: f64,
+    /// How many OUTPUT seconds this clip still contributes.
+    output_secs: f64,
+    /// The runs, relative to `open_secs`.
+    segments: Vec<AudioSpeedSegment>,
+}
+
 fn fade_for_clip(
     clip: &chroma_timeline::Clip,
     info: &super::video::VideoInfo,

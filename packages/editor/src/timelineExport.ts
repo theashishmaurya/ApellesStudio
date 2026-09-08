@@ -79,9 +79,13 @@ import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 // preview's own `clipSourceFrameAt`/`Clip::source_frame_at`. See `speedRamp.ts`.
 import {
   flatSpeedOf,
+  hasReverseSegments,
   hasSpeedRamp,
   outputAtSourceFrame,
+  outputSpanOfLeadingSource,
+  outputSpanOfTrailingSource,
   rampOutputSourceFrames,
+  rampSegmentSeconds,
   rampSetptsSecondsExpr,
   resolveSpeedSegments,
 } from './speedRamp';
@@ -846,6 +850,85 @@ function outputSourceFrames(clip: Clip, opts: TimelineExportOptions): number {
   return rampOutputSourceFrames(resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]));
 }
 
+/**
+ * D-240 — the PICTURE half of reverse speed: one `trim`(+`reverse`)+`setpts`
+ * branch per resolved run, spliced back together with `concat`.
+ *
+ * **Why a different filtergraph shape rather than a different expression.**
+ * Every other speed case this compiler handles is a `setpts` slope, because
+ * `setpts` relabels the timestamp of a frame the decoder has already handed
+ * over *in decode order*. A negative slope therefore emits descending
+ * timestamps over frames that are still in forward order — the encoder drops
+ * or reorders them, and the picture never actually runs backwards. Reversing
+ * frames is a buffering operation, and ffmpeg spells it `reverse`: hold the
+ * window, emit it last-to-first. So reverse is structurally the audio side's
+ * `asplit`/`atrim`/`concat` construction (`buildRampedAtempoSteps`), not the
+ * picture side's expression — which is why this reads like that function and
+ * not like `rampSetptsSecondsExpr`.
+ *
+ * **The memory question, which is the real constraint.** `reverse` buffers
+ * every frame in its window as raw video. Two things bound that here, and both
+ * are load-bearing:
+ *
+ * 1. The clip's own input is already opened `-ss`/`-t` to exactly its trim
+ *    window (see `buildExportFfmpegArgs`), so `reverse` can never see the rest
+ *    of the source file — the pathological case is a 4-second clip out of a
+ *    two-hour master, and that master is never buffered.
+ * 2. Each branch `trim`s to ONE run before reversing, so a ramp that reverses
+ *    only its middle second buffers only that second. A branch whose run plays
+ *    forwards gets no `reverse` node at all and buffers nothing.
+ *
+ * What remains is genuinely required: a fully-reversed clip buffers itself,
+ * which is what "reverse" costs in every NLE. `splitLabels` fan the SAME
+ * decoded stream out to the branches (`split`, not N `-i`s) so the file is
+ * decoded once regardless of how many runs the ramp has.
+ *
+ * Each branch re-bases with `setpts=PTS-STARTPTS` because `concat` requires
+ * its inputs to start at zero, and divides by `|speed|` because a reversed run
+ * is exactly as long as the same range played forwards — the sign has already
+ * done its whole job by selecting `reverse`.
+ *
+ * Returns the steps plus the label the joined result lands in. The caller
+ * splices the B-103 placement `setpts` on afterwards, so everything downstream
+ * still runs on one timeline-seconds clock.
+ */
+export function buildReversibleRampSteps(
+  srcRef: string,
+  segments: ReadonlyArray<{ startSec: number; endSec: number; speed: number }>,
+  idLabel: string,
+): { steps: string[]; label: string } {
+  const steps: string[] = [];
+  const branch = (seg: { startSec: number; endSec: number; speed: number }, inRef: string, out: string): string => {
+    const parts = [`${inRef}trim=start=${seg.startSec}:end=${seg.endSec}`];
+    if (seg.speed < 0) parts.push('reverse');
+    const magnitude = Math.abs(seg.speed);
+    parts.push(magnitude !== 1 ? `setpts=(PTS-STARTPTS)/${magnitude}` : 'setpts=PTS-STARTPTS');
+    return `${parts.join(',')}[${out}]`;
+  };
+
+  // A one-run reverse (the common case — "play this clip backwards") needs no
+  // `split` and no `concat`: those exist only to rejoin runs, and there is
+  // nothing to rejoin. Emitting them anyway would work, but it would put a
+  // `concat=n=1` in every reversed export's filtergraph for no reason.
+  if (segments.length === 1) {
+    const out = `rv${idLabel}`;
+    steps.push(branch(segments[0], srcRef, out));
+    return { steps, label: `[${out}]` };
+  }
+
+  const splitLabels = segments.map((_, i) => `vs${idLabel}_${i}`);
+  steps.push(`${srcRef}split=${segments.length}${splitLabels.map((l) => `[${l}]`).join('')}`);
+  const partLabels: string[] = [];
+  segments.forEach((seg, i) => {
+    const part = `vp${idLabel}_${i}`;
+    steps.push(branch(seg, `[${splitLabels[i]}]`, part));
+    partLabels.push(part);
+  });
+  const out = `vc${idLabel}`;
+  steps.push(`${partLabels.map((l) => `[${l}]`).join('')}concat=n=${segments.length}:v=1:a=0[${out}]`);
+  return { steps, label: `[${out}]` };
+}
+
 /** One clip's `setpts`/`crop`/`scale` chain, ending in `[label]` — factored
  *  out of `buildExportFfmpegArgs` so it's independently testable. Takes the
  *  clip's ffmpeg INPUT index (`inputIdx`, one `-i` per clip, in track/clip
@@ -901,7 +984,22 @@ function buildClipFilterChain(
   // is an optimisation and not a second semantics.
   const speedSegments = resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]);
   const rampExpr = rampSetptsSecondsExpr(speedSegments, clipFps);
-  if (rampExpr !== null) {
+  if (hasReverseSegments(speedSegments)) {
+    // D-240 — at least one run plays backwards, which no `setpts` expression
+    // can do (see `buildReversibleRampSteps`). The retime becomes a
+    // `trim`/`reverse`/`concat` block whose output already starts at zero and
+    // already has the right length, and the B-103 placement shift is then
+    // applied to THAT as its own node — so downstream this chain is in
+    // timeline seconds exactly as it is on every other path, and every filter
+    // after this point is untouched by reverse.
+    const built = buildReversibleRampSteps(src, rampSegmentSeconds(speedSegments, clipFps), label);
+    steps.push(...built.steps);
+    src = built.label;
+    if (placement.inputStartSec !== 0) {
+      steps.push(`${src}setpts=PTS+${placement.inputStartSec}/TB[s${label}]`);
+      src = `[s${label}]`;
+    }
+  } else if (rampExpr !== null) {
     const placeTerm = placement.inputStartSec !== 0 ? `+${placement.inputStartSec}` : '';
     // SINGLE-QUOTED, and that is load-bearing rather than cosmetic: a comma is
     // how a filtergraph separates one filter from the next, so an unquoted
@@ -1086,13 +1184,19 @@ function buildClipFilterChain(
   // `buildAudioSourceChain` has always divided correctly. Routing all three
   // through one map fixes that flat-speed bug and makes the ramped case right
   // by construction, rather than adding a second way to be wrong.
-  const clipEndSourceFrame = clip.source_start + clip.duration;
-  const outSec = (sourceFrame: number) => outputAtSourceFrame(speedSegments, sourceFrame) / clipFps;
-  const lenSec = outSec(clipEndSourceFrame);
+  //
+  // D-240 — all three are now asked in PLAYBACK order
+  // (`rampOutputSourceFrames` / `outputSpanOf{Leading,Trailing}Source`) rather
+  // than by mapping a source endpoint forward. For every forward ramp that is
+  // algebraically the same expression B-112 wrote and returns the same
+  // numbers; for a REVERSED run it is the difference between a fade at the
+  // head of what the viewer sees and a fade at the tail — and between a real
+  // `lenSec` and a zero one. See `outputSpanOfLeadingSource`.
+  const lenSec = rampOutputSourceFrames(speedSegments) / clipFps;
   const fadeExpr = fadeGainExpr(
     lenSec,
-    outSec(clip.source_start + (clip.fade_in_frames ?? 0)),
-    lenSec - outSec(clipEndSourceFrame - (clip.fade_out_frames ?? 0)),
+    outputSpanOfLeadingSource(speedSegments, clip.fade_in_frames ?? 0) / clipFps,
+    outputSpanOfTrailingSource(speedSegments, clip.fade_out_frames ?? 0) / clipFps,
     clip.fade_in_curve ?? DEFAULT_EASE_CURVE,
     clip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     bigTVar,

@@ -1553,16 +1553,39 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       decoded pixels (`speedRamp.ffmpeg.test.ts`: 78/84 output frames exact, 6
       off by one, vs. up to 18 frames out for a deliberately wrong ramp). Fixed
       B-112 on the way through.
-      - ⬜ **Speed-ramp follow-ups** (D-236's own "not built" list; none needs a
-        schema change): reverse (negative) speed — needs ffmpeg's
-        whole-stream-buffering `reverse` filter and a backwards preview decode;
+      - ~~**Reverse (negative) speed**~~ — **DONE, 2026-09-08 (D-240).** A sign
+        on the existing ramp: `[a,b)` at `-s` occupies the same output `+s`
+        would, so no schema change and no clip ever moves. Per RUN, not per
+        clip, so a ramp can mix directions. Reverse is a filtergraph SHAPE
+        (`trim`/`reverse`/`concat` per run, `areverse`+`atempo=|s|` for the
+        sound), *not* a negative `setpts` slope — which ffmpeg accepts, runs,
+        and which reverses nothing. Quantisation mirrors to `ceil-1`. The
+        "backwards preview decode" D-236 feared turned out not to be needed:
+        `decode_pipe` already handles a backward step. Inspector percentage
+        accepts a negative plus a per-run **Reverse** button (Resolve's *Reverse
+        Segment* / Premiere's *Reverse Speed*, both of which spell it as a
+        negative percentage); `editor_set_clip_speed` takes negatives on both
+        `speed` and `points`. Proved against real decoded pixels
+        (`speedRampReverse.ffmpeg.test.ts`).
+      - ~~**Live-preview AUDIO retiming**~~ — **DONE, 2026-09-08 (D-241).** The
+        mixer now resamples per the same `speed_points` the picture uses, so a
+        ramped clip's preview sound tracks its picture (measured within 50 µs;
+        1.9 s out before). It VARISPEEDS deliberately — pitch moves with speed,
+        like tape and like Premiere's default — where the export preserves pitch
+        via `atempo`; a stated asymmetry, not an oversight, since a WSOLA/phase
+        vocoder on the real-time thread buys pitch an editor is not checking for
+        at a cost in latency and artefacts. Reverse works live too (the mixer
+        buffers the run — ~11 MB for 30 s of stereo, against ~5 GB for the same
+        picture).
+      - ⬜ **Speed-ramp follow-ups still open** (none needs a schema change):
         smoothed S-curve speed transitions — piecewise-quadratic, no `atempo`
         equivalent, approximable meanwhile by subdividing into more constant
         segments; dragging speed points on the clip itself rather than in the
         Inspector; frame interpolation for slow motion (optical flow / frame
-        blending — source frames currently repeat); and **live-preview AUDIO
-        retiming**, since the picture previews a ramp but the live mixer does
-        not resample.
+        blending — source frames currently repeat); and **reverse-playback
+        preview performance** — reverse decodes correctly but pays a
+        keyframe-seek respawn per frame, exactly as scrubbing backwards does
+        today (a `decode_pipe` caching question, not a speed-ramp one).
     - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /
       Fit-to-Fill / Place on Top / Append / Ripple-Overwrite (ref:
       `timeline.jpg`).

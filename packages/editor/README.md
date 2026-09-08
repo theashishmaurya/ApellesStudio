@@ -62,9 +62,18 @@ dragging a pool item in from the shell's Sources panel.
   plus a real-decoded-pixel test (`speedRamp.ffmpeg.test.ts`). A flat speed is
   a one-segment ramp — the pre-D-236 export-time `speedOverrides` resolves
   through the same function and still compiles the identical filtergraph.
-  `SpeedRampEditor.tsx` is the Inspector section around it. **Does not** do
-  reverse speed, smoothed S-curve transitions, or frame interpolation — see
-  D-236's own "not built" list.
+  `SpeedRampEditor.tsx` is the Inspector section around it.
+  **Reverse (D-240)** is a NEGATIVE speed, per run: one `anchor` term (a
+  reversed run's output starts at its source END) generalises both maps, and
+  `quantizedSourceFrameAtOutput` carries the rounding, which mirrors from
+  `floor` to `ceil - 1` when the direction of travel does. It compiles to a
+  different filtergraph *shape*, not a different expression — `trim`/`reverse`/
+  `concat` per run (`buildReversibleRampSteps` in `timelineExport.ts`) and
+  `areverse` + `atempo=|s|` for the sound — because a negative `setpts` slope
+  is a graph ffmpeg runs happily and which reverses nothing. Pinned by
+  `speedRampReverse.ffmpeg.test.ts`. **Does not** do smoothed S-curve
+  transitions or frame interpolation — see D-236's "not built" list, as
+  narrowed by D-240.
 - `eq.ts` (D-224, roadmap item 27) — the per-clip parametric EQ's model and
   math: the `EqBand` type `Clip.eq_bands` is a list of, the Resolve-shaped
   four-band strip the Inspector authors (`defaultEqBands`), the stored-value

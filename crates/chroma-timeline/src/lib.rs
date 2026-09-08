@@ -1724,6 +1724,33 @@ impl Clip {
         speed_ramp::ramp_output_source_frames(&self.speed_segments())
     }
 
+    /// D-241 — this clip's speed runs still AHEAD of TIMELINE frame
+    /// `timeline_frame`, in playback order, and how many source-frame units of
+    /// OUTPUT they add up to.
+    ///
+    /// The pair the live audio mixer needs to start a play mid-clip: which runs
+    /// are left, and how long they last. Both come off the same
+    /// `speed_segments()` the picture decodes with, so the sound cannot be
+    /// retimed against a different ramp than the picture is — which is the
+    /// whole point of putting this here rather than re-deriving it in
+    /// `chroma::audio`.
+    ///
+    /// Empty (and `0.0`) once the playhead is past the clip. For an UN-RAMPED
+    /// clip this still answers correctly (one identity run), but no caller
+    /// asks — `chroma::audio` checks `speed_points.is_empty()` first and keeps
+    /// its pre-D-241 path, so an ordinary clip's mix is untouched.
+    pub fn remaining_speed_segments(
+        &self,
+        timeline_frame: i64,
+        fps: f64,
+    ) -> (Vec<speed_ramp::SpeedSegment>, f64) {
+        let output_pos =
+            timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps);
+        let remaining = speed_ramp::segments_from_output(&self.speed_segments(), output_pos as f64);
+        let out_frames = speed_ramp::ramp_output_source_frames(&remaining);
+        (remaining, out_frames)
+    }
+
     /// D-226 — the SOURCE frame this clip shows at TIMELINE frame
     /// `timeline_frame`, **without** [`Track::clip_at`]'s "is it inside this
     /// clip's window" check: the identical arithmetic, extrapolated.
@@ -1763,7 +1790,15 @@ impl Clip {
         // from (B-090/B-094/B-095/B-098/B-103/B-108 are all the same shape),
         // so it is pinned here and re-proved against real decoded pixels in
         // `speedRamp.ffmpeg.test.ts`.
-        speed_ramp::source_frame_at_output(&self.speed_segments(), output_pos as f64).floor() as i64
+        //
+        // D-240 — the rounding now lives in
+        // `speed_ramp::quantized_source_frame_at_output` rather than a bare
+        // `.floor()` here, because a REVERSED run sweeps the same half-open
+        // interval in the other direction and its mirror rule is `ceil - 1`.
+        // See that function for the full argument; for every forward ramp it
+        // is exactly the `.floor()` this line used to be.
+        speed_ramp::quantized_source_frame_at_output(&self.speed_segments(), output_pos as f64)
+            as i64
     }
 
     /// D-226 — [`Self::source_frame_at`] pinned into the source's own real
