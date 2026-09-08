@@ -20578,3 +20578,70 @@ index against `ffprobe`'s PTS list — an oracle sharing no code with the thing
 under test. Three of them were confirmed to **fail** against the pre-D-228
 behaviour and pass after; the CFR control passes both ways, which is the point.
 See B-104.
+
+---
+
+## D-230 — Docs reconciliation, round 2: the product docs had drifted on FEATURE STATUS, not on framing — and `CLAUDE.md`'s own drift note was itself wrong
+
+**decided + done (2026-09-08).** A docs-only pass over `docs/00-vision.md`,
+`docs/01-prd.md`, `docs/02-scope.md`, `docs/03-architecture.md` and `CLAUDE.md`'s
+"Known drift to reconcile" note. No source files touched.
+
+**Context.** `CLAUDE.md` had carried a standing drift note since 2026-09-02 claiming
+(a) `03-architecture.md` "is stale, has a banner, needs the full D-039 rewrite" and
+(b) `00-vision.md`/`01-prd.md`/`02-scope.md` "still say grading only, not an editor."
+**Both claims were false, and had been for six days.** The 2026-09-02 pass had already
+rewritten all four files for the 3-tab pivot: `03-architecture.md` was a complete,
+structurally-correct 370-line document with no banner, and the other three had all been
+corrected to the Edit/Motion/Colorist framing. Acting on the note as written would have
+meant redoing work already done while missing the real problem.
+
+**The real problem was feature status.** Between 2026-09-02 and 2026-09-08 roughly 190
+decisions landed (D-039 → D-229), and the product docs described none of them. The
+concrete falsehoods found and fixed:
+
+| claim, as documented | reality on 2026-09-08 |
+|---|---|
+| Edit is "a single-video-track timeline… no multi-track, audio, transitions, or transcript-cut" (`01-prd.md`) | a real multi-track NLE: video+audio tracks, alpha-over compositor, slip/slide/roll, transitions, markers, text clips, per-property keyframes, per-clip volume/pan/EQ, ducking, FCPXML export |
+| Motion is a "placeholder tab… isn't wired into a tab UI yet" (`01-prd.md`, `02-scope.md`, `03-architecture.md`) | a real authoring tab since D-047, and since D-151–D-182 has multi-scene management, a layer list with thumbnails, a creation Catalog, on-canvas manipulation, and a keyframe timeline with a bezier ease editor |
+| "only 3 crates exist, and 2 of the 3 are still stubs" (`03-architecture.md`) | 8 crates exist, 6 real and load-bearing — waves 1–3 of the extraction landed 2026-09-05 (D-143–D-148) |
+| "38 MCP tools", "the bridge is Colorist-only today" (`03-architecture.md`, `01-prd.md`, `02-scope.md`) | **95** tools over four prefixed op registries — 42 Colorist, 45 Edit, 8 debug |
+| "`shots` and `media` are still two separate, un-unified lists" (`03-architecture.md`) | unified by D-046 then D-070 — `Clip` replaced `ProjectShot`, grades key off the clip id |
+| the live scopes panel "isn't confirmed built"; relight is out of v1 scope (`02-scope.md`) | both built and routed — `Waveform.tsx` (5 modes incl. vectorscope) and `RelightPanel.tsx`/`RelightPuckLayer.tsx` |
+
+**Method — every claim re-derived, none carried forward.** Counts came from the code, not
+from the previous revision of the doc: MCP tools by parsing `@mcp.tool()` out of
+`mcp/server.py` (95, broken down by prefix); primitives from the engine's own `zod` `use`
+enum (**8**, not the "7" older docs listed — they wrongly counted `scene3d`, which is a
+scene container, not a layer `use`); crate status from `crates/*/README.md`; the shim
+inventory by actually measuring the files (five are pure re-export shims of 9–34 lines;
+`project.rs` and `audio.rs` are *not*, they keep a real app-side half each).
+
+**Two real gaps surfaced by the pass, documented rather than fixed** (both out of a
+docs-pass's scope, both now stated plainly in all three product docs):
+1. **Motion has 0 MCP tools despite 18 working `motion_*` ops.** D-167–D-171 built and
+   live-verified the whole surface on the control-server bridge, but nobody wrote the
+   Python `@mcp.tool()` wrappers — so an MCP client cannot call any of it. Already
+   recorded in D-170's own closing note; this pass promotes it from a buried line in a
+   decision entry to a stated gap in the PRD, the scope doc and the architecture doc,
+   because it is the one place a *shipped* tab violates `CLAUDE.md`'s "every feature is
+   built for a human AND an AI" rule.
+2. **The mirror-image gap on Edit:** media understanding (D-189) is MCP-only — four tools
+   and a store, with no GUI surface consuming it.
+
+**Deliberately left, and why.** `docs/04-roadmap.md`'s "Now — what's live, by tab" summary
+is itself stale (it still says the Editor has "no multi-track") and its "In flight right
+now" tracker is dated 2026-09-04. The roadmap's *per-item* entries and "Shipped" section
+are current and were this pass's ground truth, but the file was left untouched: two other
+agents were landing feature work in it concurrently, and a docs pass rewriting the same
+summary section would have produced a pointless merge conflict over a file whose real
+content is fine. `docs/BUGS.md`'s "Known engine constraints" (the third item in the old
+drift note) was likewise not re-verified. Both are now named explicitly in `CLAUDE.md`'s
+rewritten note instead of being silently dropped.
+
+**Why this is a `D-NNN` at all**, given it ships no code: the failure mode it corrects is
+structural, not clerical. A drift note that names the *wrong* files teaches every future
+session to distrust the doc set, and "aspiration written as fact" in a PRD is exactly what
+`CLAUDE.md`'s cardinal rule exists to prevent. Recording what was wrong — including that
+the previous pass's own note was wrong — is what stops the next reconciliation from
+starting over from the same false premise.

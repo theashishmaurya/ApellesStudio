@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Docs reconciliation, round 2 (D-230).** Docs-only. The product
+  docs had drifted on *feature status*, not framing: `01-prd.md` still called Edit a
+  single-track MVP and Motion a placeholder tab, `02-scope.md` listed shipped features
+  as out-of-scope, and `03-architecture.md` said 3 crates existed (8 do) and 38 MCP
+  tools (95 do). All re-derived from the code — tool counts parsed from `mcp/server.py`,
+  primitives from the engine's `zod` enum (8, not 7), crate status from
+  `crates/*/README.md`. `CLAUDE.md`'s own drift note was itself wrong on both files it
+  named and is rewritten to say what is actually still stale. Two real gaps surfaced and
+  documented, not fixed: Motion has **0 MCP tools** despite 18 working `motion_*` bridge
+  ops (D-167–D-171 never got their Python wrappers), and Edit's media understanding is
+  MCP-only with no GUI consumer.
 - **2026-09-08** — **Fix B-104: the on-canvas transform box detached from the
   picture and drifted worse the longer playback ran (D-228).** Owner-reported
   on a real macOS screen recording — a genuinely variable-frame-rate source.

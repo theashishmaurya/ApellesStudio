@@ -4,6 +4,12 @@
 > correction of the "grading only" framing below, not a rewrite of the underlying thesis —
 > the local-first, agent-native, colour-science-depth argument is unchanged and still the
 > differentiator (`docs/notes/product-direction.md` §7).
+>
+> **Re-checked 2026-09-08 (D-230) and left substantially as-written.** Unlike `01-prd.md`
+> and `02-scope.md`, which had gone badly stale on feature status, this file is pitched
+> above the feature layer and none of its claims had drifted. One factual detail was
+> corrected (the interchange format under "what success looks like"). The thesis holds:
+> what changed in the intervening week is that considerably more of it is now built.
 
 ## The one-liner
 
@@ -69,9 +75,11 @@ science as the part nobody else has bothered to build.
   human refinement time: cut to the transcript, a motion-graphic explainer roughed in from
   a script, the talking-head shot graded — subject isolated (tracked), background hazed by
   depth, matched to a reference — each pass reviewable and undoable, not a black box.
-- The grade exports as a `.cube` (primary) + the project round-trips (OTIO for the edit,
-  `grade.json` per shot) so any piece of it drops back into whatever else owns a later
-  step.
+- The grade exports as a `.cube` (primary) + the project round-trips (a timeline
+  interchange format for the edit, `grade.json` per clip) so any piece of it drops back
+  into whatever else owns a later step. *Partly real already:* the `.cube` bake and
+  `grade.json` shipped in v1 (D-022/D-025), and the edit exports **FCPXML 1.7** as of
+  D-196 — OTIO, named here in 2026-09-02, is not what shipped and is still open.
 - Other people use it. It's the obvious answer when someone asks "is there an open-source,
   local, agent-native video tool that actually takes colour seriously?"
 
