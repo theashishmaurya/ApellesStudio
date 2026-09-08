@@ -20,6 +20,21 @@ One or two lines per session. Detail lives in the decision it references.
   measured). Verified against the owner's real file with an `ffprobe`-PTS
   oracle, plus 6 new tests on a synthesized VFR fixture (3 confirmed failing
   pre-fix) and 8 on the argument construction.
+- **2026-09-08** — **Subtitles / captions (D-229, roadmap 27).** `.srt`/`.vtt`
+  import as a real `TrackKind::Subtitle` track, per-track style with a per-cue
+  "use track style" override, an Inspector section with a CPS cue list, sidecar
+  `.srt`/`.vtt` export, and 5 `editor_*` MCP tools. A track kind rather than a
+  clip variant — deliberately the opposite call from D-211's title, because a
+  caption composites over the finished picture whatever its track index and its
+  style belongs to the track. **Multi-line cues** (which D-211 had to forbid for
+  titles) render identically in the live preview and the export because the line
+  layout is ours, not either engine's: one `drawtext` per line at `y_align=font`,
+  whose content-independence and `hhea`-derived box were measured against ffmpeg
+  7.1 across four faces before being built on. Proven by a real-ffmpeg pixel test
+  (the box lands at exactly `line_top − box_padding`; two lines stack exactly one
+  `line_step` apart). **TTML is deliberately refused, not half-built** — its
+  timings depend on `ttp:timeBase`/`ttp:frameRate`, and a subset parser would
+  import real broadcast files with silently wrong times.
 - **2026-09-08** — **Fix B-102: total silence during live preview playback.**
   `symphonia` was never built with MP3 decode support (`isomp4`/`aac`/`alac`/
   `aiff` were explicitly enabled; `mp3` — the one common format symphonia keeps

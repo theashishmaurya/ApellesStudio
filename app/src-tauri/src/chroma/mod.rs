@@ -47,6 +47,13 @@
 //!   (B-100/D-219), along with its two Tauri commands and the two
 //!   `control.rs` native ops that reach it. Internal debug tooling is never
 //!   shipped (CLAUDE.md)
+//! - `caption_render` — rasterise a subtitle cue into an RGBA layer the
+//!   compositor draws OVER the finished frame (D-229). Multi-line, and
+//!   line-for-line identical to what the ffmpeg export's `drawtext` draws;
+//!   see `docs/notes/subtitles.md` for the measurement that makes that true
+//! - `subtitles` — read a `.srt`/`.vtt` file into cues already on the
+//!   project's own timebase, and write a subtitle track back out as one
+//!   (D-229). The parsing itself is `chroma_timeline::subtitle_import`
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
 //!   used by the Edit-tab timeline exporter (`packages/editor/src/
@@ -67,6 +74,7 @@
 //!   `ffmpeg_run`'s own "the caller owns the content" split)
 
 pub mod audio;
+pub mod caption_render;
 pub mod commands;
 pub mod control;
 /// B-100/D-219 — internal debug tooling, never shipped: the whole module,
@@ -94,6 +102,7 @@ pub mod relight;
 pub mod session;
 pub mod sidecar;
 pub mod state;
+pub mod subtitles;
 pub mod text;
 pub mod video;
 pub mod write_text_file;

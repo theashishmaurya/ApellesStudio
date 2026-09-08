@@ -1254,6 +1254,206 @@ def editor_set_text_clip(
 
 
 @mcp.tool()
+def editor_import_subtitles(
+    path: str,
+    offset_frames: int | None = None,
+    font: str | None = None,
+    size: float | None = None,
+    color: str | None = None,
+    box_enabled: bool | None = None,
+    box_color: str | None = None,
+    box_opacity: float | None = None,
+    align: str | None = None,
+    position_x: float | None = None,
+    position_y: float | None = None,
+) -> str:
+    """Import a SubRip (.srt) or WebVTT (.vtt) subtitle file as a new SUBTITLE
+    track, with every cue placed and timed from the file.
+
+    Adds ONE new track at the bottom of the track list and fills it with one
+    caption clip per cue — a single undoable step, not one per cue. Returns the
+    new track's index and how many cues landed.
+
+    **TTML/XML/embedded-MXF subtitles are NOT supported** (D-228). That is a
+    deliberate refusal, not an oversight: TTML cue times only resolve correctly
+    once `ttp:timeBase`/`ttp:frameRate` are honoured, and a subset parser would
+    import real broadcast files with silently wrong timings. Convert to .srt
+    first.
+
+    Timings come from the file and are converted to this project's own frame
+    rate by the backend, so they cannot drift from what the GUI importer would
+    produce. `offset_frames` shifts every cue — pass the playhead frame to drop
+    a file in mid-timeline rather than at 00:00.
+
+    The style arguments set the whole TRACK's style (the reference NLE's "Track
+    Style"), which is how a whole imported file is styled in one action; every
+    one of them is optional and defaults sensibly. Use
+    `editor_set_caption_style` afterwards to change it, or to override one
+    single cue.
+
+    A caption is positioned entirely by its style — `position_x`/`position_y`
+    are normalised 0–1 anchors, `size` is a fraction of the frame HEIGHT.
+    `editor_set_clip_transform` does NOT apply to captions."""
+    import json
+
+    args: dict = {"path": path}
+    if offset_frames is not None:
+        args["offsetFrames"] = offset_frames
+    for key, val in (
+        ("font", font),
+        ("size", size),
+        ("color", color),
+        ("boxEnabled", box_enabled),
+        ("boxColor", box_color),
+        ("boxOpacity", box_opacity),
+        ("align", align),
+        ("positionX", position_x),
+        ("positionY", position_y),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_import_subtitles", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_export_subtitles(track: int, path: str) -> str:
+    """Write one subtitle track's captions out as a standalone .srt or .vtt
+    file (the format is chosen by `path`'s extension; anything else writes
+    SubRip).
+
+    This is the SIDECAR half of delivering subtitles. It is not needed to get
+    captions into the video — `editor_export` already burns every visible
+    subtitle track into the rendered picture. Use this when a platform wants
+    the caption file separately.
+
+    Cues are written in timeline order regardless of the order they were added
+    in. Refused if `track` is not a subtitle track."""
+    import json
+
+    return json.dumps(_op("editor_export_subtitles", track=track, path=path), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_caption(
+    track: int,
+    text: str,
+    start_frame: int | None = None,
+    duration: int | None = None,
+) -> str:
+    """Add ONE caption to an existing subtitle track — for writing captions by
+    hand rather than importing a file.
+
+    `track` must already be a subtitle track (`editor_add_track` with
+    kind="subtitle"); adding a caption to a video or audio track is refused,
+    because the compositor only ever looks for captions on subtitle tracks and
+    it would be an invisible clip.
+
+    Unlike a TITLE (`editor_add_text_clip`), `text` MAY contain newlines — a
+    two-line cue is normal and renders identically in the preview and the
+    export. `duration` defaults to 2 seconds' worth of frames.
+
+    The caption's look comes from its track's style, not from this call — see
+    `editor_set_caption_style`."""
+    import json
+
+    args: dict = {"track": track, "text": text}
+    if start_frame is not None:
+        args["startFrame"] = start_frame
+    if duration is not None:
+        args["duration"] = duration
+    return json.dumps(_op("editor_add_caption", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_caption(track: int, clip: int, text: str) -> str:
+    """Change one existing caption's text. Newlines are allowed (that is what
+    makes it a caption rather than a title).
+
+    Refused if `track`/`clip` names something that is not a caption, or if the
+    track is locked. A caption's TIMING is its clip's own timing — move or trim
+    it with the ordinary clip tools (`editor_move_clip`, `editor_trim_clip`,
+    `editor_split_clip`), which all work on a caption exactly as on any other
+    clip."""
+    import json
+
+    return json.dumps(
+        _op("editor_set_caption", track=track, clip=clip, text=text), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def editor_set_caption_style(
+    track: int,
+    clip: int | None = None,
+    use_track_style: bool | None = None,
+    font: str | None = None,
+    size: float | None = None,
+    color: str | None = None,
+    box_enabled: bool | None = None,
+    box_color: str | None = None,
+    box_opacity: float | None = None,
+    box_padding: float | None = None,
+    line_spacing: float | None = None,
+    align: str | None = None,
+    position_x: float | None = None,
+    position_y: float | None = None,
+) -> str:
+    """Style a subtitle track — font, size, colour, background box and position
+    — or override the style of ONE caption on it.
+
+    With `clip` omitted this sets the TRACK's style, which every caption on it
+    uses. That is almost always what you want: a whole imported file is styled
+    once. With `clip` given it sets that one cue's own override; pass
+    `use_track_style=True` with a `clip` to drop the override and go back to
+    the track's style.
+
+    Omitted fields keep their current value.
+
+    - `font` — a catalogue key from `editor_text_fonts` ("sans-bold", …), not a
+      system font name. A family this machine has no file for is refused here
+      rather than failing the export, because the preview and the export must
+      read the same file.
+    - `size` — fraction of the frame HEIGHT (0.055 ≈ a normal subtitle).
+    - `color` / `box_color` — `#RGB` or `#RRGGBB`.
+    - `box_opacity` — 0–1. `box_enabled=False` removes the background entirely.
+    - `box_padding` / `line_spacing` — fractions of the resolved font size.
+    - `align` — "left" | "center" | "right"; each LINE of a cue is aligned
+      independently, which is the subtitle convention.
+    - `position_x` / `position_y` — normalised 0–1 anchors. `position_y` is
+      where the LAST line sits; extra lines of a multi-line cue stack UPWARD
+      from it, so a cue growing to two lines keeps its bottom line put.
+
+    These are the only geometry a caption has: `editor_set_clip_transform`,
+    fades and opacity keyframes do NOT apply to a caption (D-228 — the export
+    draws it with ffmpeg's `drawtext`, which cannot scale, rotate or crop a
+    text box, so offering those would let the preview show something the export
+    cannot reproduce)."""
+    import json
+
+    args: dict = {"track": track}
+    if clip is not None:
+        args["clip"] = clip
+    if use_track_style is not None:
+        args["useTrackStyle"] = use_track_style
+    for key, val in (
+        ("font", font),
+        ("size", size),
+        ("color", color),
+        ("boxEnabled", box_enabled),
+        ("boxColor", box_color),
+        ("boxOpacity", box_opacity),
+        ("boxPadding", box_padding),
+        ("lineSpacing", line_spacing),
+        ("align", align),
+        ("positionX", position_x),
+        ("positionY", position_y),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_set_caption_style", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_split_clip(track: int, clip: int, at_frame: int) -> str:
     """Split one clip on the timeline into two, at an exact TIMELINE frame.
     `track`/`clip` are the 0-based indices from `get_timeline`."""
@@ -1364,8 +1564,14 @@ def editor_move_clip(
 
 @mcp.tool()
 def editor_add_track(track_kind: str = "video") -> str:
-    """Add a new, empty track to the timeline. `track_kind` is "video" or
-    "audio". Returns the new track's index.
+    """Add a new, empty track to the timeline. `track_kind` is "video",
+    "audio" or "subtitle". Returns the new track's index.
+
+    A "subtitle" track is what `editor_add_caption` needs (D-228); it takes no
+    part in the video z-order and nothing in the audio mix, so the paragraph
+    below about compositing order does not apply to one. To bring in a whole
+    `.srt`/`.vtt` file instead, use `editor_import_subtitles`, which creates
+    its own track.
 
     **This always APPENDS at the highest index — the BOTTOM of the
     compositing stack** (track index order is z-order, lower index paints on

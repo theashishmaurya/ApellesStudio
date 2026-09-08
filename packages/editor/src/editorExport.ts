@@ -25,7 +25,12 @@ import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, transitionClipIndices, type Timeline } from './timeline';
-import { buildExportFfmpegArgs, textClipsMissingFonts, type TimelineExportOptions } from './timelineExport';
+import {
+  buildExportFfmpegArgs,
+  captionClipsMissingFonts,
+  textClipsMissingFonts,
+  type TimelineExportOptions,
+} from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
@@ -178,7 +183,14 @@ export function compileEditorExportArgs(a: {
   // Read synchronously from the module cache `useEditorControl` warms at
   // mount — see `textFonts.ts`'s own doc for why the cache exists.
   const fontFiles = textFontPaths();
-  const missingFonts = textClipsMissingFonts(tl, fontFiles);
+  // D-229 — captions resolve fonts through the SAME catalogue, so they are
+  // checked in the same place and refused for the same reason. Concatenated
+  // rather than checked separately so the user gets one message naming every
+  // unrenderable font, not one error per kind of clip.
+  const missingFonts = [
+    ...textClipsMissingFonts(tl, fontFiles),
+    ...captionClipsMissingFonts(tl, fontFiles, fps),
+  ];
   if (missingFonts.length > 0) {
     // Refused rather than compiled-and-let-ffmpeg-fail: a `drawtext` with an
     // unresolvable `fontfile=` takes the WHOLE export down with an opaque

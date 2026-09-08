@@ -20578,3 +20578,141 @@ index against `ffprobe`'s PTS list — an oracle sharing no code with the thing
 under test. Three of them were confirmed to **fail** against the pre-D-228
 behaviour and pass after; the CFR control passes both ways, which is the point.
 See B-104.
+
+---
+
+## D-229 — Subtitles get their own `TrackKind`, and multi-line renders identically in both engines because the line layout is OURS
+
+**Context.** Roadmap item 27's subtitles/captions line: import SRT/TTML, give
+captions their own track type, make them styleable. Reference:
+`scratch/resolve-reference/captioning.jpg` — Blackmagic's own Edit page, read
+directly. Full worked detail, including every measurement quoted below, is in
+`docs/notes/subtitles.md`.
+
+### Decision 1 — a track kind, not a `Clip` variant. The opposite call from D-211.
+
+D-211 made a title a `Clip` variant on an ordinary video track and argued it
+well: both references put a title there, and this crate's track-index z-order
+already *is* the ordering a title needs. A caption is genuinely different, on
+two counts that the reference frame itself demonstrates:
+
+- **A different compositing rule.** Chroma's video-track index IS its z-order
+  (`resolve_visible_video_layers_at`). A caption is drawn over the finished
+  picture *whatever* index it sits at, and never occludes what is beneath it.
+  As a clip on a video track, a subtitle lane's position in the track list
+  would mean "compositing priority against the picture" — inserting one
+  between two video tracks would change the picture, and an opaque caption
+  clip would hide the video under it. Neither is true of a caption anywhere.
+- **The style belongs to the track.** A whole imported `.srt` is styled once,
+  not cue by cue — the reference Inspector has a "Track Style" tab and a
+  per-caption "Use Track Style" checkbox. That wants a `Track` field, which is
+  meaningless on a video track.
+
+The reference frame also shows two subtitle tracks (English white, French
+yellow) burnt in together at different heights, neither occluding the other.
+
+So: `TrackKind::Subtitle`, `Track::caption_style`, `Clip::caption:
+Option<CaptionCue>`, and `Timeline::resolve_visible_captions_at` as its own
+resolver. Every existing `kind == Video` / `== Audio` filter in the compositor
+and the mixer keeps its exact meaning — a subtitle track matches neither, so
+neither needed touching.
+
+**Rejected: captions as `Clip::text` on video tracks** (reusing D-211
+wholesale) — the two points above, plus `TextLayer` is single-line by
+construction and captions are not. **Rejected: a `Timeline`-level cue list**
+(like `markers`) — a caption must move, trim and split like any other clip
+(Blackmagic's own copy says so), which being a `Clip` gives for free; a
+separate list would have needed all of that reimplemented.
+
+### Decision 2 — multi-line, by making the line layout ours rather than either engine's
+
+This is the load-bearing one. D-211 **forbade** multi-line titles, honestly, on
+the grounds that inter-line layout is the one thing `ab_glyph` (preview) and
+ffmpeg's `drawtext` (export) genuinely disagree about. A caption cannot take
+that exit: real `.srt` files are full of two-line cues, and joining them onto
+one line would mishandle the format.
+
+Closed, not avoided:
+
+1. **One single-line draw per line** — one `drawtext` node per line, one glyph
+   run per line. Neither engine is ever asked to lay out a second line, so the
+   case where they provably agree is the only case that runs.
+2. **The step between lines is plain integer arithmetic with no font metric in
+   it** (`CaptionLayout::line_step`). Both engines get the same integers.
+3. **Each line is anchored by the top of its font line box** — `drawtext`'s
+   `y_align=font`.
+
+(3) is what makes a per-line `y` mean the same thing regardless of a line's
+glyphs. Measured against ffmpeg 7.1, Arial Bold at 60 px, all drawn at `y=150`:
+`y_align=font` put the box at 150→218 for "Ag", "xx" **and** "Wy" — identical,
+content-independent, top exactly at `y`, with `boxborderw=N` expanding it by
+exactly `N` on every side. The default `y_align=text` pins the ink top instead
+(content-dependent), and `y_align=baseline` leaves the *box* ink-dependent;
+`boxh` fixes the box's height but not its anchor. So `y_align=font` is also
+what makes the background box the uniform-height, horizontally-hugging band the
+reference frame actually shows — it is `drawtext`'s own box, not a separate
+`drawbox`, which is what avoided needing to ship glyph metrics to the
+TypeScript compiler.
+
+And the preview reproduces that box exactly, from the same font tables:
+`drawtext` renders at em = `fontsize` px and takes its line box from `hhea`
+(`(ascender − descender + lineGap) / unitsPerEm × fontsize`) — predicted vs.
+measured 68.99/69, 114.99/115, 73.18/73, 91.99/92 across Arial, Arial Bold,
+Impact and Times New Roman at 60–100 px. `ab_glyph` scaled through
+`freetype_equivalent_scale` (D-212) reports exactly those numbers.
+
+**Rejected: `drawtext`'s native multi-line** (`\n` + `line_spacing` +
+`text_align`) — shorter, but it hands inter-line layout back to libfreetype and
+so re-opens precisely the divergence D-211 refused. **Rejected: shipping
+per-line advance widths from Rust to the export compiler** so the box could be
+a `drawbox` — a real IPC channel and a staleness hazard, made unnecessary by
+`y_align=font`.
+
+### Decision 3 — a caption has no transform, opacity or fade
+
+Its geometry is entirely its resolved `CaptionStyle`. D-211's line, one step
+further, for its reason: the export draws a caption with `drawtext`, which
+cannot scale, rotate or crop a text box, and a preview offering controls the
+export silently ignores is the B-053 class of defect this repo keeps closing.
+`position_y` is a single normalised anchor fixing the **last** line, with extra
+lines stacking upward — rejected a top/middle/bottom enum, which a normalised
+position subsumes while matching every other geometry field in this model.
+
+### Decision 4 — SRT and WebVTT ship; TTML is deliberately refused
+
+SubRip and WebVTT are one grammar (they differ in the decimal separator, a
+header, trailing cue settings and WebVTT's `NOTE`/`STYLE`/`REGION` blocks), so
+supporting both cost a handful of lines and covers files that mix the
+conventions — which real files do constantly.
+
+**TTML is not parsed, and that is a refusal rather than a gap.** Its cue times
+are only meaningful once `ttp:timeBase`/`ttp:frameRate`/
+`ttp:frameRateMultiplier` are resolved (`120f` means different instants under
+different declared rates; an `smpte` timebase changes it again), and its text
+is only correct once `region`/`style` inheritance is walked. A subset parser
+reading `begin`/`end` and ignoring those would import real broadcast files with
+**silently wrong timings** — worse than no support, because the failure is
+invisible. `chroma_import_subtitles` refuses a `.ttml`/`.dfxp`/`.xml`/`.itt` by
+name and says to convert, rather than letting the SubRip grammar fail with "no
+cues found". Tracked on the roadmap as its own line.
+
+Inline `<i>`/`<b>`/`<u>`/`<font>` tags are stripped, not rendered — the shared
+font catalogue has no italic face, so there is nothing honest to switch to, and
+leaving the literal markup in would burn it into the picture.
+
+**Verified.** `cargo test --workspace` (the caption model, the parser's
+real-world edge cases — BOM, CRLF, missing final newline, absent/out-of-order
+numbering, overlapping cues, backwards timings, Latin-1 — and the rasteriser's
+own geometry); `caption.test.ts` (14) pinning the TypeScript layout arithmetic
+to the *same fixture* the Rust test asserts; and
+`timelineExportCaptions.ffmpeg.test.ts` (8) running **real ffmpeg** and reading
+**real decoded pixels** — including that the background box lands at exactly
+`line_top − box_padding`, that a two-line cue stacks exactly one `line_step`
+apart growing upward, and that two subtitle tracks render together in their own
+colours. `tsc --noEmit` clean.
+
+**A footnote correcting D-212's prose, not its code.** D-212 says FreeType
+sizes by `ascender − descender` while `ab_glyph` sizes by the em. It is the
+reverse. The correction factor in the code is right either way and nothing
+changes; recorded in `docs/notes/subtitles.md` §3 with the measurement so the
+next person to check this does not conclude the code is wrong.

@@ -82,7 +82,9 @@ import {
   fadePresetName,
   hasActiveEq,
   gapAt,
+  isCaptionClip,
   isTextClip,
+  newCaptionClipFields,
   MARKER_COLORS,
   markersOf,
   newMarker,
@@ -107,6 +109,7 @@ import {
   type EqBandKind,
   type Marker,
   type NewClipFields,
+  type CaptionStyle,
   type TextLayer,
   type Timeline,
   type Transition,
@@ -469,6 +472,54 @@ const thrownMessage = (e: any): string => String(e?.message || e);
  *  band. This is the same "return the measurement, for free" contract the
  *  grading tools hold to. */
 const EQ_REPORT_FREQS = [60, 120, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
+
+/** D-229 — how long a caption added with no explicit `duration` lasts.
+ *
+ *  Two seconds, not `DEFAULT_TITLE_SECONDS`: a caption is a line of speech,
+ *  and two seconds is the middle of the broadcast-standard range for one
+ *  (roughly 1–6 s, at ~17 characters per second). A title's default is a
+ *  different thing for a different job, which is why this is its own constant
+ *  rather than a reuse. */
+const DEFAULT_CAPTION_SECONDS = 2;
+
+/** D-229 — one cue as `chroma_import_subtitles` returns it: already parsed
+ *  and already converted to the project's own timebase by the Rust side. */
+interface ImportedCaption {
+  id: string;
+  start_frame: number;
+  duration: number;
+  text: string;
+}
+
+/** D-229 — the `CaptionStyle` fields present in a control-op's arguments, and
+ *  only those.
+ *
+ *  **Only what was actually passed** — an absent key must not become a
+ *  default, or "change the colour" would silently reset the size, the
+ *  position and the box. The same patch discipline `editor_set_text_clip`
+ *  follows, factored out here because both the track style and the per-cue
+ *  override read it. */
+function captionStylePatch(a: any): Partial<CaptionStyle> {
+  const patch: Partial<CaptionStyle> = {};
+  if (a?.font !== undefined) patch.font = String(a.font);
+  if (a?.size !== undefined) patch.size = Number(a.size);
+  if (a?.color !== undefined) patch.color = String(a.color);
+  if (a?.boxEnabled !== undefined) patch.box_enabled = !!a.boxEnabled;
+  if (a?.boxColor !== undefined) patch.box_color = String(a.boxColor);
+  if (a?.boxOpacity !== undefined) patch.box_opacity = Number(a.boxOpacity);
+  if (a?.boxPadding !== undefined) patch.box_padding = Number(a.boxPadding);
+  if (a?.lineSpacing !== undefined) patch.line_spacing = Number(a.lineSpacing);
+  if (a?.align !== undefined) {
+    const v = String(a.align);
+    // Anything else is dropped rather than stored: the model would carry a
+    // value neither renderer knows, which both would then silently treat as
+    // "centre" — an invisible wrong answer.
+    if (v === 'left' || v === 'center' || v === 'right') patch.align = v;
+  }
+  if (a?.positionX !== undefined) patch.position_x = Number(a.positionX);
+  if (a?.positionY !== undefined) patch.position_y = Number(a.positionY);
+  return patch;
+}
 
 function noTimeline(): { error: string } {
   const s = useEditorTimelineStore.getState();
@@ -962,6 +1013,186 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, text: after?.text ?? null };
       },
 
+      // --- Subtitles / captions (D-229) ---------------------------------- //
+      //
+      // (`captionStylePatch` and `DEFAULT_CAPTION_SECONDS` live just below
+      // this hook, next to the other module-level helpers.)
+      //
+      // Every one of these drives the SAME store op the GUI's own Inspector
+      // and Import button drive (CLAUDE.md: "the same op/store action
+      // underneath both"), so there is one validation, one undo entry and one
+      // reducer per capability rather than a parallel MCP path.
+
+      editor_import_subtitles: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const path = typeof a?.path === 'string' ? a.path : '';
+        if (!path) return { error: 'path must be the path to a .srt or .vtt file' };
+        // The Rust command does the parsing AND the ms→frames conversion, so
+        // the GUI and this path cannot round a cue differently. A parse
+        // failure comes back as a real message naming the offending line.
+        // Computed BEFORE the `try`, deliberately: the React Compiler bails
+        // out of a whole function containing a conditional/optional-chaining
+        // "value block" inside a try/catch (D-201 keeps this package at zero
+        // bailouts, enforced by `reactCompiler.test.ts`), and a hoisted local
+        // reads better here anyway.
+        const offsetFrames =
+          a?.offsetFrames !== undefined ? Math.round(Number(a.offsetFrames)) : null;
+        let imported: { cues: ImportedCaption[]; source_name: string };
+        try {
+          imported = await invoke<{ cues: ImportedCaption[]; source_name: string }>(
+            'chroma_import_subtitles',
+            { path, offsetFrames },
+          );
+        } catch (e) {
+          return { error: String(e) };
+        }
+        if (imported.cues.length === 0) return { error: 'that file contained no cues' };
+
+        const style = captionStylePatch(a);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'import_subtitles',
+          cues: imported.cues,
+          ...(Object.keys(style).length > 0 ? { style } : {}),
+        });
+        const after = useEditorTimelineStore.getState().timeline;
+        return {
+          ok: true,
+          track: (after?.tracks.length ?? 1) - 1,
+          cues: imported.cues.length,
+          sourceName: imported.source_name,
+        };
+      },
+
+      editor_export_subtitles: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        const tr = tl.tracks[track];
+        if (!tr) return { error: `no track ${track}` };
+        if (tr.kind !== 'subtitle') return { error: `track ${track} is not a subtitle track` };
+        const path = typeof a?.path === 'string' ? a.path : '';
+        if (!path) return { error: 'path must be where to write the .srt or .vtt file' };
+        try {
+          const written = await invoke<number>('chroma_export_subtitles', { track, path });
+          return { ok: true, track, cues: written, path };
+        } catch (e) {
+          return { error: String(e) };
+        }
+      },
+
+      editor_add_caption: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        const tr = tl.tracks[track];
+        if (!tr) return { error: `no track ${track}` };
+        // Refused on a video/audio track rather than silently creating a
+        // caption the compositor's caption resolver will never find — the
+        // resolver only walks subtitle tracks, so this would be an invisible
+        // clip.
+        if (tr.kind !== 'subtitle') {
+          return {
+            error: `track ${track} is a ${tr.kind} track — a caption needs a subtitle track (editor_add_track kind="subtitle")`,
+          };
+        }
+        const text = typeof a?.text === 'string' ? a.text : '';
+        if (!text.trim()) return { error: 'text must be a non-empty caption' };
+        const fps = timelineFps(tl);
+        const duration =
+          a?.duration !== undefined
+            ? Math.round(Number(a.duration))
+            : Math.round(DEFAULT_CAPTION_SECONDS * fps);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          return { error: 'duration must be a positive number of TIMELINE frames' };
+        }
+        const clip = newCaptionClipFields(text, duration);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'add_clip',
+          track,
+          clip,
+          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
+        });
+        const after = useEditorTimelineStore.getState().timeline;
+        const placed = after?.tracks[track]?.clips.find((c) => c.id === clip.id);
+        if (!placed) return { error: 'add_clip did not place the caption — is that frame already occupied?' };
+        return { ok: true, track, clip: after?.tracks[track].clips.indexOf(placed), id: clip.id };
+      },
+
+      editor_set_caption: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        if (!isCaptionClip(found.c)) {
+          return { error: `clip ${found.clip} on track ${found.track} is not a caption` };
+        }
+        if (typeof a?.text !== 'string') return { error: 'text must be a string' };
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_caption_text',
+          track: found.track,
+          clip: found.clip,
+          text: a.text,
+        });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return { ok: true, track: found.track, clip: found.clip, caption: after?.caption ?? null };
+      },
+
+      editor_set_caption_style: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        const tr = tl.tracks[track];
+        if (!tr) return { error: `no track ${track}` };
+        if (tr.kind !== 'subtitle') return { error: `track ${track} is not a subtitle track` };
+        if (tr.locked) return { error: `track ${track} is locked — unlock it first` };
+
+        // `useTrackStyle: true` is the reference Inspector's own checkbox:
+        // drop a cue's override and go back to the track's style.
+        const cueIndex = a?.clip !== undefined && a.clip !== null ? Math.round(Number(a.clip)) : null;
+        if (cueIndex !== null && a?.useTrackStyle === true) {
+          const c = tr.clips[cueIndex];
+          if (!c || !isCaptionClip(c)) return { error: `clip ${cueIndex} on track ${track} is not a caption` };
+          useEditorTimelineStore
+            .getState()
+            .applyOp({ kind: 'set_caption_cue_style', track, clip: cueIndex, patch: null });
+          return { ok: true, track, clip: cueIndex, usingTrackStyle: true };
+        }
+
+        const patch = captionStylePatch(a);
+        if (Object.keys(patch).length === 0) {
+          return {
+            error:
+              'nothing to change — pass at least one of font / size / color / box_enabled / box_color / box_opacity / box_padding / line_spacing / align / position_x / position_y (or useTrackStyle:true with a clip)',
+          };
+        }
+        // A font key the backend has no file for would compile to a
+        // `drawtext` ffmpeg cannot run — refused HERE, at the write, exactly
+        // as `editor_set_text_clip` does, rather than at export time.
+        if (patch.font !== undefined) {
+          const fonts = textFontsSync();
+          const known = fonts.find((f) => f.key === patch.font);
+          if (fonts.length > 0 && !known?.path) {
+            const usable = fonts.filter((f) => f.path).map((f) => f.key).join(' | ');
+            return { error: `no font file for "${patch.font}" on this machine — one of ${usable} (see editor_text_fonts)` };
+          }
+        }
+
+        if (cueIndex !== null) {
+          const c = tr.clips[cueIndex];
+          if (!c || !isCaptionClip(c)) return { error: `clip ${cueIndex} on track ${track} is not a caption` };
+          useEditorTimelineStore
+            .getState()
+            .applyOp({ kind: 'set_caption_cue_style', track, clip: cueIndex, patch });
+          const after = useEditorTimelineStore.getState().timeline?.tracks[track]?.clips[cueIndex];
+          return { ok: true, track, clip: cueIndex, style: after?.caption?.style ?? null };
+        }
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_caption_style', track, patch });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[track];
+        return { ok: true, track, style: after?.caption_style ?? null };
+      },
+
       editor_split_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
@@ -1093,7 +1324,15 @@ export function useEditorControl(): void {
 
       // ---- tracks ----------------------------------------------------------
       editor_add_track: (a) => {
-        const trackKind = a?.trackKind === 'audio' ? 'audio' : 'video';
+        // D-229 — an explicit three-way match, not `=== 'audio' ? … : 'video'`.
+        // That two-way ternary silently coerced every unrecognised value to
+        // 'video', so a caller asking for a subtitle track would have got a
+        // video one and no error — and then every caption placed on it would
+        // have been invisible. An unknown kind still falls back to 'video'
+        // (unchanged), but a real one is now honoured.
+        const requested = a?.trackKind;
+        const trackKind =
+          requested === 'audio' ? 'audio' : requested === 'subtitle' ? 'subtitle' : 'video';
         useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind });
         const tl = useEditorTimelineStore.getState().timeline;
         return { ok: true, track: (tl?.tracks.length ?? 1) - 1 };

@@ -241,7 +241,7 @@ fn font_cache() -> &'static Mutex<HashMap<PathBuf, Arc<FontVec>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn load_font(path: &Path) -> Result<Arc<FontVec>, String> {
+pub(super) fn load_font(path: &Path) -> Result<Arc<FontVec>, String> {
     // Deliberately two short lock scopes rather than one held across the
     // file read + parse: this is on the per-frame preview path, and holding
     // the map locked through I/O would serialise every layer behind the
@@ -365,7 +365,7 @@ pub fn render_text_layer(
 /// `units_per_em` (a bitmap-only or malformed font) rather than dividing by
 /// zero — the same "degrade, don't fail the frame" posture the rest of this
 /// module takes.
-fn freetype_equivalent_scale(font: &FontVec, px: f32) -> PxScale {
+pub(super) fn freetype_equivalent_scale(font: &FontVec, px: f32) -> PxScale {
     let upem = font.units_per_em().unwrap_or(0.0);
     if upem <= 0.0 {
         return PxScale::from(px);

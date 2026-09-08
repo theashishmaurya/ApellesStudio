@@ -49,6 +49,8 @@ import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
+import { CaptionInspectorPanel } from './CaptionInspectorPanel';
+import { SubtitleImportButton } from './SubtitleImportButton';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
@@ -181,7 +183,15 @@ export function EditorTab() {
             minSize={TIMELINE_MIN_HEIGHT}
             className="shrink-0 border-t border-border-color flex flex-col min-h-0"
           >
-            <TimelineSwitcher />
+            {/* D-229 — the timeline's own toolbar strip: the timeline
+                switcher, plus the Import-subtitles action (which creates a
+                whole TRACK, so it belongs here beside the switcher rather
+                than in the Sources media pool — see
+                `SubtitleImportButton`'s own doc). */}
+            <div className="flex shrink-0 items-center justify-between gap-2 pr-2">
+              <TimelineSwitcher />
+              <SubtitleImportButton />
+            </div>
             <div className="flex-1 min-h-0">
               <TimelinePane />
             </div>
@@ -216,6 +226,10 @@ export function EditorTab() {
                 selected. */}
             <div className="flex h-full flex-col min-h-0">
               <TextClipInspectorPanel />
+              {/* D-229 — mounted unconditionally; renders null unless the
+                  selection is exactly one caption, exactly like the title
+                  panel above it. */}
+              <CaptionInspectorPanel />
               <div className="flex-1 min-h-0">
                 <EditorInspectorPanel />
               </div>
