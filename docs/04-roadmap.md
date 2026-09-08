@@ -1615,13 +1615,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `editor_set_clip_eq` MCP tool. Verified by a real frequency-response
       measurement in BOTH engines against one shared table. Design detail:
       `docs/notes/audio-fade-duck-crossfade-plan.md` §10.
-    - ⬜ **EQ response curve UI** — the one half of the item above that was
-      deliberately scoped out (D-224): Resolve's ±24 dB / log-frequency graph
-      with a draggable, hit-tested point per band. The model, both engines and
-      the exact dB curve function (`eq_response_db` / `eqResponseDb`, already
-      pinned by measurement, already reported by `editor_set_clip_eq`) are all
-      in place for it — what is missing is only the interactive plot. A
-      log-scaled frequency drag on the band's own Freq field belongs with it.
+    - ~~**EQ response curve UI** — the one half of the item above that was
+      deliberately scoped out (D-224)~~ — **DONE, 2026-09-08 (D-237).**
+      `EqResponseGraph.tsx`: Resolve's ±24 dB / log-frequency graph, rendered
+      above the four band blocks, with a numbered, hit-tested, draggable point
+      per band and the whole strip's combined response drawn as a filled/
+      stroked line — every dB value from `eqResponseDb` (`./eq`, D-224's own
+      pinned math), sampled on a log-frequency axis rather than solved (a
+      biquad cascade's response has no closed-form screen path the way a
+      bezier ease curve does). Horizontal drag moves frequency (log-scaled),
+      vertical drag moves gain (gain-using kinds only — a pass filter's point
+      sits on the 0 dB line and its drag writes only `freq_hz`), and Q is a
+      scroll-wheel-over-the-point gesture (debounced to one commit per
+      gesture), matching Logic Pro's own Channel EQ convention (checked
+      against Apple's own "Channel EQ parameters" guide — Resolve's own
+      reference screenshot shows no secondary axis for Q at all). The graph
+      and the existing Freq/Gain/Q `PropertyRow`s write the identical
+      `onEqBandChange`, so a drag and a typed value can never disagree. Pure
+      geometry in `eqCurve.ts`, unit-tested against `eqResponseDb` at named
+      frequencies; real-DOM pointer/wheel-gesture tests in
+      `EqResponseGraph.dom.test.tsx`; end-to-end wiring proof (through the
+      real store) in `ClipInspectorPanel.eq.dom.test.tsx`. No new MCP surface
+      — `editor_set_clip_eq` already reports `responseDb`/the resolved bands,
+      so the graph is a GUI affordance over the existing tool.
     - ~~**Audio scrubbing + waveform toggle** — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`)~~ — **DONE, 2026-09-08 (D-232).**
       Dragging the playhead (timeline cursor OR the player's position bar) now

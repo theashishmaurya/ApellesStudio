@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **EQ response graph: Resolve's ±24 dB / log-frequency plot,
+  draggable per-band points, scroll-wheel Q (D-237, roadmap item 27's last open
+  half of D-224).** `EqResponseGraph.tsx` above the Inspector's four EQ band
+  blocks — a numbered point per band (horizontal drag = frequency, log-scaled;
+  vertical drag = gain, gain-using kinds only) plus the combined response as a
+  filled/stroked curve, sampled from the existing `eqResponseDb` (never
+  re-derived). Q is scroll-wheel-over-the-point, checked against Logic Pro's
+  own Channel EQ convention and debounced to one commit per gesture. No new
+  MCP tool — `editor_set_clip_eq` already reports `responseDb`, so the graph is
+  a GUI affordance over it (D-214 precedent). 38 new tests (`eqCurve.test.ts`,
+  `EqResponseGraph.dom.test.tsx`) plus 3 end-to-end wiring tests added to
+  `ClipInspectorPanel.eq.dom.test.tsx`.
+
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge
