@@ -35,7 +35,7 @@
  * uses — one op and one validator under both interfaces, per CLAUDE.md.
  */
 import { useState } from 'react';
-import { Button, Input } from '@chroma/ui';
+import { Button, ScrubbableNumberInput } from '@chroma/ui';
 import { InspectorSection } from '@chroma/inspector';
 import { RotateCcw } from 'lucide-react';
 
@@ -113,19 +113,14 @@ export function AdjustmentClipInspectorPanel() {
                     {label}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Input
-                      type="number"
+                    <ScrubbableNumberInput
                       step={STEP}
                       min={MIN}
                       max={MAX}
                       disabled={trackLocked}
                       className="h-7 w-20 text-right"
                       value={Number(value.toFixed(3))}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        if (!Number.isFinite(v)) return;
-                        patch({ [key]: v } as Partial<AdjustmentLayer>);
-                      }}
+                      onValueChange={(v) => patch({ [key]: v } as Partial<AdjustmentLayer>)}
                     />
                     {/* Per-parameter reset, mirroring the D-208 transform
                         rows' own affordance — disabled when already at

@@ -40,6 +40,7 @@ import {
   Button,
   Input,
   ScrollArea,
+  ScrubbableNumberInput,
   Select,
   SelectContent,
   SelectItem,
@@ -337,17 +338,15 @@ export function CaptionInspectorPanel() {
             <label className={row}>
               <span className="text-text-secondary">Size</span>
               <span className="flex items-center gap-1">
-                <Input
-                  type="number"
+                <ScrubbableNumberInput
                   step={0.1}
                   min={0.5}
                   max={100}
                   disabled={trackLocked}
                   className={numInput}
                   value={Number((style.size * PERCENT).toFixed(2))}
-                  onChange={(e) => {
-                    const pct = Number(e.target.value);
-                    if (!Number.isFinite(pct) || pct <= 0) return;
+                  onValueChange={(pct) => {
+                    if (pct <= 0) return;
                     patchStyle({ size: pct / PERCENT });
                   }}
                 />
@@ -411,19 +410,16 @@ export function CaptionInspectorPanel() {
                 <label className={row}>
                   <span className="text-text-secondary pl-2">Opacity</span>
                   <span className="flex items-center gap-1">
-                    <Input
-                      type="number"
+                    <ScrubbableNumberInput
                       step={1}
                       min={0}
                       max={100}
                       disabled={trackLocked}
                       className={numInput}
                       value={Math.round(style.box_opacity * PERCENT)}
-                      onChange={(e) => {
-                        const pct = Number(e.target.value);
-                        if (!Number.isFinite(pct)) return;
-                        patchStyle({ box_opacity: Math.min(1, Math.max(0, pct / PERCENT)) });
-                      }}
+                      onValueChange={(pct) =>
+                        patchStyle({ box_opacity: Math.min(1, Math.max(0, pct / PERCENT)) })
+                      }
                     />
                     <span className="text-text-secondary/60">%</span>
                   </span>
@@ -461,18 +457,14 @@ export function CaptionInspectorPanel() {
             ).map(([key, label]) => (
               <label className={row} key={key}>
                 <span className="text-text-secondary">{label}</span>
-                <Input
-                  type="number"
+                <ScrubbableNumberInput
                   step={0.01}
                   min={-1}
                   max={2}
                   disabled={trackLocked}
                   className={numInput}
                   value={Number(style[key].toFixed(3))}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (Number.isFinite(v)) patchStyle({ [key]: v });
-                  }}
+                  onValueChange={(v) => patchStyle({ [key]: v })}
                 />
               </label>
             ))}
@@ -598,21 +590,18 @@ export function CaptionInspectorPanel() {
                       <label className={row}>
                         <span className="text-text-secondary pl-2">Opacity</span>
                         <span className="flex items-center gap-1">
-                          <Input
-                            type="number"
+                          <ScrubbableNumberInput
                             step={1}
                             min={0}
                             max={100}
                             disabled={trackLocked}
                             className={numInput}
                             value={Math.round(anim.active_box_opacity * PERCENT)}
-                            onChange={(e) => {
-                              const pct = Number(e.target.value);
-                              if (!Number.isFinite(pct)) return;
+                            onValueChange={(pct) =>
                               patchAnim({
                                 active_box_opacity: Math.min(1, Math.max(0, pct / PERCENT)),
-                              });
-                            }}
+                              })
+                            }
                           />
                           <span className="text-text-secondary/60">%</span>
                         </span>
@@ -625,17 +614,15 @@ export function CaptionInspectorPanel() {
                       ).map(([key, label]) => (
                         <label className={row} key={key}>
                           <span className="text-text-secondary pl-2">{label}</span>
-                          <Input
-                            type="number"
+                          <ScrubbableNumberInput
                             step={0.01}
                             min={0}
                             max={2}
                             disabled={trackLocked}
                             className={numInput}
                             value={Number(anim[key].toFixed(3))}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              if (Number.isFinite(v) && v >= 0) patchAnim({ [key]: v });
+                            onValueChange={(v) => {
+                              if (v >= 0) patchAnim({ [key]: v });
                             }}
                           />
                         </label>
@@ -646,17 +633,15 @@ export function CaptionInspectorPanel() {
                   <label className={row}>
                     <span className="text-text-secondary">Animate in</span>
                     <span className="flex items-center gap-1">
-                      <Input
-                        type="number"
+                      <ScrubbableNumberInput
                         step={0.01}
                         min={0}
                         max={5}
                         disabled={trackLocked}
                         className={numInput}
                         value={Number(anim.enter_secs.toFixed(3))}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          if (Number.isFinite(v) && v >= 0) patchAnim({ enter_secs: v });
+                        onValueChange={(v) => {
+                          if (v >= 0) patchAnim({ enter_secs: v });
                         }}
                       />
                       <span className="text-text-secondary/60">s</span>
@@ -669,17 +654,15 @@ export function CaptionInspectorPanel() {
                   {anim.kind === 'build' && (
                     <label className={row}>
                       <span className="text-text-secondary">Rise</span>
-                      <Input
-                        type="number"
+                      <ScrubbableNumberInput
                         step={0.01}
                         min={0}
                         max={2}
                         disabled={trackLocked}
                         className={numInput}
                         value={Number(anim.enter_rise.toFixed(3))}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          if (Number.isFinite(v) && v >= 0) patchAnim({ enter_rise: v });
+                        onValueChange={(v) => {
+                          if (v >= 0) patchAnim({ enter_rise: v });
                         }}
                       />
                     </label>
@@ -690,17 +673,15 @@ export function CaptionInspectorPanel() {
                   {!isSingleWordAnim(anim.kind) && (
                     <label className={row}>
                       <span className="text-text-secondary">Word gap</span>
-                      <Input
-                        type="number"
+                      <ScrubbableNumberInput
                         step={0.01}
                         min={0}
                         max={2}
                         disabled={trackLocked}
                         className={numInput}
                         value={Number(anim.word_gap.toFixed(3))}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          if (Number.isFinite(v) && v >= 0) patchAnim({ word_gap: v });
+                        onValueChange={(v) => {
+                          if (v >= 0) patchAnim({ word_gap: v });
                         }}
                       />
                     </label>

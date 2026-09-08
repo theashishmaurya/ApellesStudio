@@ -275,6 +275,19 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   dnd-kit path additionally requires the gesture's real pointer to be inside
   the edit area, so "dropped somewhere else entirely" still cancels.
 
+- **Every numeric Inspector field is dragged, not spun (B-113 / D-253).**
+  `PropertyRow.tsx` and every other numeric field here render `@chroma/ui`'s
+  `ScrubbableNumberInput`: no native spin buttons anywhere (WebKit painted them
+  over the digits, and B-113's `pr-5` reserve could never have cleared them —
+  the widget is laid out inside the padding box), and horizontal drag on the
+  field in their place — 8px per declared `step`, Shift ×10, Cmd ÷10, 4px
+  before a press counts as a drag rather than a click. `numericField.ts` is now
+  only the Inspector row's *geometry* (`NUM_FIELD`, the fit budget); the
+  display-rounding helpers it used to own are `@chroma/ui`'s, next to the
+  component that needs them. The gesture's behavioural tests live in this
+  package (`ScrubbableNumberInput.dom.test.tsx`) because `@chroma/ui` has no
+  test tier and this one owns the real-`PointerEvent` harness.
+
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript
 cut, GPU compositing, grade-in-preview, OTIO export, MCP, timeline
 rename/delete. See `docs/notes/editor-mvp.md`.

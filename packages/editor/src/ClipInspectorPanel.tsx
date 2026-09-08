@@ -175,7 +175,7 @@ import { useState } from 'react';
 import { Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
 import {
   Button,
-  Input,
+  ScrubbableNumberInput,
   Select,
   SelectContent,
   SelectItem,
@@ -672,14 +672,13 @@ export function ClipInspectorPanel({
               <>
                 <label className={row}>
                   <span className="text-text-secondary">Width</span>
-                  <Input
-                    type="number"
+                  <ScrubbableNumberInput
                     step={1}
                     min={0}
                     disabled={trackLocked || !geometry}
                     className={numInput}
-                    value={widthPx != null ? Math.round(widthPx) : ''}
-                    onChange={(e) => handleWidthPxChange(Number(e.target.value))}
+                    value={widthPx != null ? Math.round(widthPx) : null}
+                    onValueChange={handleWidthPxChange}
                   />
                 </label>
                 <div className="flex items-center justify-center py-0.5">
@@ -695,14 +694,13 @@ export function ClipInspectorPanel({
                 </div>
                 <label className={row}>
                   <span className="text-text-secondary">Height</span>
-                  <Input
-                    type="number"
+                  <ScrubbableNumberInput
                     step={1}
                     min={0}
                     disabled={trackLocked || !geometry}
                     className={numInput}
-                    value={heightPx != null ? Math.round(heightPx) : ''}
-                    onChange={(e) => handleHeightPxChange(Number(e.target.value))}
+                    value={heightPx != null ? Math.round(heightPx) : null}
+                    onValueChange={handleHeightPxChange}
                   />
                 </label>
                 {!geometry && (
@@ -885,8 +883,7 @@ export function ClipInspectorPanel({
                 <div className="flex flex-col gap-1" key={durationKey}>
                   <label className={row}>
                     <span className="text-text-secondary">{label}</span>
-                    <Input
-                      type="number"
+                    <ScrubbableNumberInput
                       // Whole frames, never negative. Not capped at the clip's
                       // own `duration`: a fade longer than the clip is
                       // legitimate (the two windows overlap and multiply), and
@@ -896,7 +893,7 @@ export function ClipInspectorPanel({
                       disabled={trackLocked}
                       className={numInput}
                       value={clip[durationKey] ?? 0}
-                      onChange={(e) => onFadeChange({ [durationKey]: Number(e.target.value) })}
+                      onValueChange={(frames) => onFadeChange({ [durationKey]: frames })}
                     />
                   </label>
                   <label className={row}>

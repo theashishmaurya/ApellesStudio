@@ -71,7 +71,8 @@ Pinned in `package.json`:
 | `Switch` | `@base-ui/react/switch` | the **bare** shadcn switch |
 | `ScrollArea`, `ScrollBar` | `@base-ui/react/scroll-area` | |
 | `Separator` | `@base-ui/react/separator` | |
-| `Input` | `@base-ui/react/input` | + `bgClassName` prop (default `bg-surface`) — back-compat |
+| `Input` | `@base-ui/react/input` | + `bgClassName` prop (default `bg-surface`) — back-compat. A `type="number"` gets `tabular-nums` and `NUMBER_INPUT_SPINNER_SUPPRESSION` — **no native spin buttons, app-wide** (B-113/D-253) |
+| `ScrubbableNumberInput` | `<Input type="number">` + `useNumberField` | the app's numeric field: drag it horizontally to change the value (Resolve's "virtual slider"), click it to type an exact one. Added D-253 — see below |
 | `Textarea` | plain `<textarea>` | (Base UI has no textarea primitive — canonical for shadcn too). Classes mirror `Input` field for field, same `bgClassName` prop/default. Added D-222 |
 | `Label` | plain `<label>` | (Base UI has no Label primitive — canonical for shadcn too) |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `@base-ui/react/collapsible` | |
@@ -90,6 +91,39 @@ Pinned in `package.json`:
 **Stays in `app/`** (D-042, craft-specific): `ColorWheel`, `LUTControl`,
 `DepthRangePicker`, `Dropdown`, the grading `Slider`, `ImagePicker`,
 `GlobalTooltip`, `Resizer`, `AppProperties`, `ExportImport*`.
+
+## Numeric fields — `ScrubbableNumberInput` (D-253, finishing B-113)
+
+Every numeric field in the app is this component, not a bare `<Input
+type="number">`. It has **no spin buttons** (WebKit lays them out inside the
+padding box and paints them over a right-aligned value; no amount of
+`padding-right` can clear them — that was B-113's mistake) and instead uses the
+gesture Resolve, Premiere/AE and Blender all use in their place:
+
+- **Drag it horizontally** to change the value. **8px = one declared `step`**,
+  quantised to whole steps. **Shift ×10**, **Cmd ÷10** (Adobe's convention;
+  Cmd rather than Ctrl because Ctrl-drag is macOS's secondary click).
+- **Click without moving** (under 4px, the same threshold the timeline's own
+  `PointerSensor` uses) and it focuses normally so you can type an exact value.
+  Arrow keys still step — suppressing the spin *button* does not disable a
+  number input's keyboard stepping.
+- **At rest** it shows a `step`-derived rounding of the value; **focused**, the
+  exact stored number. Pass `roundDisplay: false` for a field whose `step` says
+  nothing about its precision.
+- `value: number | null` — `null` is a legitimately unset field, and `onClear`
+  says what emptying it means. Omit `onClear` and clearing commits nothing.
+
+The behaviour lives in `hooks/use-number-scrub.ts` — `useNumberScrub` (the
+gesture alone) and `useNumberField` (the whole field, as props to spread). That
+module is also published as the **`@chroma/ui/number-scrub` subpath**, which
+imports nothing but React: `@chroma/motion` cannot import this package's barrel
+(`@react-three/fiber`'s JSX augmentation vs. `Text.tsx`'s polymorphic `as` —
+see `packages/motion/src/Button.tsx`) and uses the subpath to get the same
+behaviour on its own raw `<input>` rather than a second hand-written copy.
+
+Its behavioural tests live in `@chroma/editor`
+(`ScrubbableNumberInput.dom.test.tsx`) because this package has no test tier
+and that one owns the real-`PointerEvent` harness (D-142).
 
 ## Theme — one source, mapped
 

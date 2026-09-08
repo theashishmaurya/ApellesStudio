@@ -23621,3 +23621,151 @@ it, which is what produced the correct, matching-baseline count above.
   check has looked for since D-219. No separate chunk was emitted for the
   debug module (one `index-*.js` + one CSS file, matching every prior check
   here). No Rust changes in this pass, so no new `cargo check` surface.
+
+## D-253 — numeric fields lose their spinner and gain drag-to-scrub (finishes B-113)
+
+**Context.** B-113 was reported again by the owner, with a screenshot showing
+Transform *and* Crop still drawing the spinner arrows over their own digits —
+after B-113's fix had landed. Both of those render through `PropertyRow`, which
+was already applying B-113's `pr-5` reserve, so the reserve was live and the
+defect was live with it.
+
+**Root cause (why the first fix could not have worked).** WebKit lays
+`::-webkit-inner-spin-button` out **inside** the input's padding box. More
+`padding-right` therefore shifts the text and the spin button left by the same
+amount and preserves the overlap exactly, at any value length. B-113's own
+`pr-5` was structurally incapable of clearing it. The fix has to remove the
+widget, not pad around it. (Full write-up: `docs/BUGS.md`, B-113's follow-up
+section.)
+
+**Options.**
+
+1. **A bigger reserve.** Rejected — the mechanism above says no reserve of any
+   size works. This is the option that was already tried.
+2. **Suppress the spinner and leave the field type-only.** Closes the defect,
+   but removes the only pointer affordance a numeric field had: every value in
+   the Inspector would then be reachable only by typing or by an on-canvas
+   drag, which is a real regression for exactly the fields (crop insets,
+   position) a user nudges most.
+3. **Suppress the spinner and put drag-to-scrub in its place.** Chosen.
+
+**Why 3, and what "the real pattern" is here.** Per CLAUDE.md's
+"research the real pattern first," this is not invented. Blackmagic's own
+Resolve manual calls the control a **virtual slider**: *"When number fields
+appear in the Inspector, they can be used as a virtual slider by hovering the
+pointer over them until you see the virtual slider cursor, and then clicking
+and dragging to the right to raise the value, or to the left to lower the
+value,"* with exact entry by *"double-click in the number field, type the
+value, and press Return."* Blender's Number Buttons are the same gesture
+(*"hold down LMB and drag the mouse to the left or right"*, *"Press LMB or
+Return to edit the value as a text field"*), as is Adobe's scrubbable hot text
+in After Effects/Premiere. None of the three ships a spin button. The owner's
+own word for what this should be was "virtual slider" too.
+
+**The sensitivity, and why each number is what it is.**
+
+- **8px of horizontal travel = one of the field's own declared `step`**
+  (`NUMBER_SCRUB.PX_PER_STEP`). Deriving the rate from `step` rather than from
+  a fixed pixel-per-unit is what makes ONE constant right for every field in
+  the app — Rotation (`step={1}`) moves a degree per 8px, a crop inset
+  (`step={0.01}`) a hundredth — with no per-field tuning. Quantised to whole
+  steps (`Math.round(dx / 8)`), so a `step={1}` field never lands on `37.4`.
+- **Shift = ×10, Meta/Command = ÷10.** This is **Adobe's** convention, and
+  Blender's is the opposite (Shift is Blender's *fine* pass). Resolve,
+  Premiere and After Effects are this repo's stated reference tools, so the
+  Adobe reading wins. Adobe's fine modifier is Command on macOS and Control on
+  Windows; macOS is v1's only platform and **Control-drag there is the
+  secondary-click gesture**, so Control would fight the context menu — Meta is
+  both the Adobe-correct and the only non-conflicting choice. Shift beats Meta
+  when both are held, so a stray Command mid-drag cannot silently turn a coarse
+  pass into a fine one.
+- **Rounding uses the DECLARED step's decimals** (plus one in the fine pass),
+  never `step * factor`'s — rounding to the decimals of
+  `0.005000000000000001` is how a value ends up rendered as
+  `0.15000000000000002`.
+- **4px separates a click from a drag** — deliberately the same number,
+  measured the same way, as `TimelinePane.tsx`'s own `PointerSensor`
+  `activationConstraint: { distance: 4 }` and `marquee.ts`'s
+  `MARQUEE_MIN_DRAG_PX`. This repo has already settled once what counts as a
+  drag; a second, different answer on another surface is the near-miss
+  `marquee.ts`'s own history is made of. Below the threshold the press stays a
+  plain click — nothing is `preventDefault`ed, so the field focuses and takes a
+  caret, which is what keeps Resolve's "double-click and type an exact value"
+  half available.
+
+**Where the code lives, and why.** `@chroma/ui/src/hooks/use-number-scrub.ts`
+holds the arithmetic plus two hooks: `useNumberScrub` (the gesture) and
+`useNumberField` (the whole field — gesture, the rounded-at-rest /
+exact-when-focused display split, and the typing draft). The component
+`ScrubbableNumberInput` is that hook on the shadcn `Input`.
+
+The split exists because **`@chroma/motion` cannot import `@chroma/ui`'s
+barrel** — `@react-three/fiber`'s global JSX augmentation, pulled in via
+`@chroma/motion-engine`, breaks `Text.tsx`'s polymorphic `as` prop in the same
+`tsc` program (documented since D-046 in `packages/motion/src/Button.tsx`).
+Rather than hand-write the field's behaviour a second time in Motion's own
+Inspector, `@chroma/ui` gained a `./number-scrub` **subpath export** that pulls
+in nothing but React, and `@chroma/motion` depends on `@chroma/ui` for that
+subpath only. That keeps the dependency running the allowed direction (a tab
+package onto the component kit) rather than inverting it by pushing a UI
+primitive up into `@chroma/inspector`, and it is narrower than the boundary it
+relaxes: the conflict is the barrel's, and the subpath cannot reach it. The
+display-rounding helpers (`displayNumber`/`displayDecimals`) moved out of
+`@chroma/editor`'s `numericField.ts` into that module for the same reason —
+rounding is intrinsic to "a numeric field," and the component needing it sits a
+layer below the Edit tab. `numericField.ts` keeps only the Inspector row's own
+geometry.
+
+**GUI/MCP parity.** Nothing new to expose. This is a new input *method* for
+values that already have their full MCP surface (`editor_set_clip_transform`,
+`editor_set_clip_keyframes`, `set_track_duck`, …) — an agent sets a number
+directly, which is the same op the drag calls. Adding an "MCP tool that
+simulates a drag" would be a worse interface for an agent than the setter it
+already has. Recorded explicitly rather than skipped, per CLAUDE.md's standing
+"human AND an AI" rule.
+
+**Migrated in this pass** (every `type="number"` in `packages/editor` and
+`packages/motion` that edits a real value): `PropertyRow` (which covers
+Transform ×5, Crop ×4, per-clip Volume/Pan and the EQ band fields in one),
+`ClipInspectorPanel` (Width/Height px, both Fade durations),
+`AdjustmentClipInspectorPanel`, `SpeedRampEditor`, `TextClipInspectorPanel`,
+`CaptionInspectorPanel` (8 fields), `TimelinePane`'s ducking popover (3), and
+`@chroma/motion`'s `InspectorPanel` (its scalar `number` field and every `vec`
+component). Deliberately **not** scrubbed: `CanvasSettingsPopover`,
+`TimelineMarkers` and `EditorExportDialog`, which are string-state setup fields
+with commit-on-blur and a legitimate empty state, and are `w-full` so the
+overlap never manifested — they still lose their spinner, via the shared
+`Input`. `app/`'s own fields inherit the suppression through the
+`app/src/components/ui/Input.tsx` shim and were not otherwise touched, per the
+"don't scatter edits through the fork" rule.
+
+**Deliberately left.** Motion's `FieldSpec` declares no per-property `step`, so
+its fields scrub at the default `1` and opt out of display rounding
+(`roundDisplay: false`) rather than rendering a `0.25` duration as `0.3`. Real
+per-field steps in `propCatalog.ts` are a genuine improvement and a separate
+pass — pinning ~50 catalog fields' precisions is its own design job, not a
+rider on a bug fix.
+
+**Verified.** `packages/editor/src/ScrubbableNumberInput.dom.test.tsx` (19 new,
+jsdom, real `PointerEvent`s a real frame apart, under `StrictMode`, on the
+existing D-142 `pointerHarness`): an 80px drag on a `step={0.01}` field moves
+the value by exactly `0.10`; `Math.round` quantisation (20px on `step={1}` is 3,
+not 2.5); no float dust (`0.15`, not `0.15000000000000002`); Shift ×10 and Meta
+÷10 and Shift winning over both; absolute-not-cumulative commits; 3px stays a
+click and 5px scrubs; a zero-movement press commits nothing; `pointercancel`
+ends the gesture instead of leaving it live; min/max pinned on a scrub and, for
+a typed value, on blur rather than mid-keystroke; the rounded/exact display
+split round-tripping the owner's own `0.052212`; and a whole gesture with zero
+console errors or warnings. `@chroma/editor` **1527/1527** (was 1508 — +19, no
+regressions; the keyframe/nav/reset/curve suites on the migrated rows all still
+pass). `@chroma/motion` **441/441**. `tsc --noEmit` clean on all ten
+`packages/*` tsconfigs. `app`'s own production `vite build` succeeds (3280
+modules) and the emitted CSS really carries the rules — `appearance:textfield`,
+`[&::-webkit-inner-spin-button]:appearance-none::-webkit-inner-spin-button
+{appearance:none}` and `cursor:ew-resize` are all in `dist/assets/*.css`, which
+is what proves the arbitrary-variant classes are not silently dropped. `app`'s
+own `tsc` has 64 pre-existing errors in the vendored fork's hooks/store, all in
+files this pass never touched. No Rust changes. **Honest limit:** jsdom has no
+layout engine and no pointer capture, so this tier asserts the gesture's
+decisions, not pixels — that the arrows are visually gone and the resize cursor
+paints is the owner's own check against the running app.

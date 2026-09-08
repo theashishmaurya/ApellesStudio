@@ -43,7 +43,7 @@
  * calls back with the next point list; `EditorInspectorPanel` owns the write.
  */
 
-import { Button, Input } from '@chroma/ui';
+import { Button, ScrubbableNumberInput } from '@chroma/ui';
 import { InspectorSection } from '@chroma/inspector';
 
 import {
@@ -183,8 +183,7 @@ export function SpeedRampEditor({
               <span className="text-text-secondary/70 w-24 shrink-0 font-mono text-[10px]">
                 {seg.startSourceFrame}–{seg.endSourceFrame}
               </span>
-              <Input
-                type="number"
+              <ScrubbableNumberInput
                 step={5}
                 // D-241 — the range is symmetric about zero, because a
                 // negative percentage IS how both Resolve and Premiere spell
@@ -198,7 +197,7 @@ export function SpeedRampEditor({
                 className="h-7 w-20 text-xs"
                 aria-label={`Speed of the run starting at source frame ${seg.startSourceFrame}, percent`}
                 value={pct(seg.speed)}
-                onChange={(e) => setSegmentSpeed(seg.startSourceFrame, Number(e.target.value) / 100)}
+                onValueChange={(percent) => setSegmentSpeed(seg.startSourceFrame, percent / 100)}
               />
               <span className="text-text-secondary/70 text-[11px]">%</span>
               {/* D-241 — Resolve's own "Reverse Segment" command, per run.

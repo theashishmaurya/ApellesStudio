@@ -119,7 +119,32 @@ export { Slider } from './components/ui/slider';
 export { Switch } from './components/ui/switch';
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area';
 export { Separator } from './components/ui/separator';
-export { Input, NUMBER_INPUT_SPINNER_RESERVE } from './components/ui/input';
+export { Input, NUMBER_INPUT_SPINNER_SUPPRESSION } from './components/ui/input';
+export { ScrubbableNumberInput } from './components/ui/scrubbable-number-input';
+export type { ScrubbableNumberInputProps } from './components/ui/scrubbable-number-input';
+// The scrub gesture and the numeric-display arithmetic (D-253). Also reachable
+// as the `@chroma/ui/number-scrub` subpath, which is how `@chroma/motion` —
+// which cannot import this barrel at all — gets at it; see that module's doc.
+export {
+  DISPLAY_DECIMALS_MAX,
+  NUMBER_SCRUB,
+  SCRUB_DECIMALS_MAX,
+  clampNumber,
+  displayDecimals,
+  displayNumber,
+  scrubFactor,
+  scrubbedValue,
+  stepDecimals,
+  useNumberField,
+  useNumberScrub,
+} from './hooks/use-number-scrub';
+export type {
+  NumberField,
+  NumberFieldInputProps,
+  NumberFieldOptions,
+  NumberScrub,
+  NumberScrubOptions,
+} from './hooks/use-number-scrub';
 export { Textarea } from './components/ui/textarea';
 export { Label } from './components/ui/label';
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from './components/ui/collapsible';

@@ -1,18 +1,23 @@
 /**
  * @chroma/editor — the Inspector numeric field's display precision and its
- * fit budget (B-113).
+ * fit budget (B-113, D-253).
  *
  * The rendered half — that a real crop value, in a real Inspector, comes out
- * short enough to clear the spinner — is `PropertyRow.numericField.dom.test.
+ * short enough to be read in full — is `PropertyRow.numericField.dom.test.
  * tsx`. This file pins the arithmetic that one depends on.
+ *
+ * The precision half of that arithmetic is `@chroma/ui`'s now (D-253 moved it
+ * there, next to `ScrubbableNumberInput`, which needs it a layer below this
+ * package). It is still exercised HERE, against this panel's own real steps
+ * and its own real field width — that pairing is what the assertions are
+ * about, and re-testing `displayNumber` in isolation in `@chroma/ui` would
+ * only restate the implementation.
  */
 import { describe, expect, it } from 'vitest';
+import { DISPLAY_DECIMALS_MAX, displayDecimals, displayNumber } from '@chroma/ui';
 
 import {
-  DISPLAY_DECIMALS_MAX,
   NUM_FIELD,
-  displayDecimals,
-  displayNumber,
   numericFieldCapacityChars,
   numericFieldFits,
   numericFieldTextWidthPx,
@@ -90,12 +95,12 @@ describe('what a resting field shows', () => {
 });
 
 describe('the field’s declared geometry', () => {
-  it('reserves the spinner’s strip out of the usable text width', () => {
+  it('counts only the field’s own padding out of the usable text width', () => {
     expect(numericFieldTextWidthPx()).toBe(
-      NUM_FIELD.widthPx - NUM_FIELD.padLeftPx - NUM_FIELD.spinnerReservePx,
+      NUM_FIELD.widthPx - NUM_FIELD.padLeftPx - NUM_FIELD.padRightPx,
     );
     // Not a tautology: it is what stops a future "make the field narrower"
-    // from silently taking the reserve back out of the digits.
+    // from silently taking the room back out of the digits.
     expect(numericFieldTextWidthPx()).toBeGreaterThan(0);
     expect(numericFieldCapacityChars()).toBeGreaterThanOrEqual(6);
   });
@@ -110,8 +115,9 @@ describe('the field’s declared geometry', () => {
     expect(NUM_FIELD.className).toContain('shrink-0');
     expect(NUM_FIELD.className).toContain('text-right');
     expect(NUM_FIELD.className).toContain('tabular-nums');
-    // …and it must NOT set its own right padding, which would override the
-    // spinner reserve `@chroma/ui`'s Input applies for `type="number"`.
+    // …and it must NOT set its own right padding: `padRightPx` above is the
+    // `Input` base's `px-3`, and a `pr-*` here would silently make that number
+    // a lie in whichever direction the caller chose.
     expect(NUM_FIELD.className).not.toMatch(/\b(pr-|px-)/);
   });
 });

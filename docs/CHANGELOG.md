@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-253: numeric fields lose the native spinner and gain
+  drag-to-scrub** — finishes B-113, whose `pr-5` reserve could never have
+  worked (WebKit lays the spin button out INSIDE the padding box, so padding
+  moves the digits and the arrows together). Every `type="number"` in the app
+  now suppresses the widget via `@chroma/ui`'s `Input`, and the field itself is
+  dragged horizontally to change its value — Resolve's "virtual slider", 8px
+  per declared `step`, Shift ×10 / Cmd ÷10 (Adobe's convention, not Blender's),
+  4px click/drag threshold matching the timeline's own. New
+  `ScrubbableNumberInput` + shared `useNumberField` hook (reached by
+  `@chroma/motion` through a new `@chroma/ui/number-scrub` subpath, since it
+  cannot import that barrel); migrated every real numeric field in the Edit and
+  Motion Inspectors.
+
 - **2026-09-09** — **D-251: Export moved again, out of the Edit tab entirely,
   to `@chroma/shell`'s own chrome bar beside the tab switcher** — the owner's
   live follow-up to D-249. `ShellTab` gained a `headerAction` slot, rendered
