@@ -7,9 +7,15 @@
   "types": "./src/index.ts",
   "description": "Chroma shared component kit (D-042) — shadcn/ui components on Base UI primitives, themed onto the app's --app-*/--color-* tokens. Structural + generic components (Button, Dialog, DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, ScrollArea, Separator, Input, Textarea, Label, Sonner) plus the 5 rebuilt RapidRAW primitives. Domain / grading components stay in app/.",
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
     "./styles.css": "./src/styles.css",
-    "./number-scrub": "./src/hooks/use-number-scrub.ts"
+    "./number-scrub": {
+      "types": "./src/hooks/use-number-scrub.ts",
+      "default": "./src/hooks/use-number-scrub.ts"
+    }
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
