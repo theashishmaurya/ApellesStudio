@@ -1,10 +1,10 @@
-// @chroma/editor — unit tests for `speedRamp.ts` (D-235).
+// @chroma/editor — unit tests for `speedRamp.ts` (D-236).
 //
 // Three things are pinned here, in order of how much they matter:
 //
 //  1. **The flat case is untouched.** A clip with no ramp, and a clip carrying
 //     only an export-time `speedOverrides` entry, must resolve to exactly one
-//     segment and to exactly the numbers every pre-D-235 call site computed
+//     segment and to exactly the numbers every pre-D-236 call site computed
 //     inline (`duration`, `duration / speed`). This is what lets the whole
 //     feature land without moving a single existing export by a frame.
 //  2. **The two directions are exact inverses.** `outputAtSourceFrame` is what
@@ -126,7 +126,7 @@ describe('normalizeSpeedPoints', () => {
     ).toHaveLength(2);
   });
 
-  it('a clip split at 1x still reads as FLAT, so it compiles the pre-D-235 path', () => {
+  it('a clip split at 1x still reads as FLAT, so it compiles the pre-D-236 path', () => {
     // The point survives, but nothing about how the clip plays has changed —
     // so no ramp expression is emitted and its length is untouched.
     const c = clip({ speed_points: [{ source_frame: 40, speed: 1 }] });
@@ -141,7 +141,7 @@ describe('normalizeSpeedPoints', () => {
   });
 });
 
-describe('resolveSpeedSegments — the flat case is exactly the pre-D-235 behaviour', () => {
+describe('resolveSpeedSegments — the flat case is exactly the pre-D-236 behaviour', () => {
   it('no ramp and no override is one identity segment of the clip\'s own window', () => {
     const segs = resolveSpeedSegments(clip());
     expect(segs).toEqual([{ startSourceFrame: 0, endSourceFrame: 96, speed: 1 }]);
@@ -336,7 +336,7 @@ describe('the timeline model reads the ramp through one definition', () => {
     // `source_frames_to_timeline`, so it necessarily rounds first. Rounding in
     // the other order is more accurate and WRONG, because it makes the preview
     // and the model disagree by a frame on a mixed-native-fps ramped clip —
-    // the exact class of quiet divergence D-235 exists to prevent.
+    // the exact class of quiet divergence D-236 exists to prevent.
     //
     // A case where the two orders genuinely give different answers, so this
     // discriminates rather than restating the implementation.

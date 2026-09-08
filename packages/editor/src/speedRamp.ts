@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the speed ramp: variable playback speed over one clip's
- * own length (D-235, roadmap item 27).
+ * own length (D-236, roadmap item 27).
  *
  * **What it is.** The single, canonical implementation of a clip's *time
  * remap* — the function that answers "which SOURCE frame does this clip show
@@ -16,7 +16,7 @@
  * (`Clip.speed_points`). Each point says "from this SOURCE frame onward, play
  * at this speed", so the speed profile is a **step function over the source
  * axis** and the resulting time remap is exactly **piecewise linear** in both
- * directions. That is the whole design (see D-235): a piecewise-linear remap
+ * directions. That is the whole design (see D-236): a piecewise-linear remap
  * is the one shape that can be written identically as closed-form arithmetic
  * in Rust (the preview), as a nested `if(between(...))` `setpts` expression in
  * ffmpeg (the export picture), and as an `atrim`/`atempo`/`concat` chain in
@@ -24,11 +24,11 @@
  * piecewise constant, because `atempo` takes a constant factor and has no
  * time-varying form at all.
  *
- * **A flat speed is a one-segment ramp.** `speedOverrides` (the pre-D-235
+ * **A flat speed is a one-segment ramp.** `speedOverrides` (the pre-D-236
  * export-time-only flat multiplier, D-183) is not a second concept: it
  * resolves through [`resolveSpeedSegments`] into a single segment at that
  * speed, and every downstream consumer sees only segments. The flat case
- * still compiles to the exact pre-D-235 `setpts=PTS/<speed>` / single
+ * still compiles to the exact pre-D-236 `setpts=PTS/<speed>` / single
  * `atempo` chain (see [`isFlatSegments`]) so no existing export changes by a
  * byte.
  *
@@ -40,7 +40,7 @@
  * - **Smoothed (S-curve) speed transitions.** Resolve's optional "smooth" on
  *   a speed point makes the speed itself ease between two segments, which
  *   makes the remap piecewise *quadratic* and has no `atempo` equivalent at
- *   all. Deferred deliberately (D-235); note that the model is closed under
+ *   all. Deferred deliberately (D-236); note that the model is closed under
  *   refinement — a smooth ramp is approximable to any tolerance by
  *   subdividing it into more constant segments, with no schema change.
  * - **Frame interpolation.** Slow motion repeats source frames (Resolve's
@@ -213,7 +213,7 @@ export function resolveSpeedSegments(
     : [{ startSourceFrame: start, endSourceFrame: end, speed: headSpeed }];
 }
 
-/** Is this clip's playback speed CONSTANT — i.e. is it something a pre-D-235
+/** Is this clip's playback speed CONSTANT — i.e. is it something a pre-D-236
  *  consumer could already express? Every compiler in this package branches on
  *  this to keep the flat path byte-identical to what it emitted before ramps
  *  existed.
@@ -331,7 +331,7 @@ function sec(value: number): number {
  * `-ss`-trimmed to the clip's in-point, so source time `0` here is
  * `source_start` — every boundary is emitted relative to that.
  *
- * A flat ramp returns `null`: the caller keeps its pre-D-235 `PTS/<speed>`
+ * A flat ramp returns `null`: the caller keeps its pre-D-236 `PTS/<speed>`
  * form, which is both shorter and byte-identical to what every existing
  * export already produces.
  */

@@ -24,7 +24,7 @@ import { easeCurveEval } from './easeCurve';
 import { resolveSpeedSegments } from './speedRamp';
 import type { Clip, Timeline, Track } from './timeline';
 
-/** D-235 — the one-segment speed ramp that IS "this clip plays at `speed`",
+/** D-236 — the one-segment speed ramp that IS "this clip plays at `speed`",
  *  which is what these tests used to pass as a bare number. `speedRamp.test.ts`
  *  pins separately that a flat ramp resolves to exactly one segment. */
 const flat = (c: Clip, speed = 1) => resolveSpeedSegments(c, speed);

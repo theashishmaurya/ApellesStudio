@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for D-235's Inspector Speed section.
+ * @chroma/editor — real-DOM coverage for D-236's Inspector Speed section.
  *
  * **Why a DOM test.** `speedRamp.test.ts` proves the remap math and
  * `speedRamp.ffmpeg.test.ts` proves the exported pixels; neither proves the
@@ -144,7 +144,7 @@ async function render() {
   await waitFrames(2);
 }
 
-describe('the Inspector Speed section (D-235)', () => {
+describe('the Inspector Speed section (D-236)', () => {
   it('shows one 100% run for an un-ramped clip, and opening the panel writes nothing', async () => {
     await render();
     expect(speedFields().map((f) => f.value)).toEqual(['100']);

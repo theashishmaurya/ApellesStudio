@@ -21515,7 +21515,7 @@ ease is not persisted — see Decision 3's follow-up note.
 
 ---
 
-## D-235 — Speed ramps: one piecewise-linear time remap, shared by the preview and the exporter
+## D-236 — Speed ramps: one piecewise-linear time remap, shared by the preview and the exporter
 
 **Context.** Roadmap item 27's "speed ramp curve — variable speed over time, not
 a flat export-time override." The framing is a contrast with something that
@@ -21590,7 +21590,7 @@ builder, all three duration sites in `timelineExport.ts`, `endFrame`,
 `outputSourceFrames()`.
 
 Byte-compatibility is a hard requirement, not an aspiration: a single-segment
-ramp compiles to the *identical* pre-D-235 `PTS/<speed>` and single-`atempo`
+ramp compiles to the *identical* pre-D-236 `PTS/<speed>` and single-`atempo`
 filtergraph, and an un-ramped clip serialises no new JSON key
 (`skip_serializing_if`). Pinned by the entire pre-existing export suite passing
 unchanged.

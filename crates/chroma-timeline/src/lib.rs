@@ -179,7 +179,7 @@ use serde::{Deserialize, Serialize};
 use chroma_types::Rational;
 
 pub mod caption;
-/// D-235 — the speed ramp's arithmetic (see the module's own doc). Kept in its
+/// D-236 — the speed ramp's arithmetic (see the module's own doc). Kept in its
 /// own file rather than inlined here because it is an exact, line-for-line
 /// mirror of `@chroma/editor`'s `speedRamp.ts`, and a reader checking the two
 /// against each other should be able to open one file per side.
@@ -1025,9 +1025,9 @@ pub struct Clip {
     /// section for exactly what this field does and does NOT fix by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_fps: Option<f64>,
-    /// D-235 — the speed ramp: variable playback speed over this clip's own
+    /// D-236 — the speed ramp: variable playback speed over this clip's own
     /// length, as a step function on the SOURCE axis. Empty (the
-    /// `#[serde(default)]`, and every pre-D-235 clip) = flat 1x, and the
+    /// `#[serde(default)]`, and every pre-D-236 clip) = flat 1x, and the
     /// `skip_serializing_if` keeps an un-ramped clip's JSON byte-identical to
     /// what it was before this field existed.
     ///
@@ -1526,7 +1526,7 @@ impl Default for Clip {
             duration: 0,
             source_len: 0,
             source_fps: None,
-            // D-235 — an empty ramp is "flat 1x", i.e. exactly the behaviour
+            // D-236 — an empty ramp is "flat 1x", i.e. exactly the behaviour
             // every clip had before speed ramps existed.
             speed_points: Vec::new(),
             start_frame: 0,
@@ -1695,7 +1695,7 @@ impl Clip {
             )
     }
 
-    /// D-235 — this clip's resolved constant-speed segments. `speed_points`
+    /// D-236 — this clip's resolved constant-speed segments. `speed_points`
     /// only; an export-time flat `speedOverrides` entry does not exist on this
     /// side (there is no export here), which is exactly why the preview and
     /// the exporter agree on a RAMP but a bare `speedOverrides` number has
@@ -1709,12 +1709,12 @@ impl Clip {
         )
     }
 
-    /// D-235 — how much OUTPUT this clip produces, still in its own
+    /// D-236 — how much OUTPUT this clip produces, still in its own
     /// source-frame units, so `source_frames_to_timeline` converts it exactly
     /// as it always converted `duration`.
     ///
     /// Returns `duration` verbatim for an un-ramped clip, WITHOUT touching the
-    /// ramp machinery — which is what keeps every pre-D-235 project's frame
+    /// ramp machinery — which is what keeps every pre-D-236 project's frame
     /// arithmetic bit-for-bit unchanged. Mirrors `@chroma/editor`'s
     /// `clipOutputSourceFrames`.
     pub fn output_source_frames(&self) -> f64 {
@@ -1741,7 +1741,7 @@ impl Clip {
     /// The result may fall outside `[0, source_len)`; deciding what to do about
     /// that is the consumer's (see [`Self::clamped_source_frame_at`]).
     ///
-    /// D-235 — under a speed ramp the second term stops being linear: the
+    /// D-236 — under a speed ramp the second term stops being linear: the
     /// output offset is fed through [`speed_ramp::source_frame_at_output`]
     /// instead, which is the exact inverse of the forward map the exporter's
     /// `setpts` expression is built from. An un-ramped clip takes the original
@@ -3599,7 +3599,7 @@ mod tests {
         assert_eq!(t.name, "New");
     }
 
-    // ---- D-235: the speed ramp, through the real preview entry points ---- //
+    // ---- D-236: the speed ramp, through the real preview entry points ---- //
     //
     // `speed_ramp`'s own tests pin the arithmetic; these pin that
     // `Track::clip_at` / `Clip::end_frame_at` — the two functions the live
@@ -3673,7 +3673,7 @@ mod tests {
     /// number. Rounding in the other order is more accurate and wrong: it
     /// would make the preview and the edit model disagree by a whole frame on
     /// a mixed-native-fps ramped clip, which is precisely the class of quiet
-    /// divergence D-235 exists to prevent.
+    /// divergence D-236 exists to prevent.
     ///
     /// 25 fps source in a 24 fps project: 43 source frames at 2x (21.5 out)
     /// + 62 at 1x (62) = 83.5 source frames of output.
@@ -3715,7 +3715,7 @@ mod tests {
         assert_eq!(back.speed_points, c.speed_points);
         assert_eq!(back.end_frame_at(24.0), 84);
 
-        // The pre-D-235 shape is unchanged on disk — no new key at all.
+        // The pre-D-236 shape is unchanged on disk — no new key at all.
         let mut plain = c.clone();
         plain.speed_points.clear();
         let pj = serde_json::to_string(&plain).unwrap();

@@ -76,7 +76,7 @@
 // exactly what `chroma-timeline` does with `chroma_types::eq` on the Rust side.
 import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
-// D-235 — the speed ramp's arithmetic lives in its own module, which imports
+// D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
 // dependency stays one-way: `timeline.ts` -> `speedRamp.ts`, never a cycle.
 import {
@@ -195,9 +195,9 @@ export interface Clip {
    *  for the common case of mixed-fps source footage, e.g. two screen
    *  recordings at two different native frame rates composited together). */
   source_fps?: number;
-  /** D-235 — the speed ramp: variable playback speed over this clip's own
+  /** D-236 — the speed ramp: variable playback speed over this clip's own
    *  length, as a step function on the SOURCE axis. Absent/empty = flat 1x,
-   *  which is every pre-D-235 clip.
+   *  which is every pre-D-236 clip.
    *
    *  Mirrors `chroma_timeline::Clip::speed_points`. All the arithmetic —
    *  resolution to concrete segments, the output-duration sum, and both
@@ -210,7 +210,7 @@ export interface Clip {
    *  `TimelineExportOptions.speedOverrides`** (D-183's export-time-only flat
    *  multiplier): a flat speed is a one-segment ramp, `resolveSpeedSegments`
    *  resolves both into the same shape, and the flat case still compiles to
-   *  the identical pre-D-235 filtergraph. */
+   *  the identical pre-D-236 filtergraph. */
   speed_points?: SpeedPoint[];
   /** Timeline-absolute start frame (D-054/D-058) — see the module doc. */
   start_frame: number;
@@ -938,7 +938,7 @@ export function timelineFramesToSource(c: Pick<Clip, 'source_fps'>, timelineFram
  *  ITS caller, all the way up to the one place `Timeline`/`fps` are both in
  *  scope at once. */
 export function endFrame(c: Clip, fps: number): number {
-  // D-235 — `Math.round` BEFORE the fps conversion, matching
+  // D-236 — `Math.round` BEFORE the fps conversion, matching
   // `chroma_timeline::Clip::end_frame_at` exactly (whose
   // `source_frames_to_timeline` takes an `i64`, so it must round first).
   // Rounding in a different ORDER than the preview does is a real divergence
@@ -947,16 +947,16 @@ export function endFrame(c: Clip, fps: number): number {
   // rounding last — so the order is pinned here rather than left to whichever
   // engine happens to be more accurate. `clipOutputSourceFrames` returns
   // `c.duration` exactly (already an integer) for every un-ramped clip, so
-  // this rounds nothing that was not already round before D-235.
+  // this rounds nothing that was not already round before D-236.
   return c.start_frame + sourceFramesToTimeline(c, Math.round(clipOutputSourceFrames(c)), fps);
 }
 
-/** D-235 — how much OUTPUT this clip produces, still measured in its own
+/** D-236 — how much OUTPUT this clip produces, still measured in its own
  *  source-frame units (so `sourceFramesToTimeline` converts it exactly as it
  *  always converted `duration`).
  *
  *  For an un-ramped clip this **is** `c.duration`, returned without touching
- *  the ramp machinery at all — which is what keeps every pre-D-235 timeline's
+ *  the ramp machinery at all — which is what keeps every pre-D-236 timeline's
  *  frame arithmetic bit-for-bit unchanged. For a ramped one it is
  *  `Σ segment_length / segment_speed`: a 2x segment contributes half its own
  *  length to the output, a 0.5x segment twice.
@@ -967,7 +967,7 @@ export function clipOutputSourceFrames(c: Pick<Clip, 'source_start' | 'duration'
   return rampOutputSourceFrames(resolveSpeedSegments(c));
 }
 
-/** D-235 — the fields the two remap functions below actually read.
+/** D-236 — the fields the two remap functions below actually read.
  *
  *  Structural rather than a whole `Clip` because `clipKeyframes.ts`'s
  *  `clipSourceFrame`/`clipTimelineFrame` — the AUTHORING half of the same
@@ -989,16 +989,16 @@ function rampSegmentsOf(c: RampedClipRef) {
   });
 }
 
-/** D-235 — the absolute SOURCE frame this clip shows at TIMELINE frame
+/** D-236 — the absolute SOURCE frame this clip shows at TIMELINE frame
  *  `timelineFrame`: the TS mirror of `chroma_timeline::Clip::source_frame_at`,
  *  which is what the live preview actually decodes with.
  *
- *  Un-ramped this is exactly the pre-D-235 `source_start +
+ *  Un-ramped this is exactly the pre-D-236 `source_start +
  *  timelineFramesToSource(timelineFrame - start_frame)`. Ramped, the linear
  *  second term is replaced by the ramp's own inverse remap — the SAME
  *  `sourceFrameAtOutput` the export's `setpts` expression is the forward
  *  image of. That shared definition is the whole preview/export parity
- *  argument for this feature (see D-235, and `speedRamp.ffmpeg.test.ts`,
+ *  argument for this feature (see D-236, and `speedRamp.ffmpeg.test.ts`,
  *  which decodes real exported pixels and checks them against this function).
  *
  *  Like its Rust twin it EXTRAPOLATES outside the clip's own window rather
@@ -1014,7 +1014,7 @@ export function clipSourceFrameAt(c: RampedClipRef, timelineFrame: number, fps: 
   return Math.floor(sourceFrameAtOutput(rampSegmentsOf(c), outputPos));
 }
 
-/** D-235 — the inverse of [`clipSourceFrameAt`]: the TIMELINE frame at which
+/** D-236 — the inverse of [`clipSourceFrameAt`]: the TIMELINE frame at which
  *  this clip reaches absolute SOURCE frame `sourceFrame`. Used by the GUI's
  *  speed-ramp editor to draw a speed point (authored in source frames) at its
  *  real position on the retimed clip, and by "add a speed point at the
@@ -2544,7 +2544,7 @@ export type EditOp =
       fade_in_curve?: EaseCurve;
       fade_out_curve?: EaseCurve;
     }
-  /** D-235 — replace a clip's speed ramp outright. Refused (no-op) if the
+  /** D-236 — replace a clip's speed ramp outright. Refused (no-op) if the
    *  clip's track is locked, same as every other per-clip op.
    *
    *  **Whole-array replacement, exactly like `set_clip_keyframes`**, and for
@@ -2921,7 +2921,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Reorder track ${op.from + 1}`;
     case 'set_clip_fade':
       return `Fade ${clipLabel(before, op.track, op.clip)}`;
-    // D-235 — a flat speed and a real ramp read very differently in an undo
+    // D-236 — a flat speed and a real ramp read very differently in an undo
     // list ("Speed 200%" vs "Speed ramp"), and which one it is is exactly
     // what the editor is undoing.
     case 'set_clip_speed': {

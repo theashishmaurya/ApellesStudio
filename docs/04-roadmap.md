@@ -1509,7 +1509,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ Context-sensitive trim tool — ripple/roll/slip/slide by pointer
       position, not a mode switch.
     - ~~**Speed ramp curve** — variable speed over time, not a flat export-time
-      override~~ — **DONE, 2026-09-08 (D-235).** `Clip.speed_points` — "from
+      override~~ — **DONE, 2026-09-08 (D-236).** `Clip.speed_points` — "from
       this SOURCE frame onward, play at this speed" — so the speed profile is a
       step function and the time remap is exactly piecewise linear. That shape
       is what lets the live preview (`Clip::source_frame_at`), the export's
@@ -1526,7 +1526,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       decoded pixels (`speedRamp.ffmpeg.test.ts`: 78/84 output frames exact, 6
       off by one, vs. up to 18 frames out for a deliberately wrong ramp). Fixed
       B-112 on the way through.
-      - ⬜ **Speed-ramp follow-ups** (D-235's own "not built" list; none needs a
+      - ⬜ **Speed-ramp follow-ups** (D-236's own "not built" list; none needs a
         schema change): reverse (negative) speed — needs ffmpeg's
         whole-stream-buffering `reverse` filter and a backwards preview decode;
         smoothed S-curve speed transitions — piecewise-quadratic, no `atempo`

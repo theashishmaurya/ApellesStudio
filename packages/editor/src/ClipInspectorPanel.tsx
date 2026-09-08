@@ -140,7 +140,7 @@ import {
   SelectValue,
 } from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-// D-235 — the Speed (Retime) section, in its own file for the reason every
+// D-236 — the Speed (Retime) section, in its own file for the reason every
 // other non-trivial section here is not: it owns real derived state (the
 // resolved segments, the retime curve) rather than being a row of inputs.
 import { SpeedRampEditor } from './SpeedRampEditor';
@@ -371,10 +371,10 @@ export function ClipInspectorPanel({
   paramStates: Record<ClipKeyframeParam, PropertyState>;
   onTransformChange: (patch: TransformPatch) => void;
   onFadeChange: (patch: FadePatch) => void;
-  /** D-235 — replace this clip's speed ramp. Whole-array, like the op itself;
+  /** D-236 — replace this clip's speed ramp. Whole-array, like the op itself;
    *  `SpeedRampEditor` computes the next list. */
   onSpeedChange: (points: SpeedPoint[]) => void;
-  /** D-235 — the SOURCE frame under the playhead, or `null` when the playhead
+  /** D-236 — the SOURCE frame under the playhead, or `null` when the playhead
    *  is not over this clip. Only the Speed section reads it ("add a speed
    *  point at the playhead"); resolved by `EditorInspectorPanel` through the
    *  same `clipSourceFrame` the keyframe rows already use, so a speed point
@@ -738,7 +738,7 @@ export function ClipInspectorPanel({
           </InspectorSection>
         )}
 
-        {/* D-235 — Speed (retime). Placed above Fade because a retime changes
+        {/* D-236 — Speed (retime). Placed above Fade because a retime changes
             the clip's LENGTH, which is what every duration below it is
             measured against — the reference (Resolve's own Retime Controls)
             likewise presents speed as a property of the clip's extent rather

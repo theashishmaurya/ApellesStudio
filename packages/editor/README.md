@@ -47,7 +47,7 @@ dragging a pool item in from the shell's Sources panel.
   that is `chroma_types::fade_gain` and its one mirror,
   `timelineExportAudio.ts`'s `fadeGainAt`. `ClipFadeOverlay.tsx` is the
   DOM/pointer wiring around it. See **On-clip fade handles** below.
-- `speedRamp.ts` (D-235, roadmap item 27) — the speed ramp's whole model and
+- `speedRamp.ts` (D-236, roadmap item 27) — the speed ramp's whole model and
   math: `Clip.speed_points` ("from this SOURCE frame onward, play at this
   speed") resolved into concrete constant-speed segments, the clip's retimed
   output length, and **both directions of the time remap** — the inverse
@@ -60,11 +60,11 @@ dragging a pool item in from the shell's Sources panel.
   `eq.ts` is: the two files ARE the preview/export agreement for this feature,
   so they are kept line-for-line comparable and pinned by `speedRamp.test.ts`
   plus a real-decoded-pixel test (`speedRamp.ffmpeg.test.ts`). A flat speed is
-  a one-segment ramp — the pre-D-235 export-time `speedOverrides` resolves
+  a one-segment ramp — the pre-D-236 export-time `speedOverrides` resolves
   through the same function and still compiles the identical filtergraph.
   `SpeedRampEditor.tsx` is the Inspector section around it. **Does not** do
   reverse speed, smoothed S-curve transitions, or frame interpolation — see
-  D-235's own "not built" list.
+  D-236's own "not built" list.
 - `eq.ts` (D-224, roadmap item 27) — the per-clip parametric EQ's model and
   math: the `EqBand` type `Clip.eq_bands` is a list of, the Resolve-shaped
   four-band strip the Inspector authors (`defaultEqBands`), the stored-value

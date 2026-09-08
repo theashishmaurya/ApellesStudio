@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **Speed ramps: variable speed over time, previewed and
-  exported from one definition (D-235, roadmap item 27).** A clip now carries
+  exported from one definition (D-236, roadmap item 27).** A clip now carries
   `speed_points` — "from this SOURCE frame onward, play at this speed" — so the
   speed profile is a step function and the time remap is exactly piecewise
   linear. That shape is chosen, not incidental: it is the only one the live

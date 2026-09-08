@@ -551,7 +551,7 @@ export function clearClipKeyframes(): ClipKeyframe[] | undefined {
  *  `fps` — every same-native-fps clip computes the same source frame either
  *  way.
  *
- *  **D-235 — now ramp-aware, by delegating rather than by growing a second
+ *  **D-236 — now ramp-aware, by delegating rather than by growing a second
  *  copy of the arithmetic.** A speed ramp makes the playhead-to-source-frame
  *  map non-linear, and this is the AUTHORING half of exactly the question
  *  `Track::clip_at` answers for playback — if the two ever disagreed, a
@@ -597,7 +597,7 @@ export function clipTimelineFrame(
   sourceFrame: number,
   fps: number,
 ): number {
-  // D-235 — the ramp-aware inverse, for `clipSourceFrame`'s reasons exactly:
+  // D-236 — the ramp-aware inverse, for `clipSourceFrame`'s reasons exactly:
   // one definition, so nav and playback cannot disagree about where a frame is.
   return clipTimelineFrameAtSource(clip, sourceFrame, fps);
 }

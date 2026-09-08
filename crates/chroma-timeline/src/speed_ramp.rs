@@ -1,5 +1,5 @@
 //! The speed ramp: variable playback speed over one clip's own length
-//! (D-235, roadmap item 27).
+//! (D-236, roadmap item 27).
 //!
 //! **What it is.** The Rust half of the single, canonical time remap — the
 //! function that answers "which SOURCE frame does this clip show at this
@@ -20,13 +20,13 @@
 //! `atrim`/`atempo`/`concat` chain for the audio (which can only ever be
 //! piecewise constant: ffmpeg's `atempo` takes a number, not an expression).
 //!
-//! **A flat speed is a one-segment ramp.** The pre-D-235 export-time-only
+//! **A flat speed is a one-segment ramp.** The pre-D-236 export-time-only
 //! `speedOverrides` multiplier (D-183) is not a rival concept — it resolves
 //! into a single segment, and every consumer sees only segments.
 //!
 //! **What it does NOT do.** Reverse (negative) speed, smoothed S-curve speed
 //! transitions, or frame interpolation for slow motion. See `speedRamp.ts`'s
-//! own module doc and D-235 for why each is deliberately out, and
+//! own module doc and D-236 for why each is deliberately out, and
 //! `docs/04-roadmap.md` for where they are tracked.
 
 use serde::{Deserialize, Serialize};
@@ -93,7 +93,7 @@ pub fn clamp_speed(speed: f64) -> f64 {
 /// normal authoring order, and a redundant-point filter deletes that split
 /// before the editor can use it. Flatness is decided from the SPEEDS instead
 /// (see [`segments_are_flat`]), so a clip carrying only 1x points still takes
-/// the byte-identical pre-D-235 flat path everywhere downstream.
+/// the byte-identical pre-D-236 flat path everywhere downstream.
 ///
 /// Applied at READ time (not only on write) because `chroma_timeline_set`
 /// stores whatever it is handed (D-058) — a hand-edited, older, or
@@ -123,7 +123,7 @@ pub fn normalize_speed_points(points: &[SpeedPoint]) -> Vec<SpeedPoint> {
     by_frame
 }
 
-/// Is this clip's playback speed CONSTANT — i.e. something a pre-D-235
+/// Is this clip's playback speed CONSTANT — i.e. something a pre-D-236
 /// consumer could already express? Equal speeds, not one segment: a clip split
 /// by a speed point whose runs all play at the same rate is flat in every way
 /// a renderer cares about. Mirrors `speedRamp.ts`'s `isFlatSegments`.
@@ -283,7 +283,7 @@ mod tests {
         let segs = resolve_speed_segments(0, 100, &[], Some(2.0));
         assert_eq!(segs, vec![seg(0, 100, 2.0)]);
         // ...and its output length is exactly `duration / speed`, the number
-        // every pre-D-235 call site computed inline.
+        // every pre-D-236 call site computed inline.
         assert_eq!(ramp_output_source_frames(&segs), 50.0);
     }
 

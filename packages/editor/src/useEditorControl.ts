@@ -137,7 +137,7 @@ import {
   type DynamicZoomFraming,
 } from './dynamicZoom';
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
-// D-235 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
+// D-236 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
 // with Rust so an agent, the Inspector and the preview all agree on the range.
 import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
@@ -2106,7 +2106,7 @@ export function useEditorControl(): void {
         };
       },
 
-      // ---- speed ramp (D-235) -------------------------------------------- //
+      // ---- speed ramp (D-236) -------------------------------------------- //
       //
       // The AI half of the Inspector's own Speed section, over the same
       // `set_clip_speed` op and the same `Clip.speed_points` — CLAUDE.md's

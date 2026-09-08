@@ -184,7 +184,7 @@ export function EditorInspectorPanel() {
     });
   };
 
-  // D-235 — the speed ramp gets its own op, for `set_clip_fade`'s reasons
+  // D-236 — the speed ramp gets its own op, for `set_clip_fade`'s reasons
   // exactly (speed is not geometry, and it applies to audio clips with no
   // transform at all). Whole-array replacement, like `set_clip_keyframes`:
   // `SpeedRampEditor` computes the next point list and this writes it.
@@ -470,7 +470,7 @@ export function EditorInspectorPanel() {
       onTransformChange={applyTransform}
       onFadeChange={applyFade}
       onSpeedChange={applySpeed}
-      // D-235 — `null` when the playhead is not over this clip at all, so the
+      // D-236 — `null` when the playhead is not over this clip at all, so the
       // Speed section disables "add a point here" rather than guessing a
       // position. `clipKfSourceFrame` is the same clamped source frame the
       // keyframe rows use, which is why the two land together.

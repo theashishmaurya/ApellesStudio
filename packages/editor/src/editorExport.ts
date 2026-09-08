@@ -32,7 +32,7 @@ import {
   type TimelineExportOptions,
 } from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
-// D-235 — a clip's own persisted speed ramp, which clashes with a transition
+// D-236 — a clip's own persisted speed ramp, which clashes with a transition
 // for exactly the reason an export-time flat override does.
 import { hasSpeedRamp } from './speedRamp';
 
@@ -79,7 +79,7 @@ function resolveHasAudioOverrides(tl: Timeline): Record<string, boolean> {
 
 /** D-226 — the names of every clip that is joined by a transition AND has a
  *  speed change on it: either an export-time `speedOverrides` entry, or
- *  (D-235) its own persisted speed ramp. See the refusal at the point of use
+ *  (D-236) its own persisted speed ramp. See the refusal at the point of use
  *  for why the combination is not compilable — it is the same reason for both,
  *  since a ramp is exactly a speed change whose factor varies. */
 function transitionClipsWithSpeedChange(
@@ -217,7 +217,7 @@ export function compileEditorExportArgs(a: {
   // reason: this is where a real reason can be reported, and the compiler
   // itself (`transitionPlansFor`) only skips such a transition defensively.
   //
-  // D-235 — checked unconditionally now, not only when `speedOverrides` was
+  // D-236 — checked unconditionally now, not only when `speedOverrides` was
   // passed: a speed ramp lives on the CLIP, so the clash can exist in a
   // document nobody handed an override to.
   {

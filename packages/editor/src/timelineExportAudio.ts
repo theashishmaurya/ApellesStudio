@@ -79,7 +79,7 @@ import {
 import type { EqBand } from './eq';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 import { easeCurveEval } from './easeCurve';
-// D-235 — the shared time remap. See `speedRamp.ts`'s module doc for why the
+// D-236 — the shared time remap. See `speedRamp.ts`'s module doc for why the
 // audio side is what pins the model to piecewise-CONSTANT speed.
 import {
   flatSpeedOf,
@@ -383,8 +383,8 @@ export function clipAudioParam(
   param: 'volume' | 'pan',
   identity: number,
   clipFps: number,
-  /** D-235 — the clip's resolved speed segments (`resolveSpeedSegments`),
-   *  replacing the pre-D-235 scalar `speed` this divided by. A key's `frame`
+  /** D-236 — the clip's resolved speed segments (`resolveSpeedSegments`),
+   *  replacing the pre-D-236 scalar `speed` this divided by. A key's `frame`
    *  is a SOURCE frame, and the expression is consumed on the POST-retime
    *  axis, so the conversion between them is the ramp's forward map — which
    *  for a single flat segment is exactly the division it replaces. Under a
@@ -548,7 +548,7 @@ export function atempoFilterChain(speed: number): string {
 }
 
 /**
- * D-235 — the RAMPED equivalent of [`atempoFilterChain`]: one `atempo` chain
+ * D-236 — the RAMPED equivalent of [`atempoFilterChain`]: one `atempo` chain
  * per constant-speed segment, spliced back together with `concat`.
  *
  * **This construction is the reason the whole speed-ramp model is piecewise
@@ -568,7 +568,7 @@ export function atempoFilterChain(speed: number): string {
  *
  * Returns the filtergraph steps and the label the result lands in. A flat
  * (single-segment) ramp is NOT handled here — the caller keeps the plain
- * [`atempoFilterChain`] node, which is what every pre-D-235 export emits.
+ * [`atempoFilterChain`] node, which is what every pre-D-236 export emits.
  */
 export function buildRampedAtempoSteps(
   srcRef: string,
@@ -636,11 +636,11 @@ export interface AudioSourceChainArgs {
    *  embedded audio — D-057's real, documented scoping — or `track.gain`
    *  for a genuine audio-track clip. */
   gain: number;
-  /** D-235 — this clip's resolved speed segments (`resolveSpeedSegments`,
+  /** D-236 — this clip's resolved speed segments (`resolveSpeedSegments`,
    *  which folds BOTH the clip's own persisted ramp and an export-time
    *  `speedOverrides[clip.id]` entry into one shape). A single segment at
    *  speed `1` means "no speed change" and produces no `atempo` node at all;
-   *  a single segment at any other speed is the pre-D-235 flat case and
+   *  a single segment at any other speed is the pre-D-236 flat case and
    *  produces the identical single `atempo` chain it always did; two or more
    *  become [`buildRampedAtempoSteps`]' `atrim`/`atempo`/`concat`.
    *
@@ -691,11 +691,11 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   let ref = srcRef;
   let hasFilter = false;
 
-  // D-235 — clip-source-frame -> post-retime, clip-local OUTPUT seconds. Every
+  // D-236 — clip-source-frame -> post-retime, clip-local OUTPUT seconds. Every
   // time quantity below (the fade windows, the automation keys, the clip's own
   // length) is authored in source frames and consumed on the axis `atempo`
   // leaves behind, so this one function is the whole conversion. For a flat
-  // ramp it is exactly the pre-D-235 `(frame - source_start) / clipFps / speed`
+  // ramp it is exactly the pre-D-236 `(frame - source_start) / clipFps / speed`
   // it replaces — `outputAtSourceFrame` on a single segment IS that division.
   const outSec = (sourceFrame: number) => outputAtSourceFrame(speedSegments, sourceFrame) / clipFps;
 
@@ -736,7 +736,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
     hasFilter = true;
   }
 
-  // D-235 — all three are POST-retime output seconds, via the ramp's own
+  // D-236 — all three are POST-retime output seconds, via the ramp's own
   // forward map rather than a division by a constant speed. A fade is authored
   // as a number of SOURCE frames from the clip's in/out point, so under a ramp
   // its real on-screen length is however long those frames take to play — a

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Speed (Retime) section of the clip Inspector (D-235).
+ * @chroma/editor — the Speed (Retime) section of the clip Inspector (D-236).
  *
  * **What it is.** The human half of the speed ramp, opposite the
  * `editor_set_clip_speed` MCP tool. Both write the same `set_clip_speed` op

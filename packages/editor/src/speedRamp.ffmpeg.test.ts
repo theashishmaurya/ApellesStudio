@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution proof that a SPEED RAMP (D-235)
+// @chroma/editor — REAL ffmpeg-execution proof that a SPEED RAMP (D-236)
 // exports the exact source frames the live preview resolves.
 //
 // **Why this test is the point of the feature, not an afterthought.** This
@@ -135,7 +135,7 @@ function frameBrightnesses(path: string): number[] {
   return out;
 }
 
-describe.skipIf(!FFMPEG_AVAILABLE)('D-235 — a speed ramp exports the frames the preview resolves', () => {
+describe.skipIf(!FFMPEG_AVAILABLE)('D-236 — a speed ramp exports the frames the preview resolves', () => {
   let dir: string;
   let srcPath: string;
   let outPath: string;

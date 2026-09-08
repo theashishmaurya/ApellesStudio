@@ -435,7 +435,7 @@ def set_clip_speed(
     points: list[dict] | None = None,
 ) -> str:
     """Retime a clip -- a flat speed change, or a real SPEED RAMP that varies
-    over the clip (D-235). `track` and `clip` are the 0-based indices from
+    over the clip (D-236). `track` and `clip` are the 0-based indices from
     get_timeline.
 
     Pass exactly one of:
@@ -805,7 +805,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "of any biquad EQ, not a divergence between the two paths."
         ),
         "speed_ramp": (
-            "D-235: set_clip_speed is the REAL way to retime a clip — a "
+            "D-236: set_clip_speed is the REAL way to retime a clip — a "
             "persisted `Clip.speed_points` ramp that the live preview and the "
             "export both honour, frame for frame, and that a human can also "
             "edit in the Inspector's Speed section. Prefer it over "
@@ -825,7 +825,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         "speed_overrides": (
             "speed_overrides is export-time ONLY — it does not touch the "
             "clip's stored trim/duration, so editor_set_playhead scrubbing "
-            "and the GUI still show the clip at 1x. D-235 supersedes it for "
+            "and the GUI still show the clip at 1x. D-236 supersedes it for "
             "most uses: set_clip_speed stores a real, previewable ramp "
             "instead, and a clip carrying one IGNORES its speed_overrides "
             "entry (the persisted ramp wins, rather than the two multiplying) "
