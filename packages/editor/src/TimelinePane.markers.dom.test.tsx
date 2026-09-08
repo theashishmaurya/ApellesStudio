@@ -165,6 +165,14 @@ function editorPopover(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[data-chroma-marker-editor]');
 }
 
+/** The toolbar's marker list trigger. Only rendered once a marker exists, so
+ *  finding it is itself part of the assertion. */
+function markerListTrigger(): HTMLElement {
+  const el = document.querySelector<HTMLElement>('[aria-label="Markers"]');
+  expect(el, 'the marker list appears once there is a marker').not.toBeNull();
+  return el!;
+}
+
 describe('timeline markers — real DOM (D-222)', () => {
   it('1. draws one flag per marker, in frame order, at the frame’s own x', async () => {
     await mountWith(buildFixture());
@@ -311,12 +319,10 @@ describe('timeline markers — real DOM (D-222)', () => {
     input.remove();
   });
 
-  it('10. the jump list offers every marker in frame order and jumps to one', async () => {
+  it('10. the marker list offers every marker in frame order and jumps to one', async () => {
     await mountWith(buildFixture());
 
-    const trigger = document.querySelector<HTMLElement>('[aria-label="Go to marker"]');
-    expect(trigger, 'the jump list appears once there is a marker').not.toBeNull();
-    fireMouse(trigger!, 'click');
+    fireMouse(markerListTrigger(), 'click');
     await waitFrames(2);
 
     const items = Array.from(document.querySelectorAll<HTMLElement>('[data-chroma-marker-list-item]'));
@@ -326,5 +332,61 @@ describe('timeline markers — real DOM (D-222)', () => {
     fireMouse(items[1], 'click');
     await waitFrames();
     expect(useEditorTimelineStore.getState().playhead).toBe(72);
+  });
+
+  // ---- B-113: deleting a marker from the list ---------------------------- //
+  //
+  // The popover's own Delete (test 6 above) already existed and already
+  // worked. What did not exist was any way to REACH a delete without knowing
+  // to double-click a 9px flag — the owner, testing live with a marker
+  // placed, reported "no way to remove a marker once placed" while looking at
+  // this very list. These three cover the affordance that closes that gap.
+
+  it('11. B-113 — each row in the marker list carries its own Delete', async () => {
+    await mountWith(buildFixture());
+    fireMouse(markerListTrigger(), 'click');
+    await waitFrames(2);
+
+    const removes = Array.from(document.querySelectorAll<HTMLElement>('[data-chroma-marker-list-remove]'));
+    expect(
+      removes.map((r) => r.dataset.chromaMarkerListRemove),
+      'one delete per row, in the same frame order the rows are in',
+    ).toEqual(['earlier', 'later']);
+  });
+
+  it('12. B-113 — clicking a row’s Delete writes the real remove_marker op', async () => {
+    await mountWith(buildFixture());
+    fireMouse(markerListTrigger(), 'click');
+    await waitFrames(2);
+
+    fireMouse(
+      document.querySelector<HTMLElement>('[data-chroma-marker-list-remove="earlier"]')!,
+      'click',
+    );
+    await waitFrames(2);
+
+    // The REAL `Timeline.markers` field, through the real store — not a
+    // picture removed from a local list.
+    expect(markers().map((m) => m.id)).toEqual(['later']);
+    // …and the flag really is gone from the strip.
+    expect(flags().map((f) => f.dataset.chromaMarker)).toEqual(['later']);
+  });
+
+  it('13. B-113 — a row’s Delete does NOT also jump the playhead to the marker it deleted', async () => {
+    await mountWith(buildFixture());
+    expect(useEditorTimelineStore.getState().playhead).toBe(0);
+    fireMouse(markerListTrigger(), 'click');
+    await waitFrames(2);
+
+    fireMouse(
+      document.querySelector<HTMLElement>('[data-chroma-marker-list-remove="later"]')!,
+      'click',
+    );
+    await waitFrames(2);
+
+    // The row's own click handler jumps; the delete sits inside that row and
+    // must stop the event, or deleting would also scrub the user to frame 72.
+    expect(useEditorTimelineStore.getState().playhead).toBe(0);
+    expect(markers().map((m) => m.id)).toEqual(['earlier']);
   });
 });

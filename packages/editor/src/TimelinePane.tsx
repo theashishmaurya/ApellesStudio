@@ -203,6 +203,29 @@
  * does not run under jsdom at all, so the edge decision is only testable as a
  * pure function — see `TimelinePane.trim.dom.test.tsx`'s header).
  *
+ * D-246 (the left library rail) — this pane's native-HTML5 drop now accepts a
+ * SECOND payload: `CHROMA_GENERATOR_DRAG_MIME`, a title or an adjustment clip
+ * dragged out of `EditLibraryRail.tsx`. It is not a second drop path — both
+ * payloads go through one `placeDroppedClip`, so a dragged generator snaps to
+ * an edge, ripples and creates a track by exactly the rules a dragged Sources
+ * item does. It is a second MIME TYPE rather than a field inside the media one
+ * because `dataTransfer.getData` is unreadable during `dragover` (see
+ * `onDragOver`'s own note), so the type name is all a live preview can branch
+ * on. The Title and Adjust buttons that used to sit in this toolbar moved to
+ * that rail with the feature; what is left here acts on the timeline you
+ * already have. The transitions palette (D-226) deliberately stays, because
+ * its target is a cut resolved through this pane's own `DndContext`.
+ *
+ * B-115 (anchored zoom) — every zoom, from the ctrl/pinch wheel or the
+ * toolbar's +/-, goes through one `zoomBy(factor, anchorClientX)`: it records
+ * the frame under the anchor before `pxPerSec` changes and an effect puts that
+ * frame back at the same viewport x afterwards (it must be an effect — the
+ * library derives its scrollable width from `scaleWidth`, so a scroll issued
+ * before the re-render is clamped against the old width). The arithmetic is
+ * `timelineZoom.ts`, pure and unit-tested. A wheel anchors on the cursor; a
+ * button, which has none, anchors on the playhead (viewport centre if the
+ * playhead is off screen).
+ *
  * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
  * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
  * tick density) via `getScaleRender`, and the labeled-tick interval
@@ -262,14 +285,11 @@ import {
   Lock,
   Scissors,
   Trash2,
-  // D-211 — the Add-title action's own icon. `Type` is the letterform icon
-  // both references use for a text/title generator, and nothing else in this
-  // toolbar has claimed it.
-  Type,
-  // D-230 — the Add-adjustment action's own icon, and the badge on an
-  // adjustment clip's body. `Wand2` is the closest match to the wand Resolve
-  // itself puts on its Effects tab (`scratch/resolve-reference/adjustments.jpg`)
-  // and nothing else in this toolbar has claimed it.
+  // D-230 — the badge on an adjustment clip's own body. `Wand2` is the
+  // closest match to the wand Resolve itself puts on its Effects tab
+  // (`scratch/resolve-reference/adjustments.jpg`). D-246: it is no longer
+  // ALSO this toolbar's Add-adjustment icon — that action, and `Type` with
+  // it, moved to `EditLibraryRail.tsx`.
   Wand2,
   // D-128 — the A/V-unlink action. Deliberately `Unlink`, not the `Unlink2`
   // below: that one is already the track header's sync-lock toggle, and
@@ -330,7 +350,6 @@ import { Waveform } from './Waveform';
 import { beginScrub, endScrub, updateScrub } from './scrubAudio';
 import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
-import { EditorExportDialog } from './EditorExportDialog';
 import {
   niceTickIntervalSeconds,
   formatTimecode,
@@ -339,12 +358,17 @@ import {
   DEFAULT_PX_PER_SEC,
   RULER_HEIGHT_PX,
 } from './ruler';
+// B-115 — anchored zoom: keep whatever is under the cursor (wheel) or the
+// playhead (buttons) under it across a zoom step.
+import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
 import {
+  CHROMA_GENERATOR_DRAG_MIME,
   CHROMA_MEDIA_DRAG_MIME,
+  GENERATOR_LABELS,
+  clipFromDraggedGenerator,
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_SYNC_LOCKED,
-  DEFAULT_TITLE_SECONDS,
   DEFAULT_TRACK_GAIN,
   checkLink,
   checkTransition,
@@ -356,11 +380,7 @@ import {
   newTransition,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
-  newAdjustmentClipFields,
-  newAdjustmentLayer,
   newMarker,
-  newTextClipFields,
-  newTextLayer,
   resolveClipLanding,
   sourceFramesToTimeline,
   syncLinkedClipIds,
@@ -369,9 +389,11 @@ import {
   trackIndexAfterMove,
   videoTrackIndex,
   type Clip,
+  type DraggedGenerator,
   type DraggedMedia,
   type LinkCheck,
   type LinkTarget,
+  type NewClipFields,
   type Timeline,
   type Track,
 } from './timeline';
@@ -1222,6 +1244,15 @@ export function TimelinePane() {
   // browser scroll, not something this file has to reimplement), which is
   // exactly what a plain two-finger scroll (or a physical mouse wheel) is
   // supposed to do: pan.
+  //
+  // B-115 — the zoom is ANCHORED: whatever is under the cursor stays under the
+  // cursor. See `zoomBy` below and `timelineZoom.ts` for the arithmetic and
+  // the "why". This listener stays mounted for the component's whole life
+  // (empty dep array — re-attaching a non-passive native listener on every
+  // `pxPerSec` change would be a real cost on the app's highest-update-rate
+  // surface), so it reaches the current `zoomBy` through a ref rather than
+  // closing over a stale one.
+  const zoomByRef = useRef<(factor: number, anchorClientX: number | null) => void>(() => {});
   useEffect(() => {
     const el = editAreaRef.current;
     if (!el) return;
@@ -1229,11 +1260,35 @@ export function TimelinePane() {
       if (!e.ctrlKey) return;
       e.preventDefault();
       const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-      setPxPerSec((w) => clampPxPerSec(w * factor));
+      zoomByRef.current(factor, e.clientX);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
+
+  /** B-115 — the frame + viewport x a zoom in flight has to keep together,
+   *  handed from `zoomBy` to the effect below. A ref, not state: it is a
+   *  parameter of one gesture, never rendered, and putting it in state would
+   *  add a render to every zoom step. */
+  const zoomAnchorRef = useRef<{ frame: number; viewportX: number } | null>(null);
+
+  /** B-115 — restore the anchor AFTER the new `pxPerSec` has been laid out.
+   *  It has to be an effect rather than a second statement inside `zoomBy`:
+   *  the timeline library's own scrollable content width is derived from
+   *  `scaleWidth` (i.e. from `pxPerSec`), so a `setScrollLeft` issued before
+   *  React has re-rendered with the new zoom would be clamped against the OLD
+   *  content width and silently lose the anchor on every zoom-in. */
+  useEffect(() => {
+    const anchor = zoomAnchorRef.current;
+    if (!anchor) return;
+    zoomAnchorRef.current = null;
+    const next = scrollLeftForAnchor(anchor.frame, anchor.viewportX, fps, pxPerSec, START_LEFT_PX);
+    editorRef.current?.setScrollLeft(next);
+    // Kept in step directly rather than waiting for the library's own
+    // `onScroll` to echo it back: every drop/drag/overlay conversion in this
+    // file reads this state, and a zoom must not leave them a frame behind.
+    setScrollLeft((prev) => (prev === next ? prev : next));
+  }, [pxPerSec, fps]);
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes.
   useEffect(() => {
@@ -1542,13 +1597,20 @@ export function TimelinePane() {
     { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
   >(null);
 
-  /** D-226 — why the last transition drop was refused, shown as a transient
-   *  toolbar note. A refusal is the NORMAL outcome of a near-miss drop (a
-   *  transition can only live on a cut, and a cross dissolve additionally needs
-   *  handle media), so it has to say WHY rather than silently doing nothing —
-   *  the same reason `checkLink`'s own reason string drives the Link button's
-   *  disabled tooltip. Cleared by the next successful drop or by dismissing it. */
-  const [transitionDropError, setTransitionDropError] = useState<string | null>(null);
+  /** D-226 — why the last drop onto this pane was refused, shown as a
+   *  transient toolbar note. A refusal is the NORMAL outcome of a near-miss
+   *  drop (a transition can only live on a cut, and a cross dissolve
+   *  additionally needs handle media), so it has to say WHY rather than
+   *  silently doing nothing — the same reason `checkLink`'s own reason string
+   *  drives the Link button's disabled tooltip. Cleared by the next successful
+   *  drop or by dismissing it.
+   *
+   *  D-246 — was `transitionDropError`; renamed when the library rail's
+   *  generator drop gained refusals of its own ("a title is picture — drop it
+   *  on a video track"). One note rather than one per drag kind: only one drag
+   *  can be in flight at a time, and a second identical chip in the same
+   *  toolbar would be the same control twice. */
+  const [dropError, setDropError] = useState<string | null>(null);
 
   // D-100 — the equivalent safety net for the OTHER drag system in this
   // file, the native-HTML5 Sources-panel drag (`onDragOver`/`onDrop`
@@ -1766,18 +1828,45 @@ export function TimelinePane() {
 
   /** D-097 — the `0..tracksLength` insertion boundary near `y`
    *  (`editAreaRef`-relative, ruler/scroll already subtracted), or `null` if
-   *  `y` isn't close to one. `tracksLength` itself (past the last row) is
-   *  unconditional — there's nothing else there to resolve to (D-096's
-   *  original behaviour, unchanged). Every OTHER boundary (0 = above the
-   *  first track, 1..tracksLength-1 = between two existing tracks) only
-   *  counts within `TRACK_INSERT_BAND_PX` of the line where two rows
-   *  actually meet — see that constant's own doc for why. Shared by
-   *  `onDragOver` (preview) and `onDrop` (the real op) so they can never
-   *  disagree about where a drop actually lands. */
+   *  `y` isn't close to one. Shared by `onDragOver` (preview), `onDrop` (the
+   *  real op) and `dndBoundary` (the dnd-kit clip drag) so they can never
+   *  disagree about where a drop actually lands.
+   *
+   *  **The two OUTER boundaries are unconditional; the inner ones are a
+   *  band.** Past the last row resolves to `tracksLength` and above the first
+   *  row resolves to `0`, in both cases because there is nothing else there to
+   *  resolve to — an inner boundary (1..tracksLength-1, between two existing
+   *  rows) has two real tracks competing for the same pixels, so it only
+   *  counts within `TRACK_INSERT_BAND_PX` of the line where the rows actually
+   *  meet (see that constant's own doc).
+   *
+   *  **B-114** — `y < 0` used to return `null`, so the top was NOT the mirror
+   *  of the bottom: the only way to reach boundary 0 was the `TRACK_INSERT_
+   *  BAND_PX` (11px) sliver at the very top of track 0's own row, and dragging
+   *  anywhere ABOVE the tracks — over the ruler and the marker strip, i.e. the
+   *  48px of `RULER_AND_MARGIN_PX` that is exactly "above your video tracks" —
+   *  resolved to nothing at all. The two drag paths then failed differently
+   *  and both wrongly: the native Sources drop fell through to
+   *  `dropTargetTrack`, which clamps into range and so quietly added the clip
+   *  to the EXISTING top track, while the dnd-kit clip drag cancelled outright
+   *  (`onDndDragEnd` returns when `dndBoundary` is `null`). The owner reported
+   *  exactly that, live: "i m trying to drag and drop a clip on over it's not
+   *  creating a new timeline on very top."
+   *
+   *  Dragging above the top track to create a new one there is the reference
+   *  gesture, not an invention — Resolve's own titles copy is "drag it into
+   *  the timeline ABOVE your video tracks", and adjustment clips are "place it
+   *  on a HIGHER video track over your clips"
+   *  (`scratch/resolve-reference/resolve-edit-features.json`, `edit-titles` /
+   *  `edit-adjustments`). Since track index order IS compositing z-order here
+   *  (D-086, lower index = on top), "above" is boundary 0, and it has to be as
+   *  reachable as "below" already was. `y`'s negative range is bounded by the
+   *  edit area's own top edge (`y` starts at `-RULER_AND_MARGIN_PX + scrollTop`),
+   *  so this cannot swallow a drop from outside the pane. */
   const trackInsertBoundary = (y: number, tracksLength: number): number | null => {
     if (tracksLength === 0) return null;
     if (y >= tracksLength * ROW_HEIGHT) return tracksLength;
-    if (y < 0) return null;
+    if (y < 0) return 0;
     const b = Math.round(y / ROW_HEIGHT);
     if (b >= 0 && b <= tracksLength && Math.abs(y - b * ROW_HEIGHT) <= TRACK_INSERT_BAND_PX) return b;
     return null;
@@ -1875,11 +1964,13 @@ export function TimelinePane() {
     if (!rect || tracks.length === 0) return timeline ? videoTrackIndex(timeline) : 0;
     const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
     // Gap-on-add fix: this used to silently fall back to `videoTrackIndex`
-    // for `y < 0`, while `onDragOver`'s own preview shows NOTHING for that
-    // same case (see its `if (y < 0)` branch below) - a real drop could land
-    // on a track the user was never shown a preview for. Now both agree:
-    // clamp into range instead of a hidden special case, so whatever track
-    // the preview pointed at is always the one the drop actually uses.
+    // for `y < 0`, while `onDragOver`'s own preview showed NOTHING for that
+    // same case - a real drop could land on a track the user was never shown
+    // a preview for. Now both agree: clamp into range instead of a hidden
+    // special case, so whatever track the preview pointed at is always the
+    // one the drop actually uses. (B-114: `y < 0` no longer reaches here at
+    // all — `onDrop` resolves it to insertion boundary 0, "a new track above
+    // the top one", before ever calling this.)
     return Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
   };
 
@@ -1904,8 +1995,17 @@ export function TimelinePane() {
   // `onDragOver`/`onDrop` pair, which now only ever handles a Sources-panel
   // media drag.
   const onDragOver = (e: DragEvent) => {
-    const isMediaDrag = e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME);
-    if (!isMediaDrag) return;
+    // D-246 — a generator drag (a title / an adjustment clip, dragged out of
+    // the left library rail) previews IDENTICALLY to a media drag: it lands as
+    // an ordinary `add_clip` at a snapped insertion point, or as a new track at
+    // an insertion boundary. Only `.types` is readable during `dragover` (the
+    // HTML5 constraint this handler's own doc above explains), which is
+    // exactly why the generator got its own MIME type rather than a field
+    // inside the media payload.
+    const isDropDrag =
+      e.dataTransfer.types.includes(CHROMA_MEDIA_DRAG_MIME) ||
+      e.dataTransfer.types.includes(CHROMA_GENERATOR_DRAG_MIME);
+    if (!isDropDrag) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOver((prev) => (prev ? prev : true));
@@ -1923,10 +2023,10 @@ export function TimelinePane() {
       );
       return;
     }
-    if (y < 0) {
-      setInsertPreview((prev) => (prev === null ? prev : null));
-      return;
-    }
+    // B-114 — there used to be an `if (y < 0)` clear-the-preview branch here.
+    // It is unreachable now: with at least one track (guaranteed above),
+    // `trackInsertBoundary` resolves every `y < 0` to boundary 0 and returns
+    // in the branch above, so nothing negative ever reaches this point.
     const track = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
     const edge = nearestEdge(tracks[track], xToFrame(e, rect));
     setInsertPreview((prev) =>
@@ -1943,31 +2043,29 @@ export function TimelinePane() {
     setDragOver((prev) => (prev ? false : prev));
     setInsertPreview((prev) => (prev === null ? prev : null));
   };
-  // D-098 — no longer handles a `CHROMA_CLIP_MOVE_MIME` payload: cross-track
-  // clip move is `onDndDragEnd` (a real `@dnd-kit/core` drag) now. This
-  // handler is Sources-panel media drops only.
-  const onDrop = (e: DragEvent) => {
-    setDragOver(false);
-    setInsertPreview(null);
-    const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
-    if (!raw) return;
-    e.preventDefault();
-    let media: DraggedMedia;
-    try {
-      media = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    // D-128 — a dropped source with an audio stream produces TWO clips: the
-    // picture, and its own audio as a separate, linked clip (the owner's own
-    // ask, and both reference NLEs' default). `audio` is `null` for a silent
-    // source, or one whose audio status isn't known yet — that drop behaves
-    // exactly as it did before this feature.
-    const pair = linkedClipsFromDraggedMedia(media);
-    if (!pair) return; // unprobed / offline media has no known length — nothing to place
-    const { video: clip, audio } = pair;
-    const linkedAudio = audio ?? undefined;
 
+  /**
+   * D-246 — where a dropped clip lands, for BOTH native-HTML5 drop payloads:
+   * a Sources-panel media item (D-095/D-096/D-097/D-128) and a library-rail
+   * generator. Extracted verbatim out of `onDrop`'s media path when the
+   * generator gained the same drop target — one placement algorithm, so a
+   * dragged title snaps to an edge, ripples and creates a track by exactly the
+   * rules a dragged source already does, and neither can drift from the other.
+   *
+   * `generator` is the generator's kind, or `null` for a media drop. It is
+   * read for one thing only: a title and an adjustment clip are picture, so a
+   * new track created for one is a VIDEO track regardless of what it was
+   * dropped next to, and a drop onto an audio or subtitle track is refused
+   * with a real sentence rather than placing an invisible clip. (D-229 made
+   * the same call for the opposite case: a media clip is never inferred onto
+   * a subtitle track.)
+   */
+  const placeDroppedClip = (
+    e: DragEvent,
+    clip: NewClipFields,
+    linkedAudio: NewClipFields | undefined,
+    generator: DraggedGenerator['kind'] | null,
+  ) => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     const y = rect ? e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop : -1;
     const boundary = rect && tracks.length > 0 ? trackInsertBoundary(y, tracks.length) : null;
@@ -1980,7 +2078,7 @@ export function TimelinePane() {
       // store or this component re-renders — so a brand-new track is
       // reliably at that index the instant it's created.
       const newTrackIdx = tracks.length;
-      const kind = inferNewTrackKind(boundary);
+      const kind = generator ? 'video' : inferNewTrackKind(boundary);
       applyOp({ kind: 'add_track', trackKind: kind });
       if (boundary !== newTrackIdx) {
         // D-097 — not a plain append: reposition the just-created track into
@@ -1991,11 +2089,18 @@ export function TimelinePane() {
         setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, newTrackIdx, boundary) })));
       }
       applyOp({ kind: 'add_clip', track: boundary, clip, linkedAudio });
+      if (generator) selectDroppedGenerator(boundary, clip.id);
       return;
     }
 
     const track = dropTargetTrack(e);
     const trackData = tracks[track];
+    if (generator && trackData && trackData.kind !== 'video') {
+      setDropError(
+        `A ${GENERATOR_LABELS[generator].toLowerCase()} is picture — drop it on a video track, or above the top one to make a new video track for it.`,
+      );
+      return;
+    }
     // D-095 — snap to a real insertion point (an open gap, or a ripple
     // between two clips / before the first) when there's a real track/rect
     // to compute one against; `computeInsertion` returning `null` (an
@@ -2017,6 +2122,69 @@ export function TimelinePane() {
     } else {
       applyOp({ kind: 'add_clip', track, clip, linkedAudio });
     }
+    if (generator) selectDroppedGenerator(track, clip.id);
+  };
+
+  /** D-246 — a dropped title/adjustment clip is selected, so the Inspector's
+   *  own Title (D-211) or Correction (D-230) section opens on it ready to type
+   *  into — the same thing the click-to-add path has always done. Guarded on
+   *  the clip actually being there: a non-ripple `add_clip` into occupied
+   *  space is refused by design, and selecting a clip that was never created
+   *  would point the Inspector at nothing. */
+  const selectDroppedGenerator = (track: number, id: string) => {
+    const after = useEditorTimelineStore.getState().timeline;
+    if (after?.tracks[track]?.clips.some((c) => c.id === id)) {
+      setSelection([{ track, id }]);
+    }
+  };
+  // D-098 — no longer handles a `CHROMA_CLIP_MOVE_MIME` payload: cross-track
+  // clip move is `onDndDragEnd` (a real `@dnd-kit/core` drag) now. This
+  // handler is Sources-panel media drops only.
+  const onDrop = (e: DragEvent) => {
+    setDragOver(false);
+    setInsertPreview(null);
+    // D-246 — a generator (title / adjustment clip) dragged out of the left
+    // library rail. Handled first and separately because it has no
+    // `DraggedMedia` payload at all: nothing to probe, no linked audio half,
+    // and one legal track kind. Everything AFTER the clip is built is the
+    // media path's own placement, reached through the shared `placeDroppedClip`
+    // below rather than a second copy of it.
+    const rawGen = e.dataTransfer.getData(CHROMA_GENERATOR_DRAG_MIME);
+    if (rawGen) {
+      e.preventDefault();
+      let gen: DraggedGenerator;
+      try {
+        gen = JSON.parse(rawGen);
+      } catch {
+        return;
+      }
+      if (gen.kind !== 'title' && gen.kind !== 'adjustment') return;
+      const built = clipFromDraggedGenerator(gen, fps);
+      if ('error' in built) {
+        setDropError(built.error);
+        return;
+      }
+      placeDroppedClip(e, built, undefined, gen.kind);
+      return;
+    }
+    const raw = e.dataTransfer.getData(CHROMA_MEDIA_DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let media: DraggedMedia;
+    try {
+      media = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    // D-128 — a dropped source with an audio stream produces TWO clips: the
+    // picture, and its own audio as a separate, linked clip (the owner's own
+    // ask, and both reference NLEs' default). `audio` is `null` for a silent
+    // source, or one whose audio status isn't known yet — that drop behaves
+    // exactly as it did before this feature.
+    const pair = linkedClipsFromDraggedMedia(media);
+    if (!pair) return; // unprobed / offline media has no known length — nothing to place
+    const { video: clip, audio } = pair;
+    placeDroppedClip(e, clip, audio ?? undefined, null);
   };
 
   const clipsOf = (track: number): Track['clips'] => tracks[track]?.clips ?? [];
@@ -2483,77 +2651,15 @@ export function TimelinePane() {
     setSelection([]);
   };
 
-  /** D-211 — add a text/title clip at the playhead, on the TOPMOST video
-   *  track, and select it so the Inspector's own Title section opens on it
-   *  ready to type into.
-   *
-   *  **Track 0, deliberately.** Track index order is compositing z-order in
-   *  this model (D-086, lower index = on top), so the topmost video track is
-   *  where a title composites over the picture — the same "drag it into the
-   *  timeline ABOVE your video tracks" placement Resolve's own titles feature
-   *  describes (`scratch/resolve-reference/`, "Incredible 2D and 3D Titles").
-   *  If there is no video track at all, `add_clip` creates one; `videoTrackIndex`
-   *  is what finds the topmost existing one.
-   *
-   *  Placed at the playhead with `ripple: false`, so it lands in whatever
-   *  space is there and simply doesn't place if that space is occupied —
-   *  never silently pushing the edit around, which is `add_clip`'s own
-   *  documented non-ripple contract. Adding a second title over the first is
-   *  then "move the playhead, or add a track," the same as for any clip.
-   *
-   *  Goes through the exact `newTextLayer` + `newTextClipFields` + `add_clip`
-   *  path `editor_add_text_clip` (MCP) uses — one implementation under both
-   *  interfaces, per CLAUDE.md's own "same op/store action underneath both". */
-  const doAddTitle = () => {
-    const tl = useEditorTimelineStore.getState().timeline;
-    if (!tl) return;
-    const layer = newTextLayer({ content: 'Title' });
-    // `newTextLayer` only fails on a caller-supplied value; this call site
-    // passes a literal, so the guard is a type narrow, not a real branch.
-    if ('error' in layer) return;
-    const track = Math.max(videoTrackIndex(tl), 0);
-    const clip = newTextClipFields(layer, Math.round(DEFAULT_TITLE_SECONDS * fps));
-    applyOp({ kind: 'add_clip', track, clip, startFrame: playhead });
-    const after = useEditorTimelineStore.getState().timeline;
-    if (after?.tracks[track]?.clips.some((c) => c.id === clip.id)) {
-      setSelection([{ track, id: clip.id }]);
-    }
-  };
-
-  /** D-230 — drop an ADJUSTMENT CLIP at the playhead, on the topmost video
-   *  track.
-   *
-   *  **The topmost track is the meaningful default here, not a convention
-   *  copied from `doAddTitle`.** An adjustment clip affects what is composited
-   *  BENEATH it, so the top of the stack is the only placement that grades the
-   *  whole edit — Resolve's own guidance is likewise to put it on a track above
-   *  the clips you want it to affect
-   *  (`scratch/resolve-reference/adjustments.jpg` shows exactly that stacking).
-   *  Dropping it on a lower track is still perfectly valid and simply reaches
-   *  less; the user can drag it wherever they like afterwards.
-   *
-   *  It lands at IDENTITY, so adding one changes not a single pixel until a
-   *  parameter moves — the same "adding it is free" property both the preview
-   *  skip and the export's emit-nothing path preserve all the way down.
-   *
-   *  Goes through the exact `newAdjustmentLayer` + `newAdjustmentClipFields` +
-   *  `add_clip` path `editor_add_adjustment_clip` (MCP) uses — one
-   *  implementation under both interfaces, per CLAUDE.md. */
-  const doAddAdjustment = () => {
-    const tl = useEditorTimelineStore.getState().timeline;
-    if (!tl) return;
-    const layer = newAdjustmentLayer({});
-    // Same type-narrow-not-a-branch guard as `doAddTitle`'s: this call site
-    // passes no caller-supplied value, so it cannot actually fail.
-    if ('error' in layer) return;
-    const track = Math.max(videoTrackIndex(tl), 0);
-    const clip = newAdjustmentClipFields(layer, Math.round(DEFAULT_TITLE_SECONDS * fps));
-    applyOp({ kind: 'add_clip', track, clip, startFrame: playhead });
-    const after = useEditorTimelineStore.getState().timeline;
-    if (after?.tracks[track]?.clips.some((c) => c.id === clip.id)) {
-      setSelection([{ track, id: clip.id }]);
-    }
-  };
+  // D-246 — `doAddTitle` (D-211) and `doAddAdjustment` (D-230) lived here,
+  // behind the toolbar's Title and Adjust buttons. Both moved to the left
+  // library rail (`EditLibraryRail.tsx`) together with those buttons, because
+  // a generated clip is a thing you take OUT OF A LIBRARY — Resolve's own copy
+  // for both is "drag it from the effects library into the timeline" — and
+  // because there was no drag source for one anywhere in the app (B-116). The
+  // rail keeps the identical click-at-the-playhead behaviour these had and
+  // adds the drag; both now build their clip with `clipFromDraggedGenerator`,
+  // which is also what this pane's own generator drop path uses.
 
   /** D-222 — drop a marker at the playhead. Not clip-scoped and never
    *  refused: a marker annotates a POSITION in the edit, so there is nothing
@@ -2564,7 +2670,7 @@ export function TimelinePane() {
     const marker = newMarker(playhead);
     // `newMarker` only rejects a caller-supplied colour or a non-finite frame;
     // this call site passes neither, so the guard is a type narrow, not a real
-    // branch (same shape as `doAddTitle`'s own `newTextLayer` guard above).
+    // branch.
     if ('error' in marker) return;
     applyOp({ kind: 'add_marker', marker });
   };
@@ -2804,10 +2910,32 @@ export function TimelinePane() {
    *  native `clientY` — dnd-kit doesn't hand you the raw pointer position
    *  directly, but the dragged `ClipBody`'s own translated top edge is an
    *  equally real, live signal of where the pointer is. */
+  /*  B-114 — and it now REFUSES unless the gesture's real pointer is inside
+   *  the edit area. `dndBoundary` is only consulted when `event.over` is
+   *  `null`, which covers two very different situations that the dragged
+   *  rect alone cannot tell apart: "above/below/between the track rows, still
+   *  over the timeline" (a real insertion) and "dropped somewhere else
+   *  entirely — the preview, the Inspector, off the window" (a cancel). That
+   *  did not matter while `trackInsertBoundary` refused every `y < 0`, because
+   *  a drop outside the pane almost always produced one; now that above-the-
+   *  tracks is a legal boundary, the two have to be told apart explicitly.
+   *  The pointer is reconstructed the same way the transition drop already
+   *  does it — `activatorEvent`'s own position plus the drag's `delta`, which
+   *  dnd-kit does not expose directly — so there is one notion of "where did
+   *  this drag actually end" in this file, not two. */
   const dndBoundary = (event: DragMoveEvent | DragEndEvent): number | null => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     const translated = event.active.rect.current.translated;
     if (!rect || !translated || tracks.length === 0) return null;
+    const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
+    if (typeof activator?.clientX !== 'number' || typeof activator?.clientY !== 'number') return null;
+    const px = activator.clientX + event.delta.x;
+    const py = activator.clientY + event.delta.y;
+    if (px < rect.left || px > rect.right || py < rect.top || py > rect.bottom) return null;
+    // D-117's own signal for WHICH boundary: the dragged `ClipBody`'s
+    // translated top edge, which is what the user actually sees lining up
+    // with a row. The pointer above answers "is this drop on the timeline at
+    // all"; this answers "which line is it on".
     const y = translated.top - rect.top - RULER_AND_MARGIN_PX + scrollTop;
     return trackInsertBoundary(y, tracks.length);
   };
@@ -2919,7 +3047,7 @@ export function TimelinePane() {
         const cuts = tr.kind === 'video' ? cutFrames(tr, fps) : [];
         const cut = nearestCut(cuts, frame, snapFrames);
         if (cut === null) {
-          setTransitionDropError(
+          setDropError(
             tr.kind !== 'video'
               ? 'Transitions apply to video tracks only.'
               : cuts.length === 0
@@ -2937,15 +3065,15 @@ export function TimelinePane() {
         );
         const built = newTransition(data.kind, cut, duration);
         if ('error' in built) {
-          setTransitionDropError(built.error);
+          setDropError(built.error);
           return;
         }
         const check = checkTransition(timeline, trackIdx, built, fps);
         if (!check.ok) {
-          setTransitionDropError(check.reason ?? 'that transition cannot go there');
+          setDropError(check.reason ?? 'that transition cannot go there');
           return;
         }
-        setTransitionDropError(null);
+        setDropError(null);
         applyOp({ kind: 'add_transition', track: trackIdx, transition: built });
         return;
       }
@@ -3078,8 +3206,53 @@ export function TimelinePane() {
     };
 
   const zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100);
-  const zoomIn = () => setPxPerSec((w) => clampPxPerSec(w * ZOOM_STEP));
-  const zoomOut = () => setPxPerSec((w) => clampPxPerSec(w / ZOOM_STEP));
+
+  /** B-115 — the one zoom entry point, for both the ctrl/pinch wheel and the
+   *  toolbar's +/- buttons. Captures the timeline frame under the anchor
+   *  BEFORE the zoom changes and hands it to the effect above, which puts that
+   *  frame back under the same viewport x once the new zoom has been laid out.
+   *
+   *  `anchorClientX` is the real cursor position for a wheel zoom; `null` for
+   *  a button press, which has none — `buttonZoomAnchorX` then supplies the
+   *  playhead (or the viewport centre when the playhead is off screen). See
+   *  `timelineZoom.ts` for why that is the right anchor for a button.
+   *
+   *  A zoom already at `MIN_PX_PER_SEC`/`MAX_PX_PER_SEC` sets no anchor at
+   *  all: nothing is going to move, and leaving a stale anchor behind would
+   *  make the NEXT zoom restore a point the user has since scrolled away
+   *  from. */
+  const zoomBy = (factor: number, anchorClientX: number | null) => {
+    const next = clampPxPerSec(pxPerSec * factor);
+    if (next === pxPerSec) return;
+    const rect = editAreaRef.current?.getBoundingClientRect();
+    const width = rect?.width ?? viewportWidth;
+    const viewportX =
+      anchorClientX !== null && rect
+        ? anchorClientX - rect.left
+        : buttonZoomAnchorX(playhead, fps, pxPerSec, scrollLeft, START_LEFT_PX, width);
+    zoomAnchorRef.current = {
+      frame: frameAtViewportX(viewportX, fps, pxPerSec, scrollLeft, START_LEFT_PX),
+      viewportX,
+    };
+    setPxPerSec(next);
+  };
+  // The wheel listener is attached once, for the component's whole life, so it
+  // reads the current closure through this ref instead of a stale one (the
+  // same `onSeekEndRef` pattern `@chroma/player`'s transport already uses for
+  // a callback that outlives the render it came from).
+  //
+  // Written in an effect, not during render: the React Compiler (D-201) bails
+  // out of a whole component that touches a ref during render ("Cannot access
+  // refs during render"), and `reactCompiler.test.ts` holds this file to zero
+  // bailouts — which matters here more than anywhere, since this is the app's
+  // highest-update-frequency surface. No dependency array on purpose: the ref
+  // must track the LATEST closure, so this runs after every commit.
+  useEffect(() => {
+    zoomByRef.current = zoomBy;
+  });
+
+  const zoomIn = () => zoomBy(ZOOM_STEP, null);
+  const zoomOut = () => zoomBy(1 / ZOOM_STEP, null);
 
   // D-058 — the labeled-tick interval adapts to the current zoom ("nice
   // numbers": widen as pxPerSec shrinks, narrow as it grows) rather than the
@@ -3237,56 +3410,27 @@ export function TimelinePane() {
             />
             <TooltipContent>Split every selected clip at the playhead</TooltipContent>
           </Tooltip>
-          {/* D-211 — the Edit tab's only affordance for creating a title.
-              In this toolbar rather than the Sources panel because a title
-              has no media-pool item behind it: it is generated, not
-              imported, so "add one to the timeline" is the whole gesture.
-              Not selection-dependent (like Export's own button below, and
-              unlike Split/Remove) — you add a title, you don't add one TO
-              something. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button variant="ghost" size="sm" onClick={doAddTitle} aria-label="Add title">
-                  <Type />
-                  Title
-                </Button>
-              }
-            />
-            <TooltipContent>
-              Add a text title at the playhead, on the topmost video track — edit its text, font, size
-              and colour in the Inspector
-            </TooltipContent>
-          </Tooltip>
-          {/* D-230 — Add adjustment clip. Sits beside Title because the two are
-              the same kind of gesture (add a generated clip at the playhead,
-              not selection-dependent) and because both references group them
-              together as things you drop onto a track above your picture. */}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={doAddAdjustment}
-                  aria-label="Add adjustment clip"
-                >
-                  <Wand2 />
-                  Adjust
-                </Button>
-              }
-            />
-            <TooltipContent>
-              Add an adjustment clip at the playhead, on the topmost video track — its colour
-              correction applies to every clip beneath it, for the span it covers
-            </TooltipContent>
-          </Tooltip>
-          {/* D-222 — markers. The add action sits with Title above (both are
-              "put something new at the playhead", neither is selection-scoped);
-              the jump list appears beside it only once there is something to
-              jump to. */}
+          {/* D-246 — the Title (D-211) and Adjust (D-230) buttons stood here.
+              They are library items, not timeline actions, and both references
+              describe them as things you DRAG out of the effects library — so
+              they moved to `EditLibraryRail.tsx` on the left edge of the tab,
+              where they are now a real drag source as well as the same
+              click-to-add they were here. What is left in this toolbar is
+              exactly what acts on the timeline you already have. */}
+          {/* D-222 — markers. A marker annotates a POSITION in this timeline,
+              so unlike the library items it genuinely belongs in this toolbar;
+              the list appears beside the add button only once there is
+              something in it. */}
           <AddMarkerButton onAdd={doAddMarker} shortcut="M" />
-          <MarkerListMenu timeline={timeline} fps={fps} onJump={setPlayhead} />
+          <MarkerListMenu
+            timeline={timeline}
+            fps={fps}
+            onJump={setPlayhead}
+            // B-113 — the same `remove_marker` op the strip's own popover
+            // Delete drives (see `MarkerListMenu`'s doc for why the list
+            // needed its own delete at all).
+            onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
+          />
           {/* D-226 — the transitions library. Beside Title/Marker for the same
               reason those two sit together: all three are "bring something new
               into the edit", none is scoped to the current selection. The drag
@@ -3308,14 +3452,14 @@ export function TimelinePane() {
               {hoverTrimMode ? (trimModeLabel(hoverTrimMode) ?? 'Trim') : 'Trim: hover a clip'}
             </span>
           )}
-          {transitionDropError && (
+          {dropError && (
             <button
               type="button"
-              onClick={() => setTransitionDropError(null)}
+              onClick={() => setDropError(null)}
               className="max-w-[26rem] truncate rounded border border-border-color bg-surface px-2 py-1 text-left text-[10px] text-text-secondary"
-              title={`${transitionDropError} (click to dismiss)`}
+              title={`${dropError} (click to dismiss)`}
             >
-              {transitionDropError}
+              {dropError}
             </button>
           )}
           <Tooltip>
@@ -3444,14 +3588,13 @@ export function TimelinePane() {
               to keep both. */}
 
           <div className="ml-auto flex items-center gap-0.5">
-            {/* D-198 — the Edit tab's own Export button + dialog + queue,
-                the same "no Export affordance at all" gap the owner pointed
-                at a real screenshot to flag. Lives here, at the far right of
-                THIS toolbar (not clip-selection-dependent like Split/Remove
-                to its left), next to the zoom controls — the other
-                always-available, not-selection-scoped action on this
-                strip. */}
-            <EditorExportDialog />
+            {/* D-247 — D-198's Export button stood here, at the far right of
+                this toolbar. It is now in the Edit tab's own top strip
+                (`EditorTab.tsx`), beside the Inspector toggle: delivering the
+                finished cut is the tab's terminal action, not one of the
+                per-clip edit actions this strip holds, and the owner asked for
+                it there directly (an arrow drawn from it up to the top bar).
+                The dialog component is unchanged — only where it is mounted. */}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -3690,6 +3833,11 @@ export function TimelinePane() {
             )}
             {insertPreview?.kind === 'new_track' && (
               <div
+                // B-114 — a stable hook for "the drag is offering a new track
+                // HERE", the same `data-chroma-*` convention D-219 established
+                // for naming a surface without matching on a Tailwind class
+                // string that changes whenever the styling does.
+                data-chroma-new-track-preview={insertPreview.index}
                 className="pointer-events-none absolute left-0 right-0 z-30 border-2 border-dashed border-accent/70 bg-accent/10"
                 style={{
                   // D-097 — past the last row (`index === tracks.length`)

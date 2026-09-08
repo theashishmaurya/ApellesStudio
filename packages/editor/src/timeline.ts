@@ -683,6 +683,38 @@ export function newTextClipFields(
   };
 }
 
+/**
+ * D-246 — the `NewClipFields` for a generator (`DraggedGenerator`), at the
+ * project's own rate.
+ *
+ * **The one place a generated clip is built**, shared by the library rail's
+ * click-to-add, the rail's drag-onto-the-timeline drop, and (through the same
+ * factories it calls) `editor_add_text_clip`/`editor_add_adjustment_clip`. It
+ * exists because a drag and a click MUST produce the identical clip — a title
+ * you dropped and a title you clicked differing in duration or default layer
+ * would be exactly the kind of two-implementations drift CLAUDE.md's "the same
+ * op/store action underneath both" rule is about.
+ *
+ * Returns `{ error }` only for a failure the underlying layer factories can
+ * report; this call site passes literals, so in practice it is a type narrow
+ * rather than a real branch — but it is propagated rather than swallowed so a
+ * future caller passing real user input gets the real message.
+ */
+export function clipFromDraggedGenerator(
+  gen: DraggedGenerator,
+  fps: number,
+): NewClipFields | { error: string } {
+  const duration = Math.max(1, Math.round(DEFAULT_TITLE_SECONDS * fps));
+  if (gen.kind === 'title') {
+    const layer = newTextLayer({ content: 'Title' });
+    if ('error' in layer) return layer;
+    return newTextClipFields(layer, duration);
+  }
+  const layer = newAdjustmentLayer({});
+  if ('error' in layer) return layer;
+  return newAdjustmentClipFields(layer, duration);
+}
+
 /** D-229 — whether `c` is a caption cue. The counterpart of [`isTextClip`],
  *  asked the same way everywhere for the same reason. */
 export function isCaptionClip(c: Pick<Clip, 'caption'> | null | undefined): boolean {
@@ -1591,6 +1623,48 @@ export const DEFAULT_FPS = 24;
  * shared `DndContext`/store from crossing (see `TimelinePane`'s doc).
  */
 export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
+
+/**
+ * D-246 — the `dataTransfer` MIME type a **generator** drag carries: a clip
+ * that has no media-pool item behind it because it is generated rather than
+ * imported (a title, an adjustment clip). Read by `TimelinePane`'s own
+ * `onDragOver`/`onDrop`, exactly alongside `CHROMA_MEDIA_DRAG_MIME`.
+ *
+ * **A second MIME type rather than a `kind` field inside the media one.**
+ * `dataTransfer.getData` is unreadable during `dragover` — only `.types` is
+ * (the HTML5 spec constraint `TimelinePane`'s drop handler already documents)
+ * — so the type name is the ONLY thing a drag's live preview can branch on.
+ * Folding generators into `CHROMA_MEDIA_DRAG_MIME` would make "is this a
+ * source with an audio half to place, or a generated clip that never has one"
+ * unanswerable until the drop, which is precisely the question the drag
+ * preview has to answer while the pointer is still moving.
+ *
+ * **Native HTML5, not `@dnd-kit`**, unlike the transitions palette (D-226).
+ * That palette is rendered *inside* `TimelinePane`'s own `DndContext`; the
+ * library rail (`EditLibraryRail.tsx`) is a sibling of the whole timeline
+ * pane, and a `useDraggable` outside the provider is not a drag at all. This
+ * is the same boundary the Sources panel crosses, so it uses the same
+ * mechanism the Sources panel already crosses it with.
+ */
+export const CHROMA_GENERATOR_DRAG_MIME = 'application/x-chroma-generator';
+
+/** D-246 — what a generator drag carries. Deliberately just the discriminator:
+ *  every other field of the resulting clip (duration, the default layer, the
+ *  id) is built by the same `newTextLayer`/`newTextClipFields` /
+ *  `newAdjustmentLayer`/`newAdjustmentClipFields` factories the click-to-add
+ *  path and the `editor_add_text_clip`/`editor_add_adjustment_clip` MCP tools
+ *  already use, so a dragged title and a clicked one are byte-identical. */
+export interface DraggedGenerator {
+  kind: 'title' | 'adjustment';
+}
+
+/** D-246 — the human-readable name of each generator, shared by the rail's own
+ *  entries and by the refusal messages, so a tooltip can never call a thing
+ *  something the error does not. */
+export const GENERATOR_LABELS: Record<DraggedGenerator['kind'], string> = {
+  title: 'Title',
+  adjustment: 'Adjustment clip',
+};
 
 // D-094 originally added `CHROMA_CLIP_MOVE_MIME` here for a native-HTML5
 // cross-track clip-move drag; D-098 replaced that mechanism with a real

@@ -124,7 +124,7 @@
  * the right test and why the listener has to be a native non-passive one.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2 } from 'lucide-react';
 import { Player, useContentBox } from '@chroma/player';
@@ -180,7 +180,17 @@ const PREVIEW_LONG_EDGE = 960;
  */
 const PREVIEW_MIME = 'image/jpeg';
 
-export function PreviewPane() {
+export interface PreviewPaneProps {
+  /** D-247 — controls for the right-hand end of `Player`'s own title strip
+   *  (its `menu` slot). The Edit tab passes its Export dialog here, having
+   *  moved it out of the timeline toolbar. A slot rather than importing
+   *  `EditorExportDialog` directly: this pane is also mounted standalone by
+   *  `app/harness.html` (D-199), and the export dialog is an Edit-tab action,
+   *  not part of what "the preview" is. */
+  headerActions?: ReactNode;
+}
+
+export function PreviewPane({ headerActions }: PreviewPaneProps = {}) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const playing = useEditorTimelineStore((s) => s.playing);
@@ -628,6 +638,7 @@ export function PreviewPane() {
       <EditOverlay />
       <Player
         title="Timeline"
+        menu={headerActions}
         muted={muted}
         onMuteToggle={() => setMuted((m) => !m)}
         volume={volume}

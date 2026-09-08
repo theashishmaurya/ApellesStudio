@@ -2011,9 +2011,33 @@ export function useEditorControl(): void {
         const requested = a?.trackKind;
         const trackKind =
           requested === 'audio' ? 'audio' : requested === 'subtitle' ? 'subtitle' : 'video';
+        // B-114 — an optional insertion INDEX, so an agent can add a track
+        // above existing footage in one call, exactly as the human's
+        // drag-above-the-top-track gesture now does. It is not a new
+        // primitive: it runs the same `add_track` + `move_track` pair
+        // `TimelinePane`'s own boundary drop runs (`placeDroppedClip`), which
+        // is also the recipe `editor_add_track`/`editor_move_track` already
+        // documented as two calls. Omitted = append, unchanged.
+        const before = useEditorTimelineStore.getState().timeline?.tracks.length ?? 0;
+        const rawIndex = a?.index;
+        const wantsIndex = rawIndex !== undefined && rawIndex !== null;
+        const index = wantsIndex ? Math.round(Number(rawIndex)) : before;
+        if (wantsIndex && (!Number.isFinite(index) || index < 0 || index > before)) {
+          return {
+            error: `index must be 0..${before} (0 = the top of the compositing stack, ${before} = append at the bottom); got ${String(rawIndex)}`,
+          };
+        }
         useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind });
-        const tl = useEditorTimelineStore.getState().timeline;
-        return { ok: true, track: (tl?.tracks.length ?? 1) - 1 };
+        if (index !== before) {
+          useEditorTimelineStore.getState().applyOp({ kind: 'move_track', from: before, to: index });
+          // Same selection-follow `editor_move_track` and the GUI's own
+          // boundary drop do — `move_track` keeps the list length, so the
+          // store's generic remap never fires for it.
+          useEditorTimelineStore
+            .getState()
+            .setSelection((prev) => prev.map((s) => ({ ...s, track: trackIndexAfterMove(s.track, before, index) })));
+        }
+        return { ok: true, track: index };
       },
       // D-214 — `editor_add_track` only ever APPENDS (roadmap item 24(e)),
       // which lands a newly-added track at the HIGHEST index — the BOTTOM of
