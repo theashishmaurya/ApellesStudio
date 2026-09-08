@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Auto-captioning from the D-189 transcript (D-237, roadmap
+  item 27).** Turns a transcript's timed words into caption cues instead of
+  requiring a hand-authored `.srt` — reuses D-229's `import_subtitles` op
+  verbatim (no new track kind, no new `Clip` field), with a segment-boundary-
+  aware word/duration/pause grouping heuristic as the only new logic
+  (`packages/editor/src/captionsFromTranscript.ts`). GUI: a "Captions from
+  Transcript" button beside the Subtitles importer, operating on the selected
+  clip. MCP: `editor_generate_captions_from_transcript`.
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge

@@ -1689,8 +1689,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         D-229 §4: TTML timings depend on `ttp:timeBase`/`ttp:frameRate` and a
         subset parser would import real files with silently wrong times. Do it
         properly (full timebase + region/style resolution) or not at all.
-      - ⬜ Auto-captioning from the D-189 transcript — the timed words already
-        exist; turning them into cues is the obvious high-value follow-up.
+      - ✅ **Auto-captioning from the D-189 transcript — DONE, 2026-09-08
+        (D-237).** `groupTranscriptIntoCues`/`generatedCuesToCaptions`
+        (`packages/editor/src/captionsFromTranscript.ts`) group transcript
+        words into cues (a whisper SEGMENT is always a cue boundary; within
+        one, a break at 8 words / 3.0 s / a 0.7 s pause, whichever first) and
+        convert them to the exact `{id, start_frame, duration, text}` shape
+        D-229's `import_subtitles` op already consumes — no new track kind, no
+        new `Clip` field, the SAME op an `.srt` import uses. GUI: `Captions
+        from Transcript` button beside `SubtitleImportButton`, operating on
+        the selected clip's source media. MCP:
+        `editor_generate_captions_from_transcript`, auto-starting the D-189
+        transcript job (same start-then-poll shape `editor_get_transcript`
+        uses). **Deferred, deliberately:** merging into an already-selected
+        subtitle track rather than always creating a new one (needs a real
+        overlap-conflict policy D-229 never had to solve either).
       - ⬜ Italic/bold rendering (needs italic faces in `chroma::text`'s
         catalogue first, with their own export-parity question).
     - Explicitly **out of scope** (owner's own cut): hardware control

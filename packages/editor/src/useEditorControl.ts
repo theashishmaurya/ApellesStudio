@@ -143,6 +143,15 @@ import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './s
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
+// D-237 — auto-captioning from the D-189 transcript. The grouping algorithm
+// and the seconds->frames conversion are the ONE new thing this feature
+// needed; both the GUI button and this hook's own op call them, then dispatch
+// the SAME `import_subtitles` op the `.srt` importer already uses.
+import {
+  generatedCuesToCaptions,
+  groupTranscriptIntoCues,
+  sanitiseIdStem,
+} from './captionsFromTranscript';
 import { loadTextFonts, textFontsSync } from './textFonts';
 import {
   clampPreviewZoom,
@@ -1200,6 +1209,84 @@ export function useEditorControl(): void {
         } catch (e) {
           return { error: String(e) };
         }
+      },
+
+      // D-237 — generate captions straight from the D-189 transcript instead
+      // of requiring a hand-authored `.srt`. Reuses `import_subtitles`
+      // (D-229) verbatim for the actual timeline mutation — the only new work
+      // is turning transcript words into cues, which
+      // `groupTranscriptIntoCues`/`generatedCuesToCaptions` do (shared with
+      // the GUI's own "Captions from Transcript" button, see
+      // `CaptionsFromTranscriptButton.tsx`).
+      //
+      // **Auto-starts the transcript job** rather than requiring
+      // `editor_get_transcript` be called first: the same start-then-poll
+      // shape those D-189 ops use (`chroma::control`'s 20 s bridge ceiling —
+      // see this file's own "media understanding" section above), reported
+      // through the identical `state` vocabulary, so a caller that has
+      // already fetched the transcript (or gets a `state: "done"` on this
+      // very first call, since results are cached by path) pays no extra
+      // round trip.
+      editor_generate_captions_from_transcript: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const path = resolveMediaPath(a);
+        if ('error' in path) return path;
+
+        const store = useMediaUnderstandingStore.getState();
+        store.startTranscript(path.path, {
+          wordTimestamps: true,
+          force: !!a?.force,
+        });
+        const status = store.transcriptStatus(path.path);
+        if (status.phase === 'error') return { error: status.error ?? 'transcription failed' };
+        if (status.phase !== 'done') {
+          return {
+            ok: true,
+            path: path.path,
+            state: status.phase,
+            note: 'transcribing — call editor_generate_captions_from_transcript again once state is "done" (or poll editor_get_transcript_status)',
+          };
+        }
+
+        const transcript = status.result;
+        const num = (v: unknown): number | undefined => {
+          if (v === undefined || v === null) return undefined;
+          const n = Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const cues = groupTranscriptIntoCues(transcript?.segments ?? [], {
+          maxWords: num(a?.maxWords),
+          maxDurationS: num(a?.maxDurationS),
+          maxPauseGapS: num(a?.maxPauseGapS),
+        });
+        if (cues.length === 0) {
+          return {
+            error:
+              'the transcript has no word-level timestamps to group into cues — re-run with word_timestamps (the default) enabled, or the file may be silent',
+          };
+        }
+
+        const fps = timelineFps(tl);
+        const offsetFrames = a?.offsetFrames !== undefined ? Math.round(Number(a.offsetFrames)) : 0;
+        const stem = path.path.split(/[/\\]/).pop()?.replace(/\.[^./\\]+$/, '') ?? 'transcript';
+        const idPrefix = `cap-${sanitiseIdStem(stem)}-`;
+        const captions = generatedCuesToCaptions(cues, fps, offsetFrames, idPrefix);
+
+        const style = captionStylePatch(a);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'import_subtitles',
+          cues: captions,
+          ...(Object.keys(style).length > 0 ? { style } : {}),
+        });
+        const after = useEditorTimelineStore.getState().timeline;
+        return {
+          ok: true,
+          track: (after?.tracks.length ?? 1) - 1,
+          cues: captions.length,
+          sourceName: stem,
+          language: transcript?.language,
+        };
       },
 
       editor_add_caption: (a) => {

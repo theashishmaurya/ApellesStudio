@@ -1548,6 +1548,92 @@ def editor_export_subtitles(track: int, path: str) -> str:
 
 
 @mcp.tool()
+def editor_generate_captions_from_transcript(
+    path: str | None = None,
+    media_id: str | None = None,
+    source_path: str | None = None,
+    offset_frames: int | None = None,
+    max_words: int | None = None,
+    max_duration_s: float | None = None,
+    max_pause_gap_s: float | None = None,
+    force: bool = False,
+    font: str | None = None,
+    size: float | None = None,
+    color: str | None = None,
+    box_enabled: bool | None = None,
+    box_color: str | None = None,
+    box_opacity: float | None = None,
+    align: str | None = None,
+    position_x: float | None = None,
+    position_y: float | None = None,
+) -> str:
+    """Auto-caption a file straight from its D-189 transcript — the timed-word
+    follow-up to `editor_import_subtitles` (D-229/D-237). Same result (a new
+    SUBTITLE track, one caption clip per cue, one undoable step) with no
+    hand-authored `.srt` required: this transcribes the file itself and groups
+    the timed words into cues.
+
+    **Auto-starts the transcript job and returns its `state`** — the same
+    start-then-poll shape `editor_get_transcript` uses (`chroma::control`'s
+    bridge caps at 20 s; a transcript takes tens of seconds). `state:
+    "running"` or `"idle"` means: wait a few seconds and call this tool again
+    with the SAME file — results are cached by path, so a repeat call costs
+    nothing once done and captions are generated on that same call. `force`
+    re-transcribes even if a result is cached (the file changed on disk).
+
+    Identify the file with `path` (any absolute path, does not need to be
+    imported first), or `media_id`/`source_path` for a project media-pool
+    item — same resolution rule as `editor_get_transcript`.
+
+    **Cue grouping** (see `packages/editor/src/captionsFromTranscript.ts` for
+    the full reasoning): a transcript SEGMENT is always a cue boundary
+    (mlx-whisper's own segment breaks are reused as sentence/clause
+    boundaries); within one segment a cue breaks at `max_words` words
+    (default 8), `max_duration_s` seconds of source span (default 3.0), or a
+    pause to the next word of at least `max_pause_gap_s` (default 0.7) —
+    whichever comes first. Override any of the three for unusually fast/slow
+    or unusually pause-heavy speech.
+
+    Refused (with a real explanation) if the transcript came back with no
+    word-level timestamps at all (silent/music-only footage, or a prior
+    `editor_get_transcript` call that passed `word_timestamps=False`).
+
+    `offset_frames` shifts every cue — pass the playhead frame to drop the
+    track in mid-timeline rather than at 00:00. The style arguments are
+    identical to `editor_import_subtitles`'s own (they set the whole new
+    TRACK's style); use `editor_set_caption_style` afterwards to change it."""
+    import json
+
+    args = _media_args(path, media_id, source_path)
+    if offset_frames is not None:
+        args["offsetFrames"] = offset_frames
+    if max_words is not None:
+        args["maxWords"] = max_words
+    if max_duration_s is not None:
+        args["maxDurationS"] = max_duration_s
+    if max_pause_gap_s is not None:
+        args["maxPauseGapS"] = max_pause_gap_s
+    if force:
+        args["force"] = True
+    for key, val in (
+        ("font", font),
+        ("size", size),
+        ("color", color),
+        ("boxEnabled", box_enabled),
+        ("boxColor", box_color),
+        ("boxOpacity", box_opacity),
+        ("align", align),
+        ("positionX", position_x),
+        ("positionY", position_y),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(
+        _op("editor_generate_captions_from_transcript", **args), indent=2, default=str
+    )
+
+
+@mcp.tool()
 def editor_add_caption(
     track: int,
     text: str,

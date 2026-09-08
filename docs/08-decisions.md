@@ -21837,3 +21837,136 @@ none needs a schema change):
 tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
+
+## D-237 — Auto-captioning from the D-189 transcript reuses D-229's `import_subtitles` verbatim; the only new code is the word→cue grouping, and it lives in TypeScript, not Rust
+
+Roadmap item 27's own line, left open by D-229: "the timed words already exist;
+turning them into cues is the obvious high-value follow-up."
+
+**Context.** D-189 gives `editor_get_transcript` per-word `{word, start, end,
+probability?}` timing (`ai-media/transcribe.py`'s verified-live shape — no
+speaker diarisation, `probability` present only when the model reports one).
+D-229 gives captions their own `TrackKind::Subtitle`, with `.srt`/`.vtt` import
+landing a whole file as one new track via ONE store op, `import_subtitles`
+(`cues: [{id, start_frame, duration, text}]`, optional track `style`). The gap
+between them is exactly one thing: turning 5-10 words/second of raw transcript
+into caption-sized cues.
+
+### Decision 1 — reuse `import_subtitles` verbatim; no new op, no new `Clip`/`Track` shape
+
+A generated cue becomes a `Clip` on a `TrackKind::Subtitle` track through the
+IDENTICAL op an imported `.srt` cue uses — same reducer, same undo entry, same
+"always a NEW track" behaviour. The only new code is upstream of that op:
+something that produces `{id, start_frame, duration, text}` from a transcript
+instead of from parsed SubRip text. This was the deciding design constraint
+from the start — CLAUDE.md's "the same op/store action underneath both" already
+governs `import_subtitles` for the GUI button vs. `editor_import_subtitles`,
+and a transcript-driven path is a third caller of the exact same primitive, not
+a reason to grow a second one.
+
+**Rejected: a new `generate_captions` op that builds the track directly** —
+would duplicate `import_subtitles`'s track-creation/style-merge logic for zero
+benefit, and any future fix to how an imported track is built (say, merging
+into an existing subtitle track instead of always creating a new one) would
+have to be made twice.
+
+### Decision 2 — the grouping algorithm lives in TypeScript, not Rust, unlike D-229's ms→frames conversion
+
+D-229's `.srt` parsing converts milliseconds to frames exactly once, in Rust
+(`chroma_timeline::subtitle_import::cues_to_clips`), specifically so the GUI
+importer and `editor_import_subtitles` could not round a cue differently —
+both reach it through the same `chroma_import_subtitles` Tauri command. A
+transcript has no such second Rust entry point to protect against: the
+transcript itself only ever reaches JavaScript, already parsed, already
+cached by path in `mediaUnderstandingStore.ts` (a module-level Zustand store,
+not a file on disk another process could reach). Both the GUI button
+(`CaptionsFromTranscriptButton.tsx`) and the MCP tool's handler
+(`useEditorControl.ts`) call the one `packages/editor/src/
+captionsFromTranscript.ts` module directly — no Tauri round trip needed to
+keep them in step, because there is only one runtime here to keep in step
+with itself. Putting the grouping logic in Rust would add a command and an
+IPC hop for no parity benefit D-229's justification actually rested on.
+
+### Decision 3 — the grouping heuristic: segment boundaries + word/duration/pause caps
+
+`groupTranscriptIntoCues` (`captionsFromTranscript.ts`) is two-level:
+
+1. **A transcript SEGMENT is always a cue boundary**, never merged with its
+   neighbour. mlx-whisper's own segmentation already breaks on natural
+   pauses/clauses — reusing it is free, honest sentence-boundary awareness,
+   cheaper than re-detecting sentences from punctuation the ASR may or may not
+   have emitted consistently.
+2. **Within one segment**, a cue closes on the first of: `DEFAULT_MAX_WORDS_
+   PER_CUE` = **8** words, `DEFAULT_MAX_CUE_DURATION_S` = **3.0** seconds of
+   source span, or a gap to the next word of at least `DEFAULT_MAX_PAUSE_GAP_S`
+   = **0.7** seconds (a real breath/clause break, not ordinary inter-word
+   spacing).
+
+**Where these three numbers came from** (CLAUDE.md treats a grouping heuristic
+as a data decision calling for judgement, not a UI pattern calling for a
+scrape): Premiere Pro's and CapCut's own auto-caption features both default to
+short, sentence-aware chunks rather than one cue per ASR segment or a full
+paragraph; broadcast subtitle practice (already this repo's own norm — see
+`CaptionCue::chars_per_second`'s doc) targets roughly 1-6 s on screen at
+15-20 characters/second. 8 words at English's ~5.7 chars/word average is
+~46 characters over up to 3.0 s — about 15 cps at the cap, inside that range
+even before a human retimes anything, and deliberately on the SHORT side of
+the broadcast range: a generated caption is a starting point an editor
+retimes, not a delivered master.
+
+**Rejected: one cue per whisper segment, no further splitting** — segments
+run several seconds and tens of words on continuous speech (a talking-head
+take, the D-189 decision entry's own target use case), which would sit on
+screen far past broadcast norms with no sub-division at all.
+**Rejected: fixed-duration windows (e.g. "a new cue every 3 seconds")** —
+ignores where the person actually paused, cutting a cue mid-sentence for no
+reason a fixed clock can see.
+**Rejected: re-detecting sentences from trailing punctuation** (`.`/`!`/`?`)
+— whisper's punctuation is real but not guaranteed present or correctly
+placed on every word, while its segment boundary is a first-class field
+already used for exactly this signal.
+
+### Decision 4 — the new track always inserted fresh, never merged into an existing one
+
+Same behaviour `import_subtitles` already has for `.srt` import: one call
+always appends a brand-new subtitle track. Merging into an already-selected
+subtitle track was considered and rejected for this pass — it would need a
+real conflict policy (two cues overlapping the same span) that D-229 never had
+to solve either, and "make a new track, then move/merge by hand" is what a
+`.srt` import already asks of an editor who wants a second language track
+next to a first. Left on the roadmap as a real follow-up, not silently
+dropped.
+
+### Interfaces (CLAUDE.md's "both in the same pass")
+
+- **GUI: `CaptionsFromTranscriptButton.tsx`**, beside `SubtitleImportButton` in
+  the timeline toolbar. Operates on the SELECTED clip's `source_path` (not a
+  file picker, unlike the `.srt` importer — see the component's own doc for
+  why a selection is the right input here) and awaits the transcript in full
+  (the GUI has no 20 s bridge ceiling to respect, unlike the MCP path below).
+- **MCP: `editor_generate_captions_from_transcript`**, resolving its file the
+  same three ways `editor_get_transcript` already does (`path`/`media_id`/
+  `source_path`) and auto-starting the transcript job — the identical
+  start-then-poll shape `editor_get_transcript` uses, since this tool reaches
+  the sidecar through the same 20 s `chroma::control` bridge (D-189). A caller
+  that already has a cached transcript (or gets `state: "done"` on this very
+  first call) pays no extra round trip. `max_words`/`max_duration_s`/
+  `max_pause_gap_s` override the three heuristic constants; the caption-style
+  arguments mirror `editor_import_subtitles`'s own.
+
+**Verified.** `captionsFromTranscript.test.ts` (14 tests) — fixture-based,
+asserting exact cue text/count/start-end seconds for: ordinary speech, a
+segment-boundary break with both halves individually under every cap, a
+word-count break, a duration break, a pause break, an overridden cap, a
+non-finite/negative override degrading to the default, a segment with no
+word-level timings producing zero cues, mlx-whisper's leading-space word
+joining, and the seconds→frames conversion's independent-rounding/minimum-
+1-frame-duration parity with `cues_to_clips`. `CaptionsFromTranscriptButton.
+dom.test.tsx` (3 tests, real DOM, real stores) — generating a track from a
+cached transcript, refusing with a real message on no/wrong selection, and
+refusing on a transcript with no word-level timestamps. `tsc --noEmit`
+introduces zero new errors; the full `@chroma/editor` suite (1232 tests) stays
+green, including the D-201 React-Compiler-bailout check (`reactCompiler.
+test.ts`), which caught a real `try/finally` bailout in the button's first
+draft — fixed the same way `SubtitleImportButton`'s own comment already
+documents (a hoisted result, no `finally`). No Rust changed.
