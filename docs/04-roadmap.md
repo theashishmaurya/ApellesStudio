@@ -1494,8 +1494,39 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /
       Fit-to-Fill / Place on Top / Append / Ripple-Overwrite (ref:
       `timeline.jpg`).
-    - ⬜ Dynamic zoom — drag a start/end box in the viewer instead of
-      hand-authoring keyframes.
+    - ~~**Dynamic zoom** — drag a start/end box in the viewer instead of
+      hand-authoring keyframes~~ — **DONE, 2026-09-08 (D-234).** Two boxes,
+      green start / dashed red end, armed from the Inspector and spanning the
+      whole clip — all four of those taken from Blackmagic's own Edit-page copy
+      for the feature (`scratch/resolve-reference/`, the `edit-dynamic`
+      section), not from a guess. The decision the feature hangs on is that it
+      **bakes ordinary `position_x`/`position_y`/`scale` keyframes** instead of
+      adding a persistent dynamic-zoom stage the way Resolve does: no new `Clip`
+      field and no change to either renderer, so preview/export agreement, undo,
+      the Inspector's per-property diamonds and the curve editor below all apply
+      to it unchanged — pinned by a test asserting the baked list is
+      byte-identical to the hand-authored equivalent and compiles to the same
+      ffmpeg expression. One deliberate divergence (D-234 §2): the boxes are the
+      clip's LAYER FOOTPRINT, not Resolve's inverse framing rect, so a bigger
+      box means more zoomed in and "the box" means one thing everywhere in the
+      viewer. Ease reuses the existing `FadeCurve`/`FADE_PRESETS` (D-147 — which
+      are already exactly Resolve's four), baked as 20 sampled segments because
+      the keyframe model has no per-key easing on either side of the wire;
+      `linear` stays exactly two keys. Replaces, never interleaves with,
+      existing position/scale keys — and warns before doing it; every other
+      animated property survives. `TransformBox` extracted from
+      `TransformOverlay` so the single box and this pair are one component.
+      Inspector section + Swap button + `editor_set_dynamic_zoom`, both
+      interfaces running the same pure `applyDynamicZoom` and the same op.
+      **Follow-up, concrete and already due:** the curve editor above (D-233)
+      landed the same day with exactly the general per-segment easing whose
+      absence forced this sampling. The two are compatible as they stand (a bake
+      writes plain keys; linear is the default), but whoever merges both
+      branches should collapse the bake to **two keys plus one D-233 ease
+      segment** for every curve — strictly better on every axis (2 keys not 21,
+      an exact curve not a 20-segment approximation, and an ease that becomes
+      re-editable and recoverable, which removes D-234's one stated cost). See
+      D-234's Decision 3.
     - ~~**Per-clip parametric EQ — multi-band** (ref: `soundtrack.jpg`)~~ —
       **DONE, 2026-09-08 (D-224), except the visual curve.** `Clip::eq_bands`
       (a list; the Inspector authors Resolve's own four-band strip), each band

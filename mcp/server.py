@@ -2370,6 +2370,76 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
 
 
 @mcp.tool()
+def editor_set_dynamic_zoom(
+    track: int,
+    clip: int,
+    start: dict | None = None,
+    end: dict | None = None,
+    ease: str | None = None,
+) -> str:
+    """Animate a push-in or pull-out across a clip's WHOLE length by naming
+    where it is framed at the start and where at the end — the shortcut for
+    "slowly zoom into this shot", instead of computing keyframes by hand.
+
+    This is the agent half of the Edit tab's Dynamic Zoom (D-234), the same
+    feature a human drives by dragging a green (start) and a red (end) box in
+    the viewer. Both interfaces run the identical box→keyframe math and write
+    the identical op, so what you author here is what the boxes show, and vice
+    versa. Calling this also turns those boxes on for the clip, so a human
+    watching sees exactly what you did.
+
+    `start` and `end` are `{"position_x": …, "position_y": …, "scale": …}` —
+    the SAME three fields (and the same units) as editor_set_clip_transform:
+    `position_*` are composition fractions offset from centre, `scale` is a
+    multiplier where bigger = more zoomed IN. Everything is optional and the
+    defaults are the useful ones:
+
+    - omit `start` → the clip's CURRENT framing at its first frame;
+    - omit `end` → that framing pushed in 1.2x (a gentle punch-in), or the
+      clip's existing end framing if it already has a dynamic zoom;
+    - omit a single FIELD inside either → the value that end already has, so
+      `end={"scale": 1.4}` zooms without recentring the shot.
+
+    `ease` is one of `linear` (default), `ease-in`, `ease-out`,
+    `ease-in-out` — the same four curves editor_set_clip_fade offers.
+
+    WHAT IT WRITES, exactly: ordinary `position_x`/`position_y`/`scale`
+    keyframes on this one clip, spanning its whole source window. There is no
+    separate 'dynamic zoom' object -- once written it is indistinguishable
+    from keys you could have authored with editor_set_clip_keyframes, which
+    means editor_get_state shows it, both the preview and editor_export
+    already render it, and a human can Cmd+Z it. `linear` writes exactly two
+    keys; any other ease is baked into ~21, because the keyframe model
+    interpolates linearly between keys on both sides of the wire and sampling
+    the curve is the only ease BOTH renderers reproduce.
+
+    REPLACES, does not append: any existing `position_x`/`position_y`/`scale`
+    keys on this clip are dropped first (a dynamic zoom spans the whole clip,
+    so two overlapping animations of the same properties would be
+    meaningless). Every OTHER animated property is left untouched -- opacity,
+    rotation, the crop insets, volume, pan.
+
+    REFUSED on a title/text clip (its scale is pinned to 1 by both renderers)
+    and on an adjustment clip (its correction is full-frame, it has no
+    geometry) rather than silently animating nothing.
+
+    Returns the two framings actually used, the ease, the clip's source-frame
+    span, how many keyframes were written, and `animates` -- false when the
+    two framings came out identical, i.e. you wrote a hold rather than a
+    zoom."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if start is not None:
+        args["start"] = start
+    if end is not None:
+        args["end"] = end
+    if ease is not None:
+        args["ease"] = ease
+    return json.dumps(_op("editor_set_dynamic_zoom", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_export(
     out_path: str,
     width: int,

@@ -278,6 +278,21 @@ the `Clip` model can already express.
   snapping/guides, marquee, multi-clip transform. (Click-to-select has since been built
   on top of Phase 1, unchanged — D-204, 2026-09-07; see Open Question 3.)
 
+> **Since built on top of this, without changing any of it — Dynamic Zoom (D-234,
+> 2026-09-08).** The third of the viewer modes this note's reference section names
+> below (Transform / Crop / **Dynamic Zoom**) now exists, as a second overlay drawing
+> **two** of this same box — a green start and a dashed red end — whose release bakes
+> `position_x`/`position_y`/`scale` keyframes across the clip. Two things about it
+> matter to a reader of *this* note. First, the box, its handles and all the pointer
+> wiring described above were extracted verbatim into `TransformBox.tsx` so both
+> overlays are one component rather than two that drift — every behaviour this section
+> specifies (uniform corner scale about the box centre, body-drag reposition, live
+> overlay-only feedback, one op on release, `Escape` cancels, no-op on a locked track)
+> is unchanged and now lives there. Second, Chroma's dynamic-zoom boxes deliberately
+> do **not** use Resolve's inverse framing-rect semantic: they are the layer footprint,
+> exactly like the box specified here, so a bigger box means more zoomed in. See D-234
+> for that argument.
+
 ### Phase 2 — rotation, and the anchor-point question
 
 `rotation` already exists on `Clip` and is already applied by `composite_layer_onto`

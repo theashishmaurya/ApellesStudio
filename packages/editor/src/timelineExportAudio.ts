@@ -73,6 +73,7 @@ import {
   clampClipVolume,
   endFrame,
   eqBandCoeffs,
+  fadeCurveEval,
   panGains,
 } from './timeline';
 import type { EqBand } from './eq';
@@ -82,61 +83,12 @@ import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 // fade — a sampled approximation of the exact cubic-bezier curve
 // --------------------------------------------------------------------------- //
 
-/** Newton-Raphson iteration cap — mirrors `chroma_types::fade::
- *  NEWTON_ITERATIONS` (WebKit's own number, see that constant's own doc). */
-const NEWTON_ITERATIONS = 8;
-/** Bisection fallback cap — mirrors `chroma_types::fade::BISECTION_ITERATIONS`. */
-const BISECTION_ITERATIONS = 32;
-/** Convergence tolerance — mirrors `chroma_types::fade::EPSILON`. */
-const EPSILON = 1e-7;
-
-function bezier(t: number, p1: number, p2: number): number {
-  const mt = 1 - t;
-  return 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t;
-}
-
-function bezierSlope(t: number, p1: number, p2: number): number {
-  const mt = 1 - t;
-  return 3 * mt * mt * p1 + 6 * mt * t * (p2 - p1) + 3 * t * t * (1 - p2);
-}
-
-function solveTForX(x: number, x1: number, x2: number): number {
-  let t = x;
-  for (let i = 0; i < NEWTON_ITERATIONS; i++) {
-    const err = bezier(t, x1, x2) - x;
-    if (Math.abs(err) < EPSILON) return t;
-    const slope = bezierSlope(t, x1, x2);
-    if (Math.abs(slope) < EPSILON) break;
-    const next = t - err / slope;
-    if (next < 0 || next > 1) break;
-    t = next;
-  }
-  let lo = 0;
-  let hi = 1;
-  t = x;
-  for (let i = 0; i < BISECTION_ITERATIONS; i++) {
-    const err = bezier(t, x1, x2) - x;
-    if (Math.abs(err) < EPSILON) return t;
-    if (err > 0) hi = t;
-    else lo = t;
-    t = (lo + hi) / 2;
-  }
-  return t;
-}
-
-/** `y` at normalised progress `x` — mirrors `chroma_types::FadeCurve::eval`
- *  field-for-field (same clamping, same short-circuit at the exact
- *  endpoints, same Newton-then-bisection solve). */
-export function fadeCurveEval(curve: FadeCurve, x: number): number {
-  if (!Number.isFinite(x)) return 1;
-  const xc = Math.min(1, Math.max(0, x));
-  if (xc <= 0) return 0;
-  if (xc >= 1) return 1;
-  const x1 = Math.min(1, Math.max(0, curve.x1));
-  const x2 = Math.min(1, Math.max(0, curve.x2));
-  const t = solveTForX(xc, x1, x2);
-  return bezier(t, curve.y1, curve.y2);
-}
+// D-234 — the curve EVALUATOR (`fadeCurveEval` and its bezier solver) moved to
+// `timeline.ts`, beside the `FadeCurve` type it evaluates, once dynamic zoom's
+// ease bake became its second consumer. See that function's own doc for why.
+// Everything below is still this module's own business: turning that exact
+// curve into the piecewise-linear ffmpeg expression an `afade`-less filter
+// chain needs.
 
 /** The fade multiplier at `pos` for a clip of length `len`, fade windows
  *  `fadeIn`/`fadeOut` — mirrors `chroma_types::fade_gain` field-for-field,

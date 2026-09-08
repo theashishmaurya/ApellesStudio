@@ -13,14 +13,15 @@ import {
   clipAudioParam,
   dbToLinear,
   duckGainExpr,
-  fadeCurveEval,
   fadeGainAt,
   fadeGainExpr,
   panGainExprs,
   resolveDuckForTrack,
   type DuckSegment,
 } from './timelineExportAudio';
-import { FADE_PRESETS, panGains } from './timeline';
+// D-234 — `fadeCurveEval` now lives beside the `FadeCurve` type it evaluates,
+// its ease bake having become a second consumer. Same function, same tests.
+import { FADE_PRESETS, fadeCurveEval, panGains } from './timeline';
 import type { Clip, Timeline, Track } from './timeline';
 
 /** A tiny ffmpeg-expression interpreter for the subset this module emits

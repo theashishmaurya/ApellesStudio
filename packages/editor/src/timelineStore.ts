@@ -66,7 +66,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { useHistoryStore } from '@chroma/history';
 
-import { applyOp as applyOpPure, labelForOp, timelineDuration, type EditOp, type Timeline } from './timeline';
+import {
+  applyOp as applyOpPure,
+  labelForOp,
+  timelineDuration,
+  type EditOp,
+  type FadeCurve,
+  type Timeline,
+} from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -198,6 +205,28 @@ interface EditorTimelineState {
    *  vertical space in the viewer, and a user who has not asked for it should
    *  get the picture. */
   waveformView: boolean;
+  /** D-234 — which clip's DYNAMIC ZOOM boxes the viewer is showing, and the
+   *  ease the next bake will use. `null` (the default) = the ordinary
+   *  single-box transform overlay.
+   *
+   *  UI state, for the same D-216 reasons `previewView` and `waveformView`
+   *  above are: it is an authoring MODE, not part of `Timeline`, so it is
+   *  never persisted and never undoable — the KEYFRAMES a dynamic zoom bakes
+   *  are the persisted, undoable artifact, and arming or disarming the mode
+   *  writes nothing at all. In the store rather than in the Inspector's own
+   *  `useState` because two surfaces need it (the Inspector section that arms
+   *  it, and `PreviewPane`'s overlay that draws it), which is exactly the
+   *  "lift it" case `selection` set the precedent for.
+   *
+   *  `clipId`, not a track/index pair: an index moves under a clip when
+   *  anything is inserted before it, and the mode must follow the CLIP. The
+   *  overlay resolves it against the current selection and simply draws
+   *  nothing when they disagree.
+   *
+   *  `curve` is authoring-only and is deliberately NOT recoverable from a
+   *  clip: the baked keys ARE the curve (see `dynamicZoom.ts`'s module doc),
+   *  so re-arming the mode always starts at `linear`. */
+  dynamicZoom: { clipId: string; curve: FadeCurve } | null;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -248,6 +277,11 @@ interface EditorTimelineState {
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
   setWaveformView: (open: boolean) => void;
+  /** D-234 — arm/disarm the viewer's dynamic-zoom boxes, or change the ease
+   *  the next bake uses. The one writer for both the human's Inspector toggle
+   *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
+   *  is always an explicit `applyOp` by whoever committed a box. */
+  setDynamicZoom: (mode: { clipId: string; curve: FadeCurve } | null) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -325,6 +359,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   inspectorOpen: true,
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
+  // D-234 — disarmed by default; the viewer shows the ordinary transform box.
+  dynamicZoom: null,
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -369,6 +405,10 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
       // preference in every reference NLE, and losing it on every clip click
       // would make it useless for the inspection it exists for.
       previewView: FIT_VIEW,
+      // D-234 — the armed clip belongs to the outgoing project, so the mode
+      // goes with it rather than leaving two boxes over a picture that has
+      // nothing to do with them.
+      dynamicZoom: null,
     });
 
     if (key === null) return;
@@ -453,6 +493,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   setInspectorOpen: (open) => set({ inspectorOpen: open }),
 
   setWaveformView: (open) => set({ waveformView: open }),
+
+  setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
 
   applyOp: (op) => {
     const before = get().timeline;

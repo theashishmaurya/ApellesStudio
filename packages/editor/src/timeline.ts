@@ -823,6 +823,75 @@ export function fadePresetName(c: FadeCurve | undefined | null): string | null {
   return hit ? hit.name : null;
 }
 
+// --------------------------------------------------------------------------- //
+// Evaluating a `FadeCurve` — D-147, moved here beside the type by D-234
+// --------------------------------------------------------------------------- //
+
+/** Newton-Raphson iteration cap for the `x → t` solve — mirrors
+ *  `chroma_types::fade::NEWTON_ITERATIONS` (WebKit's own number). */
+const NEWTON_ITERATIONS = 8;
+/** Bisection fallback cap — mirrors `chroma_types::fade::BISECTION_ITERATIONS`. */
+const BISECTION_ITERATIONS = 32;
+/** Convergence tolerance — mirrors `chroma_types::fade::EPSILON`. */
+const CURVE_EPSILON = 1e-7;
+
+function bezier(t: number, p1: number, p2: number): number {
+  const mt = 1 - t;
+  return 3 * mt * mt * t * p1 + 3 * mt * t * t * p2 + t * t * t;
+}
+
+function bezierSlope(t: number, p1: number, p2: number): number {
+  const mt = 1 - t;
+  return 3 * mt * mt * p1 + 6 * mt * t * (p2 - p1) + 3 * t * t * (1 - p2);
+}
+
+function solveTForX(x: number, x1: number, x2: number): number {
+  let t = x;
+  for (let i = 0; i < NEWTON_ITERATIONS; i++) {
+    const err = bezier(t, x1, x2) - x;
+    if (Math.abs(err) < CURVE_EPSILON) return t;
+    const slope = bezierSlope(t, x1, x2);
+    if (Math.abs(slope) < CURVE_EPSILON) break;
+    const next = t - err / slope;
+    if (next < 0 || next > 1) break;
+    t = next;
+  }
+  let lo = 0;
+  let hi = 1;
+  t = x;
+  for (let i = 0; i < BISECTION_ITERATIONS; i++) {
+    const err = bezier(t, x1, x2) - x;
+    if (Math.abs(err) < CURVE_EPSILON) return t;
+    if (err > 0) hi = t;
+    else lo = t;
+    t = (lo + hi) / 2;
+  }
+  return t;
+}
+
+/** `y` at normalised progress `x` — mirrors `chroma_types::FadeCurve::eval`
+ *  field-for-field (same clamping, same short-circuit at the exact endpoints,
+ *  same Newton-then-bisection solve).
+ *
+ *  **D-234 moved this here from `timelineExportAudio.ts`**, where D-147 first
+ *  wrote it, and the reason is the one `panGains` above already states for
+ *  itself: it now has two consumers on opposite sides of the app — the ffmpeg
+ *  audio compiler (`fadeGainAt`) and dynamic zoom's ease bake
+ *  (`dynamicZoom.ts`) — and a second copy of a bezier solver is exactly the
+ *  drift this repo's "extract it" rule exists to stop. An authoring-side
+ *  overlay reaching into the export compiler for its easing would also be the
+ *  wrong dependency direction. The function itself is unchanged. */
+export function fadeCurveEval(curve: FadeCurve, x: number): number {
+  if (!Number.isFinite(x)) return 1;
+  const xc = Math.min(1, Math.max(0, x));
+  if (xc <= 0) return 0;
+  if (xc >= 1) return 1;
+  const x1 = Math.min(1, Math.max(0, curve.x1));
+  const x2 = Math.min(1, Math.max(0, curve.x2));
+  const t = solveTForX(xc, x1, x2);
+  return bezier(t, curve.y1, curve.y2);
+}
+
 /** B-077 — `c.duration`/`c.source_start` (and any other quantity measured in
  *  `c`'s own **source frames**, per the module doc on `Clip`) converted to
  *  **timeline frames** at the project's own `fps` (`timelineFps(tl)`), using
