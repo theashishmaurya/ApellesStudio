@@ -1,6 +1,6 @@
 /**
  * useDebugControl.ts — mounts the `debug_*` op registry, in dev builds only
- * (D-218).
+ * (D-219).
  *
  * What it is: one hook, mounted once from `app/src/App.tsx` next to
  *   `useChromaControl()`, that listens on the same `chroma://request` /
@@ -14,7 +14,7 @@
  *   pass drops both the branch and `debugOps.ts`'s entire chunk, along with
  *   `domTree.ts`, `uiState.ts`, and every op body in them. That is the
  *   frontend counterpart of `#[cfg(debug_assertions)]` on the Rust commands
- *   (D-218 / B-099): a real compile-time gate, not a runtime flag, and one
+ *   (D-219 / B-100): a real compile-time gate, not a runtime flag, and one
  *   that is *checked* — see `docs/notes/debug-tooling.md` for the bundle grep
  *   that proves it on a real `vite build`.
  *

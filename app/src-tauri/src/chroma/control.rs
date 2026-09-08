@@ -19,9 +19,9 @@
 //! so routing it through the store would buy nothing anyway).
 //!
 //! Those two are also the only thing here that is `#[cfg(debug_assertions)]`
-//! (B-099/D-218): internal debug tooling is never shipped, so a release build
+//! (B-100/D-219): internal debug tooling is never shipped, so a release build
 //! has no [`native_op`] arms at all and forwards every op onward. The
-//! FRONTEND-side `debug_*` ops (D-218's UI-state / DOM-tree / frame-timing
+//! FRONTEND-side `debug_*` ops (D-219's UI-state / DOM-tree / frame-timing
 //! registry, `@chroma/debug`) need no special handling here — they are
 //! ordinary forwarded ops, gated on their own side by `import.meta.env.DEV`.
 //!
@@ -153,7 +153,7 @@ enum BridgeErr {
 /// answer with a reason in it, not a transport failure, and the MCP client
 /// reads `ok`/`error` rather than the status code.
 ///
-/// B-099/D-218 — this whole function is gated with the module it calls into.
+/// B-100/D-219 — this whole function is gated with the module it calls into.
 /// Every op it answers is internal debug tooling, and internal debug tooling
 /// is never shipped, so a release build gets the [`no-op twin`](native_op)
 /// below and forwards everything to the frontend exactly as it did before
@@ -183,7 +183,7 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
     })
 }
 
-/// Release-build twin of [`native_op`] (B-099/D-218): there are no native ops
+/// Release-build twin of [`native_op`] (B-100/D-219): there are no native ops
 /// once the debug tooling is compiled out, so everything is forwarded to the
 /// frontend. A real function rather than a `cfg` inside the caller, so the one
 /// call site reads the same in both configurations.

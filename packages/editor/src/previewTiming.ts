@@ -1,6 +1,6 @@
 /**
  * previewTiming.ts — what the Edit-tab preview's playback loop ACTUALLY did,
- * measured in the webview (D-218, `docs/notes/debug-tooling.md` piece 5).
+ * measured in the webview (D-219, `docs/notes/debug-tooling.md` piece 5).
  *
  * What it is: two small ring buffers of `performance.now()` timestamps that
  *   `PreviewPane` writes to as it plays — one per `requestAnimationFrame`
@@ -27,7 +27,7 @@
  *
  * **Debug-only.** Every call site in `PreviewPane.tsx` is wrapped in
  * `if (import.meta.env.DEV)`, so a production build constant-folds them away
- * and this module is tree-shaken out along with them (D-218's frontend gate).
+ * and this module is tree-shaken out along with them (D-219's frontend gate).
  * Pure and injectable (`at` is a parameter) so the statistics are unit-tested
  * without a clock — see `previewTiming.test.ts`.
  */

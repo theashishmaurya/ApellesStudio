@@ -248,7 +248,7 @@ export function PreviewPane() {
   /** Put one freshly-fetched frame's bytes on screen, releasing the previous
    *  frame's object URL (D-217 — see `frameUrl`'s own note). */
   const showFrame = useCallback((bytes: ArrayBuffer) => {
-    // D-218 (debug-tooling piece 5) — one timestamp per frame that reaches
+    // D-219 (debug-tooling piece 5) — one timestamp per frame that reaches
     // the screen, so `debug_frame_timing` can report the real playback
     // interval D-217 had no way to measure. `import.meta.env.DEV` is folded
     // to `false` by `vite build`, so this line and `previewTiming.ts` itself
@@ -365,7 +365,7 @@ export function PreviewPane() {
 
     const tick = async () => {
       if (stopped) return;
-      // D-218 — the other half of the frame-timing readout: how often the rAF
+      // D-219 — the other half of the frame-timing readout: how often the rAF
       // loop got to run at all. A stalled `raf` channel next to a healthy
       // `paint` one is the signature of a THROTTLED (backgrounded) window,
       // which is precisely the blocker that stopped D-217 measuring this from

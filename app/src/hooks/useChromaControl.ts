@@ -1458,7 +1458,7 @@ export function useChromaControl() {
       // `editor_set_clip_fade`, so this skip is also what stops this file
       // from answering "unknown op" for its own former ops under their new
       // names.
-      // D-218 — `debug_*` gets the same treatment for the same reason: the
+      // D-219 — `debug_*` gets the same treatment for the same reason: the
       // internal debug UI-state/DOM ops are `@chroma/debug`'s registry
       // (`useDebugControl`, dev builds only). Without this skip they would
       // land here as "unknown op" and race that registry for the one-shot

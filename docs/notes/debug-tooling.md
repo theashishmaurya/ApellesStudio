@@ -13,8 +13,8 @@ a real compile-time gate (`#[cfg(debug_assertions)]`, a Cargo feature, or equiva
 so there is no path for one of these to ship. These are for us, not for an end user's
 build of Chroma.
 
-**How that gate is actually implemented** (D-218; the Rust half was missing until
-then — **B-099**):
+**How that gate is actually implemented** (D-219; the Rust half was missing until
+then — **B-100**):
 
 - **Rust.** `#[cfg(debug_assertions)]` on `chroma::debug_capture` (the whole module),
   on each command *inside* `tauri::generate_handler!` (the macro parses an outer
@@ -48,13 +48,13 @@ several rounds of the owner's own screenshots before an agent could even confirm
    permission wall entirely, doesn't need it) plus an MCP tool wrapping it, so an
    agent can call the tool, get a real PNG path, and `Read` it to actually see current
    state. Status/branch: see `docs/CHANGELOG.md`'s dated entry once it lands.
-2. **UI state open/close/select debug actions** — **DONE (D-218, 2026-09-08).**
+2. **UI state open/close/select debug actions** — **DONE (D-219, 2026-09-08).**
    Deterministic, non-pixel-coordinate ways to drive the UI, through the same store
    actions a human's click goes through: `debug_set_active_tab` (Edit/Motion/
    Colorist), `debug_set_sources_panel`, `debug_set_editor_inspector`, plus the read
    half `debug_ui_state` (every flag above, the Edit selection/playhead, and the
    dialogs the DOM actually has open). Explicit named ops per real UI state — **not**
-   a generic "set any field" backdoor and **not** a synthesised click; D-218 has the
+   a generic "set any field" backdoor and **not** a synthesised click; D-219 has the
    full reasoning and the one refactor it forced (the Edit Inspector's flag lifted
    out of `EditorTab.tsx`'s `useState` into `useEditorTimelineStore`, so one piece of
    state sits under both the human's button and the op).
@@ -69,11 +69,11 @@ several rounds of the owner's own screenshots before an agent could even confirm
    screenshot tool, not after it). `debug_sample_pixel(path, x, y)` reads the exact
    RGBA + hex out of **any** saved PNG, including one written long before the app's
    current state, and refuses an out-of-bounds coordinate with the real image size.
-   Re-checked against this piece's own wording during D-218 and found already
+   Re-checked against this piece's own wording during D-219 and found already
    complete — nothing was rebuilt. The one thing worth knowing when using it with
    piece 4: its coordinates are **device** pixels, `debug_dom_tree`'s rects are
    **CSS** pixels, so multiply by the screenshot's `scaleFactor`.
-4. **DOM tree capture** — **DONE (D-218, 2026-09-08).** `debug_dom_tree
+4. **DOM tree capture** — **DONE (D-219, 2026-09-08).** `debug_dom_tree
    {selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` returns the
    real hierarchy under a selector: tag/id/classes, the semantic attributes
    (`data-*`, `aria-*`, `role`, …), each element's `getBoundingClientRect()`, and a
@@ -92,7 +92,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    Stable query hooks exist on the two big panels: `[data-chroma-panel=
    "editor-inspector"]`, `[data-chroma-panel="sources"]`.
 
-5. **Preview frame-timing readout** — **DONE (D-218, 2026-09-08)** (found needed by
+5. **Preview frame-timing readout** — **DONE (D-219, 2026-09-08)** (found needed by
    D-217). `debug_frame_timing {limit?, reset?}` reports the real frame-to-frame
    intervals on **two independent channels**: `paint` (frames actually put on screen)
    and `raf` (how often the play loop got to run at all), each with
@@ -150,7 +150,7 @@ Coordinate spaces: `debug_dom_tree` rects are **CSS** pixels, `debug_screenshot`
 this wrong reads as a wrong colour rather than as an error, so it is worth checking the
 two numbers against each other once per session.
 
-### That loop, actually run (2026-09-08, D-218's own verification)
+### That loop, actually run (2026-09-08, D-219's own verification)
 
 A real `tauri dev` instance from an isolated worktree (`CHROMA_CONTROL_PORT=19791`,
 vite on 1421), a real project, a real 4K clip on the timeline. Numbers, not claims:
@@ -231,10 +231,10 @@ already happened once (2026-09-07).
 ## Gate verification — the numbers, not the claim
 
 Re-run these whenever a debug tool is added; a gate that is asserted rather than
-checked is how B-099 happened in the first place.
+checked is how B-100 happened in the first place.
 
 - **Frontend.** `npm run build --workspace app`, then grep `app/dist/` for every debug
-  op name. Run 2026-09-08 on D-218's tree: `debug_get_ui_state`, `debug_set_active_tab`,
+  op name. Run 2026-09-08 on D-219's tree: `debug_get_ui_state`, `debug_set_active_tab`,
   `debug_set_sources_panel`, `debug_set_editor_inspector`, `debug_dom_tree`,
   `debug_frame_timing`, `debug_screenshot`, `debug_sample_pixel`,
   `chroma_debug_screenshot`, `chroma_debug_sample_pixel`, plus the internal symbols
@@ -249,7 +249,7 @@ checked is how B-099 happened in the first place.
 
 ## Status
 
-Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-218 for 2, 4, 5; B-099
+Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
 for the gate). The one stated remaining gap is the **Colorist tab's** own panel /
 visibility / settings state — see piece 2 above for why it is a real design call rather
 than a missing line of code.

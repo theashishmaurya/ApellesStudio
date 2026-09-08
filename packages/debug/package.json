@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma internal debug tooling (D-218) — the debug_* control-server op registry that drives and inspects the RUNNING app: UI state (tab / Sources / Inspector), a bounded DOM-tree dump, and the Edit-tab preview's real frame timing. Debug-only: the whole registry is behind import.meta.env.DEV and is dropped from a production build.",
+  "description": "Chroma internal debug tooling (D-219) — the debug_* control-server op registry that drives and inspects the RUNNING app: UI state (tab / Sources / Inspector), a bounded DOM-tree dump, and the Edit-tab preview's real frame timing. Debug-only: the whole registry is behind import.meta.env.DEV and is dropped from a production build.",
   "scripts": {
     "test": "vitest run"
   },

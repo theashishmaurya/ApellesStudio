@@ -1,6 +1,6 @@
 /**
  * domTree.ts — a bounded, JSON-serialisable snapshot of the running webview's
- * real DOM (D-218, `docs/notes/debug-tooling.md` piece 4).
+ * real DOM (D-219, `docs/notes/debug-tooling.md` piece 4).
  *
  * What it is: the "why is this element positioned/sized/styled like that"
  *   answer, taken from the live document itself — element hierarchy, the

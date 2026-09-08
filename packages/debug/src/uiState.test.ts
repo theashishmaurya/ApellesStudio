@@ -1,5 +1,5 @@
 /**
- * uiState.test.ts (D-218) — the debug ops' argument validation.
+ * uiState.test.ts (D-219) — the debug ops' argument validation.
  *
  * The point of these is the refusals, not the happy paths: D-216's rule is
  * that an op which quietly accepts a value it cannot act on, does nothing and

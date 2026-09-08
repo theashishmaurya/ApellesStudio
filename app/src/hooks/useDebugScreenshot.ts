@@ -44,7 +44,7 @@ interface DebugScreenshotResult {
 
 export function useDebugScreenshot(): void {
   useEffect(() => {
-    // B-099/D-218 — `chroma_debug_screenshot` is `#[cfg(debug_assertions)]`
+    // B-100/D-219 — `chroma_debug_screenshot` is `#[cfg(debug_assertions)]`
     // now, so in a release build the command does not exist and this shortcut
     // would only ever toast "command not found". Gated with it, on the
     // frontend's equivalent compile-time constant: `vite build` folds

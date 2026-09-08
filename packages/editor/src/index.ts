@@ -34,7 +34,7 @@ export { PreviewPane } from './PreviewPane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
-/** D-218 (debug tooling piece 5) — the preview's own frame-timing ring
+/** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
  *  buffers. Exported for `@chroma/debug`'s `debug_frame_timing` op, which
  *  reads them; `PreviewPane` writes them. Both writes and the reader are
  *  compile-time gated out of a production build (see `previewTiming.ts`), so

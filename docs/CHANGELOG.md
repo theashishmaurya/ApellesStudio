@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **The debug-tooling loop closes: an agent can now open a
-  panel, photograph it, and read the DOM behind the pixels (D-218).**
+  panel, photograph it, and read the DOM behind the pixels (D-219).**
   `docs/notes/debug-tooling.md` pieces 2, 4 and 5 built, piece 3 found already
   complete in D-210 and left alone. Six new MCP tools in a new `@chroma/debug`
   package: `debug_ui_state`, `debug_set_active_tab`, `debug_set_sources_panel`,
@@ -16,7 +16,7 @@ One or two lines per session. Detail lives in the decision it references.
   D-217 needed and could not take). Forced one honest refactor: the Edit
   Inspector's open/closed flag moved out of `EditorTab.tsx`'s `useState` into
   the store, so there is one piece of state under both interfaces.
-- **2026-09-08** — **B-099 fixed: the debug screenshot tool had been shipping
+- **2026-09-08** — **B-100 fixed: the debug screenshot tool had been shipping
   ungated.** Found while reading D-210 as the reference pattern —
   `chroma_debug_screenshot`/`chroma_debug_sample_pixel` had no
   `#[cfg(debug_assertions)]` anywhere, so a release build contained the whole

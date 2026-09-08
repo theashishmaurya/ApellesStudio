@@ -2505,7 +2505,7 @@ def debug_sample_pixel(path: str, x: int, y: int) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# debug — drive and inspect the real UI (D-218)
+# debug — drive and inspect the real UI (D-219)
 #
 # The other half of D-210's screenshot: these DRIVE real UI state and DUMP the
 # real DOM, so "open the Inspector, screenshot it, check the element is really

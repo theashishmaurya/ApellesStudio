@@ -81,7 +81,7 @@ export function EditorTab() {
   const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
-  // D-218 — the Inspector's open/closed flag lives in the store now, not in a
+  // D-219 — the Inspector's open/closed flag lives in the store now, not in a
   // `useState` here, so the human's toggle below and the debug UI-state op
   // `debug_set_editor_inspector` drive one piece of state rather than two.
   const inspectorOpen = useEditorTimelineStore((s) => s.inspectorOpen);
@@ -193,7 +193,7 @@ export function EditorTab() {
         <>
           <ResizableHandle />
           <ResizablePanel
-            // D-218 — a stable, human-readable hook for the debug DOM-tree
+            // D-219 — a stable, human-readable hook for the debug DOM-tree
             // dump (`debug_dom_tree {selector}`) and for any future
             // targeted query. Not a test-only artefact: it is the one thing
             // that lets a tool ask about "the Inspector" without matching on

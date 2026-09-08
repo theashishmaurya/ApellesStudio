@@ -1,5 +1,5 @@
 /**
- * previewTiming.test.ts (D-218) — the preview frame-timing readout's maths.
+ * previewTiming.test.ts (D-219) — the preview frame-timing readout's maths.
  *
  * Every timestamp is injected, so these are exact rather than flaky: the
  * whole point of the readout is that a number it reports can be trusted as

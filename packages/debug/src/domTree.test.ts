@@ -1,5 +1,5 @@
 /**
- * domTree.test.ts (D-218) — the DOM serialiser's contract.
+ * domTree.test.ts (D-219) — the DOM serialiser's contract.
  *
  * What these cover: the parts with correct answers — the three bounds
  * (`selector` / `maxDepth` / `maxNodes`) and that each one REPORTS itself

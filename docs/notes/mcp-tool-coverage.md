@@ -195,7 +195,7 @@ control. Lower value for an agent than the above (an agent driving edits doesn't
 obviously need to literally press play), but genuinely zero coverage; noted for
 completeness rather than urgency.
 
-## Debug / UI verification — CLOSED, 8 tools (D-210 + D-218, 2026-09-08)
+## Debug / UI verification — CLOSED, 8 tools (D-210 + D-219, 2026-09-08)
 
 `debug_screenshot`, `debug_sample_pixel`. Not a *product* capability like
 everything above — an agent-tooling one, and the reason it belongs in this doc
@@ -212,7 +212,7 @@ These two are the first ops answered by the control server **itself** in Rust
 see `docs/notes/debug-screenshot-tool.md` for why, and for the real limits
 (webview only, device pixels, macOS only).
 
-**D-218 added the other six**, which is what turns "look at the app" into a
+**D-219 added the other six**, which is what turns "look at the app" into a
 loop that actually closes — drive a state change, photograph it, then check the
 DOM behind the pixels:
 
@@ -227,11 +227,11 @@ DOM behind the pixels:
 
 Unlike D-210's pair these are **frontend** ops (`@chroma/debug`'s registry,
 prefix `debug_`), because driving UI state means calling the same store action
-the human's click calls — that is D-218's central decision, and it is why none
+the human's click calls — that is D-219's central decision, and it is why none
 of them synthesises a click or takes a pixel coordinate.
 
 All seven are **dev-build only** — internal debug tooling is never shipped
-(CLAUDE.md). Rust: `#[cfg(debug_assertions)]` (B-099 fixed the two D-210
+(CLAUDE.md). Rust: `#[cfg(debug_assertions)]` (B-100 fixed the two D-210
 commands, which had been ungated). Frontend: `import.meta.env.DEV` plus a
 dynamic import, so the registry is dropped from a production bundle. Scope,
 status and the live verification loop: `docs/notes/debug-tooling.md`.

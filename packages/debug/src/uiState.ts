@@ -1,5 +1,5 @@
 /**
- * uiState.ts — argument parsing for the debug UI-state ops (D-218,
+ * uiState.ts — argument parsing for the debug UI-state ops (D-219,
  * `docs/notes/debug-tooling.md` piece 2).
  *
  * What it is: the small, store-free half of `debugOps.ts` — turning one

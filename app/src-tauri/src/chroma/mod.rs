@@ -44,7 +44,7 @@
 //!   needs no macOS Screen Recording permission (it is not screen capture),
 //!   so an agent can actually SEE the UI it just changed.
 //!   **`#[cfg(debug_assertions)]` — compiled out of a release build entirely**
-//!   (B-099/D-218), along with its two Tauri commands and the two
+//!   (B-100/D-219), along with its two Tauri commands and the two
 //!   `control.rs` native ops that reach it. Internal debug tooling is never
 //!   shipped (CLAUDE.md)
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
@@ -69,7 +69,7 @@
 pub mod audio;
 pub mod commands;
 pub mod control;
-/// B-099/D-218 — internal debug tooling, never shipped: the whole module,
+/// B-100/D-219 — internal debug tooling, never shipped: the whole module,
 /// its Tauri commands and its control-server ops exist only in a build with
 /// debug assertions on (`tauri dev`, `cargo test`). A release build has no
 /// code path to a webview screenshot at all.

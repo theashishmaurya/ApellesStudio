@@ -2208,7 +2208,7 @@ pub fn run() {
             chroma::export::chroma_bake_lut,
             chroma::ffmpeg_run::chroma_run_ffmpeg,
             chroma::write_text_file::chroma_write_text_file,
-            // B-099/D-218 — internal debug tooling is never shipped
+            // B-100/D-219 — internal debug tooling is never shipped
             // (CLAUDE.md). `tauri::generate_handler!` parses an outer
             // attribute per command and re-emits it on that command's match
             // arm, so this is a real compile-time gate on the command's very

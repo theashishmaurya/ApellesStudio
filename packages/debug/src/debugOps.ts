@@ -1,5 +1,5 @@
 /**
- * debugOps.ts — the `debug_*` frontend op registry (D-218).
+ * debugOps.ts — the `debug_*` frontend op registry (D-219).
  *
  * What it is: the fourth control-server op registry, alongside Colorist's
  *   (`app/src/hooks/useChromaControl.ts`), Motion's and the Edit tab's — same
@@ -22,7 +22,7 @@
  *   `import()` inside an `if (import.meta.env.DEV)` branch, so a production
  *   `vite build` constant-folds that branch away and Rollup drops this module
  *   and its chunk entirely. That is the frontend's equivalent of the
- *   `#[cfg(debug_assertions)]` gate on the Rust half (D-218, B-099), and it is
+ *   `#[cfg(debug_assertions)]` gate on the Rust half (D-219, B-100), and it is
  *   verified by grepping the built bundle rather than assumed.
  *
  * Ops:

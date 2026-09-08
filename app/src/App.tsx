@@ -176,7 +176,7 @@ function App() {
   // D-210: Cmd/Ctrl+Shift+D screenshots the webview to a PNG — the human half
   // of the same capture the MCP `debug_screenshot` tool takes.
   useDebugScreenshot();
-  // D-218: the `debug_*` UI-state / DOM-tree / frame-timing op registry —
+  // D-219: the `debug_*` UI-state / DOM-tree / frame-timing op registry —
   // the other half of the same "an agent can drive and inspect the real app"
   // loop D-210's screenshot started. Dev builds only: the hook's whole body
   // is behind `import.meta.env.DEV` and the registry itself is a dynamic

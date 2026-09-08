@@ -153,7 +153,7 @@ interface EditorTimelineState {
   selection: Selection[];
   /** the current gap selection (D-105), mutually exclusive with `selection` */
   selectedGap: SelectedGap | null;
-  /** D-218 — whether the Edit tab's Inspector column is shown. Lifted out of
+  /** D-219 — whether the Edit tab's Inspector column is shown. Lifted out of
    *  `EditorTab.tsx`'s own `useState` for exactly the reason `selection`
    *  above was lifted out of `TimelinePane`'s: something other than that one
    *  component now needs to read and write it — the debug UI-state op
@@ -202,7 +202,7 @@ interface EditorTimelineState {
    *  site to be rewritten to close over the store's `get()` instead. */
   setSelection: (selection: Selection[] | ((prev: Selection[]) => Selection[])) => void;
   setSelectedGap: (gap: SelectedGap | null) => void;
-  /** D-218 — show/hide the Inspector column. The one writer for both the
+  /** D-219 — show/hide the Inspector column. The one writer for both the
    *  human's toggle button (`EditorTab.tsx`) and the debug op. */
   setInspectorOpen: (open: boolean) => void;
   applyOp: (op: EditOp) => void;

@@ -1,6 +1,6 @@
 # @chroma/debug
 
-**Internal debug tooling for the running app** (D-218) — the `debug_*`
+**Internal debug tooling for the running app** (D-219) — the `debug_*`
 control-server op registry. It lets an agent (or a developer at an HTTP
 client) *drive* real UI state and *inspect* the real webview, so a UI change
 can actually be verified instead of guessed at.
@@ -25,7 +25,7 @@ rule). The gate is **compile-time, not a runtime flag**:
   is in the app's static import graph in the first place.
 
 This is the frontend counterpart of `#[cfg(debug_assertions)]` on the Rust
-commands (B-099 fixed the Rust half, which had been shipping ungated).
+commands (B-100 fixed the Rust half, which had been shipping ungated).
 It is **verified, not assumed**: `docs/notes/debug-tooling.md` records the
 `vite build` + bundle-grep that proves no `debug_` op name survives.
 
@@ -51,7 +51,7 @@ invokes; `useEditorTimelineStore.setInspectorOpen` is what the Inspector
 toggle invokes. Nothing here synthesises a click, a keypress or a pointer
 event. That is the design decision, not an implementation detail: a simulated
 click proves the simulation works, a store action proves the app works
-(D-218).
+(D-219).
 
 `debug_dom_tree` coordinates are **CSS pixels** (`getBoundingClientRect()`);
 `debug_screenshot` pixels are **device pixels**. Multiply by the screenshot's

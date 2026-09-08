@@ -19474,7 +19474,7 @@ and conclude the transform is broken.
   is now covered is everything up to that: real app, real WKWebView, real
   control server, real compositor, and a picture of the result.
 
-## D-218 — Debug tooling pieces 2–5: explicit named `debug_*` ops that drive the app's OWN store actions, a bounded DOM dump, and the preview's own frame timing
+## D-219 — Debug tooling pieces 2–5: explicit named `debug_*` ops that drive the app's OWN store actions, a bounded DOM dump, and the preview's own frame timing
 
 **decided (2026-09-08)**
 
@@ -19588,13 +19588,13 @@ measuring a backgrounded window" instead of conflating them. `hitches` counts
 intervals over twice the median rather than over a fixed millisecond
 threshold — "slow" depends on the frame rate being attempted.
 
-### The gate (and B-099)
+### The gate (and B-100)
 
 **Every one of these is compiled out of a production build, and so are D-210's,
 which were not.** Auditing the pattern before copying it turned up that
 `chroma_debug_screenshot` / `chroma_debug_sample_pixel` had shipped with no
 compile-time gate at all — a real defect against CLAUDE.md's standing "debug
-tooling is never shipped" invariant, filed as **B-099** and fixed here.
+tooling is never shipped" invariant, filed as **B-100** and fixed here.
 
 - **Rust:** `#[cfg(debug_assertions)]` on `chroma::debug_capture`, on both
   commands *inside* `tauri::generate_handler!` (its macro parses an outer
