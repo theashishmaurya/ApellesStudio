@@ -4,6 +4,34 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Speed ramps: variable speed over time, previewed and
+  exported from one definition (D-235, roadmap item 27).** A clip now carries
+  `speed_points` — "from this SOURCE frame onward, play at this speed" — so the
+  speed profile is a step function and the time remap is exactly piecewise
+  linear. That shape is chosen, not incidental: it is the only one the live
+  preview (closed-form Rust), the export's picture (an ffmpeg `setpts`
+  expression) and the export's sound can all express, and the sound is what
+  decides it — `atempo` takes a number rather than an expression, so a ramped
+  clip's audio is per-segment `atrim`/`atempo`/`concat` and a smoothly-varying
+  speed would have had no matching audio at all. The pre-existing export-time
+  `speedOverrides` is **generalised, not duplicated**: a flat speed is a
+  one-segment ramp, resolved through the same function, still compiling the
+  byte-identical filtergraph. Both interfaces in the same pass — an Inspector
+  **Speed** section (per-run percentage, add a point at the playhead, a Retime
+  Curve readout, modelled on Resolve's own Retime Controls read out of
+  `scratch/resolve-reference/create.jpg`) and `editor_set_clip_speed`. Because
+  this is the B-090/B-094/B-095/B-098/B-103/B-108 risk squared — it animates
+  time itself, so a wrong ramp still renders a smooth, plausible, wrong video —
+  the parity proof is real decoded pixels: a fixture whose every frame is a
+  distinct grey, exported through a `0.5x → 2x → 1.25x` ramp and read back frame
+  by frame, agrees with the preview's own resolver on 78 of 84 frames exactly
+  and the rest by one, against up to 18 frames out for a deliberately wrong
+  ramp. Found and fixed **B-112** on the way: the export divided a sped clip's
+  length by its speed but not its fade windows, so the picture faded for
+  `speed`× longer than its own sound. Deliberately not built, all named on the
+  roadmap: reverse speed, smoothed S-curve transitions, on-clip point dragging,
+  frame interpolation, and live-preview audio retiming.
+
 - **2026-09-08** — **Dynamic zoom: drag two boxes in the viewer instead of
   keying by hand (D-234, roadmap item 27).** Arm it from the Inspector and the
   preview shows a green START box and a dashed red END box over the selected

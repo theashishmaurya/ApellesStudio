@@ -1508,8 +1508,34 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       reason).
     - ⬜ Context-sensitive trim tool — ripple/roll/slip/slide by pointer
       position, not a mode switch.
-    - ⬜ Speed ramp curve — variable speed over time, not a flat export-time
-      override.
+    - ~~**Speed ramp curve** — variable speed over time, not a flat export-time
+      override~~ — **DONE, 2026-09-08 (D-235).** `Clip.speed_points` — "from
+      this SOURCE frame onward, play at this speed" — so the speed profile is a
+      step function and the time remap is exactly piecewise linear. That shape
+      is what lets the live preview (`Clip::source_frame_at`), the export's
+      picture (a nested `if(lt(T,…))` `setpts` expression) and the export's
+      sound (per-segment `atrim`/`atempo`/`concat`) all express the same remap;
+      `atempo` takes a number rather than an expression, which is what pins the
+      model to piecewise-CONSTANT speed. The pre-existing flat `speedOverrides`
+      is generalised, not duplicated: a flat speed is a one-segment ramp and
+      still compiles the byte-identical filtergraph. Both interfaces in the same
+      pass — an Inspector **Speed** section (per-run percentage, add a point at
+      the playhead, Retime Curve readout, modelled on Resolve's own Retime
+      Controls in `scratch/resolve-reference/create.jpg`) and
+      `editor_set_clip_speed`. Preview/export agreement is proved against real
+      decoded pixels (`speedRamp.ffmpeg.test.ts`: 78/84 output frames exact, 6
+      off by one, vs. up to 18 frames out for a deliberately wrong ramp). Fixed
+      B-112 on the way through.
+      - ⬜ **Speed-ramp follow-ups** (D-235's own "not built" list; none needs a
+        schema change): reverse (negative) speed — needs ffmpeg's
+        whole-stream-buffering `reverse` filter and a backwards preview decode;
+        smoothed S-curve speed transitions — piecewise-quadratic, no `atempo`
+        equivalent, approximable meanwhile by subdividing into more constant
+        segments; dragging speed points on the clip itself rather than in the
+        Inspector; frame interpolation for slow motion (optical flow / frame
+        blending — source frames currently repeat); and **live-preview AUDIO
+        retiming**, since the picture previews a ramp but the live mixer does
+        not resample.
     - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /
       Fit-to-Fill / Place on Top / Append / Ripple-Overwrite (ref:
       `timeline.jpg`).

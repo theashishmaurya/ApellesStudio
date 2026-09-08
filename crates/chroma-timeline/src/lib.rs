@@ -179,6 +179,11 @@ use serde::{Deserialize, Serialize};
 use chroma_types::Rational;
 
 pub mod caption;
+/// D-235 — the speed ramp's arithmetic (see the module's own doc). Kept in its
+/// own file rather than inlined here because it is an exact, line-for-line
+/// mirror of `@chroma/editor`'s `speedRamp.ts`, and a reader checking the two
+/// against each other should be able to open one file per side.
+pub mod speed_ramp;
 pub mod subtitle_import;
 
 use caption::{CaptionCue, CaptionStyle};
@@ -193,6 +198,7 @@ use caption::{CaptionCue, CaptionStyle};
 // in the timeline model should not have to know which crate the type came from.
 pub use chroma_types::ease::EaseCurve;
 pub use chroma_types::fade::{self, fade_gain};
+pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type
 // and the Audio EQ Cookbook biquad math behind it live in `chroma-types` (L0)
@@ -1019,6 +1025,25 @@ pub struct Clip {
     /// section for exactly what this field does and does NOT fix by itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_fps: Option<f64>,
+    /// D-235 — the speed ramp: variable playback speed over this clip's own
+    /// length, as a step function on the SOURCE axis. Empty (the
+    /// `#[serde(default)]`, and every pre-D-235 clip) = flat 1x, and the
+    /// `skip_serializing_if` keeps an un-ramped clip's JSON byte-identical to
+    /// what it was before this field existed.
+    ///
+    /// All the arithmetic lives in [`speed_ramp`] — nothing reads these points
+    /// directly except [`Clip::speed_segments`], which is what
+    /// [`Clip::end_frame_at`] and [`Clip::source_frame_at`] (i.e. the whole
+    /// preview) go through. `@chroma/editor`'s `speedRamp.ts` is the exact
+    /// mirror the exporter compiles from, and their agreement is this
+    /// feature's preview/export parity.
+    ///
+    /// This is the generalisation of, not a rival to, the export-time-only
+    /// flat `speedOverrides` multiplier (D-183): a flat speed is a one-segment
+    /// ramp, and both resolve through the same
+    /// [`speed_ramp::resolve_speed_segments`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub speed_points: Vec<SpeedPoint>,
     /// Timeline-absolute start frame (D-054). The `#[serde(default = ...)]`
     /// here is a **migration sentinel**, not a real default: legacy JSON with
     /// no `start_frame` key deserializes to `i64::MIN`, which
@@ -1501,6 +1526,9 @@ impl Default for Clip {
             duration: 0,
             source_len: 0,
             source_fps: None,
+            // D-235 — an empty ramp is "flat 1x", i.e. exactly the behaviour
+            // every clip had before speed ramps existed.
+            speed_points: Vec::new(),
             start_frame: 0,
             opacity: default_opacity(),
             position_x: 0.0,
@@ -1659,7 +1687,41 @@ impl Clip {
     /// number either way, so this is a strict widening, not a behavior
     /// change for the common case.
     pub fn end_frame_at(&self, fps: f64) -> i64 {
-        self.start_frame + source_frames_to_timeline(self.source_fps, self.duration, fps)
+        self.start_frame
+            + source_frames_to_timeline(
+                self.source_fps,
+                self.output_source_frames().round() as i64,
+                fps,
+            )
+    }
+
+    /// D-235 — this clip's resolved constant-speed segments. `speed_points`
+    /// only; an export-time flat `speedOverrides` entry does not exist on this
+    /// side (there is no export here), which is exactly why the preview and
+    /// the exporter agree on a RAMP but a bare `speedOverrides` number has
+    /// always been, and remains, an export-only concept with no preview.
+    pub fn speed_segments(&self) -> Vec<speed_ramp::SpeedSegment> {
+        speed_ramp::resolve_speed_segments(
+            self.source_start,
+            self.duration,
+            &self.speed_points,
+            None,
+        )
+    }
+
+    /// D-235 — how much OUTPUT this clip produces, still in its own
+    /// source-frame units, so `source_frames_to_timeline` converts it exactly
+    /// as it always converted `duration`.
+    ///
+    /// Returns `duration` verbatim for an un-ramped clip, WITHOUT touching the
+    /// ramp machinery — which is what keeps every pre-D-235 project's frame
+    /// arithmetic bit-for-bit unchanged. Mirrors `@chroma/editor`'s
+    /// `clipOutputSourceFrames`.
+    pub fn output_source_frames(&self) -> f64 {
+        if self.speed_points.is_empty() {
+            return self.duration as f64;
+        }
+        speed_ramp::ramp_output_source_frames(&self.speed_segments())
     }
 
     /// D-226 — the SOURCE frame this clip shows at TIMELINE frame
@@ -1678,9 +1740,30 @@ impl Clip {
     ///
     /// The result may fall outside `[0, source_len)`; deciding what to do about
     /// that is the consumer's (see [`Self::clamped_source_frame_at`]).
+    ///
+    /// D-235 — under a speed ramp the second term stops being linear: the
+    /// output offset is fed through [`speed_ramp::source_frame_at_output`]
+    /// instead, which is the exact inverse of the forward map the exporter's
+    /// `setpts` expression is built from. An un-ramped clip takes the original
+    /// addition unchanged, so nothing about a normal clip's decode moves.
     pub fn source_frame_at(&self, timeline_frame: i64, fps: f64) -> i64 {
-        self.source_start
-            + timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps)
+        let output_pos =
+            timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps);
+        if self.speed_points.is_empty() {
+            return self.source_start + output_pos;
+        }
+        // FLOOR, not round: a frame occupies the half-open interval
+        // `[n, n+1)` on the source axis, so the frame visible at a
+        // fractional source position 23.5 is frame 23 — it has started and
+        // frame 24 has not. Rounding would show frame 24 for the last half of
+        // frame 23's own screen time, i.e. it would run half a frame AHEAD of
+        // the export, whose `setpts` maps a decoded frame's timestamp forward
+        // and therefore floors by construction. That half-frame is exactly the
+        // kind of quiet preview/export divergence this feature is most at risk
+        // from (B-090/B-094/B-095/B-098/B-103/B-108 are all the same shape),
+        // so it is pinned here and re-proved against real decoded pixels in
+        // `speedRamp.ffmpeg.test.ts`.
+        speed_ramp::source_frame_at_output(&self.speed_segments(), output_pos as f64).floor() as i64
     }
 
     /// D-226 — [`Self::source_frame_at`] pinned into the source's own real
@@ -3514,6 +3597,140 @@ mod tests {
         let t: Timeline = serde_json::from_str(j).unwrap();
         assert_eq!(t.id, "");
         assert_eq!(t.name, "New");
+    }
+
+    // ---- D-235: the speed ramp, through the real preview entry points ---- //
+    //
+    // `speed_ramp`'s own tests pin the arithmetic; these pin that
+    // `Track::clip_at` / `Clip::end_frame_at` — the two functions the live
+    // compositor actually calls — really do route through it, which is the
+    // half a pure-math test cannot see.
+
+    /// The ramped clip used below: 96 source frames at 24 fps, played 0.5x for
+    /// its first second and 2x for the rest.
+    ///
+    ///   - source [0, 24)  at 0.5x -> 48 output frames
+    ///   - source [24, 96) at 2.0x -> 36 output frames
+    ///
+    /// 84 output frames total, vs. 96 un-ramped.
+    fn ramped_clip() -> Clip {
+        Clip {
+            id: "r".into(),
+            name: "R".into(),
+            source_path: "/r.mov".into(),
+            source_start: 0,
+            duration: 96,
+            source_len: 96,
+            source_fps: Some(24.0),
+            start_frame: 0,
+            speed_points: vec![
+                SpeedPoint {
+                    source_frame: 0,
+                    speed: 0.5,
+                },
+                SpeedPoint {
+                    source_frame: 24,
+                    speed: 2.0,
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_ramp_changes_the_clips_real_timeline_footprint() {
+        let c = ramped_clip();
+        assert_eq!(c.output_source_frames(), 84.0);
+        assert_eq!(c.end_frame_at(24.0), 84);
+        // An un-ramped clip is untouched: still exactly its own duration.
+        let mut plain = c.clone();
+        plain.speed_points.clear();
+        assert_eq!(plain.end_frame_at(24.0), 96);
+    }
+
+    #[test]
+    fn clip_at_decodes_the_ramped_source_frame_the_exporter_will_show() {
+        let tr = Track {
+            kind: TrackKind::Video,
+            clips: vec![ramped_clip()],
+            ..Default::default()
+        };
+        let at = |f: i64| tr.clip_at(f, 24.0).map(|(_, sf)| sf);
+        // The slow half: two output frames per source frame.
+        assert_eq!(at(0), Some(0));
+        assert_eq!(at(24), Some(12));
+        assert_eq!(at(47), Some(23));
+        // The 2x half starts exactly where the slow one ends (output 48).
+        assert_eq!(at(48), Some(24));
+        assert_eq!(at(60), Some(48));
+        // The last frame inside the clip, and nothing past its new end.
+        assert_eq!(at(83), Some(94));
+        assert_eq!(at(84), None);
+    }
+
+    /// The exact case `speedRamp.test.ts`'s "rounds the retimed length BEFORE
+    /// the fps conversion" pins on the TS side, asserted here to the SAME
+    /// number. Rounding in the other order is more accurate and wrong: it
+    /// would make the preview and the edit model disagree by a whole frame on
+    /// a mixed-native-fps ramped clip, which is precisely the class of quiet
+    /// divergence D-235 exists to prevent.
+    ///
+    /// 25 fps source in a 24 fps project: 43 source frames at 2x (21.5 out)
+    /// + 62 at 1x (62) = 83.5 source frames of output.
+    ///   - round-first: round(83.5) = 84, then 84 * 24/25 = 80.64 -> 81
+    ///   - round-last:  83.5 * 24/25 = 80.16                      -> 80
+    #[test]
+    fn the_retimed_length_rounds_before_the_fps_conversion_not_after() {
+        let c = Clip {
+            id: "r".into(),
+            name: "R".into(),
+            source_path: "/r.mov".into(),
+            source_start: 0,
+            duration: 105,
+            source_len: 105,
+            source_fps: Some(25.0),
+            start_frame: 0,
+            speed_points: vec![
+                SpeedPoint {
+                    source_frame: 0,
+                    speed: 2.0,
+                },
+                SpeedPoint {
+                    source_frame: 43,
+                    speed: 1.0,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(c.output_source_frames(), 83.5);
+        assert_eq!(c.end_frame_at(24.0), 81);
+    }
+
+    #[test]
+    fn a_ramp_survives_a_json_round_trip_and_an_unramped_clip_serialises_no_key() {
+        let c = ramped_clip();
+        let j = serde_json::to_string(&c).unwrap();
+        assert!(j.contains("speed_points"), "a real ramp must persist: {j}");
+        let back: Clip = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.speed_points, c.speed_points);
+        assert_eq!(back.end_frame_at(24.0), 84);
+
+        // The pre-D-235 shape is unchanged on disk — no new key at all.
+        let mut plain = c.clone();
+        plain.speed_points.clear();
+        let pj = serde_json::to_string(&plain).unwrap();
+        assert!(
+            !pj.contains("speed_points"),
+            "an un-ramped clip must not grow a key: {pj}"
+        );
+        // ...and legacy JSON with no key deserialises to "no ramp", not an error.
+        let legacy: Clip = serde_json::from_str(
+            r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,
+                "duration":10,"source_len":10,"start_frame":0}"#,
+        )
+        .unwrap();
+        assert!(legacy.speed_points.is_empty());
+        assert_eq!(legacy.end_frame_at(24.0), 10);
     }
 
     #[test]

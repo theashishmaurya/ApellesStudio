@@ -72,6 +72,7 @@ import { useEditorTimelineStore, type Selection } from './timelineStore';
 // here: one write path for the human and the agent, per CLAUDE.md.
 import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
 import {
+  clipOutputSourceFrames,
   timelineDuration,
   CLIP_KEYFRAME_DEFAULTS,
   EASE_PRESETS,
@@ -136,6 +137,9 @@ import {
   type DynamicZoomFraming,
 } from './dynamicZoom';
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
+// D-235 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
+// with Rust so an agent, the Inspector and the preview all agree on the range.
+import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
@@ -2099,6 +2103,94 @@ export function useEditorControl(): void {
           fadeInCurveName: easePresetName(after?.fade_in_curve),
           fadeOutCurveName: easePresetName(after?.fade_out_curve),
           note: 'a fade on a video clip fades its picture AND its embedded audio together',
+        };
+      },
+
+      // ---- speed ramp (D-235) -------------------------------------------- //
+      //
+      // The AI half of the Inspector's own Speed section, over the same
+      // `set_clip_speed` op and the same `Clip.speed_points` — CLAUDE.md's
+      // "every feature is built for a human AND an AI" rule, not a follow-up.
+      //
+      // Two shapes, because the two real requests are genuinely different:
+      // `speed` alone is "make this whole clip 2x" (a one-segment ramp, which
+      // is the flat case expressed in the ramped model rather than a separate
+      // concept), and `points` is a real ramp. `points: []` / `speed: 1`
+      // clears the ramp, since `normalizeSpeedPoints` drops an identity point.
+      editor_set_clip_speed: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const c = found.c;
+
+        const rawPoints = a?.points;
+        if (rawPoints !== undefined && !Array.isArray(rawPoints)) {
+          return { error: 'points must be a list of {source_frame, speed} objects' };
+        }
+        if (rawPoints !== undefined && a?.speed !== undefined) {
+          return { error: 'pass either speed (a flat multiplier) or points (a ramp), not both' };
+        }
+
+        let next: SpeedPoint[];
+        if (Array.isArray(rawPoints)) {
+          const parsed: SpeedPoint[] = [];
+          for (const [i, p] of rawPoints.entries()) {
+            const frame = Number((p as { source_frame?: unknown })?.source_frame);
+            const speed = Number((p as { speed?: unknown })?.speed);
+            if (!Number.isFinite(frame)) {
+              return { error: `points[${i}].source_frame must be a source frame number` };
+            }
+            // Refused, not clamped: a speed outside the range is a request the
+            // caller got wrong, and silently retiming to 20x instead of the
+            // 200x it asked for is worse than saying so. (The MODEL still
+            // clamps — `chroma_timeline_set` stores whatever it is handed, so
+            // a document reaching the store another way must degrade safely.)
+            if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
+              return { error: `points[${i}].speed must be between ${MIN_SPEED} and ${MAX_SPEED} (1 = normal)` };
+            }
+            parsed.push({ source_frame: Math.round(frame), speed });
+          }
+          next = parsed;
+        } else if (a?.speed !== undefined) {
+          const speed = Number(a.speed);
+          if (!Number.isFinite(speed) || speed < MIN_SPEED || speed > MAX_SPEED) {
+            return { error: `speed must be between ${MIN_SPEED} and ${MAX_SPEED} (1 = normal)` };
+          }
+          next = [{ source_frame: c.source_start, speed }];
+        } else {
+          return { error: 'pass speed (a flat multiplier) or points (a ramp)' };
+        }
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_speed',
+          track: found.track,
+          clip: found.clip,
+          points: next,
+        });
+
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        const segments = after ? resolveSpeedSegments(after) : [];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          name: after?.name ?? c.name,
+          points: after?.speed_points ?? [],
+          // The resolved runs, because that — not the point list — is what
+          // actually plays, and an agent that just trimmed the clip needs to
+          // see which of its points still bite.
+          segments: segments.map((s) => ({
+            sourceFrames: [s.startSourceFrame, s.endSourceFrame],
+            speed: s.speed,
+          })),
+          sourceFrames: c.duration,
+          outputFrames: after ? Math.round(clipOutputSourceFrames(after)) : c.duration,
+          note:
+            'a retime changes this clip\'s length on the timeline but not its start_frame — ' +
+            'neighbouring clips do not move, so close or fill the gap yourself. ' +
+            'Picture and sound are retimed together.',
         };
       },
 

@@ -140,6 +140,11 @@ import {
   SelectValue,
 } from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
+// D-235 — the Speed (Retime) section, in its own file for the reason every
+// other non-trivial section here is not: it owns real derived state (the
+// resolved segments, the retime curve) rather than being a row of inputs.
+import { SpeedRampEditor } from './SpeedRampEditor';
+import type { SpeedPoint } from './speedRamp';
 import {
   EQ_BAND_KINDS,
   EQ_BAND_KIND_LABELS,
@@ -329,6 +334,8 @@ export function ClipInspectorPanel({
   paramStates,
   onTransformChange,
   onFadeChange,
+  onSpeedChange,
+  playheadSourceFrame,
   onEqBandChange,
   onEqClear,
   onParamChange,
@@ -364,6 +371,15 @@ export function ClipInspectorPanel({
   paramStates: Record<ClipKeyframeParam, PropertyState>;
   onTransformChange: (patch: TransformPatch) => void;
   onFadeChange: (patch: FadePatch) => void;
+  /** D-235 — replace this clip's speed ramp. Whole-array, like the op itself;
+   *  `SpeedRampEditor` computes the next list. */
+  onSpeedChange: (points: SpeedPoint[]) => void;
+  /** D-235 — the SOURCE frame under the playhead, or `null` when the playhead
+   *  is not over this clip. Only the Speed section reads it ("add a speed
+   *  point at the playhead"); resolved by `EditorInspectorPanel` through the
+   *  same `clipSourceFrame` the keyframe rows already use, so a speed point
+   *  and a keyframe added at the same moment land on the same frame. */
+  playheadSourceFrame: number | null;
   /** D-224 — patch ONE band of this clip's EQ. Partial by field, exactly as
    *  `set_clip_eq` itself is: the panel edits one control at a time and must
    *  never restate a frequency it did not touch. */
@@ -720,6 +736,22 @@ export function ClipInspectorPanel({
               </p>
             )}
           </InspectorSection>
+        )}
+
+        {/* D-235 — Speed (retime). Placed above Fade because a retime changes
+            the clip's LENGTH, which is what every duration below it is
+            measured against — the reference (Resolve's own Retime Controls)
+            likewise presents speed as a property of the clip's extent rather
+            than of its picture. Not offered on a generated layer: a title or
+            an adjustment clip has no source footage to retime, and its
+            timeline footprint is simply its own duration. */}
+        {!clip.text && !clip.adjustment && (
+          <SpeedRampEditor
+            clip={clip}
+            trackLocked={trackLocked}
+            playheadSourceFrame={playheadSourceFrame}
+            onSpeedChange={onSpeedChange}
+          />
         )}
 
         {/* D-147 — Fade in / out. Its own section rather than more Transform
