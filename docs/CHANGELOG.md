@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **B-122 fixed: dragging a clip onto a track HEADER crashed
+  the whole app, because two different dnd-kit droppables both called
+  themselves `type: 'track'`.** Caught in the dev-server log while the owner
+  was testing the B-115 drag gesture — `TypeError: undefined is not an object
+  (evaluating 'dest.clips')`, unhandled inside a React event handler, taking
+  the render tree and the `tauri dev` process down with it. The track HEADER is
+  a droppable too (every `useSortable` item is), and it carried `{ type:
+  'track', index }` while the row LANE carried `{ type: 'track', track }` — so
+  a clip dropped on a header passed the discriminator check and read
+  `undefined` as its destination track index. It survived review because the
+  payload shapes were asserted with six separate inline `as` casts, each
+  individually plausible: a cast is a promise, not a check. Fixed at the root —
+  distinct `'track-header'`/`'track-lane'` discriminators, and a new
+  `dndTargets.ts` that replaces every cast with a runtime-validating narrowing
+  which refuses a header, a stale track index and a malformed payload alike, so
+  no caller can be handed an index it must remember to bounds-check. The same
+  bug existed in `onDndDragMove` (crashed mid-drag) and, mirrored, in the
+  track-reorder branch (silently did nothing). 13 new unit cases, the first
+  feeding in the exact payload that crashed the app.
+
 - **2026-09-08** — **The clip Inspector is tabbed: Video and Audio, instead of
   one ~30-control scroll (D-246), and its numeric fields no longer hide their
   own digits under the spinner arrows (B-113).** Both reported live by the
@@ -45,7 +65,7 @@ One or two lines per session. Detail lives in the decision it references.
   AI in the same pass: `editor_add_track` takes an optional `index`.
 
 - **2026-09-08** — **A pass over four things the owner hit editing live:
-  B-119, B-120, B-121 and D-250.** *B-119* — "Captions from Transcript" on a
+  B-122, B-120, B-121 and D-250.** *B-122* — "Captions from Transcript" on a
   source with no audio showed the raw `CalledProcessError` argv from the
   sidecar's ffmpeg call; `chroma_transcribe` now refuses up front through the
   same `VideoInfo::has_audio` probe the rest of the app uses, and `ai-media/`

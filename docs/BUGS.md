@@ -1845,3 +1845,32 @@ status: fixed (2026-09-08) · severity: low (nothing is broken — a shipped fea
 - **regression test:** `CaptionPanel.dom.test.tsx` asserts the trigger is in the DOM, reads "Captions", does **not** read "Subtitles", and carries a disclosure affordance.
 
 - **left to the left-rail work, deliberately:** the owner's own annotation on this screenshot proposed moving caption actions into a left icon rail, which a sibling pass is designing. This change does not move anything — it makes the control in its current home say what it is, which is worth doing whether or not it later relocates.
+## B-122 — dragging a clip onto a track HEADER crashed the app: two different droppables both called themselves `type: 'track'`
+
+status: fixed (2026-09-08) · severity: **blocker** (an unhandled `TypeError` inside a React event handler — it took the render tree down with no error boundary to catch it, and the `tauri dev` process with it, `npm error code 143`; the user loses the session, not just the gesture) · area: `packages/editor/src/TimelinePane.tsx` (`SortableTrackHeader`, `TrackDropZone`, the three `@dnd-kit` handlers) and the new `packages/editor/src/dndTargets.ts`
+
+- **found:** 2026-09-08, in the dev-server log, while the owner was testing the B-115 gesture ("drag a clip over, it's not creating a new timeline on very top"). Caught live rather than reproduced blind:
+
+  ```
+  TypeError: undefined is not an object (evaluating 'dest.clips')
+    resolveClipLanding @ packages/editor/src/timeline.ts
+    onDndDragEnd       @ packages/editor/src/TimelinePane.tsx
+  ```
+
+- **the root cause is NOT an out-of-bounds index — it is an ambiguous discriminator.** Two *different* droppables in this pane both declared `data: { type: 'track', … }` with *different* payload shapes:
+  - `SortableTrackHeader` — `{ type: 'track', index }`, the track header in the left column. It is a droppable because **every `useSortable` item is also a droppable** (dnd-kit's own model), which is easy to forget: it was written as a drag *source* for the reorder gesture.
+  - `TrackDropZone` — `{ type: 'track', track }`, the full-width row lane in the edit area.
+
+  So dragging a clip up-and-left toward the top of the timeline — i.e. exactly the "put this above my video tracks" gesture — ended the drag over a HEADER. `onDndDragEnd`'s clip branch checked `overData.type !== 'track'`, which **passed**, then read `overData.track`, which a header does not have. `toTrack` was `undefined`, `tracks[undefined]` was `undefined`, and `resolveClipLanding` reads `dest.clips` on its first line.
+
+- **why it survived review for so long, which is the real lesson.** `dnd-kit` types `data.current` as `Record<string, unknown> | undefined`, so every reader must assert a shape. This file did that inline, **six times**, each site asserting the shape it happened to want — `as { type: 'track'; track: number }` in one place, `as { type: 'track'; index: number }` in another. A cast is a *promise*, not a check. Six independent promises about one shared `type` namespace is precisely how two of them end up contradicting each other, and the compiler cannot help because every one of them was, individually, plausible.
+
+- **the same bug existed in two more places, one of which was silently benign:** `onDndDragMove` had the identical crash (so it could throw mid-drag, before the drop), and the track-REORDER branch had the mirror image — a *lane* passing its `type: 'track'` check and yielding `overData.index === undefined`, which did not crash only because `doMoveTrack` ignores a bad index. That one had been quietly doing nothing rather than reordering. Both directions were wrong; both are refused now.
+
+- **fix, at the root.** The two droppables get genuinely distinct discriminators — `'track-header'` and `'track-lane'` — and the six inline casts are replaced by `dndTargets.ts`: the named payload types plus four narrowing functions that **validate at runtime**. `laneDropTrack(over, trackCount)` answers "which real track is this over" in one step, returning `null` for *every* non-landing alike: not over anything, over a header, a malformed payload, or a lane naming a track that no longer exists (reachable with no bug at all — dnd-kit caches droppable data for the whole gesture, so an undo or an MCP call removing a track mid-drag leaves a stale index). The caller therefore never receives an index it has to remember to bounds-check; there is no "valid shape, impossible value" state left to forget about.
+
+- **and the defensive net, kept anyway.** All three `resolveClipLanding` call sites now prove their destination first. Two are guaranteed by `laneDropTrack`'s own validation; the third (the "Move to ▾" dropdown, which builds its menu from real indices and so should never fail) gets an explicit guard — because "should never fire" is exactly what was believed about the two drag sites before one of them took the dev server down.
+
+- **verification:** `dndTargets.test.ts`, 13 new cases. The first feeds `laneDropTrack` the **exact payload a track header emits** — the input that crashed the app — and asserts `null`; others cover the mirror-image confusion, a stale/out-of-range track index, malformed payloads, junk-input non-throwing, and a regression guard asserting the legacy shared `type: 'track'` is now recognised by *nothing*. `npm test --workspace @chroma/editor` 1499/1499 (77 files). `npx tsc --noEmit -p packages/editor` clean — and TypeScript itself caught one call site the rename had missed, which is the point of naming the types once.
+
+- **honest tier note:** these are unit tests, not a DOM drag, because `TimelinePane.trim.dom.test.tsx` already documents that **dnd-kit resolves no `over` at all under jsdom** — a drop-on-a-header cannot be driven end to end in that tier. Making the wrong decision into a pure function is what made the crashing input a value a test can simply pass in, and it pins the contract rather than one gesture that happens to reach it. The real-browser gesture remains an owner check.

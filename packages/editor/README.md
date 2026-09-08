@@ -34,6 +34,16 @@ dragging a pool item in from the shell's Sources panel.
   `CHROMA_GENERATOR_DRAG_MIME`/`DraggedGenerator`/`clipFromDraggedGenerator`,
   the same contract for a *generated* clip (a title, an adjustment clip)
   dragged out of the left library rail.
+- `dndTargets.ts` (B-122) — the `@dnd-kit` payload contract: named types for
+  every drag source and drop target sharing `TimelinePane`'s one `DndContext`,
+  plus the four functions that narrow an untyped `data.current` into something
+  safe to use. It exists because two different droppables once shared the
+  discriminator `'track'` — the sortable track HEADER (`{ type, index }`) and
+  the row LANE (`{ type, track }`) — and six inline `as` casts each promised
+  the shape they wanted, so a clip dropped on a header read as a lane drop with
+  `track: undefined` and crashed the app. These validate at runtime and fold
+  the bounds check in, so a caller cannot receive a track index that does not
+  name a real track. No DOM, no React, no store.
 - `marquee.ts` (D-137) — marquee-select's pure half: whether a `pointerdown`
   may start a rubber-band at all (`canStartMarquee` /
   `MARQUEE_BLOCKING_SELECTOR`), the activation threshold, the
@@ -142,8 +152,10 @@ dragging a pool item in from the shell's Sources panel.
   documented escape hatch — so no gesture here can collide with the marquee.
 - `TimelineTransitions.tsx` (D-226/D-227, roadmap item 27) — the transitions
   library: the toolbar's browsable palette (a real `@dnd-kit` drag source — a
-  third drag kind sharing `TimelinePane`'s one `DndContext` alongside `track`
-  and `clip`, disambiguated by `data.type` as those two already are), the
+  third drag kind sharing `TimelinePane`'s one `DndContext` alongside
+  `track-header` and `clip`, disambiguated by `data.type` as those two already
+  are — see `dndTargets.ts` and B-122 for why that discriminator has to be
+  genuinely unique per payload SHAPE, not per conceptual thing), the
   hatched badge drawn on a track across a transition's own window, and the
   popover carrying its type / duration / alignment / dip colour / Remove. The
   model and ops (`Transition`, `transitionWindow`, `transitionHandles`,

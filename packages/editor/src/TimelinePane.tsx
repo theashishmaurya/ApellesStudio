@@ -75,6 +75,17 @@
  *     `TrackDropZone` (module scope, below) for the current mechanism. The
  *     "distinct hit-target, not either-defers-to-the-other" coexistence
  *     principle above is unchanged — only the drag API underneath it is.
+ *     **B-122 — every `@dnd-kit` payload in this file is now named and
+ *     narrowed by `dndTargets.ts`, not asserted inline.** `SortableTrackHeader`
+ *     is a DROPPABLE as well as a draggable (every `useSortable` item is), and
+ *     it and `TrackDropZone` both used to answer to `type: 'track'` with
+ *     differently-shaped payloads — so a clip dropped on a track header read as
+ *     a lane drop with `track: undefined` and crashed the app inside
+ *     `resolveClipLanding`. The discriminators are `'track-header'` and
+ *     `'track-lane'` now, and `asClipDrag`/`asTrackHeaderDrag`/`laneDropTrack`/
+ *     `headerDropIndex` validate at runtime — including that a track index
+ *     names a track that actually exists — so no handler here can be handed an
+ *     index it must remember to bounds-check.
  *   - **Dropping a Sources-panel clip targets whichever lane the cursor is
  *     over** (D-046 pass 3's plain-HTML5-drag mechanism, now row-aware) —
  *     `dropTargetTrack` converts `e.clientY` into a row index using the
@@ -361,6 +372,17 @@ import {
 // B-116 — anchored zoom: keep whatever is under the cursor (wheel) or the
 // playhead (buttons) under it across a zoom step.
 import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
+// B-122 — the one place the `@dnd-kit` payload shapes are named, and the
+// validating narrowings that replaced this file's six inline `as` casts.
+import {
+  asClipDrag,
+  asTrackHeaderDrag,
+  headerDropIndex,
+  laneDropTrack,
+  type ClipDragData,
+  type TrackHeaderDragData,
+  type TrackLaneDropData,
+} from './dndTargets';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
   CHROMA_MEDIA_DRAG_MIME,
@@ -841,7 +863,13 @@ function SortableTrackHeader({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: trackDragId(index),
-    data: { type: 'track' as const, index },
+    // B-122 — `'track-header'`, not `'track'`. `useSortable` makes this a
+    // DROPPABLE as well as a draggable, and `TrackDropZone` (the row lane) was
+    // a droppable calling itself `'track'` too — with a `track` field where
+    // this one has `index`. Every `event.over` reader discriminated on that
+    // one string, so the two were indistinguishable and a clip dropped on a
+    // HEADER read as a lane drop with `track: undefined`. See `dndTargets.ts`.
+    data: { type: 'track-header' as const, index } satisfies TrackHeaderDragData,
   });
   const style: CSSProperties = {
     height,
@@ -1089,7 +1117,11 @@ function ClipBody({
 function TrackDropZone({ track, top, height }: { track: number; top: number; height: number }) {
   const { setNodeRef } = useDroppable({
     id: `track-drop:${track}`,
-    data: { type: 'track' as const, track },
+    // B-122 — `'track-lane'`, not `'track'`: `SortableTrackHeader` is a
+    // droppable too (every sortable is) and used to answer to the same name
+    // with a differently-shaped payload. Distinct discriminators are what make
+    // `event.over?.data.current` safe to narrow on at all — see `dndTargets.ts`.
+    data: { type: 'track-lane' as const, track } satisfies TrackLaneDropData,
   });
   return (
     <div
@@ -1547,9 +1579,7 @@ export function TimelinePane() {
   // one shared `<DndContext>`'s notion of "what's currently being dragged"
   // — drives the `DragOverlay` ghost and whether `TrackDropZone` overlays
   // exist in the DOM at all (only during a clip-type drag).
-  const [activeDrag, setActiveDrag] = useState<
-    { type: 'track'; index: number } | { type: 'clip'; track: number; clipId: string } | null
-  >(null);
+  const [activeDrag, setActiveDrag] = useState<TrackHeaderDragData | ClipDragData | null>(null);
   // D-113 — owner, live: "when i drag and drop it shows whole track as
   // white make only the track length and where it is actually going to
   // go, placeholder kindda." The full-row wash `TrackDropZone` used to
@@ -2821,7 +2851,15 @@ export function TimelinePane() {
     if (i < 0) return;
     const clip = clipsOf(primary.track)[i];
     const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
-    const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, clip.start_frame, snapFrames, fps);
+    // B-122 — the third and last `resolveClipLanding` call site, and the only
+    // one not fed by a drag. `otherTracks` builds this menu from real indices,
+    // so this guard should never fire — but `resolveClipLanding` reads
+    // `dest.clips` immediately, and "should never fire" is exactly what was
+    // believed about the two drag sites before one of them took the dev server
+    // down. Every caller of that function now proves its destination first.
+    const dest = tracks[toTrack];
+    if (!dest) return;
+    const { startFrame, ripple } = resolveClipLanding(dest, clip.id, clip, clip.start_frame, snapFrames, fps);
     applyOp({ kind: 'move', fromTrack: primary.track, toTrack, clip: i, startFrame, ripple });
     setSelection([{ track: toTrack, id: primary.id }]);
   };
@@ -2926,12 +2964,15 @@ export function TimelinePane() {
   // clip move — same-track drag/trim/resize stays on the timeline library's
   // own native mechanism, untouched, out of scope for this migration).
   const onDndDragStart = useCallback((event: DragStartEvent) => {
-    const data = event.active.data.current as
-      | { type: 'track'; index: number }
-      | { type: 'clip'; track: number; clipId: string }
-      | undefined;
-    if (!data) return;
-    setActiveDrag(data);
+    // B-122 — narrowed by `dndTargets.ts`'s validating helpers rather than an
+    // inline `as` cast. A cast is a promise, not a check; six independent
+    // promises about one shared `type` namespace is exactly how the header and
+    // the lane ended up indistinguishable.
+    const clip = asClipDrag(event.active.data.current);
+    const header = asTrackHeaderDrag(event.active.data.current);
+    const next = clip ?? header;
+    if (!next) return; // a transitions-palette drag — no overlay ghost of its own
+    setActiveDrag(next);
   }, []);
 
   const onDndDragCancel = useCallback(() => {
@@ -3010,12 +3051,13 @@ export function TimelinePane() {
    *  the whole component. */
   const onDndDragMove =
     (event: DragMoveEvent) => {
-      const data = event.active.data.current as
-        | { type: 'track'; index: number }
-        | { type: 'clip'; track: number; clipId: string }
-        | undefined;
-      const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
-      if (!data || data.type !== 'clip') {
+      // B-122 — `laneDropTrack` answers "which REAL track is this over" in one
+      // step: it refuses a track HEADER (the crash), a malformed payload, and
+      // an index naming a track that no longer exists. So `toTrack` below is
+      // never an index this component has to remember to bounds-check.
+      const data = asClipDrag(event.active.data.current);
+      const overTrack = laneDropTrack(event.over?.data.current, tracks.length);
+      if (!data) {
         setClipDragPreview((prev) => (prev === null ? prev : null));
         setInsertPreview((prev) => (prev === null ? prev : null));
         return;
@@ -3031,10 +3073,10 @@ export function TimelinePane() {
         setInsertPreview((prev) => (prev === null ? prev : null));
         return;
       }
-      if (!overData || overData.type !== 'track') {
-        // Not over an existing track's droppable — check whether this is a
-        // real track-insertion boundary (same helper the Sources-panel add
-        // path uses) and show the identical ghost-row preview if so.
+      if (overTrack === null) {
+        // Not over an existing track's lane — check whether this is a real
+        // track-insertion boundary (same helper the Sources-panel add path
+        // uses) and show the identical ghost-row preview if so.
         setClipDragPreview((prev) => (prev === null ? prev : null));
         const boundary = dndBoundary(event);
         setInsertPreview((prev) =>
@@ -3053,10 +3095,13 @@ export function TimelinePane() {
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
       const clip = clipsOf(fromTrack)[i];
-      const toTrack = overData.track;
+      const toTrack = overTrack;
       const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
       const intendedFrame = clip.start_frame + deltaFrames;
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
+      // `toTrack` came from `laneDropTrack`, which only ever returns a real
+      // track index — so this cannot be the `undefined` that crashed
+      // `resolveClipLanding` on `dest.clips` (B-122).
       const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
       setClipDragPreview((prev) => {
         if (
@@ -3078,26 +3123,31 @@ export function TimelinePane() {
   /** D-201 — no `useCallback`, same reasoning as `onDndDragMove` just above. */
   const onDndDragEnd =
     (event: DragEndEvent) => {
-      const data = event.active.data.current as
-        | { type: 'track'; index: number }
-        | { type: 'clip'; track: number; clipId: string }
-        | TransitionDragData
-        | undefined;
+      // B-122 — the three drag kinds sharing this `DndContext`, each narrowed
+      // by a real runtime check rather than an `as` cast (see `dndTargets.ts`).
+      // `TransitionDragData` stays with its own feature (D-226); the two that
+      // were confusable with each other are the ones that moved.
+      const raw = event.active.data.current;
+      const clipDrag = asClipDrag(raw);
+      const headerDrag = asTrackHeaderDrag(raw);
+      const transitionDrag =
+        raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
       setActiveDrag(null);
       setClipDragPreview((prev) => (prev === null ? prev : null));
-      if (!data) return;
 
       // D-226 — a transition dragged out of the palette. Its only legal target
       // is a real CUT on a video track, so the drop resolves to the nearest one
       // within `TRANSITION_SNAP_PX` and is refused (with a real reason) rather
       // than snapped to something arbitrary — a transition is not a clip, it
       // cannot land "roughly there".
-      if (data.type === 'transition') {
-        const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
-        if (!overData || overData.type !== 'track' || !timeline) return;
-        const trackIdx = overData.track;
+      if (transitionDrag) {
+        // B-122 — a transition dropped on a track HEADER used to reach here as
+        // a lane drop with `track: undefined`; it survived only because of the
+        // `if (!tr) return` below, which the clip path did not have. Now the
+        // narrowing itself refuses it, and `trackIdx` is always a real track.
+        const trackIdx = laneDropTrack(event.over?.data.current, tracks.length);
+        if (trackIdx === null || !timeline) return;
         const tr = tracks[trackIdx];
-        if (!tr) return;
         // The pointer's real x: `event.delta` is the whole drag's movement, and
         // `activatorEvent` is the original pointer event it started from — the
         // pair gives an absolute position without needing a rect measurement,
@@ -3127,7 +3177,7 @@ export function TimelinePane() {
           fps,
           (c) => endFrame(c, fps) - c.start_frame,
         );
-        const built = newTransition(data.kind, cut, duration);
+        const built = newTransition(transitionDrag.kind, cut, duration);
         if ('error' in built) {
           setDropError(built.error);
           return;
@@ -3142,16 +3192,21 @@ export function TimelinePane() {
         return;
       }
 
-      if (data.type === 'track') {
+      if (headerDrag) {
         // `over` is another `SortableTrackHeader` (every sortable item is
         // also a droppable, dnd-kit's own doc) — its `data.current.index`
         // is the CURRENT render's track index, exactly what `doMoveTrack`
         // (unchanged from D-094/D-097) already expects as `to`.
-        const overData = event.over?.data.current as { type: 'track'; index: number } | undefined;
-        if (!overData || overData.type !== 'track') return;
-        doMoveTrack(data.index, overData.index);
+        // B-122 — a reorder resolves against another HEADER, never a lane.
+        // These two questions look identical at the call site and have
+        // different right answers, which is why `dndTargets.ts` gives each its
+        // own function.
+        const overIndex = headerDropIndex(event.over?.data.current, tracks.length);
+        if (overIndex === null) return;
+        doMoveTrack(headerDrag.index, overIndex);
         return;
       }
+      if (!clipDrag) return;
 
       // clip — D-100: the ONLY move mechanism now, same-track or
       // cross-track alike (see `buildRows`'s `movable: false` doc and
@@ -3159,7 +3214,7 @@ export function TimelinePane() {
       // gone). `over`'s track vs. this clip's own starting track is what
       // decides which case this is — no separate code path per gesture,
       // just a different `startFrame` computation.
-      const { track: fromTrack, clipId } = data;
+      const { track: fromTrack, clipId } = clipDrag;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
 
@@ -3207,10 +3262,15 @@ export function TimelinePane() {
         }
       }
 
-      const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
-      if (!overData || overData.type !== 'track') {
+      // B-122 — one question, one answer: `laneDropTrack` is `null` for "not
+      // over anything", "over a HEADER rather than a lane" (the crash) and
+      // "over a lane whose track no longer exists" alike, and every one of
+      // those is the same non-landing. `toTrack` below is therefore always a
+      // real track index, which is what `resolveClipLanding` requires.
+      const overTrack = laneDropTrack(event.over?.data.current, tracks.length);
+      if (overTrack === null) {
         setInsertPreview((prev) => (prev === null ? prev : null));
-        // D-117 — not over an existing track's droppable: check whether
+        // D-117 — not over an existing track's lane: check whether
         // this is a real track-insertion boundary instead of just
         // cancelling. Mirrors the Sources-panel `onDrop`'s own
         // `add_track` (+ `move_track` when it's not a plain append) —
@@ -3237,7 +3297,7 @@ export function TimelinePane() {
         setSelection([{ track: boundary, id: clipId }]);
         return;
       }
-      const toTrack = overData.track;
+      const toTrack = overTrack;
       const clip = clipsOf(fromTrack)[i];
       // D-104 — `event.delta.x` is the net pointer movement for the whole
       // drag, in screen px, converted to frames the same way `xToFrame` does
@@ -3341,7 +3401,7 @@ export function TimelinePane() {
   // was a symptom of that gap, not a one-off bug — the browser's default
   // drag image is a frozen DOM snapshot captured once at `dragstart`).
   const dragOverlayLabel =
-    activeDrag?.type === 'track'
+    activeDrag?.type === 'track-header'
       ? labels[activeDrag.index]
       : activeDrag?.type === 'clip'
         ? (clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]?.name ?? activeDrag.clipId)
