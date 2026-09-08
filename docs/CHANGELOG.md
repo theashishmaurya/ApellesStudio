@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
+  a new top-level `website/` (Astro, its own project, deliberately outside the
+  npm workspace), reversing the standing "build the website LAST, right before
+  launch" decision at the owner's explicit instruction. Its palette and type are
+  a verbatim transcription of the app's own Dark theme and Poppins face, with the
+  shipped `MARKER_COLORS` swatches as the only chromatic signals — and a test
+  reads both real app files and fails on any drift. The hero is a working
+  miniature of the Edit tab (a real draggable playhead scrubbing real
+  screenshots, plus D-253's own 8px-per-step drag-to-scrub numeric fields driving
+  the preview) rather than a parallax scroll. Every MCP figure is counted from
+  `mcp/server.py` — 115 definitions, 9 debug-only, **106 shipped** — by a test
+  that also asserts every tool name printed is real, which caught one invented
+  name during the build and found `mcp/README.md`'s own heading stale (94/8/48
+  vs. the real 115/9/60; corrected here). Missing things are stated on the page,
+  not hidden: no Motion or Colorist screenshots exist, there is no demo video,
+  and the Motion tab's 0 MCP tools is printed beside the other counts. The beta
+  form is fully built against a marked placeholder endpoint and refuses to post
+  until a real one is set (`website/BETA_SIGNUP_SETUP.md`). 141 tests green,
+  `astro check` and `astro build` clean.
+
 - **2026-09-09** — **D-253: numeric fields lose the native spinner and gain
   drag-to-scrub** — finishes B-113, whose `pr-5` reserve could never have
   worked (WebKit lays the spin button out INSIDE the padding box, so padding

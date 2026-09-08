@@ -2394,11 +2394,24 @@ overnight pass as everything above.
 
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
+**The marketing website is no longer on the list below — it SHIPPED
+(2026-09-09, D-255),** out of sequence at the owner's explicit instruction. It
+lives in a new top-level `website/` (Astro, its own project, deliberately
+outside the npm workspace); see `website/README.md` to run it and **D-255** for
+the reversal itself, the token-derivation approach, and what it deliberately
+leaves undone. Building it early unblocked nothing and committed nothing —
+`docs/notes/pre-launch-plan.md` §0 already named the website as one of the two
+items that do **not** depend on the unresolved D-002 licensing question.
+Still open on it: no demo video (`website/TODO-DEMO-VIDEO.md`), no real
+Formspree endpoint (`website/BETA_SIGNUP_SETUP.md`), no domain or deployment,
+no download links (they wait on real installers), no public changelog page, and
+no Motion/Colorist screenshots (none have ever been captured).
+
 **Deferred, not abandoned — build LAST, right before launch, per the owner's own
 sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
 a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in
-remote-GPU cloud fallback for the existing local AI sidecars, the marketing
-website, **a Windows port**, and **general-purpose Python-sidecar hosting**.
+remote-GPU cloud fallback for the existing local AI sidecars,
+**a Windows port**, and **general-purpose Python-sidecar hosting**.
 Research-and-scope pass done, nothing built — `docs/notes/pre-launch-plan.md`
 has the full findings, provider comparisons, and — the one thing to resolve
 before starting the backend or the cloud sidecar — the real, currently-

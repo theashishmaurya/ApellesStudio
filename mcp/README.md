@@ -41,10 +41,23 @@ claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools — 94 (plus 8 debug-build-only)
+## Tools — 106 shipped (plus 9 debug-build-only; 115 definitions total)
+
+> **Re-counted 2026-09-09 (D-255)** directly against this file's own server —
+> `grep -c '^@mcp.tool()' server.py` = **115**, of which 9 are `debug_*`
+> (dev-build only, never shipped), leaving **106**. The heading previously said
+> "94 (plus 8)" and the paragraph below said 48 Edit tools; both had gone stale
+> as tools landed. Split by prefix: 60 Edit (`editor_*` plus the four unprefixed
+> `get_timeline` / `set_clip_fade` / `set_clip_speed` / `set_track_duck`),
+> 42 Colorist, 4 media-understanding, 0 Motion.
+>
+> These numbers are now **asserted by a test** — `website/tests/mcp-data.test.ts`
+> re-counts this file on every website test run and fails if the site's published
+> figures drift from it. If you add a tool and that suite goes red, update
+> `website/src/data/mcp.ts` and this heading together.
 
 The table below is the **Colorist** surface (grading, masks, relight, scopes,
-export). The Edit tab's own 48 `editor_*` tools — read/seek/**selection**
+export). The Edit tab's own 60 `editor_*` tools — read/seek/**selection**
 (D-216), preview zoom (D-218), media import/removal, clip placement/split/trim/
 slip/swap/move/remove, gap removal, text/title clips (D-211), **adjustment
 clips (D-230)**, track management
@@ -55,7 +68,7 @@ export, FCPXML interchange, and 4 media-understanding tools from D-189 (listed
 at the end of this table) — are documented with their behaviour in
 `../docs/notes/mcp-tool-coverage.md`, which is the authoritative per-tab
 inventory; the pattern every tab follows is
-`../docs/notes/mcp-architecture.md`. The 8 `debug_*` tools (D-210, D-219) are
+`../docs/notes/mcp-architecture.md`. The 9 `debug_*` tools (D-210, D-219, D-246) are
 debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md` and
 `../docs/notes/debug-tooling.md`.
 

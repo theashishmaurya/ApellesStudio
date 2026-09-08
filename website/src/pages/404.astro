@@ -1,0 +1,42 @@
+---
+/**
+ * 404.astro — the not-found page (D-255).
+ * Set as a timecode that ran past the end of the sequence, because that is the
+ * one joke this product is actually entitled to make.
+ */
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Not found — Chroma" description="That page does not exist on Chroma's site.">
+  <section class="nf">
+    <div class="shell">
+      <p class="eyebrow">404</p>
+      <h1>Past the last frame.</h1>
+      <p class="lede">There is nothing at this address. The timeline ends earlier than that.</p>
+      <p class="back"><a href="/">Back to the start &rarr;</a></p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .nf {
+    padding-block: clamp(6rem, 4rem + 10vw, 12rem);
+  }
+  h1 {
+    font-size: var(--step-4);
+    font-weight: 300;
+    margin: 1rem 0 1.25rem;
+  }
+  .back {
+    margin-top: 2rem;
+  }
+  .back a {
+    font-size: var(--step--1);
+    border-bottom: 1px solid var(--color-border-color);
+    padding-bottom: 2px;
+    transition: border-color var(--dur-slow) var(--ease-out);
+  }
+  .back a:hover {
+    border-color: var(--color-accent);
+  }
+</style>

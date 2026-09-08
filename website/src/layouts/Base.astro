@@ -1,0 +1,79 @@
+---
+/**
+ * Base.astro — the site's single document shell (D-255).
+ *
+ * What it is: <head>, fonts, global CSS, nav and footer around a slot.
+ * What it does NOT do: any per-page logic — pages compose sections themselves.
+ *
+ * The font loading mirrors app/index.html's own preconnect + css2 pattern
+ * verbatim, so the site renders in the product's real typeface rather than an
+ * approximation of it.
+ */
+import '../styles/global.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://chroma.video').href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={new URL('/shots/edit-inspector.png', Astro.site ?? 'https://chroma.video').href} />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <meta name="theme-color" content="#181818" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <Nav />
+    <main id="main">
+      <slot />
+    </main>
+    <Footer />
+
+    <style>
+      /* Hidden without leaving the document — a negative `left` offset would
+         extend the scrollable overflow area and shift a full-page capture. */
+      .skip {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 100;
+        background: var(--color-accent);
+        color: var(--color-button-text);
+        padding: 0.6rem 1rem;
+        font-size: var(--step--1);
+        transform: translateY(-120%);
+        transition: transform var(--dur-fast) var(--ease-out);
+      }
+      .skip:focus {
+        transform: translateY(0);
+      }
+    </style>
+  </body>
+</html>

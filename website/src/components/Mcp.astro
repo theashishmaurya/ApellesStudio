@@ -1,0 +1,263 @@
+---
+/**
+ * Mcp.astro — the MCP surface on the home page (D-255).
+ *
+ * Set as a terminal plus a dense tool inventory rather than feature cards,
+ * because that is the shape of the material: a command you actually run, and a
+ * list of real function names. The Motion tab's zero is printed alongside the
+ * others — the count is only worth anything if the gap is in it too.
+ */
+import { TOOL_GROUPS, TOOL_TOTALS, MOTION_GAP, CONNECTION, VERIFIED_ON } from '../data/mcp.ts';
+---
+
+<section class="mcp section" id="mcp">
+  <div class="shell top">
+    <div>
+      <p class="eyebrow">Model Context Protocol</p>
+      <h2>An agent drives the same buttons you do.</h2>
+      <p class="lede">
+        Every MCP tool posts to a control server inside the running app, which dispatches it to the
+        exact store action the GUI button calls. There is no second code path and no parallel
+        state: an agent's edit moves the real sliders, lands on the same undo stack, and is visible
+        on screen while it happens.
+      </p>
+    </div>
+
+    <div class="term" role="group" aria-label="Connecting an MCP client to Chroma">
+      <div class="term-bar"><span class="mono">chroma / mcp</span></div>
+      <pre class="mono"><code>$ cd mcp
+$ python3 -m venv .venv
+$ .venv/bin/pip install -r requirements.txt
+
+$ claude mcp add chroma -- \
+    /ABS/PATH/chroma/mcp/.venv/bin/python \
+    /ABS/PATH/chroma/mcp/server.py</code></pre>
+      <p class="term-note">
+        The desktop app must be running &mdash; its control server binds on start, at
+        <span class="mono">127.0.0.1:{CONNECTION.defaultPort}</span>.
+        <a href="/docs/mcp/">Full setup &rarr;</a>
+      </p>
+    </div>
+  </div>
+
+  <div class="shell inv">
+    {
+      TOOL_GROUPS.map((g) => (
+        <article class="grp">
+          <div class="grp-h">
+            <span class="n mono" style={`--tone:var(--marker-${g.signal})`}>
+              {String(g.count).padStart(2, '0')}
+            </span>
+            <h3>{g.name}</h3>
+          </div>
+          <p>{g.blurb}</p>
+          <ul class="names mono">
+            {g.sample.map((n) => (
+              <li>{n}</li>
+            ))}
+          </ul>
+        </article>
+      ))
+    }
+
+    <article class="grp gap">
+      <div class="grp-h">
+        <span class="n mono zero">{String(MOTION_GAP.count).padStart(2, '0')}</span>
+        <h3>Motion</h3>
+      </div>
+      <p>{MOTION_GAP.note}</p>
+    </article>
+  </div>
+
+  <div class="shell tally">
+    <hr class="rule" />
+    <p>
+      <strong class="mono">{TOOL_TOTALS.shipped}</strong> tools ship to users.
+      <span class="dim">
+        A further {TOOL_TOTALS.debugOnly} exist for driving the app during development and are
+        compiled out of a production build. Counted directly from
+        <span class="mono">mcp/server.py</span> on {VERIFIED_ON}.
+      </span>
+    </p>
+  </div>
+</section>
+
+<style>
+  .mcp {
+    background: var(--color-surface);
+    border-block: 1px solid var(--color-border-color);
+  }
+
+  .top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(2rem, 1rem + 4vw, 5rem);
+    align-items: start;
+  }
+
+  h2 {
+    font-size: var(--step-4);
+    font-weight: 300;
+    margin: 1rem 0 1.5rem;
+    max-width: 16ch;
+  }
+
+  /* ---- terminal ------------------------------------------------------- */
+
+  .term {
+    border: 1px solid var(--color-border-color);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-primary);
+    overflow: hidden;
+  }
+
+  .term-bar {
+    padding: 0.5rem 0.85rem;
+    border-bottom: 1px solid var(--color-border-color);
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    letter-spacing: 0.08em;
+  }
+
+  .term pre {
+    margin: 0;
+    padding: 1.1rem 1rem;
+    overflow-x: auto;
+    font-size: 0.78rem;
+    line-height: 1.85;
+    color: var(--color-text-primary);
+  }
+
+  .term-note {
+    padding: 0.85rem 1rem;
+    border-top: 1px solid var(--color-border-color);
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+  }
+
+  .term-note a {
+    color: var(--color-text-primary);
+    border-bottom: 1px solid var(--color-border-color);
+    transition: border-color var(--dur-slow) var(--ease-out);
+  }
+  .term-note a:hover {
+    border-color: var(--color-accent);
+  }
+
+  /* ---- inventory ------------------------------------------------------ */
+
+  .inv {
+    margin-top: clamp(3rem, 2rem + 4vw, 5rem);
+    display: grid;
+    /* Deliberately uneven: the two big surfaces get the room, the two small
+       ones sit beneath them. Not four equal cards. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    border-top: 1px solid var(--color-border-color);
+  }
+
+  .grp {
+    padding: 1.75rem 0;
+    border-bottom: 1px solid var(--color-border-color);
+    padding-right: clamp(1rem, 0.5rem + 2vw, 3rem);
+  }
+
+  .grp:nth-child(odd) {
+    border-right: 1px solid var(--color-border-color);
+    padding-left: 0;
+  }
+  .grp:nth-child(even) {
+    padding-left: clamp(1rem, 0.5rem + 2vw, 3rem);
+    padding-right: 0;
+  }
+
+  .grp-h {
+    display: flex;
+    align-items: baseline;
+    gap: 0.9rem;
+    margin-bottom: 0.85rem;
+  }
+
+  /* The count is the loudest thing in the section, and the only place a signal
+     colour is used at size — the way a marker reads on a timeline. */
+  .n {
+    font-size: var(--step-3);
+    font-weight: 500;
+    color: var(--tone);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .n.zero {
+    color: var(--color-text-secondary);
+  }
+
+  .grp h3 {
+    font-size: var(--step-1);
+    font-weight: 400;
+  }
+
+  .grp p {
+    color: var(--color-text-secondary);
+    font-size: var(--step--1);
+    max-width: 52ch;
+  }
+
+  .names {
+    list-style: none;
+    margin: 1.1rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .names li {
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-color);
+    border-radius: 4px;
+    padding: 0.15rem 0.4rem;
+    transition:
+      color var(--dur-slow) var(--ease-out),
+      border-color var(--dur-slow) var(--ease-out);
+  }
+  .names li:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-text-secondary);
+  }
+
+  .gap p {
+    max-width: 60ch;
+  }
+
+  /* ---- tally ---------------------------------------------------------- */
+
+  .tally {
+    margin-top: 2.5rem;
+  }
+  .tally p {
+    margin-top: 1.25rem;
+    font-size: var(--step--1);
+    max-width: 78ch;
+  }
+  .tally strong {
+    font-size: var(--step-2);
+    font-weight: 500;
+  }
+  .dim {
+    color: var(--color-text-secondary);
+  }
+
+  @media (max-width: 900px) {
+    .top,
+    .inv {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .grp:nth-child(odd) {
+      border-right: 0;
+    }
+    .grp:nth-child(even) {
+      padding-left: 0;
+    }
+  }
+</style>

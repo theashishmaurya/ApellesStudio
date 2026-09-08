@@ -1,0 +1,305 @@
+---
+/**
+ * Beta.astro — pre-launch signup (D-255).
+ *
+ * What it is: a real form with real client-side validation and real
+ * submitting/success/error states, posting to Formspree's JSON endpoint.
+ * What it does NOT do: post anywhere until the owner drops a real endpoint into
+ * `src/data/beta.ts`. Until then it validates, then tells the visitor plainly
+ * that signup is not open yet rather than silently swallowing an address.
+ *
+ * Setup: website/BETA_SIGNUP_SETUP.md.
+ */
+import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint, ROLES } from '../data/beta.ts';
+
+const endpoint = BETA_FORM_ENDPOINT;
+const placeholder = isPlaceholderEndpoint(endpoint);
+---
+
+<section class="beta section" id="beta">
+  <div class="shell wrap">
+    <div class="copy">
+      <p class="eyebrow">Pre-launch</p>
+      <h2>Get it when it opens.</h2>
+      <p class="lede">
+        Chroma has not shipped a public build yet. Leave an address and you will hear from us once
+        there is one worth installing &mdash; nothing else, and no list you have to escape from
+        afterwards.
+      </p>
+      <p class="fine">
+        We store your address to send you that one message. It is not sold, and there is no
+        analytics or tracking script anywhere on this site.
+      </p>
+    </div>
+
+    <form
+      class="form"
+      data-beta-form
+      data-endpoint={endpoint}
+      data-placeholder={placeholder ? 'true' : 'false'}
+      action={endpoint}
+      method="POST"
+      novalidate
+    >
+      <div class="row">
+        <label for="beta-email">Email</label>
+        <input
+          id="beta-email"
+          name="email"
+          type="email"
+          inputmode="email"
+          autocomplete="email"
+          placeholder="you@studio.com"
+          required
+          aria-describedby="beta-email-err"
+        />
+        <p class="err" id="beta-email-err" data-err hidden></p>
+      </div>
+
+      <div class="row">
+        <label for="beta-role">What do you make? <span class="opt">optional</span></label>
+        <select id="beta-role" name="role">
+          <option value="">Prefer not to say</option>
+          {ROLES.map((r) => <option value={r}>{r}</option>)}
+        </select>
+      </div>
+
+      <!-- Honeypot: a real bot trap, visually and semantically hidden from people. -->
+      <div class="hp" aria-hidden="true">
+        <label for="beta-company">Company</label>
+        <input id="beta-company" name="_gotcha" type="text" tabindex="-1" autocomplete="off" />
+      </div>
+
+      <button type="submit" data-submit>
+        <span data-label>Request beta access</span>
+      </button>
+
+      <p class="status" data-status role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+
+<style>
+  .beta {
+    border-top: 1px solid var(--color-border-color);
+    background: var(--color-surface);
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: clamp(2rem, 1rem + 5vw, 6rem);
+    align-items: start;
+  }
+
+  h2 {
+    font-size: var(--step-4);
+    font-weight: 300;
+    margin: 1rem 0 1.5rem;
+  }
+
+  .fine {
+    margin-top: 1.5rem;
+    font-size: 0.75rem;
+    line-height: 1.7;
+    color: var(--color-text-secondary);
+    max-width: 46ch;
+  }
+
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    border: 1px solid var(--color-border-color);
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-primary);
+    padding: clamp(1.25rem, 0.8rem + 1.6vw, 2rem);
+  }
+
+  .row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  label {
+    font-size: var(--step--1);
+    color: var(--color-text-secondary);
+  }
+
+  .opt {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    opacity: 0.7;
+  }
+
+  input[type='email'],
+  select {
+    width: 100%;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-color);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-family: inherit;
+    font-size: var(--step-0);
+    padding: 0.7rem 0.8rem;
+    transition: border-color var(--dur-slow) var(--ease-out);
+  }
+
+  input[type='email']:hover,
+  select:hover {
+    border-color: var(--color-text-secondary);
+  }
+  input[type='email']:focus,
+  select:focus {
+    border-color: var(--color-accent);
+  }
+  input[aria-invalid='true'] {
+    border-color: var(--marker-red);
+  }
+
+  .err {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--marker-red);
+  }
+
+  .hp {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  button {
+    margin-top: 0.25rem;
+    background: var(--color-accent);
+    color: var(--color-button-text);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: var(--step-0);
+    font-weight: 500;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition:
+      opacity var(--dur-slow) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  button:hover:not(:disabled) {
+    opacity: 0.88;
+  }
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .status {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--color-text-secondary);
+    min-height: 1.2em;
+  }
+  .status[data-tone='ok'] {
+    color: var(--marker-green);
+  }
+  .status[data-tone='bad'] {
+    color: var(--marker-red);
+  }
+
+  @media (max-width: 860px) {
+    .wrap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
+
+<script>
+  /**
+   * Real submit handling. Validates, disables while in flight, reports the
+   * outcome, and refuses to post at all while the endpoint is the placeholder
+   * shipped in src/data/beta.ts.
+   */
+  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+  document.querySelectorAll<HTMLFormElement>('[data-beta-form]').forEach((form) => {
+    const email = form.querySelector<HTMLInputElement>('#beta-email');
+    const err = form.querySelector<HTMLElement>('[data-err]');
+    const status = form.querySelector<HTMLElement>('[data-status]');
+    const button = form.querySelector<HTMLButtonElement>('[data-submit]');
+    const label = form.querySelector<HTMLElement>('[data-label]');
+    if (!email || !err || !status || !button || !label) return;
+
+    const setErr = (msg: string) => {
+      err.textContent = msg;
+      err.hidden = msg === '';
+      email.setAttribute('aria-invalid', msg === '' ? 'false' : 'true');
+    };
+
+    const setStatus = (msg: string, tone: 'ok' | 'bad' | '' = '') => {
+      status.textContent = msg;
+      if (tone) status.dataset.tone = tone;
+      else delete status.dataset.tone;
+    };
+
+    email.addEventListener('input', () => {
+      if (err.hidden === false) setErr('');
+    });
+
+    form.addEventListener('submit', async (e: SubmitEvent) => {
+      e.preventDefault();
+      setStatus('');
+
+      const value = email.value.trim();
+      if (value === '') {
+        setErr('An email address is required.');
+        email.focus();
+        return;
+      }
+      if (!EMAIL.test(value)) {
+        setErr('That does not look like an email address.');
+        email.focus();
+        return;
+      }
+      setErr('');
+
+      if (form.dataset.placeholder === 'true') {
+        setStatus(
+          'Signup is not wired up yet — this site is still pre-launch. Nothing was sent, so please try again once the form is live.',
+          'bad',
+        );
+        return;
+      }
+
+      button.disabled = true;
+      label.textContent = 'Sending…';
+
+      try {
+        const res = await fetch(form.dataset.endpoint ?? form.action, {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+          body: new FormData(form),
+        });
+
+        if (res.ok) {
+          form.reset();
+          setStatus('You are on the list. We will be in touch when there is a build.', 'ok');
+          label.textContent = 'Request beta access';
+          button.disabled = false;
+          return;
+        }
+        setStatus('That did not go through. Please try again in a moment.', 'bad');
+      } catch {
+        setStatus('Could not reach the server. Check your connection and try again.', 'bad');
+      }
+
+      label.textContent = 'Request beta access';
+      button.disabled = false;
+    });
+  });
+</script>
