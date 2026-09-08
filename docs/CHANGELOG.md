@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **Reverse speed, and the live preview's audio finally
-  retimes (D-240, D-241 — D-236's two named speed-ramp follow-ups).** A clip, or
+  retimes (D-241, D-242 — D-236's two named speed-ramp follow-ups).** A clip, or
   any single run of a ramp, can now play BACKWARDS: a negative percentage in the
   Inspector or a per-run **Reverse** button (both references spell it that way),
   and negatives on `editor_set_clip_speed`. It needed no schema change — a

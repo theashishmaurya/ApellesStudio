@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution proof that REVERSE speed (D-240)
+// @chroma/editor — REAL ffmpeg-execution proof that REVERSE speed (D-241)
 // exports the exact source frames, in the exact order, the live preview
 // resolves.
 //
@@ -135,7 +135,7 @@ function exportTimeline(tl: Timeline, outPath: string): void {
   }
 }
 
-describe.skipIf(!FFMPEG_AVAILABLE)('D-240 — reverse speed exports the frames the preview resolves', () => {
+describe.skipIf(!FFMPEG_AVAILABLE)('D-241 — reverse speed exports the frames the preview resolves', () => {
   let dir: string;
   let srcPath: string;
   let sourceBrightness: number[] = [];

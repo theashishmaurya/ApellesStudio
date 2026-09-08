@@ -95,7 +95,7 @@ describe('clampSpeed', () => {
     expect(clampSpeed(1e-6)).toBe(MIN_SPEED);
   });
 
-  it('D-240 — keeps the SIGN and clamps only the magnitude', () => {
+  it('D-241 — keeps the SIGN and clamps only the magnitude', () => {
     expect(clampSpeed(-2)).toBe(-2);
     expect(clampSpeed(-0.5)).toBe(-0.5);
     expect(clampSpeed(-1e6)).toBe(-MAX_SPEED);
@@ -408,7 +408,7 @@ describe('the timeline model reads the ramp through one definition', () => {
 });
 
 // --------------------------------------------------------------------------- //
-// D-240 — reverse (negative) speed
+// D-241 — reverse (negative) speed
 // --------------------------------------------------------------------------- //
 
 /** Forward, then backwards at 2x, then forward again:
@@ -424,7 +424,7 @@ const MIXED_REVERSE: SpeedPoint[] = [
   { source_frame: 72, speed: 1 },
 ];
 
-describe('D-240 — a reversed run', () => {
+describe('D-241 — a reversed run', () => {
   it('resolves with its sign intact and occupies the SAME output as its forward twin', () => {
     const back = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: -2 }] }));
     const fwd = resolveSpeedSegments(clip({ speed_points: [{ source_frame: 0, speed: 2 }] }));
@@ -544,7 +544,7 @@ describe('D-240 — a reversed run', () => {
   });
 });
 
-describe('D-240 — fades are measured in PLAYBACK order, not by mapping a source endpoint', () => {
+describe('D-241 — fades are measured in PLAYBACK order, not by mapping a source endpoint', () => {
   it('a forward ramp is algebraically unchanged — the B-112 spelling, same numbers', () => {
     const segs = resolveSpeedSegments(clip({ speed_points: RAMP }));
     // What B-112 computed: `outputAtSourceFrame(source_start + n)` for the

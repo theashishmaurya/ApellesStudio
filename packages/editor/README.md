@@ -63,7 +63,7 @@ dragging a pool item in from the shell's Sources panel.
   a one-segment ramp — the pre-D-236 export-time `speedOverrides` resolves
   through the same function and still compiles the identical filtergraph.
   `SpeedRampEditor.tsx` is the Inspector section around it.
-  **Reverse (D-240)** is a NEGATIVE speed, per run: one `anchor` term (a
+  **Reverse (D-241)** is a NEGATIVE speed, per run: one `anchor` term (a
   reversed run's output starts at its source END) generalises both maps, and
   `quantizedSourceFrameAtOutput` carries the rounding, which mirrors from
   `floor` to `ceil - 1` when the direction of travel does. It compiles to a
@@ -73,7 +73,7 @@ dragging a pool item in from the shell's Sources panel.
   is a graph ffmpeg runs happily and which reverses nothing. Pinned by
   `speedRampReverse.ffmpeg.test.ts`. **Does not** do smoothed S-curve
   transitions or frame interpolation — see D-236's "not built" list, as
-  narrowed by D-240.
+  narrowed by D-241.
 - `eq.ts` (D-224, roadmap item 27) — the per-clip parametric EQ's model and
   math: the `EqBand` type `Clip.eq_bands` is a list of, the Resolve-shaped
   four-band strip the Inspector authors (`defaultEqBands`), the stored-value

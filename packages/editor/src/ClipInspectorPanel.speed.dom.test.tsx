@@ -125,7 +125,7 @@ function removeButtons(): HTMLButtonElement[] {
   ) as HTMLButtonElement[];
 }
 
-/** D-240 — the per-run Reverse buttons, in run order. */
+/** D-241 — the per-run Reverse buttons, in run order. */
 function reverseButtons(): HTMLButtonElement[] {
   return [...(mounted?.container.querySelectorAll('button') ?? [])].filter((b) =>
     (b.getAttribute('aria-label') ?? '').startsWith('Reverse the run starting at source frame'),
@@ -238,7 +238,7 @@ describe('the Inspector Speed section (D-236)', () => {
   });
 });
 
-describe('the Inspector Speed section — reverse (D-240)', () => {
+describe('the Inspector Speed section — reverse (D-241)', () => {
   it('the Reverse button flips the run\'s sign and stores a real negative speed', async () => {
     await render();
     expect(reverseButtons()).toHaveLength(1);

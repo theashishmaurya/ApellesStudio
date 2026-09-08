@@ -21840,7 +21840,7 @@ introduces zero new errors.
 
 ---
 
-## D-240 — Reverse speed is a SIGN on the existing ramp, and a different filtergraph SHAPE
+## D-241 — Reverse speed is a SIGN on the existing ramp, and a different filtergraph SHAPE
 
 **Context.** The first of D-236's own named follow-ups. Its note said reverse
 "needs ffmpeg's whole-stream-buffering `reverse` filter and a backwards decode
@@ -21972,7 +21972,7 @@ without needing ffmpeg.
 
 ---
 
-## D-241 — Live-preview audio retiming: the mixer VARISPEEDS, and that asymmetry with the export is the choice
+## D-242 — Live-preview audio retiming: the mixer VARISPEEDS, and that asymmetry with the export is the choice
 
 **Context.** D-236's other named follow-up, and the one it called out as a
 "stated asymmetry rather than left to be discovered": a ramped clip's picture
@@ -22077,7 +22077,7 @@ land within **50 microseconds** of the source second the picture shows, and a
 mixed `1x → -2x → 1x` ramp within **0.1 ms** (tolerance set at 2 ms — the
 threshold below which nothing is audible — not at what the implementation
 happens to hit). The negative control, the same fixture with the retime removed,
-is **1.9 seconds** out at the same point, which is the drift D-241 closes.
+is **1.9 seconds** out at the same point, which is the drift D-242 closes.
 Reverse is additionally asserted strictly descending, and the mixed ramp is
 checked against a hand-written three-line oracle rather than a second copy of
 the ramp code — `chroma-media` sits *below* `chroma-timeline` in the D-039

@@ -1010,7 +1010,7 @@ export function clipSourceFrameAt(c: RampedClipRef, timelineFrame: number, fps: 
   // FLOOR, not round — see `chroma_timeline::Clip::source_frame_at`'s own
   // note: a frame owns the half-open source interval `[n, n+1)`, and the
   // export's `setpts` floors by construction, so rounding here would put the
-  // preview half a frame ahead of the file. D-240 moved that rounding into
+  // preview half a frame ahead of the file. D-241 moved that rounding into
   // `quantizedSourceFrameAtOutput`, because a REVERSED run sweeps the same
   // interval downward and its mirror rule is `ceil - 1`; for a forward ramp
   // it is exactly the `Math.floor` this line used to be.

@@ -851,7 +851,7 @@ function outputSourceFrames(clip: Clip, opts: TimelineExportOptions): number {
 }
 
 /**
- * D-240 — the PICTURE half of reverse speed: one `trim`(+`reverse`)+`setpts`
+ * D-241 — the PICTURE half of reverse speed: one `trim`(+`reverse`)+`setpts`
  * branch per resolved run, spliced back together with `concat`.
  *
  * **Why a different filtergraph shape rather than a different expression.**
@@ -985,7 +985,7 @@ function buildClipFilterChain(
   const speedSegments = resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]);
   const rampExpr = rampSetptsSecondsExpr(speedSegments, clipFps);
   if (hasReverseSegments(speedSegments)) {
-    // D-240 — at least one run plays backwards, which no `setpts` expression
+    // D-241 — at least one run plays backwards, which no `setpts` expression
     // can do (see `buildReversibleRampSteps`). The retime becomes a
     // `trim`/`reverse`/`concat` block whose output already starts at zero and
     // already has the right length, and the B-103 placement shift is then
@@ -1185,7 +1185,7 @@ function buildClipFilterChain(
   // through one map fixes that flat-speed bug and makes the ramped case right
   // by construction, rather than adding a second way to be wrong.
   //
-  // D-240 — all three are now asked in PLAYBACK order
+  // D-241 — all three are now asked in PLAYBACK order
   // (`rampOutputSourceFrames` / `outputSpanOf{Leading,Trailing}Source`) rather
   // than by mapping a source endpoint forward. For every forward ramp that is
   // algebraically the same expression B-112 wrote and returns the same

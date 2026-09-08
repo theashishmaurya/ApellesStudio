@@ -24,7 +24,7 @@
 //! `speedOverrides` multiplier (D-183) is not a rival concept — it resolves
 //! into a single segment, and every consumer sees only segments.
 //!
-//! **Reverse (negative) speed — D-240.** A speed may be NEGATIVE, meaning that
+//! **Reverse (negative) speed — D-241.** A speed may be NEGATIVE, meaning that
 //! run plays its own source range backwards. It is not a second model: a
 //! segment `[a, b)` at speed `-s` occupies exactly the same `(b-a)/s` of
 //! output a `+s` segment would, it just walks the source from `b` down to `a`.
@@ -63,7 +63,7 @@ pub struct SpeedPoint {
     /// Absolute SOURCE frame, at the clip's own native rate (`source_fps`).
     pub source_frame: i64,
     /// Source frames consumed per output frame from here on: `2.0` is double
-    /// speed, `0.5` half. **Negative is REVERSE** (D-240): `-1.0` plays this
+    /// speed, `0.5` half. **Negative is REVERSE** (D-241): `-1.0` plays this
     /// run backwards at its recorded rate. Never `0.0` — see [`clamp_speed`].
     pub speed: f64,
 }
@@ -76,7 +76,7 @@ pub struct SpeedSegment {
     /// Exclusive, absolute SOURCE frame.
     pub end_source_frame: i64,
     /// Negative = this run plays `[start_source_frame, end_source_frame)`
-    /// BACKWARDS (D-240). Its output length is unchanged: `len / |speed|`.
+    /// BACKWARDS (D-241). Its output length is unchanged: `len / |speed|`.
     pub speed: f64,
 }
 
@@ -89,7 +89,7 @@ impl SpeedSegment {
     /// begins: its start when it plays forwards, its **end** when it plays in
     /// reverse.
     ///
-    /// This one term is the entire negative-speed generalisation (D-240). With
+    /// This one term is the entire negative-speed generalisation (D-241). With
     /// it, `output = acc + (source - anchor) / speed` and `source = anchor +
     /// (output - acc) * speed` are each other's exact inverse for either sign,
     /// so both maps below are written once and branch nowhere.
@@ -112,7 +112,7 @@ impl SpeedSegment {
     }
 }
 
-/// Does any run of this ramp play backwards (D-240)? The branch every compiler
+/// Does any run of this ramp play backwards (D-241)? The branch every compiler
 /// takes: a reversed run cannot be expressed as a `setpts` slope or an
 /// `atempo` factor at all — it needs ffmpeg's frame-buffering
 /// `reverse`/`areverse`, which is a different filtergraph shape entirely.
@@ -121,13 +121,13 @@ pub fn has_reverse_segments(segments: &[SpeedSegment]) -> bool {
 }
 
 /// `speed` with its MAGNITUDE pinned into `[MIN_SPEED, MAX_SPEED]` and its
-/// SIGN preserved (D-240: a negative speed is a real, supported reverse run).
+/// SIGN preserved (D-241: a negative speed is a real, supported reverse run).
 /// Every non-finite input and exact `0.0` resolves to `1.0` — the two values
 /// that would make the remap infinite or collapse the clip to a single
 /// instant.
 ///
 /// Note what is deliberately NOT clamped away: `-0.5` stays `-0.5`. Before
-/// D-240 this function's whole job was to erase a negative, and the one-line
+/// D-241 this function's whole job was to erase a negative, and the one-line
 /// change here is what unlocks reverse everywhere downstream, because every
 /// authored point in both languages goes through it. Exact mirror of
 /// `speedRamp.ts`'s `clampSpeed`.
@@ -184,7 +184,7 @@ pub fn normalize_speed_points(points: &[SpeedPoint]) -> Vec<SpeedPoint> {
 /// point whose runs all play at the same rate is flat in every way a renderer
 /// cares about.
 ///
-/// **D-240 — a reversed run is never "flat", even alone.** A single segment at
+/// **D-241 — a reversed run is never "flat", even alone.** A single segment at
 /// `-2.0` is perfectly constant, but `setpts=PTS/-2` and `atempo=-2` are not
 /// what plays it backwards, so it must not take the constant path. "Flat" here
 /// has always meant *expressible by the pre-D-236 compiler*, and that is the
@@ -263,7 +263,7 @@ pub fn resolve_speed_segments(
 
 /// How long this ramp's OUTPUT is, in the clip's own source-frame units —
 /// `Σ len_i / |speed_i|`. For a flat ramp this is exactly `duration / speed`,
-/// and for an un-ramped clip exactly `duration`. The magnitude (D-240) is what
+/// and for an un-ramped clip exactly `duration`. The magnitude (D-241) is what
 /// makes a reversed run take exactly as long as the same range forwards.
 pub fn ramp_output_source_frames(segments: &[SpeedSegment]) -> f64 {
     segments.iter().map(SpeedSegment::output_len).sum()
@@ -286,7 +286,7 @@ pub fn output_at_source_frame(segments: &[SpeedSegment], source_frame: f64) -> f
         // The last segment also absorbs everything past the ramp — that IS the
         // documented "extrapolate at the last segment's own speed" rule, and
         // writing it as a fall-through rather than a separate head/tail case
-        // is what makes all three one formula. (Before D-240 the head and tail
+        // is what makes all three one formula. (Before D-241 the head and tail
         // were spelled out separately; they are algebraically the same
         // expression, which is why collapsing them changed no forward-ramp
         // result — pinned by the untouched D-236 tests below.)
@@ -319,7 +319,7 @@ pub fn source_frame_at_output(segments: &[SpeedSegment], output_pos: f64) -> f64
 /// The runs still AHEAD of OUTPUT position `output_pos`, in playback order,
 /// with the one being played through truncated to the part not yet played.
 ///
-/// D-241 — the live audio mixer's own question. A play starts wherever the
+/// D-242 — the live audio mixer's own question. A play starts wherever the
 /// playhead is, mid-clip and often mid-run, and the mixer needs the ramp from
 /// *there*: it has no notion of a clip and cannot re-derive which runs are
 /// behind it.
@@ -388,7 +388,7 @@ fn segment_speed_at_output(segments: &[SpeedSegment], output_pos: f64) -> f64 {
 /// - Playing FORWARD, output sweeps that interval upward, so `floor` is the
 ///   frame on screen — and `setpts` floors by construction, which is why D-236
 ///   pinned this rule after a test failure rather than by reasoning.
-/// - Playing in REVERSE (D-240), a segment `[a, b)` is entered at source `b`
+/// - Playing in REVERSE (D-241), a segment `[a, b)` is entered at source `b`
 ///   and swept DOWN to `a`, so the continuous position ranges over `(a, b]` —
 ///   the mirror interval. `floor` there would show frame `b` (one past the
 ///   segment's own end) at the very first output frame and frame `a-1` at the
@@ -546,7 +546,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------- //
-    // D-240 — reverse (negative) speed
+    // D-241 — reverse (negative) speed
     // ---------------------------------------------------------------------- //
 
     /// The same mixed ramp `speedRampReverse.ffmpeg.test.ts` proves against

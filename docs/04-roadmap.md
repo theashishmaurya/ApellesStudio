@@ -1553,7 +1553,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       decoded pixels (`speedRamp.ffmpeg.test.ts`: 78/84 output frames exact, 6
       off by one, vs. up to 18 frames out for a deliberately wrong ramp). Fixed
       B-112 on the way through.
-      - ~~**Reverse (negative) speed**~~ — **DONE, 2026-09-08 (D-240).** A sign
+      - ~~**Reverse (negative) speed**~~ — **DONE, 2026-09-08 (D-241).** A sign
         on the existing ramp: `[a,b)` at `-s` occupies the same output `+s`
         would, so no schema change and no clip ever moves. Per RUN, not per
         clip, so a ramp can mix directions. Reverse is a filtergraph SHAPE
@@ -1567,7 +1567,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         negative percentage); `editor_set_clip_speed` takes negatives on both
         `speed` and `points`. Proved against real decoded pixels
         (`speedRampReverse.ffmpeg.test.ts`).
-      - ~~**Live-preview AUDIO retiming**~~ — **DONE, 2026-09-08 (D-241).** The
+      - ~~**Live-preview AUDIO retiming**~~ — **DONE, 2026-09-08 (D-242).** The
         mixer now resamples per the same `speed_points` the picture uses, so a
         ramped clip's preview sound tracks its picture (measured within 50 µs;
         1.9 s out before). It VARISPEEDS deliberately — pitch moves with speed,

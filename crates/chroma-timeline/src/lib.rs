@@ -1724,7 +1724,7 @@ impl Clip {
         speed_ramp::ramp_output_source_frames(&self.speed_segments())
     }
 
-    /// D-241 — this clip's speed runs still AHEAD of TIMELINE frame
+    /// D-242 — this clip's speed runs still AHEAD of TIMELINE frame
     /// `timeline_frame`, in playback order, and how many source-frame units of
     /// OUTPUT they add up to.
     ///
@@ -1738,7 +1738,7 @@ impl Clip {
     /// Empty (and `0.0`) once the playhead is past the clip. For an UN-RAMPED
     /// clip this still answers correctly (one identity run), but no caller
     /// asks — `chroma::audio` checks `speed_points.is_empty()` first and keeps
-    /// its pre-D-241 path, so an ordinary clip's mix is untouched.
+    /// its pre-D-242 path, so an ordinary clip's mix is untouched.
     pub fn remaining_speed_segments(
         &self,
         timeline_frame: i64,
@@ -1791,7 +1791,7 @@ impl Clip {
         // so it is pinned here and re-proved against real decoded pixels in
         // `speedRamp.ffmpeg.test.ts`.
         //
-        // D-240 — the rounding now lives in
+        // D-241 — the rounding now lives in
         // `speed_ramp::quantized_source_frame_at_output` rather than a bare
         // `.floor()` here, because a REVERSED run sweeps the same half-open
         // interval in the other direction and its mirror rule is `ceil - 1`.

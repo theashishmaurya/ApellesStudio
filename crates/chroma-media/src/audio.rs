@@ -937,7 +937,7 @@ pub struct AudioSourceSpec {
     /// and `level_for_clip`: a band is already in the only units it has
     /// (hertz, decibels, Q), none of which are frames.
     pub eq_bands: Vec<chroma_types::EqBand>,
-    /// D-241 — this clip's SPEED RAMP, as the runs still ahead of the
+    /// D-242 — this clip's SPEED RAMP, as the runs still ahead of the
     /// playhead, or **empty** when it plays at its recorded rate (every clip in
     /// every pre-D-236 project, and the common case now). Empty is not "a ramp
     /// that does nothing": [`open_source`] attaches no [`Retime`] stage at all
@@ -967,7 +967,7 @@ pub struct AudioSourceSpec {
 }
 
 /// One constant-speed run of a clip's ramp, as the live mixer takes it
-/// (D-241). The exact counterpart of `@chroma/editor`'s
+/// (D-242). The exact counterpart of `@chroma/editor`'s
 /// `SpeedSegmentSeconds`, which is what the exporter builds its per-segment
 /// `atrim`/`atempo`/`areverse` chain from — the two are the same list, handed
 /// to two different renderers, which is this feature's whole preview/export
@@ -979,7 +979,7 @@ pub struct AudioSpeedSegment {
     /// Exclusive, same axis.
     pub end_secs: f64,
     /// Source seconds consumed per output second. **Negative plays this run
-    /// backwards** (D-240); its output length is `(end - start) / |speed|`
+    /// backwards** (D-241); its output length is `(end - start) / |speed|`
     /// either way.
     pub speed: f64,
 }
@@ -2216,7 +2216,7 @@ pub(crate) struct DecodedSource {
     /// [`StartTrim`] for why a source cannot simply trust that the seek in
     /// [`open_source`] put it in the right place.
     start_trim: Option<StartTrim>,
-    /// D-241 — this source's speed ramp, or `None` when it plays at its
+    /// D-242 — this source's speed ramp, or `None` when it plays at its
     /// recorded rate (every clip in every pre-D-236 project, and the common
     /// case). `None` is not "a ramp that returns its own input": [`Self::ensure`]
     /// takes a different branch entirely for it, so an un-ramped source decodes
@@ -2239,7 +2239,7 @@ struct RetimeRun {
     start: f64,
     /// Exclusive input frame this run covers.
     end: f64,
-    /// Signed; negative plays `[start, end)` backwards (D-240).
+    /// Signed; negative plays `[start, end)` backwards (D-241).
     speed: f64,
 }
 
@@ -2283,7 +2283,7 @@ impl RetimePlan {
     }
 }
 
-/// D-241 — the live mixer's RETIME stage: one clip's speed ramp applied to its
+/// D-242 — the live mixer's RETIME stage: one clip's speed ramp applied to its
 /// already-decoded, already-resampled, already-channel-adapted audio, so the
 /// preview's sound advances through the source at the same rate its picture
 /// does.
@@ -2298,7 +2298,7 @@ impl RetimePlan {
 /// ffmpeg hands it a WSOLA implementation for free. The live mixer deliberately
 /// does not: it VARISPEEDS, like tape — a 2x clip previews an octave up, a
 /// reversed one previews backwards. That is a real, stated asymmetry with the
-/// export (see D-241), not an oversight, and it is the same choice Premiere
+/// export (see D-242), not an oversight, and it is the same choice Premiere
 /// makes by default ("Maintain Audio Pitch" is a checkbox you turn ON, not the
 /// default). Two reasons it is the right one here: a phase vocoder or WSOLA is
 /// a whole DSP subsystem with its own latency and artefacts to get wrong on the
@@ -2549,7 +2549,7 @@ impl DecodedSource {
     /// this source hits EOF (setting `exhausted`, after which `carry` may
     /// stay short of `want` forever — that's fine, [`Self::take`] pads).
     ///
-    /// D-241 — a source carrying a [`Retime`] takes the second branch: the
+    /// D-242 — a source carrying a [`Retime`] takes the second branch: the
     /// decoded stream feeds the retime's own input window instead of `carry`,
     /// and `carry` is filled from what the retime resamples out of it. An
     /// un-retimed source (every clip in every pre-D-236 project) runs the first
@@ -2567,7 +2567,7 @@ impl DecodedSource {
         self.ensure_retimed(want, out_channels)
     }
 
-    /// [`Self::ensure`]'s retimed branch (D-241).
+    /// [`Self::ensure`]'s retimed branch (D-242).
     ///
     /// Three steps per pass, in this order because each needs the previous
     /// one's answer: **plan** the output frames' input positions, **feed** the
@@ -2624,7 +2624,7 @@ impl DecodedSource {
     }
 
     /// Decode the next packet into interleaved samples at the session's own
-    /// `(out_rate, out_channels)` — the body of the pre-D-241 `ensure` loop,
+    /// `(out_rate, out_channels)` — the body of the pre-D-242 `ensure` loop,
     /// lifted verbatim into its own step so the plain and the retimed paths can
     /// share one decoder without either re-spelling it.
     ///
@@ -2716,7 +2716,7 @@ impl DecodedSource {
     /// one) is `.all(DecodedSource::is_done)`. Reaching the clip's out-point
     /// counts as done just as much as reaching the file's end (B-048).
     ///
-    /// D-241 — a RETIMED source is not done just because its decoder hit EOF:
+    /// D-242 — a RETIMED source is not done just because its decoder hit EOF:
     /// a reversed run has by then buffered the whole range it is about to play
     /// backwards, and a slowed one still has most of its output ahead of it. So
     /// the retime gets a say, and the real bound stays [`Self::remaining`] (the
@@ -2803,14 +2803,14 @@ pub(crate) fn open_source(
         // B-052 / D-133 — the seek above is an optimisation, not the thing that
         // establishes where playback starts; this is.
         start_trim: start_trim(track.time_base, start_secs, src_rate),
-        // D-241 — attached separately, by `DecodedSource::with_speed`, so this
+        // D-242 — attached separately, by `DecodedSource::with_speed`, so this
         // function keeps the signature its five other callers already use.
         retime: None,
     })
 }
 
 impl DecodedSource {
-    /// D-241 — attach this source's speed ramp, if it has one.
+    /// D-242 — attach this source's speed ramp, if it has one.
     ///
     /// Separate from [`open_source`] rather than a sixth parameter on it: the
     /// ramp needs the session's real `out_rate`, which is the same thing
@@ -2988,7 +2988,7 @@ fn run_session(
             out_channels,
         ) {
             Ok(ds) => {
-                // D-241 — the ramp is attached here, not inside `open_source`,
+                // D-242 — the ramp is attached here, not inside `open_source`,
                 // because it needs `out_rate` (the device's, only known now)
                 // and because no other caller of `open_source` has one.
                 decoded.push(ds.with_speed(&spec.speed, out_rate, out_channels));
@@ -4875,7 +4875,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------- //
-    // D-241 — live-preview audio retiming
+    // D-242 — live-preview audio retiming
     // ---------------------------------------------------------------------- //
 
     /// Synthesize a WAV whose **sample VALUE encodes its own source time**:
@@ -4966,10 +4966,10 @@ mod tests {
         }
     }
 
-    /// **The headline live-retiming proof (D-241): a ramped clip's preview
+    /// **The headline live-retiming proof (D-242): a ramped clip's preview
     /// audio advances through the source at the rate its PICTURE does.**
     ///
-    /// Before D-241 this was a stated asymmetry — the picture previewed a ramp
+    /// Before D-242 this was a stated asymmetry — the picture previewed a ramp
     /// and the mixer played the sound at its recorded rate, so at output second
     /// 1.0 of a 2x clip the picture showed source second 2.0 and the sound was
     /// still at 1.0. This decodes real audio through the real source path and
@@ -5037,7 +5037,7 @@ mod tests {
         let dur = 4.0;
         let wav = synth_position_ramp_wav(dir.path(), dur, rate);
 
-        // No `with_speed` at all — the pre-D-241 mixer, which is also exactly
+        // No `with_speed` at all — the pre-D-242 mixer, which is also exactly
         // what an un-ramped clip still does today.
         let mut ds = open_source(&wav, 0.0, Some(2.0), rate, 1).expect("open");
         let mut out = Vec::new();
@@ -5050,14 +5050,14 @@ mod tests {
         let idx = (1.9 * rate as f64) as usize;
         let measured = source_secs_of(out[idx], dur);
         // The picture at 2x is showing source second 3.8 here; the old mixer
-        // plays 1.9. That 1.9-second gap IS the bug D-241 closes.
+        // plays 1.9. That 1.9-second gap IS the bug D-242 closes.
         assert!(
             (measured - 3.8).abs() > 1.5,
             "the un-retimed path should be ~1.9s behind the picture, but read {measured:.3}s"
         );
     }
 
-    /// Reverse (D-240) in the live mixer: the sound must run BACKWARDS through
+    /// Reverse (D-241) in the live mixer: the sound must run BACKWARDS through
     /// the source, which is the case a forward-streaming decoder cannot do
     /// without the retime's buffered window.
     #[test]

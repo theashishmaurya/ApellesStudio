@@ -473,7 +473,7 @@ def set_clip_speed(
     3. **Picture and sound are retimed together.** In the EXPORT the audio
        pitch is preserved (an `atempo` chain per segment); in the live PREVIEW
        it is not -- the mixer varispeeds, so a sped-up clip previews
-       chipmunked and a reversed one previews backwards, like tape (D-241).
+       chipmunked and a reversed one previews backwards, like tape (D-242).
        Timing matches either way, which is the thing you are editing to.
        A clip's own fades, volume and pan automation follow the retime too --
        a key stays on the source moment you authored it against, and a fade is
@@ -482,7 +482,7 @@ def set_clip_speed(
     4. **The preview and the export agree frame for frame.** Both read the same
        remap; `editor_get_state` and the exported file will show the same
        source frame at the same timeline position.
-    5. **Reverse is per RUN, not per clip** (D-240). A ramp may mix forward and
+    5. **Reverse is per RUN, not per clip** (D-241). A ramp may mix forward and
        reversed segments -- `[{0, 1.0}, {48, -2.0}, {96, 1.0}]` plays forwards,
        then whips backwards at 2x, then forwards again. Reversing does not
        change how long a run occupies: `-2.0` and `2.0` take exactly the same

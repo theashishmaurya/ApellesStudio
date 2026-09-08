@@ -22,7 +22,7 @@
  * read-only SVG plot of the actual remap. A speed point is added at the
  * playhead (Resolve's own gesture) and removed from its row.
  *
- * **Reverse (D-240), and its shape is also read, not invented.** Both real
+ * **Reverse (D-241), and its shape is also read, not invented.** Both real
  * references express reverse as a **negative percentage on the same speed
  * number**, and both give it a command as well as a typed sign: Resolve's
  * Retime Controls has *Reverse Segment*, which "reverses the speed of the
@@ -186,7 +186,7 @@ export function SpeedRampEditor({
               <Input
                 type="number"
                 step={5}
-                // D-240 — the range is symmetric about zero, because a
+                // D-241 — the range is symmetric about zero, because a
                 // negative percentage IS how both Resolve and Premiere spell
                 // reverse (`-100%` = backwards at recorded speed). `clampSpeed`
                 // pins the magnitude and keeps the sign, so a typed `0` (which
@@ -201,7 +201,7 @@ export function SpeedRampEditor({
                 onChange={(e) => setSegmentSpeed(seg.startSourceFrame, Number(e.target.value) / 100)}
               />
               <span className="text-text-secondary/70 text-[11px]">%</span>
-              {/* D-240 — Resolve's own "Reverse Segment" command, per run.
+              {/* D-241 — Resolve's own "Reverse Segment" command, per run.
                   Flips the SIGN and leaves the magnitude alone, so reversing a
                   37% run gives -37% and reversing it back gives 37% — the
                   round trip is exact, which typing a minus sign into the field

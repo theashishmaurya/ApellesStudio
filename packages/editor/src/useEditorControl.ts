@@ -141,7 +141,7 @@ import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSo
 // with Rust so an agent, the Inspector and the preview all agree on the range.
 import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
 
-/** D-236/D-240 — is this a speed an agent may store?
+/** D-236/D-241 — is this a speed an agent may store?
  *
  *  Refused, not clamped: a speed outside the range is a request the caller got
  *  wrong, and silently retiming to 20x instead of the 200x it asked for is
@@ -149,7 +149,7 @@ import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './s
  *  stores whatever it is handed, so a document reaching the store another way
  *  must degrade safely; see `clampSpeed`.)
  *
- *  D-240 — the range is on the MAGNITUDE and either sign is accepted, which is
+ *  D-241 — the range is on the MAGNITUDE and either sign is accepted, which is
  *  the whole difference between "this tool cannot reverse a clip" and "it can".
  *  `0` is still refused: it is not slow, it is a clip that never advances. */
 function isAcceptableSpeed(speed: number): boolean {
@@ -2183,7 +2183,7 @@ export function useEditorControl(): void {
         };
       },
 
-      // ---- speed ramp (D-236, reverse D-240) ----------------------------- //
+      // ---- speed ramp (D-236, reverse D-241) ----------------------------- //
       //
       // The AI half of the Inspector's own Speed section, over the same
       // `set_clip_speed` op and the same `Clip.speed_points` — CLAUDE.md's

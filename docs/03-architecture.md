@@ -266,7 +266,7 @@ alone. A drift between the two is a real defect class, not a theoretical one.
 Roadmap item 27 tracks the list. (Subtitles/captions were on this list and landed as D-229
 while this pass was being written — a fair illustration of why these docs drift. Adjustment
 clips followed as D-230; **speed ramps** as D-236, and their reverse and live-audio-retime
-follow-ups as D-240/D-241 — that entry is a good example of the drift being *specific*:
+follow-ups as D-241/D-242 — that entry is a good example of the drift being *specific*:
 the list said "a flat export-time override exists", which was true of D-183 and stopped
 being true the moment `Clip.speed_points` landed.)
 

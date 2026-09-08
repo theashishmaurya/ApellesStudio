@@ -522,7 +522,7 @@ export function eqFilterChain(
  * documented `[0.5, 2.0]` per-instance range — the standard, real technique
  * (ffmpeg's own FAQ recommends exactly this) for a speed change outside that
  * single-filter range, not a workaround invented here. `speed` is assumed
- * `> 0` — D-240's reversed runs pass their MAGNITUDE and carry the sign in a
+ * `> 0` — D-241's reversed runs pass their MAGNITUDE and carry the sign in a
  * separate `areverse` node, because `atempo` has no negative form at all (see
  * [`rampSegmentChain`]).
  */
@@ -580,7 +580,7 @@ export function buildRampedAtempoSteps(
   idLabel: string,
 ): { steps: string[]; label: string } {
   const steps: string[] = [];
-  // D-240 — a ONE-run ramp reaches here now (a wholly reversed clip is a
+  // D-241 — a ONE-run ramp reaches here now (a wholly reversed clip is a
   // single segment that is nonetheless not "flat", see `isFlatSegments`), and
   // it needs neither `asplit` nor `concat`: those exist only to rejoin runs,
   // and there is nothing to rejoin. Mirrors `buildReversibleRampSteps`'s own
@@ -610,7 +610,7 @@ export function buildRampedAtempoSteps(
  *  its source window, re-base to zero for `concat`, reverse it if it plays
  *  backwards, then set its tempo.
  *
- *  **D-240 — `areverse` is a node, not a factor.** `atempo` takes a positive
+ *  **D-241 — `areverse` is a node, not a factor.** `atempo` takes a positive
  *  number and rejects a negative one outright, so a reversed run's `-2` is
  *  split into two independent statements: `areverse` (which buffers the
  *  trimmed window and re-emits its samples last-to-first) and `atempo=2` (the
@@ -629,7 +629,7 @@ function rampSegmentChain(seg: { startSec: number; endSec: number; speed: number
   if (seg.speed < 0) parts.push('areverse');
   // `Math.abs`, and the `atempo` node is emitted even at 1x — that is what a
   // forward ramp has always produced here, and this fragment stays
-  // byte-identical to the pre-D-240 one for every such segment.
+  // byte-identical to the pre-D-241 one for every such segment.
   parts.push(atempoFilterChain(Math.abs(seg.speed)));
   return parts.join(',');
 }
@@ -783,7 +783,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   // 12-frame fade-in on a 0.5x head is a full second, not half of one, and it
   // has to land on exactly the frames the picture's own fade lands on.
   //
-  // D-240 — asked in PLAYBACK order rather than by mapping a source endpoint
+  // D-241 — asked in PLAYBACK order rather than by mapping a source endpoint
   // forward, exactly as `buildClipFilterChain`'s picture half now is and for
   // the identical reason (see `outputSpanOfLeadingSource`): under a reversed
   // run the clip's in-point is the last thing heard, so the old spelling put

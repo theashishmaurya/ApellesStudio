@@ -32,7 +32,7 @@
  * `atempo` chain (see [`isFlatSegments`]) so no existing export changes by a
  * byte.
  *
- * **Reverse (negative) speed — D-240.** A speed may now be NEGATIVE, meaning
+ * **Reverse (negative) speed — D-241.** A speed may now be NEGATIVE, meaning
  * that run plays its own source range backwards. It is not a second model: a
  * segment `[a, b)` at speed `-s` occupies exactly the same `(b-a)/s` of
  * output a `+s` segment would, it just walks the source from `b` down to `a`
@@ -74,7 +74,7 @@ export interface SpeedPoint {
   source_frame: number;
   /** Playback speed from here on: source frames consumed per output frame.
    *  `2` is double speed (half the output length), `0.5` is half speed
-   *  (double the output length). **Negative is REVERSE** (D-240): `-1` plays
+   *  (double the output length). **Negative is REVERSE** (D-241): `-1` plays
    *  this run backwards at its recorded rate, `-2` backwards at double speed.
    *  Never `0` — see [`clampSpeed`]. */
   speed: number;
@@ -88,14 +88,14 @@ export interface SpeedSegment {
   /** Exclusive, absolute SOURCE frame. */
   endSourceFrame: number;
   /** Negative = this run plays `[startSourceFrame, endSourceFrame)` BACKWARDS
-   *  (D-240). Its output length is unchanged — `len / |speed|`. */
+   *  (D-241). Its output length is unchanged — `len / |speed|`. */
   speed: number;
 }
 
 /** The SOURCE position a segment sits at when its own OUTPUT run begins: its
  *  start when it plays forwards, its **end** when it plays in reverse.
  *
- *  This one term is the entire negative-speed generalisation (D-240). With it,
+ *  This one term is the entire negative-speed generalisation (D-241). With it,
  *  `output = acc + (source - anchor) / speed` and `source = anchor + (output -
  *  acc) * speed` are each other's exact inverse for either sign, so both maps
  *  below are written once and branch nowhere. */
@@ -111,7 +111,7 @@ function segmentOutputLength(s: SpeedSegment): number {
   return Math.max(0, s.endSourceFrame - s.startSourceFrame) / Math.abs(s.speed);
 }
 
-/** Does any run of this ramp play backwards (D-240)? The branch every
+/** Does any run of this ramp play backwards (D-241)? The branch every
  *  compiler takes: a reversed run cannot be expressed as a `setpts` slope or
  *  an `atempo` factor at all — it needs ffmpeg's frame-buffering
  *  `reverse`/`areverse`, which is a different filtergraph shape entirely. */
@@ -131,12 +131,12 @@ export const MIN_SPEED = 0.05;
 export const MAX_SPEED = 20;
 
 /** `speed` with its MAGNITUDE pinned into `[MIN_SPEED, MAX_SPEED]` and its
- *  SIGN preserved (D-240: a negative speed is a real, supported reverse run).
+ *  SIGN preserved (D-241: a negative speed is a real, supported reverse run).
  *  Every non-finite input and exact `0` resolves to `1` — the two values that
  *  would make the remap infinite or collapse the clip to a single instant.
  *
  *  Note what is deliberately NOT clamped away: `-0.5` stays `-0.5`. Before
- *  D-240 this function's whole job was to erase a negative, and the one-line
+ *  D-241 this function's whole job was to erase a negative, and the one-line
  *  change here is what unlocks reverse everywhere downstream, because every
  *  authored point in both languages goes through it. */
 export function clampSpeed(speed: number): number {
@@ -266,7 +266,7 @@ export function resolveSpeedSegments(
  *  play at the same rate is flat in every way that matters to a renderer, and
  *  compiling it as a ramp would emit a needless expression for an identity.
  *
- *  **D-240 — a reversed run is never "flat", even alone.** A single segment at
+ *  **D-241 — a reversed run is never "flat", even alone.** A single segment at
  *  `-2` is perfectly constant, but `setpts=PTS/-2` and `atempo=-2` are not
  *  what plays it backwards (the first emits descending timestamps, the second
  *  is rejected outright), so it must not take the constant path. "Flat" here
@@ -290,7 +290,7 @@ export function flatSpeedOf(segments: readonly SpeedSegment[]): number {
  * clip's `duration` already is).
  *
  * `Σ len_i / |speed_i|` — the one place the "a 2x segment occupies half as
- * much output" rule is written down. The magnitude (D-240) is what makes a
+ * much output" rule is written down. The magnitude (D-241) is what makes a
  * reversed run take exactly as long as the same range played forwards, which
  * is the whole reason reverse needed no schema change: a clip's footprint on
  * the timeline never depends on the DIRECTION it plays.
@@ -327,7 +327,7 @@ export function outputAtSourceFrame(segments: readonly SpeedSegment[], sourceFra
     // The last segment also absorbs everything past the ramp — that IS the
     // documented "extrapolate at the last segment's own speed" rule, and
     // writing it as a fall-through rather than a separate tail case is what
-    // makes the head, the body and the tail one formula. (Before D-240 the
+    // makes the head, the body and the tail one formula. (Before D-241 the
     // head and tail were spelled out separately; they are algebraically the
     // same expression, which is why collapsing them changed no forward-ramp
     // result — pinned by the untouched D-236 tests.)
@@ -374,7 +374,7 @@ export function sourceFrameAtOutput(segments: readonly SpeedSegment[], outputPos
  * - Playing FORWARD, output sweeps that interval upward, so `floor` is the
  *   frame on screen — and `setpts` floors by construction, which is why D-236
  *   pinned this rule after a test failure rather than by reasoning.
- * - Playing in REVERSE (D-240), a segment `[a, b)` is entered at source `b`
+ * - Playing in REVERSE (D-241), a segment `[a, b)` is entered at source `b`
  *   and swept DOWN to `a`, so the continuous position ranges over `(a, b]` —
  *   the mirror interval. `floor` there would show frame `b` (one past the
  *   segment's own end) at the very first output frame and frame `a-1` at the
@@ -414,12 +414,12 @@ function segmentSpeedAtOutput(segments: readonly SpeedSegment[], outputPos: numb
  * playback order — the length of a fade-in, in the axis the fade actually runs
  * on.
  *
- * **Why this is not `outputAtSourceFrame(source_start + n)` (D-240).** That
+ * **Why this is not `outputAtSourceFrame(source_start + n)` (D-241).** That
  * spelling — which is what B-112 correctly introduced — asks "when does the
  * ramp REACH this source frame". For a forward ramp the frame `n` past the
  * in-point is the frame `n` past the playback start, so the two questions have
  * the same answer and this function returns exactly what B-112's expression
- * did (pinned by the whole pre-D-240 fade suite passing unchanged).
+ * did (pinned by the whole pre-D-241 fade suite passing unchanged).
  *
  * Under a REVERSED run they are different questions with different answers.
  * A clip playing wholly backwards *starts* on its last source frame, so
@@ -496,7 +496,7 @@ function sec(value: number): number {
  * form, which is both shorter and byte-identical to what every existing
  * export already produces.
  *
- * **A ramp containing a REVERSED run also returns `null` (D-240)**, and for a
+ * **A ramp containing a REVERSED run also returns `null` (D-241)**, and for a
  * reason of a different kind: no `setpts` expression plays a clip backwards.
  * `setpts` only relabels the timestamp of a frame the decoder already handed
  * over in decode order, so a descending slope emits descending timestamps and
@@ -560,8 +560,8 @@ export interface SpeedSegmentSeconds {
  *  Consumed by all three retiming compilers, which is why it is not named for
  *  any one of them: `timelineExportAudio.ts`'s `atrim`/`atempo`/`areverse`/
  *  `concat` chain, `timelineExport.ts`'s `trim`/`reverse`/`setpts`/`concat`
- *  chain for a reversed picture (D-240), and `chroma::audio`'s live
- *  `AudioSpeedSegment` list for the preview mixer (D-241).
+ *  chain for a reversed picture (D-241), and `chroma::audio`'s live
+ *  `AudioSpeedSegment` list for the preview mixer (D-242).
  *
  *  The seconds axis is the SOURCE one — the input has been `-ss`-trimmed to
  *  the clip's in-point, so source second `0` is `source_start`, and the live

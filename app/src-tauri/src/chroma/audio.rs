@@ -254,7 +254,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // out-point depends on its own `source_fps` against the
             // timeline's rate.
             let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
-            // D-241 — a ramped clip overrides the open point and the out-point
+            // D-242 — a ramped clip overrides the open point and the out-point
             // with the retime's own, because under a ramp the source second to
             // open at and the number of OUTPUT seconds left stop being the same
             // number. `None` (every un-ramped clip) leaves both exactly as the
@@ -320,7 +320,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         // still needs it.
         let elapsed_frames = start_frame as i64 - clip.start_frame;
         let remaining_frames = (clip.end_frame_at(fps) - start_frame as i64).max(0) as u64;
-        // D-241 — see the video-track source above; identical for the same
+        // D-242 — see the video-track source above; identical for the same
         // reason, since a ramp is a property of the clip and not of what kind
         // of track it sits on.
         let speed = speed_for_clip(&clip, &info, start_frame as i64, fps);
@@ -374,14 +374,14 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 /// out-point arithmetic (B-048/D-130) already uses a few lines up at each call
 /// site — so this inherits the model's existing assumption that a clip's source
 /// fps is its timeline fps rather than introducing a second one.
-/// D-241 — this clip's speed ramp as the live mixer takes it: where in the
+/// D-242 — this clip's speed ramp as the live mixer takes it: where in the
 /// source to OPEN, how many OUTPUT seconds are left, and the runs themselves in
 /// seconds relative to that open point. `None` when the clip plays at its
 /// recorded rate, which is every clip in every pre-D-236 project — and `None`
 /// is what keeps their mix byte-identical, because it leaves the two fields it
 /// would otherwise override exactly as they were.
 ///
-/// **This is the timeline→media half of D-241, which is why it is app-side**,
+/// **This is the timeline→media half of D-242, which is why it is app-side**,
 /// exactly like [`fade_for_clip`] and [`level_for_clip`] and for the same
 /// reason: an [`AudioSpeedSegment`] is seconds and a number — media facts —
 /// while "this clip's speed runs, in its own source-frame space, from the
