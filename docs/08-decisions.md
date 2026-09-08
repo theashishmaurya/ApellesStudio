@@ -19858,3 +19858,135 @@ already exercise every real interaction (diamond toggle, `</` `>` nav,
 reset) through the real component tree, and a `PropertyRow`-only test would
 duplicate those same assertions against the same code from a different
 import path.
+
+## D-223 — Per-clip audio: `volume` + `pan` as real `Clip` fields, linear like `Track::gain`, constant power at a 0 dB centre
+
+**Context.** Roadmap 27's first unticked item, and the one the parametric-EQ
+item explicitly waits on. Until now the ONLY level control on the audio path
+was `Track::gain` (D-057) — a whole-track fader. Making one clip on a track
+quieter, or placing one clip in the stereo field, was impossible without
+moving it to its own track and turning that track down, which is not what any
+real NLE asks of an editor. The reference is Resolve's own Inspector, which
+carries "Clip Volume" and "Clip Pan" as separate, per-clip, keyframeable rows
+(`scratch/resolve-reference/soundtrack.jpg`, feature 9 of the saved Edit-page
+reference set — the one this repo's own "research the real pattern first" rule
+points at). This repo's other reference, deliberately, is its OWN track-gain
+UI and D-208's Transform rows: the interaction pattern is not re-derived here.
+
+**Three decisions worth recording, and one measured divergence.**
+
+### 1. Linear, not decibels — matching `Track::gain` rather than `duck_db`
+
+The audio path already has both units in it: `Track::gain` and
+`MASTER_VOLUME_BITS` are linear multipliers; `Track::duck_db` is decibels
+(D-149's own entry argues why — a duck *amount* is the number editors state in
+dB, and it is typed rather than dragged). A clip's volume is a **fader**, sits
+in series with `Track::gain`, and is dragged — so it takes `gain`'s unit.
+`volume: f64`, `1.0` = unity, floored at 0, no ceiling (a fader that cannot
+boost is not one; `gain` has no ceiling either). Two level controls in one
+signal chain that disagree about their unit would be a permanent "is 0.5 half,
+or −0.5 dB?" trap, which is the whole reason this is not a per-feature style
+choice.
+
+`pan: f64` is normalised `-1.0` … `1.0`, `0.0` = centre. Checked rather than
+assumed: there was **no** pan-like precedent anywhere in the model, so this
+establishes the convention a future track or master pan should follow.
+
+### 2. The pan law: constant power, normalised to unity at the CENTRE
+
+`chroma_types::pan_gains` (L0, beside `fade.rs` and for the same layering
+reason — the mixer that consumes it is L1 `chroma-media` and cannot reach up to
+L2's `Clip`). Nothing pan-like existed in this codebase to match, so this is
+the standard choice made explicitly: **constant power** (`gl ∝ cos θ`,
+`gr ∝ sin θ`, `θ = (pan+1)·π/4`), so a clip does not audibly dip in level as it
+is swept off centre. A linear/"constant gain" crossfade between the channels
+would; that is precisely why constant power is the standard.
+
+The one deviation from the textbook form is **forced, not stylistic**. Written
+the usual way the law is unity at the extremes and `1/√2` at the centre — the
+familiar −3 dB-centre pan law. Chroma cannot use that form: `pan` defaults to
+`0.0` on every clip in every project ever authored, so a centre gain of
+anything but exactly `1.0` would quietly attenuate every existing mix by 3 dB
+on the day this shipped. Scaling the law by `√2` pins the centre at exactly
+unity — the "0 dB centre" pan law real DAWs offer as an explicit option — and
+moves the 3 dB to the extremes. **Cost, stated rather than hidden:** a
+hard-panned clip is boosted 3.01 dB in its destination channel, so a source
+already at full scale can clip. The mixer's `tanh` limiter (and the exporter's
+`asoftclip`) catch that whenever ≥2 sources sum, but both deliberately bypass
+the limiter for a lone source, so the honest answer for a hot single clip is to
+lower its own `volume` — which the MCP tool text and the Inspector's own note
+say, rather than leaving it to be discovered.
+
+`pan_gains` short-circuits `0.0` to a bit-exact `(1.0, 1.0)` and `±1.0` to an
+exactly-silent far channel: `SQRT_2 * cos(PI/4)` is 0.9999999999999999 and
+`cos(PI/2)` is 6.1e-17, so without the short-circuits an "unused" feature would
+not be bit-identical and hard left would silence the right channel exactly
+while hard right left a residue in the left. Both are asserted as equalities.
+
+### 3. Composition order: everything multiplies, and pan splits last
+
+`final = track.gain × clip.volume × fade_envelope × duck_envelope`, then the
+pan law splits that result per channel. Multiplication is the only composition
+under which no stage silently overrides another — the same argument D-147 made
+for a fade against keyframed opacity and D-149 for a fade against a duck.
+Implemented identically in the two places that must agree:
+
+- **Live** — `chroma_media::audio::LevelEnvelope` joins `FadeEnvelope` and
+  `DuckEnvelope` in the SAME per-sample-frame pass (`SourceEnvelopes::apply`),
+  not a second pass. It is the first envelope that returns a per-CHANNEL pair,
+  which is why it is its own type. Channel 0 is left, channel 1 is right, any
+  further surround channel gets the volume alone (a real surround panner is a
+  2-D position, not this one number), and a MONO output device ignores pan
+  entirely rather than turning a hard-right pan into silence.
+- **Export** — `timelineExportAudio.ts`'s `buildAudioSourceChain`. A static
+  volume folds into the same single `volume=<n>` node the track gain already
+  used, so an unused feature costs the argv nothing. A real pan forks the chain:
+  `aformat=channel_layouts=stereo` → `channelsplit` → one `volume` per channel
+  → `join`. **Why not ffmpeg's own `pan` filter:** its coefficients are parsed
+  once, as numbers — it cannot express a keyframed pan, and `stereotools`'
+  balance options are static too. `volume` is the one gain filter with a real
+  per-frame expression, so the law is written AS an expression
+  (`√2*cos((clip(p,-1,1)+1)*PI/4)`) — exact, like `duckGainExpr`'s `exp`, not
+  sampled like the fade's bezier.
+
+**Keyframeable, through the machinery that already existed.** `volume`/`pan`
+are keyed in the same `chroma_keyframes` array under their own names; the
+Inspector rows are `PropertyRow`s (D-220 generalised it over the param name for
+exactly this), the interpolation is `interpolate_param`/`paramValueAt`
+unchanged, and the live mixer converts the clip's keys once into a clip-local
+seconds `LevelCurve` it can evaluate per sample-frame on its own thread. The
+only new type-level change is `ClipKeyframeParam = ClipTransformParam |
+ClipAudioParam`. "Key all properties" deliberately stays transform+crop: it
+sits in a geometry section and silently animating a clip's level from it would
+be an animation nobody asked for.
+
+**Its own op (`set_clip_audio` / `editor_set_clip_audio`), not two more fields
+on `set_clip_transform`** — D-147's own argument for `set_clip_fade`, which
+applies here unchanged: a level is not geometry, it applies to audio-track
+clips that have no transform at all, and `set_clip_transform`'s fields are
+required (an omitted one resets), so a volume nudge through it would restate —
+and could silently reset — nine geometry values. Unlike `set_clip_fade`, its
+two fields are independently optional: volume and pan are independent controls
+with independent rows, so a partial write is the normal case, not a hazard.
+
+**Verified.** `cargo test` — `chroma-types` 28, `chroma-timeline` 151,
+`chroma-media` 108, `app/src-tauri`'s `chroma::audio` suite, all green,
+including the pan law's own constant-power invariant (`gl² + gr² == 2` across a
+201-point sweep) and per-channel application in the real mixer. `npm test
+--workspace @chroma/editor` 800/800, `npx tsc --noEmit -p packages/editor`
+clean. The real proof is in `timelineExport.ffmpeg.test.ts`: seven new tests
+that run REAL ffmpeg and measure the exported file **per channel**
+(`pan=mono|c0=cN` → `volumedetect`) — a hard-left pan measures the right
+channel at −91 dB and the left at +3.0 dB against the source, a keyframed pan
+measures hard-left in the first half-second and hard-right in the last, and
+clip volume × track gain measures the full −12.04 dB. A whole-file
+`volumedetect` (every pre-existing audio test) literally cannot tell a pan from
+an attenuation, which is why the per-channel helper exists at all.
+
+**One measured divergence, filed as B-101:** panning a MONO source. The
+exporter's `aformat` upmix uses libswresample's power-preserving rematrix
+(−3 dB per channel, measured); the live mixer's `adapt_channels` duplicates the
+channel at unity. So an exported panned mono clip sits 3 dB below what the
+preview played. Stereo sources are unaffected (`aformat` is a verified no-op
+for them). Not fixed here because the fix belongs to the mono-adaptation layer,
+not to this feature — see B-101 for the two real options.

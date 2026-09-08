@@ -29,11 +29,14 @@
 //! the same frames→seconds step [`chroma_audio_play`] already does for
 //! `start_secs` / `duration_secs`, done for one more pair of fields; the
 //! envelope's arithmetic, and the decision to apply it per output sample-frame,
-//! are the crate's.
+//! are the crate's. D-223 added [`level_for_clip`] beside it on exactly the
+//! same seam — a clip's own `volume`/`pan` (and their keyframes, in the clip's
+//! own source-frame space) turned into the seconds-based
+//! `chroma_media::audio::LevelEnvelope`.
 
 use std::path::PathBuf;
 
-use chroma_media::audio::{AudioSourceSpec, DuckEnvelope, FadeEnvelope};
+use chroma_media::audio::{AudioSourceSpec, DuckEnvelope, FadeEnvelope, LevelEnvelope};
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
@@ -185,6 +188,11 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 // and D-129 externalises new clips' audio anyway) but excluding
                 // it would be an asymmetry with no reason behind it.
                 duck: duck_for_track(track_index, start_frame, &info)?,
+                // D-223 — a video clip's own Clip Volume / Clip Pan apply to
+                // its embedded audio, the one thing that clip contributes to
+                // the mix. (They have no picture meaning at all, unlike the
+                // fade above — see `Clip::volume`.)
+                level: level_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
             });
         } else {
             log::debug!(
@@ -218,6 +226,9 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // D-149 — the everyday ducking case: a music bed on this track,
             // ducked by whatever is on the dialogue track it points at.
             duck: duck_for_track(track_index, start_frame, &info)?,
+            // D-223 — the everyday case: this clip's own level and stereo
+            // position, independent of its track's fader.
+            level: level_for_clip(&clip, &info, elapsed_frames),
         });
     }
 
@@ -261,6 +272,86 @@ fn fade_for_clip(
         in_curve: clip.fade_in_curve,
         out_curve: clip.fade_out_curve,
     })
+}
+
+/// Build this clip's own volume/pan envelope (D-223), or `None` when it is at
+/// unity and centred — the common path, and the one that keeps the mix
+/// byte-identical to pre-D-223 (see [`LevelEnvelope::new`], whose `None` makes
+/// the mixer skip its per-sample pass rather than multiply by a 1.0 it
+/// computed).
+///
+/// **This is the timeline→media half of D-223, which is why it is app-side**,
+/// exactly like [`fade_for_clip`] above and for the same reason: a
+/// [`LevelEnvelope`] is seconds and plain numbers — media facts — while "this
+/// clip's `volume` keyframes, in its own source-frame space" needs a
+/// `chroma_timeline::Clip` and its probed [`super::video::VideoInfo`], which a
+/// media crate reaching for would be reaching *up* a layer (D-039/D-146).
+///
+/// **Keyframes are read through [`super::keyframes::parse_keyframes`]**, the
+/// same D-034 parser `chroma::edit::resolve_clip_transform` uses for the
+/// picture — so a `"volume"` key an agent or the Inspector wrote is seen here
+/// exactly as the compositor sees an `"opacity"` one. What this does NOT do is
+/// call `interpolate_param` per sample: the mixer needs a self-contained
+/// envelope it can evaluate on its own thread, so the keys are converted once,
+/// here, into the clip-local seconds `LevelCurve::Keys` interpolates between —
+/// linearly, holding outside, which is `interpolate_param`'s own rule for a
+/// numeric param. (Its `rotation` shortest-arc special case is not reachable
+/// for these two names, and its `round6` is not applied — a ≤5e-7 difference
+/// in a linear gain, two orders of magnitude below `f32` audio precision.)
+///
+/// `elapsed_frames` is how far into the clip playback is starting, in timeline
+/// frames — the same argument, meaning and conversion [`fade_for_clip`] takes.
+fn level_for_clip(
+    clip: &chroma_timeline::Clip,
+    info: &super::video::VideoInfo,
+    elapsed_frames: i64,
+) -> Option<LevelEnvelope> {
+    let fps = info.fps();
+    // Signed, unlike `VideoInfo::frame_to_secs`'s own `u64`: a key authored
+    // BEFORE this clip's current in-point is perfectly legal (trimming never
+    // deletes keys) and is what holds the curve's value at the clip's head, so
+    // its clip-local position is genuinely negative and must stay so.
+    let secs = |frames: i64| if fps > 0.0 { frames as f64 / fps } else { 0.0 };
+
+    let keyframes = clip.chroma_keyframes.as_ref().and_then(|kf| {
+        // `parse_keyframes` reads `parameters.chromaKeyframes` off the
+        // CONTAINING object; `Clip::chroma_keyframes` is the bare array. Same
+        // one-line wrap `resolve_clip_transform` does, not a second parser.
+        let wrapped = serde_json::json!({ "chromaKeyframes": kf });
+        super::keyframes::parse_keyframes(&wrapped)
+    });
+
+    let curve = |name: &str, static_value: f64| -> chroma_media::audio::LevelCurve {
+        let Some(keys) = keyframes.as_ref() else {
+            return chroma_media::audio::LevelCurve::Const(static_value);
+        };
+        let points: Vec<(f64, f64)> = keys
+            .iter()
+            .filter_map(|k| {
+                let v = k.params.get(name)?.as_f64()?;
+                if !v.is_finite() {
+                    return None;
+                }
+                Some((secs(k.frame as i64 - clip.source_start), v))
+            })
+            .collect();
+        // No key names this param -> its static field governs, exactly as
+        // `interpolate_param` returning `None` means for the compositor.
+        if points.is_empty() {
+            chroma_media::audio::LevelCurve::Const(static_value)
+        } else {
+            // `parse_keyframes` is frame-sorted, so this is already ascending
+            // — `LevelCurve::value_at`'s stated precondition, met by
+            // construction rather than by a re-sort.
+            chroma_media::audio::LevelCurve::Keys(points)
+        }
+    };
+
+    LevelEnvelope::new(
+        secs(elapsed_frames),
+        curve("volume", clip.volume),
+        curve("pan", clip.pan),
+    )
 }
 
 /// Build the ducking envelope for the source on track `track_index`, or `None`
@@ -451,6 +542,151 @@ mod tests {
             (env.gain_at(0.0) - 0.48).abs() < 1e-6,
             "got {}",
             env.gain_at(0.0)
+        );
+    }
+
+    // --- D-223: per-clip volume/pan → the mixer's level envelope ---------- //
+    //
+    // The timeline→media half is what lives here: a clip's static fields and
+    // its `chroma_keyframes` turned into clip-local seconds. The pan law, the
+    // per-channel application and the interpolation itself are
+    // `chroma-media`'s / `chroma-types`' and are tested there.
+
+    fn clip_with_level(volume: f64, pan: f64) -> chroma_timeline::Clip {
+        chroma_timeline::Clip {
+            duration: 250,
+            source_len: 250,
+            volume,
+            pan,
+            ..Default::default()
+        }
+    }
+
+    /// **The backward-compatibility case for the mixer.** A clip at unity and
+    /// centred gets NO envelope at all — not one that happens to return 1.0 —
+    /// so `mix_chunk` skips the per-sample pass and the mix runs exactly the
+    /// arithmetic it ran before D-223. The same property `fade_for_clip`'s own
+    /// first test pins, for the same reason.
+    #[test]
+    fn a_clip_at_unity_and_centre_gets_no_level_envelope_at_all() {
+        let info = info_25fps();
+        assert!(level_for_clip(&clip_with_level(1.0, 0.0), &info, 0).is_none());
+        // …and either field alone is enough to get one
+        assert!(level_for_clip(&clip_with_level(0.5, 0.0), &info, 0).is_some());
+        assert!(level_for_clip(&clip_with_level(1.0, -1.0), &info, 0).is_some());
+    }
+
+    /// A static level resolves to exactly the clip's own numbers, through the
+    /// real pan law — hard left is `(√2, 0)`, so the right channel is silent
+    /// and the left is boosted (the 0 dB-centre normalisation).
+    #[test]
+    fn a_static_level_resolves_to_the_clips_own_volume_and_pan() {
+        let env = level_for_clip(&clip_with_level(0.5, -1.0), &info_25fps(), 0).unwrap();
+        let (vol, l, r) = env.gains_at(3.0);
+        assert!((vol - 0.5).abs() < 1e-6, "{vol}");
+        assert!((l - std::f32::consts::SQRT_2).abs() < 1e-6, "{l}");
+        assert_eq!(r, 0.0);
+    }
+
+    /// A **keyframed** volume becomes a real automation curve in the mixer's
+    /// own clip-local seconds — the keys are SOURCE frames, converted at the
+    /// clip's own fps and rebased on its `source_start` (25 fps here, so
+    /// source frame 25 is 1 s into a clip starting at source frame 0).
+    #[test]
+    fn keyframed_volume_becomes_a_clip_local_seconds_curve() {
+        let clip = chroma_timeline::Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "volume": 0.0 } },
+                { "frame": 50, "params": { "volume": 1.0 } },
+            ])),
+            ..clip_with_level(1.0, 0.0)
+        };
+        let env = level_for_clip(&clip, &info_25fps(), 0).expect("a keyed volume is a real level");
+        assert_eq!(env.gains_at(0.0).0, 0.0);
+        assert!(
+            (env.gains_at(1.0).0 - 0.5).abs() < 1e-6,
+            "midpoint of the ramp"
+        );
+        assert_eq!(env.gains_at(2.0).0, 1.0);
+        assert_eq!(env.gains_at(9.0).0, 1.0, "held past the last key");
+    }
+
+    /// Keys are rebased on the clip's own `source_start`, exactly as
+    /// `resolve_clip_transform` reads them for the picture — a trimmed clip's
+    /// automation must not slide by the trim amount.
+    #[test]
+    fn keyframe_times_are_rebased_on_the_clips_source_start() {
+        let clip = chroma_timeline::Clip {
+            source_start: 25, // 1 s into the source at 25 fps
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 25, "params": { "volume": 0.0 } },
+                { "frame": 75, "params": { "volume": 1.0 } },
+            ])),
+            ..clip_with_level(1.0, 0.0)
+        };
+        let env = level_for_clip(&clip, &info_25fps(), 0).expect("a keyed volume is a real level");
+        // The first key sits at the clip's own in-point, i.e. clip second 0.
+        assert_eq!(env.gains_at(0.0).0, 0.0);
+        assert!((env.gains_at(1.0).0 - 0.5).abs() < 1e-6);
+    }
+
+    /// A keyframe naming only ONE of the two params leaves the other on its
+    /// static field — `interpolate_param`'s own "only the keys that define
+    /// this param take part" rule, which is what makes per-property keyframing
+    /// work at all (B-094).
+    #[test]
+    fn a_key_naming_only_pan_leaves_volume_on_its_static_field() {
+        let clip = chroma_timeline::Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "pan": -1.0 } },
+                { "frame": 50, "params": { "pan": 1.0 } },
+            ])),
+            ..clip_with_level(0.25, 0.0)
+        };
+        let env = level_for_clip(&clip, &info_25fps(), 0).unwrap();
+        for t in [0.0, 1.0, 2.0] {
+            assert!((env.gains_at(t).0 - 0.25).abs() < 1e-6, "volume at {t}");
+        }
+        // …and the pan really sweeps: silent right at the start, silent left
+        // at the end.
+        assert_eq!(env.gains_at(0.0).2, 0.0);
+        assert_eq!(env.gains_at(2.0).1, 0.0);
+    }
+
+    /// Keys that are all the identity are not an envelope — an agent that
+    /// keyed volume at 1.0 twice changed nothing, and must not cost the mixer
+    /// its fast path. (The check itself is `LevelEnvelope::new`'s; this pins
+    /// that the app-side builder really routes through it.)
+    #[test]
+    fn keyframes_that_are_all_identity_still_produce_no_envelope() {
+        let clip = chroma_timeline::Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "volume": 1.0, "pan": 0.0 } },
+                { "frame": 50, "params": { "volume": 1.0, "pan": 0.0 } },
+            ])),
+            ..clip_with_level(1.0, 0.0)
+        };
+        assert!(level_for_clip(&clip, &info_25fps(), 0).is_none());
+    }
+
+    /// Starting playback mid-clip starts part-way along the automation, not at
+    /// its beginning — what `offset_secs` is for, the same property
+    /// `a_mid_fade_play_starts_part_way_down_the_ramp` pins for a fade.
+    #[test]
+    fn a_mid_ramp_play_starts_part_way_along_the_automation() {
+        let clip = chroma_timeline::Clip {
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "volume": 0.0 } },
+                { "frame": 50, "params": { "volume": 1.0 } },
+            ])),
+            ..clip_with_level(1.0, 0.0)
+        };
+        // 25 frames = 1 s into a 2 s ramp.
+        let env = level_for_clip(&clip, &info_25fps(), 25).unwrap();
+        assert!(
+            (env.gains_at(0.0).0 - 0.5).abs() < 1e-6,
+            "{}",
+            env.gains_at(0.0).0
         );
     }
 

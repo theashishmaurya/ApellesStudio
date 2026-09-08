@@ -41,6 +41,15 @@
  * or not, its own previous/next key) and owns the four new handlers
  * (`onParamChange`/`onKeyframeToggle`/`onKeyframeNav`/`onResetParam`).
  * `ClipInspectorPanel` stays pure presentation, exactly as before.
+ *
+ * D-223 — the per-clip audio properties (`volume`/`pan`) join that same model
+ * rather than getting a parallel one: one `paramStates` record over
+ * `CLIP_KEYFRAME_DEFAULTS` (transform ∪ audio), one set of four handlers, one
+ * keyframe path. The ONE thing that branches is where a STATIC edit is
+ * written — `set_clip_audio` for the audio pair, `set_clip_transform` for the
+ * rest ([`staticWrite`] below) — because a level is not geometry and does not
+ * belong in a transform write (see the ops' own docs). "Key all properties"
+ * deliberately stays transform+crop only; see `doUpsertKeyframe`.
  */
 import {
   adjacentParamKeyframeFrame,
@@ -57,10 +66,14 @@ import {
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
 import type { PropertyState } from './PropertyRow';
 import {
+  CLIP_KEYFRAME_DEFAULTS,
   CLIP_TRANSFORM_DEFAULTS,
   DEFAULT_FADE_CURVE,
   findClip,
+  isClipAudioParam,
   timelineFps,
+  type ClipAudioParam,
+  type ClipKeyframeParam,
   type ClipTransformParam,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
@@ -144,12 +157,35 @@ export function EditorInspectorPanel() {
     });
   };
 
+  // D-223 — per-clip volume/pan get their own op, for exactly the reason
+  // fades do (a level is not geometry — see `set_clip_audio`'s own doc). Both
+  // fields are independently optional there, so unlike `applyTransform` /
+  // `applyFade` this does NOT restate the clip's other value: an omitted field
+  // is left alone by the reducer itself.
+  const applyAudio = (patch: Partial<Record<ClipAudioParam, number>>) => {
+    if (!primary || !selectedClip || selectedIdx < 0) return;
+    applyOp({ kind: 'set_clip_audio', track: primary.track, clip: selectedIdx, ...patch });
+  };
+
   // D-208 — every keyframeable property's static (un-animated) value, read
-  // once here through `CLIP_TRANSFORM_DEFAULTS` instead of nine scattered
+  // once here through `CLIP_KEYFRAME_DEFAULTS` instead of eleven scattered
   // `?? 1` / `?? 0` fallbacks that could each drift from the backend's own
   // defaults independently.
-  const staticValue = (param: ClipTransformParam): number =>
-    (selectedClip?.[param] as number | undefined) ?? CLIP_TRANSFORM_DEFAULTS[param];
+  const staticValue = (param: ClipKeyframeParam): number =>
+    (selectedClip?.[param] as number | undefined) ?? CLIP_KEYFRAME_DEFAULTS[param];
+
+  /** D-223 — write ONE property's static field through the op that owns it.
+   *  The only place the transform/audio split shows up in this file's
+   *  per-property handlers; everything else about them is identical, which is
+   *  the whole point of keeping one set of handlers rather than two. */
+  const staticWrite = (param: ClipKeyframeParam, value: number) => {
+    if (isClipAudioParam(param)) applyAudio({ [param]: value });
+    // D-193 — editing `scale` also clears any independent Width/Height
+    // override, so that field stays a real "back to plain uniform scale"
+    // affordance rather than one that silently does nothing.
+    else if (param === 'scale') applyTransform({ scale: value, box_width: null, box_height: null });
+    else applyTransform({ [param]: value });
+  };
 
   // D-208 — one write of a `set_clip_keyframes` op, so every per-property
   // handler below stays a single expression and none of them can forget the
@@ -164,7 +200,7 @@ export function EditorInspectorPanel() {
   // `prevFrame`/`nextFrame` are TIMELINE frames (`clipTimelineFrame` runs
   // the key's own source frame back through `source_fps`), ready to hand
   // straight to `setPlayhead`.
-  const paramState = (param: ClipTransformParam): PropertyState => {
+  const paramState = (param: ClipKeyframeParam): PropertyState => {
     const prev = adjacentParamKeyframeFrame(clipKeyframes, param, clipKfSourceFrame, -1);
     const next = adjacentParamKeyframeFrame(clipKeyframes, param, clipKfSourceFrame, 1);
     const toTimeline = (f: number | null) =>
@@ -181,8 +217,8 @@ export function EditorInspectorPanel() {
   };
 
   const paramStates = Object.fromEntries(
-    (Object.keys(CLIP_TRANSFORM_DEFAULTS) as ClipTransformParam[]).map((p) => [p, paramState(p)]),
-  ) as Record<ClipTransformParam, PropertyState>;
+    (Object.keys(CLIP_KEYFRAME_DEFAULTS) as ClipKeyframeParam[]).map((p) => [p, paramState(p)]),
+  ) as Record<ClipKeyframeParam, PropertyState>;
 
   /** D-208 — edit ONE property's value.
    *
@@ -200,7 +236,7 @@ export function EditorInspectorPanel() {
    *  in the static case; in the animated case it is a second op, but only
    *  when an override actually exists (the rare case), so the ordinary
    *  animated edit stays one op. */
-  const applyParam = (param: ClipTransformParam, value: number) => {
+  const applyParam = (param: ClipKeyframeParam, value: number) => {
     if (!primary || !selectedClip || selectedIdx < 0 || !Number.isFinite(value)) return;
     if (hasParamKeyframes(clipKeyframes, param)) {
       if (param === 'scale' && (selectedClip.box_width != null || selectedClip.box_height != null)) {
@@ -208,7 +244,7 @@ export function EditorInspectorPanel() {
       }
       applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: value }));
     } else {
-      applyTransform(param === 'scale' ? { scale: value, box_width: null, box_height: null } : { [param]: value });
+      staticWrite(param, value);
     }
   };
 
@@ -226,11 +262,11 @@ export function EditorInspectorPanel() {
    *  one op/one undo step; when they differ it is deliberately two ops (the
    *  edit model has one op per history entry — see `applyOp` — and there is
    *  no combined transform-and-keyframes op to reach for). */
-  const toggleParamKeyframes = (param: ClipTransformParam) => {
+  const toggleParamKeyframes = (param: ClipKeyframeParam) => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
     if (hasParamKeyframes(clipKeyframes, param)) {
       const held = paramValueAt(clipKeyframes, param, clipKfSourceFrame, staticValue(param));
-      if (held !== staticValue(param)) applyTransform({ [param]: held });
+      if (held !== staticValue(param)) staticWrite(param, held);
       applyKeyframes(removeClipKeyframeParam(clipKeyframes, param));
     } else {
       applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: staticValue(param) }));
@@ -240,7 +276,7 @@ export function EditorInspectorPanel() {
   /** D-208 — jump the playhead to this property's own previous/next
    *  keyframe. A no-op when there is none in that direction (the button is
    *  disabled then too — this guard is for the keyboard-activated case). */
-  const goToParamKeyframe = (param: ClipTransformParam, dir: -1 | 1) => {
+  const goToParamKeyframe = (param: ClipKeyframeParam, dir: -1 | 1) => {
     const target = dir < 0 ? paramStates[param].prevFrame : paramStates[param].nextFrame;
     if (target !== null) setPlayhead(target);
   };
@@ -258,10 +294,10 @@ export function EditorInspectorPanel() {
    *  exactly the D-193 reason its own number field does: without that, a
    *  clip with a `box_width`/`box_height` pair would report scale 1 while
    *  still rendering at the overridden size. */
-  const resetParam = (param: ClipTransformParam) => {
+  const resetParam = (param: ClipKeyframeParam) => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
-    const value = CLIP_TRANSFORM_DEFAULTS[param];
-    applyTransform(param === 'scale' ? { scale: value, box_width: null, box_height: null } : { [param]: value });
+    const value = CLIP_KEYFRAME_DEFAULTS[param];
+    staticWrite(param, value);
     if (hasParamKeyframes(clipKeyframes, param)) {
       applyKeyframes(mergeClipKeyframeParams(clipKeyframes, clipKfSourceFrame, { [param]: value }));
     }
@@ -276,6 +312,14 @@ export function EditorInspectorPanel() {
   // D-132 — the crop insets are keyed alongside everything else, which is
   // what makes them animatable at all: `resolve_clip_transform` (Rust) reads
   // them out of this same flat params object through the D-034 interpolator.
+  //
+  // D-223 — `CLIP_TRANSFORM_DEFAULTS`, deliberately, NOT the merged
+  // `CLIP_KEYFRAME_DEFAULTS`: this button's own label and tooltip say
+  // "transform and crop", it sits in a section about the clip's geometry, and
+  // silently keying a clip's volume and pan as a side effect of "pin the
+  // picture as it is" would be an animation the user never asked for on a
+  // property they may not even have open. The two audio rows have their own
+  // diamonds, which is the affordance for keying them.
   const doUpsertKeyframe = () => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
     // Each property's value AT THE PLAYHEAD, not its static field — for an

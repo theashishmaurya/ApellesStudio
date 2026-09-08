@@ -1449,8 +1449,16 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       per-clip audio and EQ rows below can reuse it — see D-220 for why this
       stopped at the Edit tab's own boundary rather than unifying with
       Motion's/Colorist's own Inspector panels (D-103 already settled that).
-    - ⬜ Per-clip audio: volume, pan — new data-model fields, not just track
-      gain (ref: `soundtrack.jpg`).
+    - ~~**Per-clip audio: volume, pan**~~ — **DONE, 2026-09-08 (D-223).**
+      Real `Clip::volume` (linear, matching `Track::gain`'s unit) and
+      `Clip::pan` (normalised, constant-power law at a 0 dB centre —
+      `chroma_types::pan`), keyframeable through the existing per-property
+      machinery, composed as `track.gain × clip.volume × fade × duck` then
+      split per channel, identically in the live mixer and the ffmpeg export.
+      Inspector "Audio" section (two `PropertyRow`s) + `editor_set_clip_audio`
+      MCP tool. Verified by real per-channel `volumedetect` measurement of
+      real exported files. One measured divergence for MONO sources only:
+      B-101. Design detail: `docs/notes/audio-fade-duck-crossfade-plan.md` §9.
     - ⬜ Timeline curve editor — bezier ease curves under a clip, editable
       directly (ref: `curve.jpg`).
     - ⬜ Transitions library — crossfade/dissolve/wipe, drag onto an edit
@@ -1465,8 +1473,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ Dynamic zoom — drag a start/end box in the viewer instead of
       hand-authoring keyframes.
     - ⬜ Per-clip parametric EQ — multi-band, visual curve (ref:
-      `soundtrack.jpg`); depends on the per-clip audio item above landing
-      first (needs the same new data-model fields to hang bands off of).
+      `soundtrack.jpg`). **Now unblocked**: the per-clip audio item above
+      landed (D-223), so the `Clip`-level audio fields the bands hang off of
+      exist, along with the pattern to follow (a new field pair + its own
+      `set_clip_*` op + a `LevelEnvelope`-shaped mixer stage + the matching
+      ffmpeg filter in `timelineExportAudio.ts`).
     - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`).
     - ⬜ Adjustment clips — one effect, applied top-down over every clip

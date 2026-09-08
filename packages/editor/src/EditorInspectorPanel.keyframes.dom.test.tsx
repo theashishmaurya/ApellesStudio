@@ -20,6 +20,15 @@
  * independently is `chroma::edit::composite_tests::
  * each_param_interpolates_across_only_its_own_keyframes`'s job (B-094), and
  * that the export does is `timelineExport.test.ts`'s.
+ *
+ * **D-223 extends the same coverage to the per-clip AUDIO rows** (`volume`/
+ * `pan`), which share every one of those components and now the same
+ * `paramStates` record — with the one thing that differs asserted directly:
+ * a static edit routes through the `set_clip_audio` op, not
+ * `set_clip_transform`, so a volume nudge cannot restate (or reset) a clip's
+ * geometry. Same authoring-contract scope: what the mixer and the exporter
+ * then DO with those keys is `chroma-media`'s and
+ * `timelineExport.ffmpeg.test.ts`'s.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -428,5 +437,95 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
     expect(keys()).toHaveLength(1);
     expect(keys()[0].params.scale).toBe(2.5);
     expect(keys()[0].params.opacity).toBe(1);
+  });
+});
+
+describe('per-clip audio rows (D-223)', () => {
+  it('renders a Volume and a Pan row, at unity and centre, both un-keyframed', async () => {
+    await render();
+    expect(field('Volume').value).toBe('1');
+    expect(field('Pan').value).toBe('0');
+    expect(button('Toggle Volume keyframes').getAttribute('aria-pressed')).toBe('false');
+    expect(button('Toggle Pan keyframes').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('typing a Volume writes the clip’s OWN volume — not the track gain, not a transform', async () => {
+    await render();
+    type(field('Volume'), 0.5);
+    await waitFrames(1);
+
+    expect(currentClip().volume).toBe(0.5);
+    // The track's own fader is untouched — the two are independent stages that
+    // multiply, which is the whole reason this field exists (D-223).
+    const tl = useEditorTimelineStore.getState().timeline;
+    expect(tl?.tracks[0].gain).toBeUndefined();
+    // …and nothing about the clip's geometry moved.
+    expect(currentClip().opacity).toBeUndefined();
+    expect(currentClip().scale).toBeUndefined();
+  });
+
+  it('a pan past hard left is clamped on the way into the model, not stored raw', async () => {
+    await render();
+    type(field('Pan'), -3);
+    await waitFrames(1);
+    expect(currentClip().pan).toBe(-1);
+  });
+
+  it('the reset button puts Volume back to unity', async () => {
+    await render();
+    type(field('Volume'), 0.2);
+    await waitFrames(1);
+    click(button('Reset Volume'));
+    await waitFrames(1);
+    expect(currentClip().volume).toBe(1);
+  });
+
+  it('the diamond keys `volume` by that exact name — the name both renderers read', async () => {
+    await render();
+    click(button('Toggle Volume keyframes'));
+    await waitFrames(1);
+    // Keyed at its CURRENT value, so turning animation on changes no sample —
+    // the same guarantee every transform property's diamond gives.
+    expect(keys()).toEqual([{ frame: 0, params: { volume: 1 } }]);
+
+    actSync(() => useEditorTimelineStore.getState().setPlayhead(60));
+    await waitFrames(1);
+    type(field('Volume'), 0.25);
+    await waitFrames(1);
+
+    // A real automation ramp: two keys, naming `volume` alone. `volume` is the
+    // name `chroma::audio::level_for_clip` (live) and `clipAudioParam`
+    // (export) both look for, so a typo here would silently animate nothing.
+    expect(keys()).toEqual([
+      { frame: 0, params: { volume: 1 } },
+      { frame: 60, params: { volume: 0.25 } },
+    ]);
+    expect(animatedParams()).toEqual(['volume']);
+    // The static field is deliberately NOT rewritten while animated — the key
+    // is what the mixer reads.
+    expect(currentClip().volume).toBeUndefined();
+  });
+
+  it('"Key all properties" deliberately does NOT key volume/pan', async () => {
+    await render();
+    click(button('Toggle Volume keyframes')); // one real audio key first
+    await waitFrames(1);
+    const before = keys();
+    expect(before).toEqual([{ frame: 0, params: { volume: 1 } }]);
+
+    const keyAll = [...(mounted?.container.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('Key all properties'),
+    );
+    click(keyAll as HTMLElement);
+    await waitFrames(1);
+
+    // The batch merged the nine transform/crop properties into the SAME frame
+    // entry and left the volume key it found there intact — but it added no
+    // `pan`, because that button is about the clip's geometry (see
+    // `doUpsertKeyframe`'s own comment).
+    const params = keys()[0].params;
+    expect(params.volume).toBe(1); // not clobbered
+    expect('pan' in params).toBe(false);
+    expect(params.scale).toBe(1);
   });
 });

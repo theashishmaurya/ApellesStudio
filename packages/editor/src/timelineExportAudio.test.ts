@@ -8,30 +8,50 @@
 import { describe, expect, it } from 'vitest';
 import {
   atempoFactors,
+  buildAudioSourceChain,
   buildDuckSegments,
+  clipAudioParam,
   dbToLinear,
   duckGainExpr,
   fadeCurveEval,
   fadeGainAt,
   fadeGainExpr,
+  panGainExprs,
   resolveDuckForTrack,
   type DuckSegment,
 } from './timelineExportAudio';
-import { FADE_PRESETS } from './timeline';
+import { FADE_PRESETS, panGains } from './timeline';
 import type { Clip, Timeline, Track } from './timeline';
 
 /** A tiny ffmpeg-expression interpreter for the subset this module emits
- *  (`if`, `between`, `lt`, `exp`) — mirrors `timelineExport.test.ts`'s own
- *  `evalExpr` helper, extended with `exp` for the duck expressions. */
+ *  (`if`, `between`, `lt`, `exp`, and D-223's `clip`/`cos`/`sin`/`max`/`PI`)
+ *  — mirrors `timelineExport.test.ts`'s own `evalExpr` helper. Every name
+ *  here is a real ffmpeg expression-language function with these exact
+ *  semantics, which is what makes evaluating a generated expression in JS a
+ *  meaningful check of what ffmpeg will do with it. */
 function evalExpr(expr: string, t: number): number {
-  const rewritten = expr.replace(/\bif\(/g, 'iff(');
+  const rewritten = expr
+    .replace(/\bif\(/g, 'iff(')
+    // `piecewiseLinearExpr` legitimately emits `(1--1)` when a key's value is
+    // negative (a pan sweeping from -1, for instance). ffmpeg's own expression
+    // parser evaluates that correctly — verified directly on the CLI, not
+    // assumed — but JavaScript's tokenizer reads `--` as the decrement
+    // operator and throws before the expression is ever evaluated. Spacing it
+    // out is a fix to THIS TEST HELPER, not a change to what ffmpeg is given.
+    .replace(/--/g, '- -');
   const iff = (cond: boolean, a: number, b: number) => (cond ? a : b);
   const between = (x: number, a: number, b: number) => x >= a && x <= b;
   const lt = (a: number, b: number) => a < b;
   const exp = Math.exp;
+  const clipFn = (x: number, lo: number, hi: number) => Math.min(Math.max(x, lo), hi);
+  const { cos, sin, max } = Math;
+  const PI = Math.PI;
   // eslint-disable-next-line no-new-func
-  const fn = new Function('t', 'iff', 'between', 'lt', 'exp', `return ${rewritten};`);
-  return fn(t, iff, between, lt, exp) as number;
+  const fn = new Function(
+    't', 'iff', 'between', 'lt', 'exp', 'clip', 'cos', 'sin', 'max', 'PI',
+    `return ${rewritten};`,
+  );
+  return fn(t, iff, between, lt, exp, clipFn, cos, sin, max, PI) as number;
 }
 
 const LINEAR = FADE_PRESETS.find((p) => p.name === 'linear')!.curve;
@@ -253,5 +273,229 @@ describe('atempoFactors', () => {
       const product = factors.reduce((a, b) => a * b, 1);
       expect(product).toBeCloseTo(speed, 6);
     }
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-223 — per-clip volume + pan
+// --------------------------------------------------------------------------- //
+
+describe('panGains — the pan law itself', () => {
+  it('is bit-exactly the identity at centre, and exactly silent in the far channel at the extremes', () => {
+    // The migration property: every pre-D-223 clip is pan 0 and must be
+    // untouched, not "multiplied by something that rounds to 1".
+    expect(panGains(0)).toEqual([1, 1]);
+    expect(panGains(-1)).toEqual([Math.SQRT2, 0]);
+    expect(panGains(1)).toEqual([0, Math.SQRT2]);
+  });
+
+  it('holds constant power across the whole sweep (gl^2 + gr^2 === 2)', () => {
+    // The defining property of a constant-power law, checked as arithmetic —
+    // the same assertion `chroma_types::pan::tests` makes about the Rust
+    // implementation, so the two are pinned to one law rather than to each
+    // other's current output.
+    for (let i = -100; i <= 100; i++) {
+      const [l, r] = panGains(i / 100);
+      expect(l * l + r * r).toBeCloseTo(2, 9);
+    }
+  });
+
+  it('clamps out of range and reads nonsense as centre', () => {
+    expect(panGains(-4)).toEqual(panGains(-1));
+    expect(panGains(4)).toEqual(panGains(1));
+    expect(panGains(NaN)).toEqual([1, 1]);
+  });
+});
+
+describe('panGainExprs', () => {
+  it('the generated ffmpeg expression evaluates to the SAME gains panGains computes', () => {
+    // This is the real cross-check: the export writes the law as an ffmpeg
+    // expression rather than as sampled points, so what must be proven is that
+    // the expression IS the law — at every pan, not just at the endpoints.
+    for (const pan of [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]) {
+      const [lExpr, rExpr] = panGainExprs(String(pan));
+      const [l, r] = panGains(pan);
+      expect(evalExpr(lExpr, 0)).toBeCloseTo(l, 12);
+      expect(evalExpr(rExpr, 0)).toBeCloseTo(r, 12);
+    }
+  });
+
+  it('clamps an out-of-range pan expression rather than letting the cosine come back up', () => {
+    // Past hard left the un-clamped cosine would start RISING again on the
+    // far channel — a pan of -3 quietly sounding like -0 — which is why
+    // `clip()` is in the expression at all.
+    const [lExpr, rExpr] = panGainExprs('-3');
+    expect(evalExpr(lExpr, 0)).toBeCloseTo(Math.SQRT2, 12);
+    expect(evalExpr(rExpr, 0)).toBeCloseTo(0, 12);
+  });
+});
+
+describe('clipAudioParam', () => {
+  it('an unkeyed clip is static at its own stored value, defaulting to the identity', () => {
+    expect(clipAudioParam(clip('a'), 'volume', 1, 24, 1)).toEqual({ kind: 'static', value: 1 });
+    expect(clipAudioParam(clip('a', { volume: 0.5 }), 'volume', 1, 24, 1)).toEqual({
+      kind: 'static',
+      value: 0.5,
+    });
+    expect(clipAudioParam(clip('a', { pan: -0.5 }), 'pan', 0, 24, 1)).toEqual({
+      kind: 'static',
+      value: -0.5,
+    });
+  });
+
+  it('keys become a piecewise-linear expression in CLIP-LOCAL seconds, rebased on source_start', () => {
+    // Keyframe frames are SOURCE frames; the clip's input is `-ss`-trimmed to
+    // its in-point, so its own `t` is 0 there. A clip trimmed 24 frames in
+    // (1s at 24fps) must not have its automation slide by that second.
+    const c = clip('a', {
+      source_start: 24,
+      chroma_keyframes: [
+        { frame: 24, params: { volume: 0 } },
+        { frame: 72, params: { volume: 1 } },
+      ],
+    });
+    const v = clipAudioParam(c, 'volume', 1, 24, 1);
+    expect(v.kind).toBe('keys');
+    if (v.kind !== 'keys') return;
+    expect(evalExpr(v.expr, 0)).toBeCloseTo(0, 9); // the clip's own in-point
+    expect(evalExpr(v.expr, 1)).toBeCloseTo(0.5, 9); // halfway up the 2s ramp
+    expect(evalExpr(v.expr, 2)).toBeCloseTo(1, 9);
+    expect(evalExpr(v.expr, 9)).toBeCloseTo(1, 9); // held past the last key
+  });
+
+  it('key times are divided by the clip speed, because volume runs AFTER atempo', () => {
+    const c = clip('a', {
+      chroma_keyframes: [
+        { frame: 0, params: { volume: 0 } },
+        { frame: 48, params: { volume: 1 } },
+      ],
+    });
+    const v = clipAudioParam(c, 'volume', 1, 24, 2); // 2x speed
+    expect(v.kind).toBe('keys');
+    if (v.kind !== 'keys') return;
+    // The 2s ramp is 1s of OUTPUT time once the clip plays twice as fast.
+    expect(evalExpr(v.expr, 0.5)).toBeCloseTo(0.5, 9);
+    expect(evalExpr(v.expr, 1)).toBeCloseTo(1, 9);
+  });
+
+  it('keys that all hold the identity collapse back to static — an animation that animates nothing', () => {
+    const c = clip('a', {
+      chroma_keyframes: [
+        { frame: 0, params: { volume: 1 } },
+        { frame: 48, params: { volume: 1 } },
+      ],
+    });
+    expect(clipAudioParam(c, 'volume', 1, 24, 1)).toEqual({ kind: 'static', value: 1 });
+  });
+});
+
+describe('buildAudioSourceChain — per-clip level (D-223)', () => {
+  const base = {
+    srcRef: '[3:a]',
+    clipFps: 24,
+    gain: 1,
+    speed: 1,
+    startSec: 0,
+    duck: null,
+    idLabel: 'au0',
+  };
+
+  it('a clip at unity and centre still needs no filter node at all', () => {
+    const { steps, ref } = buildAudioSourceChain({ ...base, clip: clip('a') });
+    expect(steps).toEqual([]);
+    expect(ref).toEqual({ kind: 'raw', inputIdx: 3 });
+  });
+
+  it('a static clip volume folds into the SAME single volume node the track gain uses', () => {
+    // One node, one number — the live mixer composes `track.gain ×
+    // clip.volume` into one scalar too, and keeping it that way is what stops
+    // this feature from costing an unused export anything.
+    const { steps } = buildAudioSourceChain({
+      ...base,
+      gain: 0.5,
+      clip: clip('a', { volume: 0.5 }),
+    });
+    expect(steps).toEqual(['[3:a]volume=0.25[vau0]']);
+  });
+
+  it('a static pan splits, applies the two real pan-law constants, and joins back to stereo', () => {
+    const { steps, ref } = buildAudioSourceChain({ ...base, clip: clip('a', { pan: -1 }) });
+    const [l, r] = panGains(-1);
+    expect(steps).toEqual([
+      '[3:a]aformat=channel_layouts=stereo[sau0]',
+      '[sau0]channelsplit=channel_layout=stereo[lau0][rau0]',
+      `[lau0]volume=volume='(${l})'[lvau0]`,
+      `[rau0]volume=volume='(${r})'[rvau0]`,
+      '[lvau0][rvau0]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[pau0]',
+    ]);
+    expect(ref).toEqual({ kind: 'label', label: 'pau0' });
+    // …and the constants really are "silence the right, boost the left".
+    expect(l).toBeCloseTo(Math.SQRT2, 12);
+    expect(r).toBe(0);
+  });
+
+  it('the track gain and clip volume multiply into BOTH channels of a panned clip', () => {
+    const { steps } = buildAudioSourceChain({
+      ...base,
+      gain: 0.5,
+      clip: clip('a', { volume: 0.5, pan: 0.5 }),
+    });
+    const left = steps.find((s) => s.startsWith('[lau0]'))!;
+    const right = steps.find((s) => s.startsWith('[rau0]'))!;
+    const [l, r] = panGains(0.5);
+    expect(evalExpr(/volume='(.*)'\[/.exec(left)![1], 0)).toBeCloseTo(0.25 * l, 12);
+    expect(evalExpr(/volume='(.*)'\[/.exec(right)![1], 0)).toBeCloseTo(0.25 * r, 12);
+  });
+
+  it('a KEYFRAMED pan is a real per-frame expression that sweeps between the channels', () => {
+    const c = clip('a', {
+      duration: 48, // 2s at 24fps
+      chroma_keyframes: [
+        { frame: 0, params: { pan: -1 } },
+        { frame: 48, params: { pan: 1 } },
+      ],
+    });
+    const { steps } = buildAudioSourceChain({ ...base, clip: c });
+    const left = steps.find((s) => s.startsWith('[lau0]'))!;
+    const right = steps.find((s) => s.startsWith('[rau0]'))!;
+    // `eval=frame` — without it ffmpeg parses the expression ONCE and the pan
+    // never moves, which is exactly the class of bug B-090 was.
+    expect(left).toContain('volume=eval=frame:');
+    const lExpr = /volume='(.*)'\[/.exec(left)![1];
+    const rExpr = /volume='(.*)'\[/.exec(right)![1];
+    expect(evalExpr(lExpr, 0)).toBeCloseTo(Math.SQRT2, 9);
+    expect(evalExpr(rExpr, 0)).toBeCloseTo(0, 9);
+    expect(evalExpr(lExpr, 1)).toBeCloseTo(1, 9); // centre, halfway through
+    expect(evalExpr(rExpr, 1)).toBeCloseTo(1, 9);
+    expect(evalExpr(lExpr, 2)).toBeCloseTo(0, 9);
+    expect(evalExpr(rExpr, 2)).toBeCloseTo(Math.SQRT2, 9);
+  });
+
+  it('a keyframed volume becomes a per-frame expression, floored at silence', () => {
+    const c = clip('a', {
+      chroma_keyframes: [
+        { frame: 0, params: { volume: 0 } },
+        { frame: 48, params: { volume: 2 } },
+      ],
+    });
+    const { steps } = buildAudioSourceChain({ ...base, clip: c });
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toContain('volume=eval=frame:');
+    const expr = /volume='(.*)'\[/.exec(steps[0])![1];
+    expect(evalExpr(expr, 0)).toBeCloseTo(0, 9);
+    expect(evalExpr(expr, 1)).toBeCloseTo(1, 9);
+    expect(evalExpr(expr, 2)).toBeCloseTo(2, 9); // no ceiling — a fader boosts
+  });
+
+  it('a clip volume multiplies with a fade rather than replacing it', () => {
+    // The composition contract: `track.gain × clip.volume × fade × duck`, the
+    // same product `SourceEnvelopes::apply` computes per sample-frame.
+    const c = clip('a', { duration: 48, volume: 0.5, fade_in_frames: 24 });
+    const { steps } = buildAudioSourceChain({ ...base, clip: c });
+    expect(steps).toHaveLength(1);
+    const expr = /volume='(.*)'\[/.exec(steps[0])![1];
+    expect(evalExpr(expr, 0)).toBeCloseTo(0, 6); // silent at the fade's start
+    expect(evalExpr(expr, 0.5)).toBeCloseTo(0.25, 3); // half the fade x half the volume
+    expect(evalExpr(expr, 1.5)).toBeCloseTo(0.5, 6); // past the fade: volume alone
   });
 });

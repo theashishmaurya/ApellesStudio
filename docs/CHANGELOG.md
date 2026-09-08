@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Per-clip audio: volume + pan (D-223, roadmap 27).** A clip
+  now carries its OWN level and stereo position, independent of its track's
+  fader — `Clip::volume` (linear, matching `Track::gain`'s unit) and
+  `Clip::pan` (constant-power law at a 0 dB centre, `chroma_types::pan`), both
+  keyframeable through the machinery D-208/D-220 already built. Composed as
+  `track.gain × clip.volume × fade × duck`, then split per channel, identically
+  in the live mixer (a third envelope in the same per-sample-frame pass) and in
+  the ffmpeg export (a `channelsplit`/`join` fork, the law written as a real
+  per-frame expression since ffmpeg's own `pan` filter cannot take one). New
+  Inspector "Audio" section + `editor_set_clip_audio`. Proved by real
+  per-channel `volumedetect` measurement of real exported files — a whole-file
+  measurement cannot tell a pan from an attenuation. One measured divergence
+  filed, not papered over: **B-101**, a panned MONO clip exports 3 dB below
+  what it plays. Unblocks roadmap 27's per-clip EQ item.
 - **2026-09-08** — **`PropertyRow` extracted to its own file (D-220,
   roadmap 27)** — the reusable Inspector row (label/field/keyframe-diamond/
   nav/reset) several upcoming features (per-clip audio pan/volume, EQ) will

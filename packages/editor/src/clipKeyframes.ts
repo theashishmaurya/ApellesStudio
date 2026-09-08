@@ -46,6 +46,17 @@
  * interpolator with its own semantics. There is exactly one interpolation
  * implementation in this package, and it mirrors exactly one Rust function.
  *
+ * **D-223 — the `param` type widened, nothing else changed.** Every function
+ * here now takes a `ClipKeyframeParam` (the transform/crop names plus the two
+ * per-clip audio ones, `volume`/`pan`) rather than `ClipTransformParam`. That
+ * is a type change only: the interpolation was always generic over the name —
+ * `paramTrack` takes a bare `string`, and the Rust function it mirrors
+ * (`chroma::keyframes::interpolate_param`) has never known the transform names
+ * either — so a keyframed clip volume is the SAME machinery an animated
+ * `opacity` uses, not a parallel one. The only name-dependent behaviour in the
+ * whole module is `rotation`'s shortest-arc case, which neither audio param
+ * can reach.
+ *
  * **Cost, since these callers run on the preview's hottest surfaces** (the
  * Inspector re-renders on every playhead tick, and so does the overlay now):
  * every per-param read below goes through [`paramTrackIndex`], which pays the
@@ -56,7 +67,7 @@
  * D-209 for the measurement.
  */
 
-import { type ClipTransformParam, sourceFramesToTimeline, timelineFramesToSource } from './timeline';
+import { type ClipKeyframeParam, sourceFramesToTimeline, timelineFramesToSource } from './timeline';
 
 export interface ClipKeyframe {
   frame: number;
@@ -163,12 +174,12 @@ export function mergeClipKeyframeParams(
  *  `chroma::keyframes::interpolate_param`'s own `hasOwnProperty` test, so the
  *  diamond can never claim a property is animated that the renderers do not
  *  actually animate. */
-export function hasParamKeyframes(existing: ClipKeyframe[] | undefined, param: ClipTransformParam): boolean {
+export function hasParamKeyframes(existing: ClipKeyframe[] | undefined, param: ClipKeyframeParam): boolean {
   return paramTrack(existing, param).keys.length > 0;
 }
 
 /** Every frame at which `param` itself is keyed, ascending. */
-export function paramKeyframeFrames(existing: ClipKeyframe[] | undefined, param: ClipTransformParam): number[] {
+export function paramKeyframeFrames(existing: ClipKeyframe[] | undefined, param: ClipKeyframeParam): number[] {
   return paramTrack(existing, param).keys.map((k) => k.frame);
 }
 
@@ -178,7 +189,7 @@ export function paramKeyframeFrames(existing: ClipKeyframe[] | undefined, param:
  *  really walk the list instead of sticking on the key under the playhead. */
 export function adjacentParamKeyframeFrame(
   existing: ClipKeyframe[] | undefined,
-  param: ClipTransformParam,
+  param: ClipKeyframeParam,
   frame: number,
   dir: -1 | 1,
 ): number | null {
@@ -204,7 +215,7 @@ export function adjacentParamKeyframeFrame(
  *  first, so the picture does not jump — see `EditorInspectorPanel`. */
 export function removeClipKeyframeParam(
   existing: ClipKeyframe[] | undefined,
-  param: ClipTransformParam,
+  param: ClipKeyframeParam,
 ): ClipKeyframe[] | undefined {
   const kfs = (existing ?? [])
     .map((k) => {
@@ -228,7 +239,7 @@ export function removeClipKeyframeParam(
  *  `staticValue` rather than propagating `NaN` into the Inspector's field. */
 export function paramValueAt(
   existing: ClipKeyframe[] | undefined,
-  param: ClipTransformParam,
+  param: ClipKeyframeParam,
   frame: number,
   staticValue: number,
 ): number {

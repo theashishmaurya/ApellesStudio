@@ -336,7 +336,11 @@ def get_timeline() -> str:
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
-    fadeOutCurve, fadeInCurveName, fadeOutCurveName}]}]}.
+    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan}]}]}.
+
+    `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which
+    MULTIPLY with the track's own `gain` rather than replacing it — see
+    editor_set_clip_audio.
 
     All positions and durations are in FRAMES, not seconds — the unit every
     Edit-tab number is in. `index` is what set_clip_fade and set_track_duck
@@ -652,6 +656,19 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "contributes no embedded audio rather than risk a broken export; "
             "re-import via editor_import_media to (re)probe it if embedded "
             "audio is missing from an export that should have it."
+        ),
+        "per_clip_level": (
+            "D-223: a clip's own `volume`/`pan` (editor_set_clip_audio, or "
+            "keyframed via editor_set_clip_keyframes) export exactly as they "
+            "play — the same `track gain x clip volume x fade x duck` product "
+            "then the same constant-power pan law, verified by real "
+            "per-channel level measurement of real exported files. ONE "
+            "measured divergence, for MONO sources only: panning a mono clip "
+            "makes the exporter upmix it to stereo through ffmpeg's own "
+            "power-preserving rematrix (-3 dB per channel) while the live "
+            "mixer duplicates the channel at unity, so an exported panned "
+            "MONO clip sits 3 dB below what the preview played. Stereo "
+            "sources — the normal case — are unaffected. See B-101."
         ),
         "speed_overrides": (
             "speed_overrides is export-time ONLY — it does not touch the "
@@ -1443,6 +1460,69 @@ def editor_set_clip_transform(
 
 
 @mcp.tool()
+def editor_set_clip_audio(
+    track: int,
+    clip: int,
+    volume: float | None = None,
+    pan: float | None = None,
+) -> str:
+    """Set ONE CLIP's own audio level and stereo position (D-223). `track` and
+    `clip` are the 0-based indices from get_timeline.
+
+    This is NOT `editor_set_track_gain`, and neither replaces the other: that
+    one is the whole track's fader, this is one clip on it, and the mixer
+    MULTIPLIES them. Turning down a track quietens every clip on it; this is
+    how you quieten one line of dialogue, or place one clip in the stereo
+    field, without touching its neighbours.
+
+    - `volume` -- a LINEAR multiplier, 1.0 = unity, 0.5 ~= -6 dB, 0.0 = silent.
+      Linear (not dB) deliberately, to match `editor_set_track_gain`'s own unit
+      in the same signal chain. Floored at 0; NO ceiling -- values above 1
+      really do boost, which the mixer's limiter then has to deal with.
+    - `pan` -- -1.0 hard left, 0.0 centre, 1.0 hard right. Clamped to that
+      range. The law is CONSTANT POWER with a 0 dB CENTRE, so a hard pan
+      BOOSTS the destination channel by 3.01 dB rather than attenuating the
+      other one: lower `volume` on the same call if the source is already near
+      full scale. A mono source panned becomes stereo-positioned mono.
+
+    Omitting a field leaves it exactly as it was -- unlike
+    editor_set_clip_transform, whose omitted fields reset. Both are stored per
+    CLIP and survive trim/split (a split gives both halves the same level).
+
+    HOW IT COMPOSES, which is the thing to reason with rather than guess at:
+    `track gain x clip volume x clip fade x track duck`, then the pan law
+    splits that per channel. Every stage multiplies; none overrides another.
+    So a clip already fading out is quieter still if you halve its volume, and
+    a ducked track ducks a boosted clip too.
+
+    WHAT IT AFFECTS: sound only. On an audio-track clip that is the whole clip.
+    On a video clip it is that clip's own EMBEDDED audio -- and nothing at all
+    once that audio has been unlinked into its own clip (D-129), which is where
+    the level then lives. A title/text clip has no audio and ignores both.
+
+    Both are KEYFRAMEABLE under the names "volume" and "pan" via
+    editor_set_clip_keyframes -- that is how you write an automation ramp (a
+    fade under dialogue, a pan sweep). Keyed values are interpolated linearly
+    and applied per output sample, in the live mixer and in `editor_export`
+    alike.
+
+    Returns what was actually STORED, plus the two per-channel gains the pan
+    resolves to and the track's own gain, so a caller can reason about the
+    real level without re-deriving the law.
+
+    Undoable: same store action and same undo stack the GUI's own Inspector
+    Audio rows write to, so a human can Cmd+Z it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if volume is not None:
+        args["volume"] = volume
+    if pan is not None:
+        args["pan"] = pan
+    return json.dumps(_op("editor_set_clip_audio", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> str:
     """Animate a SINGLE clip's own transform over time — e.g. a zoom-in at
     the moment of a click. Keyframes are scoped to this one clip only (its
@@ -1454,9 +1534,15 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
     every time, not just the one you're adding. Each entry is
     `{"frame": <source-frame-absolute int>, "params": {<subset of
     opacity/position_x/position_y/scale/rotation/crop_left/crop_top/
-    crop_right/crop_bottom>: <number>}}`. Values are piecewise-linearly
-    interpolated between keyframes, held constant before the first and after
-    the last.
+    crop_right/crop_bottom/volume/pan>: <number>}}`. Values are
+    piecewise-linearly interpolated between keyframes, held constant before
+    the first and after the last.
+
+    `volume` and `pan` (D-223) are this clip's own AUDIO level and stereo
+    position — the same two properties `editor_set_clip_audio` sets
+    statically, keyed here for a real automation ramp. They are applied per
+    output SAMPLE (not per video frame) in both the live mixer and
+    `editor_export`, so a ramp is smooth rather than stepped.
 
     Interpolation is PER PROPERTY (D-208): each param is resolved over only
     the keys that name it, so an entry naming a `params` SUBSET animates just

@@ -111,6 +111,33 @@ function volumeStats(path: string, startSecs?: number, durSecs?: number): { mean
   return { mean: Number(mean[1]), max: Number(max[1]) };
 }
 
+/** [`volumeStats`] for ONE channel of a stereo file (D-223) — `pan=mono|c0=cN`
+ *  extracts that channel alone, then the same `volumedetect` reads its real
+ *  level. A pan's whole point is that the two channels differ, which a
+ *  whole-file measurement literally cannot see: hard-left and "3dB quieter"
+ *  produce the same `mean_volume`. Same `-ss`/`-t` sub-segmenting as
+ *  `volumeStats`, so a keyframed pan's own SWEEP can be measured second by
+ *  second in one exported file. */
+function channelVolumeStats(
+  path: string,
+  channel: 0 | 1,
+  startSecs?: number,
+  durSecs?: number,
+): { mean: number; max: number } {
+  const args: string[] = [];
+  if (startSecs !== undefined) args.push('-ss', String(startSecs));
+  if (durSecs !== undefined) args.push('-t', String(durSecs));
+  args.push('-i', path, '-af', `pan=mono|c0=c${channel},volumedetect`, '-f', 'null', '-');
+  const res = spawnSync('ffmpeg', args, { encoding: 'utf8' });
+  const out = `${res.stderr ?? ''}${res.stdout ?? ''}`;
+  const mean = /mean_volume:\s*(-?[\d.]+)\s*dB/.exec(out);
+  const max = /max_volume:\s*(-?[\d.]+)\s*dB/.exec(out);
+  if (!mean || !max) {
+    throw new Error(`volumedetect produced no readable output for ${path} channel ${channel}:\n${out}`);
+  }
+  return { mean: Number(mean[1]), max: Number(max[1]) };
+}
+
 /** The real decoded RGB pixel at `(x, y)` at `timeSecs` into `path` — a
  *  1x1 `crop` to raw `rgb24`, read directly off stdout. B-090's own real
  *  proof: a string-matched filtergraph proves nothing about whether an
@@ -643,5 +670,129 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
 
     expect(hasAudioStream(out)).toBe(false);
+  });
+
+  // ---- D-223: per-clip volume + pan, measured per CHANNEL ---------------- //
+  //
+  // A pan is the first thing in this pipeline whose whole point is that the
+  // two channels get DIFFERENT numbers, so a whole-file `volumedetect` (every
+  // other audio test above) cannot see whether it worked at all: hard left and
+  // "3dB quieter" look identical to it. These read each channel on its own.
+
+  it('D-223: a static clip volume of 0.5 lowers the exported level by ~6.02dB, independently of the track gain', () => {
+    const unity = clip('u', { source_path: toneA, duration: 96, source_fps: 24 });
+    const halved = clip('h', { source_path: toneA, duration: 96, source_fps: 24, volume: 0.5 });
+    const outUnity = join(dir, 'clipvol_unity.mp4');
+    const outHalved = join(dir, 'clipvol_half.mp4');
+    const opts = { fps: 30, width: 320, height: 240 };
+
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [unity])]), outUnity, opts)], { stdio: 'pipe' });
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [halved])]), outHalved, opts)], { stdio: 'pipe' });
+
+    const dropDb = volumeStats(outUnity).mean - volumeStats(outHalved).mean;
+    expect(dropDb).toBeGreaterThan(4.5);
+    expect(dropDb).toBeLessThan(7.5); // ~6.02dB, real encoder/measurement slack
+  });
+
+  it('D-223: clip volume MULTIPLIES with track gain rather than replacing it (0.5 x 0.5 = ~12dB down)', () => {
+    const unity = clip('u', { source_path: toneA, duration: 96, source_fps: 24 });
+    const both = clip('b', { source_path: toneA, duration: 96, source_fps: 24, volume: 0.5 });
+    const outUnity = join(dir, 'compose_unity.mp4');
+    const outBoth = join(dir, 'compose_both.mp4');
+    const opts = { fps: 30, width: 320, height: 240 };
+
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [unity], { gain: 1 })]), outUnity, opts)], { stdio: 'pipe' });
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [both], { gain: 0.5 })]), outBoth, opts)], { stdio: 'pipe' });
+
+    const dropDb = volumeStats(outUnity).mean - volumeStats(outBoth).mean;
+    // 20*log10(0.25) = -12.04dB. A path that let one override the other would
+    // land at ~6dB, which this window excludes.
+    expect(dropDb).toBeGreaterThan(10.5);
+    expect(dropDb).toBeLessThan(13.5);
+  });
+
+  it('D-223: a hard-LEFT pan really silences the RIGHT channel and boosts the left — per-channel, not overall', () => {
+    const panned = clip('p', { source_path: toneA, duration: 96, source_fps: 24, pan: -1 });
+    const out = join(dir, 'pan_left.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [panned])]), out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const left = channelVolumeStats(out, 0).mean;
+    const right = channelVolumeStats(out, 1).mean;
+    const source = channelVolumeStats(toneA, 0).mean;
+
+    // The right channel is gone — not "quieter", gone (a codec's own noise
+    // floor is far below -60dB).
+    expect(right).toBeLessThan(-60);
+    // …and the left is BOOSTED by ~3.01dB (20*log10(sqrt(2))), which is the
+    // measured, deliberate cost of this app's 0dB-centre constant-power law
+    // (see `chroma_types::pan`). A law that merely turned the right channel
+    // down would leave the left unchanged, which this window excludes.
+    expect(left - source).toBeGreaterThan(2);
+    expect(left - source).toBeLessThan(4);
+  });
+
+  it('D-223: a hard-RIGHT pan is the exact mirror image', () => {
+    const panned = clip('p', { source_path: toneA, duration: 96, source_fps: 24, pan: 1 });
+    const out = join(dir, 'pan_right.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [panned])]), out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    expect(channelVolumeStats(out, 0).mean).toBeLessThan(-60);
+    expect(channelVolumeStats(out, 1).mean).toBeGreaterThan(-30);
+  });
+
+  it('D-223: a centred clip really is untouched — both channels at the source level, no channel imbalance', () => {
+    // The migration property, measured rather than argued: pan 0 must be the
+    // exact identity, since every pre-D-223 clip carries it.
+    const centred = clip('c', { source_path: toneA, duration: 96, source_fps: 24, pan: 0 });
+    const out = join(dir, 'pan_centre.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [centred])]), out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const left = channelVolumeStats(out, 0).mean;
+    const right = channelVolumeStats(out, 1).mean;
+    expect(Math.abs(left - right)).toBeLessThan(0.5);
+    expect(Math.abs(left - channelVolumeStats(toneA, 0).mean)).toBeLessThan(3);
+  });
+
+  it('D-223: a KEYFRAMED pan really sweeps left-to-right across the clip, measured second by second', () => {
+    // The one that a string-matched argv could never prove: that the pan
+    // MOVES. Hard left at the head, hard right at the tail, so the first
+    // second is loud-left/silent-right and the last second is the reverse.
+    const swept = clip('s', {
+      source_path: toneA,
+      duration: 96, // 4s @ 24fps
+      source_fps: 24,
+      chroma_keyframes: [
+        { frame: 0, params: { pan: -1 } },
+        { frame: 96, params: { pan: 1 } },
+      ],
+    });
+    const out = join(dir, 'pan_sweep.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [swept])]), out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const headLeft = channelVolumeStats(out, 0, 0, 0.5).mean;
+    const headRight = channelVolumeStats(out, 1, 0, 0.5).mean;
+    const tailLeft = channelVolumeStats(out, 0, 3.4, 0.5).mean;
+    const tailRight = channelVolumeStats(out, 1, 3.4, 0.5).mean;
+
+    expect(headLeft - headRight).toBeGreaterThan(15); // starts hard left
+    expect(tailRight - tailLeft).toBeGreaterThan(15); // ends hard right
+  });
+
+  it('D-223: a keyframed VOLUME really ramps the exported level over time', () => {
+    const ramped = clip('r', {
+      source_path: toneA,
+      duration: 96,
+      source_fps: 24,
+      chroma_keyframes: [
+        { frame: 0, params: { volume: 0 } },
+        { frame: 96, params: { volume: 1 } },
+      ],
+    });
+    const out = join(dir, 'vol_ramp.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [ramped])]), out, { fps: 30, width: 320, height: 240 })], { stdio: 'pipe' });
+
+    const head = volumeStats(out, 0, 0.5).mean;
+    const tail = volumeStats(out, 3.4, 0.5).mean;
+    expect(tail - head).toBeGreaterThan(10);
   });
 });

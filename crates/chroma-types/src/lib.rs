@@ -100,6 +100,14 @@ pub mod fade;
 
 pub use fade::{FadeCurve, fade_gain};
 
+/// The per-clip stereo pan law + the clip-volume guard (D-223). Pure math,
+/// here rather than beside `chroma_timeline::Clip`'s own `pan`/`volume` fields
+/// for exactly [`fade`]'s reason — the audio mixer that consumes it is L1 and
+/// cannot reach up to L2.
+pub mod pan;
+
+pub use pan::{clip_volume, pan_gains};
+
 #[cfg(test)]
 mod tests {
     use super::*;
