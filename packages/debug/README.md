@@ -43,16 +43,18 @@ MCP as tools of the same name.
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_editor_inspector` | `{open: bool}` — the Edit tab's Inspector column |
 | `debug_set_inspector_tab` | `{tab: 'video'\|'audio'}` — that Inspector's own Video/Audio tab (D-246); only one is on screen at a time, so set it before screenshotting or dumping the panel |
+| `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-251, `@chroma/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-251 for why. |
 | `debug_dom_tree` | `{selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` → bounded JSON of the real DOM: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles |
 | `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@chroma/editor`'s `previewTiming.ts`) |
 
 **Every write calls the same store action the human's own control calls** —
 `useShellStore.setActiveTab` is literally what the tab button's `onClick`
 invokes; `useEditorTimelineStore.setInspectorOpen` is what the Inspector
-toggle invokes. Nothing here synthesises a click, a keypress or a pointer
-event. That is the design decision, not an implementation detail: a simulated
-click proves the simulation works, a store action proves the app works
-(D-219).
+toggle invokes; `useEditorTimelineStore.setPanelOpen` is what every
+registered popover's own trigger invokes via `usePanelOpen` (D-251). Nothing
+here synthesises a click, a keypress or a pointer event. That is the design
+decision, not an implementation detail: a simulated click proves the
+simulation works, a store action proves the app works (D-219).
 
 `debug_dom_tree` coordinates are **CSS pixels** (`getBoundingClientRect()`);
 `debug_screenshot` pixels are **device pixels**. Multiply by the screenshot's
@@ -81,8 +83,12 @@ between them.
 
 `src/domTree.test.ts` and `src/uiState.test.ts` (vitest, jsdom) cover the
 serialiser's bounds, attribute/style selection, dialog detection and argument
-validation — the parts that have correct answers. The ops themselves are
-verified live against a running app; the loop and its results are recorded in
+validation — the parts that have correct answers. `src/debugOps.popover.dom
+.test.tsx` goes one level further for `debug_set_popover_open`: it mounts the
+real `CaptionPanel` and proves the op actually opens/closes its real popover
+(no synthesised click), and that an unknown id or a missing `open` is refused
+by name rather than silently accepted. The other ops are verified live
+against a running app; the loop and its results are recorded in
 `docs/notes/debug-tooling.md`.
 
 `npm run test --workspace @chroma/debug`, or `npm test` from the repo root.

@@ -23415,3 +23415,89 @@ badge would stay as the thing that tells slip from slide. Nothing here touches
 where these controls live: the left-icon-rail redesign the owner sketched on
 the same screenshot is a separate, concurrent pass, and this change is
 deliberately position-neutral so it survives whatever that lands.
+
+## D-251 — A generic `debug_set_popover_open(id, open)` op, backed by one shared `openPanels` map, instead of a bespoke op per popover
+**decided (2026-09-08)**
+
+- **Context.** The coordinating session needed to screenshot `CaptionPanel`'s
+  caption-preset-library popover for the owner, but it opens only via a real
+  mouse click, and this process has no macOS Accessibility/Screen Recording
+  permission to drive one — the same wall `docs/notes/debug-tooling.md`'s
+  piece 2 (D-219) already solved for the Inspector and Sources panel. That
+  fix lifted each one's open flag out of local `useState` into a bespoke
+  `useEditorTimelineStore` field (`inspectorOpen`) with its own debug op
+  (`debug_set_editor_inspector`) and its own line in `debug_get_ui_state`.
+  Doing the identical thing again for `CaptionPanel` would be the third
+  near-copy of that same three-part shape (field + op + snapshot line) —
+  and a repo sweep for this task found it would not be the last: three more
+  `Popover`/`Dialog` components already carry the identical
+  `useState(false)`-gated-open problem (`CanvasSettingsPopover`,
+  `EditorExportDialog`), plus a fourth still-uncontrolled one
+  (`EditLibraryRail`'s rail popovers, D-248) and a fifth keyed one
+  (`MarkerStrip`'s per-marker editor popover, D-222).
+- **Options:**
+  (a) Repeat D-219's bespoke-field pattern for `CaptionPanel` alone
+      (`captionPanelOpen` + `debug_set_caption_panel` + a snapshot line) —
+      fastest for the one popover asked for, but the exact copy-paste
+      CLAUDE.md's "shared logic → extract, never copy-paste" rule exists to
+      stop, and every future popover pays the same fixed cost again;
+  (b) one generic `openPanels: Record<string, boolean>` map in
+      `useEditorTimelineStore`, one `setPanelOpen(id, open)` action, one
+      parser (`panelRegistry.ts`'s `parsePanelId`, recognise-or-refuse by
+      name per D-216) and one op, `debug_set_popover_open({id, open})`, that
+      any popover opts into by swapping its own `useState(false)` for
+      `usePanelOpen(id)` — a one-line-plus-one-id cost per popover from here
+      on, forever;
+  (c) a fully generic "set any store field" backdoor — rejected outright,
+      same reasoning D-219 already used to reject it: it would let a caller
+      corrupt state the human's own UI can never reach, not just drive real
+      UI affordances.
+- **Choice:** (b). Migrated all three of today's simple boolean-gated
+  popovers to it (`CaptionPanel`, `CanvasSettingsPopover`,
+  `EditorExportDialog`) to prove the pattern generalises, not just assert it.
+  `EditLibraryRail`'s rail popovers and `MarkerStrip`'s marker editor are
+  **left alone, deliberately** — the former is intentionally uncontrolled
+  (Base UI manages it internally so a native HTML5 drag out of it can hold it
+  open through the whole drag; forcing it to a controlled boolean risks
+  breaking that), and the latter is keyed by *which marker*
+  (`editingId: string | null`), a different generic shape
+  (`Record<string, string | null>`) that deserves its own small design
+  rather than a forced fit into this boolean map. Recorded in
+  `panelRegistry.ts`'s own module doc so the next agent extending this
+  doesn't have to rediscover them.
+- **Why this is a real op and not routed through the existing
+  `debug_set_editor_inspector` shape:** that op is intentionally one-purpose
+  (D-219's own "explicit named ops per real UI state — not a generic
+  'set any field' backdoor" rule) because the Inspector is exactly one piece
+  of chrome with exactly one flag. A *popover* is not one piece of chrome —
+  it is a category with an open-ended membership, so the right unit to name
+  explicitly is the CATEGORY's op plus a closed, checked `id` enum
+  (`PANEL_IDS`), not a fresh op per member. `debug_get_ui_state`'s snapshot
+  gained one `editor.openPanels` field (the live map) plus `editor.panelIds`
+  (the reference list of what CAN appear there) rather than one boolean field
+  per popover, for the same reason.
+- **Debug-only, no GUI/MCP pair needed.** Per CLAUDE.md's own carve-out for
+  this initiative (`docs/notes/debug-tooling.md`): a debug op has no button
+  by design, and this is not the real `editor_*` MCP surface an agent uses
+  for actual editing — it exists solely so an agent can drive and screenshot
+  the real running UI without a human's mouse.
+- **Verified.** A new real-DOM test
+  (`packages/debug/src/debugOps.popover.dom.test.tsx`) mounts the real
+  `CaptionPanel` (exported from `@chroma/editor`'s index for exactly this),
+  calls `DEBUG_OPS.debug_set_popover_open({id: 'caption-panel', open: true})`
+  with **no synthesised click**, and asserts the real preset-library content
+  lands in the DOM — then closes it the same way, and separately asserts an
+  unknown id and a missing `open` are refused by name (D-216), never a silent
+  no-op. `@chroma/editor` 1507/1507 (the existing `CaptionPanel.dom.test.tsx`
+  needed its own `beforeEach` reset extended to `openPanels: {}`, since the
+  flag now lives in the shared store rather than resetting for free on every
+  component mount — the exact leak this pattern trades for the reachability
+  win). `@chroma/debug` 32/32 (4 new). `tsc --noEmit -p packages/editor -p
+  packages/debug` clean. Gate re-verified `app`'s own production `vite
+  build`: `debug_set_popover_open` — **0** occurrences in the bundle (same
+  method as D-219/D-246's own check), while `setPanelOpen` — the store action
+  the human's own popover triggers call, via `usePanelOpen` — is present
+  (**2**), the same "op name absent, the action it calls present" shape that
+  check has looked for since D-219. No separate chunk was emitted for the
+  debug module (one `index-*.js` + one CSS file, matching every prior check
+  here). No Rust changes in this pass, so no new `cargo check` surface.

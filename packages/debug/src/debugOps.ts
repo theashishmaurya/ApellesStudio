@@ -32,6 +32,13 @@
  *   `debug_set_sources_panel`     — the shell's docked Sources column.
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
+ *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
+ *                                   id (D-251, `@chroma/editor`'s
+ *                                   `panelRegistry.ts`) — the caption preset
+ *                                   library, the canvas-size popover, the
+ *                                   export dialog, and whatever the next one
+ *                                   registers, through ONE op rather than a
+ *                                   new bespoke op per popover.
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
  *                                   intervals (see `@chroma/editor`'s
@@ -51,6 +58,8 @@ import {
   resetPreviewTiming,
   CLIP_INSPECTOR_TABS,
   parseClipInspectorTab,
+  PANEL_IDS,
+  parsePanelId,
 } from '@chroma/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
@@ -86,6 +95,11 @@ function uiStateSnapshot() {
       // `[data-chroma-panel="clip-inspector"]` is what answers the latter.
       inspectorTab: editor.inspectorTab,
       inspectorTabs: CLIP_INSPECTOR_TABS,
+      // D-251 — every registered popover/dialog's open flag; a panel with no
+      // entry yet is closed (see `usePanelOpen`'s `?? false`), so this is
+      // filled in lazily and `panelIds` is the reference for what CAN appear.
+      openPanels: editor.openPanels,
+      panelIds: PANEL_IDS,
       projectOpen: editor.openProjectKey !== null,
       timelineStatus: editor.status,
       selection: editor.selection,
@@ -135,6 +149,19 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     // The same action the tab button's own click calls (`ClipInspectorPanel`).
     useEditorTimelineStore.getState().setInspectorTab(tab);
     return { ok: true, inspectorTab: useEditorTimelineStore.getState().inspectorTab };
+  },
+
+  debug_set_popover_open: (a) => {
+    const id = parsePanelId(a?.id);
+    if (id === null) {
+      return { error: `unknown panel ${JSON.stringify(a?.id)} — expected one of ${PANEL_IDS.join(', ')}` };
+    }
+    const open = parseBool(a?.open, 'open');
+    if (isParseError(open)) return open;
+    // The same action that panel's own trigger's `onOpenChange`/`onClick`
+    // calls (`usePanelOpen`, `panelRegistry.ts`) — never a synthesised click.
+    useEditorTimelineStore.getState().setPanelOpen(id, open.value);
+    return { ok: true, id, open: useEditorTimelineStore.getState().openPanels[id] ?? false };
   },
 
   debug_dom_tree: (a) => {

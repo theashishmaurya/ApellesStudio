@@ -16,7 +16,9 @@
     "react": "^19.2.8"
   },
   "devDependencies": {
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "jsdom": "^29.1.1",
+    "react-dom": "^19.2.8",
     "vitest": "^3.2.4"
   }
 }
