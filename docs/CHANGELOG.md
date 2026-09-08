@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **The clip Inspector is tabbed: Video and Audio, instead of
+  one ~30-control scroll (D-246), and its numeric fields no longer hide their
+  own digits under the spinner arrows (B-113).** Both reported live by the
+  owner against a real project. The tab split is Resolve's own
+  (`scratch/resolve-reference/`, the same scrape D-208/D-223/D-224 were built
+  from): Transform, Crop, Dynamic Zoom, Speed, Fade and Keyframes on Video;
+  Volume/Pan and the four-band EQ on Audio. Nothing moved but the container —
+  same sections, same ops, same gates — and the DOM test asserts exactly that
+  (the union of the two tabs is the old section set, with nothing on both). A
+  clip type with no audio (a title) gets no Audio tab and no tab bar at all,
+  so its Inspector is the column it always was. The tab lives in the store, so
+  the human's click and the new `debug_set_inspector_tab` drive one action, not
+  two. B-113 was two faults at once: WebKit paints a number input's spinner
+  over its right-aligned text with no space reserved (now reserved by
+  `@chroma/ui`'s `Input` for EVERY `type="number"`, not per call site), and the
+  rows rendered raw dragged floats like `0.052212` into a 40px box — a resting
+  field now shows a `step`-derived rounding and the exact value returns on
+  focus, so nothing stored or typed changed.
+
 - **2026-09-08** — **B-111 fixed: the audio session now re-resolves the
   timeline as it plays, so a clip starting later than the playhead when Play
   was pressed actually sounds (D-245).** The old `chroma_audio_play` built its

@@ -113,6 +113,10 @@ beforeEach(() => {
     playing: false,
     selection: [{ track: 0, id: CLIP_ID }],
     selectedGap: null,
+    // D-246 — the EQ section lives on the Inspector's Audio tab. Set here
+    // rather than clicked because this file is about the EQ, not the tabs;
+    // the click path has its own test (`ClipInspectorPanel.tabs.dom.test.tsx`).
+    inspectorTab: 'audio',
   });
 });
 

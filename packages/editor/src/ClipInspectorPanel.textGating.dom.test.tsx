@@ -83,6 +83,11 @@ function selectClip(id: string) {
     playing: false,
     selection: [{ track: 0, id }],
     selectedGap: null,
+    // D-246 — start every case on the Video tab. The Inspector's tab is
+    // deliberately STICKY across selections (see the store field's own doc), so
+    // a case that clicked over to Audio would otherwise leak that choice into
+    // the next one.
+    inspectorTab: 'video',
   });
 }
 
@@ -107,6 +112,24 @@ async function render() {
   await waitFrames(2);
 }
 
+/** D-246 — click the real Audio tab, the same button a human clicks. The
+ *  text-clip cases below deliberately never call this: a title has no Audio
+ *  tab at all, which is what `tabExists('Audio')` asserts instead. */
+async function showAudioTab() {
+  const tab = [...(mounted?.container.querySelectorAll('button') ?? [])].find(
+    (b) => b.textContent === 'Audio',
+  );
+  if (!tab) throw new Error('no Audio tab');
+  actSync(() => tab.click());
+  await waitFrames(2);
+}
+
+function tabExists(label: string): boolean {
+  return [...(mounted?.container.querySelectorAll('button') ?? [])].some(
+    (b) => b.textContent === label,
+  );
+}
+
 describe("a text clip's Inspector hides rows that do nothing for it", () => {
   it('an ordinary video clip gets every row: Scale, Rotation, Width, Height, and the Crop section', async () => {
     selectClip(VIDEO_CLIP_ID);
@@ -115,7 +138,13 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
       expect(labelExists(label)).toBe(true);
     }
     // D-223 — and its own audio level, which a media clip really has (its
-    // embedded sound) even on a video track.
+    // embedded sound) even on a video track. D-246 — on the Audio tab now,
+    // which is the point of this second half: the rows did not disappear, they
+    // moved, and a video clip really does have that tab to move them to.
+    for (const label of ['Volume', 'Pan']) {
+      expect(labelExists(label)).toBe(false);
+    }
+    await showAudioTab();
     for (const label of ['Volume', 'Pan']) {
       expect(labelExists(label)).toBe(true);
     }
@@ -136,6 +165,12 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
     for (const label of ['Volume', 'Pan']) {
       expect(labelExists(label)).toBe(false);
     }
+    // D-246 — and there is no Audio TAB to go looking for them on either: the
+    // gate is stated once now, in `clipInspectorTabs`, and with only one tab
+    // left the bar itself is not drawn — a title's Inspector is exactly the
+    // single scrolling column it was before tabs existed.
+    expect(tabExists('Audio')).toBe(false);
+    expect(tabExists('Video')).toBe(false);
   });
 
   it('switching selection from a text clip back to a video clip brings the hidden rows back', async () => {

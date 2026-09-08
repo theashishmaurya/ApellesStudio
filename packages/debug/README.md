@@ -38,10 +38,11 @@ MCP as tools of the same name.
 
 | op | what it does |
 | --- | --- |
-| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector, selection/playhead, and every dialog the DOM currently has open |
+| `debug_get_ui_state` | active tab, Sources panel, Edit Inspector (open + which of its tabs), selection/playhead, and every dialog the DOM currently has open |
 | `debug_set_active_tab` | `{tab: 'edit'\|'motion'\|'colorist'}` (or a 1-based index) |
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_editor_inspector` | `{open: bool}` — the Edit tab's Inspector column |
+| `debug_set_inspector_tab` | `{tab: 'video'\|'audio'}` — that Inspector's own Video/Audio tab (D-246); only one is on screen at a time, so set it before screenshotting or dumping the panel |
 | `debug_dom_tree` | `{selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` → bounded JSON of the real DOM: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles |
 | `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@chroma/editor`'s `previewTiming.ts`) |
 

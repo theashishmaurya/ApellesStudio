@@ -35,16 +35,27 @@
  * — TypeScript infers `TParam` from the `state`/callbacks passed in, so
  * nothing at either existing call site changed shape.
  *
+ * **B-113 — the field's own geometry and display precision moved out** to
+ * `numericField.ts`, and the row no longer renders a raw stored float. The
+ * crop rows showed values like `0.0` with the spinner arrows painted over the
+ * digits that did not fit; the field was `w-16` with no reserve for WebKit's
+ * inner-spin-button, and `0.052212` (a real value from an on-canvas crop
+ * drag) is eight characters. The row is now one step wider, `shrink-0` so a
+ * narrow Inspector cannot squeeze it back, and shows a `step`-derived
+ * rounding while at rest — the exact value returns on focus, so editing is
+ * unchanged. The spinner's own strip is reserved by `@chroma/ui`'s `Input`
+ * for every `type="number"`, not by this row.
+ *
  * Pure presentation, like the panel it came from: no store access, no
  * `Clip` knowledge, nothing beyond the props below.
  */
+import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, Spline } from 'lucide-react';
 import { Button, Input } from '@chroma/ui';
 
+import { NUM_FIELD, displayNumber } from './numericField';
+
 const row = 'flex items-center justify-between gap-2';
-/** D-208 — a property row's field shares its line with four icon buttons,
- *  so it runs one step narrower than a plain numeric row's own input. */
-const propInput = 'h-7 w-16 text-right';
 
 /** One keyframeable property's live state, as a `PropertyRow` needs it —
  *  generic over nothing (a value is always a plain number here; a
@@ -144,6 +155,19 @@ export function PropertyRow<TParam extends string>({
   // reverse) is not a state any caller wants, and this keeps the three buttons
   // one render decision rather than three independent ones.
   const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
+
+  /** B-113 — a focused field shows the EXACT stored value; a resting one shows
+   *  it rounded to what the row can actually display (`numericField.ts`).
+   *
+   *  The focus split is what makes the rounding free of behavioural cost:
+   *  while the user is in the field they see and edit the real number, so
+   *  typing a fourth decimal, stepping with the spinner and arrow keys, and
+   *  every `onChange` this row emits are byte-for-byte what they were before
+   *  the rounding existed. Rounding an unfocused value instead of widening
+   *  the field is what stops an on-canvas crop drag's `0.052212` from
+   *  overflowing a field no Inspector width can make eight characters wide. */
+  const [focused, setFocused] = useState(false);
+  const shown = focused ? state.value : displayNumber(state.value, step);
   return (
     <div className={row}>
       {/* The label still really labels the input (clicking it focuses the
@@ -158,8 +182,15 @@ export function PropertyRow<TParam extends string>({
           min={min}
           max={max}
           disabled={disabled}
-          className={propInput}
-          value={state.value}
+          className={NUM_FIELD.className}
+          value={shown}
+          // Nothing is hidden by the rounding: the full-precision value is one
+          // hover (or one click into the field) away, and the attribute is
+          // omitted entirely when the two already agree so the tooltip only
+          // ever appears when it has something to add.
+          title={shown === state.value ? undefined : `${label}: ${state.value}`}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onChange={(e) => onChange(Number(e.target.value))}
         />
       </label>

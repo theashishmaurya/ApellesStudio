@@ -110,6 +110,10 @@ beforeEach(() => {
     playing: false,
     selection: [{ track: 0, id: CLIP_ID }],
     selectedGap: null,
+    // D-246 — every test in this file starts on the Inspector's Video tab
+    // (its default), so the transform/crop rows below are the ones on screen.
+    // The audio block at the bottom switches to Audio for itself.
+    inspectorTab: 'video',
   });
 });
 
@@ -441,6 +445,15 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
 });
 
 describe('per-clip audio rows (D-223)', () => {
+  // D-246 — Volume and Pan moved onto the Inspector's Audio tab, which is
+  // where a user now finds them; the store field is the same one the tab
+  // button writes (see `ClipInspectorPanel.tabs.dom.test.tsx` for the click
+  // path itself). The rows' own behaviour below is unchanged by that move,
+  // which is exactly what these assertions still prove.
+  beforeEach(() => {
+    useEditorTimelineStore.setState({ inspectorTab: 'audio' });
+  });
+
   it('renders a Volume and a Pan row, at unity and centre, both un-keyframed', async () => {
     await render();
     expect(field('Volume').value).toBe('1');
@@ -513,6 +526,14 @@ describe('per-clip audio rows (D-223)', () => {
     const before = keys();
     expect(before).toEqual([{ frame: 0, params: { volume: 1 } }]);
 
+    // D-246 — the whole-clip Keyframes section is on the VIDEO tab (it keys
+    // transform and crop; see `clipInspectorTabs.ts`), so this gesture is a
+    // real cross-tab one: key the volume on Audio, then batch-key the geometry
+    // on Video. That the two do not interfere is exactly what this asserts.
+    actSync(() => {
+      useEditorTimelineStore.setState({ inspectorTab: 'video' });
+    });
+    await waitFrames(1);
     const keyAll = [...(mounted?.container.querySelectorAll('button') ?? [])].find((b) =>
       b.textContent?.includes('Key all properties'),
     );

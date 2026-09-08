@@ -4251,8 +4251,8 @@ def debug_ui_state() -> str:
     a store flag, so the list stays correct as modals are added to the app.
 
     Returns {shell:{activeTab,tabs,sourcesPanelOpen,wgpuSurfaceActive},
-             editor:{inspectorOpen,projectOpen,timelineStatus,selection,
-                     selectedGap,playing,playhead},
+             editor:{inspectorOpen,inspectorTab,inspectorTabs,projectOpen,
+                     timelineStatus,selection,selectedGap,playing,playhead},
              openDialogs:[{tag,role,label,rect}]}."""
     import json
 
@@ -4306,6 +4306,35 @@ def debug_set_editor_inspector(open: bool) -> str:
     return json.dumps(
         _op("debug_set_editor_inspector", open=open), indent=2, default=str
     )
+
+
+@mcp.tool()
+def debug_set_inspector_tab(tab: str) -> str:
+    """Switch the Edit tab's clip Inspector between its "video" and "audio"
+    tabs (D-246) — the same state the tab bar's own button drives.
+
+    The Inspector splits a clip's properties in two: Video holds Transform,
+    Crop, Dynamic Zoom, Speed, Fade and the whole-clip Keyframes actions;
+    Audio holds Volume/Pan and the four-band EQ. Only one is on screen at a
+    time, so a `debug_screenshot` or a `debug_dom_tree` of the Inspector shows
+    one of them — set the tab first when you are looking for a control on the
+    other.
+
+    You do NOT need this to EDIT anything: every control on both tabs already
+    has its own MCP tool (`editor_set_clip_transform`, `set_clip_audio` /
+    `editor_set_clip_*`, …) that writes the timeline directly, whichever tab
+    is showing. This is for looking at the app, which is what the `debug_*`
+    family is for.
+
+    The choice is sticky and per session: a clip with no audio at all (a
+    generated title) shows its Video tab regardless, without forgetting the
+    choice. An unknown name is refused with the accepted list rather than
+    silently ignored.
+
+    Returns {ok, inspectorTab}."""
+    import json
+
+    return json.dumps(_op("debug_set_inspector_tab", tab=tab), indent=2, default=str)
 
 
 @mcp.tool()

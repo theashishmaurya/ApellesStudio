@@ -51,7 +51,10 @@ several rounds of the owner's own screenshots before an agent could even confirm
 2. **UI state open/close/select debug actions** — **DONE (D-219, 2026-09-08).**
    Deterministic, non-pixel-coordinate ways to drive the UI, through the same store
    actions a human's click goes through: `debug_set_active_tab` (Edit/Motion/
-   Colorist), `debug_set_sources_panel`, `debug_set_editor_inspector`, plus the read
+   Colorist), `debug_set_sources_panel`, `debug_set_editor_inspector`,
+   `debug_set_inspector_tab` (D-246 — the clip Inspector's own Video/Audio tab;
+   only one renders at a time, so a screenshot of the panel is a screenshot of
+   one of them), plus the read
    half `debug_ui_state` (every flag above, the Edit selection/playhead, and the
    dialogs the DOM actually has open). Explicit named ops per real UI state — **not**
    a generic "set any field" backdoor and **not** a synthesised click; D-219 has the
@@ -138,6 +141,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
 debug_ui_state()                             # what's open right now
 debug_set_active_tab("edit")                 # → useShellStore.setActiveTab
 debug_set_editor_inspector(open=True)        # → useEditorTimelineStore.setInspectorOpen
+debug_set_inspector_tab("audio")             # → useEditorTimelineStore.setInspectorTab
 debug_screenshot()                           # → a real PNG path; Read it, look at it
 debug_dom_tree('[data-chroma-panel="editor-inspector"]', max_depth=3)
                                              # → its REAL rect + computed styles
@@ -243,6 +247,12 @@ checked is how B-100 happened in the first place.
   emitted (one `index-*.js`). The control-server op `editor_set_selection` was grepped
   in the same pass as a control and found **1** occurrence, so the grep was reading a
   real bundle.
+  Re-run 2026-09-08 for D-246's new op: `debug_set_inspector_tab` — **0** occurrences,
+  as are `debug_get_ui_state` and `debug_set_active_tab` on the same build. Its own
+  store action `setInspectorTab` is present (**1**), and must be: that is the function
+  the human's tab button calls, exactly as `setInspectorOpen` (**2**) is. The op name
+  being absent while the action it calls is present is precisely the shape this gate is
+  supposed to have.
 - **Rust.** `cargo check -p RapidRAW --release --lib` compiles clean with the whole
   `debug_capture` module and both commands cfg'd out (release turns `debug_assertions`
   off), which also proves nothing outside the gate still references them.
