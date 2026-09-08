@@ -77,7 +77,7 @@ import {
 } from './timeline';
 import { easeCurveEval, isIdentityEase } from './easeCurve';
 
-// D-232 — `ClipKeyframe` moved to `timeline.ts` (beside `Clip`, whose field
+// D-233 — `ClipKeyframe` moved to `timeline.ts` (beside `Clip`, whose field
 // holds an array of them) once a third module needed it. Re-exported here so
 // every existing importer of `./clipKeyframes` keeps working, and because this
 // is still the module that owns what you can DO to one.
@@ -90,7 +90,7 @@ export type { ClipKeyframe };
 /** One param's keys, frame-ascending: the shape every per-param read in this
  *  module wants, and the one place the filter/map/sort is paid for. */
 interface ParamTrack {
-  /** The param's keys, frame-ascending. `ease` (D-232) is the curve shaping
+  /** The param's keys, frame-ascending. `ease` (D-233) is the curve shaping
    *  the segment from THIS key to the next one — already normalised, so a
    *  `null` here really means "linear", and no reader has to re-check whether
    *  a stored curve happens to be the identity. */
@@ -139,7 +139,7 @@ function paramTrackIndex(existing: ClipKeyframe[]): Map<string, ParamTrack> {
       }
       const value = Number(k.params[name]);
       if (!Number.isFinite(value)) track.finite = false;
-      // D-232 — normalised at index-build time, so `paramValueAt` never pays
+      // D-233 — normalised at index-build time, so `paramValueAt` never pays
       // the identity check (or a malformed-curve check) per read on the
       // preview's hottest surface. `isIdentityEase` also collapses a stored
       // `linear` to `null`, which is what keeps an explicitly-linear segment
@@ -179,7 +179,7 @@ function paramTrack(existing: ClipKeyframe[] | undefined, param: string): ParamT
  *  the same frame, and "key every property here" is then just this same
  *  function called with all nine names at once.
  *
- *  D-232 — an existing key's `ease` map is carried through untouched, for the
+ *  D-233 — an existing key's `ease` map is carried through untouched, for the
  *  same reason its unnamed `params` are: adding a `scale` key at a frame that
  *  already eases `opacity` must not silently straighten the opacity curve.
  *  A newly-created entry has no `ease` at all (linear), which is the right
@@ -211,7 +211,7 @@ export function hasParamKeyframes(existing: ClipKeyframe[] | undefined, param: C
 
 /**
  * Every keyframeable property this clip actually animates, in
- * [`CLIP_KEYFRAME_DEFAULTS`]' own declaration order (D-232).
+ * [`CLIP_KEYFRAME_DEFAULTS`]' own declaration order (D-233).
  *
  * Declaration order rather than "order first encountered in the array": the
  * curve editor's clip button opens the FIRST of these, and which property that
@@ -269,7 +269,7 @@ export function adjacentParamKeyframeFrame(
  *  writing the property's static field to the value it had at the playhead
  *  first, so the picture does not jump — see `EditorInspectorPanel`.
  *
- *  D-232 — the param's `ease` entries go with its keys. An ease map naming a
+ *  D-233 — the param's `ease` entries go with its keys. An ease map naming a
  *  param that no key animates any more is unreachable data that would
  *  resurrect the moment the property was re-animated, which is exactly the
  *  "stopwatch off then on gives you your old curves back, surprisingly" bug
@@ -300,7 +300,7 @@ export function removeClipKeyframeParam(
 
 /**
  * Set (or clear, with `curve === null`) the [`EaseCurve`] shaping `param`'s
- * segment that STARTS at the key on `frame` — D-232's one write.
+ * segment that STARTS at the key on `frame` — D-233's one write.
  *
  * Returns a NEW array, like every writer here. A `frame` where `param` is not
  * actually keyed returns the input array **unchanged and reference-equal**:
@@ -311,7 +311,7 @@ export function removeClipKeyframeParam(
  *
  * Clearing writes no `ease: {}` husk: the key loses the map entirely once its
  * last curve goes, so a fully un-eased timeline serialises exactly as it did
- * before D-232 and a round trip through the backend cannot reintroduce a
+ * before D-233 and a round trip through the backend cannot reintroduce a
  * difference.
  *
  * The curve is stored verbatim, unclamped — `easeCurveEval` clamps `x1`/`x2`
@@ -344,7 +344,7 @@ export function setClipKeyframeEase(
 }
 
 /** One drawable/editable stretch of a property's animation: the two keys it
- *  runs between and the curve shaping it (D-232). */
+ *  runs between and the curve shaping it (D-233). */
 export interface ParamSegment {
   /** The key this segment starts at — the one that OWNS its `ease`, and the
    *  `frame` [`setClipKeyframeEase`] is called with. Source frames. */
@@ -423,10 +423,10 @@ function namedParamValueAt(
   const lo = keyed[hi - 1];
   const span = keyed[hi].frame - lo.frame;
   const linearT = span > 0 ? Math.min(Math.max((f - lo.frame) / span, 0), 1) : 0;
-  // D-232 — the segment's own ease, owned by the key it starts at, warping
+  // D-233 — the segment's own ease, owned by the key it starts at, warping
   // `t` and nothing else. `easeCurveEval` pins both endpoints, so this can
   // never move a keyframe; `null` (the normalised "linear") is the untouched
-  // pre-D-232 arithmetic, bit-for-bit.
+  // pre-D-233 arithmetic, bit-for-bit.
   const t = lo.ease ? easeCurveEval(lo.ease, linearT) : linearT;
   if (param === 'rotation') {
     let d = (keyed[hi].value - lo.value) % 360;

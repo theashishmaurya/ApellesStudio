@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline curve editor lane (D-232, roadmap item 27:
+ * @chroma/editor — the timeline curve editor lane (D-233, roadmap item 27:
  * "Bezier ease curves under a clip, editable directly").
  *
  * What it is: a lane docked under the timeline's track area, time-aligned with
@@ -24,7 +24,7 @@
  *
  * **Why a docked, resizable lane rather than expanding the clip's own row
  * in-place** (which is literally what Resolve does). Three reasons, in order
- * of weight, and the trade is written up in D-232:
+ * of weight, and the trade is written up in D-233:
  *   1. CLAUDE.md's standing rule — a pane holding real content the user will
  *      want more or less of must actually be resizable. A curve is exactly
  *      that: the taller the lane, the finer the ease you can author. An

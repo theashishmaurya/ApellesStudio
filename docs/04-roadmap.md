@@ -1460,7 +1460,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       real exported files. One measured divergence for MONO sources only:
       B-101. Design detail: `docs/notes/audio-fade-duck-crossfade-plan.md` §9.
     - ~~**Timeline curve editor** — bezier ease curves under a clip, editable
-      directly (ref: `curve.jpg`)~~ — **DONE, 2026-09-08 (D-232).** Every
+      directly (ref: `curve.jpg`)~~ — **DONE, 2026-09-08 (D-233).** Every
       keyframe segment was linear; now any segment of any animated property
       carries an optional cubic-bezier `ease`, dragged on a real curve in a
       resizable lane docked under the timeline and time-aligned with it
@@ -1470,7 +1470,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       curve concept — D-147's `FadeCurve` was renamed `EaseCurve`, moved to
       its own `chroma_types::ease`, and is now shared by fades and keyframes;
       one solver, one preset list, one MCP parser. Absent `ease` means linear,
-      so every pre-D-232 project resolves bit-identically and compiles to
+      so every pre-D-233 project resolves bit-identically and compiles to
       byte-identical ffmpeg argv. Preview (Rust `interpolate_param`),
       authoring (`clipKeyframes.ts`) and export (`keyframeExprAt`, sampled —
       ffmpeg has no bezier solver) all read the one curve; their worst-case
@@ -1478,7 +1478,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       they agree exactly at every authored keyframe. GUI + MCP in the same
       pass (`editor_set_keyframe_ease`, `editor_set_curve_editor`). Proven by
       a real-ffmpeg pixel test that was verified to fail when the curve is
-      dropped in the compile path. Found and filed, not fixed: **B-106**
+      dropped in the compile path. Found and filed, not fixed: **B-108**
       (export interpolates `rotation` the long way round the 0°/360° seam).
     - ~~**Transitions library** — crossfade/dissolve/wipe, drag onto an edit
       point~~ — **DONE, 2026-09-08 (D-226 + D-227).** (Ref is

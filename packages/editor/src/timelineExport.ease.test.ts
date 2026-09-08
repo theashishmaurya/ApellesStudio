@@ -1,5 +1,5 @@
 /**
- * D-232 — how an eased keyframe segment compiles to an ffmpeg expression, and
+ * D-233 — how an eased keyframe segment compiles to an ffmpeg expression, and
  * (the part that actually matters) how closely the compiled expression tracks
  * the curve the LIVE PREVIEW resolves.
  *
@@ -7,7 +7,7 @@
  * animation data — B-090, B-094, B-095, B-098 — so the two assertions this
  * file exists for are:
  *
- *   1. **An un-eased timeline compiles byte-identically to before D-232.**
+ *   1. **An un-eased timeline compiles byte-identically to before D-233.**
  *      No existing project's export can change.
  *   2. **An eased one agrees with the preview at every authored keyframe
  *      exactly, and in between by a MEASURED bound** — not "should be close",
@@ -76,7 +76,7 @@ function keys(ease?: typeof EASE_IN): ExportKeyframe[] {
 }
 
 describe('keyframeExprAt — no easing', () => {
-  it('is byte-identical to the pre-D-232 two-point expression', () => {
+  it('is byte-identical to the pre-D-233 two-point expression', () => {
     // The backward-compatibility guarantee, asserted on the exact string
     // because the string IS the ffmpeg argv: no existing project's export
     // command can change as a result of this feature.

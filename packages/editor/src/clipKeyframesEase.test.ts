@@ -1,8 +1,8 @@
 /**
- * D-232 — per-segment keyframe easing, on the authoring/preview-mirror side
+ * D-233 — per-segment keyframe easing, on the authoring/preview-mirror side
  * (`clipKeyframes.ts`).
  *
- * `clipKeyframes.test.ts` continues to own the pre-D-232 behaviour; this file
+ * `clipKeyframes.test.ts` continues to own the pre-D-233 behaviour; this file
  * is the easing half, kept separate so the "an un-eased clip resolves exactly
  * as it always did" guarantee has an obvious home and the older file stays
  * about what it was about.
@@ -34,7 +34,7 @@ function ramp(ease?: typeof EASE_IN): ClipKeyframe[] {
 }
 
 describe('paramValueAt — easing', () => {
-  it('is bit-identical to the pre-D-232 linear ramp when nothing is eased', () => {
+  it('is bit-identical to the pre-D-233 linear ramp when nothing is eased', () => {
     // The backward-compatibility guarantee: every project that existed before
     // this feature must resolve to exactly the same numbers.
     const kfs = ramp();
@@ -127,7 +127,7 @@ describe('setClipKeyframeEase', () => {
   });
 
   it('clears back to linear without leaving an empty husk', () => {
-    // A fully un-eased timeline must serialise exactly as it did before D-232,
+    // A fully un-eased timeline must serialise exactly as it did before D-233,
     // so a round trip through the backend cannot reintroduce a difference.
     const eased = setClipKeyframeEase(ramp(), 0, 'opacity', EASE_IN)!;
     const cleared = setClipKeyframeEase(eased, 0, 'opacity', null);

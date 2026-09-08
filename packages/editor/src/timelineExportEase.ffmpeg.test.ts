@@ -1,5 +1,5 @@
 // @chroma/editor — REAL ffmpeg-execution proof that an EASED keyframe segment
-// (D-232) exports the shape the live preview resolves.
+// (D-233) exports the shape the live preview resolves.
 //
 // Why this exists as a real-pixel test rather than another argv assertion:
 // this repo has shipped four separate preview/export divergences on animation
@@ -114,7 +114,7 @@ function brightnessAt(path: string, timeSecs: number): number {
   return (r + g + b) / 3;
 }
 
-describe.skipIf(!FFMPEG_AVAILABLE)('D-232 — an eased keyframe segment exports the curve the preview resolves', () => {
+describe.skipIf(!FFMPEG_AVAILABLE)('D-233 — an eased keyframe segment exports the curve the preview resolves', () => {
   let dir: string;
   let whiteClip: string;
   /** One export per curve under test, rendered once in `beforeAll` — each is a

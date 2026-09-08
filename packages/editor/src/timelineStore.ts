@@ -125,7 +125,7 @@ export interface SelectedGap {
 
 /**
  * Which clip's animation the timeline curve editor is open on, and which of
- * its properties is being plotted (D-232).
+ * its properties is being plotted (D-233).
  *
  * `track` + `id` addresses the clip the same way [`Selection`] does — by the
  * clip's own stable id, not its index, so an edit elsewhere on the track
@@ -183,7 +183,7 @@ interface EditorTimelineState {
   selection: Selection[];
   /** the current gap selection (D-105), mutually exclusive with `selection` */
   selectedGap: SelectedGap | null;
-  /** D-232 — the timeline curve editor's target, or `null` when the lane is
+  /** D-233 — the timeline curve editor's target, or `null` when the lane is
    *  closed. See [`CurveEditorTarget`]. */
   curveEditor: CurveEditorTarget | null;
   /** D-218 — the preview pane's VIEWPORT zoom + pan (`previewZoom.ts`).
@@ -250,7 +250,7 @@ interface EditorTimelineState {
    *  site to be rewritten to close over the store's `get()` instead. */
   setSelection: (selection: Selection[] | ((prev: Selection[]) => Selection[])) => void;
   setSelectedGap: (gap: SelectedGap | null) => void;
-  /** D-232 — open the curve editor on one clip property, or close it with
+  /** D-233 — open the curve editor on one clip property, or close it with
    *  `null`. The one writer for the timeline's own curve button, the
    *  Inspector's per-property one, and `editor_set_curve_editor` over MCP —
    *  the same human-and-agent pairing CLAUDE.md requires of every feature. */
@@ -502,7 +502,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
       set((s) => ({
         selection: s.selection.map((sel) => ({ ...sel, track: locate(sel.id) })).filter((sel) => sel.track >= 0),
         selectedGap: null,
-        // D-232 — the curve editor follows its clip by id through a prune,
+        // D-233 — the curve editor follows its clip by id through a prune,
         // exactly as `selection` does above, and closes if that clip is gone.
         // Leaving a stale `track` here would point the lane at a different
         // clip's animation while still letting the user drag its handles.

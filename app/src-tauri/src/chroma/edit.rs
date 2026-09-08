@@ -1923,7 +1923,7 @@ mod composite_tests {
         assert_eq!(t0.opacity, 0.0);
     }
 
-    /// **D-232 — the LIVE PREVIEW path honours a segment's ease curve.**
+    /// **D-233 — the LIVE PREVIEW path honours a segment's ease curve.**
     ///
     /// `chroma::keyframes`' own tests pin the resolver; this pins the whole
     /// compositor-facing path a rendered frame actually takes
@@ -1967,7 +1967,7 @@ mod composite_tests {
         assert_eq!(resolve_clip_transform(&eased, 0).opacity, 0.0);
         assert_eq!(resolve_clip_transform(&eased, 100).opacity, 1.0);
 
-        // ...and the same keys with no `ease` are the pre-D-232 linear ramp,
+        // ...and the same keys with no `ease` are the pre-D-233 linear ramp,
         // unchanged — the backward-compatibility half, at this layer.
         let plain = Clip {
             opacity: 1.0,

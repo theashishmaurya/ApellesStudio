@@ -362,7 +362,7 @@ export function EditorInspectorPanel() {
   const doClearKeyframes = () => applyKeyframes(clearClipKeyframes());
 
   /**
-   * D-232 — open (or toggle off) one property's ease curve in the timeline's
+   * D-233 — open (or toggle off) one property's ease curve in the timeline's
    * curve editor lane.
    *
    * The Inspector does not render the lane; it only names the target, exactly

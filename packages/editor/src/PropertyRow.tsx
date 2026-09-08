@@ -89,7 +89,7 @@ export function staticPropertyState(value: number): PropertyState {
 
 /** One Transform/Crop-shaped row: label, value field, that property's own
  *  keyframe nav + stopwatch diamond, its own reset (D-208), and — when it is
- *  animated — the button that opens its ease curve on the timeline (D-232).
+ *  animated — the button that opens its ease curve on the timeline (D-233).
  *
  *  `TParam` is whatever the caller's own property-name type is
  *  (`ClipTransformParam` for the Transform/Crop/Audio rows, an EQ band's own
@@ -129,7 +129,7 @@ export function PropertyRow<TParam extends string>({
   onKeyframeToggle?: (param: TParam) => void;
   onKeyframeNav?: (param: TParam, dir: -1 | 1) => void;
   onReset: (param: TParam) => void;
-  /** D-232 — open (or close) this property's curve in the timeline's curve
+  /** D-233 — open (or close) this property's curve in the timeline's curve
    *  editor lane. Optional for the same reason the keyframe trio is: a
    *  property this app deliberately does not animate (D-224's EQ fields) has
    *  no curve, and a permanently-dead button advertises an affordance that
@@ -215,7 +215,7 @@ export function PropertyRow<TParam extends string>({
             </Button>
           </>
         )}
-        {/* D-232 — only on an ANIMATED property. An ease curve is the shape
+        {/* D-233 — only on an ANIMATED property. An ease curve is the shape
             BETWEEN two keyframes, so a static property has nothing to shape;
             showing the button anyway would open an empty lane. The row's own
             diamond is how you get from static to animated, and it is

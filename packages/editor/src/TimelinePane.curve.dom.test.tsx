@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the timeline curve editor (D-232),
+ * @chroma/editor — real-DOM coverage for the timeline curve editor (D-233),
  * built on `testUtils/pointerHarness.ts` (D-142) and modelled on
  * `TimelinePane.fade.dom.test.tsx`.
  *
@@ -169,7 +169,7 @@ function segmentD(): string | null {
   return mounted!.container.querySelector('[data-chroma-curve-segment="0"]')?.getAttribute('d') ?? null;
 }
 
-describe('the timeline curve editor — real DOM, real PointerEvents (D-232)', () => {
+describe('the timeline curve editor — real DOM, real PointerEvents (D-233)', () => {
   it('1. renders no lane until one is opened, and one when it is', async () => {
     expect(lane()).toBeNull();
     openLane();

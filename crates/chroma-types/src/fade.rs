@@ -15,7 +15,7 @@
 //!   `FadeEnvelope`). See `docs/notes/audio-fade-duck-crossfade-plan.md` §2 for
 //!   why one field pair drives both rather than separate video/audio fades.
 //!
-//! **It does not own the curve type any more** (D-232). [`EaseCurve`] moved to
+//! **It does not own the curve type any more** (D-233). [`EaseCurve`] moved to
 //!   [`crate::ease`] once keyframe easing became its second consumer — a fade
 //!   is an *envelope* (two windows over a clip's length, multiplied), the curve
 //!   is the *shape* its ramps are drawn with, and neither is a kind of the

@@ -410,7 +410,7 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
  *  checked against its bundled source, not guessed). */
 const START_LEFT_PX = 20;
 
-/** D-232 — below this clip width (px) the curve button is not drawn.
+/** D-233 — below this clip width (px) the curve button is not drawn.
  *
  *  Same rule, and same reason, as D-207's fade handles disappearing under
  *  36px: on a zoomed-out timeline a clip is a sliver, and a button pinned to
@@ -419,7 +419,7 @@ const START_LEFT_PX = 20;
  *  is inset past the right trim zone rather than sitting on a corner. */
 const CURVE_BUTTON_MIN_CLIP_PX = 48;
 
-/** D-232 — the curve lane's default and minimum heights, px.
+/** D-233 — the curve lane's default and minimum heights, px.
  *
  *  The default is a little over three track rows, which is the smallest lane
  *  in which a full-range ease reads as a curve rather than as a slightly bent
@@ -1061,7 +1061,7 @@ export function TimelinePane() {
    *  keyboard action. */
   const selectedGap = useEditorTimelineStore((s) => s.selectedGap);
   const setSelectedGap = useEditorTimelineStore((s) => s.setSelectedGap);
-  // D-232 — the curve editor's target lives in the store, not here, because
+  // D-233 — the curve editor's target lives in the store, not here, because
   // two other surfaces open it: the Inspector's per-property curve button and
   // `editor_set_curve_editor` over MCP.
   const curveEditor = useEditorTimelineStore((s) => s.curveEditor);
@@ -1090,7 +1090,7 @@ export function TimelinePane() {
   const labels = useMemo(() => (timeline ? trackLabels(timeline) : []), [timeline]);
 
   /**
-   * D-232 — the curve lane's target, resolved from the store's `{track, id,
+   * D-233 — the curve lane's target, resolved from the store's `{track, id,
    * param}` to the actual clip and its INDEX (which `set_clip_keyframes`
    * addresses).
    *
@@ -1902,7 +1902,7 @@ export function TimelinePane() {
       // linked half is genuinely part of what the user has hold of — it will
       // move, trim and delete with the selection.
       const isAvLinked = !isSel && avLinkedIds.has(action.id);
-      // D-232 — which property the curve button would open, and whether this
+      // D-233 — which property the curve button would open, and whether this
       // clip's lane is the one currently open. `animatedParams` is served off
       // `clipKeyframes.ts`'s per-array `WeakMap` index (D-209), so asking it
       // once per clip per render is a map lookup, not a re-scan.
@@ -2116,7 +2116,7 @@ export function TimelinePane() {
               disabled={isLockedTrack}
             />
           )}
-          {/* D-232 — the curve-editor toggle, at the clip's top-right, which
+          {/* D-233 — the curve-editor toggle, at the clip's top-right, which
               is where Resolve puts its own (`scratch/resolve-reference/
               curve.jpg`: a curve glyph and a keyframe glyph on the clip's
               name bar). Shown only on a clip that ACTUALLY animates
@@ -3289,7 +3289,7 @@ export function TimelinePane() {
         <ResizableHandle />
 
         <ResizablePanel className="relative min-h-0 overflow-hidden">
-          {/* D-232 — the edit area and the curve lane are a real vertical
+          {/* D-233 — the edit area and the curve lane are a real vertical
               `ResizablePanelGroup`, per CLAUDE.md's standing "every
               resizable-by-nature pane must actually be resizable" rule: how
               tall the lane is IS how finely you can author an ease.

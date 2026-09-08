@@ -94,7 +94,7 @@ pub enum ChromaError {
 pub type Result<T, E = ChromaError> = std::result::Result<T, E>;
 
 /// The cubic-bezier easing curve every ramp in this project is shaped by
-/// (D-147, moved out of [`fade`] by D-232 once keyframe easing became its
+/// (D-147, moved out of [`fade`] by D-233 once keyframe easing became its
 /// second consumer). Pure math — see the module doc for why it is L0.
 pub mod ease;
 

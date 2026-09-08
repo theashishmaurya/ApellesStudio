@@ -374,7 +374,7 @@ export function ClipInspectorPanel({
   onKeyframeToggle: (param: ClipKeyframeParam) => void;
   onKeyframeNav: (param: ClipKeyframeParam, dir: -1 | 1) => void;
   onResetParam: (param: ClipKeyframeParam) => void;
-  /** D-232 — open (or close) one property's ease curve in the timeline's
+  /** D-233 — open (or close) one property's ease curve in the timeline's
    *  curve editor lane. Passed straight through to every keyframeable
    *  `PropertyRow`; the rows themselves decide whether to render the button
    *  (only an animated property has a curve — see `PropertyRow`). */

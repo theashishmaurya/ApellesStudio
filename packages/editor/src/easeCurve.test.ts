@@ -1,5 +1,5 @@
 /**
- * `easeCurve.ts` — the TS mirror of `chroma_types::ease` (D-232).
+ * `easeCurve.ts` — the TS mirror of `chroma_types::ease` (D-233).
  *
  * The point of this file is not that the solver works (D-147's Rust tests
  * already pin that, and this is the same algorithm). It is that the TWO

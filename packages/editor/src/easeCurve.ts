@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the cubic-bezier easing curve solver, in TypeScript
- * (D-232; the solver itself is D-147's, extracted here from
+ * (D-233; the solver itself is D-147's, extracted here from
  * `timelineExportAudio.ts` where it lived when a fade was its only caller).
  *
  * What it is: an exact, field-for-field mirror of `chroma_types::ease`
@@ -17,12 +17,12 @@
  *     window → that window's gain multiplier.
  *   - `clipKeyframes.ts`'s `paramValueAt` — progress between two of one
  *     property's keyframes → how far through the value change we are
- *     (D-232's actual feature).
+ *     (D-233's actual feature).
  *   - `curveEditor.ts` — the same numbers, drawn.
  *
  * **Why this file exists rather than a second copy.** The solve was written
  * once, inside the audio exporter, because a fade was the only thing shaped
- * by a curve. D-232 gives the same curve a second, completely unrelated
+ * by a curve. D-233 gives the same curve a second, completely unrelated
  * consumer (keyframe easing, which the *authoring* layer needs — and
  * `clipKeyframes.ts` importing an interpolator out of an ffmpeg export module
  * would be exactly the wrong dependency direction). That is the "if two
@@ -131,7 +131,7 @@ export function easeCurveEval(curve: EaseCurve, x: number): number {
  *  a plain two-point linear segment rather than 20 sampled ones, and
  *  `paramValueAt` skips the solve entirely — so a timeline with no easing
  *  produces byte-identical ffmpeg argv and bit-identical resolved values to
- *  before D-232, which is the guarantee this feature's tests actually assert.
+ *  before D-233, which is the guarantee this feature's tests actually assert.
  */
 export function isIdentityEase(curve: EaseCurve | undefined | null): boolean {
   if (!curve) return true;

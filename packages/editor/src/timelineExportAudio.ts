@@ -10,7 +10,7 @@
  *
  * - `fadeGainAt`/`fadeGainExpr` mirror `chroma_types::fade_gain`
  *   field-for-field, over the curve solve `easeCurve.ts`'s `easeCurveEval`
- *   owns (D-232 moved it there — a fade is no longer its only caller; see
+ *   owns (D-233 moved it there — a fade is no longer its only caller; see
  *   that module's own doc). ffmpeg's own expression language has no bezier-root
  *   solver, so the fade curve is SAMPLED at a fine resolution and fed through
  *   `ffmpegExpr.ts`'s shared piecewise-linear builder — a deliberate,

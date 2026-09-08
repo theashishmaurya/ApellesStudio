@@ -20941,7 +20941,7 @@ session to distrust the doc set, and "aspiration written as fact" in a PRD is ex
 the previous pass's own note was wrong — is what stops the next reconciliation from
 starting over from the same false premise.
 
-## D-232 — Timeline curve editor: per-segment bezier easing for any keyframed property, as a resizable lane under the timeline
+## D-233 — Timeline curve editor: per-segment bezier easing for any keyframed property, as a resizable lane under the timeline
 
 **decided (2026-09-08)** · roadmap item 27 ("Core NLE parity"): *"Bezier ease curves under a clip, editable directly."*
 
@@ -21171,7 +21171,7 @@ make a second isolated instance a config fork, not a launch. Said plainly
 rather than implied. The jsdom tier cannot prove that a press on a handle beats
 what is painted under it on a real screen; that stays for the interactive tier.
 
-**Found, not fixed here: B-106** — the export interpolates a keyframed
+**Found, not fixed here: B-108** — the export interpolates a keyframed
 `rotation` linearly while the preview takes the shortest arc, so a rotation
 crossing the 0°/360° seam spins the wrong way in the rendered file. Orthogonal
 to easing (which warps the rate along whichever arc each side picks, so it

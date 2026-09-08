@@ -1,5 +1,5 @@
 /**
- * `curveEditor.ts` — the curve lane's pure geometry (D-232).
+ * `curveEditor.ts` — the curve lane's pure geometry (D-233).
  */
 import { describe, expect, it } from 'vitest';
 

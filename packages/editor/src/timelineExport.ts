@@ -95,7 +95,7 @@ import {
  *  this compiler deliberately takes the loosest shape it can read rather than
  *  the model type — `rebaseKeyframesToClipInput` hands it re-based entries
  *  that are not a `Clip`'s own any more, and `keyframeExprAt` is called
- *  directly by tests with hand-written fixtures. D-232 added `ease` to both,
+ *  directly by tests with hand-written fixtures. D-233 added `ease` to both,
  *  identically. */
 export interface ExportKeyframe {
   frame: number;
@@ -105,7 +105,7 @@ export interface ExportKeyframe {
 
 /**
  * How many linear segments approximate ONE eased keyframe segment in the
- * generated ffmpeg expression (D-232).
+ * generated ffmpeg expression (D-233).
  *
  * ffmpeg's expression language has no bezier-root solver, so an eased segment
  * is SAMPLED and fed through `ffmpegExpr.ts`'s piecewise-linear builder —
@@ -149,7 +149,7 @@ const EASE_SAMPLE_STEPS = 20;
  * (`timelineExportAudio.ts`'s sampled fade-curve expression) needed the exact
  * same piecewise-linear-over-points construction.
  *
- * **D-232 — per-segment easing, and why this is still one expression.** A key
+ * **D-233 — per-segment easing, and why this is still one expression.** A key
  * may carry an `ease` curve for `param`, shaping the segment that starts at
  * it. ffmpeg cannot solve a bezier, so an eased segment is emitted as
  * `EASE_SAMPLE_STEPS` linear sub-segments whose endpoints are the exact
@@ -157,7 +157,7 @@ const EASE_SAMPLE_STEPS = 20;
  * same curve type. The sampling is confined to eased segments: a linear one
  * still emits its two authored endpoints and nothing else, so a timeline with
  * no easing produces a **byte-identical** expression string (and therefore
- * byte-identical ffmpeg argv) to before D-232. That is asserted, not assumed —
+ * byte-identical ffmpeg argv) to before D-233. That is asserted, not assumed —
  * see `timelineExport.ease.test.ts`.
  *
  * The preview does not sample: Rust evaluates the curve exactly, per frame.
@@ -1145,7 +1145,7 @@ function hasKeyframesFor(clip: Clip, param: string): boolean {
  *  (`source_start > 0`) would have its keyframes' timing offset by exactly
  *  `source_start/fps` seconds inside its own filter chain. */
 function rebaseKeyframesToClipInput(clip: Clip): ExportKeyframe[] {
-  // D-232 — `ease` rides along with the entry it belongs to. Re-basing
+  // D-233 — `ease` rides along with the entry it belongs to. Re-basing
   // shifts WHEN a key is, never what shape leaves it; dropping the map here
   // would have exported every eased animation as linear while the preview
   // eased it, which is precisely the preview/export divergence class

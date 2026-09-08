@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **Timeline curve editor: real bezier ease curves on any keyframed
-  property (D-232, roadmap 27).** Keyframe segments were all linear — the biggest
+  property (D-233, roadmap 27).** Keyframe segments were all linear — the biggest
   reason a generated move looks generated. Each segment now carries an optional
   cubic-bezier `ease`, authored by dragging its two control points in a resizable
   lane docked under the timeline (built from Resolve's own `curve.jpg`), by four
@@ -17,7 +17,7 @@ One or two lines per session. Detail lives in the decision it references.
   bit-identically and export byte-identically. Preview and export agree exactly at
   every authored key and by a measured 1.4e-3 between them, proven by a real-ffmpeg
   pixel test that was checked to fail when the curve is dropped. Two bugs found on
-  the way: **B-106** (open) — the export spins a seam-crossing `rotation` the long
+  the way: **B-108** (open) — the export spins a seam-crossing `rotation` the long
   way round while the preview takes the short arc; **B-107** (fixed here) —
   `chroma::audio`'s tests guarded the process-global open project with a mutex of
   their own instead of the shared `PROJECT_STATE_LOCK`, so they cleared it out from

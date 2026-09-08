@@ -67,7 +67,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
-// D-232 — the curve editor's own model helpers, shared verbatim with the GUI
+// D-233 — the curve editor's own model helpers, shared verbatim with the GUI
 // (`ClipCurveEditor.tsx` / `EditorInspectorPanel.tsx`) rather than reimplemented
 // here: one write path for the human and the agent, per CLAUDE.md.
 import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
@@ -1635,7 +1635,7 @@ export function useEditorControl(): void {
       },
 
       /**
-       * D-232 — set (or clear) the cubic-bezier EASE shaping one animated
+       * D-233 — set (or clear) the cubic-bezier EASE shaping one animated
        * property's segment, between the keyframe at `frame` and that
        * property's next keyframe.
        *
@@ -1718,7 +1718,7 @@ export function useEditorControl(): void {
       },
 
       /**
-       * D-232 — open the timeline's curve editor lane on one clip property, or
+       * D-233 — open the timeline's curve editor lane on one clip property, or
        * close it (`param: null`).
        *
        * UI state, like `editor_set_preview_zoom` (D-218): it changes what is on

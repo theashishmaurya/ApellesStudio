@@ -46,11 +46,11 @@
 //! different params really are keyed at different frames and the hold rule
 //! would turn a linear ramp into a step (B-094). See that function's own doc.
 //!
-//! **Per-segment easing (D-232), on [`interpolate_param`] only.** A keyframe
+//! **Per-segment easing (D-233), on [`interpolate_param`] only.** A keyframe
 //! entry may carry an optional `ease` map — `{"<param>": {x1,y1,x2,y2}}` —
 //! naming, per param, the [`EaseCurve`] that shapes the segment running from
 //! **this** key to that param's **next** key. An absent entry means linear,
-//! which is what every keyframe written before D-232 has, so nothing about the
+//! which is what every keyframe written before D-233 has, so nothing about the
 //! stored shape of an existing project changed and the resolved value for one
 //! is bit-identical to before. The curve warps `t` and only `t`: the two
 //! endpoint values are still the authored ones, and `x = 1` still lands
@@ -62,7 +62,7 @@ use chroma_types::EaseCurve;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-/// One keyframe: a source-frame index, the params that hold at it, and (D-232)
+/// One keyframe: a source-frame index, the params that hold at it, and (D-233)
 /// the per-param easing of the segment that *starts* here.
 #[derive(Debug, Clone)]
 pub struct Keyframe {
@@ -70,7 +70,7 @@ pub struct Keyframe {
     pub params: Map<String, Value>,
     /// Param name → the curve shaping this key's outgoing segment for that
     /// param. Empty for every key that does not ease (the overwhelmingly
-    /// common case, and every pre-D-232 key). A `BTreeMap` rather than
+    /// common case, and every pre-D-233 key). A `BTreeMap` rather than
     /// `serde_json::Map` because the values are a real typed struct here, not
     /// arbitrary JSON — the parse either produces an [`EaseCurve`] or drops
     /// the entry, so no consumer ever has to re-validate one.
@@ -85,7 +85,7 @@ pub struct Keyframe {
 /// duplicate is treated as "after" the earlier one, so an exact-frame lookup
 /// lands on the first).
 ///
-/// D-232 — an entry's optional `ease` object is parsed here too, via
+/// D-233 — an entry's optional `ease` object is parsed here too, via
 /// [`parse_ease_map`]. It is *optional at every level*: no `ease` key, a
 /// non-object one, or a malformed curve inside it all degrade to "this param
 /// is not eased" (i.e. linear) rather than failing the entry, which is the
@@ -115,7 +115,7 @@ pub fn parse_keyframes(parameters: &Value) -> Option<Vec<Keyframe>> {
     Some(out)
 }
 
-/// One keyframe entry's `ease` object → the typed per-param curve map (D-232).
+/// One keyframe entry's `ease` object → the typed per-param curve map (D-233).
 ///
 /// Every level is best-effort: an absent/non-object `ease`, or an entry inside
 /// it whose four control points are not all finite numbers, contributes
@@ -233,7 +233,7 @@ pub fn interpolate(keyframes: &[Keyframe], frame: u64) -> Map<String, Value> {
 /// tested* contract for those callers (see the module header) and is not a
 /// bug there.
 ///
-/// # Easing (D-232)
+/// # Easing (D-233)
 ///
 /// The segment between two of `name`'s own keys is shaped by the
 /// [`EaseCurve`] the **earlier** key names for `name` in its `ease` map, if
@@ -247,7 +247,7 @@ pub fn interpolate(keyframes: &[Keyframe], frame: u64) -> Map<String, Value> {
 ///   `rotation`'s shortest arc (the arc is chosen from the two values, then
 ///   traversed at the eased rate) and the hold-outside-the-range clamp;
 /// - a param with no `ease` entry runs the identical `x + (y - x) * t` it
-///   always did, so every pre-D-232 keyframe resolves bit-identically.
+///   always did, so every pre-D-233 keyframe resolves bit-identically.
 ///
 /// **Why the curve is stored on the segment's start key, not as an in/out
 /// handle pair on each key** (After Effects' own presentation). A cubic
@@ -295,7 +295,7 @@ pub fn interpolate_param(keyframes: &[Keyframe], frame: u64, name: &str) -> Opti
             } else {
                 0.0
             };
-            // D-232 — the segment's own easing, taken from the key it starts
+            // D-233 — the segment's own easing, taken from the key it starts
             // at. `eval` pins both endpoints, so this cannot move a keyframe.
             let t = match lo.ease.get(name) {
                 Some(curve) => curve.eval(t),
@@ -686,7 +686,7 @@ mod tests {
         assert!(interpolated_parameters(&p).is_none());
     }
 
-    // --- D-232: per-segment easing -------------------------------------- //
+    // --- D-233: per-segment easing -------------------------------------- //
 
     /// `ease-in`, as four control points, in the JSON shape a keyframe stores.
     fn ease_in_json() -> Value {
@@ -708,7 +708,7 @@ mod tests {
     }
 
     /// **The backward-compatibility case.** Every keyframe written before
-    /// D-232 has no `ease` at all, and must resolve bit-identically to before.
+    /// D-233 has no `ease` at all, and must resolve bit-identically to before.
     #[test]
     fn an_unaeased_segment_is_exactly_the_old_linear_ramp() {
         let k = opacity_ramp(None);

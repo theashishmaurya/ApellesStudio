@@ -133,11 +133,11 @@ export interface Rational {
  * different subsets of properties — per-property keyframing (D-208) is
  * exactly that, and every reader filters by name before bracketing.
  *
- * `ease` (D-232) is the optional per-param easing of the segment that STARTS
+ * `ease` (D-233) is the optional per-param easing of the segment that STARTS
  * at this key; see `Clip.chroma_keyframes`' own doc for the shape and
  * `chroma::keyframes::interpolate_param` for the semantics. It lives on the
  * model type here, beside `Clip`, rather than in `clipKeyframes.ts` where the
- * pre-D-232 version of this interface sat: three modules now read it
+ * pre-D-233 version of this interface sat: three modules now read it
  * (`clipKeyframes.ts` to author and resolve, `timelineExport.ts` to compile,
  * `curveEditor.ts` to draw), and a shared model type belongs with the model.
  */
@@ -253,9 +253,9 @@ export interface Clip {
    *  (Rust-side) interpolates it at render time relative to the clip's own
    *  source frame — this file never interpolates it itself.
    *
-   *  **D-232 — the optional `ease` map.** `{"<param>": {x1,y1,x2,y2}}`, naming
+   *  **D-233 — the optional `ease` map.** `{"<param>": {x1,y1,x2,y2}}`, naming
    *  per param the [`EaseCurve`] that shapes the segment running from THIS key
-   *  to that param's NEXT key. Absent (the default, and every pre-D-232 key)
+   *  to that param's NEXT key. Absent (the default, and every pre-D-233 key)
    *  means linear, so nothing about an existing project's stored shape or
    *  resolved values changed. It sits beside `params` rather than inside it
    *  because `params` is a flat `name -> number` map that three separate
@@ -810,12 +810,12 @@ export function panGains(pan: number): [number, number] {
   return [Math.SQRT2 * Math.cos(theta), Math.SQRT2 * Math.sin(theta)];
 }
 
-/** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147, generalised by D-232) —
+/** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147, generalised by D-233) —
  *  mirrors `chroma_types::EaseCurve`. `P0 = (0,0)` and `P3 = (1,1)` are
  *  implicit; `x` is normalised progress through *something*, `y` is how far
  *  through the change you are at that progress.
  *
- *  **Two consumers, one type** (this is why D-232 renamed it off `FadeCurve`):
+ *  **Two consumers, one type** (this is why D-233 renamed it off `FadeCurve`):
  *  a clip's `fade_in_curve`/`fade_out_curve` shape a fade window's gain ramp,
  *  and a keyframe entry's `ease` shapes the segment between two of one
  *  property's keyframes. The curve itself knows about neither — see
@@ -825,7 +825,7 @@ export function panGains(pan: number): [number, number] {
  *  **No preset name is stored** — the four control points are the only truth,
  *  and [`easePresetName`] matches a curve back to a label for display.
  *  Storing both would be two sources of truth that disagree the moment a
- *  custom curve is authored, which both the curve editor (D-232) and MCP can
+ *  custom curve is authored, which both the curve editor (D-233) and MCP can
  *  do. */
 export interface EaseCurve {
   x1: number;
@@ -2392,7 +2392,7 @@ export type EditOp =
       kind: 'set_clip_keyframes';
       track: number;
       clip: number;
-      /** D-232 — [`ClipKeyframe`], so an entry's optional `ease` map rides
+      /** D-233 — [`ClipKeyframe`], so an entry's optional `ease` map rides
        *  along. This op stays the ONE write for every keyframe change the app
        *  makes (a per-property diamond, "key all properties", a delete, and now
        *  a curve drag): the array is the unit of truth, `clipKeyframes.ts`

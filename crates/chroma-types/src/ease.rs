@@ -1,5 +1,5 @@
 //! `EaseCurve` — the one cubic-bezier easing curve this project has (D-147
-//! gave it life as a fade shape; D-232 made it the shape of a keyframe
+//! gave it life as a fade shape; D-233 made it the shape of a keyframe
 //! segment too).
 //!
 //! **What it is:** `cubic-bezier(x1, y1, x2, y2)` with `P0 = (0,0)` and
@@ -13,7 +13,7 @@
 //!   number in the unit interval (modulo deliberate `y` overshoot, below);
 //!   every consumer decides what to do with it:
 //!   - [`crate::fade::fade_gain`] turns it into a clip's fade multiplier.
-//!   - `chroma::keyframes::interpolate_param` (D-232) uses it to warp `t`
+//!   - `chroma::keyframes::interpolate_param` (D-233) uses it to warp `t`
 //!     between two keyframes of one animated property, so a `scale` ramp can
 //!     ease in and out instead of moving at a constant rate.
 //!   Neither knows about the other, and this module knows about neither.
