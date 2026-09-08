@@ -60,7 +60,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
-import { FADE_PRESETS, type Timeline } from './timeline';
+import { EASE_PRESETS, type Timeline } from './timeline';
 
 const FPS = 24;
 const PX_PER_SEC = 90; // DEFAULT_PX_PER_SEC, as `TimelinePane.tsx` defines it
@@ -188,8 +188,8 @@ describe('on-clip fade handles — real DOM, real PointerEvents (D-207)', () => 
     // The op is a whole-fade write, exactly as the Inspector's `applyFade`
     // makes it: the other side is preserved and both curves are stated.
     expect(clipAt(0).fade_out_frames).toBe(0);
-    expect(clipAt(0).fade_in_curve).toEqual(FADE_PRESETS[0].curve);
-    expect(clipAt(0).fade_out_curve).toEqual(FADE_PRESETS[0].curve);
+    expect(clipAt(0).fade_in_curve).toEqual(EASE_PRESETS[0].curve);
+    expect(clipAt(0).fade_out_curve).toEqual(EASE_PRESETS[0].curve);
   });
 
   it('3. dragging an AUDIO clip’s fade-out handle leftward writes fade_out_frames on that clip only', async () => {
@@ -310,7 +310,7 @@ describe('on-clip fade handles — real DOM, real PointerEvents (D-207)', () => 
     ]);
     const clip = clipAt(0);
     expect(clip.fade_out_frames).toBe(12);
-    expect(clip.fade_out_curve).toEqual(FADE_PRESETS[0].curve);
+    expect(clip.fade_out_curve).toEqual(EASE_PRESETS[0].curve);
   });
 
   it('10. a locked track offers no fade handles (its ramps still draw)', async () => {

@@ -57,9 +57,9 @@
  * `buildClipFilterChain`'s own note and `docs/BUGS.md` B-103.
  */
 
-import type { Clip, Timeline, Track, Transition } from './timeline';
+import type { Clip, EaseCurve, Timeline, Track, Transition } from './timeline';
 import {
-  DEFAULT_FADE_CURVE,
+  DEFAULT_EASE_CURVE,
   endFrame,
   timelineFramesToSource,
   transitionHandles,
@@ -75,6 +75,7 @@ import {
 } from './caption';
 import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
+import { easeCurveEval, isIdentityEase } from './easeCurve';
 import {
   audioRefBracket,
   audioRefMapArg,
@@ -88,11 +89,39 @@ import {
 // keyframeExprAt — piecewise-linear ffmpeg expression generator
 // --------------------------------------------------------------------------- //
 
-/** One clip's raw keyframe array, as stored on `Clip.chroma_keyframes`. */
+/** One clip's raw keyframe array, as stored on `Clip.chroma_keyframes`.
+ *
+ *  Structurally `ClipKeyframe` (`timeline.ts`), spelled separately because
+ *  this compiler deliberately takes the loosest shape it can read rather than
+ *  the model type — `rebaseKeyframesToClipInput` hands it re-based entries
+ *  that are not a `Clip`'s own any more, and `keyframeExprAt` is called
+ *  directly by tests with hand-written fixtures. D-232 added `ease` to both,
+ *  identically. */
 export interface ExportKeyframe {
   frame: number;
   params: Record<string, unknown>;
+  ease?: Record<string, EaseCurve>;
 }
+
+/**
+ * How many linear segments approximate ONE eased keyframe segment in the
+ * generated ffmpeg expression (D-232).
+ *
+ * ffmpeg's expression language has no bezier-root solver, so an eased segment
+ * is SAMPLED and fed through `ffmpegExpr.ts`'s piecewise-linear builder —
+ * exactly what `timelineExportAudio.ts`'s `fadeGainExpr` already does to the
+ * identical curve type, for the identical reason, and the reason this constant
+ * matches `FADE_SAMPLE_STEPS`. Each sampled *value* is exact (the real
+ * `easeCurveEval`); the approximation is only of the continuous curve BETWEEN
+ * samples, with error bounded by the sample count.
+ *
+ * 20 is not a guess: for the steepest of the four presets the worst-case
+ * chord error against the true curve is well under 0.5% of the segment's own
+ * value range — below a frame's worth of movement for any animation a person
+ * would author, and far below the 1/255 an 8-bit output can even represent for
+ * opacity. `timelineExport.ease.test.ts` measures it rather than asserting it.
+ */
+const EASE_SAMPLE_STEPS = 20;
 
 /**
  * Build an ffmpeg filter expression (using `t`, ffmpeg's own per-frame time
@@ -119,6 +148,25 @@ export interface ExportKeyframe {
  * output, see that module's own doc) once a second, unrelated caller
  * (`timelineExportAudio.ts`'s sampled fade-curve expression) needed the exact
  * same piecewise-linear-over-points construction.
+ *
+ * **D-232 — per-segment easing, and why this is still one expression.** A key
+ * may carry an `ease` curve for `param`, shaping the segment that starts at
+ * it. ffmpeg cannot solve a bezier, so an eased segment is emitted as
+ * `EASE_SAMPLE_STEPS` linear sub-segments whose endpoints are the exact
+ * `easeCurveEval` values — the same sampling `fadeGainExpr` performs on the
+ * same curve type. The sampling is confined to eased segments: a linear one
+ * still emits its two authored endpoints and nothing else, so a timeline with
+ * no easing produces a **byte-identical** expression string (and therefore
+ * byte-identical ffmpeg argv) to before D-232. That is asserted, not assumed —
+ * see `timelineExport.ease.test.ts`.
+ *
+ * The preview does not sample: Rust evaluates the curve exactly, per frame.
+ * That asymmetry is the same one D-197 already documents for fades, and it is
+ * bounded rather than open-ended — both sides agree on the authored endpoints
+ * exactly, and in between by less than the output's own quantisation. The
+ * B-090/B-094/B-095 divergence class is about the two sides interpreting the
+ * animation DATA differently; here they interpret it identically and one of
+ * them approximates the drawing of it, within a measured bound.
  */
 export function keyframeExprAt(
   keyframes: ExportKeyframe[],
@@ -134,12 +182,41 @@ export function keyframeExprAt(
    *  Byte-identical output for the default, so no existing argv changes. */
   timeVar = 't',
 ): string {
-  const points: ExprPoint[] = keyframes
+  const keyed = keyframes
     .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
-    .map((k) => ({ t: k.frame / fps, value: Number(k.params[param]) }))
+    .map((k) => ({
+      t: k.frame / fps,
+      value: Number(k.params[param]),
+      // Normalised exactly as `clipKeyframes.ts`'s own index does, so "linear"
+      // and "no curve" are one case on both sides of the wire.
+      ease: isIdentityEase(k.ease?.[param]) ? null : (k.ease?.[param] ?? null),
+    }))
     .sort((a, b) => a.t - b.t);
 
-  if (points.length === 0) return String(staticValue);
+  if (keyed.length === 0) return String(staticValue);
+
+  const points: ExprPoint[] = [];
+  for (let i = 0; i < keyed.length; i++) {
+    const a = keyed[i];
+    const b = keyed[i + 1];
+    points.push({ t: a.t, value: a.value });
+    // Interior sample points, for an eased segment only. `1..STEPS-1`: both
+    // endpoints are already authored points (this key's, and the next key's on
+    // its own iteration), and re-emitting them would only add duplicate `t`s
+    // for `piecewiseLinearExpr` to build zero-width segments from.
+    if (!b || !a.ease || b.t <= a.t) continue;
+    for (let s = 1; s < EASE_SAMPLE_STEPS; s++) {
+      const u = s / EASE_SAMPLE_STEPS;
+      points.push({
+        t: a.t + (b.t - a.t) * u,
+        // The value is the EXACT one both the live preview and the authoring
+        // layer resolve at this instant — `easeCurveEval` is the same mirror
+        // of `chroma_types::EaseCurve::eval` they call. Only the straight
+        // lines drawn between these points are the approximation.
+        value: a.value + (b.value - a.value) * easeCurveEval(a.ease, u),
+      });
+    }
+  }
   return piecewiseLinearExpr(points, timeVar);
 }
 
@@ -283,8 +360,8 @@ export function buildTextDrawtextStep(
     lenSec,
     (clip.fade_in_frames ?? 0) / clipFps,
     (clip.fade_out_frames ?? 0) / clipFps,
-    clip.fade_in_curve ?? DEFAULT_FADE_CURVE,
-    clip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+    clip.fade_in_curve ?? DEFAULT_EASE_CURVE,
+    clip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     clipTime,
   );
   const alphaExpr = fadeExpr ? `(${opacityExpr})*(${fadeExpr})` : opacityExpr;
@@ -942,8 +1019,8 @@ function buildClipFilterChain(
     lenSec,
     (clip.fade_in_frames ?? 0) / clipFps,
     (clip.fade_out_frames ?? 0) / clipFps,
-    clip.fade_in_curve ?? DEFAULT_FADE_CURVE,
-    clip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+    clip.fade_in_curve ?? DEFAULT_EASE_CURVE,
+    clip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     bigTVar,
   );
   const alphaExpr = fadeExpr ? `(${opacityExpr})*(${fadeExpr})` : opacityExpr;
@@ -1068,7 +1145,16 @@ function hasKeyframesFor(clip: Clip, param: string): boolean {
  *  (`source_start > 0`) would have its keyframes' timing offset by exactly
  *  `source_start/fps` seconds inside its own filter chain. */
 function rebaseKeyframesToClipInput(clip: Clip): ExportKeyframe[] {
-  return (clip.chroma_keyframes ?? []).map((k) => ({ frame: k.frame - clip.source_start, params: k.params }));
+  // D-232 — `ease` rides along with the entry it belongs to. Re-basing
+  // shifts WHEN a key is, never what shape leaves it; dropping the map here
+  // would have exported every eased animation as linear while the preview
+  // eased it, which is precisely the preview/export divergence class
+  // B-090/B-094/B-095 document.
+  return (clip.chroma_keyframes ?? []).map((k) => ({
+    frame: k.frame - clip.source_start,
+    params: k.params,
+    ease: k.ease,
+  }));
 }
 
 /** B-103 — `overlay`'s `x`/`y` expressions are evaluated on the MAIN (base)

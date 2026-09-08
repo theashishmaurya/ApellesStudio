@@ -426,7 +426,6 @@ fn duck_for_track(
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
 
@@ -457,9 +456,29 @@ mod tests {
     /// of them can never interleave their generation bumps — the same class of
     /// cross-test interference B-038 documents for `chroma::export`/`relight`,
     /// avoided here rather than discovered later.
+    ///
+    /// **B-107 — this is the SHARED `PROJECT_STATE_LOCK`, not a private mutex
+    /// of its own.** It used to be `static LOCK: Mutex<()>` local to this
+    /// function, which serialised these tests against *each other* and against
+    /// nothing else. But the global they actually contend over is
+    /// `state::SESSION`'s open project, and the tests in `chroma::edit`,
+    /// `chroma::project` and `chroma::state` guard that with
+    /// `PROJECT_STATE_LOCK`. Two different mutexes over one global is not
+    /// mutual exclusion: several tests here call `state::set_project(None)` on
+    /// their way out, which would land in the middle of an
+    /// `edit::preview_adjustment_tests` body that was holding the *other* lock
+    /// and had opened its own project, so its next `timeline_frame` panicked
+    /// with "no project open". One lock, one global.
+    ///
+    /// It costs some test parallelism (these now serialise against every
+    /// project-state test in the binary, not just each other) and that is the
+    /// right trade: `PROJECT_STATE_LOCK` is the codebase's existing, documented
+    /// answer for exactly this class (B-105), and a second lock beside it is
+    /// the thing that was wrong.
     fn session_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     // --- D-147: clip fades → the mixer's envelope ------------------------ //

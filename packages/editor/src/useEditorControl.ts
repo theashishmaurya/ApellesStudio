@@ -67,10 +67,15 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
+// D-232 — the curve editor's own model helpers, shared verbatim with the GUI
+// (`ClipCurveEditor.tsx` / `EditorInspectorPanel.tsx`) rather than reimplemented
+// here: one write path for the human and the agent, per CLAUDE.md.
+import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
 import {
   timelineDuration,
-  FADE_PRESETS,
-  DEFAULT_FADE_CURVE,
+  CLIP_KEYFRAME_DEFAULTS,
+  EASE_PRESETS,
+  DEFAULT_EASE_CURVE,
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_TITLE_SECONDS,
@@ -79,7 +84,7 @@ import {
   eqBandsForDisplay,
   eqKindUsesGain,
   eqResponseDb,
-  fadePresetName,
+  easePresetName,
   hasActiveEq,
   gapAt,
   isAdjustmentClip,
@@ -108,7 +113,8 @@ import {
   TRANSITION_KINDS,
   DEFAULT_TRANSITION_FRAMES,
   type AdjustmentLayer,
-  type FadeCurve,
+  type ClipKeyframeParam,
+  type EaseCurve,
   type Clip,
   type EqBand,
   type EqBandKind,
@@ -335,10 +341,10 @@ function timelineDto(tl: Timeline) {
         keyframes: c.chroma_keyframes ?? [],
         fadeInFrames: c.fade_in_frames ?? 0,
         fadeOutFrames: c.fade_out_frames ?? 0,
-        fadeInCurve: c.fade_in_curve ?? DEFAULT_FADE_CURVE,
-        fadeOutCurve: c.fade_out_curve ?? DEFAULT_FADE_CURVE,
-        fadeInCurveName: fadePresetName(c.fade_in_curve),
-        fadeOutCurveName: fadePresetName(c.fade_out_curve),
+        fadeInCurve: c.fade_in_curve ?? DEFAULT_EASE_CURVE,
+        fadeOutCurve: c.fade_out_curve ?? DEFAULT_EASE_CURVE,
+        fadeInCurveName: easePresetName(c.fade_in_curve),
+        fadeOutCurveName: easePresetName(c.fade_out_curve),
         // D-223 — this clip's own level, so an agent can read it back before
         // deciding what to write (and can tell a clip that is already quiet
         // from a track that is). Defaulted here the same way every field
@@ -429,13 +435,13 @@ function markerNotFound(tl: Timeline, id: string): string {
  *  points (`[x1,y1,x2,y2]` or `{x1,y1,x2,y2}`) — copied verbatim from the
  *  pre-D-183 `set_clip_fade`. An unknown NAME is reported rather than
  *  silently substituted. */
-function parseCurve(v: unknown, which: string): FadeCurve | { error: string } | undefined {
+function parseCurve(v: unknown, which: string): EaseCurve | { error: string } | undefined {
   if (v == null) return undefined;
   if (typeof v === 'string') {
-    const hit = FADE_PRESETS.find((p) => p.name === v);
+    const hit = EASE_PRESETS.find((p) => p.name === v);
     return (
       hit?.curve ?? {
-        error: `unknown ${which} "${v}" — one of ${FADE_PRESETS.map((p) => p.name).join(' | ')}, or four control points [x1,y1,x2,y2]`,
+        error: `unknown ${which} "${v}" — one of ${EASE_PRESETS.map((p) => p.name).join(' | ')}, or four control points [x1,y1,x2,y2]`,
       }
     );
   }
@@ -1628,6 +1634,130 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, count: keyframes.length };
       },
 
+      /**
+       * D-232 — set (or clear) the cubic-bezier EASE shaping one animated
+       * property's segment, between the keyframe at `frame` and that
+       * property's next keyframe.
+       *
+       * The agent half of the timeline curve editor. `frame` names the key the
+       * segment STARTS at, in the clip's own source frames — the same axis
+       * `editor_set_clip_keyframes` writes and `editor_get_state` reports.
+       * `curve` takes a preset name or four control points, exactly as
+       * `editor_set_clip_fade`'s curves do (one parser, `parseCurve`); `null`
+       * clears the ease back to linear.
+       *
+       * Refuses rather than silently doing nothing when the named frame is not
+       * actually a keyframe of that property — an agent that mistyped a frame
+       * should hear about it, not get `{ok: true}` for a write that changed
+       * nothing (the same B-053 posture every refusal in this file takes).
+       */
+      editor_set_keyframe_ease: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+
+        const param = a?.param;
+        if (typeof param !== 'string' || !(param in CLIP_KEYFRAME_DEFAULTS)) {
+          return { error: `param must be one of ${Object.keys(CLIP_KEYFRAME_DEFAULTS).join(' | ')}` };
+        }
+        const frame = Number(a?.frame);
+        if (!Number.isFinite(frame)) {
+          return { error: 'frame must be a number (the clip source frame the segment starts at)' };
+        }
+
+        let curve: EaseCurve | null = null;
+        if (a?.curve != null) {
+          const parsed = parseCurve(a.curve, 'curve');
+          if (parsed && 'error' in parsed) return parsed;
+          curve = parsed ?? null;
+        }
+
+        const before = found.c.chroma_keyframes;
+        const next = setClipKeyframeEase(before, frame, param as ClipKeyframeParam, curve);
+        if (next === before) {
+          const frames = paramKeyframeFrames(before, param as ClipKeyframeParam);
+          if (frames.length === 0) {
+            return {
+              error: `${param} is not animated on this clip — keyframe it first with editor_set_clip_keyframes`,
+            };
+          }
+          if (!frames.includes(Math.round(frame))) {
+            return { error: `no ${param} keyframe at frame ${frame} — this clip's are: ${frames.join(', ')}` };
+          }
+          // A real key, and the write was genuinely a no-op: clearing an ease
+          // that was already linear. Honest success, with nothing applied.
+          return {
+            ok: true,
+            track: found.track,
+            clip: found.clip,
+            param,
+            frame: Math.round(frame),
+            curve: null,
+            changed: false,
+          };
+        }
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_keyframes',
+          track: found.track,
+          clip: found.clip,
+          keyframes: next ?? [],
+        });
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          param,
+          frame: Math.round(frame),
+          curve,
+          curveName: curve ? easePresetName(curve) : 'linear',
+          changed: true,
+        };
+      },
+
+      /**
+       * D-232 — open the timeline's curve editor lane on one clip property, or
+       * close it (`param: null`).
+       *
+       * UI state, like `editor_set_preview_zoom` (D-218): it changes what is on
+       * screen and nothing in `project.json`. It exists so an agent that has
+       * just eased a curve can SHOW the human the curve it eased, and so a
+       * human asking "show me the opacity curve" gets the same lane the
+       * Inspector's own button opens — the one target, in the store, that both
+       * affordances already share.
+       */
+      editor_set_curve_editor: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        if (a?.param == null) {
+          useEditorTimelineStore.getState().setCurveEditor(null);
+          return { ok: true, open: false };
+        }
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const param = a.param;
+        if (typeof param !== 'string' || !(param in CLIP_KEYFRAME_DEFAULTS)) {
+          return {
+            error: `param must be one of ${Object.keys(CLIP_KEYFRAME_DEFAULTS).join(' | ')}, or null to close`,
+          };
+        }
+        const animated = animatedParams(found.c.chroma_keyframes);
+        if (!animated.includes(param as ClipKeyframeParam)) {
+          return {
+            error:
+              animated.length === 0
+                ? 'this clip has no animated properties — there is no curve to show'
+                : `${param} is not animated on this clip — animated: ${animated.join(', ')}`,
+          };
+        }
+        useEditorTimelineStore
+          .getState()
+          .setCurveEditor({ track: found.track, id: found.c.id, param: param as ClipKeyframeParam });
+        return { ok: true, open: true, track: found.track, clip: found.clip, param };
+      },
+
       // ---- export (Phase 2/3, D-183; D-201 real audio mixing; D-198
       // extracted the real body into `editorExport.ts` so the Edit tab's own
       // GUI Export dialog + queue can call the EXACT same compile+run logic
@@ -1716,8 +1846,8 @@ export function useEditorControl(): void {
           clip: found.clip,
           fade_in_frames: Number(a?.fade_in_frames ?? c.fade_in_frames ?? 0),
           fade_out_frames: Number(a?.fade_out_frames ?? c.fade_out_frames ?? 0),
-          fade_in_curve: inCurve ?? c.fade_in_curve ?? DEFAULT_FADE_CURVE,
-          fade_out_curve: outCurve ?? c.fade_out_curve ?? DEFAULT_FADE_CURVE,
+          fade_in_curve: inCurve ?? c.fade_in_curve ?? DEFAULT_EASE_CURVE,
+          fade_out_curve: outCurve ?? c.fade_out_curve ?? DEFAULT_EASE_CURVE,
         });
 
         const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
@@ -1728,10 +1858,10 @@ export function useEditorControl(): void {
           name: after?.name ?? c.name,
           fadeInFrames: after?.fade_in_frames ?? 0,
           fadeOutFrames: after?.fade_out_frames ?? 0,
-          fadeInCurve: after?.fade_in_curve ?? DEFAULT_FADE_CURVE,
-          fadeOutCurve: after?.fade_out_curve ?? DEFAULT_FADE_CURVE,
-          fadeInCurveName: fadePresetName(after?.fade_in_curve),
-          fadeOutCurveName: fadePresetName(after?.fade_out_curve),
+          fadeInCurve: after?.fade_in_curve ?? DEFAULT_EASE_CURVE,
+          fadeOutCurve: after?.fade_out_curve ?? DEFAULT_EASE_CURVE,
+          fadeInCurveName: easePresetName(after?.fade_in_curve),
+          fadeOutCurveName: easePresetName(after?.fade_out_curve),
           note: 'a fade on a video clip fades its picture AND its embedded audio together',
         };
       },

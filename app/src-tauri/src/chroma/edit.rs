@@ -1923,6 +1923,63 @@ mod composite_tests {
         assert_eq!(t0.opacity, 0.0);
     }
 
+    /// **D-232 — the LIVE PREVIEW path honours a segment's ease curve.**
+    ///
+    /// `chroma::keyframes`' own tests pin the resolver; this pins the whole
+    /// compositor-facing path a rendered frame actually takes
+    /// (`resolve_clip_transform` -> `resolve_clip_transform_unfaded` ->
+    /// `interpolate_param`), which is the half that has to agree with
+    /// `timelineExport.ts`. The matching export-side proof is
+    /// `timelineExportEase.ffmpeg.test.ts`, which measures real exported
+    /// pixels against the same curve.
+    #[test]
+    fn resolve_clip_transform_applies_a_segments_ease_curve() {
+        let eased = Clip {
+            opacity: 1.0,
+            chroma_keyframes: Some(serde_json::json!([
+                {
+                    "frame": 0,
+                    "params": { "opacity": 0.0 },
+                    "ease": { "opacity": { "x1": 0.42, "y1": 0.0, "x2": 1.0, "y2": 1.0 } },
+                },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+
+        // The curve is applied, and it is the RIGHT curve — compared against
+        // `EaseCurve::eval` itself rather than a hand-copied constant.
+        for f in [10_i64, 25, 50, 75, 90] {
+            let got = resolve_clip_transform(&eased, f).opacity;
+            let want = chroma_types::EaseCurve::EASE_IN.eval(f as f64 / 100.0);
+            assert!(
+                (got - want).abs() < 1e-6,
+                "frame {f}: got {got}, want {want}"
+            );
+        }
+        // An ease-in is genuinely slower at the start than the linear ramp the
+        // same two keys would otherwise give — so a wrong-but-plausible curve
+        // fails this too.
+        assert!(resolve_clip_transform(&eased, 25).opacity < 0.25);
+
+        // Both authored keyframes still resolve to exactly their values: a
+        // curve warps the rate, it can never move a key.
+        assert_eq!(resolve_clip_transform(&eased, 0).opacity, 0.0);
+        assert_eq!(resolve_clip_transform(&eased, 100).opacity, 1.0);
+
+        // ...and the same keys with no `ease` are the pre-D-232 linear ramp,
+        // unchanged — the backward-compatibility half, at this layer.
+        let plain = Clip {
+            opacity: 1.0,
+            chroma_keyframes: Some(serde_json::json!([
+                { "frame": 0, "params": { "opacity": 0.0 } },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+            ..Default::default()
+        };
+        assert_eq!(resolve_clip_transform(&plain, 25).opacity, 0.25);
+    }
+
     /// **B-094 / D-208 — per-property keyframes really are independent.**
     /// Three keys, each naming a DIFFERENT param subset: `scale` is keyed at
     /// 0 and 100 only, `opacity` at 50 only. `scale` must ramp linearly
@@ -3901,6 +3958,21 @@ mod preview_adjustment_tests {
             path: project_dir,
             name: "Adjust".into(),
         }));
+        // B-107 — assert the precondition this helper exists to establish,
+        // rather than inheriting it. Every caller holds `PROJECT_STATE_LOCK`,
+        // but that only excludes other holders of the SAME lock: when
+        // `chroma::audio`'s tests guarded the very same global with a private
+        // mutex of their own, one of them could clear it between this line and
+        // the first `centre_pixel` call, and the failure surfaced as a
+        // "no project open" panic inside `timeline_frame` — three layers from
+        // the cause, and easy to misread as a fault in the feature under test.
+        // Checked here so a future second lock fails loudly, at the leak.
+        assert!(
+            super::state::current_project().is_some(),
+            "open_project must leave a project open — if this fires, some other \
+             test cleared the process-global project state without holding \
+             PROJECT_STATE_LOCK (see B-107)"
+        );
         tmp
     }
 

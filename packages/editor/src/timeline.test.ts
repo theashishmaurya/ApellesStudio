@@ -24,8 +24,8 @@ import {
   DEFAULT_MARKER_COLOR,
   endFrame,
   ensureAudioTrackWithRoom,
-  FADE_PRESETS,
-  fadePresetName,
+  EASE_PRESETS,
+  easePresetName,
   findClip,
   gapAt,
   labelForOp,
@@ -1157,14 +1157,14 @@ describe('set_clip_fade (D-147)', () => {
       clip: 0,
       fade_in_frames: 12,
       fade_out_frames: 24,
-      fade_in_curve: FADE_PRESETS[1].curve, // ease-in
-      fade_out_curve: FADE_PRESETS[2].curve, // ease-out
+      fade_in_curve: EASE_PRESETS[1].curve, // ease-in
+      fade_out_curve: EASE_PRESETS[2].curve, // ease-out
     });
     const c = after.tracks[0].clips[0];
     expect(c.fade_in_frames).toBe(12);
     expect(c.fade_out_frames).toBe(24);
-    expect(fadePresetName(c.fade_in_curve)).toBe('ease-in');
-    expect(fadePresetName(c.fade_out_curve)).toBe('ease-out');
+    expect(easePresetName(c.fade_in_curve)).toBe('ease-in');
+    expect(easePresetName(c.fade_out_curve)).toBe('ease-out');
     // the OTHER clip is untouched
     expect(after.tracks[0].clips[1].fade_in_frames).toBeUndefined();
   });
@@ -1178,8 +1178,8 @@ describe('set_clip_fade (D-147)', () => {
       fade_out_frames: 0,
     });
     const c = after.tracks[0].clips[0];
-    expect(fadePresetName(c.fade_in_curve)).toBe('linear');
-    expect(fadePresetName(c.fade_out_curve)).toBe('linear');
+    expect(easePresetName(c.fade_in_curve)).toBe('linear');
+    expect(easePresetName(c.fade_out_curve)).toBe('linear');
   });
 
   /** Floored and integral on the way in, so a negative or fractional frame
@@ -1239,20 +1239,20 @@ describe('set_clip_fade (D-147)', () => {
   });
 });
 
-describe('fadePresetName / FADE_PRESETS (D-147)', () => {
+describe('easePresetName / EASE_PRESETS (D-147)', () => {
   it('every preset round-trips to its own name', () => {
-    for (const p of FADE_PRESETS) expect(fadePresetName(p.curve)).toBe(p.name);
+    for (const p of EASE_PRESETS) expect(easePresetName(p.curve)).toBe(p.name);
   });
 
   it('an absent curve reads as linear, matching the server default', () => {
-    expect(fadePresetName(undefined)).toBe('linear');
+    expect(easePresetName(undefined)).toBe('linear');
   });
 
   /** A custom curve — which MCP can author today even though the Inspector
    *  has no curve editor — must report as custom rather than being silently
    *  misreported as `linear`. */
   it('a custom curve has no preset name', () => {
-    expect(fadePresetName({ x1: 0.1, y1: 0.9, x2: 0.9, y2: 0.1 })).toBeNull();
+    expect(easePresetName({ x1: 0.1, y1: 0.9, x2: 0.9, y2: 0.1 })).toBeNull();
   });
 });
 

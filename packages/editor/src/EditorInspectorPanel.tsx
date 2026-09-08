@@ -76,7 +76,7 @@ import type { PropertyState } from './PropertyRow';
 import {
   CLIP_KEYFRAME_DEFAULTS,
   CLIP_TRANSFORM_DEFAULTS,
-  DEFAULT_FADE_CURVE,
+  DEFAULT_EASE_CURVE,
   findClip,
   isClipAudioParam,
   timelineFps,
@@ -95,6 +95,8 @@ export function EditorInspectorPanel() {
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   // D-208 — the `<` / `>` per-property keyframe nav moves the playhead.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
+  const curveEditor = useEditorTimelineStore((s) => s.curveEditor);
+  const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
 
   // Same Phase 1 multi-select fallback `TimelinePane.tsx` already uses for
   // every single-clip-only consumer (docs/notes/multi-select.md): a
@@ -161,8 +163,8 @@ export function EditorInspectorPanel() {
       clip: selectedIdx,
       fade_in_frames: patch.fade_in_frames ?? selectedClip.fade_in_frames ?? 0,
       fade_out_frames: patch.fade_out_frames ?? selectedClip.fade_out_frames ?? 0,
-      fade_in_curve: patch.fade_in_curve ?? selectedClip.fade_in_curve ?? DEFAULT_FADE_CURVE,
-      fade_out_curve: patch.fade_out_curve ?? selectedClip.fade_out_curve ?? DEFAULT_FADE_CURVE,
+      fade_in_curve: patch.fade_in_curve ?? selectedClip.fade_in_curve ?? DEFAULT_EASE_CURVE,
+      fade_out_curve: patch.fade_out_curve ?? selectedClip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     });
   };
 
@@ -359,6 +361,28 @@ export function EditorInspectorPanel() {
 
   const doClearKeyframes = () => applyKeyframes(clearClipKeyframes());
 
+  /**
+   * D-232 — open (or toggle off) one property's ease curve in the timeline's
+   * curve editor lane.
+   *
+   * The Inspector does not render the lane; it only names the target, exactly
+   * as the timeline's own curve button does, and the store is the one place
+   * that target lives (see `CurveEditorTarget`). That is what lets the two
+   * affordances stay in step: pressing the timeline's button lights up the
+   * matching Inspector row's, and vice versa, with no state to synchronise.
+   */
+  const toggleParamCurve = (param: ClipKeyframeParam) => {
+    if (!selectedClip || !primary) return;
+    const open = curveEditor?.id === selectedClip.id && curveEditor?.param === param;
+    setCurveEditor(open ? null : { track: primary.track, id: selectedClip.id, param });
+  };
+
+  /** Which property's curve is open, but only when it belongs to the clip this
+   *  panel is showing — otherwise a row here would light up for a curve that
+   *  is open on some other clip. */
+  const openCurveParam =
+    selectedClip && curveEditor?.id === selectedClip.id ? curveEditor.param : null;
+
   return (
     <ClipInspectorPanel
       // D-193 — remounts `ClipInspectorPanel` on every new clip selection,
@@ -381,6 +405,8 @@ export function EditorInspectorPanel() {
       onKeyframeToggle={toggleParamKeyframes}
       onKeyframeNav={goToParamKeyframe}
       onResetParam={resetParam}
+      onOpenCurve={toggleParamCurve}
+      openCurveParam={openCurveParam}
       onUpsertKeyframe={doUpsertKeyframe}
       onRemoveKeyframeHere={doRemoveKeyframeHere}
       onClearKeyframes={doClearKeyframes}

@@ -5,7 +5,7 @@
  * Everything here has a correct answer: the frames↔px conversion (including
  * the mixed-native-fps case B-077 exists for), the drag clamp's deliberate
  * asymmetry with the MODEL's own no-clamp rule, and the exact control points
- * an SVG cubic needs to trace a `FadeCurve`'s real shape. The gesture wiring
+ * an SVG cubic needs to trace a `EaseCurve`'s real shape. The gesture wiring
  * around it is covered by `TimelinePane.fade.dom.test.tsx`.
  */
 
@@ -20,10 +20,10 @@ import {
   fadeUnityLinePath,
   pxToFadeFrames,
 } from './clipFade';
-import { FADE_PRESETS, type Clip, type FadeCurve } from './timeline';
+import { EASE_PRESETS, type Clip, type EaseCurve } from './timeline';
 
-const LINEAR = FADE_PRESETS[0].curve;
-const EASE_IN = FADE_PRESETS[1].curve;
+const LINEAR = EASE_PRESETS[0].curve;
+const EASE_IN = EASE_PRESETS[1].curve;
 
 /** 24 fps project; the clip is native-24 unless a test says otherwise. */
 const FPS = 24;
@@ -163,7 +163,7 @@ describe('fadeRampPaths — the REAL curve, not a straight-line approximation (D
   });
 
   it('places both control points at the curve’s own coordinates, scaled to the ramp box', () => {
-    const curve: FadeCurve = { x1: 0.25, y1: 0.1, x2: 0.75, y2: 0.9 };
+    const curve: EaseCurve = { x1: 0.25, y1: 0.1, x2: 0.75, y2: 0.9 };
     const n = nums(fadeRampPaths('in', W, H, 80, curve)!.line);
     expect(n[2]).toBeCloseTo(0.25 * 80, 3);
     expect(n[3]).toBeCloseTo(H - 0.1 * (H - TOP), 3);

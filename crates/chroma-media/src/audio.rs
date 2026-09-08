@@ -258,7 +258,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chroma_types::{Biquad, BiquadCoeffs, EqBand, FadeCurve};
+use chroma_types::{Biquad, BiquadCoeffs, EaseCurve, EqBand};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp_sample::FromSample;
 use once_cell::sync::Lazy;
@@ -948,8 +948,8 @@ pub struct FadeEnvelope {
     pub len_secs: f64,
     pub fade_in_secs: f64,
     pub fade_out_secs: f64,
-    pub in_curve: FadeCurve,
-    pub out_curve: FadeCurve,
+    pub in_curve: EaseCurve,
+    pub out_curve: EaseCurve,
 }
 
 impl FadeEnvelope {
@@ -1227,7 +1227,7 @@ fn decay(from: f64, target: f64, elapsed: f64, tau: f64) -> f64 {
 /// [`Self::value_at`] mirrors `chroma::keyframes::interpolate_param` (D-034/
 /// D-208 — the one interpolator the authoring UI, the compositor and the
 /// exporter all already agree on): **linear between the two bracketing keys,
-/// held flat outside them.** Not the bezier [`FadeCurve`] model — a fade is a
+/// held flat outside them.** Not the bezier [`EaseCurve`] model — a fade is a
 /// shaped ramp with no keys, an automation curve is keys with no shape, and
 /// conflating them would mean a keyframed volume interpolating differently in
 /// the mixer than the same keys do in the Inspector's own readout.
@@ -2814,8 +2814,8 @@ mod tests {
             len_secs: 1.0,
             fade_in_secs: 1.0,
             fade_out_secs: 0.0,
-            in_curve: FadeCurve::LINEAR,
-            out_curve: FadeCurve::LINEAR,
+            in_curve: EaseCurve::LINEAR,
+            out_curve: EaseCurve::LINEAR,
         }
     }
 
@@ -3603,8 +3603,8 @@ mod tests {
             len_secs: 1.0,
             fade_in_secs: 1.0,
             fade_out_secs: 0.0,
-            in_curve: FadeCurve::LINEAR,
-            out_curve: FadeCurve::LINEAR,
+            in_curve: EaseCurve::LINEAR,
+            out_curve: EaseCurve::LINEAR,
         };
         let signal = vec![1.0f32; 8];
 

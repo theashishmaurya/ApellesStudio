@@ -4,7 +4,7 @@
  *
  * **What it is.** Frames↔pixels for a clip's `fade_in_frames`/
  * `fade_out_frames` at the timeline's current zoom, plus the SVG path strings
- * that draw each ramp at its real `FadeCurve` shape. `ClipFadeOverlay.tsx` is
+ * that draw each ramp at its real `EaseCurve` shape. `ClipFadeOverlay.tsx` is
  * the DOM/pointer wiring around this; everything with a correct answer lives
  * here and is unit-tested in `clipFade.test.ts` — the same split
  * `transformGeometry.ts`/`TransformOverlay.tsx` and `marquee.ts`/
@@ -32,7 +32,7 @@ import {
   sourceFramesToTimeline,
   timelineFramesToSource,
   type Clip,
-  type FadeCurve,
+  type EaseCurve,
 } from './timeline';
 
 /** Diameter of the drawn fade handle, in px. Matches `TransformOverlay.tsx`'s
@@ -139,11 +139,11 @@ function fmt(n: number): string {
  * space (origin top-left, `width` × `height`).
  *
  * **The curve is drawn EXACTLY, not approximated or simplified to a straight
- * line.** A `FadeCurve` is `cubic-bezier(x1,y1,x2,y2)` with `P0=(0,0)` and
+ * line.** A `EaseCurve` is `cubic-bezier(x1,y1,x2,y2)` with `P0=(0,0)` and
  * `P3=(1,1)` implicit; an SVG `C` segment is the same parametric cubic with
  * the same four control points, so mapping the curve's own unit square onto
  * (ramp width × clip height) traces the identical geometry. The Newton/
- * bisection solve `fadeCurveEval` needs exists only to answer "gain at a given
+ * bisection solve `easeCurveEval` needs exists only to answer "gain at a given
  * *x*", which drawing never asks.
  *
  * `x` in the curve's own space is progress through the fade WINDOW and `y` is
@@ -158,7 +158,7 @@ export function fadeRampPaths(
   width: number,
   height: number,
   rampPx: number,
-  curve: FadeCurve,
+  curve: EaseCurve,
 ): FadeRampPaths | null {
   if (!(rampPx > 0) || !(height > 0)) return null;
   const top = Math.min(FADE_TOP_INSET_PX, height / 2);

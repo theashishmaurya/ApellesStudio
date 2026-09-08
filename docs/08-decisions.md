@@ -20940,3 +20940,243 @@ session to distrust the doc set, and "aspiration written as fact" in a PRD is ex
 `CLAUDE.md`'s cardinal rule exists to prevent. Recording what was wrong — including that
 the previous pass's own note was wrong — is what stops the next reconciliation from
 starting over from the same false premise.
+
+## D-232 — Timeline curve editor: per-segment bezier easing for any keyframed property, as a resizable lane under the timeline
+
+**decided (2026-09-08)** · roadmap item 27 ("Core NLE parity"): *"Bezier ease curves under a clip, editable directly."*
+
+**Context.** Every keyframe segment in the Edit tab interpolated **linearly**:
+constant rate between two keys, dead stop at the next one. D-208 built real
+per-property keyframing (a stopwatch diamond, `<`/`>` nav, per-property reset)
+and D-209 made the on-canvas box resolve through the same interpolator, so
+authoring keyframes was solved — but *how* a property moves between them was
+not authorable at all, by a human or an agent. That is the single biggest
+reason a machine-authored move reads as machine-authored. D-147 had already
+built the whole bezier apparatus for **fades** (`FadeCurve`, a WebKit-grade
+Newton/bisection solver, four presets, an MCP curve parser, and D-207's
+draggable on-clip handles that draw the real curve shape) — for one consumer.
+
+**Reference, per CLAUDE.md's "research the real pattern first."**
+`scratch/resolve-reference/curve.jpg` — DaVinci Resolve's own inline clip curve
+editor, opened and read before anything was designed. It settles the layout
+question completely: a lane **under the clip**, not a modal or a separate
+window; a header strip carrying the property's name, four ease-preset buttons
+and a `<`/`◆`/`>` keyframe navigator; a plot with the value range labelled at
+both ends (`100.00` / `0.00`); keyframes as dots on a real curve; flat holds
+before the first key and after the last. Every one of those is reproduced.
+
+### Decision 1 — extend the EXISTING curve concept, do not invent a second one
+
+Considered: (a) a new keyframe-specific curve type; (b) reuse `FadeCurve`
+as-is; (c) reuse it and rename it to what it now is. Chose **(c)**.
+
+(a) was never defensible: a keyframe ease and a fade ramp are the *same*
+`cubic-bezier(x1,y1,x2,y2)` object — the CSS/After Effects model — and a second
+type would mean a second solver, a second preset list, a second MCP parser and
+two mirrors to keep in step with Rust instead of one. That is exactly the
+duplication CLAUDE.md's "if two places need it, extract it" forbids, and the
+drift it invites is this repo's own B-090/B-094/B-095/B-098 bug family.
+
+(b) would have left `chroma::keyframes` importing a type called **`FadeCurve`**
+to ease a `scale` animation — a misnomer that teaches every later reader a
+coupling that does not exist. So the type is renamed **`EaseCurve`** and moved
+out of `chroma_types::fade` into its own `chroma_types::ease`: a fade is an
+*envelope* (two windows over a clip's length, multiplied), the curve is the
+*shape* its ramps are drawn with, and neither is a kind of the other.
+`fade.rs` keeps `fade_gain` and now imports the curve. **No alias was left
+behind** — one name per concept, mechanically renamed across both languages,
+`tsc` and `cargo` proving completeness. On the TS side the same move split the
+solver out of `timelineExportAudio.ts` (where it lived when a fade was its only
+caller) into `easeCurve.ts`, because the *authoring* layer needs it and
+`clipKeyframes.ts` importing an interpolator out of an ffmpeg export module
+would have been exactly the wrong dependency direction. Same extraction, same
+reason, as D-197's `ffmpegExpr.ts`.
+
+### Decision 2 — one curve per SEGMENT, owned by the key it starts at
+
+Not per-key in/out handle pairs, which is how After Effects *presents* the same
+thing. A cubic segment is defined by exactly two free control points — the
+outgoing handle of the earlier key and the incoming handle of the later one —
+which are precisely one `EaseCurve`'s `(x1,y1)`/`(x2,y2)`, so the two models
+have **identical expressive power**. The handle-pair form spreads one segment's
+shape across two entries, which means deleting a key has to repair its
+neighbour and a key's two halves can disagree about a segment that no longer
+exists. One curve per segment has neither problem: delete the key and its
+segment's shape goes with it. The editor still *draws* the familiar pair of
+handles, because that is what the reference shows and what a user expects.
+
+Stored as an optional `ease` map on the keyframe entry —
+`{frame, params, ease?: {"<param>": {x1,y1,x2,y2}}}` — **beside** `params`, not
+inside it. `params` is a flat `name -> number` map that three separate readers
+walk with `Object.keys` to discover which properties are animated
+(`paramTrackIndex`, `keyframeExprAt`, `interpolate_param`); a curve smuggled in
+under a mangled key would appear in all three as a phantom animated property.
+
+**Absent means linear, and that is the backward-compatibility guarantee in
+code.** Every keyframe written before this change has no `ease`, so every
+existing project resolves bit-identically and — asserted on the exact argv
+string — compiles to a **byte-identical** ffmpeg expression. A stored `linear`
+curve normalises to the same "no curve" case on both sides of the wire
+(`isIdentityEase`, which tests the geometric condition "both control points on
+the diagonal" rather than comparing against one literal preset — `(1/3,2/3)`
+and CSS's `(0,0,1,1)` are the same straight line).
+
+### Decision 3 — three interpolators, one meaning; the export samples, and the error is measured
+
+The curve had to reach all three consumers or the feature would have been a
+preview that lies (B-088's rule):
+
+1. **Live preview** — `chroma::keyframes::interpolate_param` (Rust) warps `t`
+   through `EaseCurve::eval` immediately before the existing `lerp_value`. That
+   is the whole change: `t = curve.eval(t)`. Because `eval` pins `y(0)=0` and
+   `y(1)=1` regardless of the handles, **easing can never move a keyframe** —
+   it warps the rate and only the rate — so it composes untouched with every
+   existing rule, `rotation`'s shortest arc and the hold-outside-range clamp
+   included.
+2. **Authoring / on-canvas** — `clipKeyframes.ts`'s `paramValueAt`, the same
+   one-line change against the same mirrored solver. Its per-array `WeakMap`
+   index (D-209) normalises each key's curve **once at index-build time**, so
+   the preview's hottest surface pays no identity check per read.
+3. **Export** — `keyframeExprAt` compiles an eased segment to 20 linear
+   sub-segments whose endpoints are the *exact* `easeCurveEval` values, fed
+   through D-197's shared `piecewiseLinearExpr`. ffmpeg's expression language
+   has no bezier-root solver; this is the identical sampling `fadeGainExpr`
+   already performs on the identical curve type, for the identical reason.
+
+`interpolate` — the mask/relight resolver — **deliberately ignores `ease`**,
+pinned by its own test. Its union-and-hold contract is documented and tested
+(D-034), and quietly changing how every existing mask animates in order to ship
+a clip-transform curve editor is exactly the blast radius the two-resolver
+split (D-208) exists to prevent.
+
+The preview/export asymmetry is **bounded and measured**, not asserted to be
+"close": worst-case disagreement across the four presets is **1.384e-3** of the
+value range (ease-in-out; ease-in/out 1.089e-3; linear is exact at 2.2e-16
+because linear segments are not sampled at all). That is about a third of the
+`1/255 = 3.9e-3` an 8-bit output can even represent, and both sides agree on
+every *authored* keyframe exactly. The test asserts `< 0.002` — just above the
+measurement, not at a comfortable round number — so lowering the sample count
+has to face it.
+
+### Decision 4 — a docked, resizable lane, not an in-row expansion
+
+The reference expands the clip's own row in place. This does not, and the trade
+is deliberate:
+
+1. **CLAUDE.md's standing rule**: a pane holding content the user will want
+   more or less of must actually be resizable. A curve is precisely that — lane
+   height *is* the precision with which you can author an ease. An in-row
+   expansion is a fixed height by construction.
+2. `TimelinePane`'s uniform `ROW_HEIGHT` is load-bearing for every drop-target,
+   insert-preview and gap hit-test in that file (~20 sites of `index *
+   ROW_HEIGHT`). Making rows variable to host a *transient editor* would couple
+   an editor's UI state into the track-layout model. The track list's uniform
+   height is not a defect to fix; it is a correct model of a track list.
+3. An in-row expansion displaces every track below it while you edit.
+
+The lane is nested **inside the edit-area panel** of the existing
+header/edit-area `ResizablePanelGroup`, which makes it inherit that panel's
+exact horizontal extent — so a keyframe dot sits under the frame of the clip
+above it at every zoom and scroll position, with no second alignment
+calculation to drift, and the track-header column stays full height. The clip's
+own on-timeline span is drawn lit with everything outside it dimmed, so the
+lane visibly belongs to its clip. `pxPerSec`/`scrollLeft`/`startLeftPx` are
+passed in rather than re-derived: **this component does not own the x axis.**
+
+### Decision 5 — both entry points, both interfaces, one target
+
+Per CLAUDE.md's "every feature is built for a human AND an AI":
+
+- **Timeline**: a curve button at the clip's top-right (where Resolve puts its
+  own), shown only on a clip that actually animates something — a button that
+  opens an empty lane teaches the user it does nothing. Same bounded-`z-20`,
+  `stopPropagation`, min-clip-width hit-target discipline D-207's fade handles
+  and D-094's move grip already follow, for B-013's reason.
+- **Inspector**: a curve button on each *animated* `PropertyRow`, beside the
+  diamond that made it animated. Omitted on a static property for the same
+  reason D-224 omits the diamond on an un-keyframeable one.
+- **MCP**: `editor_set_keyframe_ease` (the real capability) and
+  `editor_set_curve_editor` (open the lane, so an agent can *show* a human the
+  curve it just set — UI state, like D-218's `editor_set_preview_zoom`).
+
+All three write through **one** store target (`CurveEditorTarget`, addressed by
+clip *id*, not index) and **one** op. No new op was added: `set_clip_keyframes`
+is already the single write for every keyframe change this app makes, and it
+was widened to carry `ease`. A separate `set_keyframe_ease` op would have been
+a second writer to the same field with its own locked-track and normalisation
+rules to keep in step, for no expressiveness the array does not already have.
+The curve editor calls the same `setClipKeyframeEase` the MCP tool does.
+
+**Drag/commit is the established convention** (D-207/D-136): overlay-only draft
+during the drag, exactly one `applyOp` on pointer-up, nothing committed by a
+drag that ends where it began, Escape cancels — because `applyOp` snapshots the
+whole timeline per call, so a per-pointermove commit is one undo entry per
+pixel.
+
+**A design flaw the jsdom tier caught, and that was fixed properly.** The first
+draft hand-rolled a radial `hitTestHandle(segments, rects, x, y)` dispatched
+from a `pointerdown` on the whole plot. That reimplements — less correctly —
+what the browser already does for an SVG element: it ignored paint order and
+`pointer-events`, and it could only work where a layout engine had already run,
+so the DOM test could not drive the gesture at all. The fix was to delete it
+and render a transparent `<circle r={HANDLE_HIT_RADIUS_PX}>` per handle, which
+is the canonical way to get a grab target larger than its glyph. Recorded
+because the temptation was to loosen the test instead.
+
+**Verified.** Rust: 33 `chroma::keyframes` tests (12 new, including the
+bit-identical-when-un-eased guarantee, easing-never-moves-a-key across
+overshooting and degenerate curves, per-param independence, composition with
+`rotation`'s arc, malformed-`ease` degradation — reachable, since MCP stores
+the array verbatim — and that `interpolate` really still ignores `ease`), plus
+a compositor-level `resolve_clip_transform_applies_a_segments_ease_curve`
+checked against `EaseCurve::eval` itself. TS: `easeCurve.test.ts` (12, with
+fixture values bisected independently of *both* implementations, so a drifted
+mirror fails rather than agreeing with itself), `curveEditor.test.ts` (20),
+`clipKeyframesEase.test.ts` (27), `timelineExport.ease.test.ts` (12, over a
+test-local interpreter for the generated expression language — a string
+comparison proves the compiler emits what it emits, this proves the expression
+*means* the right thing), and `TimelinePane.curve.dom.test.tsx` (10, real
+`PointerEvent`s through the real `TimelinePane` and the real store, pinning the
+one-op-on-pointer-up rule and that a locked track offers no drag).
+
+And the one that actually closes the loop: **`timelineExportEase.ffmpeg.test.ts`
+runs real ffmpeg and measures real decoded pixels** — a white clip's keyframed
+opacity over the canvas, normalised against its own fully-opaque frame — against
+`easeCurveEval`, the exact mirror of what Rust evaluates for the preview. It was
+verified to genuinely catch the regression it exists for: with `ease` dropped in
+`rebaseKeyframesToClipInput` (the one place it *had* to be threaded, and the
+easiest to miss), 2 of its 5 cases fail; restored, all 5 pass.
+
+`cargo fmt`/`clippy` clean on all new code; `tsc --noEmit` clean; editor suite
+1034 passing (was 946); `cargo test --workspace --no-fail-fast` green except the
+documented pre-existing B-097.
+
+Getting to that last one turned up **B-107**, fixed here: the first full-workspace
+run failed *three* tests, not the expected one. The two extra were
+`chroma::edit`'s adjustment-preview tests panicking with "no project open" — they
+passed in isolation and the whole binary passed under `--test-threads=1`, which
+is the signature of a parallel race on a process-global rather than a real defect.
+Cause: `chroma::audio`'s `session_test_guard` locked a `static Mutex` **private to
+that function** while every other project-state test in the binary locks the
+shared `PROJECT_STATE_LOCK`, and eleven of the audio tests call
+`state::set_project(None)` on their way out. Two mutexes over one global is not
+mutual exclusion. Fixed both halves, as B-105 did for the same shape one file
+over: the guard now returns the shared lock (all eleven call sites unchanged), and
+the dependent helper asserts its own precondition instead of inheriting it.
+Verified by four parallel runs, all 221/1 with only B-097 failing.
+
+**No live GUI run** — same reason D-208/D-211 give: the app's
+`tauri-plugin-single-instance` lock plus the main checkout's running dev server
+make a second isolated instance a config fork, not a launch. Said plainly
+rather than implied. The jsdom tier cannot prove that a press on a handle beats
+what is painted under it on a real screen; that stays for the interactive tier.
+
+**Found, not fixed here: B-106** — the export interpolates a keyframed
+`rotation` linearly while the preview takes the shortest arc, so a rotation
+crossing the 0°/360° seam spins the wrong way in the rendered file. Orthogonal
+to easing (which warps the rate along whichever arc each side picks, so it
+neither causes nor worsens it) and a real change to the export compiler's
+per-param genericity, wanting its own ffmpeg test. Filed rather than folded in.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

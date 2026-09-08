@@ -574,6 +574,23 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "zoom at their own moment with zero interaction — there is no "
             "track-level or whole-timeline keyframe concept."
         ),
+        "keyframe_segments_are_linear_until_you_ease_them": (
+            "D-232: every keyframe segment interpolates LINEARLY by default — "
+            "constant rate, and a dead stop at the next key. That is usually "
+            "the single biggest reason a generated move looks generated. "
+            "editor_set_keyframe_ease sets a real cubic-bezier ease on ONE "
+            "property's segment (the one STARTING at the frame you name), "
+            "taking the same preset names and control points as "
+            "editor_set_clip_fade's curves. Easing warps the RATE only: both "
+            "endpoints still hit their authored values exactly, so it can "
+            "never move a keyframe. `y` outside 0..1 is legal and means "
+            "overshoot. The live preview solves the curve exactly per frame; "
+            "editor_export approximates each eased segment as 20 linear steps "
+            "(ffmpeg has no bezier solver), which is below one output "
+            "quantisation step — the two agree on every authored keyframe "
+            "exactly. editor_set_curve_editor opens the same curve in the GUI "
+            "so a human can see and redrag it."
+        ),
         "a_keyframe_overrides_the_static_field_per_property": (
             "PER PROPERTY, a keyframe wins over the value "
             "editor_set_clip_transform writes, at EVERY frame — the static "
@@ -2290,6 +2307,92 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
     import json
 
     return json.dumps(_op("editor_set_clip_keyframes", track=track, clip=clip, keyframes=keyframes), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_keyframe_ease(
+    track: int,
+    clip: int,
+    param: str,
+    frame: int,
+    curve: str | list[float] | None = None,
+) -> str:
+    """Shape HOW one animated property moves between two of its keyframes —
+    a real cubic-bezier ease, not just a named preset.
+
+    By default every keyframe segment is LINEAR: the property changes at a
+    constant rate and stops dead at the next key, which is what makes a
+    machine-authored move read as machine-authored. This is the fix. It sets
+    the ease on the segment that STARTS at `frame` and runs to `param`'s next
+    keyframe.
+
+    `param` is one of opacity / position_x / position_y / scale / rotation /
+    crop_left / crop_top / crop_right / crop_bottom / volume / pan — the same
+    names `editor_set_clip_keyframes` writes.
+
+    `frame` is a clip SOURCE-frame-absolute number and must be an EXISTING
+    keyframe of that property; if it is not, this reports the frames that do
+    exist rather than silently doing nothing. Easing is per property, so the
+    same frame can carry a different curve for `scale` than for `opacity`.
+
+    `curve` is either a preset NAME -- "linear" | "ease-in" | "ease-out" |
+    "ease-in-out" (also "ease", CSS's own) -- or four cubic-bezier control
+    points [x1, y1, x2, y2]: the same model, and the same parser, as
+    `editor_set_clip_fade`'s curves. `x` is progress from this keyframe to the
+    next, `y` is how far through the value change you are at that progress.
+    P0=(0,0)/P3=(1,1) are implicit, so an ease can never move a keyframe — both
+    ends still hit their authored values exactly.
+
+    `y` may go outside 0..1 on purpose: that is OVERSHOOT (anticipation, a
+    bounce past the target and back). `x` is clamped to 0..1, because a control
+    point outside the segment horizontally makes the curve non-invertible and
+    meaningless. `curve=None` clears the ease back to linear.
+
+    A typical natural move is "ease-in-out" on the middle segments and
+    "ease-out" on the last one. Set it and then look: `editor_set_curve_editor`
+    opens this exact curve in the GUI so a human can see and redrag it.
+
+    The live preview and `editor_export` interpret the curve identically (the
+    export approximates it as 20 linear steps per segment, well under one
+    output quantisation step, because ffmpeg has no bezier solver).
+
+    Undoable: same store action and same undo stack as the GUI's own curve
+    editor, so a human can Cmd+Z it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip, "param": param, "frame": frame}
+    if curve is not None:
+        args["curve"] = curve
+    return json.dumps(_op("editor_set_keyframe_ease", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_curve_editor(
+    track: int | None = None,
+    clip: int | None = None,
+    param: str | None = None,
+) -> str:
+    """Open the GUI's timeline curve editor on one clip property's animation
+    curve, or close it (`param=None`).
+
+    This changes what is ON SCREEN, not the project — nothing here is saved or
+    undoable. Use it to SHOW a human the curve you just set with
+    `editor_set_keyframe_ease`: the lane opens under the timeline, time-aligned
+    with the clip, with that property's keyframes on a real bezier curve whose
+    control points they can drag.
+
+    `param` must be a property the clip actually animates; if it is not, this
+    reports which properties are animated rather than opening an empty lane."""
+    import json
+
+    args: dict = {}
+    if track is not None:
+        args["track"] = track
+    if clip is not None:
+        args["clip"] = clip
+    if param is not None:
+        args["param"] = param
+    return json.dumps(_op("editor_set_curve_editor", **args), indent=2, default=str)
 
 
 @mcp.tool()

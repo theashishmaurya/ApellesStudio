@@ -67,12 +67,21 @@
  * D-209 for the measurement.
  */
 
-import { type ClipKeyframeParam, sourceFramesToTimeline, timelineFramesToSource } from './timeline';
+import {
+  CLIP_KEYFRAME_DEFAULTS,
+  type ClipKeyframe,
+  type ClipKeyframeParam,
+  type EaseCurve,
+  sourceFramesToTimeline,
+  timelineFramesToSource,
+} from './timeline';
+import { easeCurveEval, isIdentityEase } from './easeCurve';
 
-export interface ClipKeyframe {
-  frame: number;
-  params: Record<string, unknown>;
-}
+// D-232 — `ClipKeyframe` moved to `timeline.ts` (beside `Clip`, whose field
+// holds an array of them) once a third module needed it. Re-exported here so
+// every existing importer of `./clipKeyframes` keeps working, and because this
+// is still the module that owns what you can DO to one.
+export type { ClipKeyframe };
 
 // --------------------------------------------------------------------------- //
 // The per-param index — D-209
@@ -81,8 +90,11 @@ export interface ClipKeyframe {
 /** One param's keys, frame-ascending: the shape every per-param read in this
  *  module wants, and the one place the filter/map/sort is paid for. */
 interface ParamTrack {
-  /** The param's keys, frame-ascending. */
-  keys: ReadonlyArray<{ frame: number; value: number }>;
+  /** The param's keys, frame-ascending. `ease` (D-232) is the curve shaping
+   *  the segment from THIS key to the next one — already normalised, so a
+   *  `null` here really means "linear", and no reader has to re-check whether
+   *  a stored curve happens to be the identity. */
+  keys: ReadonlyArray<{ frame: number; value: number; ease: EaseCurve | null }>;
   /** Every stored value coerced to a finite number. When false, every read
    *  falls back to the caller's static value rather than propagating `NaN` —
    *  the same all-or-nothing rule `paramValueAt` applied before D-209, hoisted
@@ -110,7 +122,10 @@ function paramTrackIndex(existing: ClipKeyframe[]): Map<string, ParamTrack> {
   const cached = paramTrackCache.get(existing);
   if (cached) return cached;
 
-  const building = new Map<string, { keys: Array<{ frame: number; value: number }>; finite: boolean }>();
+  const building = new Map<
+    string,
+    { keys: Array<{ frame: number; value: number; ease: EaseCurve | null }>; finite: boolean }
+  >();
   for (const k of existing) {
     if (!k || typeof k.params !== 'object' || k.params === null) continue;
     // `Object.keys` rather than a `hasOwnProperty` loop: same answer for the
@@ -124,7 +139,13 @@ function paramTrackIndex(existing: ClipKeyframe[]): Map<string, ParamTrack> {
       }
       const value = Number(k.params[name]);
       if (!Number.isFinite(value)) track.finite = false;
-      track.keys.push({ frame: k.frame, value });
+      // D-232 — normalised at index-build time, so `paramValueAt` never pays
+      // the identity check (or a malformed-curve check) per read on the
+      // preview's hottest surface. `isIdentityEase` also collapses a stored
+      // `linear` to `null`, which is what keeps an explicitly-linear segment
+      // exactly as cheap, and exactly as exact, as an un-eased one.
+      const stored = k.ease?.[name];
+      track.keys.push({ frame: k.frame, value, ease: isIdentityEase(stored) ? null : (stored ?? null) });
     }
   }
   const index = new Map<string, ParamTrack>();
@@ -156,14 +177,24 @@ function paramTrack(existing: ClipKeyframe[] | undefined, param: string): ParamT
  *  which this replaces outright — nothing wants the destructive form). One
  *  property's diamond must never be able to delete another property's key at
  *  the same frame, and "key every property here" is then just this same
- *  function called with all nine names at once. */
+ *  function called with all nine names at once.
+ *
+ *  D-232 — an existing key's `ease` map is carried through untouched, for the
+ *  same reason its unnamed `params` are: adding a `scale` key at a frame that
+ *  already eases `opacity` must not silently straighten the opacity curve.
+ *  A newly-created entry has no `ease` at all (linear), which is the right
+ *  default — the segment it just split had a shape, but the two halves of a
+ *  split segment are not that shape, and inventing one would be a worse lie
+ *  than the honest straight line every NLE gives a fresh key. */
 export function mergeClipKeyframeParams(
   existing: ClipKeyframe[] | undefined,
   frame: number,
   params: Record<string, number>,
 ): ClipKeyframe[] {
   const f = Math.max(0, Math.round(frame));
-  const kfs = (existing ?? []).map((k) => (k.frame === f ? { frame: f, params: { ...k.params, ...params } } : k));
+  const kfs = (existing ?? []).map((k) =>
+    k.frame === f ? { ...k, frame: f, params: { ...k.params, ...params } } : k,
+  );
   if (!kfs.some((k) => k.frame === f)) kfs.push({ frame: f, params: { ...params } });
   kfs.sort((a, b) => a.frame - b.frame);
   return kfs;
@@ -176,6 +207,30 @@ export function mergeClipKeyframeParams(
  *  actually animate. */
 export function hasParamKeyframes(existing: ClipKeyframe[] | undefined, param: ClipKeyframeParam): boolean {
   return paramTrack(existing, param).keys.length > 0;
+}
+
+/**
+ * Every keyframeable property this clip actually animates, in
+ * [`CLIP_KEYFRAME_DEFAULTS`]' own declaration order (D-232).
+ *
+ * Declaration order rather than "order first encountered in the array": the
+ * curve editor's clip button opens the FIRST of these, and which property that
+ * is must not depend on which one the user happened to key first — a clip that
+ * animates opacity and scale should offer the same default lane whichever
+ * order they were authored in.
+ *
+ * Only names in `CLIP_KEYFRAME_DEFAULTS` are reported. A keyframe array can
+ * legitimately carry others (`box_width`/`box_height` are keyframeable in the
+ * Rust resolver without being independently keyable — D-193), and MCP can
+ * write anything at all; neither has an Inspector row or a curve lane, so
+ * neither belongs in a list whose whole purpose is "what can the user open".
+ */
+export function animatedParams(existing: ClipKeyframe[] | undefined): ClipKeyframeParam[] {
+  if (!existing || existing.length === 0) return [];
+  const index = paramTrackIndex(existing);
+  return (Object.keys(CLIP_KEYFRAME_DEFAULTS) as ClipKeyframeParam[]).filter(
+    (p) => (index.get(p)?.keys.length ?? 0) > 0,
+  );
 }
 
 /** Every frame at which `param` itself is keyed, ascending. */
@@ -212,20 +267,121 @@ export function adjacentParamKeyframeFrame(
  *  animation off deletes that property's keys and leaves every OTHER
  *  property's keys exactly where they were. The caller is responsible for
  *  writing the property's static field to the value it had at the playhead
- *  first, so the picture does not jump — see `EditorInspectorPanel`. */
+ *  first, so the picture does not jump — see `EditorInspectorPanel`.
+ *
+ *  D-232 — the param's `ease` entries go with its keys. An ease map naming a
+ *  param that no key animates any more is unreachable data that would
+ *  resurrect the moment the property was re-animated, which is exactly the
+ *  "stopwatch off then on gives you your old curves back, surprisingly" bug
+ *  every other keyframe writer here is careful not to have. Other params'
+ *  ease entries at the same key are untouched. */
 export function removeClipKeyframeParam(
   existing: ClipKeyframe[] | undefined,
   param: ClipKeyframeParam,
 ): ClipKeyframe[] | undefined {
   const kfs = (existing ?? [])
     .map((k) => {
-      if (!Object.prototype.hasOwnProperty.call(k.params, param)) return k;
+      const hasParam = Object.prototype.hasOwnProperty.call(k.params, param);
+      const hasEase = !!k.ease && Object.prototype.hasOwnProperty.call(k.ease, param);
+      if (!hasParam && !hasEase) return k;
       const params = { ...k.params };
       delete params[param];
-      return { frame: k.frame, params };
+      const next: ClipKeyframe = { frame: k.frame, params };
+      if (k.ease) {
+        const ease = { ...k.ease };
+        delete ease[param];
+        if (Object.keys(ease).length > 0) next.ease = ease;
+      }
+      return next;
     })
     .filter((k) => Object.keys(k.params).length > 0);
   return kfs.length === 0 ? undefined : kfs;
+}
+
+/**
+ * Set (or clear, with `curve === null`) the [`EaseCurve`] shaping `param`'s
+ * segment that STARTS at the key on `frame` — D-232's one write.
+ *
+ * Returns a NEW array, like every writer here. A `frame` where `param` is not
+ * actually keyed returns the input array **unchanged and reference-equal**:
+ * an ease with no segment to shape is unreachable data (see
+ * [`removeClipKeyframeParam`]), and returning the same reference means a
+ * no-op write never pushes an undo entry — the same "a drag that ends where
+ * it began commits nothing" discipline D-207's fade handles established.
+ *
+ * Clearing writes no `ease: {}` husk: the key loses the map entirely once its
+ * last curve goes, so a fully un-eased timeline serialises exactly as it did
+ * before D-232 and a round trip through the backend cannot reintroduce a
+ * difference.
+ *
+ * The curve is stored verbatim, unclamped — `easeCurveEval` clamps `x1`/`x2`
+ * at the point of use and `y` overshoot is deliberately legal (see its doc).
+ * What the author dragged is what is stored.
+ */
+export function setClipKeyframeEase(
+  existing: ClipKeyframe[] | undefined,
+  frame: number,
+  param: ClipKeyframeParam,
+  curve: EaseCurve | null,
+): ClipKeyframe[] | undefined {
+  if (!existing || existing.length === 0) return existing;
+  const f = Math.round(frame);
+  const target = existing.find((k) => k.frame === f);
+  if (!target || !Object.prototype.hasOwnProperty.call(target.params, param)) return existing;
+
+  const hadEase = !!target.ease && Object.prototype.hasOwnProperty.call(target.ease, param);
+  if (curve === null && !hadEase) return existing;
+
+  return existing.map((k) => {
+    if (k.frame !== f) return k;
+    const ease: Record<string, EaseCurve> = { ...k.ease };
+    if (curve === null) delete ease[param];
+    else ease[param] = curve;
+    const next: ClipKeyframe = { frame: k.frame, params: k.params };
+    if (Object.keys(ease).length > 0) next.ease = ease;
+    return next;
+  });
+}
+
+/** One drawable/editable stretch of a property's animation: the two keys it
+ *  runs between and the curve shaping it (D-232). */
+export interface ParamSegment {
+  /** The key this segment starts at — the one that OWNS its `ease`, and the
+   *  `frame` [`setClipKeyframeEase`] is called with. Source frames. */
+  fromFrame: number;
+  /** The key it ends at. Always `> fromFrame` (zero-length segments are
+   *  dropped: they have no shape and nothing to drag). */
+  toFrame: number;
+  fromValue: number;
+  toValue: number;
+  /** `null` for a linear segment — already normalised through
+   *  `isIdentityEase`, so a stored `linear` and an absent curve are the same
+   *  answer here, exactly as they are to both renderers. */
+  ease: EaseCurve | null;
+}
+
+/**
+ * Every segment of `param`'s own animation, in frame order — what the curve
+ * editor draws, and what its keyboard/preset controls address.
+ *
+ * Empty for a static property, and empty for one with a single key (one key
+ * holds flat; there is no segment, which is why the curve editor shows that
+ * property as a flat line with nothing to grab rather than an empty panel).
+ *
+ * Built from the same cached [`paramTrackIndex`] every other read here uses,
+ * so opening the editor on a 50-key clip costs a walk, not a re-sort.
+ */
+export function paramSegments(existing: ClipKeyframe[] | undefined, param: ClipKeyframeParam): ParamSegment[] {
+  const track = paramTrack(existing, param);
+  if (!track.finite) return [];
+  const out: ParamSegment[] = [];
+  for (let i = 0; i + 1 < track.keys.length; i++) {
+    const a = track.keys[i];
+    const b = track.keys[i + 1];
+    if (b.frame <= a.frame) continue;
+    out.push({ fromFrame: a.frame, toFrame: b.frame, fromValue: a.value, toValue: b.value, ease: a.ease });
+  }
+  return out;
 }
 
 /** `param`'s real value at `frame` — what the preview is actually showing —
@@ -266,7 +422,12 @@ function namedParamValueAt(
 
   const lo = keyed[hi - 1];
   const span = keyed[hi].frame - lo.frame;
-  const t = span > 0 ? Math.min(Math.max((f - lo.frame) / span, 0), 1) : 0;
+  const linearT = span > 0 ? Math.min(Math.max((f - lo.frame) / span, 0), 1) : 0;
+  // D-232 — the segment's own ease, owned by the key it starts at, warping
+  // `t` and nothing else. `easeCurveEval` pins both endpoints, so this can
+  // never move a keyframe; `null` (the normalised "linear") is the untouched
+  // pre-D-232 arithmetic, bit-for-bit.
+  const t = lo.ease ? easeCurveEval(lo.ease, linearT) : linearT;
   if (param === 'rotation') {
     let d = (keyed[hi].value - lo.value) % 360;
     if (d > 180) d -= 360;

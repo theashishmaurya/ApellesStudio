@@ -45,14 +45,36 @@
 //! for the Edit tab's per-property clip-transform keyframes (D-208), where
 //! different params really are keyed at different frames and the hold rule
 //! would turn a linear ramp into a step (B-094). See that function's own doc.
+//!
+//! **Per-segment easing (D-232), on [`interpolate_param`] only.** A keyframe
+//! entry may carry an optional `ease` map — `{"<param>": {x1,y1,x2,y2}}` —
+//! naming, per param, the [`EaseCurve`] that shapes the segment running from
+//! **this** key to that param's **next** key. An absent entry means linear,
+//! which is what every keyframe written before D-232 has, so nothing about the
+//! stored shape of an existing project changed and the resolved value for one
+//! is bit-identical to before. The curve warps `t` and only `t`: the two
+//! endpoint values are still the authored ones, and `x = 1` still lands
+//! exactly on the next key. See [`interpolate_param`] for why the curve is
+//! stored on the segment's start key rather than as an in/out handle pair per
+//! key, and why [`interpolate`] deliberately ignores it.
 
+use chroma_types::EaseCurve;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
-/// One keyframe: a source-frame index and the geometry params that hold at it.
+/// One keyframe: a source-frame index, the params that hold at it, and (D-232)
+/// the per-param easing of the segment that *starts* here.
 #[derive(Debug, Clone)]
 pub struct Keyframe {
     pub frame: u64,
     pub params: Map<String, Value>,
+    /// Param name → the curve shaping this key's outgoing segment for that
+    /// param. Empty for every key that does not ease (the overwhelmingly
+    /// common case, and every pre-D-232 key). A `BTreeMap` rather than
+    /// `serde_json::Map` because the values are a real typed struct here, not
+    /// arbitrary JSON — the parse either produces an [`EaseCurve`] or drops
+    /// the entry, so no consumer ever has to re-validate one.
+    pub ease: BTreeMap<String, EaseCurve>,
 }
 
 /// Parse `parameters.chromaKeyframes` into a frame-sorted `Vec<Keyframe>`.
@@ -62,6 +84,13 @@ pub struct Keyframe {
 /// or an object `params` are skipped. Ties on `frame` keep input order (a later
 /// duplicate is treated as "after" the earlier one, so an exact-frame lookup
 /// lands on the first).
+///
+/// D-232 — an entry's optional `ease` object is parsed here too, via
+/// [`parse_ease_map`]. It is *optional at every level*: no `ease` key, a
+/// non-object one, or a malformed curve inside it all degrade to "this param
+/// is not eased" (i.e. linear) rather than failing the entry, which is the
+/// same posture the rest of this parser already takes toward a malformed
+/// `params` value.
 pub fn parse_keyframes(parameters: &Value) -> Option<Vec<Keyframe>> {
     let arr = parameters.get("chromaKeyframes")?.as_array()?;
     let mut out: Vec<Keyframe> = arr
@@ -75,6 +104,7 @@ pub fn parse_keyframes(parameters: &Value) -> Option<Vec<Keyframe>> {
             Some(Keyframe {
                 frame: frame.round() as u64,
                 params,
+                ease: parse_ease_map(entry.get("ease")),
             })
         })
         .collect();
@@ -83,6 +113,34 @@ pub fn parse_keyframes(parameters: &Value) -> Option<Vec<Keyframe>> {
     }
     out.sort_by_key(|k| k.frame);
     Some(out)
+}
+
+/// One keyframe entry's `ease` object → the typed per-param curve map (D-232).
+///
+/// Every level is best-effort: an absent/non-object `ease`, or an entry inside
+/// it whose four control points are not all finite numbers, contributes
+/// nothing and that param simply eases linearly. That matters because this
+/// data can be written by MCP (`editor_set_clip_keyframes` stores the array
+/// verbatim), so "malformed" is a reachable state and must degrade to the
+/// unset behaviour rather than change how an unrelated param resolves.
+///
+/// `x1`/`x2` are **not** clamped here — [`EaseCurve::eval`] clamps them at the
+/// point of use, deliberately (see its own doc), and clamping on the way in
+/// would make the stored value differ from what the author wrote.
+fn parse_ease_map(value: Option<&Value>) -> BTreeMap<String, EaseCurve> {
+    let mut out = BTreeMap::new();
+    let Some(Value::Object(obj)) = value else {
+        return out;
+    };
+    for (name, v) in obj {
+        let read = |k: &str| v.get(k).and_then(Value::as_f64).filter(|f| f.is_finite());
+        if let (Some(x1), Some(y1), Some(x2), Some(y2)) =
+            (read("x1"), read("y1"), read("x2"), read("y2"))
+        {
+            out.insert(name.clone(), EaseCurve { x1, y1, x2, y2 });
+        }
+    }
+    out
 }
 
 /// The interpolated geometry params for `frame`, given frame-sorted `keyframes`
@@ -174,6 +232,44 @@ pub fn interpolate(keyframes: &[Keyframe], frame: u64) -> Map<String, Value> {
 /// of the shared one, because the union-and-hold rule is the *documented,
 /// tested* contract for those callers (see the module header) and is not a
 /// bug there.
+///
+/// # Easing (D-232)
+///
+/// The segment between two of `name`'s own keys is shaped by the
+/// [`EaseCurve`] the **earlier** key names for `name` in its `ease` map, if
+/// any. The curve warps the normalised progress `t` and nothing else —
+/// `t = curve.eval(t)` right before [`lerp_value`] — so:
+///
+/// - both endpoints still resolve to exactly their authored values
+///   ([`EaseCurve::eval`] pins `y(0) = 0` and `y(1) = 1` regardless of the
+///   handles), i.e. easing can never move a keyframe;
+/// - it composes with every other rule here untouched, including
+///   `rotation`'s shortest arc (the arc is chosen from the two values, then
+///   traversed at the eased rate) and the hold-outside-the-range clamp;
+/// - a param with no `ease` entry runs the identical `x + (y - x) * t` it
+///   always did, so every pre-D-232 keyframe resolves bit-identically.
+///
+/// **Why the curve is stored on the segment's start key, not as an in/out
+/// handle pair on each key** (After Effects' own presentation). A cubic
+/// segment is defined by exactly two free control points: the outgoing handle
+/// of the earlier key and the incoming handle of the later one. Those are the
+/// same two points as this one [`EaseCurve`]'s `(x1,y1)`/`(x2,y2)`, so the two
+/// models have identical expressive power — but the handle-pair form spreads
+/// one segment's shape across two entries, which means deleting a key has to
+/// repair its neighbour, and a key's two halves can disagree about a segment
+/// that no longer exists. One curve per segment, owned by the key the segment
+/// starts at, has neither problem: delete the key and its segment's shape goes
+/// with it. The editor UI still *presents* the two control points as the
+/// familiar pair of draggable handles.
+///
+/// **[`interpolate`] deliberately ignores `ease` entirely.** Its callers are
+/// mask/relight geometry, whose keys are written a whole field-set at a time
+/// by one gesture and whose interpolation contract (union-and-hold, nearest-
+/// key snap for structural mismatches) is separately documented and tested
+/// (D-034). Easing there is a real feature someone may want one day; it is not
+/// this one, and quietly changing how every existing mask animates in order to
+/// ship a clip-transform curve editor is exactly the kind of blast radius this
+/// module's two-resolver split exists to avoid.
 pub fn interpolate_param(keyframes: &[Keyframe], frame: u64, name: &str) -> Option<Value> {
     let mut keyed = keyframes
         .iter()
@@ -198,6 +294,12 @@ pub fn interpolate_param(keyframes: &[Keyframe], frame: u64, name: &str) -> Opti
                 ((frame - lo.frame) as f64 / span).clamp(0.0, 1.0)
             } else {
                 0.0
+            };
+            // D-232 — the segment's own easing, taken from the key it starts
+            // at. `eval` pins both endpoints, so this cannot move a keyframe.
+            let t = match lo.ease.get(name) {
+                Some(curve) => curve.eval(t),
+                None => t,
             };
             return Some(lerp_value(a, b, t, name));
         }
@@ -582,5 +684,224 @@ mod tests {
             ],
         });
         assert!(interpolated_parameters(&p).is_none());
+    }
+
+    // --- D-232: per-segment easing -------------------------------------- //
+
+    /// `ease-in`, as four control points, in the JSON shape a keyframe stores.
+    fn ease_in_json() -> Value {
+        json!({ "x1": 0.42, "y1": 0.0, "x2": 1.0, "y2": 1.0 })
+    }
+
+    /// A two-key `opacity` ramp 0 -> 1 over frames 0..100, optionally eased.
+    fn opacity_ramp(ease: Option<Value>) -> Vec<Keyframe> {
+        match ease {
+            Some(e) => kfs(json!([
+                { "frame": 0,   "params": { "opacity": 0.0 }, "ease": { "opacity": e } },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+            None => kfs(json!([
+                { "frame": 0,   "params": { "opacity": 0.0 } },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ])),
+        }
+    }
+
+    /// **The backward-compatibility case.** Every keyframe written before
+    /// D-232 has no `ease` at all, and must resolve bit-identically to before.
+    #[test]
+    fn an_unaeased_segment_is_exactly_the_old_linear_ramp() {
+        let k = opacity_ramp(None);
+        for f in (0..=100).step_by(5) {
+            let expected = round6(f as f64 / 100.0);
+            assert_eq!(param(&k, f, "opacity"), Some(expected), "frame {f}");
+        }
+    }
+
+    /// Easing warps the RATE and only the rate: both authored keyframes still
+    /// resolve to exactly their authored values. This is the property that
+    /// makes a curve safe to apply to a segment at all.
+    #[test]
+    fn easing_never_moves_a_keyframe() {
+        for e in [
+            ease_in_json(),
+            json!({ "x1": 0.0, "y1": 1.0, "x2": 1.0, "y2": 0.0 }),
+            // deliberate overshoot, which is legal in this model
+            json!({ "x1": 0.3, "y1": 2.5, "x2": 0.7, "y2": -1.5 }),
+        ] {
+            let k = opacity_ramp(Some(e.clone()));
+            assert_eq!(param(&k, 0, "opacity"), Some(0.0), "{e} at the first key");
+            assert_eq!(param(&k, 100, "opacity"), Some(1.0), "{e} at the last key");
+        }
+    }
+
+    /// The curve is really applied, and it is the RIGHT curve — checked
+    /// against `EaseCurve::eval` itself (the same function the compositor
+    /// calls), not against a hand-copied number.
+    #[test]
+    fn an_eased_segment_follows_its_own_curve() {
+        let k = opacity_ramp(Some(ease_in_json()));
+        for f in [10_u64, 25, 50, 75, 90] {
+            let expected = round6(EaseCurve::EASE_IN.eval(f as f64 / 100.0));
+            let got = param(&k, f, "opacity").expect("keyed");
+            assert!(
+                (got - expected).abs() < 1e-6,
+                "frame {f}: got {got}, expected {expected}"
+            );
+        }
+        // ...and an ease-in really is slower than linear at the start, so this
+        // test would fail for a wrong-but-plausible curve too.
+        assert!(param(&k, 25, "opacity").expect("keyed") < 0.25);
+    }
+
+    /// The curve belongs to the segment's START key. A two-segment animation
+    /// with only the first eased must leave the second dead straight.
+    #[test]
+    fn the_ease_comes_from_the_segments_start_key() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "scale": 0.0 }, "ease": { "scale": ease_in_json() } },
+            { "frame": 100, "params": { "scale": 1.0 } },
+            { "frame": 200, "params": { "scale": 2.0 } },
+        ]));
+        assert!(param(&k, 50, "scale").expect("keyed") < 0.5);
+        assert_eq!(param(&k, 150, "scale"), Some(1.5));
+    }
+
+    /// Two properties keyed at the same frame ease independently — the map is
+    /// per param, exactly as `params` is.
+    #[test]
+    fn each_param_eases_independently_at_the_same_key() {
+        let k = kfs(json!([
+            {
+                "frame": 0,
+                "params": { "opacity": 0.0, "scale": 0.0 },
+                "ease": { "opacity": ease_in_json() },
+            },
+            { "frame": 100, "params": { "opacity": 1.0, "scale": 1.0 } },
+        ]));
+        assert_eq!(param(&k, 50, "scale"), Some(0.5));
+        assert!(param(&k, 50, "opacity").expect("keyed") < 0.5);
+    }
+
+    /// Easing composes with `rotation`'s shortest-arc rule rather than
+    /// replacing it: the arc is chosen from the two values, then traversed at
+    /// the eased rate. 350 -> 10 must still go the short way, through 0.
+    #[test]
+    fn easing_composes_with_rotations_shortest_arc() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "rotation": 350.0 }, "ease": { "rotation": ease_in_json() } },
+            { "frame": 100, "params": { "rotation": 10.0 } },
+        ]));
+        let mid = param(&k, 50, "rotation").expect("keyed");
+        // The short way is +20 degrees; eased, we are less than half along it,
+        // and nowhere near the 180 the long way would pass through.
+        assert!(mid > 350.0 && mid < 360.0, "got {mid}");
+        assert!(mid < 360.0);
+    }
+
+    /// A stored `linear` curve and no curve at all are the same answer.
+    #[test]
+    fn a_stored_linear_curve_is_the_identity() {
+        let linear = json!({ "x1": 1.0/3.0, "y1": 1.0/3.0, "x2": 2.0/3.0, "y2": 2.0/3.0 });
+        let eased = opacity_ramp(Some(linear));
+        let plain = opacity_ramp(None);
+        for f in (0..=100).step_by(10) {
+            assert_eq!(
+                param(&eased, f, "opacity"),
+                param(&plain, f, "opacity"),
+                "frame {f}"
+            );
+        }
+    }
+
+    /// Overshoot survives to the resolved value — a curve whose `y` dips below
+    /// zero really does pull the property BACK before it moves forward
+    /// (anticipation), rather than being silently clamped.
+    #[test]
+    fn overshoot_reaches_the_resolved_value() {
+        let k = kfs(json!([
+            {
+                "frame": 0,
+                "params": { "position_x": 0.0 },
+                "ease": { "position_x": { "x1": 0.4, "y1": -0.6, "x2": 0.6, "y2": 1.0 } },
+            },
+            { "frame": 100, "params": { "position_x": 1.0 } },
+        ]));
+        assert!(param(&k, 25, "position_x").expect("keyed") < 0.0);
+    }
+
+    /// Holding outside the keyed range is unchanged by easing.
+    #[test]
+    fn easing_does_not_change_the_hold_outside_the_range() {
+        let k = opacity_ramp(Some(ease_in_json()));
+        assert_eq!(param(&k, 0, "opacity"), Some(0.0));
+        assert_eq!(param(&k, 500, "opacity"), Some(1.0));
+    }
+
+    /// **`interpolate` — the mask/relight resolver — deliberately ignores
+    /// `ease`.** Pinned so a later "why are there two resolvers" cleanup
+    /// cannot quietly change how every existing mask animates.
+    #[test]
+    fn the_mask_resolver_ignores_ease_entirely() {
+        let k = kfs(json!([
+            { "frame": 0,   "params": { "centerX": 0.0 }, "ease": { "centerX": ease_in_json() } },
+            { "frame": 100, "params": { "centerX": 100.0 } },
+        ]));
+        assert_eq!(get(&interpolate(&k, 25), "centerX"), 25.0);
+        // ...while the per-param resolver, on the very same keys, does ease.
+        assert!(param(&k, 25, "centerX").expect("keyed") < 25.0);
+    }
+
+    /// Malformed / absent ease data degrades to "not eased" rather than
+    /// failing the entry or poisoning an unrelated param — the same posture
+    /// `parse_keyframes` already takes toward a malformed `params` value.
+    /// This data is reachable: MCP stores the keyframe array verbatim.
+    #[test]
+    fn malformed_ease_degrades_to_linear() {
+        for bad in [
+            json!("ease-in"), // a NAME, not points — names are resolved UI-side
+            json!({ "opacity": { "x1": 0.4 } }), // missing points
+            json!({ "opacity": { "x1": "a", "y1": 0, "x2": 1, "y2": 1 } }), // non-numeric
+            json!({ "opacity": null }),
+            json!([]),
+        ] {
+            let k = kfs(json!([
+                { "frame": 0,   "params": { "opacity": 0.0 }, "ease": bad },
+                { "frame": 100, "params": { "opacity": 1.0 } },
+            ]));
+            assert_eq!(
+                param(&k, 50, "opacity"),
+                Some(0.5),
+                "bad ease {bad} should be linear"
+            );
+        }
+    }
+
+    /// A malformed curve for ONE param must not disturb another param's real
+    /// one at the same key.
+    #[test]
+    fn one_malformed_curve_does_not_disturb_a_sibling() {
+        let k = kfs(json!([
+            {
+                "frame": 0,
+                "params": { "opacity": 0.0, "scale": 0.0 },
+                "ease": { "opacity": { "x1": "nope" }, "scale": ease_in_json() },
+            },
+            { "frame": 100, "params": { "opacity": 1.0, "scale": 1.0 } },
+        ]));
+        assert_eq!(param(&k, 50, "opacity"), Some(0.5));
+        assert!(param(&k, 50, "scale").expect("keyed") < 0.5);
+    }
+
+    /// Determinism (a project invariant): the same keys and frame give a
+    /// bit-identical answer every call, easing included.
+    #[test]
+    fn eased_resolution_is_bit_deterministic() {
+        let k = opacity_ramp(Some(ease_in_json()));
+        for f in (0..=100).step_by(7) {
+            let a = param(&k, f, "opacity");
+            let b = param(&k, f, "opacity");
+            assert_eq!(a, b, "frame {f}");
+        }
     }
 }
