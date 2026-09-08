@@ -519,6 +519,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            markers: Vec::new(),
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),
@@ -848,6 +849,7 @@ mod tests {
             name: "AudioTest".into(),
             rate: None,
             tracks,
+            markers: Vec::new(),
         };
         let manifest = super::super::project::ProjectManifest {
             schema: "chroma.project/1".into(),

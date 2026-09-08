@@ -30,3 +30,24 @@
 .timeline-editor-action-right-stretch:hover:after {
   border-right-color: rgba(255, 255, 255, 0.35);
 }
+
+/*
+ * D-222 — room for the marker strip.
+ *
+ * The library leaves a 10px `margin-top` between its 32px ruler and its edit
+ * area (`.timeline-editor-edit-area { margin-top: 10px }` in the bundled CSS
+ * above), and that gap is exactly where a marker flag belongs — under the
+ * ruler's ticks, above the first track, which is where DaVinci Resolve puts
+ * its own (`scratch/resolve-reference/markers.jpg`). 10px is too short for a
+ * legible flag, so the gap is widened to the strip's own height rather than
+ * the strip being drawn overlapping either neighbour.
+ *
+ * The number is NOT written here: `MARKER_STRIP_HEIGHT` (`TimelineMarkers.tsx`)
+ * is the one definition, `TimelinePane.tsx`'s `RULER_AND_MARGIN_PX` derives
+ * from it, and this rule reads it through a custom property that
+ * `TimelinePane` sets on the pane root — so the CSS and the drop/overlay
+ * geometry can never drift apart.
+ */
+.timeline-editor-edit-area {
+  margin-top: var(--chroma-marker-strip-height, 10px);
+}

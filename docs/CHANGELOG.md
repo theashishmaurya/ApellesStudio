@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Timeline markers (D-222, roadmap 27).** Colour-coded,
+  titled flags pinned to a timeline frame, on their own strip between the
+  ruler's ticks and track 0 — Resolve's own placement, built from its own
+  screenshot. They live on the `Timeline`, not on a `Clip`, so one survives
+  the clip beneath it being trimmed, moved or deleted; they are real
+  `EditOp`s (`add_marker`/`remove_marker`/`set_marker`), so unlike D-216's
+  selection and D-218's preview zoom they persist into `project.json` and
+  undo with ⌘Z. Click a flag to jump, double-click to rename/recolour/delete,
+  `M` or the toolbar button to add at the playhead, a dropdown to jump
+  between them — plus `editor_add_marker`/`_list_markers`/`_set_marker`/
+  `_remove_marker` driving the same three ops. Adds `Textarea` to
+  `@chroma/ui`.
 - **2026-09-08** — **`PropertyRow` extracted to its own file (D-220,
   roadmap 27)** — the reusable Inspector row (label/field/keyframe-diamond/
   nav/reset) several upcoming features (per-clip audio pan/volume, EQ) will

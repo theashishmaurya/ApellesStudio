@@ -39,6 +39,14 @@
  * concerns (`docs/notes/mcp-architecture.md`'s "every tab owns its own ops"
  * rule) — moved here verbatim (same logic, same read-back-after-write
  * convention), removed from Colorist's file.
+ *
+ * **D-222 — timeline markers.** `editor_add_marker` / `editor_list_markers` /
+ * `editor_set_marker` / `editor_remove_marker`, driving the same
+ * `add_marker`/`set_marker`/`remove_marker` `EditOp`s the ruler's own flag
+ * strip does. Unlike `editor_set_selection` (D-216) and
+ * `editor_set_preview_zoom` (D-218), which write store-only view state, these
+ * write real document content: a marker is persisted into `project.json` and
+ * undone by the ordinary shared undo stack.
  */
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -57,12 +65,17 @@ import {
   fadePresetName,
   gapAt,
   isTextClip,
+  MARKER_COLORS,
+  markersOf,
+  newMarker,
   newTextClipFields,
   newTextLayer,
+  resolveMarkerColor,
   timelineFps,
   trackIndexAfterMove,
   type FadeCurve,
   type Clip,
+  type Marker,
   type NewClipFields,
   type TextLayer,
   type Timeline,
@@ -290,7 +303,32 @@ function timelineDto(tl: Timeline) {
         text: c.text ?? null,
       })),
     })),
+    // D-222 — reported alongside the tracks so `editor_get_timeline` is still
+    // one call for "what is on this timeline". Frame-sorted (`markersOf`), the
+    // same order the ruler draws them in.
+    markers: markersOf(tl).map(markerDto),
   };
+}
+
+/** One marker, in the camelCase-ish shape every `editor_*` response uses.
+ *  Flat and near-identical to the stored record — a marker has nothing to
+ *  derive — but routed through one function so `editor_get_timeline`,
+ *  `editor_list_markers` and each mutating op can never report it differently.
+ *  `name`/`note` are normalised to an explicit `null` rather than omitted, so
+ *  a caller reading a response never has to distinguish absent from empty. */
+function markerDto(m: Marker) {
+  return { id: m.id, frame: m.frame, color: m.color, name: m.name ?? null, note: m.note ?? null };
+}
+
+/** D-222 — "no marker with that id", with the ids that DO exist, so a caller
+ *  that guessed or held a stale id can recover in one round trip. Mirrors
+ *  `resolveClip`'s own "no track N (0..M)" convention of naming the valid
+ *  range in the error itself. */
+function markerNotFound(tl: Timeline, id: string): string {
+  const ids = (tl.markers ?? []).map((m) => m.id);
+  return ids.length === 0
+    ? `no marker "${id}" — this timeline has no markers`
+    : `no marker "${id}" — existing ids: ${ids.join(', ')}`;
 }
 
 /** A fade curve arrives as either a preset name ("ease-in") or four control
@@ -1250,6 +1288,81 @@ export function useEditorControl(): void {
           attackMs: after?.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
           releaseMs: after?.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
         };
+      },
+
+      // ---- markers (D-222, roadmap item 27) -------------------------------
+      //
+      // The agent half of `Timeline.markers`. All four drive the exact same
+      // `add_marker`/`set_marker`/`remove_marker` `EditOp`s the ruler's own
+      // flag strip does (`TimelineMarkers.tsx`), through the same
+      // `applyOp` — so a marker an agent drops is persisted and undoable
+      // identically to one a human dropped, and there is no second write path
+      // to keep in step (CLAUDE.md's human+AI parity rule).
+      //
+      // No `track` argument anywhere here, deliberately: a marker belongs to
+      // the timeline, not to a track or a clip (see `Timeline.markers`).
+
+      editor_list_markers: () => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return { markers: markersOf(tl).map(markerDto), palette: MARKER_COLORS.map((c) => c.name) };
+      },
+
+      editor_add_marker: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        // `frame` defaults to the playhead — the same thing the GUI's own
+        // button/`M` shortcut does, so "put a marker here" needs no argument
+        // once the agent has seeked.
+        const frame = a?.frame == null ? useEditorTimelineStore.getState().playhead : Math.round(Number(a.frame));
+        const marker = newMarker(frame, a?.color, a?.name, a?.note);
+        if ('error' in marker) return marker;
+        useEditorTimelineStore.getState().applyOp({ kind: 'add_marker', marker });
+        return { ok: true, marker: markerDto(marker) };
+      },
+
+      editor_remove_marker: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const id = String(a?.id ?? '');
+        const hit = (tl.markers ?? []).find((m) => m.id === id);
+        if (!hit) return { error: markerNotFound(tl, id) };
+        useEditorTimelineStore.getState().applyOp({ kind: 'remove_marker', id });
+        return { ok: true, removed: markerDto(hit) };
+      },
+
+      editor_set_marker: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const id = String(a?.id ?? '');
+        if (!(tl.markers ?? []).some((m) => m.id === id)) return { error: markerNotFound(tl, id) };
+
+        const patch: { frame?: number; color?: string; name?: string | null; note?: string | null } = {};
+        if (a?.frame != null) {
+          const frame = Math.round(Number(a.frame));
+          if (!Number.isFinite(frame)) return { error: 'frame must be a finite number of timeline frames' };
+          patch.frame = frame;
+        }
+        if (a?.color != null) {
+          // Validated HERE rather than left to the reducer (which silently
+          // keeps the old colour for an unresolvable one, so the document can
+          // never hold garbage) — an agent that mistyped a colour name needs
+          // to be told, not to get `ok: true` and an unchanged marker.
+          const hex = resolveMarkerColor(String(a.color));
+          if (typeof hex !== 'string') return hex;
+          patch.color = hex;
+        }
+        // `null` clears the field, an absent key leaves it alone — the op's
+        // own convention, passed straight through.
+        if (a?.name !== undefined) patch.name = a.name == null ? null : String(a.name);
+        if (a?.note !== undefined) patch.note = a.note == null ? null : String(a.note);
+        if (Object.keys(patch).length === 0) {
+          return { error: 'nothing to set — pass at least one of frame, color, name, note' };
+        }
+
+        useEditorTimelineStore.getState().applyOp({ kind: 'set_marker', id, patch });
+        const after = useEditorTimelineStore.getState().timeline?.markers?.find((m) => m.id === id);
+        return { ok: true, marker: after ? markerDto(after) : null };
       },
 
       // ---- media understanding (D-189) — read-only analysis of a file ----

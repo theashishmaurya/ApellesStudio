@@ -19858,3 +19858,150 @@ already exercise every real interaction (diamond toggle, `</` `>` nav,
 reset) through the real component tree, and a `PropertyRow`-only test would
 duplicate those same assertions against the same code from a different
 import path.
+
+## D-222 — Timeline markers: annotations on the `Timeline`, real `EditOp`s, and a flag strip in the ruler's own band
+
+**Context.** Roadmap item 27's Resolve-parity backlog: *"Markers —
+colour-coded, titled, timeline-anchored (ref: `markers.jpg`)."* Every
+reference NLE has them; Chroma had no way at all to flag a frame position —
+"client wants a cut here", "sync point", "VFX shot start" — for a human or an
+agent. Built from Resolve's own screenshot
+(`scratch/resolve-reference/markers.jpg`, kept from this session's scrape),
+per CLAUDE.md's "research the real pattern first" rule: small coloured flags
+on a dedicated strip between the timecode ruler and the first track, opened by
+double-click into a dialog whose fields are Time / Duration / Name / Notes /
+Keyword / a sixteen-swatch colour row, plus a marker list to jump between
+them.
+
+**Decision 1 — the marker hangs off the `Timeline`, not off a `Clip`.**
+Resolve has both kinds (a timeline marker on the ruler, a clip marker on a
+clip body); only the timeline kind is in scope here, and it is the kind that
+was actually asked for. The reason it must be a `Timeline` field is
+behavioural, not stylistic: a marker names a position in the *edit*, so it has
+to survive the clip beneath it being trimmed, moved to another track or
+deleted, which a `Clip`-owned field cannot. Same call `gain`/`duck_from`
+already got — the owner is whichever level the thing is genuinely a property
+of. Shape: `{ id, frame: i64, color: String, name: Option<String>, note:
+Option<String> }`, `#[serde(default)] pub markers: Vec<Marker>` on `Timeline`.
+A **bare** `#[serde(default)]` is correct here, unlike `Track::gain`'s
+`default = "default_track_gain"`: `Vec::default()` is empty, and "a project
+saved before markers existed has no markers" is exactly right — no migration,
+no silent behaviour change. Pinned by four Rust tests, including a pre-D-222
+`project.json` *with real tracks and clips* on it.
+
+**Deliberately not in the model this pass:** a marker DURATION (Resolve's
+range marker) and its Keyword field. Both are real Resolve features and
+neither is needed to flag a frame; a duration in particular would put a second
+time-extent concept into a model where `Clip` already owns one, and would want
+its own drag affordance on the strip. Scoped out explicitly rather than
+half-built.
+
+**Decision 2 — markers are real `EditOp`s: persisted AND undoable.** This is
+the deliberate opposite of the two most recent adjacent calls, D-216
+(`selection`) and D-218 (`previewView`), which are store-only, never
+persisted, never undoable. The line is the same one both of those drew and it
+falls on the other side here: `selection`/`previewView` describe how the user
+is *looking* at the edit, a marker is something the user *wrote into* it. So
+`add_marker` / `remove_marker` / `set_marker` are ordinary members of
+`timeline.ts`'s `EditOp` union, applied by `applyOp`, which means they land in
+`project.json` and on D-051's shared undo stack with no new mechanism at all.
+
+`set_marker` is a **patch** (`set_text_clip`'s shape), not a full replace
+(`set_clip_transform`'s): the reducer merges against what is there, so an
+omitted field provably keeps its value and a colour click need not restate the
+note. An explicit `null` (or an empty/whitespace string) clears a name/note —
+the one thing `undefined` cannot express in a patch. `applyOp` keeps the list
+**sorted by frame** on every write rather than sorting at read time: markers
+are drawn and listed in ruler order everywhere, so sorting once per write
+beats re-sorting per render. `Array.sort` is stable, so two markers on one
+frame keep insertion order.
+
+**Decision 3 — the colour palette is document content, so it is a named
+constant of literal hexes, not `--color-*` tokens.** CLAUDE.md's "one token
+source" rule exists so app *chrome* has one theme; a marker's colour is a
+choice the user made, persisted into their project, carrying meaning ("red =
+fix this") that must be the same colour in every theme and in a colleague's
+copy. Binding it to a theme token would silently recolour a marker set when
+the theme changed. `MARKER_COLORS` (`timeline.ts`) is Resolve's own sixteen,
+in its own order, and is the single definition — which is what that rule is
+actually protecting. `resolveMarkerColor` accepts a palette name or a raw hex
+and is shared by the GUI swatches and the MCP ops, so `"red"` can never mean
+two things.
+
+**Decision 4 — the strip goes in the timeline library's own ruler/edit-area
+gap, widened.** `@xzdarcy/react-timeline-editor` leaves a 10px `margin-top`
+between its 32px ruler and its edit area, and its ruler's ticks occupy that
+ruler's own bottom ~8px (read from its bundled CSS, not guessed) — so the gap
+is precisely where Resolve puts its flags, under the ticks and above track 0.
+10px is too short for a legible flag, so `timeline-overrides.css` widens the
+gap to `MARKER_STRIP_HEIGHT` (16px) via a `--chroma-marker-strip-height`
+custom property `TimelinePane` sets, and `RULER_AND_MARGIN_PX` — which every
+absolutely-positioned overlay and the drop-target row math derive from — is
+now computed from that same constant instead of the library's hardcoded 42.
+One definition, no drift. The considered alternative, drawing flags inline on
+a track as diamonds, was rejected: that is Premiere's *per-clip* marker
+treatment and would wrongly imply the marker belongs to the clip beneath it —
+the exact thing decision 1 is about.
+
+**Decision 5 — click jumps, double-click/right-click edits.** Resolve's own
+split, and the right one: a marker's first job is to be a place you jump to
+while reviewing, so popping a form open on every such jump would make the
+common gesture the expensive one. The editor is a `Popover` (the primitive
+`CanvasSettingsPopover` and the track-header duck settings already use),
+anchored to an invisible, `pointer-events-none` element at the marker's own x
+so the flag itself keeps ownership of its press; one popover instance for
+whichever marker is being edited, not N mounted portals. **Gesture
+coexistence** with the marquee (D-137), the clip drag (D-098) and the fade
+handles (D-207) needed no change to any of them: the strip carries
+`data-chroma-no-marquee`, the escape hatch `marquee.ts`'s
+`MARQUEE_BLOCKING_SELECTOR` already documents for "anything later rendered
+into the edit area that owns its own press", and everything in the strip but
+the flags is `pointer-events-none`.
+
+**Human + AI in the same pass** (CLAUDE.md's parity rule): the toolbar's
+Marker button and the `M` shortcut (Resolve/Premiere/FCP all bind `M` to
+exactly this; guarded so a modifier chord or a keypress inside an
+`<input>`/`<textarea>` never triggers it), a jump-to dropdown that appears
+only once a marker exists, and `editor_add_marker` / `editor_list_markers` /
+`editor_set_marker` / `editor_remove_marker` — all driving the same three
+`EditOp`s through the same `applyOp`. `editor_add_marker`'s `frame` defaults
+to the playhead, exactly as the GUI button does. `editor_get_timeline` reports
+the list too, so a caller needs one call for "what is on this timeline".
+
+**Verified.** `cargo test -p chroma-timeline` 147/147 (4 new: pre-D-222 JSON
+with and without real tracks, serde round-trip with `skip_serializing_if`, and
+wire-order preservation); `cargo test -p chroma-project` 56/56; `cargo clippy
+--workspace --all-targets` no errors and no new warnings; `npm test
+--workspace @chroma/editor` 804/804 with 27 new — 17 unit tests over the ops
+(sort invariant, patch/clear semantics, colour resolution, no-op on an unknown
+id, and the "a marker survives its clip being trimmed, moved and deleted"
+guarantee decision 1 exists for) and a new 10-case real-DOM suite
+(`TimelinePane.markers.dom.test.tsx`) proving the flags land at the frame's
+own x using the pane's real `pxPerSec`/`scrollLeft` math, that click jumps the
+playhead without opening the editor, that double-click/right-click open it and
+its swatch/Delete write the real store field, and that the button and the `M`
+shortcut both add at the playhead while `⌘M` and a keypress in a text field do
+not. `npx tsc --noEmit -p packages/editor` / `-p packages/ui` clean.
+
+**Live-verified in real Chromium**, on D-142's permanent harness
+(`app/harness.html`, a fresh Vite on its own port in this worktree) — the tier
+jsdom cannot reach, and the one that matters for decision 4, since the widened
+gap is a CSS custom property the stylesheet reads and jsdom has no layout
+engine to prove it landed. Measured there: `.timeline-editor-edit-area`'s
+computed `margin-top` is `16px` (the override applies); the ruler occupies
+78–110, the strip 110–126, track row 0 starts at 126 — the strip fills the gap
+exactly, overlapping neither neighbour; and after clicking the frame-96 flag
+the library's own `.timeline-editor-cursor` sits at x = 485.9 against that
+flag's own x = 485.9, i.e. the strip's frame→pixel math is **pixel-identical**
+to the playhead's rather than a second derivation that merely looks close.
+Double-click opened the editor with the marker's real name/frame and 16
+swatches, a swatch click wrote `#4CAF50` onto the store's real marker, and
+Delete removed it and closed the popover with it. No console errors. (The
+harness page does not define the app's `--color-*` tokens, so every
+`bg-surface` surface renders transparent there — the toolbar included; a
+pre-existing harness gap, not this popover's.)
+
+**One dependency added to `@chroma/ui`:** `textarea.tsx` — shadcn's own
+textarea, classes mirroring `input.tsx` field for field. A plain `<textarea>`
+rather than a Base UI primitive because Base UI ships none (checked against
+its export list); the marker's Notes field is the first consumer.

@@ -1356,6 +1356,103 @@ def editor_set_track_hidden(track: int, hidden: bool) -> str:
 
 
 @mcp.tool()
+def editor_list_markers() -> str:
+    """Every marker on the current timeline, in frame order — a marker is a
+    colour-coded, optionally titled flag pinned to a TIMELINE frame ("client
+    wants a cut here", "sync point", "VFX shot start").
+
+    Markers belong to the TIMELINE, not to any clip or track: there is no
+    `track` argument on any of the four marker tools, and a marker survives
+    the clip beneath it being trimmed, moved to another track, or deleted.
+    They are pure annotation — nothing in the live preview or in
+    `editor_export`'s output is affected by one.
+
+    Each entry is `{id, frame, color, name, note}`; `name`/`note` are `null`
+    when unset. `id` is what `editor_set_marker`/`editor_remove_marker` take.
+    Also returns `palette`, the marker colour names `editor_add_marker` and
+    `editor_set_marker` accept. `editor_get_timeline` reports the same list
+    under its own `markers` key, so this tool is the cheap way to re-read just
+    the markers after writing one."""
+    import json
+
+    return json.dumps(_op("editor_list_markers"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_marker(
+    frame: int | None = None,
+    color: str | None = None,
+    name: str | None = None,
+    note: str | None = None,
+) -> str:
+    """Pin a marker to a timeline frame — the same action the GUI's Marker
+    button and its `M` shortcut perform.
+
+    `frame` omitted means "at the playhead", exactly like the GUI's own
+    button, so `editor_set_playhead(...)` then `editor_add_marker()` is the
+    natural pair. `color` is a palette NAME (blue, cyan, green, yellow, red,
+    pink, purple, fuchsia, rose, lavender, sky, mint, lemon, sand, cocoa,
+    cream — `editor_list_markers` returns the live list) or a raw `#RGB` /
+    `#RRGGBB` hex; omitted gives blue, the same default DaVinci Resolve uses.
+    `name` is the short title shown next to the flag on the ruler; `note` is
+    longer free text visible only in the marker's own popover.
+
+    A marker is real document content: it is written into `project.json` and
+    a GUI undo (⌘Z) removes it, unlike `editor_set_selection` /
+    `editor_set_preview_zoom`, which change only what the user is looking at.
+    Any frame is legal, including one past the last clip. Returns the created
+    marker including its generated `id`."""
+    import json
+
+    args: dict = {}
+    for key, val in (("frame", frame), ("color", color), ("name", name), ("note", note)):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_add_marker", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_marker(
+    id: str,
+    frame: int | None = None,
+    color: str | None = None,
+    name: str | None = None,
+    note: str | None = None,
+) -> str:
+    """Change an existing marker's frame, colour, title or note. `id` comes
+    from `editor_list_markers` (or from `editor_add_marker`'s own response).
+
+    A PATCH, not a full replace: every argument you omit keeps its current
+    value, so recolouring a marker needs no restating of its note. To CLEAR a
+    title or a note, pass the empty string `""` for it — omitting it leaves it
+    alone. `color` takes the same palette name or hex `editor_add_marker`
+    does, and an unrecognised one is an error rather than a silent no-change.
+
+    Moving a marker's `frame` re-sorts it into place; the list this and
+    `editor_list_markers` report is always in frame order. Returns the marker
+    as it now stands."""
+    import json
+
+    args: dict = {"id": id}
+    for key, val in (("frame", frame), ("color", color), ("name", name), ("note", note)):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_set_marker", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_remove_marker(id: str) -> str:
+    """Delete one marker. `id` comes from `editor_list_markers`. An unknown
+    id is an error naming the ids that DO exist, not a silent no-op. Removing
+    a marker touches nothing else on the timeline — no clip, no track, no
+    ripple — and is undoable in the GUI like any other edit. Returns the
+    marker that was removed."""
+    import json
+
+    return json.dumps(_op("editor_remove_marker", id=id), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_clip_transform(
     track: int,
     clip: int,

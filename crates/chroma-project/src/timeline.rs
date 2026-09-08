@@ -242,6 +242,7 @@ mod tests {
                 }],
                 ..Default::default()
             }],
+            markers: Vec::new(),
         });
         manifest.active_timeline = 0;
 
@@ -264,6 +265,7 @@ mod tests {
             name: "t1".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
         manifest.active_timeline = 7;
 
@@ -285,12 +287,14 @@ mod tests {
             name: "first".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
         manifest.timelines.push(Timeline {
             id: "t2".into(),
             name: "second".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
         manifest.active_timeline = 1;
         manifest.settings.width = Some(1280);

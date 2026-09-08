@@ -447,6 +447,7 @@ pub fn chroma_timeline_create(name: String) -> Result<Timeline, String> {
         name,
         rate: None,
         tracks: Vec::new(),
+        markers: Vec::new(),
     };
     manifest.timelines.push(tl.clone());
     manifest.active_timeline = manifest.timelines.len() - 1;
@@ -2711,6 +2712,7 @@ mod preview_text_tests {
                         ..Default::default()
                     },
                 ],
+                markers: Vec::new(),
             }],
             active_timeline: 0,
             media: Vec::new(),
@@ -2920,6 +2922,7 @@ mod preview_throughput_tests {
                 name: "MultiTrack".into(),
                 rate: None,
                 tracks,
+                markers: Vec::new(),
             }],
             active_timeline: 0,
             media: Vec::new(),

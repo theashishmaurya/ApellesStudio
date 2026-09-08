@@ -41,7 +41,13 @@ per-clip **crop** — `crop_left`/`crop_top`/`crop_right`/`crop_bottom`, normali
 0–1 edge insets into the clip's own source (D-132) — and per-clip **fades**:
 `fade_in_frames`/`fade_out_frames` plus a `FadeCurve` each (D-147). Every one of
 those is *carried* here and *applied* one layer up, in `app/src-tauri` — this
-crate still renders nothing. The fade is the one with an evaluator attached
+crate still renders nothing. **`Timeline::markers` (D-222)** is the one field
+here that is never applied anywhere: a `Marker` (`{id, frame, color, name?,
+note?}`) is a timeline-anchored *annotation*, not a render input, so nothing
+composites, mixes or exports it. It hangs off the `Timeline` rather than a
+`Clip` precisely so it survives the clip beneath it being trimmed, moved or
+deleted; its edit ops live in `@chroma/editor`'s `timeline.ts` with every other
+op that actually runs. The fade is the one with an evaluator attached
 (`Clip::fade_multiplier_at`, over `chroma-types`' curve math — see above); the
 *result* is still applied up there, and for audio in `chroma-media`.
 
