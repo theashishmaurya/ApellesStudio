@@ -54,7 +54,8 @@ import {
   removeClipKeyframeParam,
   type ClipKeyframe,
 } from './clipKeyframes';
-import { ClipInspectorPanel, type FadePatch, type PropertyState, type TransformPatch } from './ClipInspectorPanel';
+import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
+import type { PropertyState } from './PropertyRow';
 import {
   CLIP_TRANSFORM_DEFAULTS,
   DEFAULT_FADE_CURVE,

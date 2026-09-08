@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **`PropertyRow` extracted to its own file (D-220,
+  roadmap 27)** — the reusable Inspector row (label/field/keyframe-diamond/
+  nav/reset) several upcoming features (per-clip audio pan/volume, EQ) will
+  need, generalised over the param-name type rather than pinned to
+  `ClipTransformParam`. Deliberately NOT a cross-tab unification with
+  Motion's/Colorist's own Inspector panels — D-103 already settled that
+  question. Also added roadmap item 27, the durable Resolve-parity backlog
+  (the session tracker artifact isn't a substitute for this).
 - **2026-09-08** — **The debug-tooling loop closes: an agent can now open a
   panel, photograph it, and read the DOM behind the pixels (D-219).**
   `docs/notes/debug-tooling.md` pieces 2, 4 and 5 built, piece 3 found already

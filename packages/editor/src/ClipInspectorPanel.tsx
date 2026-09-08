@@ -86,9 +86,16 @@
  * nullable, ratio-locked *pair*, so neither action is a well-defined
  * single-field operation, and `Scale`'s own field already is the "clear the
  * override" affordance. See `ClipTransformParam`'s doc and D-208.
+ *
+ * **Roadmap 25 — `PropertyRow`/`PropertyState` now live in their own file**
+ * (`PropertyRow.tsx`), generalised over any param-name type rather than
+ * pinned to `ClipTransformParam` — see that file's own doc for why this was
+ * worth extracting and why it stops there (not a cross-tab Inspector
+ * unification). This file's own `TRANSFORM_FIELDS`/`CROP_FIELDS` and their
+ * rendering are unchanged; only where the row itself is defined moved.
  */
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
+import { Diamond, Lock, Unlock, X } from 'lucide-react';
 import {
   Button,
   Input,
@@ -102,6 +109,7 @@ import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import { FADE_PRESETS, fadePresetName, type Clip, type ClipTransformParam, type FadeCurve } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 import type { ClipGeometry } from './useClipGeometry';
+import { PropertyRow, type PropertyState } from './PropertyRow';
 
 export type TransformPatch = Partial<{
   opacity: number;
@@ -148,140 +156,6 @@ const CUSTOM_CURVE = 'custom';
 
 const row = 'flex items-center justify-between gap-2';
 const numInput = 'h-7 w-20 text-right';
-/** D-208 — a property row's field shares its line with four icon buttons, so
- *  it runs one step narrower than the Size/Fade rows' `numInput`. */
-const propInput = 'h-7 w-16 text-right';
-
-/** D-208 — one keyframeable property's live state, as this pure-presentation
- *  panel needs it. `EditorInspectorPanel` derives every field (see its own
- *  `paramStates`); nothing here reads `clip.chroma_keyframes` directly.
- *
- *  `value` is the property's value AT THE PLAYHEAD — the interpolated one for
- *  an animated property, the static field otherwise — because a field showing
- *  a static number while the preview renders an interpolated one is a panel
- *  that lies about the picture. */
-export interface PropertyState {
-  value: number;
-  /** Any keyframe at all names this property (the filled diamond). */
-  animated: boolean;
-  /** …and one of them sits exactly at the playhead. */
-  keyedHere: boolean;
-  /** The nearest key strictly before / after the playhead, or `null` when
-   *  there is none in that direction (the `<` / `>` buttons' disabled state).
-   *  Timeline frames, ready to hand straight to `setPlayhead`. */
-  prevFrame: number | null;
-  nextFrame: number | null;
-}
-
-/** One Transform/Crop row: label, value field, that property's own keyframe
- *  nav + stopwatch diamond, and its own reset (D-208). Local to this file —
- *  it is this panel's row layout, not a shared component. */
-function PropertyRow({
-  label,
-  param,
-  state,
-  step,
-  min,
-  max,
-  disabled,
-  onChange,
-  onKeyframeToggle,
-  onKeyframeNav,
-  onReset,
-}: {
-  label: string;
-  param: ClipTransformParam;
-  state: PropertyState;
-  step: number;
-  min?: number;
-  max?: number;
-  disabled: boolean;
-  onChange: (value: number) => void;
-  onKeyframeToggle: (param: ClipTransformParam) => void;
-  onKeyframeNav: (param: ClipTransformParam, dir: -1 | 1) => void;
-  onReset: (param: ClipTransformParam) => void;
-}) {
-  return (
-    <div className={row}>
-      {/* The label still really labels the input (clicking it focuses the
-          field) — which is why the buttons live OUTSIDE this element: a
-          <label> wrapping them would make every icon click also hit the
-          input. */}
-      <label className="flex min-w-0 flex-1 items-center justify-between gap-2">
-        <span className="text-text-secondary truncate">{label}</span>
-        <Input
-          type="number"
-          step={step}
-          min={min}
-          max={max}
-          disabled={disabled}
-          className={propInput}
-          value={state.value}
-          onChange={(e) => onChange(Number(e.target.value))}
-        />
-      </label>
-      <div className="flex shrink-0 items-center">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled || state.prevFrame === null}
-          onClick={() => onKeyframeNav(param, -1)}
-          title={`Go to the previous ${label} keyframe`}
-          aria-label={`Previous ${label} keyframe`}
-        >
-          <ChevronLeft size={12} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled}
-          // Animated AND a key right here reads at full strength; animated
-          // but between keys is dimmed. That is the whole reason `<`/`>`
-          // mean anything — without it there is no way to tell, from the
-          // row, whether the playhead is sitting on one of this property's
-          // keys or between two of them.
-          className={
-            state.animated ? (state.keyedHere ? 'text-accent' : 'text-accent/50') : 'text-text-secondary'
-          }
-          onClick={() => onKeyframeToggle(param)}
-          title={
-            state.animated
-              ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
-                (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
-              : `Animate ${label} (keyframes it at the playhead)`
-          }
-          aria-label={`Toggle ${label} keyframes`}
-          aria-pressed={state.animated}
-        >
-          {/* Filled = this property is animated, hollow = static — the same
-              Diamond-plus-fill convention `RelightPanel.tsx` and this
-              panel's own Keyframes section already use. */}
-          <Diamond size={11} fill={state.animated ? 'currentColor' : 'none'} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled || state.nextFrame === null}
-          onClick={() => onKeyframeNav(param, 1)}
-          title={`Go to the next ${label} keyframe`}
-          aria-label={`Next ${label} keyframe`}
-        >
-          <ChevronRight size={12} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled}
-          onClick={() => onReset(param)}
-          title={`Reset ${label} to its default`}
-          aria-label={`Reset ${label}`}
-        >
-          <RotateCcw size={11} />
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 /** D-132 — the four crop rows, in Resolve's own Left/Right/Top/Bottom order
  *  (its Crop palette's own control order, not alphabetical), each a

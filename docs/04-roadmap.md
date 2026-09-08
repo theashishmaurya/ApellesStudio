@@ -1439,6 +1439,44 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       collaboration stay explicitly out, per the owner's own cut.
     Not started as fixes — this entry is the log of what was reported, to be
     triaged and actioned in the next work pass.
+27. **Resolve-parity backlog** — scoped from the real Edit-page reference
+    (`scratch/resolve-reference/`, item 25's own pointer above), prioritized.
+    This is the durable list — the session tracker artifact used overnight
+    is ephemeral and not a substitute for this entry.
+    - ~~**Reusable Inspector row component**~~ — **DONE, 2026-09-08 (D-220).**
+      `PropertyRow`/`PropertyState` extracted from `ClipInspectorPanel.tsx`
+      into their own file, generalised over the param-name type so the
+      per-clip audio and EQ rows below can reuse it — see D-220 for why this
+      stopped at the Edit tab's own boundary rather than unifying with
+      Motion's/Colorist's own Inspector panels (D-103 already settled that).
+    - ⬜ Per-clip audio: volume, pan — new data-model fields, not just track
+      gain (ref: `soundtrack.jpg`).
+    - ⬜ Timeline curve editor — bezier ease curves under a clip, editable
+      directly (ref: `curve.jpg`).
+    - ⬜ Transitions library — crossfade/dissolve/wipe, drag onto an edit
+      point (ref: `addeffects.jpg`).
+    - ⬜ Context-sensitive trim tool — ripple/roll/slip/slide by pointer
+      position, not a mode switch.
+    - ⬜ Speed ramp curve — variable speed over time, not a flat export-time
+      override.
+    - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /
+      Fit-to-Fill / Place on Top / Append / Ripple-Overwrite (ref:
+      `timeline.jpg`).
+    - ⬜ Dynamic zoom — drag a start/end box in the viewer instead of
+      hand-authoring keyframes.
+    - ⬜ Per-clip parametric EQ — multi-band, visual curve (ref:
+      `soundtrack.jpg`); depends on the per-clip audio item above landing
+      first (needs the same new data-model fields to hang bands off of).
+    - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
+      tape-style scrub (ref: `scrubbing.jpg`).
+    - ⬜ Adjustment clips — one effect, applied top-down over every clip
+      beneath it (ref: `adjustments.jpg`).
+    - ⬜ Markers — colour-coded, titled, timeline-anchored (ref:
+      `markers.jpg`).
+    - ⬜ Subtitles / captions — import SRT/TTML, own track type, styleable
+      (ref: `captioning.jpg`).
+    - Explicitly **out of scope** (owner's own cut): hardware control
+      surfaces, multi-user real-time collaboration.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

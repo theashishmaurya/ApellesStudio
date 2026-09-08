@@ -19813,3 +19813,48 @@ its own full Rust build, and the owner's own dev server was live) — the same
 last tier D-216 reached with `debug_screenshot`, and the same honest caveat every
 harness-verified entry since D-125 carries: Chromium is a different engine from
 WKWebView.
+
+## D-220 — `PropertyRow` extracted to its own file, generic over the param-name type — NOT a cross-tab Inspector unification
+
+**Context.** Roadmap 25's backlog listed "Reusable Inspector row component"
+as foundational — several features still ahead (per-clip audio pan/volume,
+a parametric EQ) will each want the same label/field/keyframe-diamond/nav/
+reset row `ClipInspectorPanel.tsx`'s Transform and Crop sections already use
+(D-208), and duplicating that row's behaviour into a second near-identical
+component per new section would be exactly the copy-paste this repo's own
+"shared logic → extract, don't copy" rule exists to prevent.
+
+**The real question this needed answering first: how far does "reusable"
+go?** `ClipInspectorPanel.tsx`'s own module doc had already settled a
+narrower version of this once (D-103): Motion's `InspectorPanel.tsx` and
+Colorist's `ControlsPanel` are each tab's own panel, built for different
+content (wider panels, selects/colour-pickers, not this panel's narrow
+side-by-side numeric rows) — forcing all three into one shared component
+across tab boundaries would mean rewriting two working, tested layouts for
+no real gain, the over-unification `@chroma/inspector`'s own README already
+warns against. That reasoning still holds and settles the scope here:
+**within the Edit tab only**, not a three-tab merge.
+
+**What actually moved:** `PropertyRow` and its `PropertyState` type,
+verbatim in behaviour, from an inline, file-local definition in
+`ClipInspectorPanel.tsx` into their own `PropertyRow.tsx`. The one real
+change: `PropertyRow`'s `param` field was typed as `ClipTransformParam` (the
+closed nine-name union `set_clip_transform`/`resolve_clip_transform` use) —
+a hard pin that would have made the component unusable for a future param
+name outside that set (an audio pan row, an EQ band gain). Generalised to
+`PropertyRow<TParam extends string>`; the component never inspects `param`'s
+value, only hands it back to its three callbacks, so this costs nothing and
+TypeScript infers `TParam` from each call site's own callbacks — both
+existing usages in `ClipInspectorPanel.tsx` are unchanged in shape.
+
+**Verified.** `npx tsc --noEmit -p packages/editor` clean; `npm test
+--workspace @chroma/editor` 776/776 — every existing test exercising
+`PropertyRow` (`EditorInspectorPanel.keyframes.dom.test.tsx`,
+`ClipInspectorPanel.textGating.dom.test.tsx`, and the transform/selection
+DOM suites that render it indirectly) passes unmodified, since the
+component's actual behaviour and DOM output are byte-identical — only its
+file and type parameter changed. No new test file: the existing DOM suites
+already exercise every real interaction (diamond toggle, `</` `>` nav,
+reset) through the real component tree, and a `PropertyRow`-only test would
+duplicate those same assertions against the same code from a different
+import path.
