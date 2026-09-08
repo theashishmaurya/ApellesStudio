@@ -44,19 +44,18 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 54 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236)
+## Edit tab / multi-track NLE — CLOSED, 56 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238)
 
-> **Count re-verified 2026-09-08 (after D-233 + D-234 merged) directly against
-> the merged `mcp/server.py`**, which is what this heading claims to be
-> counting: 57 `@mcp.tool()` functions named `editor_*` (or the three
-> pre-D-183 exceptions above), minus the 4 media-understanding ones that have
-> their own section below, is **53**. Two earlier headings independently
-> recomputed this same total mid-merge (48 and 50) from partial views before
-> D-233 and D-234 had both landed — neither was wrong for what it could see,
-> both are superseded by this count against the real, final file. The
-> `+N` breakdown is the historical log its authors wrote and has not been
-> re-audited entry by entry; treat the total as authoritative and the
-> breakdown as provenance.
+> **Count re-verified 2026-09-08 (after D-238 merged) directly against the
+> merged `mcp/server.py`**: 60 `@mcp.tool()` functions named `editor_*` (or
+> the three pre-D-183 exceptions above), minus the 4 media-understanding ones
+> that have their own section below, is **56**. A prior heading here said 54
+> against a recomputation that read 53 — both already stale the moment D-236
+> landed without the prose being re-run — superseded by this count against
+> the real, final file, the same way that note itself superseded two earlier
+> ones. The `+N` breakdown is the historical log its authors wrote and has
+> not been re-audited entry by entry; treat the total as authoritative and
+> the breakdown as provenance.
 
 <!-- The count above is the real one, re-counted 2026-09-08 against
      `grep -oE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck)\(' mcp/server.py`

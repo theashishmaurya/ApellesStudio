@@ -51,6 +51,7 @@ import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { SubtitleImportButton } from './SubtitleImportButton';
+import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
 import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
@@ -188,10 +189,15 @@ export function EditorTab() {
                 switcher, plus the Import-subtitles action (which creates a
                 whole TRACK, so it belongs here beside the switcher rather
                 than in the Sources media pool — see
-                `SubtitleImportButton`'s own doc). */}
+                `SubtitleImportButton`'s own doc). D-238 adds the transcript-
+                driven alternative right beside it — same "creates a whole
+                track" reasoning, same toolbar. */}
             <div className="flex shrink-0 items-center justify-between gap-2 pr-2">
               <TimelineSwitcher />
-              <SubtitleImportButton />
+              <div className="flex items-center gap-1">
+                <SubtitleImportButton />
+                <CaptionsFromTranscriptButton />
+              </div>
             </div>
             <div className="flex-1 min-h-0">
               <TimelinePane />
