@@ -157,6 +157,32 @@ several rounds of the owner's own screenshots before an agent could even confirm
   a human's click would, then screenshot to confirm what actually rendered — not two
   independent tools used separately.
 
+### The non-frontmost window is part of the contract, and it changes what renders (B-124)
+
+The whole point of the loop above is that the agent drives the app *instead of*
+the owner watching it — so the native window is essentially **never frontmost**
+while a `debug_*` op runs. That is not a neutral detail. A background window's
+`requestAnimationFrame` is throttled to a stop (this repo measured it for
+D-217/D-219; `packages/editor/src/previewTiming.ts`'s header states it, and
+`debug_frame_timing` reports `raf: { samples: 0 }` in that condition), and any
+UI whose update is *scheduled on a frame* therefore does not complete.
+
+B-124 is the first time that bit an actual feature rather than a measurement:
+Base UI hides a deselected `Tabs.Panel` by unmounting it, the unmount waits on a
+rAF callback, no callback ever came, and the clip Inspector rendered both tab
+panels stacked. `debug_set_inspector_tab` and `debug_get_ui_state` both reported
+the truth; the pixels did not follow. Two working notes from it:
+
+- **When a `debug_*` op reports the right state and `debug_screenshot`
+  disagrees, suspect a frame that was never scheduled before suspecting the
+  store.** `debug_dom_tree` settles it — it reports real computed `display` and
+  real measured rects, so "the node is there but has a box it should not have"
+  is directly visible, and that is what actually cracked B-124.
+- **A fix for this class of bug cannot be verified through this loop**, because
+  the loop is the failing condition. Drop to the component level above — the
+  D-142 harness in real Chromium, with `requestAnimationFrame` stubbed to a
+  no-op, reproduces it exactly and proves the fix under the same condition.
+
 ## The loop, concretely (this is what all five pieces are FOR)
 
 ```

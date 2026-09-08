@@ -170,6 +170,20 @@
  * picked a different clip, and `debug_set_inspector_tab` needs to drive the
  * same state the human's click drives (CLAUDE.md's one-action-under-both-
  * interfaces rule). See that field's own doc.
+ *
+ * **B-124 / D-254 — the tab CHROME, which is a separate story from the split
+ * above and worth reading before touching either.** D-246's split was correct
+ * and invisible. The deselected panel went on painting, stacked under the
+ * selected one, because Base UI hides a `Tabs.Panel` by unmounting it and that
+ * unmount waits on a `requestAnimationFrame` a non-frontmost window never
+ * fires; and the selected tab had no selected state at all, because the kit
+ * styled `data-selected:` while Base UI emits `data-active`. Both are fixed in
+ * `@chroma/ui`'s `tabs.tsx` (see `TABS_CONTENT_HIDDEN` there), so this file
+ * only carries what is genuinely app-specific: the `line` variant plus the
+ * accent underline that matches `Shell.tsx`'s own tab switcher and
+ * `TimelineSwitcher`, and `INSPECTOR_SECTION_DIVIDERS` below. jsdom cannot see
+ * B-124 — that is stated, with the reason, in B-124's own entry and in
+ * `ClipInspectorPanel.tabChrome.dom.test.tsx`'s header.
  */
 import { useState } from 'react';
 import { Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
@@ -391,6 +405,31 @@ const DEFAULT_EQ_BAND_VALUES: Readonly<Record<'freq_hz' | 'gain_db' | 'q', numbe
   q: EQ_DEFAULT_Q,
 };
 
+/** D-254 — a real hairline between adjacent Inspector sections, on BOTH tabs.
+ *
+ *  The owner drew a line on a screenshot of the Crop → Dynamic Zoom seam and
+ *  asked for a divider there. Every other seam had the same gap and the same
+ *  absence — Transform → Crop, Dynamic Zoom → Speed, Speed → Fade, Fade →
+ *  Keyframes, and Audio → EQ on the other tab — so all of them get it, rather
+ *  than the one that happened to be screenshotted; a rule in exactly one of
+ *  six identical seams is worse than none.
+ *
+ *  Expressed as a between-children rule (`* + *`) on the tab panel rather
+ *  than a `<Separator />` interleaved six times, or a border baked into
+ *  `@chroma/inspector`'s shared `InspectorSection`. The first is six edits to
+ *  keep in sync and one more thing to forget when a seventh section lands;
+ *  the second would reach into Motion's Inspector too, where the same
+ *  component is returned as the root of a dozen different subcomponents and
+ *  `:first-child` means something different in each. `* + *` is inherently
+ *  correct as sections come and go — never above the first, never below the
+ *  last, no per-section bookkeeping.
+ *
+ *  `border-border-color` is the fork's own line token (what this panel's
+ *  header, the Inspector column and `TimelineSwitcher` already use); `pt-4`
+ *  balances the `gap-4` the panel already sets, so the rule sits centred in
+ *  16px of air on each side rather than crowding the heading under it. */
+const INSPECTOR_SECTION_DIVIDERS = '[&>*+*]:border-t [&>*+*]:border-border-color [&>*+*]:pt-4';
+
 export function ClipInspectorPanel({
   clip,
   trackLocked,
@@ -597,10 +636,26 @@ export function ClipInspectorPanel({
         {/* One tab is not a tab bar: a text clip has no audio, so its
             Inspector renders exactly the single scrolling column it always
             did, with no chrome that does nothing. */}
+        {/* D-254 — the app's OWN tab language, not shadcn's default pill.
+            Chroma draws a selected tab as an accent underline under a
+            full-strength label, in both places it already had tabs: the
+            shell's Edit/Motion/Colorist switcher (`Shell.tsx` — a `bg-accent`
+            2px bar plus `text-text-primary`) and this same tab's own
+            `TimelineSwitcher` (`data-active:border-b-accent`). The pill this
+            bar shipped with was the shadcn kit's untouched `default` variant,
+            which is why it read as borrowed; `line` is the kit's own
+            no-pill variant, and the accent underline below is the same
+            `border-b-2` idiom `TimelineSwitcher` uses, stated at the call
+            site (the `editor` layer) rather than pushed into `@chroma/ui`,
+            so the generic kit stays generic. */}
         {tabs.length > 1 && (
-          <TabsList className="w-full">
+          <TabsList variant="line" className="w-full gap-0 p-0">
             {tabs.map((id) => (
-              <TabsTrigger key={id} value={id} className="flex-1 text-xs">
+              <TabsTrigger
+                key={id}
+                value={id}
+                className="flex-1 rounded-none border-b-2 border-b-transparent py-1.5 text-xs data-active:border-b-accent data-active:text-text-primary"
+              >
                 {CLIP_INSPECTOR_TAB_LABELS[id]}
               </TabsTrigger>
             ))}
@@ -617,7 +672,7 @@ export function ClipInspectorPanel({
             of its sound (a fade drives picture AND sound together — the
             section's own note says so — and "Key all properties" keys
             transform and crop). See `clipInspectorTabs.ts` for the split. */}
-        <TabsContent value="video" className="flex flex-col gap-4">
+        <TabsContent value="video" className={`flex flex-col gap-4 ${INSPECTOR_SECTION_DIVIDERS}`}>
           <InspectorSection label="Transform">
             {/* D-208 — the five transform properties, each its own independently
                 keyframeable/resettable row. `TRANSFORM_FIELDS` carries only the
@@ -1005,7 +1060,7 @@ export function ClipInspectorPanel({
             which is exactly the `!clip.text` gate these two sections used to
             carry individually — now stated once, in `clipInspectorTabs`. */}
         {tabs.includes('audio') && (
-          <TabsContent value="audio" className="flex flex-col gap-4">
+          <TabsContent value="audio" className={`flex flex-col gap-4 ${INSPECTOR_SECTION_DIVIDERS}`}>
           {/* D-223 — this clip's OWN level and stereo position, independent of
               its track's fader. Its own section rather than more Fade rows for
               the same reason Crop got one: the reference NLE presents them as a

@@ -94,7 +94,13 @@ export function TimelineSwitcher() {
               // the last tab) replaces the bare `gap-0.5` as the visual
               // separator between tabs, since equal-width flex-1 was the
               // only thing that had been keeping them apart before.
-              className="h-8 shrink-0 grow-0 basis-auto rounded-t-md rounded-b-none border-r border-border-color/60 border-b-2 border-b-transparent px-3 text-[11px] last:border-r-0 data-selected:border-b-accent"
+              // B-124 — `data-active`, not `data-selected`: Base UI's own
+              // `Tabs.Tab` emits the former, so this accent underline had
+              // never once drawn and the active timeline was indistinguishable
+              // from the others. Same one-word defect as `@chroma/ui`'s
+              // `tabs.tsx` carried; fixed in the same pass so the two cannot
+              // drift back apart.
+              className="h-8 shrink-0 grow-0 basis-auto rounded-t-md rounded-b-none border-r border-border-color/60 border-b-2 border-b-transparent px-3 text-[11px] last:border-r-0 data-active:border-b-accent"
             >
               {t.name || 'Untitled timeline'}
             </TabsTrigger>

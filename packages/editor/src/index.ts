@@ -31,6 +31,13 @@ export { TimelinePane } from './TimelinePane';
  *  layer: does the returned frame render, does the boundary land in the
  *  right place, does dragging commit). */
 export { PreviewPane } from './PreviewPane';
+/** B-124 — the same D-142/D-199 precedent again, for the clip Inspector.
+ *  `app/harness.html`'s `?mode=inspector` mounts this standalone so a real
+ *  Chromium tab can measure what the Video/Audio tab split actually PAINTS —
+ *  the thing jsdom structurally cannot see, and the thing that let a
+ *  both-panels-visible bug ship green (see that bug's entry in
+ *  `docs/BUGS.md`). */
+export { EditorInspectorPanel } from './EditorInspectorPanel';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 // D-246 — the clip Inspector's tab model. Exported for `@chroma/debug`'s

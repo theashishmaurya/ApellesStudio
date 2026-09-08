@@ -73,11 +73,13 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  EditorInspectorPanel,
   PreviewPane,
   TimelinePane,
   TimelineSwitcher,
   timelineDuration,
   useEditorTimelineStore,
+  type ClipInspectorTab,
   type EditOp,
   type Timeline,
 } from '@chroma/editor';
@@ -88,8 +90,16 @@ import '../src/styles.css';
  *  at load. Defaults to `'timeline'` — every existing consumer of this file
  *  (D-142's own history) expects `TimelinePane`; `'preview'` is the new,
  *  additive mode for the canvas-boundary/transform-overlay/drag checks (see
- *  `docs/notes/preview-canvas-boundary.md`). */
-type HarnessMode = 'timeline' | 'preview';
+ *  `docs/notes/preview-canvas-boundary.md`).
+ *
+ *  **B-124 added `'inspector'`**, for the same reason `'preview'` exists: the
+ *  clip Inspector's D-246 Video/Audio tab split is a pure LAYOUT question —
+ *  does the deselected tab's panel still occupy a box on screen? — and jsdom
+ *  answers every layout question with zero, so it is structurally incapable of
+ *  seeing the bug that shipped (both panels painted, stacked, the Audio one
+ *  1076px below the fold). Real Chromium measures it in one
+ *  `getBoundingClientRect`. */
+type HarnessMode = 'timeline' | 'preview' | 'inspector';
 
 function setStatus(text: string): void {
   const el = document.getElementById('harness-status');
@@ -417,8 +427,10 @@ function select(track?: number, id?: string): void {
 }
 
 let strict = true;
-let mode: HarnessMode =
-  new URLSearchParams(window.location.search).get('mode') === 'preview' ? 'preview' : 'timeline';
+let mode: HarnessMode = ((): HarnessMode => {
+  const raw = new URLSearchParams(window.location.search).get('mode');
+  return raw === 'preview' || raw === 'inspector' ? raw : 'timeline';
+})();
 let root: ReturnType<typeof createRoot> | null = null;
 
 function render(): void {
@@ -428,17 +440,34 @@ function render(): void {
   // ambient height of its own (it expects a flex ancestor, exactly what
   // `EditorTab.tsx` gives it) — `#root` needs an explicit height for
   // `useContentBox`'s `ResizeObserver` math to have anything to measure.
-  container.style.height = mode === 'preview' ? '100vh' : '';
-  container.style.display = mode === 'preview' ? 'flex' : '';
+  // B-124 — `'inspector'` needs the same thing `'preview'` does, and for a
+  // sharper reason: the Inspector's own scroller is `flex-1 min-h-0
+  // overflow-y-auto`, so it only CLIPS (and therefore only shows the bug)
+  // inside an ancestor with a real bounded height. `EditorTab.tsx` gives it
+  // exactly that — a fixed-width `ResizablePanel` of full height — and this
+  // reproduces that box, at the Inspector's own default width, rather than
+  // letting the panel grow to its content and hide the defect.
+  container.style.height = mode === 'timeline' ? '' : '100vh';
+  container.style.display = mode === 'timeline' ? '' : 'flex';
+  container.style.width = mode === 'inspector' ? '320px' : '';
   // D-195, Task 3 — in 'timeline' mode, `TimelineSwitcher` renders above
   // `TimelinePane`, the same stacking `EditorTab.tsx` uses, so the tab
   // strip's real click-through behavior (switch/create) is exercised
   // against the same store the pane reads. 'preview' mode mounts
   // `PreviewPane` alone — the switcher isn't part of what that mode checks.
+  // B-124 — the Inspector mounts inside the same `flex h-full flex-col
+  // min-h-0` wrapper `EditorTab.tsx` wraps it in, so its scroller resolves
+  // its height the same way it does in the real app.
   const el =
-    mode === 'preview'
-      ? React.createElement(PreviewPane)
-      : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
+    mode === 'inspector'
+      ? React.createElement(
+          'div',
+          { className: 'flex h-full w-full flex-col min-h-0 bg-surface' },
+          React.createElement('div', { className: 'flex-1 min-h-0' }, React.createElement(EditorInspectorPanel)),
+        )
+      : mode === 'preview'
+        ? React.createElement(PreviewPane)
+        : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
   root.render(strict ? React.createElement(React.StrictMode, null, el) : el);
   setStatus(`mounted mode=${mode} (strictMode=${strict}) — window.__chromaHarness`);
 }
@@ -474,6 +503,17 @@ render();
   },
   get mode() {
     return mode;
+  },
+  /** B-124 — drive the clip Inspector's Video/Audio tab through the SAME
+   *  store action `debug_set_inspector_tab` and the tab button's own click
+   *  both call. Deliberately the store action and not a synthesised click,
+   *  for the reason `debugOps.ts` gives: a simulated click proves the
+   *  simulation works, a store action proves the app does. */
+  setInspectorTab(next: ClipInspectorTab) {
+    useEditorTimelineStore.getState().setInspectorTab(next);
+  },
+  tab(): ClipInspectorTab {
+    return useEditorTimelineStore.getState().inspectorTab;
   },
   get settings() {
     return { ...harnessSettings };

@@ -2015,3 +2015,159 @@ owner held Alt in the running app. Area: `packages/editor/src/TimelinePane.tsx`.
   node's JSX is this bug waiting to happen, and no test that seeds state before
   mounting can see it. The cheap habit: mount the component the way the app
   mounts it — empty first — at least once per pointer-gesture feature.
+
+## B-124 — the clip Inspector's Video/Audio tabs looked inert: BOTH panels painted at once, stacked, because Base UI hides a deselected panel behind a `requestAnimationFrame` that a non-frontmost window never fires
+
+**Status: fixed, 2026-09-09.** Severity: **blocker for the feature** — D-246
+shipped complete and fully tested, and switching the tab appeared to do nothing
+at all. Area: `packages/ui/src/components/ui/tabs.tsx`,
+`packages/editor/src/ClipInspectorPanel.tsx`.
+
+- **found:** 2026-09-09, by the coordinating session driving the real running
+  app: `debug_set_inspector_tab {"tab":"audio"}` returned `ok`,
+  `debug_get_ui_state` confirmed the store genuinely held
+  `"inspectorTab": "audio"`, and a screenshot taken straight after still showed
+  the VIDEO tab's content — Transform / Crop / Dynamic Zoom / Speed — with
+  neither tab looking selected. Reported as "store state is correct; render is
+  not."
+
+- **that framing was half right, and the half that was wrong is the
+  interesting half.** The store WAS correct, and so was most of the render:
+  `debug_dom_tree` on the live app showed the Audio trigger carrying
+  `aria-selected="true"` and `data-active`, i.e. React had re-rendered and Base
+  UI had switched. What had not happened is that the VIDEO panel had not gone
+  away. Both `[data-slot="tabs-content"]` nodes were in the DOM, both
+  `display: flex`, both `visibility: visible`, with real measured boxes:
+
+  | panel | y | height |
+  |---|---|---|
+  | Video (`aria-labelledby` → the Video trigger) | 127 | 1076 |
+  | Audio (`aria-labelledby` → the Audio trigger) | 1203 | 916 |
+
+  …inside a scroller 785px tall. So the Audio tab's content was rendered,
+  selected and correct — 1076px below the top of a viewport that could show
+  759px of it. The tab bar worked; the user simply never saw a pixel change.
+
+- **cause, part 1 — the unmount is gated on `requestAnimationFrame`.** Base UI's
+  `Tabs.Panel` does not hide a deselected panel with CSS. It unmounts it:
+  `shouldRender = keepMounted || mounted`, `hidden = !mounted`, and `mounted`
+  is only ever cleared by `useOpenChangeComplete`'s `onComplete`. That callback
+  runs through `useAnimationsFinished`, whose very first act is
+  `frame.request(exec)` — it waits for a `requestAnimationFrame` callback
+  *before* it even looks at `getAnimations()`. **No rAF tick, no unmount, ever.**
+
+  And this app's own `packages/editor/src/previewTiming.ts` already documents,
+  in its module header, the condition that produces exactly that: *"a
+  **background** window's `requestAnimationFrame` is throttled to a stop, so the
+  play loop does not tick at all in a non-frontmost instance"* (D-217/D-219).
+  Which is every agent-driven session, by construction — the debug tooling
+  exists so an agent can drive the app *instead of* the owner watching it, so
+  the window is essentially never frontmost when a `debug_*` op runs.
+
+  The live app confirmed the mechanism from the other side: after switching the
+  tab back and forth, **both** panels carried `data-ending-style` — including
+  the SELECTED one, whose `transitionStatus` is cleared by its own
+  `AnimationFrame.request(() => setTransitionStatus(undefined))`. Two
+  independent rAF-scheduled callbacks, neither delivered. `debug_frame_timing`
+  on the same app reported `raf: { samples: 0, fps: null }`.
+
+- **cause, part 2 — and even a correctly-`hidden` panel would still have
+  painted.** `[hidden] { display: none }` is a **UA-stylesheet** rule. This
+  panel carries `flex-1` from `@chroma/ui` and `flex flex-col gap-4` from the
+  call site — author-origin `display` declarations, which beat any UA rule on
+  origin alone, before specificity is even consulted. So the `hidden` path Base
+  UI relies on was independently broken here too; it just never got far enough
+  to matter. Fixed as well, rather than left as the next person's surprise.
+
+- **why every test tier was green, and why one of them CANNOT go red.** The
+  D-246 suites (`clipInspectorTabs.test.ts`, `ClipInspectorPanel.tabs.dom.
+  test.tsx`, 18 tests) assert which sections are on which tab, and they are
+  right. They run in jsdom, and **jsdom is the one environment in which this bug
+  is structurally impossible**: `useAnimationsFinished` opens with
+  `if (typeof element.getAnimations !== 'function') { run(); return; }`, jsdom
+  does not implement `getAnimations`, so the deselected panel unmounts
+  synchronously there no matter how broken the real thing is. jsdom also applies
+  no Tailwind CSS at all, so it could not have seen part 2 either. A jsdom test
+  asserting "only one panel is in the DOM" passes on the broken build — it was
+  written, confirmed to pass pre-fix, and deliberately NOT kept as the proof.
+  Same lesson as B-123 and B-092/B-093, arrived at from a new direction: the
+  tier was not too weak, it was the one arrangement that cannot see the defect.
+
+- **fix.** Two CSS rules on `TabsContent` in `@chroma/ui`, so every Tabs
+  consumer gets them, not just this panel:
+  - `[&[inert]]:hidden` — the load-bearing one. Base UI writes
+    `inert: inertValue(!open)` straight from `open` during render, with no
+    effect, no frame and no animation in between, so it is correct on the very
+    commit the value changes. The deselected panel is the inert one, by
+    construction, whether or not Base UI ever gets to unmount it.
+  - `[&[hidden]]:hidden` — an author-origin rule at class+attribute
+    specificity, which beats any `display` utility on the same element and so
+    closes part 2 permanently.
+
+  Neither costs anything on the healthy path, where the panel is unmounted and
+  matches no selector at all. Rejected alternatives: rendering only the active
+  `TabsContent` at the call site (fixes one panel, leaves the primitive broken
+  for `CaptionPanel` and everything after it, and fights Base UI's own
+  structure); and keying the hide off `data-ending-style` (unusable — the live
+  app proved that attribute is itself rAF-driven and was stuck on BOTH panels).
+
+- **also found and fixed in the same pass, same family, separate defect:** the
+  selected tab had no visual selected state anywhere in the app, because
+  `@chroma/ui`'s `tabs.tsx` styled `data-selected:` while Base UI's `Tabs.Tab`
+  emits **`data-active`** (`TabsTabDataAttributes`: activationDirection /
+  orientation / disabled / active — there is no `selected`). Dead since D-042.
+  Measured on the real app: the selected Audio trigger and the unselected Video
+  trigger had byte-identical computed style — `background-color: rgba(0,0,0,0)`,
+  `color: oklab(… / 0.6)`, `box-shadow: none`. `TimelineSwitcher.tsx` carried
+  the same one-word defect in its own `data-selected:border-b-accent`, so the
+  active timeline's accent underline had never once drawn either. Both fixed;
+  the retheming that follows is D-254.
+
+- **verification — real Chromium with `requestAnimationFrame` stubbed dead**,
+  which is the only honest way to reproduce a bug whose trigger is "rAF does not
+  tick", and which jsdom passing is what shipped in the first place. Driven over
+  CDP against D-142's own harness (`app/harness.html`), extended with a
+  `?mode=inspector` mode that mounts the real `EditorInspectorPanel` inside the
+  same bounded-height flex column `EditorTab.tsx` gives it. The tab is flipped
+  through the SAME `setInspectorTab` store action `debug_set_inspector_tab`
+  calls — never a synthesised click.
+
+  - **rAF dead, before the fix** (reproduces the live app exactly): 2 panels,
+    both `display: flex` — Video at y=89 h=1082, Audio at y=1171 h=921; the
+    deselected one carrying `inert` and `data-ending-style` and NO `hidden`.
+  - **rAF dead, after the fix:** deselected panel `display: none`, rect 0×0;
+    selected panel `display: flex`, y=88, h=938. Mirrored exactly on switching
+    back.
+  - **rAF healthy, after the fix:** exactly one panel with a box in each state,
+    first heading `Transform` on Video and `Audio` on Audio; a real trusted
+    CDP `Input.dispatchMouseEvent` click on the Video trigger behaves
+    identically to the store-driven path.
+  - **the live app** is where the bug was reproduced in the first place, with
+    the measurements in the table above and a native `debug_screenshot` showing
+    the Video tab's fields under a tab bar with no selected state. The fix
+    itself could not be re-verified there, because that instance runs from the
+    main checkout and this work is on its own branch.
+
+- **regression test:** `ClipInspectorPanel.tabChrome.dom.test.tsx`, 5 tests.
+  Its header states plainly that jsdom cannot see B-124 itself, so what it pins
+  is the CONTRACT the fix stands on — that Base UI marks the selected tab
+  `data-active` and the deselected panel `inert`, both checked against the real
+  primitive — alongside the class strings that consume those attributes, so an
+  attribute rename can never again silently leave the styling matching nothing.
+  3 of the 5 were confirmed to fail on the pre-fix source (`expected … to
+  contain 'data-active:border-b-accent'` / `'[&[inert]]:hidden'` /
+  `'[&>*+*]:border-t'`); the other 2 are contract tests that pass either way, by
+  design and as documented in the file.
+
+  `@chroma/editor` 1513/1513 green (78 files), `@chroma/debug` 32/32,
+  `npx tsc --noEmit` clean on `packages/editor` and `packages/ui`.
+
+- **worth noting for next time.** Any Base UI primitive that hides a child by
+  unmounting it — `Tabs.Panel`, and by inspection the same
+  `useOpenChangeComplete` path in the popover/dialog/collapsible family — is
+  relying on `requestAnimationFrame` to finish the job, and in a non-frontmost
+  window it will not finish. That is not an exotic condition here: it is the
+  normal condition for every agent-driven session this repo's debug tooling was
+  built for. When a `debug_*` op reports the right state and the screenshot
+  disagrees, suspect a frame that was never scheduled before suspecting the
+  store.
