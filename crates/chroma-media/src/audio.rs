@@ -700,7 +700,10 @@ static LEVEL: Lazy<Mutex<(f32, f32)>> = Lazy::new(|| Mutex::new((0.0, 0.0)));
 static MASTER_VOLUME_BITS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(1.0f32.to_bits());
 
-fn is_current(my_gen: u64) -> bool {
+/// `pub(crate)` since D-232: [`crate::scrub`]'s own thread checks the exact
+/// same generation, because a scrub is a request on THIS transport rather than
+/// a parallel one — see that module's doc.
+pub(crate) fn is_current(my_gen: u64) -> bool {
     SESSION.lock().unwrap_or_else(|e| e.into_inner()).generation == my_gen
 }
 
@@ -778,6 +781,35 @@ fn begin_request(seq: u64) -> Option<u64> {
     }
     *LEVEL.lock().unwrap_or_else(|e| e.into_inner()) = (0.0, 0.0);
     Some(my_gen)
+}
+
+/// [`begin_request`] under the name the OTHER transport mode calls it by
+/// (D-232). [`crate::scrub::begin`] claims this same single transport — that is
+/// the whole reason a scrub and a play can never sound at once, with no second
+/// protocol and no new invariant. Named rather than exposed as `begin_request`
+/// so a reader of `scrub.rs` sees "claim the session", not a function whose doc
+/// is entirely about play/stop ordering.
+pub(crate) fn session_claim(seq: u64) -> Option<u64> {
+    begin_request(seq)
+}
+
+/// Hand the session the thread handle for generation `my_gen`, so the NEXT
+/// [`begin_request`] joins it before starting anything of its own — exactly
+/// what [`start`] does for a play session, and for exactly the same reason: the
+/// outgoing thread owns an open `cpal` output stream, and two of those alive at
+/// once is a real, device-dependent hazard rather than merely untidy.
+/// `pub(crate)` for [`crate::scrub::start`], which spawns the other kind of
+/// thread this transport owns (D-232).
+///
+/// Installs nothing if `my_gen` has already been superseded — that handle is
+/// then just orphaned bookkeeping (the thread still exits promptly on its own
+/// via [`is_current`]), and overwriting a newer session's handle with it would
+/// lose the one that actually needs joining.
+pub(crate) fn session_install_join(my_gen: u64, handle: thread::JoinHandle<()>) {
+    let mut guard = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.generation == my_gen {
+        guard.join = Some(handle);
+    }
 }
 
 // --------------------------------------------------------------------------- //
@@ -2105,7 +2137,11 @@ fn seek_source(
 /// between [`Self::ensure`] calls) so every source can be asked for exactly
 /// the same number of samples regardless of its own internal packet/chunk
 /// sizes.
-struct DecodedSource {
+/// `pub(crate)` since D-232 — [`crate::scrub`] fills its decoded window through
+/// exactly this type, so a scrub lands on the same source second, through the
+/// same channel adaptation, resampling and B-052/D-133 start trim, that
+/// playback would.
+pub(crate) struct DecodedSource {
     label: String,
     format: Box<dyn symphonia::core::formats::FormatReader>,
     decoder: Box<dyn symphonia::core::codecs::audio::AudioDecoder>,
@@ -2206,7 +2242,7 @@ impl DecodedSource {
     /// clip's out-point the rest of the window is silence and nothing further
     /// is decoded (B-048). Always returns exactly `want` samples either way, so
     /// every source stays in lockstep for [`mix_sources`].
-    fn take(&mut self, want: usize, out_channels: usize) -> Result<Vec<f32>, String> {
+    pub(crate) fn take(&mut self, want: usize, out_channels: usize) -> Result<Vec<f32>, String> {
         let allowed = match self.remaining {
             Some(r) => want.min(r),
             None => want,
@@ -2227,7 +2263,7 @@ impl DecodedSource {
     /// `run_session`'s whole-session-done check (every source, not just
     /// one) is `.all(DecodedSource::is_done)`. Reaching the clip's out-point
     /// counts as done just as much as reaching the file's end (B-048).
-    fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.remaining == Some(0) || (self.exhausted && self.carry.is_empty())
     }
 }
@@ -2239,7 +2275,7 @@ impl DecodedSource {
 /// symphonia open/probe/seek prefix (duplicated there for the documented
 /// reason: the two diverge immediately after — one a bounded batch read, this
 /// one a live streaming source kept open for the session's lifetime).
-fn open_source(
+pub(crate) fn open_source(
     path: &Path,
     start_secs: f64,
     duration_secs: Option<f64>,
@@ -2641,7 +2677,7 @@ fn run_session(
 /// default config actually is, dispatching to a generic body via
 /// `dasp_sample::FromSample` for the `f32` (internal pipeline) → device
 /// sample-type conversion.
-fn build_output_stream(
+pub(crate) fn build_output_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
@@ -2686,9 +2722,8 @@ where
                 // the ring buffer, before the device and before the RMS/peak
                 // meter — so `chroma_audio_level` (and any future meter UI)
                 // reports what's actually audible, not the pre-mute signal.
-                let volume = f32::from_bits(
-                    MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed),
-                );
+                let volume =
+                    f32::from_bits(MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed));
                 for (dst, s) in data.iter_mut().zip(samples.iter()) {
                     let s = s * volume;
                     *dst = T::from_sample(s);
@@ -2721,21 +2756,31 @@ mod tests {
     /// default parallel test execution without needing its own lock.
     #[test]
     fn chroma_audio_set_volume_clamps_and_round_trips() {
-        let read = || {
-            f32::from_bits(MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed))
-        };
+        let read = || f32::from_bits(MASTER_VOLUME_BITS.load(std::sync::atomic::Ordering::Relaxed));
 
         set_volume(0.42);
         assert_eq!(read(), 0.42);
 
         set_volume(-1.0);
-        assert_eq!(read(), 0.0, "negative volume clamps to silence, not a negative multiplier");
+        assert_eq!(
+            read(),
+            0.0,
+            "negative volume clamps to silence, not a negative multiplier"
+        );
 
         set_volume(5.0);
-        assert_eq!(read(), 1.0, "volume above unity clamps to 1.0, not amplified beyond it");
+        assert_eq!(
+            read(),
+            1.0,
+            "volume above unity clamps to 1.0, not amplified beyond it"
+        );
 
         set_volume(1.0);
-        assert_eq!(read(), 1.0, "leave MASTER_VOLUME_BITS at real unity for any test that runs after this one");
+        assert_eq!(
+            read(),
+            1.0,
+            "leave MASTER_VOLUME_BITS at real unity for any test that runs after this one"
+        );
     }
 
     #[test]

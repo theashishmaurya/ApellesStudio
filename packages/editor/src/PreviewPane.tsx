@@ -21,10 +21,19 @@
  *
  * Audio session churn (D-130): the audio effect is keyed on whether a timeline
  * exists, not on the timeline object — see that effect's comment. And both
- * audio commands carry a monotonic `seq` (`nextAudioSeq`), because since D-125
- * they are `(async)` Tauri commands and so no longer execute in the order they
- * were invoked — see that constant's comment and `chroma/audio.rs`'s
- * `begin_request`.
+ * audio commands carry a monotonic `seq` (`nextAudioSeq`, `audioTransport.ts`),
+ * because since D-125 they are `(async)` Tauri commands and so no longer
+ * execute in the order they were invoked — see that module's own doc and
+ * `chroma/audio.rs`'s `begin_request`.
+ *
+ * Tape-style scrub audio + the waveform strip (D-232, roadmap item 27): the
+ * position bar's drag is now a real *gesture* (`Player`'s `onSeekStart`/
+ * `onSeekEnd`), driving `scrubAudio.ts` — so dragging the playhead makes sound,
+ * where "no audio during scrub" used to be the documented behaviour just below.
+ * That is the same single Rust transport playback uses, which is why the play
+ * effect below now also refuses to start under a live scrub. `<ScrubWaveform>`
+ * is handed to `Player`'s `waveform` slot and shown when the store's
+ * `waveformView` is on. See D-232.
  *
  * Audio (D-049): `chroma_audio_play(playhead)` / `chroma_audio_stop()` are
  * fired at exactly the same `playing` transitions that (re)baseline the video
@@ -32,8 +41,8 @@
  * moment and then run independently against real wall-clock time (video via
  * `performance.now()`, audio via the device's own clock inside Rust). See
  * `chroma/audio.rs`'s module doc for why that's the deliberate sync model
- * rather than a tighter per-frame coupling. No audio during scrub (paused) —
- * only real Play produces sound, per D-049 scope.
+ * rather than a tighter per-frame coupling. (D-049 scoped scrub audio out
+ * entirely; D-232 put it back, as its own position-driven mode — see above.)
  *
  * Frame payload (D-217): `chroma_timeline_frame` answers with the JPEG's raw
  * bytes (an `ArrayBuffer`), not a `data:image/jpeg;base64,…` string, and this
@@ -137,6 +146,9 @@ import {
   steppedZoom,
 } from './previewZoom';
 import { recordPreviewTiming } from './previewTiming';
+import { nextAudioSeq } from './audioTransport';
+import { beginScrub, endScrub, isScrubbing, updateScrub } from './scrubAudio';
+import { ScrubWaveform } from './ScrubWaveform';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -166,30 +178,6 @@ const PREVIEW_LONG_EDGE = 960;
  */
 const PREVIEW_MIME = 'image/jpeg';
 
-/**
- * Monotonic stamp for every audio transport command (D-130).
- *
- * `chroma_audio_play` / `chroma_audio_stop` are `#[tauri::command(async)]`
- * since D-125, which means each `invoke` becomes its own `tokio::spawn`ed task
- * on a multi-threaded runtime — they no longer run in the order they were
- * issued, and two can run at once. The play/stop protocol depends entirely on
- * that order (a pause's stop must not land on top of the resume's play; the
- * newest play must win), so the order is sent explicitly instead of assumed:
- * Rust drops any request a newer one has already overtaken.
- *
- * Seeded from `Date.now()` rather than starting at 1 so a page reload (dev HMR,
- * or a webview reload in the shipped app) still produces stamps above whatever
- * the previous page got to — the Rust side's high-water mark lives in the
- * process, which outlives the page. That holds unless a page issues more than
- * one command per elapsed millisecond of its whole lifetime, which a
- * user-driven transport never does.
- *
- * Same request-token pattern `timelineStore.ts`'s `load()` uses for the same
- * class of bug (B-034 / D-112).
- */
-let audioSeq = Date.now();
-const nextAudioSeq = () => ++audioSeq;
-
 export function PreviewPane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
@@ -199,6 +187,11 @@ export function PreviewPane() {
   const savedVersion = useEditorTimelineStore((s) => s.savedVersion);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const setPlaying = useEditorTimelineStore((s) => s.setPlaying);
+  // D-232 — the waveform strip's own visibility. Store state, not local
+  // `useState`, so `editor_set_waveform_view` drives the same flag the human's
+  // toggle does; see the field's own doc in `timelineStore.ts`.
+  const waveformView = useEditorTimelineStore((s) => s.waveformView);
+  const setWaveformView = useEditorTimelineStore((s) => s.setWaveformView);
 
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
   const [decodeErr, setDecodeErr] = useState<string | null>(null);
@@ -564,7 +557,11 @@ export function PreviewPane() {
   // because that flips `playing` or empties `timeline` outright.
   useEffect(() => {
     if (!playing || !hasTimeline) {
-      invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
+      // D-232 — a live scrub owns the SAME transport (see `scrubAudio.ts`), so
+      // an unconditional stop here would kill it: the position bar's own drag
+      // sets `playing` false on its first move, which runs exactly this branch.
+      // A scrub's end is `endScrub`'s business and nothing else's.
+      if (!isScrubbing()) invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
       return;
     }
     const startFrame = useEditorTimelineStore.getState().playhead;
@@ -576,9 +573,30 @@ export function PreviewPane() {
       console.warn('chroma_audio_play failed:', e);
     });
     return () => {
-      invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
+      if (!isScrubbing()) invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
     };
   }, [playing, hasTimeline]);
+
+  // D-232 — the transport's own scrub gesture. `Player` reports the position
+  // bar's drag as a real start/move/end triple (`onSeek` alone cannot tell a
+  // drag from a programmatic seek), and this hands each straight to the shared
+  // driver, which is the same one `TimelinePane`'s cursor drag uses.
+  const onSeekStart = useCallback(
+    (frame: number) => {
+      setPlaying(false);
+      setPlayhead(frame);
+      beginScrub(frame);
+    },
+    [setPlaying, setPlayhead],
+  );
+  const onSeekMove = useCallback(
+    (frame: number) => {
+      setPlaying(false);
+      setPlayhead(frame);
+      updateScrub(frame);
+    },
+    [setPlaying, setPlayhead],
+  );
 
   const step = (d: number) => {
     if (playing) setPlaying(false);
@@ -674,10 +692,16 @@ export function PreviewPane() {
         playing={playing}
         onPlayPause={() => setPlaying(!playing)}
         onStep={step}
-        onSeek={(f) => {
-          setPlaying(false);
-          setPlayhead(f);
-        }}
+        // D-232 — a position-bar drag is a scrub gesture, not a series of
+        // unrelated seeks: `onSeekStart` claims the audio transport,
+        // `onSeek` steers it, `onSeekEnd` releases it (including on unmount
+        // mid-drag — `Player` guarantees that pairing).
+        onSeek={onSeekMove}
+        onSeekStart={onSeekStart}
+        onSeekEnd={endScrub}
+        waveform={<ScrubWaveform />}
+        waveformOn={waveformView}
+        onWaveformToggle={() => setWaveformView(!waveformView)}
       />
     </div>
   );

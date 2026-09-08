@@ -4,8 +4,9 @@
 //! (`docs/notes/crate-extraction-plan.md` §2.2). Two things live here, and
 //! only two:
 //!
-//! 1. The five `#[tauri::command]` wrappers. Commands never move into a crate
-//!    — a real `tauri-macros` constraint, not a preference (plan §1).
+//! 1. The `#[tauri::command]` wrappers (five for playback, plus D-232's three
+//!    for scrubbing). Commands never move into a crate — a real `tauri-macros`
+//!    constraint, not a preference (plan §1).
 //! 2. The body of [`chroma_audio_play`] that turns a **timeline frame** into a
 //!    set of audio sources. That is timeline resolution
 //!    (`edit::resolve_video_position` / `edit::resolve_audio_track_positions`
@@ -37,6 +38,7 @@
 use std::path::PathBuf;
 
 use chroma_media::audio::{AudioSourceSpec, DuckEnvelope, FadeEnvelope, LevelEnvelope};
+use chroma_media::scrub::ScrubSource;
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
@@ -85,6 +87,80 @@ pub async fn chroma_audio_waveform(
     buckets: usize,
 ) -> Result<Vec<(f32, f32)>, String> {
     chroma_media::audio::waveform(source_path, start_secs, duration_secs, buckets).await
+}
+
+/// Turn the frontend's `(path, source_secs)` pair into a scrub target (D-232),
+/// or `None` when there is nothing audible under the playhead — a gap, a silent
+/// clip, or past the end of the timeline, all of which are ordinary states that
+/// must sound like silence.
+///
+/// **Why the frontend resolves this and not us.** Every other timeline→media
+/// conversion in this file ([`fade_for_clip`] and friends) is app-side
+/// precisely because it needs a `chroma_timeline::Clip`. A scrub's is not: it
+/// arrives already resolved, in exactly the "bare source path + source seconds"
+/// shape [`chroma_audio_waveform`] has taken since D-051, and for the same
+/// reason — the caller is a pointer drag firing tens of times a second, and
+/// [`super::edit::resolve_video_position`] would re-read and clone the whole
+/// active `Timeline` out of the project manifest on every one of them. See
+/// D-232 for the full weighing, including why this is a real boundary call
+/// rather than a convenience: `@chroma/editor`'s `clipAt` is already the
+/// pointwise mirror of `chroma_timeline::Track::clip_at` and is already what
+/// every other Edit-tab UI decision resolves through.
+fn scrub_source(source_path: Option<String>, source_secs: f64) -> Option<ScrubSource> {
+    let path = source_path.filter(|p| !p.is_empty())?;
+    if !source_secs.is_finite() {
+        return None;
+    }
+    Some(ScrubSource {
+        path: PathBuf::from(path),
+        source_secs: source_secs.max(0.0),
+    })
+}
+
+/// Begin a tape-style scrub gesture (D-232) — the pointer went down on the
+/// timeline cursor or the player's position bar.
+///
+/// Claims the SAME transport `chroma_audio_play`/`chroma_audio_stop` use, so a
+/// scrub started during playback stops it, and pressing Play during a scrub
+/// stops the scrub, through the one D-130 ordering protocol rather than a
+/// second one. `seq` is the frontend's monotonic stamp, from the same counter
+/// the other two commands use.
+///
+/// `(async)` (D-125): like the other two, this joins the outgoing session's
+/// thread and must not do that on Tauri's main thread.
+#[tauri::command(async)]
+pub fn chroma_audio_scrub_begin(
+    source_path: Option<String>,
+    source_secs: f64,
+    seq: u64,
+) -> Result<(), String> {
+    let Some(session) = chroma_media::scrub::begin(seq) else {
+        // Overtaken by a newer transport request before this task got a worker
+        // thread — same drop the play path makes, for the same reason.
+        return Ok(());
+    };
+    chroma_media::scrub::start(session, scrub_source(source_path, source_secs))
+}
+
+/// Move the scrub read head — called for every pointer move of the drag.
+///
+/// **Deliberately a plain blocking `#[tauri::command]`, and deliberately
+/// without a `seq`.** It only stores into a mutex (microseconds), so there is
+/// nothing to get off the main thread; and running inline on the IPC drain
+/// means these keep their issue order for free, where the `(async)` commands
+/// around it cannot. A position is a level, not an edge — last writer wins is
+/// exactly what a scrub wants. See `chroma_media::scrub::update`.
+#[tauri::command]
+pub fn chroma_audio_scrub_update(source_path: Option<String>, source_secs: f64) {
+    chroma_media::scrub::update(scrub_source(source_path, source_secs));
+}
+
+/// End the scrub gesture (pointer up, or the component unmounting mid-drag).
+/// The same stop the transport already had, under the name the gesture calls
+/// it by.
+#[tauri::command(async)]
+pub fn chroma_audio_scrub_end(seq: u64) {
+    chroma_media::scrub::end(seq);
 }
 
 /// Seek-and-play in one call: resolve `start_frame` on the active timeline to
@@ -1180,7 +1256,14 @@ mod tests {
 
         let _tmp = open_test_project(&video_path);
         let played = chroma_audio_play(0, next_test_seq());
-        thread::sleep(Duration::from_millis(1500));
+        // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
+        // second of audio the device has actually written, and a session's first
+        // few hundred ms are device-open + seek, during which the ring is
+        // legitimately silent. 1.5 s put that single refresh right on the
+        // boundary, so this assertion could fail because the meter had not
+        // ticked yet rather than because there was no sound — seen live,
+        // intermittently, while adding D-232's own sibling test.
+        thread::sleep(Duration::from_millis(2500));
         let (rms, peak) = chroma_audio_level();
         chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
@@ -1255,7 +1338,14 @@ mod tests {
             Some((&tone_path.display().to_string(), 1.0)),
         );
         let played = chroma_audio_play(0, next_test_seq());
-        thread::sleep(Duration::from_millis(1500));
+        // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
+        // second of audio the device has actually written, and a session's first
+        // few hundred ms are device-open + seek, during which the ring is
+        // legitimately silent. 1.5 s put that single refresh right on the
+        // boundary, so this assertion could fail because the meter had not
+        // ticked yet rather than because there was no sound — seen live,
+        // intermittently, while adding D-232's own sibling test.
+        thread::sleep(Duration::from_millis(2500));
         let (rms, peak) = chroma_audio_level();
         chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
@@ -1293,7 +1383,14 @@ mod tests {
             Some((&tone_path.display().to_string(), 0.0)),
         );
         let played = chroma_audio_play(0, next_test_seq());
-        thread::sleep(Duration::from_millis(1500));
+        // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
+        // second of audio the device has actually written, and a session's first
+        // few hundred ms are device-open + seek, during which the ring is
+        // legitimately silent. 1.5 s put that single refresh right on the
+        // boundary, so this assertion could fail because the meter had not
+        // ticked yet rather than because there was no sound — seen live,
+        // intermittently, while adding D-232's own sibling test.
+        thread::sleep(Duration::from_millis(2500));
         let (_rms, peak) = chroma_audio_level();
         chroma_audio_stop(next_test_seq());
         super::super::state::set_project(None);
@@ -1302,6 +1399,143 @@ mod tests {
         assert!(
             peak > 0.001,
             "the video's own audio must still play even with the audio track muted, got peak={peak}"
+        );
+    }
+
+    // ------------------------------------------------------------------ //
+    // D-232 — tape-style scrubbing. The design's load-bearing claim is that a
+    // scrub is a THIRD request on the existing single transport rather than a
+    // parallel subsystem, so the first two tests below assert exactly that
+    // against the same session state the play/stop ordering tests above use.
+    // The grain/window arithmetic itself is `chroma-media`'s and is unit-tested
+    // in `scrub.rs`; what lives here is the command surface.
+    // ------------------------------------------------------------------ //
+
+    /// **A scrub and playback cannot sound at once.** Starting a scrub claims
+    /// the same generation a play would, so the running play session's thread
+    /// sees itself superseded and exits — no second protocol, no new invariant.
+    #[test]
+    fn starting_a_scrub_supersedes_a_running_play_session() {
+        let _guard = session_test_guard();
+        let gen_after_play = begin_request(next_test_seq()).expect("accepted");
+        chroma_audio_scrub_begin(None, 0.0, next_test_seq()).expect("scrub begin");
+        assert!(
+            !is_current(gen_after_play),
+            "a scrub must tear down the play session it started over"
+        );
+        chroma_audio_scrub_end(next_test_seq());
+    }
+
+    /// And the other direction, plus the ordering rule: a scrub command that a
+    /// newer request has already overtaken is dropped, exactly like a stale
+    /// play or stop (B-047 / D-130).
+    #[test]
+    fn a_stale_scrub_command_cannot_supersede_a_newer_request() {
+        let _guard = session_test_guard();
+        let newer = next_test_seq();
+        let older = newer - 1; // issued first, reaches the runtime second
+
+        let gen_after_newer = begin_request(newer).expect("the newer request is accepted");
+        let stale = chroma_audio_scrub_begin(None, 0.0, older);
+
+        assert!(stale.is_ok(), "a dropped stale scrub is not an error");
+        let (generation, last_seq) = session_snapshot();
+        assert_eq!(
+            generation, gen_after_newer,
+            "a stale scrub must not claim the session"
+        );
+        assert_eq!(last_seq, newer);
+        assert!(is_current(gen_after_newer));
+    }
+
+    /// A position update carries no `seq` and must never touch the transport —
+    /// it is a level, not an edge (see `chroma_media::scrub::update`). If it
+    /// bumped the generation it would kill the very scrub thread it is steering.
+    #[test]
+    fn a_scrub_position_update_never_touches_the_transport() {
+        let _guard = session_test_guard();
+        let mine = begin_request(next_test_seq()).expect("accepted");
+        for secs in [0.0, 1.0, 2.5] {
+            chroma_audio_scrub_update(Some("/fixture.m4a".into()), secs);
+        }
+        assert!(
+            is_current(mine),
+            "steering a scrub must not supersede the session being steered"
+        );
+    }
+
+    /// End-to-end through the real command surface: a real scrub gesture over a
+    /// real file must produce non-silent PCM out of the actual `cpal` output
+    /// stream — the same live-device rms/peak proxy D-049/D-050 introduced,
+    /// which is the only thing a sandboxed agent can check about audio it
+    /// cannot listen to. Gated on `CHROMA_TEST_AUDIO_VIDEO`, like its playback
+    /// siblings; unlike them it needs no open project, because a scrub is
+    /// handed a resolved source rather than resolving a timeline.
+    #[test]
+    fn chroma_audio_scrub_produces_non_silent_pcm_end_to_end() {
+        let _guard = session_test_guard();
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, next_test_seq())
+            .expect("chroma_audio_scrub_begin");
+        // Drag the read head forward the way a real pointer would, so the run
+        // covers both the in-window fast path and at least one re-anchor
+        // (`WINDOW_SECS - PRE_ROLL_SECS` = 2.5 s of source, crossed twice here).
+        //
+        // 2.4 s of drag, deliberately generous: `chroma_audio_level` refreshes
+        // only once per second of audio the device has actually written, and the
+        // first ~250 ms of a scrub is device-open + first-window decode, during
+        // which the ring is legitimately silent. A 1.2 s run put the single
+        // refresh right on that boundary and made this test a coin flip — the
+        // assertion has to fail because there is no sound, never because the
+        // meter had not ticked yet.
+        for step in 0..40 {
+            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25);
+            thread::sleep(Duration::from_millis(60));
+        }
+        let (rms, peak) = chroma_audio_level();
+        chroma_audio_scrub_end(next_test_seq());
+
+        eprintln!(
+            "chroma_audio_scrub_produces_non_silent_pcm_end_to_end ({video_path}): rms={rms:.4} peak={peak:.4}"
+        );
+        assert!(
+            peak > 0.001,
+            "expected non-silent PCM out of the real cpal output stream while scrubbing, got peak={peak}"
+        );
+    }
+
+    /// A scrub with nothing under the playhead — a gap, or a source with no
+    /// audio stream — is a silent no-op, not an error. The direct counterpart of
+    /// `chroma_audio_play_on_a_source_with_no_audio_is_a_silent_no_op`.
+    #[test]
+    fn chroma_audio_scrub_over_a_source_with_no_audio_is_a_silent_no_op() {
+        let _guard = session_test_guard();
+        let Ok(video_path) = std::env::var("CHROMA_TEST_SILENT_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_SILENT_VIDEO to run (a real file confirmed to have no audio stream)"
+            );
+            return;
+        };
+
+        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, next_test_seq())
+            .expect("a scrub over silent media is not an error");
+        for step in 0..5 {
+            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25);
+            thread::sleep(Duration::from_millis(60));
+        }
+        let (rms, peak) = chroma_audio_level();
+        chroma_audio_scrub_end(next_test_seq());
+
+        assert_eq!(
+            (rms, peak),
+            (0.0, 0.0),
+            "a source with no audio stream must not produce any device output"
         );
     }
 

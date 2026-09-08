@@ -20940,3 +20940,166 @@ session to distrust the doc set, and "aspiration written as fact" in a PRD is ex
 `CLAUDE.md`'s cardinal rule exists to prevent. Recording what was wrong — including that
 the previous pass's own note was wrong — is what stops the next reconciliation from
 starting over from the same false premise.
+
+---
+
+## D-232 — Tape-style audio scrub is a THIRD request on the ONE transport; the viewer waveform is a playhead-centred window, fetched in snapped tiles
+**decided (2026-09-08)**
+
+Roadmap item 27, *"Audio scrubbing + waveform toggle — source-viewer waveform,
+tape-style scrub"*. Reference read first, per CLAUDE.md's research rule:
+`scratch/resolve-reference/scrubbing.jpg` (Resolve's Timeline viewer — a
+full-width waveform band between the picture and the position bar, a coloured
+playhead line through it, a brighter region inside a dimmer surround). Full
+design detail, including the verification split and the honest gaps:
+`docs/notes/audio-fade-duck-crossfade-plan.md` §11.
+
+### 1. The load-bearing decision: how scrub audio coexists with playback
+
+- **Context.** The existing engine (D-049/D-050) is **time-driven**: resolve
+  every source at one playhead frame, then free-run against the audio device's
+  clock. A scrub is **position-driven**: no clock at all, just "where is the
+  pointer now", sampled tens of times a second, following the user backwards
+  and forwards and standing still. It is genuinely a different mode, not a
+  variant, and it has to coexist with the D-125/D-130 session-generation
+  machinery rather than fight it.
+- **Options.**
+  (a) **Call `chroma_audio_play` per pointer move.** Every call rebuilds a
+  `cpal` output stream and re-probes/re-seeks every source; D-125 measured that
+  warm-up in hundreds of milliseconds. At 60 Hz this is not a slow version of
+  the feature, it is not the feature.
+  (b) **A second, independent audio subsystem** with its own session state.
+  There is one output device and one thing the user can be hearing, so two
+  transports need a new mutual-exclusion invariant between them — precisely the
+  implicit, untested ordering assumption B-047/D-130 already had to make
+  explicit once.
+  (c) **A third request on the existing transport.**
+- **Choice: (c).** `chroma_media::scrub::begin(seq)` calls the same
+  `begin_request` `play`/`stop` call, takes the same generation, and its thread
+  exits on the same `is_current` check. "Starting a scrub stops playback" and
+  "pressing Play stops the scrub" are therefore not new behaviour that could be
+  got wrong — they are the single-transport rule that already held, applied to
+  one more caller. It also inherits the D-126 master monitoring volume and the
+  D-049 rms/peak verification hook for free, because it opens its output stream
+  through `audio::build_output_stream` and fills its window through
+  `audio::open_source`/`DecodedSource` rather than duplicating either.
+- **Consequence that had to follow:** the frontend's request stamp became
+  genuinely shared (`nextAudioSeq` moved from `PreviewPane.tsx` to
+  `audioTransport.ts`). Two counters feeding one Rust high-water mark would not
+  be two orderings — they would be one ordering fed by two sources that can each
+  hand out a stamp the other already used, so a real scrub could be dropped as
+  "stale" by a play issued before it.
+- **The one exception:** `scrub::update(position)` is deliberately outside the
+  protocol and carries **no `seq`**. The stamps exist because play/stop are
+  *edges* whose effect depends on which landed last; a position is a *level* —
+  absolute, idempotent, last-writer-wins, which is exactly what a scrub wants.
+  Its command is a plain blocking `#[tauri::command]` (it only stores into a
+  mutex), which additionally keeps updates in issue order for free.
+
+### 2. Constant-pitch granular scrub, not varispeed
+
+- **Context.** A real tape deck's scrub changes pitch with drag speed.
+- **Options.** (a) real varispeed — resample by a ratio derived from drag speed;
+  (b) granular at unity pitch — a short grain read from wherever the playhead
+  is, repeated.
+- **Choice: (b).** 60 ms grains with an 8 ms raised-cosine fade at each end.
+  Two reasons, not one: a variable-ratio resampler in the scrub path is a real
+  DSP subsystem (the existing `rubato` converter is fixed-ratio, chosen at
+  session start), and the drag-speed signal you would drive it with — differences
+  between pointer events — is noisy enough to make the pitch wobble on a steady
+  drag. It is also what Premiere's and Resolve's own playhead drags actually
+  sound like, so this is the reference behaviour rather than a simplification of
+  it. The fade is not cosmetic: without it every grain boundary is a step
+  discontinuity, i.e. an audible click ~17 times a second.
+- **Cheapness comes from a decoded window**, not from per-grain seeking: 4 s of
+  PCM anchored 1.5 s *behind* the position, so backward drags stay inside it. In
+  the window a grain is a memcpy; leaving it costs one decode (~20–40 ms),
+  absorbed by a 3-grain (~180 ms) ring cushion. That constant is the one direct
+  latency-vs-underrun trade and says so where it is defined.
+- **Scoped out, deliberately:** a scrub monitors exactly ONE source where
+  `chroma_audio_play` mixes all of them — re-anchoring N decoders per window
+  crossing is N times the stall for a monitoring aid whose question is "what is
+  at this frame". Roadmap follow-up, not a hidden gap.
+
+### 3. The frontend resolves which clip a scrub is reading
+
+- **Context.** Every other timeline→media conversion in `chroma::audio` is
+  app-side because it needs a `chroma_timeline::Clip` (D-146/D-147).
+- **Choice:** the scrub commands take a **bare source path + source seconds** —
+  exactly the shape `chroma_audio_waveform` has taken since D-051 — and
+  `@chroma/editor`'s `scrubSource.ts` resolves it.
+- **Why, and why it is a boundary call rather than a convenience.** The cost
+  argument is real (`resolve_video_position` re-reads and clones the whole
+  active `Timeline` from the manifest per call, and the caller here is a pointer
+  drag), but the correctness argument is the one that decides it: `clipAt` is
+  already the pointwise mirror of `Track::clip_at` and is already what every
+  other Edit-tab UI decision resolves through. One resolver now serves both the
+  scrub engine and the waveform strip, so the two cannot disagree about what is
+  under the playhead. Priority mirrors `chroma_audio_play`'s exactly (audio
+  track first, topmost wins; else embedded video audio unless A/V-linked,
+  D-129), with one addition — a track muted to `gain: 0` is skipped, because
+  with only one source to pick, picking a muted one would make scrub audible
+  where playback is silent.
+
+### 4. What the waveform toggle shows
+
+- **Read off the reference:** a full-width band between the picture and the
+  position bar, a playhead line through it, a brighter region inside a dimmer
+  surround. All three shipped — as `<Player>`'s new `waveform` slot plus a
+  transport toggle (omitted-not-disabled when the caller supplies nothing, that
+  component's standing contract).
+- **One argued divergence:** a fixed **4-second window centred on the playhead**,
+  not a full-duration overview. A whole real edit across ~900 px is ~1 px per
+  second, which shows nothing you could scrub *to*; 4 s is ~225 px/s, enough to
+  see a word boundary and put the playhead on it. The brighter region is the
+  clip's own trimmed extent — material outside it exists in the source but is
+  not on the timeline, which is what the reference's inner highlight conveys.
+- **Not a second waveform pipeline:** peaks come from `Waveform.tsx`'s own
+  `getPeaks` → `chroma_audio_waveform`, through the same frontend cache and the
+  same D-128 Rust cache. Because the drawn window slides continuously,
+  requesting *it* would miss that cache every frame and pay a full `symphonia`
+  decode per pointer move — literally D-128's own defect. So the strip fetches a
+  **snapped 12 s tile** and does index arithmetic inside it: the request changes
+  at most once per 4 s of source traversed. Asserted at the IPC boundary,
+  because it is invisible from the picture.
+
+### 5. The MCP surface — and the tool that deliberately does not exist
+
+`editor_set_waveform_view(open)` (the toggle's write half, same store flag the
+human's button drives), `editor_get_waveform(frame?, window_secs?, buckets?)`
+(the same envelope the strip draws, as numbers), and `waveformView` added to
+`editor_get_state`.
+
+**There is no `editor_scrub`.** Tape-scrub's entire content is "audio, now,
+while my hand moves": an agent cannot hear it, and `editor_set_playhead` already
+moves the playhead observably, so a scrub tool would be an awkward wrapper
+around a seek. What an agent needs from this capability is the *information* a
+human gets by ear — where the sound is, whether a cut lands mid-word, whether a
+clip is silent at all — and that is `editor_get_waveform`. CLAUDE.md's "a human
+AND an AI" rule is met by giving the agent the equivalent capability, not the
+identical gesture.
+
+### 6. Status / verification
+
+**Verified by test** (detail in §11g of the note): the grain/window arithmetic
+as pure unit tests; a real window decoded from real media holding real
+non-silent PCM (env-gated, in `chroma-media`, deliberately separate from the
+end-to-end test because a decode fault and a device fault are different faults
+one silence assertion cannot tell apart); **real non-silent PCM reaching the real
+`cpal` device during a real 2.4 s drag** — `rms=0.0807 peak=0.3783` on a real
+44.1 kHz stereo file, with the no-audio-stream counterpart measuring exactly
+`(0.0, 0.0)`; the transport claim in all three directions; the resolver and tile
+math; and the strip plus both MCP ops driven through the real `chroma://request`
+dispatch path, including a recording 2D context that pins where the playhead
+line and the dimming actually landed.
+
+**Found by running the env-gated test for real** — the same mechanism that
+caught B-102 — the scrub thread's `JoinHandle` must be installed on the session
+exactly as a play session's is, or an orphaned scrub thread keeps the output
+device and the next session is silent. Fixed in this change (not filed as a
+B-NNN: it never landed).
+
+**Needs a human ear, and is not claimed:** whether it *sounds* like a scrub
+(every constant in §2 is a judgement call), whether ~180 ms feels attached to
+the hand, whether a re-anchor is ever audible as a dropout, and whether 4 s is
+the right strip window at real size.

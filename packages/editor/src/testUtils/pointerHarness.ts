@@ -325,6 +325,107 @@ export function installObjectUrlStub(): ObjectUrlStub {
   };
 }
 
+/** One `fillRect` a stubbed 2D context recorded — enough to assert *what was
+ *  drawn where* without a rasteriser. */
+export interface RecordedFill {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fillStyle: string;
+  globalAlpha: number;
+}
+
+export interface CanvasContextStub {
+  /** Every `fillRect` on every canvas since the stub was installed, newest
+   *  last. */
+  fills(): RecordedFill[];
+  restore(): void;
+}
+
+/** jsdom implements no canvas rendering at all: `HTMLCanvasElement
+ *  .getContext()` is a hard "Not implemented" that jsdom reports through
+ *  `console.error` (confirmed against the installed jsdom, not assumed). Every
+ *  canvas-drawing component in this package therefore trips the zero-console-
+ *  error bar every DOM suite here sets, even though nothing is wrong.
+ *
+ *  This is a real recorder, not a no-op: it captures each `fillRect`'s
+ *  rectangle plus the `fillStyle`/`globalAlpha` in force at the time, so a
+ *  jsdom-tier test can still assert the geometry a component *asked* for — e.g.
+ *  that `ScrubWaveform` drew its playhead at the fraction it computed — without
+ *  pretending this tier can check pixels. Everything else on the context is a
+ *  no-op; `setTransform`/`clearRect`/gradients have nothing to record.
+ *
+ *  Returns the handle; call `restore()` in teardown. */
+export function installCanvasContextStub(width = 600, height = 44): CanvasContextStub {
+  const proto = HTMLCanvasElement.prototype as any;
+  const original = proto.getContext;
+  const recorded: RecordedFill[] = [];
+
+  proto.getContext = function (kind: string): unknown {
+    if (kind !== '2d') return null;
+    const ctx: any = {
+      canvas: this,
+      fillStyle: '#000',
+      strokeStyle: '#000',
+      globalAlpha: 1,
+      lineWidth: 1,
+      font: '',
+      setTransform: () => {},
+      resetTransform: () => {},
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      scale: () => {},
+      clearRect: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      stroke: () => {},
+      fill: () => {},
+      measureText: (t: string) => ({ width: t.length * 6 }),
+      fillText: () => {},
+      getPropertyValue: () => '',
+      fillRect(x: number, y: number, w: number, h: number) {
+        recorded.push({ x, y, w, h, fillStyle: ctx.fillStyle, globalAlpha: ctx.globalAlpha });
+      },
+    };
+    return ctx;
+  };
+
+  // A canvas laid out by CSS reports 0 for `clientWidth` in jsdom, which makes
+  // every measured-width drawing component draw nothing at all. Give the
+  // measurement a real, fixed answer, the same way `stubOffsetMetrics` does for
+  // the preview surface.
+  const owned = ['clientWidth', 'clientHeight'] as const;
+  const previous = owned.map((k) => Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('data-scrub-waveform') ? width : 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('data-scrub-waveform') ? height : 0;
+    },
+  });
+
+  return {
+    fills: () => recorded,
+    restore() {
+      proto.getContext = original;
+      owned.forEach((k, i) => {
+        if (previous[i]) Object.defineProperty(HTMLElement.prototype, k, previous[i]!);
+        else delete (HTMLElement.prototype as any)[k];
+      });
+      recorded.length = 0;
+    },
+  };
+}
+
 /** jsdom implements no Pointer Events *capture* API at all —
  *  `setPointerCapture`/`releasePointerCapture`/`hasPointerCapture` are simply
  *  absent from `Element.prototype` (confirmed directly against the installed

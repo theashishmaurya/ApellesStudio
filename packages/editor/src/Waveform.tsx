@@ -23,7 +23,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
-type Peak = [number, number];
+/** One amplitude bucket: `[min, max]`, both in `-1..1`. Mirrors the `(f32, f32)`
+ *  pairs `chroma_audio_waveform` returns. */
+export type Peak = [number, number];
 
 const MAX_CACHE = 200;
 const peakCache = new Map<string, Promise<Peak[]>>();
@@ -32,7 +34,24 @@ function cacheKey(sourcePath: string, startSecs: number, durationSecs: number, b
   return `${sourcePath}|${startSecs.toFixed(3)}|${durationSecs.toFixed(3)}|${buckets}`;
 }
 
-function getPeaks(sourcePath: string, startSecs: number, durationSecs: number, buckets: number): Promise<Peak[]> {
+/**
+ * The peaks fetch, with its in-page cache — `export`ed since D-232 because the
+ * viewer's own scrub waveform strip (`ScrubWaveform.tsx`) asks the same backend
+ * the same way and must share this cache rather than open a second one. The
+ * Rust side caches too (D-128), so a duplicate frontend cache would not be
+ * wrong, just wasteful IPC; one path is also one place to change.
+ *
+ * A failed request resolves to `[]` — a source with no audio, a file that
+ * vanished and a real decode error are all "nothing to draw" to every caller
+ * here (the same contract `chroma_audio_waveform` itself has for a silent
+ * source).
+ */
+export function getPeaks(
+  sourcePath: string,
+  startSecs: number,
+  durationSecs: number,
+  buckets: number,
+): Promise<Peak[]> {
   const key = cacheKey(sourcePath, startSecs, durationSecs, buckets);
   let p = peakCache.get(key);
   if (!p) {

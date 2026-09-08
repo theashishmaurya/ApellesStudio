@@ -16,8 +16,9 @@
  * component later without the Editor's choices constraining them.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import {
+  AudioWaveform,
   Camera,
   ChevronLeft,
   ChevronRight,
@@ -62,6 +63,25 @@ export interface PlayerProps {
   onStep: (delta: number) => void;
   /** Optional scrub bar; omit → no scrub bar rendered. */
   onSeek?: (frame: number) => void;
+  /**
+   * The position bar's drag became a real GESTURE (D-232) — pointer down and
+   * moving, or the first keyboard step. Paired with {@link onSeekEnd}, which
+   * always follows, including if this component unmounts mid-drag.
+   *
+   * This exists so a caller can drive *tape-style scrub audio*, which needs to
+   * know that a drag is in progress and not merely that the frame changed —
+   * `onSeek` alone cannot tell a drag apart from a programmatic seek. The
+   * gesture detection is this component's own (it owns the slider); what a
+   * gesture *means* is the caller's, which is why these are two bare
+   * notifications and not an audio prop. Omit both → nothing changes.
+   *
+   * A keyboard arrow on the focused slider produces a start/end pair around a
+   * single frame step. That is a real, if very short, gesture and is left as
+   * one rather than special-cased.
+   */
+  onSeekStart?: (frame: number) => void;
+  /** The position-bar gesture ended — pointer up, keyup, or unmount. */
+  onSeekEnd?: () => void;
   /** Omit → button hidden. */
   onSkipStart?: () => void;
   /** Omit → button hidden. */
@@ -120,6 +140,24 @@ export interface PlayerProps {
   /** Omit → the percentage readout stays a plain, non-interactive label. */
   onZoomReset?: () => void;
 
+  /**
+   * An audio waveform strip for the current position (D-232), rendered
+   * **between the picture and the position bar** — the placement
+   * DaVinci Resolve's own viewer uses (`scratch/resolve-reference/scrubbing.jpg`:
+   * a full-width waveform band directly under the picture, directly above the
+   * position bar, with a playhead line through it).
+   *
+   * Presentational only, exactly like `surface`: this component renders
+   * whatever node it is handed and knows nothing about audio, peaks or
+   * playheads. Shown only when {@link waveformOn}; the toggle button next to
+   * the transport appears only when {@link onWaveformToggle} is supplied,
+   * matching every other optional control here.
+   */
+  waveform?: ReactNode;
+  waveformOn?: boolean;
+  /** Omit → the waveform toggle button is hidden. */
+  onWaveformToggle?: () => void;
+
   className?: string;
 }
 
@@ -143,6 +181,8 @@ export function Player({
   onPlayPause,
   onStep,
   onSeek,
+  onSeekStart,
+  onSeekEnd,
   onSkipStart,
   onSkipEnd,
   onSnapshot,
@@ -158,21 +198,58 @@ export function Player({
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  waveform,
+  waveformOn,
+  onWaveformToggle,
   className,
 }: PlayerProps) {
   const showTitleStrip = Boolean(title || onPrev || onNext || menu);
   const hasDuration = total > 0;
+
+  // D-232 — the position bar's own gesture state. A ref, not state: nothing
+  // renders differently mid-drag, and re-rendering the transport on every
+  // pointer move of a scrub is exactly the jank the perf rule forbids.
+  const seekDragging = useRef(false);
+  // The end callback is also fired from an unmount cleanup, which must not
+  // re-run every time the caller passes a new closure — so the cleanup reads
+  // the latest one through a ref rather than closing over it.
+  const onSeekEndRef = useRef(onSeekEnd);
+  onSeekEndRef.current = onSeekEnd;
+  useEffect(
+    () => () => {
+      // Unmounting mid-drag (a tab switch, a project close) still ends the
+      // gesture — otherwise a scrub started here would outlive the control
+      // that started it and hold the audio device open.
+      if (seekDragging.current) {
+        seekDragging.current = false;
+        onSeekEndRef.current?.();
+      }
+    },
+    [],
+  );
 
   // Base UI's Slider is generic over `number | readonly number[]` (range
   // sliders use an array, one value per thumb) — we only ever pass a single
   // value, but the callback type still has to account for the array case.
   const handleSeek = useCallback(
     (value: number | readonly number[]) => {
-      const f = Array.isArray(value) ? value[0] : (value as number);
-      onSeek?.(Math.round(f));
+      const f = Math.round(Array.isArray(value) ? value[0] : (value as number));
+      if (!seekDragging.current) {
+        seekDragging.current = true;
+        onSeekStart?.(f);
+      }
+      onSeek?.(f);
     },
-    [onSeek],
+    [onSeek, onSeekStart],
   );
+
+  /** Base UI fires this on pointerup / keyup — the real end of the gesture,
+   *  which `onValueChange` cannot report. */
+  const handleSeekCommit = useCallback(() => {
+    if (!seekDragging.current) return;
+    seekDragging.current = false;
+    onSeekEnd?.();
+  }, [onSeekEnd]);
 
   const handleVolumeSeek = useCallback(
     (value: number | readonly number[]) => {
@@ -225,6 +302,14 @@ export function Player({
       <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black/40">{surface}</div>
 
       <div className="shrink-0 flex flex-col border-t border-border-color bg-surface text-text-primary">
+        {/* D-232 — the waveform band sits between the picture and the position
+            bar, full width, exactly as the Resolve reference has it. Rendered
+            above the `border-t` divider's content so the two read as one
+            stacked axis (waveform over position bar), which is what makes the
+            playhead line and the slider thumb legible as the same position. */}
+        {waveformOn && waveform && (
+          <div className="border-b border-border-color">{waveform}</div>
+        )}
         {onSeek && (
           <div className="px-3 pt-2">
             <Slider
@@ -245,6 +330,8 @@ export function Player({
               step={1}
               disabled={!hasDuration}
               onValueChange={handleSeek}
+              // D-232 — the gesture's real end. See `handleSeekCommit`.
+              onValueCommitted={handleSeekCommit}
               aria-label="Seek"
             />
           </div>
@@ -310,6 +397,23 @@ export function Player({
                 </div>
               )}
             </div>
+          )}
+          {/* D-232 — the waveform toggle, next to mute/volume because it is the
+              same kind of thing: a control over what this viewer tells you
+              about the AUDIO at this position. Omitted, not disabled, when the
+              caller supplies no handler — this component's standing rule. */}
+          {onWaveformToggle && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onWaveformToggle}
+              title={waveformOn ? 'Hide the audio waveform' : 'Show the audio waveform'}
+              aria-label={waveformOn ? 'Hide the audio waveform' : 'Show the audio waveform'}
+              aria-pressed={!!waveformOn}
+              className={waveformOn ? 'text-accent' : undefined}
+            >
+              <AudioWaveform />
+            </Button>
           )}
           {onSnapshot && (
             <Button variant="ghost" size="icon-sm" onClick={onSnapshot} title="Snapshot" aria-label="Snapshot">

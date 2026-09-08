@@ -22,6 +22,19 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   - `media_cache` — the persistent, source-keyed disk cache for derived
     artefacts (D-128): `blake3(path ‖ mtime ‖ len)` identity, atomic
     `write_blob`, LRU `prune_to_budget`.
+  - `audio` — the Edit-tab playback engine (symphonia → rubato → dasp_sample →
+    cpal, D-049/D-050/D-057), its per-source gain envelopes (fade D-147, duck
+    D-149, level D-223, EQ D-224), the single transport's generation/`seq`
+    ordering protocol (D-130), and the waveform-envelope path (D-051/D-128).
+  - `scrub` — **tape-style audio scrubbing (D-232)**: the *position-driven*
+    playback mode, beside `audio`'s time-driven one. Given a path and a source
+    second that the caller updates at pointer-move rate, it repeatedly emits a
+    short enveloped grain read from a decoded window around that position. It
+    is not a second engine: it claims `audio`'s **same** single transport (so a
+    scrub and a play can never sound at once, with no new invariant), opens its
+    `cpal` output stream through `audio::build_output_stream`, and fills its
+    window through `audio::open_source`/`DecodedSource`. One source, not a mix
+    — see D-232.
 
 ## What it does NOT do
 
@@ -66,7 +79,9 @@ whose production entry point is deliberately `init(app_cache_dir)`.
 
 ## Status
 
-D-146 — the first of the three ordered commits of plan §2.2: `video.rs` (773),
-`decode_pipe.rs` (514) and `media_cache.rs` (311) moved. `probe_cached`
-(commit 2) and `filmstrip`/`audio` (commit 3) follow. See `docs/08-decisions.md`
-D-146 for the decision record.
+D-146 — all three ordered commits of plan §2.2 landed: `video.rs`,
+`decode_pipe.rs` and `media_cache.rs` (commit 1), `probe_cached` out of
+`edit.rs` (commit 2), `filmstrip.rs` whole and `audio.rs` **split** — engine
+here, timeline resolution left app-side (commit 3). See `docs/08-decisions.md`
+D-146 for the decision record. `scrub` was added later, by D-232, and is the
+only module here that was not extracted from the fork.

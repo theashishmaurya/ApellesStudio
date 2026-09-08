@@ -302,6 +302,7 @@ import {
   type TransitionPatch,
 } from './TimelineTransitions';
 import { Waveform } from './Waveform';
+import { beginScrub, endScrub, updateScrub } from './scrubAudio';
 import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
 import { EditorExportDialog } from './EditorExportDialog';
@@ -999,6 +1000,11 @@ export function TimelinePane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
+  // D-232 — grabbing the playhead during playback pauses it, the way every
+  // reference NLE does and the way the player's own position bar already did.
+  // It is also what keeps the ONE audio transport coherent: a scrub claims it,
+  // so a play session left nominally running would have lost its sound anyway.
+  const setPlaying = useEditorTimelineStore((s) => s.setPlaying);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   /** Multi-select, Phase 1 (D-107, `docs/notes/multi-select.md`) — an array
    *  of the same `{track, id}` shape D-080 always used singularly, not a
@@ -1091,6 +1097,13 @@ export function TimelinePane() {
   useEffect(() => {
     editorRef.current?.setTime(playhead / fps);
   }, [playhead, fps]);
+
+  // D-232 — unmounting mid-drag (a tab switch, a project close) still ends the
+  // scrub gesture. `onCursorDragEnd` cannot fire for a component that is gone,
+  // and a scrub that outlived its gesture would hold the audio output device
+  // open for the rest of the session. `endScrub` is idempotent, so this costs
+  // nothing on an ordinary unmount.
+  useEffect(() => endScrub, []);
 
   // Scroll-wheel zoom (D-051, pan/zoom split D-072) — the library has no
   // wheel handling of its own (checked before writing this), so this is a
@@ -3268,7 +3281,25 @@ export function TimelinePane() {
                 setPlayhead(s2f(time));
                 return true;
               }}
-              onCursorDrag={(time) => setPlayhead(s2f(time))}
+              // D-232 — the timeline's own tape-scrub gesture. The library
+              // already distinguishes the three phases of a cursor drag, which
+              // is exactly what scrub audio needs and what `onCursorDrag`
+              // alone cannot express: `onSeek`-shaped callbacks cannot tell a
+              // drag apart from a programmatic seek. Same shared driver the
+              // player's position bar uses, so both gestures feed the one Rust
+              // scrub transport.
+              onCursorDragStart={(time) => {
+                const frame = s2f(time);
+                setPlaying(false);
+                setPlayhead(frame);
+                beginScrub(frame);
+              }}
+              onCursorDrag={(time) => {
+                const frame = s2f(time);
+                setPlayhead(frame);
+                updateScrub(frame);
+              }}
+              onCursorDragEnd={() => endScrub()}
               onChange={() => false}
               onActionResizeEnd={onActionResizeEndCb}
             />

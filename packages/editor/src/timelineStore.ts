@@ -182,6 +182,22 @@ interface EditorTimelineState {
    *  deliberately not an `EditOp` (D-216's rule): it is store state, never
    *  part of `Timeline`, so it is neither persisted nor undoable. */
   inspectorOpen: boolean;
+  /** D-232 — whether the viewer shows its audio waveform strip (`ScrubWaveform`,
+   *  the "waveform toggle" half of roadmap item 27).
+   *
+   *  Here rather than in `PreviewPane`'s own `useState` for exactly the reason
+   *  `inspectorOpen` above is: something outside that component has to read and
+   *  write it — `editor_set_waveform_view` over MCP, which runs outside React
+   *  and must drive the SAME state the human's toggle button drives rather than
+   *  simulate a click on it (CLAUDE.md's "one op/store action under both
+   *  interfaces").
+   *
+   *  Session chrome, not project data: deliberately NOT cleared by
+   *  `setOpenProject`, not persisted, and not undoable (D-216's rule — it is
+   *  store state, never part of `Timeline`). Defaults OFF: the strip costs real
+   *  vertical space in the viewer, and a user who has not asked for it should
+   *  get the picture. */
+  waveformView: boolean;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -228,6 +244,10 @@ interface EditorTimelineState {
   /** D-219 — show/hide the Inspector column. The one writer for both the
    *  human's toggle button (`EditorTab.tsx`) and the debug op. */
   setInspectorOpen: (open: boolean) => void;
+  /** D-232 — show/hide the viewer's waveform strip. The one writer for both the
+   *  human's toggle button (`Player`, via `PreviewPane`) and
+   *  `editor_set_waveform_view`. */
+  setWaveformView: (open: boolean) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -303,6 +323,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   previewView: FIT_VIEW,
   // D-118 shipped the Inspector open; keep that default now the flag lives here.
   inspectorOpen: true,
+  // D-232 — off by default; see the field's own doc.
+  waveformView: false,
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -429,6 +451,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     })),
 
   setInspectorOpen: (open) => set({ inspectorOpen: open }),
+
+  setWaveformView: (open) => set({ waveformView: open }),
 
   applyOp: (op) => {
     const before = get().timeline;
