@@ -82,11 +82,15 @@ import {
   fadePresetName,
   hasActiveEq,
   gapAt,
+  isAdjustmentClip,
   isCaptionClip,
   isTextClip,
+  ADJUSTMENT_PARAMS,
   newCaptionClipFields,
   MARKER_COLORS,
   markersOf,
+  newAdjustmentClipFields,
+  newAdjustmentLayer,
   newMarker,
   newTextClipFields,
   newTextLayer,
@@ -103,6 +107,7 @@ import {
   TRANSITION_ALIGNMENTS,
   TRANSITION_KINDS,
   DEFAULT_TRANSITION_FRAMES,
+  type AdjustmentLayer,
   type FadeCurve,
   type Clip,
   type EqBand,
@@ -1193,6 +1198,110 @@ export function useEditorControl(): void {
         return { ok: true, track, style: after?.caption_style ?? null };
       },
 
+      // ---- adjustment clips (D-230) ----------------------------------------
+      // The AI half of the Edit tab's own "Adjust" button, both through the
+      // SAME `newAdjustmentClipFields` + `add_clip` / `set_adjustment_clip`
+      // ops. No new placement path, exactly as for a title: an adjustment
+      // clip is a `Clip`, so `add_clip` places it and ripple / explicit
+      // `startFrame` / auto track creation all come for free.
+
+      editor_add_adjustment_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+
+        // Every parameter is optional and defaults to identity — adding a
+        // neutral adjustment clip and grading it afterwards is a legitimate
+        // (and, for an agent working iteratively, the natural) two-step.
+        const layer = newAdjustmentLayer({
+          exposure: a?.exposure !== undefined ? Number(a.exposure) : undefined,
+          contrast: a?.contrast !== undefined ? Number(a.contrast) : undefined,
+          saturation: a?.saturation !== undefined ? Number(a.saturation) : undefined,
+          temperature: a?.temperature !== undefined ? Number(a.temperature) : undefined,
+          tint: a?.tint !== undefined ? Number(a.tint) : undefined,
+        });
+        if ('error' in layer) return layer;
+
+        const track = Math.round(Number(a?.track));
+        if (!Number.isFinite(track) || track < 0) {
+          return { error: 'track must be a track index (0 = topmost). An adjustment clip affects the tracks BELOW it, so 0 grades the whole edit' };
+        }
+        const fps = timelineFps(tl);
+        const duration =
+          a?.duration !== undefined
+            ? Math.round(Number(a.duration))
+            : Math.round(DEFAULT_TITLE_SECONDS * fps);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          return { error: 'duration must be a positive number of TIMELINE frames' };
+        }
+
+        const clip: NewClipFields = newAdjustmentClipFields(layer, duration, a?.name);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'add_clip',
+          track,
+          clip,
+          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
+          ripple: !!a?.ripple,
+        });
+
+        const after = useEditorTimelineStore.getState().timeline;
+        const placed = after?.tracks[track]?.clips.find((c) => c.id === clip.id);
+        if (!placed) {
+          return { error: 'add_clip did not place the adjustment clip — check the track index (and that it is a video track)' };
+        }
+        return {
+          ok: true,
+          track,
+          clip: after?.tracks[track]?.clips.findIndex((c) => c.id === clip.id) ?? -1,
+          clipId: placed.id,
+          startFrame: placed.start_frame,
+          duration: placed.duration,
+          adjustment: placed.adjustment ?? null,
+          // Said explicitly in the RESULT, not just the tool description: the
+          // single most common way to get this wrong is to place it on the
+          // bottom track and wonder why nothing changed.
+          affects: `every visible video track with an index greater than ${track}, for frames ${placed.start_frame}..${placed.start_frame + placed.duration - 1}`,
+        };
+      },
+
+      editor_set_adjustment_clip: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        if (!isAdjustmentClip(found.c)) {
+          return { error: `clip ${found.clip} on track ${found.track} is not an adjustment clip — editor_set_adjustment_clip only edits clips created by editor_add_adjustment_clip` };
+        }
+        // Only the parameters actually mentioned are patched; the reducer
+        // merges against the clip's existing layer, so changing saturation can
+        // never silently reset exposure.
+        const patch: Partial<AdjustmentLayer> = {};
+        for (const key of ADJUSTMENT_PARAMS) {
+          if (a?.[key] !== undefined) patch[key] = Number(a[key]);
+        }
+        if (Object.keys(patch).length === 0) {
+          return { error: `nothing to change — pass at least one of ${ADJUSTMENT_PARAMS.join(' / ')}` };
+        }
+        // Validate here, where there is somewhere to report to: `applyOp`'s
+        // reducer is pure and can only no-op on a bad patch.
+        const merged = newAdjustmentLayer(patch, found.c.adjustment ?? null);
+        if ('error' in merged) return merged;
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_adjustment_clip',
+          track: found.track,
+          clip: found.clip,
+          patch,
+        });
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          adjustment: after?.adjustment ?? null,
+        };
+      },
+
       editor_split_clip: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
@@ -1426,6 +1535,37 @@ export function useEditorControl(): void {
             };
           }
         }
+        // D-230 — the same refusal for an ADJUSTMENT clip, and a wider one:
+        // its correction is always FULL-FRAME, so neither geometry field nor
+        // the crop insets nor `position_*` mean anything in either renderer.
+        // Only `opacity` does (as the correction's mix amount). Refusing is
+        // the same B-053 reasoning as the text case above — an agent that set
+        // `scale` on an adjustment clip and saw no change would have no way to
+        // find out why. Restating a field at its own default stays fine, which
+        // is what lets the GUI's own transform form keep writing every field.
+        if (isAdjustmentClip(c)) {
+          const ignored = (
+            [
+              ['position_x', a?.position_x, 0],
+              ['position_y', a?.position_y, 0],
+              ['scale', a?.scale, 1],
+              ['rotation', a?.rotation, 0],
+              ['crop_left', a?.crop_left, 0],
+              ['crop_top', a?.crop_top, 0],
+              ['crop_right', a?.crop_right, 0],
+              ['crop_bottom', a?.crop_bottom, 0],
+              ['box_width', a?.box_width, null],
+              ['box_height', a?.box_height, null],
+            ] as const
+          )
+            .filter(([, v, dflt]) => v !== undefined && v !== null && Number(v) !== dflt)
+            .map(([name]) => name);
+          if (ignored.length > 0) {
+            return {
+              error: `an adjustment clip's correction is always full-frame — ${ignored.join(', ')} would be silently ignored by both the preview and the export. Only opacity applies (it is how strongly the correction is mixed in); use editor_set_adjustment_clip for the correction itself, and move/trim the clip to change which layers and which span it covers.`,
+            };
+          }
+        }
         // Every field required by the real EditOp — read the clip's OWN
         // current values as defaults (same "only state what changes"
         // convenience `set_clip_fade` already gives a caller) so a partial
@@ -1464,6 +1604,20 @@ export function useEditorControl(): void {
           if (typeof k?.frame !== 'number' || typeof k?.params !== 'object' || k.params === null) {
             return { error: 'each keyframe needs a numeric frame and a params object' };
           }
+        }
+        // D-230 — an ADJUSTMENT clip has nothing keyframeable. Its correction
+        // is compiled to ffmpeg filter coefficients that are fixed at filter
+        // init, so even its `opacity` (the correction's mix amount, the one
+        // transform field it honours at all) is read statically by BOTH
+        // renderers. Storing keyframes here would animate nothing anywhere —
+        // refused rather than silently ignored, same B-053 reasoning as
+        // `editor_set_clip_transform`'s own refusals above. Note this differs
+        // from a TEXT clip, whose opacity/position keyframes really do animate.
+        if (isAdjustmentClip(found.c) && keyframes.length > 0) {
+          return {
+            error:
+              'an adjustment clip cannot be keyframed — its correction compiles to ffmpeg filter coefficients that are fixed when the filter starts, so both the preview and the export read its opacity statically. Set a constant strength with editor_set_clip_transform\'s `opacity`, or split the clip and give each half its own correction.',
+          };
         }
         useEditorTimelineStore.getState().applyOp({
           kind: 'set_clip_keyframes',

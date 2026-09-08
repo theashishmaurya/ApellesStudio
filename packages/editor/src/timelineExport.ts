@@ -39,6 +39,15 @@
  * to colour compiles to a `color` filter SOURCE with no `-i` at all, the same
  * shape `[base]` already uses. `docs/notes/transitions.md` §6.
  *
+ * **D-230 — adjustment clips.** A `Clip.adjustment` compiles to two colour
+ * filter nodes (`lutrgb` then `colorchannelmixer`, see `./adjustment.ts`)
+ * spliced into the overlay chain at exactly the position that clip's `overlay`
+ * would have occupied — so the stream they operate on is, by construction,
+ * every layer beneath the clip, and "applies to everything under it" needs no
+ * scoping rule of its own. Same trick D-213's `drawtext` already uses. An
+ * identity correction emits nothing at all, so an untouched adjustment clip
+ * produces a byte-identical argv to having none. `docs/notes/adjustment-clips.md`.
+ *
  * **B-103 — every clip is now placed in TIME** (`setpts=PTS+<start>/TB` at the
  * head of its chain). It never was: `overlay` pairs its inputs by timestamp,
  * and nothing shifted a clip's stream to where it sits on the timeline, so a
@@ -64,6 +73,7 @@ import {
   type CaptionCue,
   type CaptionStyle,
 } from './caption';
+import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 import {
   audioRefBracket,
@@ -1249,7 +1259,15 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // z-order both have to count it. `label` is derived from its clip id
       // rather than an input index, since it has none; `t` prefixed so a text
       // label can never collide with a `v<N>` input label.
-      if (clip.text) {
+      // D-230 — an ADJUSTMENT clip takes the exact same "no `-i`, no input
+      // index, real slot in the paint order" branch, and for the same reason:
+      // it occupies real timeline space and its position in the chain is what
+      // decides which layers it reaches. It differs only in what gets spliced
+      // there — two colour-filter nodes on the composited stream rather than a
+      // `drawtext` or an `overlay`. Sharing this branch (rather than adding a
+      // parallel one) is what guarantees a title and an adjustment on the same
+      // track keep their relative order.
+      if (clip.text || clip.adjustment) {
         const startSec = clip.start_frame / opts.fps;
         pending.push({
           clip,
@@ -1476,6 +1494,28 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       return;
     }
     if (chain.clip === null) return; // only a plate has no clip, handled above
+    // D-230 — an ADJUSTMENT clip applies its correction to the stream built so
+    // far, at exactly the position in the chain its `overlay` would have taken.
+    // `lastLabel` at this point is precisely "every layer below this clip
+    // composited", so "applies to everything beneath it, for its own span"
+    // needs no scoping logic of its own — the same property the live-preview
+    // compositor gets from its own back-to-front walk (`chroma::edit`'s
+    // `Step::Adjust`), which is what makes the two engines agree structurally
+    // rather than by two matching implementations.
+    //
+    // A correction that provably does nothing emits NO node at all, so adding
+    // an adjustment clip and leaving it alone produces a byte-identical argv to
+    // not having it — mirroring the preview's own skip.
+    if (chain.clip.adjustment) {
+      const ops = clipAdjustmentOps(chain.clip);
+      if (ops) {
+        filterSteps.push(
+          ...buildAdjustmentSteps(ops, lastLabel, outLabel, chain.startSec, chain.endSec),
+        );
+        lastLabel = outLabel;
+      }
+      return;
+    }
     if (chain.clip.text) {
       const fontFile = opts.fontFiles?.[chain.clip.text.font];
       if (fontFile) {

@@ -52,6 +52,7 @@ import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { SubtitleImportButton } from './SubtitleImportButton';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
+import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
@@ -230,6 +231,11 @@ export function EditorTab() {
                   selection is exactly one caption, exactly like the title
                   panel above it. */}
               <CaptionInspectorPanel />
+              {/* D-230 — the same stacking, for the same reasons, for an
+                  adjustment clip's correction. The two are mutually exclusive
+                  by construction (a clip cannot be both), so only ever one of
+                  them renders anything. */}
+              <AdjustmentClipInspectorPanel />
               <div className="flex-1 min-h-0">
                 <EditorInspectorPanel />
               </div>

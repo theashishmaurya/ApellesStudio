@@ -319,6 +319,138 @@ export interface Clip {
    *  and sized entirely by its resolved `CaptionStyle`. See the Rust field's
    *  own doc and D-229 for why that line is drawn there. */
   caption?: CaptionCue | null;
+  /** Adjustment layer (D-230) — mirrors `chroma_timeline::Clip::adjustment`.
+   *  Present (non-null) = this clip is an ADJUSTMENT CLIP: it contributes no
+   *  picture of its own and instead applies a primary colour correction to
+   *  everything composited BENEATH it, for the span it covers. `source_path`
+   *  is empty on such a clip, as on a text clip. Absent/`null` = an ordinary
+   *  clip, which is every clip in every pre-D-230 project.
+   *
+   *  A `Clip` variant rather than a new `Track.kind`, following `text`'s own
+   *  precedent: Resolve puts an adjustment clip on an ordinary video track
+   *  above the clips it affects, and track-index z-order already means
+   *  "beneath". The genuinely new part is the compositing MODEL — an operator
+   *  on the canvas so far, rather than a layer with pixels — see the Rust
+   *  field's doc and D-230.
+   *
+   *  **Only `opacity` applies, and only statically.** It is the correction's
+   *  mix amount (`0` = no effect, `1` = full). It is NOT keyframeable and NOT
+   *  faded here, because the export compiles to `lutrgb`/`colorchannelmixer`
+   *  coefficients, which ffmpeg fixes at filter init — a preview that animated
+   *  what the export cannot is the B-053/B-095 defect class. `position_*`,
+   *  `scale`, `rotation`, `box_*` and the crop insets do not apply at all: the
+   *  correction is always full-frame. See `docs/notes/adjustment-clips.md`. */
+  adjustment?: AdjustmentLayer | null;
+}
+
+/** The five-parameter primary correction an adjustment clip carries (D-230) —
+ *  mirrors `chroma_types::adjustment::AdjustmentLayer` field for field.
+ *
+ *  Named in the Colorist's own vocabulary on purpose: an adjustment clip is
+ *  emphatically NOT a second, parallel effects language. It is also not the
+ *  Colorist grade itself, which is structurally unavailable here — that blob is
+ *  untyped in Rust (D-020/D-025) and applied only by a wgpu shader the Edit
+ *  tab's CPU preview does not run and ffmpeg could not reproduce. See D-230.
+ *
+ *  Every field is `0` at identity, so a freshly added adjustment clip changes
+ *  nothing until something moves. All five are clamped to `-1..=1`. */
+export interface AdjustmentLayer {
+  /** Stops of exposure, `-1..=1`; a linear gain of `2^exposure`. */
+  exposure: number;
+  /** Contrast about the 0.5 pivot, `-1..=1`. */
+  contrast: number;
+  /** Saturation, `-1..=1`; `-1` is Rec.709 luma, `+1` is double. */
+  saturation: number;
+  /** Warm/cool, `-1..=1`; positive is warmer (red up, blue down). */
+  temperature: number;
+  /** Green/magenta, `-1..=1`; positive is magenta (green down). */
+  tint: number;
+}
+
+/** The identity correction — what a newly added adjustment clip carries. */
+export const IDENTITY_ADJUSTMENT: AdjustmentLayer = {
+  exposure: 0,
+  contrast: 0,
+  saturation: 0,
+  temperature: 0,
+  tint: 0,
+};
+
+/** The five parameter names, in the order the Inspector shows them — one list
+ *  so the GUI panel, the MCP tool's argument validation and the tests cannot
+ *  drift apart about which parameters exist. */
+export const ADJUSTMENT_PARAMS: readonly (keyof AdjustmentLayer)[] = [
+  'exposure',
+  'contrast',
+  'saturation',
+  'temperature',
+  'tint',
+] as const;
+
+/** Build a valid [`AdjustmentLayer`], filling in defaults and clamping — the
+ *  ONE place an adjustment layer is constructed or patched, shared by the GUI's
+ *  Add-adjustment button, its Inspector and the `editor_add_adjustment_clip` /
+ *  `editor_set_adjustment_clip` MCP ops (CLAUDE.md: "the same op/store action
+ *  underneath both").
+ *
+ *  Returns `{ error }` rather than throwing or silently coercing, matching
+ *  [`newTextLayer`] and every other validating helper on this surface. A
+ *  non-finite value is a real caller error worth naming; an out-of-range one is
+ *  clamped rather than rejected, matching the Rust side's `normalised()` (the
+ *  model stores what the UI wrote and the consumer decides what it means). */
+export function newAdjustmentLayer(
+  patch: Partial<AdjustmentLayer>,
+  base?: AdjustmentLayer | null,
+): AdjustmentLayer | { error: string } {
+  const from: AdjustmentLayer = base ?? { ...IDENTITY_ADJUSTMENT };
+  const out = { ...from };
+  for (const key of ADJUSTMENT_PARAMS) {
+    const v = patch[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      return { error: `${key} must be a finite number in -1..1` };
+    }
+    out[key] = Math.min(1, Math.max(-1, v));
+  }
+  return out;
+}
+
+/** Whether a correction provably does nothing — so the compositor can skip a
+ *  full-canvas pass and the exporter can emit no filter node at all, keeping a
+ *  freshly-added, untouched adjustment clip byte-identical to having none.
+ *  Mirrors `AdjustmentLayer::is_identity` in Rust. */
+export function isIdentityAdjustment(layer: AdjustmentLayer): boolean {
+  return ADJUSTMENT_PARAMS.every((k) => {
+    const v = layer[k];
+    return !Number.isFinite(v) || v === 0;
+  });
+}
+
+/** The `NewClipFields` for an adjustment clip (D-230), ready to hand to the
+ *  ordinary `add_clip` op — placed by exactly the same op a media or text clip
+ *  is, so ripple / explicit `startFrame` / track creation all come for free and
+ *  there is no second placement path to keep in step. Mirrors
+ *  [`newTextClipFields`] exactly, including why `source_fps` stays unset. */
+export function newAdjustmentClipFields(
+  layer: AdjustmentLayer,
+  durationFrames: number,
+  name?: string,
+): NewClipFields {
+  const duration = Math.max(1, Math.round(durationFrames));
+  return {
+    id: `adjust-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    shot_id: null,
+    media_id: null,
+    link_group: null,
+    // Resolve labels these "Adjustment Clip" on the clip body — the reference
+    // screenshot this feature was built from shows exactly that string.
+    name: name || 'Adjustment Clip',
+    source_path: '',
+    source_start: 0,
+    duration,
+    source_len: duration,
+    adjustment: layer,
+  };
 }
 
 /** A generated text/title layer (D-211) — mirrors `chroma_timeline::TextLayer`
@@ -365,7 +497,13 @@ export const DEFAULT_TEXT_COLOR = '#FFFFFF';
  *  Three seconds is the standard default duration a still/generator gets in
  *  every reference NLE (Premiere's own default still duration is 5s, Resolve's
  *  4s; 3s reads better for the short-form work this editor is built for) —
- *  a named constant rather than a magic number, per CLAUDE.md. */
+ *  a named constant rather than a magic number, per CLAUDE.md.
+ *
+ *  **Also the default span of a new ADJUSTMENT clip (D-230)**, deliberately
+ *  sharing this constant rather than declaring a second one: both are
+ *  generator clips with no source media to take a length from, which is
+ *  exactly the case this number was chosen for (see "still/generator" above).
+ *  The name is historical — it predates there being a second generator kind. */
 export const DEFAULT_TITLE_SECONDS = 3;
 
 /** Whether `c` is a generated text/title clip rather than a media clip
@@ -373,6 +511,25 @@ export const DEFAULT_TITLE_SECONDS = 3;
  *  the same way everywhere, rather than an `!= null` check at each site. */
 export function isTextClip(c: Pick<Clip, 'text'> | null | undefined): boolean {
   return c?.text != null;
+}
+
+/** D-230 — whether a clip is an ADJUSTMENT clip (an operator on the layers
+ *  beneath it, with no picture of its own). [`isTextClip`]'s counterpart, and
+ *  the one predicate every consumer branches on, mirroring
+ *  `Clip::is_adjustment` in Rust. */
+export function isAdjustmentClip(c: Pick<Clip, 'adjustment'> | null | undefined): boolean {
+  return c?.adjustment != null;
+}
+
+/** D-229/D-230 — whether a clip contributes no decoded picture of its own,
+ *  i.e. it is a text clip, a caption, or an adjustment clip. The predicate for
+ *  "don't ask the media layer about this clip": it has no `source_path` to
+ *  probe, decode, filmstrip or open an ffmpeg input for. Mirrors
+ *  `Clip::is_generated` in Rust. */
+export function isGeneratedClip(
+  c: Pick<Clip, 'text' | 'caption' | 'adjustment'> | null | undefined,
+): boolean {
+  return isTextClip(c) || isCaptionClip(c) || isAdjustmentClip(c);
 }
 
 /** Build a valid [`TextLayer`], filling in the defaults and normalising what
@@ -454,16 +611,6 @@ export function newTextClipFields(
  *  asked the same way everywhere for the same reason. */
 export function isCaptionClip(c: Pick<Clip, 'caption'> | null | undefined): boolean {
   return c?.caption != null;
-}
-
-/** D-229 — whether `c`'s picture is GENERATED rather than decoded from
- *  `source_path`: a title or a caption. Mirrors `Clip::is_generated`.
- *
- *  The predicate every "do I need to open a media file for this clip" site
- *  wants; before captions there was one kind of generated clip and
- *  [`isTextClip`] doubled as this question. */
-export function isGeneratedClip(c: Pick<Clip, 'text' | 'caption'> | null | undefined): boolean {
-  return isTextClip(c) || isCaptionClip(c);
 }
 
 /** Build the `NewClipFields` for one caption cue — the ONE place a caption
@@ -2397,6 +2544,16 @@ export type EditOp =
       cues: Array<{ id: string; start_frame: number; duration: number; text: string }>;
       style?: Partial<CaptionStyle>;
     }
+  /** D-230 — patch an ADJUSTMENT clip's colour correction. A `patch`, not the
+   *  full set, for exactly `set_text_clip`'s reason: the reducer merges
+   *  against the clip's existing layer via [`newAdjustmentLayer`], so an
+   *  omitted parameter provably keeps its value, and requiring all five would
+   *  force every caller (a single slider drag included) to restate four
+   *  numbers it is not changing.
+   *
+   *  Refused on a clip that is not already an adjustment clip — see the
+   *  reducer for why that matters more here than it looks. */
+  | { kind: 'set_adjustment_clip'; track: number; clip: number; patch: Partial<AdjustmentLayer> }
   /** D-222 — pin a [`Marker`] to a timeline frame. A real `EditOp`, not a
    *  store field, and that is the deliberate difference from D-216's
    *  `selection` and D-218's `previewView`: those describe how the user is
@@ -2604,6 +2761,15 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.patch === null ? 'Use track style for caption' : 'Override caption style';
     case 'import_subtitles':
       return `Import ${op.cues.length} subtitle${op.cues.length === 1 ? '' : 's'}`;
+    // D-230 — name the parameter when exactly one changed, which is what a
+    // slider drag or a single MCP call produces: "Adjust exposure" is a useful
+    // undo entry, "Edit adjustment clip" three times over is not.
+    case 'set_adjustment_clip': {
+      const keys = Object.keys(op.patch);
+      return keys.length === 1
+        ? `Adjust ${keys[0]} on ${clipLabel(before, op.track, op.clip)}`
+        : `Edit ${clipLabel(before, op.track, op.clip)} correction`;
+    }
     // D-222 — a marker's own name is the one thing worth putting in an undo
     // label ("Add marker" three times over says nothing about which).
     case 'add_marker':
@@ -3204,6 +3370,26 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       sync_locked: DEFAULT_SYNC_LOCKED,
       ...(op.style ? { caption_style: op.style } : {}),
     });
+    return next;
+  }
+  if (op.kind === 'set_adjustment_clip') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    // Refused for anything that is not already an adjustment clip, and this
+    // matters MORE than the equivalent guard on `set_text_clip`: patching an
+    // `adjustment` onto a media clip would not merely mis-render it, it would
+    // silently convert a clip that contributes picture into one that
+    // contributes none — both renderers branch on `is_adjustment()` BEFORE they
+    // look at `source_path`, so the clip's video would simply vanish from the
+    // edit while its file reference sat there looking fine.
+    if (!c || !isAdjustmentClip(c)) return tl;
+    const merged = newAdjustmentLayer(op.patch, c.adjustment ?? null);
+    // A no-op on an invalid patch, for `set_text_clip`'s reason: this reducer
+    // is pure and has nowhere to report to; the caller surfaces the message.
+    if ('error' in merged) return tl;
+    const next = clone(tl);
+    next.tracks[op.track].clips[op.clip].adjustment = merged;
     return next;
   }
   if (op.kind === 'move') {

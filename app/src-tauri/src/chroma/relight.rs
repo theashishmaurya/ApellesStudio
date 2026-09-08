@@ -377,8 +377,20 @@ mod tests {
     /// itself is exhaustively tested in `chroma::keyframes` already (D-034);
     /// this just confirms the hook wiring doesn't panic / drop fields when
     /// `chromaKeyframes` is present but there is nothing to interpolate against.
+    ///
+    /// **B-105 — "with no video loaded" is now ESTABLISHED here, not assumed.**
+    /// `current_video()` is process-global and several tests in other modules
+    /// set it; this test's entire premise is that it is `None`, so it takes
+    /// `PROJECT_STATE_LOCK` and says so outright rather than inheriting whatever
+    /// the last test to touch it happened to leave. Fixing only the leaking
+    /// side would leave this passing by luck; a test that depends on a global
+    /// should set it.
     #[test]
     fn keyframed_light_without_a_loaded_video_falls_back_to_raw_fields() {
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::chroma::state::set_current_video(None);
         let adj = json!({
             "relightLights": [
                 {
