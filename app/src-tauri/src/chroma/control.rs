@@ -18,6 +18,13 @@
 //! (and a screenshot is a picture of the webview, not a fact about the store,
 //! so routing it through the store would buy nothing anyway).
 //!
+//! Those two are also the only thing here that is `#[cfg(debug_assertions)]`
+//! (B-099/D-218): internal debug tooling is never shipped, so a release build
+//! has no [`native_op`] arms at all and forwards every op onward. The
+//! FRONTEND-side `debug_*` ops (D-218's UI-state / DOM-tree / frame-timing
+//! registry, `@chroma/debug`) need no special handling here — they are
+//! ordinary forwarded ops, gated on their own side by `import.meta.env.DEV`.
+//!
 //! See chroma/docs/08-decisions.md D-020 / D-210 and
 //! chroma/docs/notes/control-server/SPEC.md.
 
@@ -145,6 +152,13 @@ enum BridgeErr {
 /// produces, and always with HTTP 200: a *failed* screenshot is a normal
 /// answer with a reason in it, not a transport failure, and the MCP client
 /// reads `ok`/`error` rather than the status code.
+///
+/// B-099/D-218 — this whole function is gated with the module it calls into.
+/// Every op it answers is internal debug tooling, and internal debug tooling
+/// is never shipped, so a release build gets the [`no-op twin`](native_op)
+/// below and forwards everything to the frontend exactly as it did before
+/// D-210 introduced the native path.
+#[cfg(debug_assertions)]
 fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Option<String> {
     let result = match op {
         "debug_screenshot" => {
@@ -169,8 +183,18 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
     })
 }
 
+/// Release-build twin of [`native_op`] (B-099/D-218): there are no native ops
+/// once the debug tooling is compiled out, so everything is forwarded to the
+/// frontend. A real function rather than a `cfg` inside the caller, so the one
+/// call site reads the same in both configurations.
+#[cfg(not(debug_assertions))]
+fn native_op(_app: &tauri::AppHandle, _op: &str, _args: &serde_json::Value) -> Option<String> {
+    None
+}
+
 /// `{path, x, y}` for `debug_sample_pixel`, with a real message naming the
 /// argument that was missing rather than a silent default.
+#[cfg(debug_assertions)]
 fn sample_pixel_args(args: &serde_json::Value) -> Result<(String, u32, u32), String> {
     let path = args
         .get("path")
