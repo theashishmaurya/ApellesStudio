@@ -44,23 +44,41 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 56 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238)
+## Edit tab / multi-track NLE — CLOSED, 58 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238; +1, D-239)
 
-> **Count re-verified 2026-09-08 (after D-238 merged) directly against the
-> merged `mcp/server.py`**: 60 `@mcp.tool()` functions named `editor_*` (or
-> the three pre-D-183 exceptions above), minus the 4 media-understanding ones
-> that have their own section below, is **56**. A prior heading here said 54
-> against a recomputation that read 53 — both already stale the moment D-236
-> landed without the prose being re-run — superseded by this count against
-> the real, final file, the same way that note itself superseded two earlier
-> ones. The `+N` breakdown is the historical log its authors wrote and has
-> not been re-audited entry by entry; treat the total as authoritative and
-> the breakdown as provenance.
+> **Count re-verified 2026-09-08, after merging BOTH D-238 (auto-captioning)
+> and D-239 (seven edit types) into main, directly against the merged
+> `mcp/server.py`**: `grep -cE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck|set_clip_speed)\(' mcp/server.py`
+> returns 62, minus the 4 media-understanding tools (`editor_get_transcript`,
+> `editor_get_transcript_status`, `editor_analyze_video`,
+> `editor_analyze_video_status`) that have their own section below, is **58**
+> -- exactly the number D-239's own branch predicted the merge would produce.
+>
+> **Why two branches each reported a different number first, and why neither
+> was wrong for its own moment.** D-239's branch counted 57 before D-238
+> (auto-captioning) had landed; D-238's own heading said 56 because it was cut
+> against a grep whose non-prefixed-tool exception list was still missing
+> `set_clip_speed` (a real counting bug D-239 found and fixed -- D-236 had
+> added that tool without the `editor_` prefix, so the old grep silently
+> skipped it, meaning even the pre-D-239 "53"/"54" figures had already been
+> one short). Two branches touching the same running total at once is exactly
+> the scenario this note's own standing instruction is for: re-count against
+> the final merged file, don't try to reconcile two stale numbers against
+> each other.
+>
+> Earlier headings independently recomputed this total mid-merge (48, 50, 53)
+> from partial views; all are superseded. The `+N` breakdown is the historical
+> log its authors wrote and has not been re-audited entry by entry; treat the
+> total as authoritative and the breakdown as provenance.
 
-<!-- The count above is the real one, re-counted 2026-09-08 against
-     `grep -oE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck)\(' mcp/server.py`
+<!-- The count above is the real one, re-counted 2026-09-08 (D-239) against
+     `grep -cE '^def (editor_[a-z_]+|get_timeline|set_clip_fade|set_track_duck|set_clip_speed)\(' mcp/server.py`
      minus the 4 media-understanding tools listed in their own section below.
-     It replaces two contradictory headings (“23 tools” and “22 tools”) that had
+     `set_clip_speed` was added to that alternation by D-239 — it is an Edit-tab
+     tool without the `editor_` prefix, exactly like the three before it, and
+     was being silently missed. If a future Edit tool lands without the prefix,
+     add it here too or this count goes quietly wrong again.
+     It replaces contradictory headings (“23 tools” and “22 tools”) that had
      been sitting here as separate lines, both already stale — count it, don't
      increment it. -->
 
@@ -90,6 +108,7 @@ zero.**
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
 > | `editor_remove_media` (2026-09-07, roadmap item 23) | Remove one or more items from the media pool by id — the pool's only correction mechanism today (no re-probe/expiry yet). Wraps the same `chroma_media_remove` the GUI's Sources panel already used; a clip on the timeline still referencing a removed item keeps playing/exporting fine (`Clip.source_path` is an independent copy, never re-read from the pool), only its `media_id` back-link goes stale — reported back in `stillReferencedBy`. |
 > | `editor_add_clip` | Place a pool item on a track, trimmed to a source range. Called once per KEPT segment (not "place then cut a gap") to build a track from a raw recording. |
+> | `editor_edit_in` (D-239, 2026-09-08, roadmap item 27) | **The seven edit types**, and the difference between this and `editor_add_clip` above is the difference between an EDIT and a placement: `editor_add_clip` puts a clip at a position, this performs one of `insert` / `overwrite` / `replace` / `fit_to_fill` / `place_on_top` / `append` / `ripple_overwrite` at the playhead, on the destination track. Insert splits what the playhead is inside and pushes everything after it down; overwrite writes over it and moves nothing; replace and fit_to_fill both take the exact slot of the clip under the playhead (the first by re-cutting the source, the second by giving it a flat D-236 speed ramp calculated to fit); place_on_top goes on the next video track ABOVE, creating a new topmost one if needed; ripple_overwrite swaps the clip under the playhead at a different length and ripples the difference. One `edit_in` `EditOp`, one undo entry named for the type, and a real `error` sentence (from the shared `checkEditIn`) rather than a silent no-op whenever it is refused. GUI: drag a Sources item over the preview and drop it on one of the seven overlay targets. **`place_on_top` can create a track at index 0, which shifts every other track's index** — re-read `editor_get_state` afterwards; the response's own `track`/`trackCount` say whether it happened. |
 > | `editor_split_clip` / `editor_remove_clip` / `editor_remove_gap` / `editor_trim_clip` / `editor_move_clip` | The rest of the ripple-edit primitives — no new `EditOp` had to be invented for any of these; every one already existed in `packages/editor/src/timeline.ts`, only the MCP wrapper was missing. |
 > | `editor_slip_clip` (D-195; GUI gesture D-235) | Slip a clip's SOURCE window in place — `start_frame`/`duration` stay fixed, only `source_start` moves (clamped to the source's own bounds, lockstep with a linked A/V pair). A real, previously-missing `EditOp` (`slip`), not a wrapper around an existing one. **Shipped MCP-only for two days with no human affordance at all** — the human-AND-AI gap from the AI side, closed by D-235's Alt-drag on a clip's upper half. |
 > | `editor_trim_clip`'s `ripple` (D-235, 2026-09-08, roadmap item 27) | The trim tool's ripple mode. Default `False` is the pre-D-235 behaviour byte for byte (only this clip changes; shortening leaves a real gap, extending is refused if a neighbour blocks it — D-058's non-rippling-by-construction model). `True` shifts everything after this clip on the SAME track to follow its new out point, so no gap opens and a blocking neighbour is pushed rather than refusing the trim; a HEAD ripple leaves `start_frame` where it is and pulls the rest of the track in behind it. Not a new op kind — it is the same `ripple` flag `editor_add_clip`/`editor_move_clip` already carry, over the same single ripple-shift primitive, so sync-locked tracks ripple with it and a clip straddling the ripple point on one of them refuses the whole op rather than being split (B-033). |

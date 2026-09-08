@@ -1339,6 +1339,84 @@ def editor_add_clip(
 
 
 @mcp.tool()
+def editor_edit_in(
+    edit_type: str,
+    media_id: str | None = None,
+    source_path: str | None = None,
+    track: int | None = None,
+    at_frame: int | None = None,
+    source_start: int | None = None,
+    duration: int | None = None,
+    name: str | None = None,
+) -> str:
+    """Edit a media-pool source into the timeline using one of the SEVEN real
+    edit types, rather than just placing it at a position (`editor_add_clip`).
+    This is the same operation the app's own edit overlay performs when a clip
+    is dragged onto the preview, so a human and you produce identical results.
+
+    `edit_type` is one of, and every one of them acts at `at_frame` (the
+    playhead by default) on `track` (the first video track by default):
+
+    - `insert` — pushes everything at/after the playhead down to make room,
+      splitting whatever clip the playhead is inside. The only type that
+      lengthens the timeline by exactly the source's own length.
+    - `overwrite` — writes over whatever is there for the new clip's length.
+      Clips it lands inside are trimmed or split; clips it swallows whole are
+      removed. Nothing's position changes: the timeline stays the same length.
+    - `replace` — swaps the clip UNDER THE PLAYHEAD for this source, kept to
+      that clip's exact start and exact length (the source is re-cut, not
+      retimed). Refused if the source is too short to cover the slot — use
+      `fit_to_fill` for that. Note this is NOT `editor_swap_clip_media`, which
+      keeps the existing clip and only changes which file it points at,
+      preserving its transform/keyframes/grade; `replace` is a new edit.
+    - `fit_to_fill` — the same slot as `replace`, but the source keeps its full
+      marked length and gets a flat speed ramp calculated to fill the slot
+      exactly (see `editor_set_clip_speed`). Refused if that speed would fall
+      outside 0.05x–20x.
+    - `place_on_top` — puts the clip on the next video track ABOVE the
+      destination that has room at the playhead, creating a new topmost video
+      track if none has any. For titles, graphics, picture-in-picture. Nothing
+      on the track below is disturbed. **The response's `track` is where it
+      really landed, which may be a track that did not exist before, and every
+      other track's index will have shifted down by one when that happens —
+      re-read `editor_get_state` before addressing tracks by index again.**
+    - `append` — after the last edit on the destination track, ignoring the
+      playhead entirely.
+    - `ripple_overwrite` — replaces the clip under the playhead even at a
+      different length: a longer source pushes everything after it down, a
+      shorter one pulls everything in, so no gap is ever left.
+
+    Identify the source with `media_id` or `source_path` (import it first with
+    `editor_import_media`), optionally trimmed to `[source_start,
+    source_start+duration)` of its own frames exactly as `editor_add_clip`
+    takes them.
+
+    Every one of the seven is ONE undo entry, named for the edit type. A
+    refused edit returns a real `error` sentence saying why and changes
+    nothing — it is never a silent no-op. `insert` and `ripple_overwrite` are
+    additionally refused when a sync-locked track has a clip straddling the
+    frame they would ripple from (docs/BUGS.md B-033)."""
+    import json
+
+    args: dict = {"editType": edit_type}
+    if media_id is not None:
+        args["mediaId"] = media_id
+    if source_path is not None:
+        args["sourcePath"] = source_path
+    if track is not None:
+        args["track"] = track
+    if at_frame is not None:
+        args["atFrame"] = at_frame
+    if source_start is not None:
+        args["sourceStart"] = source_start
+    if duration is not None:
+        args["duration"] = duration
+    if name is not None:
+        args["name"] = name
+    return json.dumps(_op("editor_edit_in", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_text_fonts() -> str:
     """List the font families a text/title clip can use, and which of them
     this machine actually has a font file for.

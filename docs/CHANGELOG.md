@@ -26,6 +26,22 @@ One or two lines per session. Detail lives in the decision it references.
   Transcript" button beside the Subtitles importer, operating on the selected
   clip. MCP: `editor_generate_captions_from_transcript`.
 
+- **2026-09-08** — **The seven edit types on drop (D-239, roadmap item 27).**
+  Dragging a Sources item now raises Blackmagic's own edit overlay over the
+  preview — Insert / Overwrite / Replace / Fit to Fill / Place on Top / Append
+  at End / Ripple Overwrite as seven labelled targets, built from the
+  `timeline.jpg` screenshot the roadmap line itself names. All seven are ONE
+  atomic `edit_in` `EditOp` (one undo, named for the type), not a client-side
+  sequence — the D-129 precedent. The audit found only Append genuinely free
+  and Insert nearly so; Overwrite needed real window-clearing, and Fit to Fill
+  needed no new retiming concept at all, just a flat D-236 speed ramp at the
+  closed-form fitting speed. Replace is deliberately distinct from D-195's
+  `swap_media`. The timeline's own positional drop is untouched. MCP:
+  `editor_edit_in`, sharing `checkEditIn` with the overlay so a greyed row, a
+  tool error and a refused op can never disagree. Fixed a latent track-index
+  remap bug in `timelineStore` (a new track at index 0 renumbers everything
+  below it) and a real counting bug in `docs/notes/mcp-tool-coverage.md`.
+
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge
