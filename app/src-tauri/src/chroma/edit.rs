@@ -890,7 +890,7 @@ fn draw_captions_onto(
     }
     let (w, h) = (frame.width(), frame.height());
     let mut canvas = frame.to_rgba8();
-    // D-241 — an animated caption needs to know where in its OWN clip this
+    // D-243 — an animated caption needs to know where in its OWN clip this
     // frame falls. Clip-local, not session-relative, so a cue that is moved or
     // rippled animates identically (the same rule its word windows follow).
     let fps = timeline.fps();

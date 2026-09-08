@@ -451,7 +451,7 @@ export function buildCaptionDrawtextSteps(
 ): string[] {
   const lines = captionLines(cue.text);
   if (lines.length === 0) return [];
-  // D-241 — an animated caption is drawn per WORD, not per line. Branching
+  // D-243 — an animated caption is drawn per WORD, not per line. Branching
   // here rather than inside the loop keeps D-229's static path byte-identical:
   // a caption with no animation compiles to exactly the filtergraph it
   // compiled to before this decision existed.
@@ -546,7 +546,7 @@ export function captionEnterExpr(t0: number, enterSecs: number): string {
 }
 
 /**
- * The `drawtext`/`drawbox` nodes for one ANIMATED caption cue (D-241) — one
+ * The `drawtext`/`drawbox` nodes for one ANIMATED caption cue (D-243) — one
  * chain per word, over the whole cue.
  *
  * **Why per word.** The static path hands a whole line to one `drawtext` and
@@ -804,7 +804,7 @@ export function captionClipsMissingFonts(
   return missing;
 }
 
-/** D-241 — every animated caption on `timeline` with a word this export has no
+/** D-243 — every animated caption on `timeline` with a word this export has no
  *  measured advance for, so the caller can refuse with a real reason instead
  *  of compiling a line whose words all stack at x=0.
  *
@@ -936,7 +936,7 @@ export interface TimelineExportOptions {
    *  export that silently disagrees with the preview. See
    *  `buildExportFfmpegArgs`' return value. */
   fontFiles?: Record<string, string>;
-  /** D-241 — the measured advance width of every word of every ANIMATED
+  /** D-243 — the measured advance width of every word of every ANIMATED
    *  caption on the timeline, keyed by `captionMetricKey`.
    *
    *  The same split as `fontFiles` directly above, for the same reason: an

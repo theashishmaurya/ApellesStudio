@@ -21840,7 +21840,7 @@ introduces zero new errors.
 
 ---
 
-## D-241 — Animated caption presets extend the native `CaptionStyle`; the Motion engine cannot host them, and was not asked to
+## D-243 — Animated caption presets extend the native `CaptionStyle`; the Motion engine cannot host them, and was not asked to
 
 **Context.** Roadmap item 28: the "Subtitles" button is import-only (D-229), and
 the owner wants a real panel — Import plus a library of styled presets you can
@@ -21854,7 +21854,7 @@ suggested trying Motion ("lets use motion :) for building couple of them").
 **Reference.** HyperFrames' own caption catalogue — `hyperframes.heygen.com/catalog`
 and the real sources in the `heygen-com/hyperframes` repository — read directly,
 not paraphrased, per CLAUDE.md's "research the real pattern first" rule. Kept in
-`scratch/heygen-caption-reference/`. Provenance and licence: **D-242**.
+`scratch/heygen-caption-reference/`. Provenance and licence: **D-244**.
 
 ### Decision 1 — a native `CaptionStyle` extension, not a Motion manifest
 
@@ -21967,7 +21967,7 @@ including every animation knob, per-word rendering in **both** engines,
 animation-extended `editor_set_caption_style`, and **8 presets**:
 `plain-subtitle`, `plain-clean` (Chroma's own), and `caption-highlight`,
 `caption-kinetic-slam`, `caption-pill-karaoke`, `caption-neon-accent`,
-`caption-clip-wipe`, `caption-editorial-build` (adapted — D-242).
+`caption-clip-wipe`, `caption-editorial-build` (adapted — D-244).
 
 **NOT built, each named so the next agent needs no re-scraping.** The owner's
 target was all 19 catalogue looks; these are the ones the native vocabulary
@@ -22025,9 +22025,9 @@ width.
 
 ---
 
-## D-242 — HyperFrames' caption catalogue is the design reference, vendored as design only, under Apache-2.0
+## D-244 — HyperFrames' caption catalogue is the design reference, vendored as design only, under Apache-2.0
 
-**Context.** D-241 needed real reference for "exact design" looks. The owner
+**Context.** D-243 needed real reference for "exact design" looks. The owner
 named `hyperframes.heygen.com/catalog` and asked for fidelity ("we want all of
 them exact design and then highly customizable").
 
@@ -22045,7 +22045,7 @@ the plan mid-build.
 
 **Decision: take the DESIGN, ship none of the code.** No HyperFrames source is
 in this repo. Their compositions are HTML + CSS + GSAP rendered in a browser;
-Chroma renders captions natively, twice (D-241 Decision 1). What is reused is
+Chroma renders captions natively, twice (D-243 Decision 1). What is reused is
 the design read off their real sources — colour values, type treatment, layout,
 per-word timing feel — re-expressed in `CaptionStyle`/`CaptionAnimation` terms.
 This is the same relationship the repo already has with
@@ -22067,7 +22067,7 @@ though nothing is copied verbatim:
 
 **Rejected: embedding HyperFrames as a runtime dependency** (its `add` CLI
 pulling components into the app). Legally fine, architecturally wrong — see
-D-241 Decision 1; the owner also ruled it out directly.
+D-243 Decision 1; the owner also ruled it out directly.
 
 **No new package dependency was added.** This is vendored design, not a dep, so
 there is nothing in `package.json` to audit — which is itself why this entry

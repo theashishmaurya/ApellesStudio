@@ -1,5 +1,5 @@
 // @chroma/editor — animated caption presets: the per-word model and its
-// evaluation (D-241, `docs/notes/caption-presets.md`).
+// evaluation (D-243, `docs/notes/caption-presets.md`).
 //
 // **What it is:** the exact TypeScript mirror of
 // `chroma_timeline::caption_anim` — when each word of a cue is "spoken", and
@@ -52,11 +52,11 @@ export const DEFAULT_CAPTION_ACTIVE_BOX_PAD_Y = 0.075;
  *  open-ended effect language is not. */
 export type CaptionAnimKind =
   /** No animation — D-229's static, whole-cue caption, one `drawtext` per
-   *  LINE. The default, and what every pre-D-241 project deserialises to. */
+   *  LINE. The default, and what every pre-D-243 project deserialises to. */
   | 'none'
   /** Line stays up; the active word gets a filled box behind it. The box is
    *  SQUARE — ffmpeg's `drawbox` has no corner radius, so a rounded one would
-   *  be a preview the export cannot reproduce (D-241). */
+   *  be a preview the export cannot reproduce (D-243). */
   | 'highlight'
   /** Line stays up; words recolour as they are spoken, active word may
    *  additionally carry a pill. */
@@ -313,7 +313,7 @@ export function captionWordState(
     case 'karaoke': {
       // BINARY, not ramped with `entered`: ffmpeg's `drawbox` takes a colour
       // string, not a per-frame alpha expression, so a box that faded in here
-      // could not be reproduced in the export (D-241).
+      // could not be reproduced in the export (D-243).
       const boxAlpha =
         phase === 'active' && anim.active_box_color
           ? Math.min(1, Math.max(0, anim.active_box_opacity))

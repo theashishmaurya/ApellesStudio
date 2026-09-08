@@ -893,7 +893,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "transcript-driven follow-up lands. Also note an animated caption "
             "emits roughly one filtergraph node per word, so setting a "
             "several-hundred-cue imported .srt to animate builds a very large "
-            "graph; that path is not optimised. See D-241 and "
+            "graph; that path is not optimised. See D-243 and "
             "docs/notes/caption-presets.md."
         ),
         "media_pool_stuck_item_B073": (
@@ -1637,7 +1637,7 @@ def editor_set_caption(track: int, clip: int, text: str) -> str:
 
 @mcp.tool()
 def editor_list_caption_presets() -> str:
-    """List the styled caption looks the Styles library offers (D-241).
+    """List the styled caption looks the Styles library offers (D-243).
 
     Each entry carries its `id` (what `editor_add_caption_preset` takes), a
     label and group, a one-line description, the animation kind it uses, its
@@ -1662,7 +1662,7 @@ def editor_add_caption_preset(
     duration: int | None = None,
     place_caption: bool = True,
 ) -> str:
-    """Apply a styled caption preset, creating what it needs (D-241).
+    """Apply a styled caption preset, creating what it needs (D-243).
 
     The one-call way to get a good-looking caption onto the timeline: it styles
     a subtitle track with the preset and, by default, drops a caption on it so
@@ -1686,7 +1686,7 @@ def editor_add_caption_preset(
 
     Presets adapted from HyperFrames' caption catalogue (Apache-2.0,
     github.com/heygen-com/hyperframes) are reimplemented natively — see each
-    preset's `note` for what differs and why (D-242)."""
+    preset's `note` for what differs and why (D-244)."""
     import json
 
     args: dict = {"preset": preset, "placeCaption": place_caption}
@@ -1760,7 +1760,7 @@ def editor_set_caption_style(
     text box, so offering those would let the preview show something the export
     cannot reproduce).
 
-    ## Animation (D-241)
+    ## Animation (D-243)
 
     An animated caption is drawn WORD BY WORD. Word timings are derived from
     each word's length across the cue — a `.srt` carries no word timings — so

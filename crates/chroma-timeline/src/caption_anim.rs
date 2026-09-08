@@ -1,4 +1,4 @@
-//! # Animated caption presets — the per-word model and its evaluation (D-241)
+//! # Animated caption presets — the per-word model and its evaluation (D-243)
 //!
 //! **What it is:** the animation half of the caption primitive. D-229 gave a
 //! caption a static [`CaptionStyle`] and a shared line layout; this module adds
@@ -33,7 +33,7 @@
 //! and it is excluded on purpose: `fontsize` is the input to the very
 //! measurement that makes the two engines agree, so animating it re-opens the
 //! divergence D-212/D-229 closed. A word that pops by moving and fading is
-//! reproducible in both engines; one that pops by scaling is not. See D-241.
+//! reproducible in both engines; one that pops by scaling is not. See D-243.
 //!
 //! ## Per-word timing is derived from the cue, not from a transcript
 //!
@@ -44,7 +44,7 @@
 //! windows.
 //!
 //! This is deliberately NOT yet wired to the real word timings the transcript
-//! feature can produce — a named follow-up in D-241. The model is already
+//! feature can produce — a named follow-up in D-243. The model is already
 //! shaped for it: [`CaptionWord::start`]/[`CaptionWord::end`] are just numbers,
 //! so a transcript-driven path substitutes better ones without changing a
 //! single renderer.
@@ -63,7 +63,7 @@ use crate::caption::CaptionStyle;
 #[serde(rename_all = "lowercase")]
 pub enum CaptionAnimKind {
     /// No animation — D-229's static, whole-cue caption, drawn one `drawtext`
-    /// per LINE. The default, and what every pre-D-241 project deserialises
+    /// per LINE. The default, and what every pre-D-243 project deserialises
     /// to.
     #[default]
     None,
@@ -72,7 +72,7 @@ pub enum CaptionAnimKind {
     ///
     /// The box is SQUARE, not rounded: ffmpeg's `drawbox` has no corner
     /// radius, so a rounded one would be a preview the export cannot
-    /// reproduce. See D-241's deferral list.
+    /// reproduce. See D-243's deferral list.
     Highlight,
     /// The whole line stays on screen; each word switches colour as it is
     /// spoken, and the active word may additionally carry a pill.
@@ -474,7 +474,7 @@ pub fn caption_word_state(
             // BINARY, not ramped with `entered`: ffmpeg's `drawbox` takes a
             // colour string, not a per-frame alpha expression, so a box that
             // faded in here could not be reproduced in the export. The
-            // reference's scaleX sweep is a named deferral in D-241; what both
+            // reference's scaleX sweep is a named deferral in D-243; what both
             // engines CAN do exactly is "on for the active word's window".
             let box_alpha = if phase == CaptionWordPhase::Active && anim.active_box_color.is_some()
             {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — the Captions panel's real behaviour (D-241).
+ * @chroma/editor — the Captions panel's real behaviour (D-243).
  *
  * `captionPresets.test.ts` proves the preset DATA is sane and
  * `captionAnim.test.ts` proves the model's arithmetic. What neither can catch

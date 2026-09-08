@@ -34,7 +34,7 @@ import {
   type TimelineExportOptions,
 } from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
-// D-241 — the per-word advances an animated caption is laid out from.
+// D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
 import { captionLayout, captionLines } from './caption';
 import { captionAnimationOf, isPerWordAnim, isSingleWordAnim } from './captionAnim';
@@ -235,7 +235,7 @@ export function compileEditorExportArgs(a: {
     }
   }
 
-  // D-241 — the measured per-word advances an ANIMATED caption is laid out
+  // D-243 — the measured per-word advances an ANIMATED caption is laid out
   // from, read synchronously from the module cache `runEditorExport` warms,
   // exactly as `fontFiles` is read from its own. Static captions need none.
   const captionMetrics = captionMetricsSnapshot();
@@ -267,7 +267,7 @@ export function compileEditorExportArgs(a: {
 }
 
 /**
- * D-241 — measure every word of every ANIMATED caption on the current
+ * D-243 — measure every word of every ANIMATED caption on the current
  * timeline, so the synchronous compiler can read them out of the module cache.
  *
  * **Why the composition size is a parameter.** A word's measurement is taken
@@ -332,7 +332,7 @@ export async function runEditorExport(
   // Inspector has ever rendered a font picker. Idempotent and a no-op once
   // loaded (see `textFonts.ts`), so this costs nothing on every later call.
   await loadTextFonts();
-  // D-241 — and the per-word advances every ANIMATED caption needs, for the
+  // D-243 — and the per-word advances every ANIMATED caption needs, for the
   // identical reason: the compiler below is synchronous, so anything it needs
   // from the backend has to already be in memory. Derived from the timeline
   // the compiler is about to read, and a no-op for a timeline whose captions

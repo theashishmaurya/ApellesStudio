@@ -60,7 +60,7 @@ import {
   type CaptionAlign,
   type CaptionStyle,
 } from './timeline';
-// D-241 — the animation half of a caption's style.
+// D-243 — the animation half of a caption's style.
 import {
   captionAnimationOf,
   isPerWordAnim,
@@ -86,7 +86,7 @@ const ALIGNMENTS: Array<{ value: CaptionAlign; label: string }> = [
   { value: 'right', label: 'Right' },
 ];
 
-/** D-241 — the animation kinds, labelled for the picker. Deliberately the
+/** D-243 — the animation kinds, labelled for the picker. Deliberately the
  *  whole closed set from `captionAnim.ts`: an author can reach any look the
  *  renderers implement from here, not only the ones a preset happens to use. */
 const ANIM_KINDS: Array<{ value: CaptionAnimKind; label: string }> = [
@@ -187,7 +187,7 @@ export function CaptionInspectorPanel() {
     }
   };
 
-  /** D-241 — the resolved animation of whatever style is in effect. Read
+  /** D-243 — the resolved animation of whatever style is in effect. Read
    *  through `captionAnimationOf` rather than off the field, so an absent key
    *  and an explicit `kind: 'none'` are the same thing here too. */
   const anim = captionAnimationOf(style);
@@ -438,7 +438,7 @@ export function CaptionInspectorPanel() {
               crop, opacity and fades don’t apply to a caption — its look is entirely this style.
             </p>
 
-            {/* D-241 — the ANIMATION half of the style.
+            {/* D-243 — the ANIMATION half of the style.
                 Every knob a preset sets is editable here, deliberately: a
                 preset is data applied through this same style, not a baked-in
                 look (owner, 2026-09-08: "keep the style configurable as much
@@ -665,7 +665,7 @@ export function CaptionInspectorPanel() {
                   <p className="text-[10px] leading-snug text-text-secondary/60">
                     Word timings are derived from each word’s length across the cue. The highlight
                     box is square and switches on and off per word — ffmpeg can’t round or fade one,
-                    so a preview that did wouldn’t export (D-241).
+                    so a preview that did wouldn’t export (D-243).
                   </p>
                 </div>
               )}

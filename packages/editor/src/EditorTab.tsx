@@ -184,7 +184,7 @@ export function EditorTab() {
             minSize={TIMELINE_MIN_HEIGHT}
             className="shrink-0 border-t border-border-color flex flex-col min-h-0"
           >
-            {/* D-229/D-241 — the timeline's own toolbar strip: the timeline
+            {/* D-229/D-243 — the timeline's own toolbar strip: the timeline
                 switcher, plus the Captions panel (import + the styled preset
                 library). It creates a whole TRACK, so it belongs here beside
                 the switcher rather than in the Sources media pool — see

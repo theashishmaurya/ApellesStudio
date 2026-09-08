@@ -64,7 +64,7 @@ struct CaptionKey {
     text: String,
     style: String,
     canvas: (u32, u32),
-    /// D-241 — `Some` only for an ANIMATED caption; see the key's construction
+    /// D-243 — `Some` only for an ANIMATED caption; see the key's construction
     /// in [`render_caption_layer`] for why a static one stays time-free.
     time: Option<(i64, i64)>,
 }
@@ -105,7 +105,7 @@ pub fn render_caption_layer(
         text: cue.text.clone(),
         style: format!("{style:?}"),
         canvas: (canvas_w, canvas_h),
-        // D-241 — the time is part of the key ONLY for an animated caption.
+        // D-243 — the time is part of the key ONLY for an animated caption.
         // A static caption is the same pixels at every frame, so keeping its
         // key time-free preserves D-229's cache behaviour exactly (one entry
         // serves the cue's whole span); an animated one genuinely differs per
@@ -131,7 +131,7 @@ pub fn render_caption_layer(
     Ok(img)
 }
 
-/// Where in its own clip a caption is being drawn (D-241).
+/// Where in its own clip a caption is being drawn (D-243).
 ///
 /// Both numbers are **clip-local seconds**, so a cue that is moved or rippled
 /// animates identically — the same reason `CaptionWord`'s own windows are
@@ -321,7 +321,7 @@ fn rasterise_caption(
     Ok(canvas)
 }
 
-/// The per-word body of [`rasterise_caption`] (D-241).
+/// The per-word body of [`rasterise_caption`] (D-243).
 ///
 /// **What makes this different from the static path:** the static path hands a
 /// whole LINE to one glyph run and lets its advance decide the line's width.
@@ -505,7 +505,7 @@ fn rasterise_animated_caption(
     // a rounded box here would be a preview the export cannot reproduce —
     // exactly the divergence class D-211/D-229 refused to open. A real rounded
     // highlight needs a rounded-rect primitive in BOTH engines and is a named
-    // follow-up in D-241.
+    // follow-up in D-243.
     if let Some((hr, hg, hb)) = anim.active_box_rgb() {
         let pad_x = (anim.active_box_pad_x.max(0.0) as f32) * font_px;
         let pad_y = (anim.active_box_pad_y.max(0.0) as f32) * font_px;
@@ -969,7 +969,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------- //
-    // D-241 — the ANIMATED (per-word) path
+    // D-243 — the ANIMATED (per-word) path
     //
     // The preview half of the parity story. `captionAnimExport.ffmpeg.test.ts`
     // asserts the same contract on the export side by rendering real pixels,

@@ -179,7 +179,7 @@ use serde::{Deserialize, Serialize};
 use chroma_types::Rational;
 
 pub mod caption;
-/// D-241 — the per-word animation model animated caption presets are built
+/// D-243 — the per-word animation model animated caption presets are built
 /// from. Its own file rather than part of `caption` because, like
 /// `speed_ramp`, it is an exact mirror of a TypeScript module
 /// (`@chroma/editor`'s `captionAnim.ts`) and a reader checking the two against

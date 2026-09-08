@@ -67,7 +67,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
-// D-241 — the caption preset library and the one action that applies it,
+// D-243 — the caption preset library and the one action that applies it,
 // shared verbatim with `CaptionPanel.tsx` so the agent and the human cannot
 // drift apart.
 import { CAPTION_PRESETS } from './captionPresets';
@@ -554,7 +554,7 @@ function captionStylePatch(a: any, baseAnim?: CaptionAnimation | null): Partial<
   }
   if (a?.positionX !== undefined) patch.position_x = Number(a.positionX);
   if (a?.positionY !== undefined) patch.position_y = Number(a.positionY);
-  // D-241 — the ANIMATION half. Merged onto the caller's CURRENT resolved
+  // D-243 — the ANIMATION half. Merged onto the caller's CURRENT resolved
   // animation (passed in as `base`) rather than written as a fragment, for the
   // same reason the Inspector's own `patchAnim` does it: a partial write onto
   // a style that carries no animation key would leave the other fields
@@ -1341,7 +1341,7 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, caption: after?.caption ?? null };
       },
 
-      // D-241 — the preset library, as the agent sees it. The GUI half is
+      // D-243 — the preset library, as the agent sees it. The GUI half is
       // `CaptionPanel.tsx`'s Styles tab; both read the SAME `captionPresets.ts`
       // and both place through the SAME `applyCaptionPreset`, so an agent can
       // reach every look a human can (CLAUDE.md).
@@ -1398,7 +1398,7 @@ export function useEditorControl(): void {
           return { ok: true, track, clip: cueIndex, usingTrackStyle: true };
         }
 
-        // D-241 — the animation currently in effect at the level being
+        // D-243 — the animation currently in effect at the level being
         // written, so a caller changing one animation knob keeps the rest.
         // Resolved the same way the renderers resolve it: the cue's override
         // if one is being edited, otherwise the track's.

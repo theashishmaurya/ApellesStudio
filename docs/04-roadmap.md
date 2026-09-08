@@ -1697,7 +1697,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       surfaces, multi-user real-time collaboration.
 
 28. **A real caption panel + styled caption presets** (owner, 2026-09-08).
-    **Largely shipped — D-241/D-242**, `docs/notes/caption-presets.md`. The
+    **Largely shipped — D-243/D-244**, `docs/notes/caption-presets.md`. The
     architecture question this item raised is answered and closed; what
     remains is a named list of individual presets, not a design problem.
     - ✅ **The panel.** `CaptionPanel.tsx` replaces D-229's straight-to-file-
@@ -1710,7 +1710,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       static ones. A preset is pure DATA — a `CaptionStyle` — so everything it
       sets stays editable (owner: "keep the style configurable as much as
       possible").
-    - ✅ **The architecture decision (D-241).** Native `CaptionStyle`
+    - ✅ **The architecture decision (D-243).** Native `CaptionStyle`
       extension, NOT a Motion manifest. Investigated for real and disqualified
       on facts: the Motion engine has no render-to-file path at all
       (`@remotion/renderer` is not a dependency anywhere — only the dev CLI),
@@ -1719,11 +1719,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       headless-Chromium frame server on BOTH paths. The owner independently
       confirmed the same call mid-build ("no new heavy runtime dependency
       chroma only"). Full reasoning, including why the HyperFrames renderer
-      itself was rejected (network in the render path), in D-241.
+      itself was rejected (network in the render path), in D-243.
     - ✅ **Per-word animation in BOTH engines**, with the vocabulary
       deliberately closed to what ffmpeg can evaluate per frame without
       changing its own text layout — alpha, dx/dy, discrete per-word colour, a
-      binary highlight box. **Per-word scale is excluded on purpose** (D-241
+      binary highlight box. **Per-word scale is excluded on purpose** (D-243
       Decision 3): `fontsize` is the input to the measurement that makes the
       two engines agree (D-212).
     - ✅ **MCP**: `editor_list_caption_presets`, `editor_add_caption_preset`,
@@ -1732,10 +1732,10 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ✅ **8 presets shipped**: `plain-subtitle`, `plain-clean` (Chroma's own),
       `caption-highlight`, `caption-kinetic-slam`, `caption-pill-karaoke`,
       `caption-neon-accent`, `caption-clip-wipe`, `caption-editorial-build`
-      (adapted from HyperFrames' catalogue, Apache-2.0 — D-242).
+      (adapted from HyperFrames' catalogue, Apache-2.0 — D-244).
     - ⬜ **11 catalogue presets NOT built**, each blocked on a real capability
       the native vocabulary lacks rather than on time. Named individually with
-      their blockers in D-241 so a follow-up needs no re-scraping:
+      their blockers in D-243 so a follow-up needs no re-scraping:
       `caption-gradient-fill`, `caption-neon-glow`, `caption-glitch-rgb`,
       `caption-matrix-decode`, `caption-texture`, `texture-mask-text`,
       `caption-parallax-layers`, `caption-camera-follow`,
@@ -1743,7 +1743,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `caption-blend-difference`, `caption-weight-shift`, `morph-text`.
       Most need a real effect capability in both renderers (a blur, a
       glyph-shaped mask, a blend mode, particles) — which is the point at
-      which the Motion/Remotion route deserves re-opening, per D-241.
+      which the Motion/Remotion route deserves re-opening, per D-243.
     - ⬜ **Bundle the reference typefaces.** The looks are set in Montserrat,
       Anton, Poppins, Outfit, Space Grotesk and Gabarito; Chroma's catalogue is
       system faces only (D-212 requires both renderers read the same

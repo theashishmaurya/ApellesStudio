@@ -1,4 +1,4 @@
-// @chroma/editor — applying a caption preset (D-241).
+// @chroma/editor — applying a caption preset (D-243).
 //
 // **What it is:** the ONE action that turns a preset id into timeline edits —
 // find or create a subtitle track, write the preset's style onto it, and

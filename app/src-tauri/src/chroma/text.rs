@@ -189,7 +189,7 @@ pub fn chroma_text_fonts() -> Vec<ResolvedFont> {
         .collect()
 }
 
-/// Measure a batch of caption words for the export compiler (D-241).
+/// Measure a batch of caption words for the export compiler (D-243).
 ///
 /// **Why this command exists at all.** An animated caption positions each WORD
 /// itself rather than letting either engine lay out a line — the same move

@@ -362,7 +362,7 @@ export function installResizeObserverStub(): () => void {
 }
 
 /** jsdom implements no Web Animations API, so `Element.getAnimations` is
- *  simply absent (D-241).
+ *  simply absent (D-243).
  *
  *  Base UI's `ScrollAreaViewport` calls it from a timer to decide whether a
  *  scroll is still animating. With it missing, the call throws AFTER the test

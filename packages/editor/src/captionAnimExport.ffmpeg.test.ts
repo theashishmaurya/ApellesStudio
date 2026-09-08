@@ -1,5 +1,5 @@
 // @chroma/editor — REAL ffmpeg-execution, PIXEL-level tests for the ANIMATED
-// caption export path (D-241, `docs/notes/caption-presets.md`).
+// caption export path (D-243, `docs/notes/caption-presets.md`).
 //
 // **Why this file exists at all.** `captionAnim.test.ts` proves the model's
 // arithmetic and `timelineExport.test.ts` can only match argv STRINGS — and a
@@ -128,7 +128,7 @@ function redBounds(f: Frame) {
   return count === 0 ? null : { x0, x1: x1 + 1, count };
 }
 
-describe.skipIf(!AVAILABLE)('animated captions — real ffmpeg render (D-241)', () => {
+describe.skipIf(!AVAILABLE)('animated captions — real ffmpeg render (D-243)', () => {
   let dir: string;
   let out: string;
 

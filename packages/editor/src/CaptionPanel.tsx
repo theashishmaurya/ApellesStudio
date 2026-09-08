@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's **Captions panel** (D-241,
+ * @chroma/editor — the Edit tab's **Captions panel** (D-243,
  * `docs/notes/caption-presets.md`).
  *
  * **What it is:** what clicking "Subtitles" opens. Two tabs:

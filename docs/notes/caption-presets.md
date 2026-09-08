@@ -1,4 +1,4 @@
-# Caption presets and per-word animation (D-241/D-242, roadmap item 28)
+# Caption presets and per-word animation (D-243/D-244, roadmap item 28)
 
 The Edit tab's Captions panel: a library of styled caption looks you can drop
 onto the timeline, a full property editor for a placed caption, and the per-word
@@ -8,10 +8,10 @@ in the export.
 Builds directly on **D-229** (`docs/notes/subtitles.md`), which gave a caption
 its own track kind, a static `CaptionStyle` and the shared line layout that
 makes a multi-line cue render the same in both engines. Read that first; this
-note only covers what D-241 adds.
+note only covers what D-243 adds.
 
 Reference: HyperFrames' caption catalogue, kept in
-`scratch/heygen-caption-reference/` (Apache-2.0 — see D-242 for provenance and
+`scratch/heygen-caption-reference/` (Apache-2.0 — see D-244 for provenance and
 what was and was not taken).
 
 ---
@@ -42,7 +42,7 @@ Two structural facts drove the design more than any single look:
    against speech — not the cue. D-229's model has no word in it at all.
 2. **Every one of them is a browser composition** — HTML + CSS + GSAP, fetching
    GSAP from a CDN and fonts from Google Fonts at render time. That is what
-   makes them un-embeddable here (D-241 Decision 1) and why the looks had to be
+   makes them un-embeddable here (D-243 Decision 1) and why the looks had to be
    re-expressed rather than run.
 
 ---
@@ -246,5 +246,5 @@ Both are named on the roadmap, and neither is hidden from the user:
   vocabulary genuinely cannot express it (glow, gradient fill, texture masking,
   channel splits, particles, per-character scramble, blend modes, per-word font
   weight, 3D parallax, camera moves, glyph morphing). Every one is named
-  individually in D-241 with its specific blocker, so a follow-up needs no
+  individually in D-243 with its specific blocker, so a follow-up needs no
   re-scraping and no re-deciding.

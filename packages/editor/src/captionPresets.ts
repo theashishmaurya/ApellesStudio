@@ -1,4 +1,4 @@
-// @chroma/editor — the caption preset library (D-241/D-242,
+// @chroma/editor — the caption preset library (D-243/D-244,
 // `docs/notes/caption-presets.md`).
 //
 // **What it is:** the named, styled caption looks the Captions panel offers,
@@ -13,7 +13,7 @@
 // configurable as much as possible"). That is the whole reason this file can
 // be pure data: nothing downstream needs to know a preset existed.
 //
-// ## Provenance and licence (D-242)
+// ## Provenance and licence (D-244)
 //
 // The looks are adapted from **HyperFrames**' own caption catalogue —
 // `github.com/heygen-com/hyperframes`, Apache License 2.0, "Copyright 2026
@@ -32,7 +32,7 @@
 // in `CaptionStyle`/`CaptionAnimation` terms. Per-preset divergences (a wipe
 // that became a rise, a rounded box that became square) are named in each
 // preset's own `note`, and the presets from that catalogue NOT built here are
-// listed with their reasons in D-241.
+// listed with their reasons in D-243.
 //
 // The same relationship this repo already has with
 // `scratch/resolve-reference/` — a real reference, a native reimplementation.
@@ -81,14 +81,14 @@ export type CaptionPresetGroup =
 
 /** Font catalogue keys used below.
  *
- *  **A known fidelity gap, deliberately taken** (D-241): HyperFrames' looks
+ *  **A known fidelity gap, deliberately taken** (D-243): HyperFrames' looks
  *  are set in Montserrat, Anton, Poppins, Outfit, Space Grotesk and Gabarito,
  *  and Chroma's font catalogue (`chroma::text::TEXT_FONTS`) is system faces
  *  only — Arial/Impact/Georgia/Courier — because both renderers must read the
  *  same single-face `.ttf` (D-212). Each preset therefore names the nearest
  *  catalogue face, and the `font` field stays editable like every other.
  *  Bundling the real (SIL OFL 1.1, freely redistributable) faces is a named
- *  follow-up in D-241, not a thing this pass silently faked. */
+ *  follow-up in D-243, not a thing this pass silently faked. */
 const FONT_HEAVY = 'sans-black';
 const FONT_BOLD = 'sans-bold';
 const FONT_DISPLAY = 'impact';
@@ -150,7 +150,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'TikTok-style — the line stays up, each word lit by a red sweep as it lands.',
     group: 'Social',
     note:
-      'Adapted from HyperFrames caption-highlight (Apache-2.0). Its red gradient box becomes a solid #FF1745 and its 10px rounded corners become square — ffmpeg drawbox has neither a gradient nor a radius, so a preview with them could not be exported (D-241).',
+      'Adapted from HyperFrames caption-highlight (Apache-2.0). Its red gradient box becomes a solid #FF1745 and its 10px rounded corners become square — ffmpeg drawbox has neither a gradient nor a radius, so a preview with them could not be exported (D-243).',
     style: {
       font: FONT_HEAVY,
       // 80px against a 1080-tall frame in the reference.
@@ -184,7 +184,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'One full-screen word per beat, slamming in from alternating sides.',
     group: 'Social',
     note:
-      'Adapted from HyperFrames caption-kinetic-slam (Apache-2.0). Its back.out scale-pop becomes a slide: ffmpeg fontsize is the measurement both renderers agree through, so animating it would break preview/export parity (D-241). Anton is stood in for by Impact.',
+      'Adapted from HyperFrames caption-kinetic-slam (Apache-2.0). Its back.out scale-pop becomes a slide: ffmpeg fontsize is the measurement both renderers agree through, so animating it would break preview/export parity (D-243). Anton is stood in for by Impact.',
     style: {
       font: FONT_DISPLAY,
       size: 0.16,
@@ -210,7 +210,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'Follow-along lyrics — spoken words dim, the live word wears a bright pill.',
     group: 'Karaoke',
     note:
-      'Adapted from HyperFrames caption-pill-karaoke (Apache-2.0). The pill is a square box for the same drawbox reason as Highlight (D-241).',
+      'Adapted from HyperFrames caption-pill-karaoke (Apache-2.0). The pill is a square box for the same drawbox reason as Highlight (D-243).',
     style: {
       font: FONT_BOLD,
       size: 0.07,
@@ -243,7 +243,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'Words light up in neon as they are spoken, and stay lit.',
     group: 'Karaoke',
     note:
-      'Adapted from HyperFrames caption-neon-accent (Apache-2.0). The recolour and per-word timing are reproduced; its actual neon GLOW is not — a real bloom needs a blur in both renderers, which is a named deferral in D-241.',
+      'Adapted from HyperFrames caption-neon-accent (Apache-2.0). The recolour and per-word timing are reproduced; its actual neon GLOW is not — a real bloom needs a blur in both renderers, which is a named deferral in D-243.',
     style: {
       font: FONT_HEAVY,
       size: 0.075,
@@ -272,7 +272,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'Clean corporate build — each word rises into the line and stays.',
     group: 'Clean',
     note:
-      'Adapted from HyperFrames caption-clip-wipe (Apache-2.0). Its per-word clipPath wipe becomes a rise-and-fade: ffmpeg drawtext cannot clip a text box, so the wipe itself is not reproducible in the export (D-241).',
+      'Adapted from HyperFrames caption-clip-wipe (Apache-2.0). Its per-word clipPath wipe becomes a rise-and-fade: ffmpeg drawtext cannot clip a text box, so the wipe itself is not reproducible in the export (D-243).',
     style: {
       font: FONT_BOLD,
       size: 88 / 1080,
@@ -298,7 +298,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'Elegant serif that assembles itself word by word, warm on dark.',
     group: 'Editorial',
     note:
-      "Adapted from HyperFrames caption-editorial-emphasis (Apache-2.0), partially: its cream-on-black palette and word build are reproduced, its dramatic per-word SIZE contrast is not — per-word size is the one property excluded from Chroma's animation vocabulary (D-241).",
+      "Adapted from HyperFrames caption-editorial-emphasis (Apache-2.0), partially: its cream-on-black palette and word build are reproduced, its dramatic per-word SIZE contrast is not — per-word size is the one property excluded from Chroma's animation vocabulary (D-243).",
     style: {
       font: FONT_SERIF_BOLD,
       size: 0.075,

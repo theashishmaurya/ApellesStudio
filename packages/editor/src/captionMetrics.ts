@@ -1,4 +1,4 @@
-// @chroma/editor — per-word caption metrics for the export compiler (D-241,
+// @chroma/editor — per-word caption metrics for the export compiler (D-243,
 // `docs/notes/caption-presets.md`).
 //
 // **What it is:** a module-level cache of `chroma_measure_caption_words` — the

@@ -75,7 +75,7 @@ export interface CaptionStyle {
    *  the **last** line's font line box. Extra lines stack *upward*, so a cue
    *  growing from one line to two keeps its bottom line in place. */
   position_y?: number;
-  /** D-241 — how this caption ANIMATES, or absent for D-229's original static
+  /** D-243 — how this caption ANIMATES, or absent for D-229's original static
    *  rendering. Mirrors `CaptionStyle::animation`.
    *
    *  Read it through `captionAnimationOf` (`captionAnim.ts`), never off this
