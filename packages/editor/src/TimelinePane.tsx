@@ -244,6 +244,11 @@ import {
   // both references use for a text/title generator, and nothing else in this
   // toolbar has claimed it.
   Type,
+  // D-229 — the Add-adjustment action's own icon, and the badge on an
+  // adjustment clip's body. `Wand2` is the closest match to the wand Resolve
+  // itself puts on its Effects tab (`scratch/resolve-reference/adjustments.jpg`)
+  // and nothing else in this toolbar has claimed it.
+  Wand2,
   // D-128 — the A/V-unlink action. Deliberately `Unlink`, not the `Unlink2`
   // below: that one is already the track header's sync-lock toggle, and
   // sync-lock and an A/V link are different relationships (see
@@ -324,6 +329,8 @@ import {
   newTransition,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
+  newAdjustmentClipFields,
+  newAdjustmentLayer,
   newMarker,
   newTextClipFields,
   newTextLayer,
@@ -341,6 +348,7 @@ import {
   type Timeline,
   type Track,
 } from './timeline';
+import { adjustmentSummary } from './adjustment';
 import {
   canStartMarquee,
   clipsInMarquee,
@@ -1860,7 +1868,33 @@ export function TimelinePane() {
               </span>
             </div>
           )}
-          {clip && !clip.text && track?.kind === 'video' && (
+          {/* D-229 — an ADJUSTMENT clip. Drawn from the real Resolve
+              reference (`scratch/resolve-reference/adjustments.jpg`), which
+              shows it as a flat, saturated, thumbnail-free bar carrying an
+              `fx` badge and the words "Adjustment Clip" — deliberately unlike
+              every clip around it, because it is the one clip on the timeline
+              that contributes no picture of its own. Same slot and same
+              guard structure as the text branch above (and the media branch's
+              `!clip.text` guard is extended for it) so `Filmstrip`/`Waveform`
+              are never handed this clip's empty `sourcePath`. */}
+          {clip?.adjustment && (
+            <div
+              className="absolute inset-0 flex items-center gap-1.5 overflow-hidden px-2"
+              style={{ background: 'rgba(70,110,205,0.72)' }}
+            >
+              <Wand2 className="size-3 shrink-0 text-button-text/90" aria-hidden />
+              <span className="truncate text-[11px] font-semibold tracking-wide text-button-text/90">
+                {clip.name || 'Adjustment Clip'}
+              </span>
+              {/* The correction's own summary, so the timeline says what this
+                  clip actually does without a trip to the Inspector — the
+                  equivalent of the effect name Resolve shows on the body. */}
+              <span className="ml-auto truncate text-[10px] font-medium text-button-text/70">
+                {adjustmentSummary(clip.adjustment)}
+              </span>
+            </div>
+          )}
+          {clip && !clip.text && !clip.adjustment && track?.kind === 'video' && (
             <>
               {/* D-119 — real filmstrip thumbnails, the clip's actual picture
                   content tiled across its full width/height, replacing the
@@ -2132,6 +2166,41 @@ export function TimelinePane() {
     if ('error' in layer) return;
     const track = Math.max(videoTrackIndex(tl), 0);
     const clip = newTextClipFields(layer, Math.round(DEFAULT_TITLE_SECONDS * fps));
+    applyOp({ kind: 'add_clip', track, clip, startFrame: playhead });
+    const after = useEditorTimelineStore.getState().timeline;
+    if (after?.tracks[track]?.clips.some((c) => c.id === clip.id)) {
+      setSelection([{ track, id: clip.id }]);
+    }
+  };
+
+  /** D-229 — drop an ADJUSTMENT CLIP at the playhead, on the topmost video
+   *  track.
+   *
+   *  **The topmost track is the meaningful default here, not a convention
+   *  copied from `doAddTitle`.** An adjustment clip affects what is composited
+   *  BENEATH it, so the top of the stack is the only placement that grades the
+   *  whole edit — Resolve's own guidance is likewise to put it on a track above
+   *  the clips you want it to affect
+   *  (`scratch/resolve-reference/adjustments.jpg` shows exactly that stacking).
+   *  Dropping it on a lower track is still perfectly valid and simply reaches
+   *  less; the user can drag it wherever they like afterwards.
+   *
+   *  It lands at IDENTITY, so adding one changes not a single pixel until a
+   *  parameter moves — the same "adding it is free" property both the preview
+   *  skip and the export's emit-nothing path preserve all the way down.
+   *
+   *  Goes through the exact `newAdjustmentLayer` + `newAdjustmentClipFields` +
+   *  `add_clip` path `editor_add_adjustment_clip` (MCP) uses — one
+   *  implementation under both interfaces, per CLAUDE.md. */
+  const doAddAdjustment = () => {
+    const tl = useEditorTimelineStore.getState().timeline;
+    if (!tl) return;
+    const layer = newAdjustmentLayer({});
+    // Same type-narrow-not-a-branch guard as `doAddTitle`'s: this call site
+    // passes no caller-supplied value, so it cannot actually fail.
+    if ('error' in layer) return;
+    const track = Math.max(videoTrackIndex(tl), 0);
+    const clip = newAdjustmentClipFields(layer, Math.round(DEFAULT_TITLE_SECONDS * fps));
     applyOp({ kind: 'add_clip', track, clip, startFrame: playhead });
     const after = useEditorTimelineStore.getState().timeline;
     if (after?.tracks[track]?.clips.some((c) => c.id === clip.id)) {
@@ -2784,6 +2853,29 @@ export function TimelinePane() {
             <TooltipContent>
               Add a text title at the playhead, on the topmost video track — edit its text, font, size
               and colour in the Inspector
+            </TooltipContent>
+          </Tooltip>
+          {/* D-229 — Add adjustment clip. Sits beside Title because the two are
+              the same kind of gesture (add a generated clip at the playhead,
+              not selection-dependent) and because both references group them
+              together as things you drop onto a track above your picture. */}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={doAddAdjustment}
+                  aria-label="Add adjustment clip"
+                >
+                  <Wand2 />
+                  Adjust
+                </Button>
+              }
+            />
+            <TooltipContent>
+              Add an adjustment clip at the playhead, on the topmost video track — its colour
+              correction applies to every clip beneath it, for the span it covers
             </TooltipContent>
           </Tooltip>
           {/* D-222 — markers. The add action sits with Title above (both are

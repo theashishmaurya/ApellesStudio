@@ -4,6 +4,34 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Fix B-105: a test-suite race over the process-global
+  `current_video()`.** `chroma::state`'s thumb-cache test set a current video
+  and never restored it; `chroma::relight`'s "no video loaded" test asserts the
+  opposite, so whichever ran first decided the result. Latent for as long as
+  both existed — D-229's slower, real-ffmpeg preview tests just widened the
+  window enough to make it deterministic. Both halves fixed (the mutator takes
+  `PROJECT_STATE_LOCK` and restores the baseline; the dependent test asserts its
+  own precondition). `cargo test -p RapidRAW --lib` is now 189 passed / 1 failed
+  across three runs, that one being the documented pre-existing B-097.
+- **2026-09-08** — **Adjustment clips (D-229, roadmap 27).** A clip that
+  contributes no picture of its own and instead applies one colour correction
+  to every clip composited *beneath* it, for the span it covers. The
+  compositing model is the new part: both renderers already paint
+  back-to-front, so the canvas in hand when the walk reaches the adjustment
+  layer *is* "every layer below it" — the whole scoping rule falls out of the
+  existing z-order rather than being implemented. The effect is a
+  five-parameter primary correction, **not** the Colorist grade: that blob is
+  untyped in Rust (D-020/D-025) and wgpu-shader-only, so the ffmpeg export
+  could never have reproduced it — a guaranteed preview/export divergence of
+  the B-090/B-095/B-098 class. One shared operator
+  (`chroma_types::adjustment`) feeds both engines, compiled to `lutrgb` +
+  `colorchannelmixer`; a single folded matrix was tried and rejected (it
+  breaches ffmpeg's ±2 coefficient cap at ordinary settings), and `geq`
+  measured ~39× slower. Preview vs. export agree to ≤ 1/255, proved by a
+  matched pair of real-pixel suites. Toolbar button, on-timeline body and
+  Inspector built from `scratch/resolve-reference/adjustments.jpg`;
+  `editor_add_adjustment_clip` / `editor_set_adjustment_clip` in the same
+  pass. Detail: `docs/notes/adjustment-clips.md`.
 - **2026-09-08** — **Fix B-102: total silence during live preview playback.**
   `symphonia` was never built with MP3 decode support (`isomp4`/`aac`/`alac`/
   `aiff` were explicitly enabled; `mp3` — the one common format symphonia keeps

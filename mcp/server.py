@@ -610,6 +610,29 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "the export cannot produce. Widening both engines together is "
             "Phase 2 — see docs/notes/text-title-clips.md."
         ),
+        "adjustment_clips": (
+            "D-229: an ADJUSTMENT CLIP (editor_add_adjustment_clip) is an "
+            "ordinary clip on an ordinary video track that contributes NO "
+            "picture of its own — it applies one colour correction to "
+            "everything composited BENEATH it, for the span it covers. Which "
+            "clips it reaches is decided entirely by track index: it affects "
+            "every visible video track with a HIGHER index than its own, so "
+            "track 0 grades the whole edit and an adjustment clip on the "
+            "BOTTOM track affects nothing (the most common way to be "
+            "surprised by it). Its five parameters (exposure, contrast, "
+            "saturation, temperature, tint; each -1..1, 0 = no change) are "
+            "the Edit tab's own primary correction, NOT the Colorist's "
+            "grading stack — that is a separate surface, applies to one clip, "
+            "and is GPU-shader-only so it could not be reproduced in the "
+            "ffmpeg export at all. Its `opacity` (via "
+            "editor_set_clip_transform) is how strongly the correction mixes "
+            "in, and is read STATICALLY: keyframing it or fading the clip "
+            "does NOT animate the correction in either engine, because ffmpeg "
+            "fixes these filter coefficients at filter init. Position, scale, "
+            "rotation and crop do not apply — the correction is full-frame. "
+            "Two adjustment clips on two tracks compose, lower one first. "
+            "See docs/notes/adjustment-clips.md."
+        ),
         "selection_gated_surfaces": (
             "D-216: you do NOT need a selection to edit anything — every "
             "mutating editor_* tool takes an explicit track/clip. But the "
@@ -1251,6 +1274,129 @@ def editor_set_text_clip(
         if val is not None:
             args[key] = val
     return json.dumps(_op("editor_set_text_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_adjustment_clip(
+    track: int,
+    start_frame: int | None = None,
+    duration: int | None = None,
+    exposure: float | None = None,
+    contrast: float | None = None,
+    saturation: float | None = None,
+    temperature: float | None = None,
+    tint: float | None = None,
+    ripple: bool = False,
+    name: str | None = None,
+) -> str:
+    """Add an ADJUSTMENT CLIP — one colour correction applied top-down to
+    EVERY clip beneath it on lower-priority tracks, for the span it covers.
+    This is the tool for "warm the whole second half up", "desaturate this
+    section", "lift the contrast across these three shots" — one clip
+    instead of grading each shot individually (D-229).
+
+    **It contributes no picture of its own.** It is an operator on whatever
+    is composited under it, so the frame you see is your footage, corrected.
+    Adding one changes nothing at all until you set a parameter.
+
+    **Which clips it reaches is decided ENTIRELY by track index, and this is
+    the one thing to get right.** Track index order is z-order: lower index =
+    higher priority = on top. An adjustment clip affects every visible video
+    track with a HIGHER index than its own — i.e. everything below it. So
+    `track=0` grades the whole edit; an adjustment clip on the bottom track
+    affects nothing and is the single most common way to be surprised by this
+    tool. Note `editor_add_track` only ever APPENDS at the highest index (the
+    BOTTOM of the stack) — to get a track above existing footage, call
+    `editor_add_track` then `editor_move_track` to move it to index 0 first.
+    The result of this call reports exactly what the placed clip affects.
+
+    **The five parameters**, each `-1.0..1.0` and `0` = no change. They are
+    the Edit tab's own primary correction, not the Colorist's full grading
+    stack (that is a separate surface with its own `set_*` tools, and it
+    applies to ONE clip; this applies to a whole region of the timeline):
+      `exposure`     — stops; a gain of 2^value. +0.5 is half a stop up.
+      `contrast`     — about the mid-grey pivot. +1 doubles it, -1 goes flat.
+      `saturation`   — -1 is greyscale, +1 is double.
+      `temperature`  — positive is WARMER (red up, blue down), negative cooler.
+      `tint`         — positive is MAGENTA (green down), negative greener.
+
+    `duration` is in TIMELINE frames (default: 3 seconds at the project's own
+    rate) — this is the span of the edit the correction covers.
+    `start_frame` places it at an exact timeline frame (default: appended
+    after whatever is already on that track); `ripple=True` shifts later
+    clips on that track out of the way instead of refusing to overlap.
+
+    **Stacking works**: two adjustment clips on two tracks compose, the lower
+    one applying first. Every ordinary clip tool works on it unchanged —
+    `editor_move_clip`, `editor_trim_clip`, `editor_split_clip`,
+    `editor_remove_clip`.
+
+    **Its OPACITY is how strongly the correction is mixed in** (`1.0` = full,
+    `0.5` = half), via the ordinary `editor_set_clip_transform`. It is read
+    STATICALLY: keyframing it or fading the clip will NOT animate the
+    correction, in either the preview or the export, because ffmpeg fixes
+    these filter coefficients when the filter starts. Position, scale,
+    rotation and crop do not apply at all — the correction is full-frame.
+
+    The preview and `editor_export` run the same maths, verified against real
+    ffmpeg to within 1/255."""
+    import json
+
+    args: dict = {"track": track, "ripple": ripple}
+    for key, val in (
+        ("startFrame", start_frame),
+        ("duration", duration),
+        ("exposure", exposure),
+        ("contrast", contrast),
+        ("saturation", saturation),
+        ("temperature", temperature),
+        ("tint", tint),
+        ("name", name),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_add_adjustment_clip", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_adjustment_clip(
+    track: int,
+    clip: int,
+    exposure: float | None = None,
+    contrast: float | None = None,
+    saturation: float | None = None,
+    temperature: float | None = None,
+    tint: float | None = None,
+) -> str:
+    """Change an existing ADJUSTMENT CLIP's colour correction. Omitted
+    parameters keep their current value — this merges against the clip's
+    existing correction, so changing saturation never resets exposure.
+
+    Each parameter is `-1.0..1.0`, `0` = no change; see
+    `editor_add_adjustment_clip` for what each one does. Values outside the
+    range are clamped rather than refused.
+
+    Refused if `track`/`clip` names a clip that is not an adjustment clip, or
+    if the track is locked.
+
+    To change WHICH clips the correction reaches, move the adjustment clip to
+    a different track (`editor_move_clip`) — it affects every visible video
+    track with a higher index than its own. To change the SPAN it covers,
+    trim or move it like any other clip. To change how strongly it is mixed
+    in, set its `opacity` with `editor_set_clip_transform`."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    for key, val in (
+        ("exposure", exposure),
+        ("contrast", contrast),
+        ("saturation", saturation),
+        ("temperature", temperature),
+        ("tint", tint),
+    ):
+        if val is not None:
+            args[key] = val
+    return json.dumps(_op("editor_set_adjustment_clip", **args), indent=2, default=str)
 
 
 @mcp.tool()

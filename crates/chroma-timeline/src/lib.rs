@@ -118,6 +118,28 @@
 //! pixels, exactly the division of labour every other compositing field here
 //! already has.
 //!
+//! **Adjustment clips (D-229, roadmap item 27, `docs/notes/adjustment-clips.md`):**
+//! [`Clip::adjustment`] — `Some(AdjustmentLayer)` makes a clip an operator on
+//! everything composited *beneath* it rather than a layer with pixels of its
+//! own. A third `Clip` variant beside [`Clip::text`], for D-211's reason: an
+//! adjustment clip sits on an ordinary video track above the clips it affects,
+//! and "beneath it" is exactly this crate's existing track-index z-order
+//! ([`Timeline::resolve_visible_video_layers_at`]), so there is nothing to add
+//! to resolution at all — the resolver hands it back as an ordinary
+//! [`LayerSource::Clip`] and the two renderers branch on
+//! [`Clip::is_adjustment`].
+//!
+//! What IS new is the compositing model, and it is genuinely new: an ordinary
+//! clip contributes its own picture, a [`Transition`] blends two named clips,
+//! and this is neither. Both renderers already walk layers back-to-front, so
+//! each applies the correction to the canvas accumulated *so far* when the walk
+//! reaches it — z-order needs no second rule. This crate, as ever, renders
+//! nothing: it carries the values and resolves the operator
+//! ([`Clip::adjustment_ops`]); `chroma::edit`'s compositor and
+//! `@chroma/editor`'s ffmpeg compiler turn that into pixels. See D-229 for why
+//! the effect is a five-parameter primary correction rather than the Colorist
+//! grade, and why it is two filter stages.
+//!
 //! **Timeline markers (D-222, roadmap item 27):** [`Timeline::markers`] — a
 //! flat list of [`Marker`]s, each an id + a TIMELINE frame + a colour + an
 //! optional name/note. They hang off the *timeline*, not off a [`Clip`],
@@ -152,6 +174,17 @@ pub use chroma_types::fade::{self, FadeCurve, fade_gain};
 // naming an ffmpeg filter — see `chroma_types::eq`'s own doc for the
 // measurement behind that.)
 pub use chroma_types::eq::{self, EqBand, EqBandKind};
+
+// D-229 — same shape again: an adjustment clip's five-parameter correction and
+// the two-stage colour operator it resolves to live in `chroma-types` (L0)
+// because the operator is a property of the VALUES, not of the timeline, and a
+// future L1 compositor crate must be able to reach it without depending on this
+// L2 crate. Re-exported here because `Clip::adjustment` is typed by it. Both
+// pixel consumers — `chroma::edit`'s CPU compositor and `@chroma/editor`'s
+// ffmpeg compiler — consume the OPERATOR rather than re-deriving the
+// correction, which is what makes preview and export the same maths by
+// construction; see that module's own doc.
+pub use chroma_types::adjustment::{self, AdjustmentLayer, AdjustmentOps};
 
 /// B-079 — mirrors `@chroma/editor/timeline.ts`'s `DEFAULT_FPS`: the project
 /// timebase assumed when [`Timeline::rate`] is unset (or malformed — zero or
@@ -1300,6 +1333,44 @@ pub struct Clip {
     /// the B-053 class of defect this repo keeps closing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextLayer>,
+
+    /// `Some` = this clip is an **adjustment clip** (D-229, roadmap item 27):
+    /// it contributes no picture of its own and instead applies
+    /// [`AdjustmentLayer`]'s primary correction to whatever is already
+    /// composited **beneath** it, for the span it covers. `source_path` is
+    /// empty, exactly as for a [`Self::text`] clip. `None` (every clip in every
+    /// pre-D-229 project) is unaffected in every way.
+    ///
+    /// **A third `Clip` variant, following [`Self::text`]'s precedent (D-211)
+    /// rather than inventing a `TrackKind::Adjustment`.** Resolve puts an
+    /// adjustment clip on an ordinary video track above the clips it affects —
+    /// "beneath it" is just this crate's existing track-index z-order
+    /// ([`Timeline::resolve_visible_video_layers_at`]), already exactly right
+    /// with nothing to add. A dedicated track kind would need its own resolver,
+    /// its own ordering rule and its own export pass, all re-deriving what
+    /// track index order already gives, and would make "an adjustment stacked
+    /// with a title on one track" unrepresentable.
+    ///
+    /// **What is genuinely new is the compositing MODEL, not the model shape.**
+    /// An ordinary clip contributes its own pixels; a transition blends two
+    /// named clips. This one is neither — it is an *operator on the canvas so
+    /// far*. Both renderers already walk layers back-to-front, so each applies
+    /// it when the walk reaches it and z-order needs no new rule; see D-229.
+    ///
+    /// **Which of this clip's other fields apply** is deliberately narrow, and
+    /// narrow *identically in both renderers* (the B-053/B-095 rule): only
+    /// `opacity` does, as the correction's mix amount, and **statically** — not
+    /// keyframed and not faded, because the export compiles to
+    /// `colorchannelmixer`/`lutrgb` coefficients, which ffmpeg fixes at filter
+    /// init and which reject a time expression outright. `position_*`, `scale`,
+    /// `rotation`, `box_*` and the crop insets do **not** apply: the correction
+    /// is always full-frame. See `docs/notes/adjustment-clips.md`.
+    ///
+    /// `#[serde(default, skip_serializing_if = "Option::is_none")]` — a
+    /// pre-D-229 clip has no key and deserialises to `None`, no migration and
+    /// no sentinel needed, exactly [`Self::text`]'s own precedent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjustment: Option<AdjustmentLayer>,
 }
 
 fn default_opacity() -> f64 {
@@ -1374,6 +1445,8 @@ impl Default for Clip {
             // D-211 — `None` is genuinely "an ordinary media clip", the only
             // sane default, so this one needs no non-zero migration value.
             text: None,
+            // D-229 — same, for the same reason.
+            adjustment: None,
         }
     }
 }
@@ -1385,6 +1458,41 @@ impl Clip {
     /// than as an `is_some()` at each site.
     pub fn is_text(&self) -> bool {
         self.text.is_some()
+    }
+
+    /// D-229 — whether this clip is an **adjustment clip**: an operator applied
+    /// to everything composited beneath it, rather than a layer with pixels of
+    /// its own. [`Self::is_text`]'s counterpart, and the one predicate every
+    /// consumer branches on.
+    pub fn is_adjustment(&self) -> bool {
+        self.adjustment.is_some()
+    }
+
+    /// D-229 — this clip's adjustment as a resolved [`AdjustmentOps`], or
+    /// `None` when it is not an adjustment clip or its correction provably does
+    /// nothing (so a consumer can skip the work entirely: the preview skips a
+    /// per-pixel pass, the export emits no filter node).
+    ///
+    /// **`opacity` is read statically here, on purpose** — no keyframe lookup
+    /// and no fade multiply, unlike [`Self::fade_multiplier_at`]'s callers.
+    /// ffmpeg fixes `lutrgb`/`colorchannelmixer` coefficients at filter init,
+    /// so a time-varying mix is not expressible in the export; resolving one in
+    /// the preview would recreate exactly the preview-shows-what-export-cannot
+    /// divergence B-053/B-095 were filed for. Centralised here so both
+    /// renderers inherit the restriction from one place rather than each
+    /// remembering it.
+    pub fn adjustment_ops(&self) -> Option<AdjustmentOps> {
+        let layer = self.adjustment.as_ref()?;
+        if layer.is_identity() {
+            return None;
+        }
+        let mix = if self.opacity.is_finite() {
+            self.opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let ops = AdjustmentOps::build(layer, mix);
+        (!ops.is_identity()).then_some(ops)
     }
 
     /// D-224 — does this clip's EQ actually change its sound? The one

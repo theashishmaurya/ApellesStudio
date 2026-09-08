@@ -1441,3 +1441,30 @@ unchanged, and the compiled argv is byte-identical for a clip at frame 0.
 **Severity.** Real and silent for any sequential edit — which is the ordinary
 use of an NLE. Masked in practice because the exporter's heaviest real use so
 far has been stacked comparison reels, where both clips start at frame 0.
+
+---
+
+## B-105 — two `chroma::*` test modules raced over the process-global `current_video()`, so a relight test passed or failed purely on scheduling order
+
+status: fixed (2026-09-08) · severity: low (a test-suite isolation defect — no shipped behaviour is wrong; the cost is a `cargo test --workspace` that fails for a reason unrelated to whatever is being verified, which is exactly how a real regression gets waved through) · area: `app/src-tauri/src/chroma/state.rs` (`active_shot_change_busts_the_thumb_cache`) and `app/src-tauri/src/chroma/relight.rs` (`keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`)
+
+- **found:** 2026-09-08, during D-229's (adjustment clips) final verification. `cargo test --workspace` reported **two** failures where only the documented pre-existing B-097 was expected. The second was
+  `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`, in a module D-229 never touched. Isolated before being explained rather than assumed pre-existing:
+  - the relight test **passes alone** (`cargo test -p RapidRAW --lib <that test>` → ok);
+  - the full suite **with D-229's new tests skipped** (`-- --skip preview_adjustment`) → only B-097 fails;
+  - the full suite **with them** → B-097 *and* the relight test fail, reproducibly.
+  That pattern says "order-dependent", not "broken by the new code".
+
+- **root cause:** `current_video()` is process-global state (`chroma::state`), and it is read far outside the module that owns it — `chroma::keyframes::interpolated_parameters` consults it to decide whether to resolve a keyframed parameter against the current frame, and returns `None` (fall back to the raw fields) when no video is loaded. `chroma::relight`'s test asserts exactly that fallback, so its entire premise is `current_video() == None`. Meanwhile `chroma::state::tests::active_shot_change_busts_the_thumb_cache` called `set_current_video(Some(…))` **twice, took no lock, and never restored it** — leaving a video set for the remainder of the process. Whichever test won the race decided the outcome.
+
+  **D-229 did not cause this; it exposed it.** Its new `preview_adjustment_tests` spawn real `ffmpeg` and decode real frames, which widened the scheduling window enough to turn a latent coin-flip into a deterministic failure. The defect had been present for as long as both tests have existed.
+
+- **expected:** a test that depends on process-global state establishes that state; a test that mutates it restores it. Neither should be able to decide the other's result.
+
+- **fix:** both halves, deliberately — fixing only the leaking side would leave the relight test passing by luck rather than by construction, and there are other `set_current_video` callers in the suite (`chroma::export`'s own tests, as `state.rs`'s existing comment already noted).
+  - `active_shot_change_busts_the_thumb_cache` now takes `PROJECT_STATE_LOCK` (the shared cross-module test mutex that exists for precisely this, `chroma/mod.rs`) and calls `set_current_video(None)` on the way out.
+  - `keyframed_light_without_a_loaded_video_falls_back_to_raw_fields` now takes the same lock and sets `set_current_video(None)` itself, so its documented precondition is asserted rather than inherited.
+
+- **verification:** `cargo test -p RapidRAW --lib --no-fail-fast` run **three times**: 189 passed, 1 failed every time — and that one is B-097, the documented pre-existing failure, alone. Before the fix the same command gave 188 passed / 2 failed.
+
+- **not fixed here, deliberately:** the underlying design smell — a process-global `current_video()` that a pure-parsing helper three modules away reads — is untouched. `PROJECT_STATE_LOCK` is the existing, documented mitigation for exactly this class across `chroma::*` tests, and widening its use is the fix that matches the codebase as it is. Making `interpolated_parameters` take the frame as an argument instead of reaching for a global is the real repair and is a much wider change than a test-isolation bug warrants; noted here so it is on the record.

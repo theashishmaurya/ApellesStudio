@@ -20472,3 +20472,163 @@ derived window and handle split reported so an agent never has to re-derive the
 integer halving. `editor_list_transitions` also reports each video track's real
 `cuts` — "where CAN one go" is the question an agent has first, and it is not
 derivable from the clip list without re-implementing the end==start match.
+
+## D-229 — Adjustment clips are an OPERATOR in the existing paint order, carrying a five-parameter primary correction (not the Colorist grade)
+
+Roadmap item 27 ("Organization & finishing"). Reference: DaVinci Resolve's own
+Edit page, `scratch/resolve-reference/adjustments.jpg` — opened and read before
+anything was designed, per CLAUDE.md's "research the real pattern first" rule.
+What it actually shows: an adjustment clip sits on the video track **above** the
+clips it affects (V2 over V1's `Van.mov`/`Beach.mov`), draws as a flat,
+thumbnail-free bar carrying an `fx` badge and the words "Adjustment Clip", and
+— when selected — the Inspector shows the **effect it carries** (the Effects /
+OpenFX tab, `Analog Damage` with its own parameter list), not the clip-geometry
+form a media clip gets. All three carried straight over.
+
+Full design detail: `docs/notes/adjustment-clips.md`.
+
+### 1. The compositing model — a canvas operator, resolved as an ordinary layer
+
+An ordinary clip contributes **its own** pixels. A D-226 transition blends **two
+named** clips. An adjustment clip is neither: it contributes nothing and
+transforms *the result of everything below it*. That is a genuinely new
+compositing model, which is why this is a `D-NNN`.
+
+**Chosen: `Clip.adjustment: Option<AdjustmentLayer>`, resolved as an ordinary
+`LayerSource::Clip`, applied by both renderers at its own point in the
+back-to-front paint walk.**
+
+Both engines *already* walk layers from the bottom up — `chroma::edit`'s
+`composite_video_frame` iterates `decoded.iter().rev()`, and
+`timelineExport.ts` chains `overlay` nodes from the highest track index down. At
+the moment either walk reaches the adjustment layer, the canvas/stream in hand
+**is** precisely "every layer beneath this clip". So the entire scoping rule —
+"applies to everything under it, for the span it covers" — is not implemented at
+all: it falls out of the existing z-order, and the span falls out of the clip
+already only being resolved inside its own frames. The preview gained one enum
+arm (`Step::Adjust`) and the exporter one branch.
+
+This also inherits, for free and with no second rule to keep in step: stacking
+(two adjustment clips compose, lower first), interaction with titles on the same
+track, hidden/locked tracks, and trimming/moving/splitting the adjustment clip
+itself.
+
+**Options rejected:**
+
+- **A `TrackKind::Adjustment`.** Contradicts D-211's own precedent (a title is a
+  `Clip` variant, not a track kind) and Resolve itself, which puts adjustment
+  clips on ordinary video tracks. Would need its own resolver, its own ordering
+  rule, its own audio/video split in every walk and its own export pass — all
+  re-deriving what track index order already gives — and would make "an
+  adjustment stacked with a title on one track" unrepresentable.
+- **Push the correction down onto each affected clip** (bake it into their
+  transforms). Rejected outright: it mutates real user-authored document
+  content, needs clips split at the adjustment's boundaries when coverage is
+  partial, and has no answer for overlapping/partially-transparent layers, where
+  "the composited result" is not any one clip's pixels.
+- **A general effects graph / node system.** Out of v1 scope
+  (`docs/02-scope.md`: "adjustment stack not nodes"), and not needed to ship the
+  primitive.
+
+### 2. What effect it carries — and why it is NOT the Colorist grade
+
+The obvious answer is Chroma's real grading stack. **It is structurally
+unavailable**, and this was verified in the code before deciding, not assumed:
+
+- the Colorist's `adjustments` blob is *deliberately untyped in Rust*
+  (D-020/D-025 — "the canonical shape is owned by the frontend `useEditorStore`
+  and a typed Rust mirror would just drift");
+- it is applied **only** by RapidRAW's wgpu shader. There is no CPU
+  implementation of it anywhere in the workspace;
+- the Edit tab's preview compositor is explicitly GPU-free (`chroma::edit`'s own
+  header: *"no `wgpu`, no colour grade"*);
+- and, decisively, **the ffmpeg export compiler could not reproduce a wgpu
+  shader at all.** Every adjustment clip would have been a guaranteed
+  preview-vs-export divergence — the exact B-090 / B-095 / B-098 class of defect
+  this repo has already fixed three times.
+
+**Chosen: a five-parameter primary correction — `exposure`, `contrast`,
+`saturation`, `temperature`, `tint`** (each `-1..1`, `0` = identity), named in
+the *Colorist's own vocabulary* so this reads as the same language rather than a
+second, parallel effects system. Plus the clip's `opacity` as the correction's
+mix amount. It is deliberately the subset that **both** engines can run
+*identically*; widening it means widening both together, which is the standing
+bar here.
+
+### 3. The operator, and the measurements that chose it
+
+The correction resolves to one shared operator in `chroma_types::adjustment`
+(L0, beside `fade`/`pan`/`eq` and for their reason). **Both renderers consume
+that operator rather than re-deriving the correction** — which is what makes
+preview and export the same maths by construction instead of by two
+implementations happening to agree.
+
+Two stages, because that is what ffmpeg can execute:
+
+| stage | maths | ffmpeg filter |
+|---|---|---|
+| 1 | per-channel affine (exposure × white balance × contrast pivot) | `lutrgb` — expression-based, **no coefficient cap**, a 256-entry LUT built once at init |
+| 2 | Rec.709 saturation matrix | `colorchannelmixer` — real SIMD 3×3 |
+
+Everything below was **measured against real ffmpeg** before being written, per
+this repo's own B-098 discipline:
+
+- **A single folded matrix was tried first and rejected by its own test.** A
+  saturation matrix maps grey to itself, so all three steps fold into one 3×3 +
+  offset — tidier, and one filter. But `colorchannelmixer` caps every
+  coefficient at ±2, and the folded matrix breaches that at *ordinary* settings:
+  contrast `0.6` with saturation `0.8` already clamps, crushing mid-grey from
+  `0.5` to `0.196`. Splitting the gain into `lutrgb` removes the ceiling
+  entirely, and stage 2 alone provably never reaches it (max 1.928 — a test
+  asserts this, and there is no clamp anywhere in the module as a result).
+- **`geq` would run the whole operator verbatim** with no cap and no split. Ruled
+  out on measurement: **76.9 s vs 1.95 s** for 6 s of 1080p30 — ~39× slower.
+  (Performance is the top priority when these trade off, per CLAUDE.md.)
+- **`format=rgba` is mandatory and its absence is silent.** An earlier draft
+  carried the offset on `colorchannelmixer`'s alpha coefficients; without an
+  explicit alpha format the filter runs, succeeds, and drops the offset entirely
+  (grey 128 came back 126, not 179). The format pin stayed even after the offset
+  moved to `lutrgb`, to stop ffmpeg inserting a YUV round trip between the two
+  nodes.
+- **The two filters round differently**: `lutrgb` truncates, `colorchannelmixer`
+  rounds. `AdjustmentOps::apply_rgb8` mirrors each at its own stage — including
+  the intermediate 8-bit quantisation, which is *less* accurate than carrying
+  f64 through and is correct precisely because it is what ffmpeg does.
+- **Agreement: ≤ 1/255**, across 6 swatches × 4 parameter sets at the corners of
+  the space.
+
+### 4. What deliberately does NOT apply (identically in both engines)
+
+Only `opacity` applies, as the mix, and **statically** — not keyframed, not
+faded. ffmpeg fixes `lutrgb`/`colorchannelmixer` coefficients at filter init, so
+a time-varying mix is not expressible in the export; animating it in the preview
+alone would recreate B-053/B-095 exactly. `position_*`, `scale`, `rotation`,
+`box_*` and the crop insets do not apply at all: the correction is full-frame.
+The correction also reaches letterboxed/empty regions (the black backdrop),
+because the export's filter sits on the composited stream which includes
+`[base]` — preview and export agreeing beats the arguably-tidier masked
+alternative the export could not reproduce. Each restriction is centralised in
+`Clip::adjustment_ops` / `clipAdjustmentOps`, stated in the Inspector, and
+stated in the MCP tool docstrings.
+
+### 5. Both interfaces in the same pass (CLAUDE.md's human+AI rule)
+
+GUI: an "Adjust" toolbar button (adds a neutral clip at the playhead on the
+topmost video track — the only placement that grades the whole edit), the
+on-timeline body from the reference (flat tinted bar, wand badge, name, live
+correction summary, no filmstrip), and an `AdjustmentClipInspectorPanel`
+(slider + number + per-parameter reset, reset-all, and the restrictions above
+stated outright). MCP: `editor_add_adjustment_clip` /
+`editor_set_adjustment_clip`, plus an `adjustment_clips` entry in
+`editor_get_capabilities`. Both go through the same `newAdjustmentLayer`
+validator and the same `add_clip` / `set_adjustment_clip` ops — one
+implementation under both interfaces.
+
+**Verification.** A matched pair of real-pixel suites, which is what makes
+preview/export parity a *checked* claim: `preview_adjustment_tests` in
+`app/src-tauri/src/chroma/edit.rs` (real `timeline_frame` output, real media on
+disk) and `packages/editor/src/timelineExportAdjustment.ffmpeg.test.ts` (real
+ffmpeg renders, real decoded pixels). Both assert against the shared
+`AdjustmentOps` rather than hand-typed numbers, and both include the control
+(no adjustment), the z-order claim (an adjustment below the picture must not
+touch it), the identity no-op, the opacity mix and stacking.

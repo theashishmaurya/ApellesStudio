@@ -1521,8 +1521,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       log-scaled frequency drag on the band's own Freq field belongs with it.
     - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`).
-    - ⬜ Adjustment clips — one effect, applied top-down over every clip
-      beneath it (ref: `adjustments.jpg`).
+    - ~~**Adjustment clips** — one effect, applied top-down over every clip
+      beneath it (ref: `adjustments.jpg`)~~ — **DONE, 2026-09-08 (D-229).**
+      A third `Clip` variant (`Clip.adjustment`, following D-211's text-clip
+      precedent), on an ordinary video track, resolved as an ordinary layer.
+      The compositing model is the new part and is what D-229 is for: it
+      contributes no pixels and instead **operates on the canvas built so
+      far**, which — since both renderers already paint back-to-front — *is*
+      "every layer beneath it", so the whole scoping rule falls out of the
+      existing z-order with nothing added. The effect is a five-parameter
+      primary correction (exposure/contrast/saturation/temperature/tint),
+      **not** the Colorist grade: that blob is untyped in Rust (D-020/D-025)
+      and wgpu-shader-only, so the ffmpeg export could not reproduce it at
+      all — a guaranteed preview/export divergence of the B-090/B-095/B-098
+      class. One shared operator in `chroma_types::adjustment` feeds both
+      engines (`lutrgb` + `colorchannelmixer`; `geq` measured ~39× slower and
+      rejected; agreement ≤ 1/255). Toolbar button + on-timeline body +
+      Inspector panel + `editor_add_adjustment_clip` /
+      `editor_set_adjustment_clip`. Matched real-pixel suites on both sides.
+      Design detail: `docs/notes/adjustment-clips.md`.
     - ~~**Markers** — colour-coded, titled, timeline-anchored (ref:
       `markers.jpg`)~~ — **DONE, 2026-09-08 (D-222).** `Timeline.markers`
       (not `Clip` — a marker survives the clip under it being trimmed/moved/

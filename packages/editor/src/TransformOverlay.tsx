@@ -178,6 +178,15 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // nothing ever reads, so the handles for it are hidden entirely rather
   // than left to fail mid-gesture.
   const isText = !!clip?.text;
+  // D-229 — an ADJUSTMENT clip gets no transform overlay at all, not just
+  // reduced handles. Its correction is full-frame and it draws nothing, so
+  // every gesture this overlay offers (move, scale, crop) would write a value
+  // neither renderer reads — the same reasoning that hides a title's scale
+  // handles above, applied to the whole box because for this clip kind there
+  // is nothing left over. `chroma_timeline_clip_geometry` still answers for it
+  // (the whole composition), so this is a deliberate hide rather than a
+  // side-effect of the fetch failing.
+  const isAdjustment = !!clip?.adjustment;
 
   const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
 
@@ -410,7 +419,8 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     if (current) commit(current, drag.kind);
   };
 
-  if (!clip || !effective || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
+  if (!clip || isAdjustment || !effective || !geometry || contentBox.width <= 0 || contentBox.height <= 0)
+    return null;
 
   // D-193 — while a drag is live, the box always follows the natural*scale
   // formula (Phase 1's uniform-only drag math, unchanged). At rest, an

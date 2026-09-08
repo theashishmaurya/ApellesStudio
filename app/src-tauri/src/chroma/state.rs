@@ -390,6 +390,20 @@ mod tests {
         // clip. Paths are unique to this test so a parallel export test (also a
         // `set_current_video` caller) can only ever *also* bust the cache, never
         // repopulate it (nothing but `chroma_frame_thumbnails` calls store_thumbs).
+        //
+        // **B-105 — takes `PROJECT_STATE_LOCK` and CLEARS the current video on
+        // the way out.** It used to do neither, and `current_video()` is read
+        // far outside this module: `chroma::keyframes::interpolated_parameters`
+        // consults it to decide whether to resolve a keyframed parameter, so
+        // leaving a video set here made
+        // `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
+        // — whose whole premise is that no video is loaded — pass or fail purely
+        // on which of the two ran first. Latent for as long as both have
+        // existed; surfaced deterministically by D-229's slower preview tests
+        // shifting the schedule. See B-105.
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let a = PathBuf::from("/thumbtest/A-unique.mov");
         let b = PathBuf::from("/thumbtest/B-unique.mov");
         set_current_video(Some(Shot { path: a.clone(), info: info(), frame: 0 }));
@@ -398,6 +412,12 @@ mod tests {
 
         set_current_video(Some(Shot { path: b.clone(), info: info(), frame: 0 }));
         assert!(cached_thumbs(&a, 48).is_none(), "switching shots must bust the thumb cache");
+
+        // Restore the process-wide baseline every other test is entitled to
+        // assume. Done last rather than in a guard type because the assertions
+        // above are infallible-by-construction on a fresh cache; a panic here
+        // poisons the lock, which the `unwrap_or_else` above already handles.
+        set_current_video(None);
     }
 
     #[test]

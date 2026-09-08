@@ -50,6 +50,7 @@ import { PanelRight } from 'lucide-react';
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
+import { AdjustmentClipInspectorPanel } from './AdjustmentClipInspectorPanel';
 import { TimelinePane } from './TimelinePane';
 import { TimelineSwitcher } from './TimelineSwitcher';
 import { useEditorTimelineStore } from './timelineStore';
@@ -216,6 +217,11 @@ export function EditorTab() {
                 selected. */}
             <div className="flex h-full flex-col min-h-0">
               <TextClipInspectorPanel />
+              {/* D-229 — the same stacking, for the same reasons, for an
+                  adjustment clip's correction. The two are mutually exclusive
+                  by construction (a clip cannot be both), so only ever one of
+                  them renders anything. */}
+              <AdjustmentClipInspectorPanel />
               <div className="flex-1 min-h-0">
                 <EditorInspectorPanel />
               </div>

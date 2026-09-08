@@ -1,8 +1,9 @@
 # chroma-types
 
 **Layer 0 (foundation).** Shared value types for the whole Chroma workspace:
-`Resolution`, `Rational`, `ChromaError`, the `fade` curve model, the `pan` law
-and the `eq` band model + biquad math (all real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
+`Resolution`, `Rational`, `ChromaError`, the `fade` curve model, the `pan` law,
+the `eq` band model + biquad math, and the `adjustment` colour operator (all
+real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
 undesigned — no real duplicate of any of them turned up in the `app/src-tauri`
 audit, see below.
 
@@ -46,6 +47,25 @@ audit, see below.
   means in BOTH engines. `@chroma/editor`'s `eq.ts` mirrors it; the two are
   pinned to one shared response table that each measures through its own
   engine.
+
+- **`src/adjustment.rs` (D-229)** is the fourth, and the only one that is not
+  audio: `AdjustmentLayer` (an adjustment clip's five-parameter primary
+  correction — `Clip::adjustment`'s own element type) plus the two-stage colour
+  operator it resolves to. Here for `eq.rs`'s reason in its strongest form —
+  **both pixel consumers consume the OPERATOR rather than re-deriving the
+  correction**: `chroma::edit`'s CPU compositor applies it per pixel, and
+  `@chroma/editor`'s ffmpeg compiler emits it as `lutrgb` + `colorchannelmixer`.
+  That is what makes an adjustment clip's live preview and its export the same
+  maths by construction instead of by two implementations agreeing. The split
+  into two stages is not aesthetic, it is what ffmpeg can execute: the gain
+  stage needs `lutrgb`'s uncapped expressions (a single folded matrix breaches
+  `colorchannelmixer`'s ±2 coefficient cap at ordinary settings), and the
+  saturation matrix provably never reaches that cap, so there is no clamp here
+  at all. `apply_rgb8` deliberately mirrors ffmpeg's own 8-bit behaviour —
+  `lutrgb` truncates, `colorchannelmixer` rounds, and there is a real
+  quantisation between them — because being *more* accurate than the exporter
+  would mean disagreeing with it. Measured agreement: ≤ 1/255. See D-229 and
+  `docs/notes/adjustment-clips.md`.
 
 ## Status
 

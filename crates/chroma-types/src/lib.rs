@@ -122,6 +122,17 @@ pub use eq::{
     EQ_MIN_FREQ_HZ, EQ_MIN_Q, EqBand, EqBandKind, eq_response_db,
 };
 
+/// The adjustment-clip primary correction + the two-stage colour operator it
+/// resolves to (D-229). Here for [`eq`]'s reason in its strongest form: the
+/// live-preview compositor and the ffmpeg export compiler both consume the
+/// OPERATOR this produces rather than each re-deriving the correction, which is
+/// what makes an adjustment clip's preview and its export the same maths by
+/// construction instead of by two implementations agreeing. See its own doc for
+/// why the effect is not the Colorist grade, and why the operator is two stages.
+pub mod adjustment;
+
+pub use adjustment::{AdjustmentLayer, AdjustmentOps};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +172,9 @@ mod tests {
         let dto: Dto = serde_json::from_str(legacy_json).unwrap();
         assert_eq!(dto.resolution, Resolution::new(1920, 1080));
         let round_tripped = serde_json::to_value(&dto).unwrap();
-        assert_eq!(round_tripped, serde_json::from_str::<Value>(legacy_json).unwrap());
+        assert_eq!(
+            round_tripped,
+            serde_json::from_str::<Value>(legacy_json).unwrap()
+        );
     }
 }

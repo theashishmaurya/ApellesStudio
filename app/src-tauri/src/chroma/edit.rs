@@ -731,11 +731,17 @@ pub(crate) fn timeline_frame_image(
     // likewise generated and has no `source_path`, so the same exception
     // applies to it; the filter below only ever discards an EMPTY-source media
     // clip, which is what it was always for.
+    //
+    // D-229 — an ADJUSTMENT clip has no `source_path` either, and decodes
+    // nothing at all: it is an operator on the layers below it, not a layer
+    // with pixels. Same exception, third time.
     let layers: Vec<VisibleLayer<'_>> = timeline
         .resolve_visible_video_layers_at(pos as i64)
         .into_iter()
         .filter(|l| match &l.source {
-            LayerSource::Clip { clip, .. } => clip.is_text() || !clip.source_path.is_empty(),
+            LayerSource::Clip { clip, .. } => {
+                clip.is_text() || clip.is_adjustment() || !clip.source_path.is_empty()
+            }
             LayerSource::Color { .. } => true,
         })
         .collect();
@@ -780,12 +786,16 @@ pub(crate) fn timeline_frame_image(
         // there is no source to decode, and its whole picture comes from the
         // compositor's own rasterise-and-blend step.
         [l] if l.alpha < 1.0 => false,
+        // D-229 — nor does a lone ADJUSTMENT clip: it decodes nothing, and the
+        // picture it produces (its correction applied to the black canvas
+        // beneath it) only exists once the compositor has run. Taking the fast
+        // path here would have tried to probe its empty `source_path`.
         [
             VisibleLayer {
                 source: LayerSource::Clip { clip, .. },
                 ..
             },
-        ] if clip.is_text() => false,
+        ] if clip.is_text() || clip.is_adjustment() => false,
         [
             VisibleLayer {
                 source:
@@ -857,12 +867,12 @@ fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
 }
 
 /// D-226 — the slot a layer will decode through, or `None` for one that decodes
-/// nothing (a generated text clip, a dip-to-colour plate). Drives the per-frame
-/// `retain_pipe_slots` release so a slot whose layer went away frees its
-/// `ffmpeg` process the same frame.
+/// nothing (a generated text clip, a dip-to-colour plate, or — D-229 — an
+/// adjustment clip). Drives the per-frame `retain_pipe_slots` release so a slot
+/// whose layer went away frees its `ffmpeg` process the same frame.
 fn layer_pipe_slot(layer: &VisibleLayer<'_>) -> Option<decode_pipe::PipeSlot> {
     match &layer.source {
-        LayerSource::Clip { clip, role, .. } if !clip.is_text() => {
+        LayerSource::Clip { clip, role, .. } if !clip.is_text() && !clip.is_adjustment() => {
             Some(pipe_slot(layer.track, *role))
         }
         _ => None,
@@ -928,7 +938,15 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
     // whole frame. Answered here rather than erroring "clip has no source",
     // so the Inspector's own geometry fetch works for a title the same way it
     // does for a media clip.
-    if c.is_text() {
+    //
+    // D-229 — an adjustment clip is the same answer for a different reason: it
+    // draws nothing, but its correction covers the whole frame, so "the whole
+    // composition" is the honest footprint. Grouped with the text case rather
+    // than left to fall through to the `source_path.is_empty()` error below,
+    // which would have made every selection of an adjustment clip a failed IPC
+    // round trip that the caller then had to interpret — an error used as
+    // control flow for a case that is not an error.
+    if c.is_text() || c.is_adjustment() {
         return Ok(ClipGeometry {
             comp_width: comp_w,
             comp_height: comp_h,
@@ -1304,18 +1322,31 @@ fn composite_video_frame(
     max_long_edge: Option<u32>,
     comp: (u32, u32),
 ) -> Result<DynamicImage, String> {
-    struct Decoded {
-        /// `Arc` (D-211) purely so a **rasterised text layer** — which
-        /// `chroma::text` hands back from its own cache, shared with whatever
-        /// other frame is showing the same title — needs no per-frame clone
-        /// of a full canvas-sized buffer. A decoded video frame is owned
-        /// outright and just gets wrapped; the cost is one allocation per
-        /// layer per frame, against a memcpy of the whole buffer.
-        img: std::sync::Arc<image::RgbaImage>,
-        transform: ClipTransform,
-        /// This layer's full-frame footprint on the canvas at `scale == 1.0`,
-        /// in canvas pixels — its source size mapped through the composition.
-        natural: (f64, f64),
+    /// One step of the paint walk. Was a plain struct (a layer always had
+    /// pixels) until D-229 introduced a layer that has none and instead
+    /// *operates on the canvas*, which is a different kind of step rather than
+    /// a differently-configured one — so it is an enum now.
+    enum Step {
+        /// An ordinary picture layer: paint it onto the canvas.
+        Paint {
+            /// `Arc` (D-211) purely so a **rasterised text layer** — which
+            /// `chroma::text` hands back from its own cache, shared with
+            /// whatever other frame is showing the same title — needs no
+            /// per-frame clone of a full canvas-sized buffer. A decoded video
+            /// frame is owned outright and just gets wrapped; the cost is one
+            /// allocation per layer per frame, against a memcpy of the whole
+            /// buffer.
+            img: std::sync::Arc<image::RgbaImage>,
+            transform: ClipTransform,
+            /// This layer's full-frame footprint on the canvas at
+            /// `scale == 1.0`, in canvas pixels — its source size mapped
+            /// through the composition.
+            natural: (f64, f64),
+        },
+        /// D-229 — an **adjustment clip**: apply this colour operator to the
+        /// canvas as it stands, which is precisely every layer below this one,
+        /// since the paint walk runs back-to-front. Nothing is drawn.
+        Adjust(chroma_timeline::AdjustmentOps),
     }
 
     let (comp_w, comp_h) = comp;
@@ -1328,7 +1359,7 @@ fn composite_video_frame(
     // anisotropic squash on every layer.
     let render_scale = canvas_w as f64 / comp_w as f64;
 
-    let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
+    let mut decoded: Vec<Step> = Vec::with_capacity(layers.len());
     for layer in layers {
         // D-226 — a generated full-frame plate: a dip-to-colour transition's
         // colour, at the canvas's own size, with the transition's own alpha as
@@ -1338,7 +1369,7 @@ fn composite_video_frame(
         // only its own way of producing a buffer.
         if let LayerSource::Color { rgb } = layer.source {
             let (r, g, b) = rgb;
-            decoded.push(Decoded {
+            decoded.push(Step::Paint {
                 img: std::sync::Arc::new(image::ImageBuffer::from_pixel(
                     canvas_w,
                     canvas_h,
@@ -1358,6 +1389,22 @@ fn composite_video_frame(
             unreachable!("the Color arm returns above");
         };
         let track = layer.track;
+        // D-229 — an ADJUSTMENT clip contributes no picture. It becomes a
+        // `Step::Adjust` in the same ordered list, so the reverse walk below
+        // reaches it at exactly its own z-position and applies it to the canvas
+        // built from every layer below — no separate ordering rule, the same
+        // way D-213's `drawtext` splices into the export's overlay chain.
+        //
+        // An adjustment whose correction provably does nothing (`None` from
+        // `adjustment_ops`) is dropped here rather than pushed, so a
+        // freshly-added, untouched adjustment clip costs the preview exactly
+        // one skipped branch per frame and not a full-canvas pass.
+        if clip.is_adjustment() {
+            if let Some(ops) = clip.adjustment_ops() {
+                decoded.push(Step::Adjust(ops));
+            }
+            continue;
+        }
         // D-211 — a text clip's layer is GENERATED, not decoded: rasterise it
         // at the canvas's own size (so `natural` is the canvas and no resize
         // step runs) and let everything downstream — the paint order, the
@@ -1366,7 +1413,7 @@ fn composite_video_frame(
         // "exactly like" honest by zeroing the fields the export path cannot
         // reproduce; see its own doc.
         if let Some(text_layer) = &clip.text {
-            decoded.push(Decoded {
+            decoded.push(Step::Paint {
                 img: text::render_text_layer(text_layer, canvas_w, canvas_h)?,
                 transform: with_transition_alpha(
                     resolve_text_clip_transform(clip, *source_frame),
@@ -1391,7 +1438,7 @@ fn composite_video_frame(
         let img =
             decode_pipe::playback_frame_scaled(pipe_slot(track, *role), &path, &info, frame, scale)
                 .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
-        decoded.push(Decoded {
+        decoded.push(Step::Paint {
             img: std::sync::Arc::new(img.to_rgba8()),
             transform: with_transition_alpha(
                 resolve_clip_transform(clip, *source_frame),
@@ -1410,11 +1457,43 @@ fn composite_video_frame(
     let mut canvas: image::RgbaImage =
         image::ImageBuffer::from_pixel(canvas_w, canvas_h, image::Rgba([0, 0, 0, 255]));
 
-    for d in decoded.iter().rev() {
-        composite_layer_onto(&mut canvas, &d.img, &d.transform, d.natural);
+    for step in decoded.iter().rev() {
+        match step {
+            Step::Paint {
+                img,
+                transform,
+                natural,
+            } => composite_layer_onto(&mut canvas, img, transform, *natural),
+            // D-229 — the whole adjustment-clip compositing model, in one line:
+            // the canvas at this point in the reverse walk IS "every layer
+            // beneath this clip", so applying the operator to it is exactly the
+            // documented behaviour, with no scoping logic of its own.
+            Step::Adjust(ops) => apply_adjustment_to_canvas(&mut canvas, ops),
+        }
     }
 
     Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+/// D-229 — apply an adjustment clip's colour operator to the whole canvas.
+///
+/// **Whole canvas, deliberately.** The correction is full-frame: it reaches
+/// letterboxed/empty regions (which are the black backdrop) exactly as it
+/// reaches picture, because that is what the ffmpeg export does — there the
+/// filter sits on the composited stream, which includes `[base]`. Preview and
+/// export agreeing matters more here than the arguably-tidier alternative of
+/// masking the effect to where picture happens to be, which the export could
+/// not reproduce without a per-layer alpha pass it does not have.
+///
+/// Alpha is untouched: the operator is a colour correction, and the canvas is
+/// opaque by construction (it starts as opaque black).
+fn apply_adjustment_to_canvas(canvas: &mut image::RgbaImage, ops: &chroma_timeline::AdjustmentOps) {
+    for px in canvas.pixels_mut() {
+        let [r, g, b] = ops.apply_rgb8([px[0], px[1], px[2]]);
+        px[0] = r;
+        px[1] = g;
+        px[2] = b;
+    }
 }
 
 /// The **kept** (un-cropped) region of a `w`×`h` layer under `t`'s normalised
@@ -3632,5 +3711,336 @@ mod preview_throughput_tests {
             "the raw payload must be smaller than the base64 one it replaced"
         );
         super::decode_pipe::reset();
+    }
+}
+
+/// **D-229 — real, end-to-end preview pixels for an adjustment clip.**
+///
+/// The feature's whole claim is that a clip which draws nothing nonetheless
+/// changes the colour of *other* clips, on *other* tracks, only *inside its own
+/// span*. Every part of that is invisible to a structural test: a build that
+/// silently ignored adjustment clips entirely would still produce a perfectly
+/// valid frame of the right size at the right moment, with the right clip
+/// showing. Only a decoded pixel can tell the two apart.
+///
+/// So these go through the real `timeline_frame` command against real
+/// solid-colour media on disk — the same shape `preview_transition_tests` and
+/// `preview_text_tests` use, and the deliberate mirror of
+/// `packages/editor/src/timelineExportAdjustment.ffmpeg.test.ts` on the export
+/// side. **The two files together are what make "the preview matches the
+/// export" a checked claim rather than an assertion**, which is the specific
+/// thing B-090/B-095/B-098 were each filed for the absence of.
+///
+/// Flat colours, not a test pattern: "what colour is on screen" is the
+/// question, and it is unanswerable against moving content.
+#[cfg(test)]
+mod preview_adjustment_tests {
+    use chroma_timeline::{AdjustmentLayer, AdjustmentOps, Clip, Timeline, Track, TrackKind};
+
+    use super::super::PROJECT_STATE_LOCK;
+
+    const W: u32 = 320;
+    const H: u32 = 180;
+    /// A JPEG round trip at the preview's own quality moves a flat colour by a
+    /// few codes. Far tighter than what is being distinguished here (a
+    /// corrected colour from an uncorrected one, which these fixtures separate
+    /// by 40+ codes summed across the channels asserted).
+    const TOL: i32 = 26;
+
+    /// The correction under test. Deliberately moves the channels by different
+    /// amounts, so "the adjustment ran" cannot be confused with "the JPEG round
+    /// trip drifted" on any single channel.
+    fn layer() -> AdjustmentLayer {
+        AdjustmentLayer {
+            exposure: 0.4,
+            contrast: 0.0,
+            saturation: -0.6,
+            temperature: 0.5,
+            tint: 0.0,
+        }
+    }
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// 96 frames (4s at 24fps) of one flat colour, so a decoded pixel at any
+    /// time IS the layer's own identity.
+    fn flat_clip(path: &std::path::Path, color: &str) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color={color}:size={W}x{H}:rate=24:duration=4"),
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(ok.success(), "generating the {color} fixture clip failed");
+    }
+
+    fn media_clip(id: &str, path: &std::path::Path) -> Clip {
+        Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: path.to_string_lossy().into_owned(),
+            source_fps: Some(24.0),
+            source_start: 0,
+            duration: 96,
+            source_len: 96,
+            start_frame: 0,
+            ..Default::default()
+        }
+    }
+
+    /// An adjustment clip covering `[start_frame, start_frame + len)` — no
+    /// source path and no media, exactly as the real model builds one.
+    fn adjustment_clip(id: &str, start_frame: i64, len: i64, adj: AdjustmentLayer) -> Clip {
+        Clip {
+            id: id.into(),
+            name: "Adjustment Clip".into(),
+            source_path: String::new(),
+            source_start: 0,
+            duration: len,
+            source_len: len,
+            start_frame,
+            adjustment: Some(adj),
+            ..Default::default()
+        }
+    }
+
+    /// A project whose track list is exactly `tracks` (index 0 = topmost).
+    fn open_project(tracks: Vec<Track>) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("Adjust.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let settings = super::project::ProjectSettings {
+            width: Some(W),
+            height: Some(H),
+            ..Default::default()
+        };
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "Adjust".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings,
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "Adjust".into(),
+                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                tracks,
+                markers: Vec::new(),
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "Adjust".into(),
+        }));
+        tmp
+    }
+
+    fn video_track(clips: Vec<Clip>) -> Track {
+        Track {
+            kind: TrackKind::Video,
+            clips,
+            ..Default::default()
+        }
+    }
+
+    /// The centre pixel of the real preview frame at timeline position `pos`,
+    /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
+    /// preview `<img>` shows.
+    fn centre_pixel(pos: u64) -> [u8; 3] {
+        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        let img = image::load_from_memory(&jpeg)
+            .expect("decode jpeg")
+            .to_rgba8();
+        assert_eq!(img.dimensions(), (W, H));
+        let p = img.get_pixel(W / 2, H / 2);
+        [p[0], p[1], p[2]]
+    }
+
+    fn assert_near(actual: u8, expected: i32, what: &str) {
+        assert!(
+            (actual as i32 - expected).abs() <= TOL,
+            "{what}: got {actual}, expected ~{expected}"
+        );
+    }
+
+    /// The feature, end to end: an adjustment clip on the TOP track really
+    /// corrects a media clip on the track BELOW it, and only within its own
+    /// span.
+    ///
+    /// The control is the same project at a position the adjustment clip does
+    /// not cover, rendered through the same command against the same fixture —
+    /// so a build that ignored adjustment clips would fail the "inside"
+    /// assertions while still passing the "outside" ones, rather than passing
+    /// everything.
+    #[test]
+    fn an_adjustment_clip_corrects_the_track_beneath_it_only_inside_its_own_span() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let teal = tmp.path().join("teal.mp4");
+        // A colour with three DIFFERENT channel values, so a correction that
+        // rebalances channels shows up as a change in their relationship and
+        // not merely in overall brightness.
+        flat_clip(&teal, "0x3080B0");
+
+        // Track 0 (top): an adjustment clip covering frames 48..=71 only.
+        // Track 1 (below): the picture, for the whole timeline.
+        let _project = open_project(vec![
+            video_track(vec![adjustment_clip("ADJ", 48, 24, layer())]),
+            video_track(vec![media_clip("PIC", &teal)]),
+        ]);
+        super::decode_pipe::reset();
+
+        // OUTSIDE the adjustment's span — the picture, untouched.
+        let outside = centre_pixel(12);
+        eprintln!("outside the adjustment span: {outside:?}");
+
+        // INSIDE it — the same picture, corrected.
+        let inside = centre_pixel(60);
+        eprintln!("inside the adjustment span:  {inside:?}");
+
+        // The load-bearing assertion, stated against the SHARED operator
+        // rather than against numbers typed in by hand: whatever
+        // `AdjustmentOps` says this correction does to the source colour is
+        // what the preview must actually show. That is what ties this test to
+        // the export, which compiles its coefficients from the very same
+        // operator.
+        let ops = AdjustmentOps::build(&layer(), 1.0);
+        let expected = ops.apply_rgb8(outside);
+        eprintln!("operator says outside -> {expected:?}");
+        assert_near(
+            inside[0],
+            expected[0] as i32,
+            "R inside the adjustment span",
+        );
+        assert_near(
+            inside[1],
+            expected[1] as i32,
+            "G inside the adjustment span",
+        );
+        assert_near(
+            inside[2],
+            expected[2] as i32,
+            "B inside the adjustment span",
+        );
+
+        // …and that it is genuinely a DIFFERENT picture, so the assertions
+        // above cannot be satisfied by the adjustment doing nothing at all.
+        let moved = (inside[0] as i32 - outside[0] as i32).abs()
+            + (inside[1] as i32 - outside[1] as i32).abs()
+            + (inside[2] as i32 - outside[2] as i32).abs();
+        assert!(
+            moved > 40,
+            "the adjustment must visibly change the picture beneath it; \
+             outside={outside:?} inside={inside:?}"
+        );
+        // Direction, not just magnitude: this correction warms (red up). A sign
+        // error in the white-balance maths would keep `moved` large and still
+        // be wrong.
+        assert!(
+            inside[0] > outside[0],
+            "a +temperature correction must raise red: {outside:?} -> {inside:?}"
+        );
+    }
+
+    /// The z-order claim, which IS the compositing model: an adjustment clip
+    /// reaches only what is BELOW it. Same fixture as above with the two tracks
+    /// swapped — the adjustment is now on the bottom track, so the picture
+    /// above it must come through completely untouched.
+    ///
+    /// Without this, a build that applied the correction to the whole finished
+    /// frame regardless of the clip's position would pass the test above.
+    #[test]
+    fn an_adjustment_clip_does_not_reach_a_track_above_it() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let teal = tmp.path().join("teal.mp4");
+        flat_clip(&teal, "0x3080B0");
+
+        // Track 0 (top): the picture. Track 1 (below): the adjustment.
+        let _project = open_project(vec![
+            video_track(vec![media_clip("PIC", &teal)]),
+            video_track(vec![adjustment_clip("ADJ", 48, 24, layer())]),
+        ]);
+        super::decode_pipe::reset();
+
+        let outside = centre_pixel(12);
+        let inside = centre_pixel(60);
+        eprintln!("adjustment BELOW the picture: outside={outside:?} inside={inside:?}");
+
+        for (ch, name) in [(0usize, "R"), (1, "G"), (2, "B")] {
+            assert_near(
+                inside[ch],
+                outside[ch] as i32,
+                &format!("{name}: an adjustment below the picture must not change it"),
+            );
+        }
+    }
+
+    /// A freshly added, untouched adjustment clip is a guaranteed no-op — the
+    /// property both engines' skip paths exist to preserve, and the reason
+    /// "add one, then grade it" is a safe two-step for an agent.
+    #[test]
+    fn an_identity_adjustment_clip_changes_nothing() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let teal = tmp.path().join("teal.mp4");
+        flat_clip(&teal, "0x3080B0");
+
+        let _project = open_project(vec![
+            video_track(vec![adjustment_clip(
+                "ADJ",
+                48,
+                24,
+                AdjustmentLayer::IDENTITY,
+            )]),
+            video_track(vec![media_clip("PIC", &teal)]),
+        ]);
+        super::decode_pipe::reset();
+
+        let outside = centre_pixel(12);
+        let inside = centre_pixel(60);
+        for (ch, name) in [(0usize, "R"), (1, "G"), (2, "B")] {
+            assert_near(
+                inside[ch],
+                outside[ch] as i32,
+                &format!("{name}: an identity adjustment must change nothing"),
+            );
+        }
     }
 }
