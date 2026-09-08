@@ -32,6 +32,18 @@
  *   new interpretation of what ducking MEANS — see D-197's own decision entry
  *   for why replicating a known bug into new code would be the wrong call.
  *
+ * - `clipAudioParam`/`panGainExprs` (D-223) mirror `chroma_media::audio::
+ *   LevelEnvelope` + `chroma_types::pan_gains` — a clip's OWN volume and
+ *   stereo pan. Neither is sampled: an automation curve IS piecewise-linear
+ *   (so `piecewiseLinearExpr` reproduces it exactly), and ffmpeg's expression
+ *   language has `cos`/`sin`/`PI`/`clip`, so the constant-power pan law is
+ *   written AS the law rather than approximated. This is the one part of the
+ *   chain that is not a single scalar per source: a pan needs different gains
+ *   on the two channels, so `buildAudioSourceChain` forks into
+ *   `channelsplit`/`join` for it — see that function for why ffmpeg's own
+ *   `pan` filter cannot be used (it takes no expressions, so it cannot express
+ *   a keyframed pan).
+ *
  * What it does NOT do: decide WHICH clips contribute audio at all (that is
  * `timelineExport.ts`'s `hasAudioOverrides`-driven walk — this module never
  * sees a `Timeline`'s tracks directly except inside `resolveDuckForTrack`,
@@ -42,7 +54,15 @@
  */
 
 import type { Clip, FadeCurve, Timeline, Track } from './timeline';
-import { DEFAULT_DUCK_ATTACK_MS, DEFAULT_DUCK_RELEASE_MS, DEFAULT_FADE_CURVE, endFrame } from './timeline';
+import {
+  DEFAULT_DUCK_ATTACK_MS,
+  DEFAULT_DUCK_RELEASE_MS,
+  DEFAULT_FADE_CURVE,
+  clampClipPan,
+  clampClipVolume,
+  endFrame,
+  panGains,
+} from './timeline';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 
 // --------------------------------------------------------------------------- //
@@ -353,6 +373,92 @@ export function resolveDuckForTrack(tl: Timeline, trackIndex: number, fps: numbe
 }
 
 // --------------------------------------------------------------------------- //
+// D-223 — per-clip volume + pan, static or keyframed
+// --------------------------------------------------------------------------- //
+
+/** One per-clip audio param's real shape for the export: a single number
+ *  (never keyed, or keyed to one value everywhere) or a real automation
+ *  expression in CLIP-LOCAL, POST-SPEED seconds.
+ *
+ *  Two cases rather than always an expression, because the static one is what
+ *  keeps the common export byte-identical: a number folds into the existing
+ *  single `volume=<n>` node (or, for pan, into two constants) instead of
+ *  making ffmpeg re-evaluate an expression every frame for a value that never
+ *  changes. */
+export type ClipAudioParamValue =
+  | { kind: 'static'; value: number }
+  | { kind: 'keys'; expr: string };
+
+/**
+ * Resolve one per-clip audio param (`'volume'` / `'pan'`) for the export.
+ *
+ * Keyframes are read out of `clip.chroma_keyframes` under the param's own
+ * name and rebased on `source_start` — the clip's input is already
+ * `-ss`-trimmed to its in-point, so its `t` is 0 there, whereas a keyframe's
+ * `frame` is a SOURCE frame. (That rebase is deliberately NOT what
+ * `timelineExport.ts`'s own `keyframeExprAt` does for the picture: its
+ * expressions are consumed inside `overlay`, whose `t` is timeline time, not
+ * clip time. Two different time bases, each correct for its own filter.)
+ *
+ * Interpolation is `piecewiseLinearExpr` — linear between keys, held flat
+ * outside — which is exactly what `chroma_media::audio::LevelCurve::value_at`
+ * does in the live mixer and what `interpolate_param` does for the Inspector's
+ * own readout. No sampling and no approximation here, unlike a fade's bezier:
+ * an automation curve IS piecewise-linear.
+ *
+ * Keys that all hold the identity collapse back to `static` — the same
+ * `LevelEnvelope::new` short-circuit the mixer applies, so an agent that keyed
+ * volume at 1.0 twice costs the export nothing either.
+ */
+export function clipAudioParam(
+  clip: Clip,
+  param: 'volume' | 'pan',
+  identity: number,
+  clipFps: number,
+  speed: number,
+): ClipAudioParamValue {
+  const keys = (clip.chroma_keyframes ?? [])
+    .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
+    .map((k) => ({
+      t: (k.frame - clip.source_start) / clipFps / speed,
+      value: Number(k.params[param]),
+    }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.value))
+    .sort((a, b) => a.t - b.t);
+
+  if (keys.length === 0 || keys.every((k) => k.value === identity)) {
+    const stored = clip[param];
+    return { kind: 'static', value: Number.isFinite(stored) ? (stored as number) : identity };
+  }
+  return { kind: 'keys', expr: piecewiseLinearExpr(keys, 't') };
+}
+
+/**
+ * The two per-channel gain expressions for a pan expression — the ffmpeg
+ * mirror of `chroma_types::pan_gains`, written as the law itself rather than
+ * as sampled points: ffmpeg's own expression language has `cos`, `sin`, `PI`
+ * and `clip`, so the constant-power curve is expressible EXACTLY, the same way
+ * `duckGainExpr`'s `exp` is (and unlike the fade's bezier root-solve, which
+ * has to be sampled).
+ *
+ * That exactness matters here specifically because the pan value is what gets
+ * interpolated, not the gains: interpolating the two GAINS linearly between
+ * keys would cut the corner off the constant-power arc and quietly dip the
+ * level mid-sweep. Applying the law to the interpolated pan is what the live
+ * mixer does per sample-frame, and this is the same composition.
+ *
+ * `clip(...)` reproduces `pan_gains`' own `[-1, 1]` clamp. The one difference
+ * from Rust, stated: `pan_gains` short-circuits an exact `0.0` to a bit-exact
+ * `(1, 1)`, while `cos(PI/4)*√2` evaluates to 0.9999999999999999 — a 1e-16
+ * relative difference, ~320 dB below anything audible, and unreachable for a
+ * clip that is centred throughout (this whole chain is skipped for it).
+ */
+export function panGainExprs(panExpr: string): [string, string] {
+  const theta = `((clip(${panExpr},-1,1)+1)*PI/4)`;
+  return [`${Math.SQRT2}*cos(${theta})`, `${Math.SQRT2}*sin(${theta})`];
+}
+
+// --------------------------------------------------------------------------- //
 // atempo — keep a speed-overridden clip's embedded/attached audio in sync
 // --------------------------------------------------------------------------- //
 
@@ -493,19 +599,89 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
       : null;
   const duckExpr = duck ? duckGainExpr(duck.segments, duck.duckedGain, `(t+${startSec})`) : null;
 
+  // D-223 — this clip's own level. `volume` is one more factor in the same
+  // product (`track.gain × clip.volume × fade × duck`, the exact order
+  // `SourceEnvelopes::apply` multiplies them in); `pan` is the one stage that
+  // is NOT the same number on both channels, so it forks the chain below.
+  //
+  // A STATIC clip volume folds straight into the track gain rather than
+  // becoming a second factor — one number, exactly as the live mixer's own
+  // `gains` slice and `LevelEnvelope` compose to, and it keeps a project that
+  // uses neither feature on the same single `volume=<n>` node it had before.
+  const volume = clipAudioParam(clip, 'volume', 1, clipFps, effectiveSpeed);
+  const pan = clipAudioParam(clip, 'pan', 0, clipFps, effectiveSpeed);
+  const staticGain = volume.kind === 'static' ? gain * clampClipVolume(volume.value) : gain;
+
   const factors: string[] = [];
-  if (gain !== 1) factors.push(String(gain));
+  if (staticGain !== 1) factors.push(String(staticGain));
+  // `max(…,0)` mirrors `chroma_types::clip_volume`'s floor — a negative
+  // authored key would otherwise invert the waveform's phase, which is never
+  // what "quieter" means.
+  if (volume.kind === 'keys') factors.push(`max(${volume.expr},0)`);
   if (fadeExpr) factors.push(fadeExpr);
   if (duckExpr) factors.push(duckExpr);
+  // Whether any factor is time-varying, i.e. whether `volume` needs
+  // `eval=frame` (per-frame re-evaluation) rather than ffmpeg's default
+  // parse-once. A static-only product stays the cheap, plain `volume=<number>`
+  // node it was before this feature existed.
+  const animated = Boolean(fadeExpr || duckExpr || volume.kind === 'keys');
 
-  if (factors.length > 0) {
-    const label = `v${idLabel}`;
-    if (fadeExpr || duckExpr) {
-      steps.push(`${ref}volume=eval=frame:volume='${factors.join('*')}'[${label}]`);
-    } else {
-      steps.push(`${ref}volume=${factors[0]}[${label}]`);
+  if (pan.kind === 'static' && clampClipPan(pan.value) === 0) {
+    if (factors.length > 0) {
+      const label = `v${idLabel}`;
+      if (animated) {
+        steps.push(`${ref}volume=eval=frame:volume='${factors.join('*')}'[${label}]`);
+      } else {
+        steps.push(`${ref}volume=${factors[0]}[${label}]`);
+      }
+      ref = `[${label}]`;
+      hasFilter = true;
     }
-    ref = `[${label}]`;
+  } else {
+    // A real pan: split the source into its two channels, apply the shared
+    // factors AND that channel's own pan-law gain to each, and join them back
+    // into one stereo stream.
+    //
+    // **Why a split/join rather than ffmpeg's own `pan` filter**: `pan`'s
+    // coefficients are parsed once, as numbers — it has no expression
+    // evaluation at all, so it cannot express a KEYFRAMED pan (and this
+    // feature's pan is keyframeable, exactly like every other clip property).
+    // `volume` is the one gain filter in ffmpeg that takes a real per-frame
+    // expression, so the pan is expressed as two of them. `stereotools`'
+    // `balance_in`/`balance_out` are likewise static options.
+    //
+    // `aformat=channel_layouts=stereo` first because `channelsplit` on a MONO
+    // source is an error, and a mono clip is exactly the case where panning is
+    // most meaningful: the upmix duplicates the mono channel into both, which
+    // is precisely what `chroma_media::audio::adapt_channels` does before the
+    // live mixer's own pan, so a panned mono clip becomes stereo-positioned
+    // mono in both paths rather than one of them.
+    const [leftExpr, rightExpr] =
+      pan.kind === 'static'
+        ? (panGains(clampClipPan(pan.value)).map(String) as [string, string])
+        : panGainExprs(pan.expr);
+    // A keyframed pan is itself time-varying, so the per-channel `volume`
+    // nodes need `eval=frame` even when nothing else does.
+    const perFrame = animated || pan.kind === 'keys';
+    const common = factors.length > 0 ? `${factors.join('*')}*` : '';
+    const evalMode = perFrame ? 'eval=frame:' : '';
+    const stereo = `s${idLabel}`;
+    const left = `l${idLabel}`;
+    const right = `r${idLabel}`;
+    const leftOut = `lv${idLabel}`;
+    const rightOut = `rv${idLabel}`;
+    const joined = `p${idLabel}`;
+    steps.push(`${ref}aformat=channel_layouts=stereo[${stereo}]`);
+    steps.push(`[${stereo}]channelsplit=channel_layout=stereo[${left}][${right}]`);
+    steps.push(`[${left}]volume=${evalMode}volume='${common}(${leftExpr})'[${leftOut}]`);
+    steps.push(`[${right}]volume=${evalMode}volume='${common}(${rightExpr})'[${rightOut}]`);
+    // An explicit `map` rather than `join`'s own channel-name guess: both
+    // inputs are mono streams whose single channel is named the same thing, so
+    // leaving it to the guess is leaving it to chance.
+    steps.push(
+      `[${leftOut}][${rightOut}]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[${joined}]`,
+    );
+    ref = `[${joined}]`;
     hasFilter = true;
   }
 

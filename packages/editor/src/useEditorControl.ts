@@ -70,6 +70,7 @@ import {
   newMarker,
   newTextClipFields,
   newTextLayer,
+  panGains,
   resolveMarkerColor,
   timelineFps,
   trackIndexAfterMove,
@@ -295,6 +296,12 @@ function timelineDto(tl: Timeline) {
         fadeOutCurve: c.fade_out_curve ?? DEFAULT_FADE_CURVE,
         fadeInCurveName: fadePresetName(c.fade_in_curve),
         fadeOutCurveName: fadePresetName(c.fade_out_curve),
+        // D-223 — this clip's own level, so an agent can read it back before
+        // deciding what to write (and can tell a clip that is already quiet
+        // from a track that is). Defaulted here the same way every field
+        // above is: a pre-D-223 clip carries neither key.
+        volume: c.volume ?? 1,
+        pan: c.pan ?? 0,
         // D-211 — `null` for an ordinary media clip; the whole text layer for
         // a title, so a caller can read back what it wrote without a second
         // round trip and can tell the two kinds of clip apart from this one
@@ -1242,6 +1249,71 @@ export function useEditorControl(): void {
           fadeInCurveName: fadePresetName(after?.fade_in_curve),
           fadeOutCurveName: fadePresetName(after?.fade_out_curve),
           note: 'a fade on a video clip fades its picture AND its embedded audio together',
+        };
+      },
+
+      // ---- per-clip level (D-223) ---------------------------------------- //
+      //
+      // Its own op rather than two more fields on `editor_set_clip_transform`,
+      // for the reason `set_clip_audio`'s own doc gives: a level is not
+      // geometry, it applies to audio-track clips with no transform at all,
+      // and that tool REQUIRES its nine geometry values (an omitted one
+      // resets), so a volume nudge through it would restate — and could
+      // silently reset — a clip's whole compositing transform.
+      editor_set_clip_audio: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const c = found.c;
+
+        // Both optional and independent — an omitted one is left exactly as it
+        // is (the reducer's own contract), so an agent setting only pan cannot
+        // accidentally reset a volume it never looked at. Rejected rather than
+        // coerced when present and unusable, so a typo is reported instead of
+        // silently becoming 0 (= silence) or NaN.
+        const num = (v: unknown, name: string): number | { error: string } | undefined => {
+          if (v === undefined || v === null) return undefined;
+          const n = Number(v);
+          if (!Number.isFinite(n)) return { error: `${name} must be a finite number, got ${String(v)}` };
+          return n;
+        };
+        const volume = num(a?.volume, 'volume');
+        if (volume !== undefined && typeof volume === 'object') return volume;
+        const pan = num(a?.pan, 'pan');
+        if (pan !== undefined && typeof pan === 'object') return pan;
+        if (volume === undefined && pan === undefined) {
+          return { error: 'set at least one of volume or pan' };
+        }
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_audio',
+          track: found.track,
+          clip: found.clip,
+          ...(volume !== undefined ? { volume } : {}),
+          ...(pan !== undefined ? { pan } : {}),
+        });
+
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        const storedPan = after?.pan ?? 0;
+        const [left, right] = panGains(storedPan);
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          name: after?.name ?? c.name,
+          // What was actually STORED — values are clamped on the way in
+          // (volume floored at 0, pan to [-1, 1]), so a caller should read
+          // these rather than assume its request landed verbatim.
+          volume: after?.volume ?? 1,
+          pan: storedPan,
+          // The real per-channel multipliers this pan resolves to, so a caller
+          // reasoning about level does not have to re-derive the pan law.
+          panGainLeft: left,
+          panGainRight: right,
+          trackGain: found.tr.gain ?? 1,
+          note: 'clip volume multiplies with the track gain, the clip fade and any duck — it does not replace them',
         };
       },
 

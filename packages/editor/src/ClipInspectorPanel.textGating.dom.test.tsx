@@ -114,6 +114,11 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
     for (const label of ['Opacity', 'Position X', 'Position Y', 'Scale', 'Rotation', 'Width', 'Height', 'Left', 'Right', 'Top', 'Bottom']) {
       expect(labelExists(label)).toBe(true);
     }
+    // D-223 — and its own audio level, which a media clip really has (its
+    // embedded sound) even on a video track.
+    for (const label of ['Volume', 'Pan']) {
+      expect(labelExists(label)).toBe(true);
+    }
   });
 
   it('a text clip keeps Opacity/Position X/Position Y but loses Scale, Rotation, Width, Height, and the whole Crop section', async () => {
@@ -123,6 +128,12 @@ describe("a text clip's Inspector hides rows that do nothing for it", () => {
       expect(labelExists(label)).toBe(true);
     }
     for (const label of ['Scale', 'Rotation', 'Width', 'Height', 'Left', 'Right', 'Top', 'Bottom']) {
+      expect(labelExists(label)).toBe(false);
+    }
+    // D-223 — a generated title has no audio stream at all, so its Volume and
+    // Pan rows would be two more controls that visibly do nothing. Hidden for
+    // the same reason, and by the same `!clip.text` gate, as Crop.
+    for (const label of ['Volume', 'Pan']) {
       expect(labelExists(label)).toBe(false);
     }
   });

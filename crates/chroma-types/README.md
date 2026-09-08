@@ -1,9 +1,10 @@
 # chroma-types
 
 **Layer 0 (foundation).** Shared value types for the whole Chroma workspace:
-`Resolution`, `Rational`, `ChromaError`, and the `fade` curve model (real, in
-use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay undesigned — no
-real duplicate of any of them turned up in the `app/src-tauri` audit, see below.
+`Resolution`, `Rational`, `ChromaError`, the `fade` curve model and the `pan`
+law (all real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
+undesigned — no real duplicate of any of them turned up in the `app/src-tauri`
+audit, see below.
 
 - **Deps:** `serde`, `thiserror`. Nothing heavy — no `wgpu`, no `ffmpeg`, no fs.
 - **Depended on by:** every other `chroma-*` crate. It is the root of the
@@ -20,6 +21,17 @@ real duplicate of any of them turned up in the `app/src-tauri` audit, see below.
   audio mixer's gain, and L1 cannot depend on L2. `chroma-timeline` re-exports
   `FadeCurve`/`fade_gain`, so callers working in the timeline model need not
   know it came from here.
+- **`src/pan.rs` (D-223)** is the second piece of real math, here for exactly
+  `fade.rs`'s reason: `pan_gains()` turns `Clip::pan` (L2) into the two
+  per-channel multipliers the audio mixer (L1) applies, and L1 cannot depend on
+  L2. Constant power, normalised to **unity at the centre** rather than at the
+  extremes — `pan` defaults to `0.0` on every clip ever authored, so a centre
+  gain of anything but exactly `1.0` would have attenuated every existing mix
+  by 3 dB; the module doc has the full argument and what that costs (a 3.01 dB
+  boost at a hard pan). `clip_volume()` beside it is the matching guard for
+  `Clip::volume` (floored at silence, no ceiling — it is a fader).
+  `@chroma/editor`'s `panGains` mirrors this function for the ffmpeg exporter;
+  both are pinned to the same constant-power invariant by their own tests.
 
 ## Status
 

@@ -87,6 +87,21 @@
  * single-field operation, and `Scale`'s own field already is the "clear the
  * override" affordance. See `ClipTransformParam`'s doc and D-208.
  *
+ * **D-223 — an Audio section: this clip's own Volume and Pan.** Two more
+ * `PropertyRow`s, so both are keyframeable/navigable/resettable exactly like
+ * every Transform and Crop row — the reuse `PropertyRow.tsx`'s own extraction
+ * was for. Its own section rather than more Fade rows because the reference
+ * (Resolve's Inspector, `scratch/resolve-reference/soundtrack.jpg`) presents
+ * "Clip Volume"/"Clip Pan" as their own group, and because a level is a
+ * different kind of thing from a fade's time-domain envelope. Hidden entirely
+ * for a text clip, by the same `!clip.text` gate and for the same reason Crop
+ * is: a generated title has no audio at all, so the rows would visibly do
+ * nothing. The section's note is load-bearing, not decoration — it says the
+ * clip's level MULTIPLIES with its track's gain (otherwise "I turned the track
+ * down and this clip is still loud" reads as a bug) and states the 3 dB boost
+ * a hard pan applies (the real, documented cost of this app's 0 dB-centre pan
+ * law — `chroma_types::pan`).
+ *
  * **Roadmap 25 — `PropertyRow`/`PropertyState` now live in their own file**
  * (`PropertyRow.tsx`), generalised over any param-name type rather than
  * pinned to `ClipTransformParam` — see that file's own doc for why this was
@@ -106,7 +121,15 @@ import {
   SelectValue,
 } from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-import { FADE_PRESETS, fadePresetName, type Clip, type ClipTransformParam, type FadeCurve } from './timeline';
+import {
+  FADE_PRESETS,
+  fadePresetName,
+  type Clip,
+  type ClipAudioParam,
+  type ClipKeyframeParam,
+  type ClipTransformParam,
+  type FadeCurve,
+} from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 import type { ClipGeometry } from './useClipGeometry';
 import { PropertyRow, type PropertyState } from './PropertyRow';
@@ -194,6 +217,31 @@ const TRANSFORM_FIELDS: Array<{
   { param: 'rotation', label: 'Rotation', step: 1 },
 ];
 
+/** D-223 — the per-clip audio rows, in Resolve's own order (Clip Volume above
+ *  Clip Pan, `scratch/resolve-reference/soundtrack.jpg`). Same
+ *  `PropertyRow`-shaped record `TRANSFORM_FIELDS` is, so both sections render
+ *  through one component.
+ *
+ *  **Steps and bounds are the stored units**, as everywhere else on this panel
+ *  (Opacity is 0–1, not 0–100; crop insets are fractions). Volume steps by
+ *  `0.05`, the same nudge Opacity uses for the same reason — it is a 0–1-ish
+ *  multiplier a human drags in twentieths — and is floored at `0` with NO
+ *  maximum, because a clip legitimately needs boosting above unity and
+ *  `Track.gain` has no ceiling either. Pan steps by `0.1` across its `-1..1`
+ *  range: ten positions across the stereo field is finer than any human
+ *  actually places a clip by ear, and a finer default step would make the
+ *  spinner arrows useless. */
+const AUDIO_FIELDS: Array<{
+  param: ClipAudioParam;
+  label: string;
+  step: number;
+  min?: number;
+  max?: number;
+}> = [
+  { param: 'volume', label: 'Volume', step: 0.05, min: 0 },
+  { param: 'pan', label: 'Pan', step: 0.1, min: -1, max: 1 },
+];
+
 /** D-211 follow-up — a TEXT clip's own `resolve_text_clip_transform` (Rust)
  *  pins `scale`/`rotation`/crop/box size to their identity values regardless
  *  of what's stored, and `editor_set_clip_transform` REFUSES a non-default
@@ -234,17 +282,17 @@ export function ClipInspectorPanel({
   /** D-208 — every keyframeable property's live state, derived by
    *  `EditorInspectorPanel`. Complete by construction (`Record`, not
    *  `Partial`), so a row can never be rendered without one. */
-  paramStates: Record<ClipTransformParam, PropertyState>;
+  paramStates: Record<ClipKeyframeParam, PropertyState>;
   onTransformChange: (patch: TransformPatch) => void;
   onFadeChange: (patch: FadePatch) => void;
   /** D-208 — edit ONE property's value. Distinct from `onTransformChange`
    *  because an animated property's edit must land on its keyframe at the
    *  playhead, not (only) on its static field — the caller decides, this
    *  panel just says which property changed to what. */
-  onParamChange: (param: ClipTransformParam, value: number) => void;
-  onKeyframeToggle: (param: ClipTransformParam) => void;
-  onKeyframeNav: (param: ClipTransformParam, dir: -1 | 1) => void;
-  onResetParam: (param: ClipTransformParam) => void;
+  onParamChange: (param: ClipKeyframeParam, value: number) => void;
+  onKeyframeToggle: (param: ClipKeyframeParam) => void;
+  onKeyframeNav: (param: ClipKeyframeParam, dir: -1 | 1) => void;
+  onResetParam: (param: ClipKeyframeParam) => void;
   onUpsertKeyframe: () => void;
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
@@ -522,6 +570,52 @@ export function ClipInspectorPanel({
             separately.
           </p>
         </InspectorSection>
+
+        {/* D-223 — this clip's OWN level and stereo position, independent of
+            its track's fader. Its own section rather than more Fade rows for
+            the same reason Crop got one: the reference NLE presents them as a
+            separate group (Resolve's Inspector: "Clip Volume" / "Clip Pan" on
+            its own Audio tab, `scratch/resolve-reference/soundtrack.jpg`),
+            and a level is a different kind of thing from a fade envelope.
+
+            Both rows are `PropertyRow`s, so both are keyframeable, navigable
+            and resettable exactly like every Transform/Crop row — a volume
+            automation ramp is the same machinery an animated Opacity uses
+            (D-208/D-220), not a parallel one.
+
+            Hidden entirely for a TEXT clip, matching how Crop is: a generated
+            title has no audio stream at all, so a rendered-but-inert Audio
+            section would be two rows that visibly do nothing. */}
+        {!clip.text && (
+          <InspectorSection label="Audio">
+            {AUDIO_FIELDS.map(({ param, label, step, min, max }) => (
+              <PropertyRow
+                key={param}
+                label={label}
+                param={param}
+                state={paramStates[param]}
+                step={step}
+                min={min}
+                max={max}
+                disabled={trackLocked}
+                onChange={(v) => onParamChange(param, v)}
+                onKeyframeToggle={onKeyframeToggle}
+                onKeyframeNav={onKeyframeNav}
+                onReset={onResetParam}
+              />
+            ))}
+            {/* Not decoration, for the same reason the Fade note isn't: the
+                first is what stops "I turned the track down and this clip is
+                still loud" being read as a bug, and the second is the real,
+                stated cost of this app's own pan law (a 0 dB centre means the
+                boost lands at the extremes — see `chroma_types::pan`). */}
+            <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+              This clip's own level, multiplied with its track's gain — not a replacement for it.
+              Hard panning boosts the destination channel by 3 dB, so lower Volume if the source is
+              already close to full scale.
+            </p>
+          </InspectorSection>
+        )}
 
         {/* the exact interaction `RelightPanel.tsx` uses for relight-light
             keyframes (Diamond icon, `keyedHere` highlight, add/update/

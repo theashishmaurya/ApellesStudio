@@ -183,6 +183,28 @@ export interface Clip {
   fade_out_frames?: number;
   fade_in_curve?: FadeCurve;
   fade_out_curve?: FadeCurve;
+  /** Per-clip audio level (D-223) — mirrors `chroma_timeline::Clip::volume` /
+   *  `pan`, this clip's OWN contribution to the mix, independent of
+   *  `Track.gain`'s whole-track fader.
+   *
+   *  `volume` is a **linear** multiplier (`1` = unity), deliberately the same
+   *  unit as `Track.gain` rather than dB — two level controls in one signal
+   *  chain that disagree about their unit is a trap. `pan` is normalised:
+   *  `-1` hard left · `0` centre · `1` hard right, through the constant-power
+   *  (0 dB centre) law in `chroma_types::pan` / `panGains` here.
+   *
+   *  Both apply ONLY to sound: on an audio-track clip that is the whole clip,
+   *  on a video clip it is its embedded audio (and nothing at all once that
+   *  audio has been unlinked into its own clip — D-129). They compose
+   *  multiplicatively with everything else: `track.gain × clip.volume × fade ×
+   *  duck`, then pan splits per channel.
+   *
+   *  Both are keyframeable through `chroma_keyframes` under these exact names
+   *  (see [`ClipAudioParam`]). Optional here for the same reason the transform
+   *  fields are: absent on a pre-D-223 clip, defaulted server-side (`1` / `0`)
+   *  on the next `chroma_timeline_get`. */
+  volume?: number;
+  pan?: number;
   /** Text/title layer (D-211) — mirrors `chroma_timeline::Clip::text`.
    *  Present (non-null) = this clip is a GENERATED text layer: its picture is
    *  rasterised from these properties rather than decoded from `source_path`
@@ -373,6 +395,96 @@ export const CLIP_TRANSFORM_DEFAULTS: Readonly<Record<ClipTransformParam, number
   crop_right: 0,
   crop_bottom: 0,
 };
+
+/** D-223 — the per-clip AUDIO properties, keyframeable and resettable exactly
+ *  like the transform ones above, and named identically to their
+ *  `chroma_timeline::Clip` fields (which is also the name their keyframes are
+ *  stored under, so nothing has to translate).
+ *
+ *  Their own type rather than more members of [`ClipTransformParam`] for
+ *  `set_clip_fade`'s own reason: a level is not geometry, it applies to
+ *  audio-track clips that have no transform at all, and it is written by its
+ *  own op — see the `'set_clip_audio'` op below. What they DO share with the
+ *  transform params is the keyframe machinery, which is generic over the
+ *  param name (D-208/D-220) — see [`ClipKeyframeParam`]. */
+export type ClipAudioParam = 'volume' | 'pan';
+
+/** Each per-clip audio property's rest value — unity gain, dead centre. The
+ *  same one-source-of-truth role [`CLIP_TRANSFORM_DEFAULTS`] plays, matching
+ *  `chroma_timeline::Clip`'s own server-side defaults (`default_volume()` /
+ *  `0.0`) exactly. */
+export const CLIP_AUDIO_DEFAULTS: Readonly<Record<ClipAudioParam, number>> = {
+  volume: 1,
+  pan: 0,
+};
+
+/** Every param name a clip keyframe can address from the Inspector — the
+ *  transform/crop set plus D-223's two audio ones. The keyframe helpers
+ *  (`clipKeyframes.ts`) are typed on this rather than on
+ *  [`ClipTransformParam`] alone: the machinery was always generic over the
+ *  name (that is exactly what D-220 generalised `PropertyRow` for), and the
+ *  Rust interpolator it mirrors (`chroma::keyframes::interpolate_param`) never
+ *  knew the transform names either. */
+export type ClipKeyframeParam = ClipTransformParam | ClipAudioParam;
+
+/** [`CLIP_TRANSFORM_DEFAULTS`] ∪ [`CLIP_AUDIO_DEFAULTS`] — every keyframeable
+ *  clip property's rest value, for the Inspector's per-property state
+ *  derivation and reset. The two halves stay separately exported because the
+ *  ops that WRITE them are different (`set_clip_transform` vs.
+ *  `set_clip_audio`), which is a real distinction a single merged map would
+ *  lose. */
+export const CLIP_KEYFRAME_DEFAULTS: Readonly<Record<ClipKeyframeParam, number>> = {
+  ...CLIP_TRANSFORM_DEFAULTS,
+  ...CLIP_AUDIO_DEFAULTS,
+};
+
+/** Is `param` one of D-223's audio properties (and therefore written through
+ *  `set_clip_audio`, not `set_clip_transform`)? One predicate, so the
+ *  Inspector's shared per-property handlers ask it in one place rather than
+ *  each re-spelling the membership test. */
+export function isClipAudioParam(param: ClipKeyframeParam): param is ClipAudioParam {
+  return param === 'volume' || param === 'pan';
+}
+
+/** The stored-clamp for a clip's own linear volume (D-223) — mirrors
+ *  `chroma_types::clip_volume`: floored at silence, no ceiling (a fader that
+ *  cannot boost is not one, and `Track.gain` has no ceiling either), and a
+ *  cleared numeric `<input>`'s `NaN` becomes unity rather than reaching the
+ *  timeline. */
+export function clampClipVolume(v: number): number {
+  return Number.isFinite(v) ? Math.max(v, 0) : 1;
+}
+
+/** The stored-clamp for a clip's pan (D-223) — `[-1, 1]`, `NaN` → centre.
+ *  Mirrors `chroma_types::pan_gains`' own clamp, applied here as well as
+ *  there for `clamp01`'s stated reason: the UI's own writes should be
+ *  well-formed at rest, not merely survivable. */
+export function clampClipPan(v: number): number {
+  return Number.isFinite(v) ? Math.min(Math.max(v, -1), 1) : 0;
+}
+
+/** The left/right amplitude multipliers for a normalised `pan` — an exact
+ *  mirror of `chroma_types::pan_gains` (constant power, normalised to unity at
+ *  centre; see that module for why the centre, not the extremes, is the
+ *  0 dB point here). Lives beside the model rather than in
+ *  `timelineExportAudio.ts` because both the exporter and any future meter/UI
+ *  readout need the same two numbers, and a second copy of a pan law is
+ *  exactly the drift this repo's "extract it" rule exists to stop. */
+export function panGains(pan: number): [number, number] {
+  if (!Number.isFinite(pan)) return [1, 1];
+  // Exactly `[1, 1]` at centre — `Math.SQRT2 * Math.cos(Math.PI / 4)` is
+  // 0.9999999999999999, and an un-panned clip must be a bit-exact no-op.
+  if (pan === 0) return [1, 1];
+  const p = Math.min(Math.max(pan, -1), 1);
+  // The extremes are pinned too, for the same reason and symmetrically:
+  // `Math.sin(0)` is exactly 0 but `Math.cos(Math.PI / 2)` is 6.1e-17, so
+  // without this, hard left would silence the right channel exactly while hard
+  // right left a 1e-16 residue in the left one.
+  if (p <= -1) return [Math.SQRT2, 0];
+  if (p >= 1) return [0, Math.SQRT2];
+  const theta = ((p + 1) * Math.PI) / 4;
+  return [Math.SQRT2 * Math.cos(theta), Math.SQRT2 * Math.sin(theta)];
+}
 
 /** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147) — mirrors
  *  `chroma_timeline::FadeCurve`. `P0 = (0,0)` and `P3 = (1,1)` are implicit;
@@ -1641,6 +1753,35 @@ export type EditOp =
       fade_in_curve?: FadeCurve;
       fade_out_curve?: FadeCurve;
     }
+  /** D-223 — set a clip's OWN audio level: linear `volume` and normalised
+   *  `pan`. Refused (no-op) if the clip's track is locked, same as every other
+   *  per-clip op.
+   *
+   *  **Its own op, for `set_clip_fade`'s reasons exactly** (and not
+   *  `set_clip_transform`'s): a level is not geometry, it applies to
+   *  audio-track clips that have no transform at all, and it is a property an
+   *  MCP agent sets on its own without touching the picture. Folding it into
+   *  `set_clip_transform` would mean every volume nudge also restated nine
+   *  geometry values it did not intend to change — the "an optional field
+   *  would silently reset" hazard that op's own doc names.
+   *
+   *  **Distinct from `set_track_gain` (D-057/D-080), which it does not
+   *  replace**: that is the whole track's fader, this is one clip on it, and
+   *  the mixer multiplies both. Neither can express the other.
+   *
+   *  Both fields are optional and each is left exactly as it was when omitted
+   *  — unlike `set_clip_fade`'s durations, which are required because a fade's
+   *  two ends are authored together (a drag on one handle). Volume and pan are
+   *  independent controls with independent rows, so a partial write is the
+   *  normal case rather than a hazard. Values are clamped on the way in
+   *  (`clampClipVolume` / `clampClipPan`). */
+  | {
+      kind: 'set_clip_audio';
+      track: number;
+      clip: number;
+      volume?: number;
+      pan?: number;
+    }
   /** D-195 — Task 2, `docs/notes/timeline-editing-feature-gap-analysis.md`
    *  item 2: replace a clip's underlying source media (`source_path`/
    *  `media_id`) IN PLACE — every other field (`start_frame`, the full
@@ -1819,6 +1960,11 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Reorder track ${op.from + 1}`;
     case 'set_clip_fade':
       return `Fade ${clipLabel(before, op.track, op.clip)}`;
+    case 'set_clip_audio':
+      // D-223 — "Level" rather than "Volume": one op carries both volume and
+      // pan, and an undo entry that named only one of them would be wrong
+      // half the time.
+      return `Set ${clipLabel(before, op.track, op.clip)} level`;
     case 'set_clip_transform':
       return `Adjust ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_keyframes':
@@ -2189,6 +2335,23 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.fade_out_frames = Math.max(0, Math.floor(op.fade_out_frames || 0));
     nc.fade_in_curve = op.fade_in_curve ?? DEFAULT_FADE_CURVE;
     nc.fade_out_curve = op.fade_out_curve ?? DEFAULT_FADE_CURVE;
+    return next;
+  }
+  if (op.kind === 'set_clip_audio') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    // Each field independently optional — an omitted one is left exactly as
+    // it was, not reset (see the op's own doc for why this differs from
+    // `set_clip_fade`'s required pair). Clamped here, on the way in, for the
+    // same reason the crop insets are: Rust degrades a nonsense value safely
+    // at the point of use, but the UI's own writes should be well-formed at
+    // rest, not merely survivable.
+    if (op.volume !== undefined) nc.volume = clampClipVolume(op.volume);
+    if (op.pan !== undefined) nc.pan = clampClipPan(op.pan);
     return next;
   }
   if (op.kind === 'swap_media') {

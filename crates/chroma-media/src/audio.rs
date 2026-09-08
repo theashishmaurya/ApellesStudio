@@ -867,6 +867,26 @@ pub struct AudioSourceSpec {
     /// see a timeline. The caller converts, in `app/src-tauri`'s
     /// `chroma::audio::duck_for_track`.
     pub duck: Option<DuckEnvelope>,
+    /// D-223 — this clip's OWN volume and stereo pan, or `None` when it is at
+    /// unity and centred (every clip in every pre-D-223 project, and the
+    /// common case now). `None` is not "an envelope that returns 1.0": with
+    /// this, [`Self::fade`] and [`Self::duck`] all absent, [`mix_chunk`] skips
+    /// the per-sample pass entirely, so that mix runs exactly the arithmetic it
+    /// always did.
+    ///
+    /// Distinct from `gain` above rather than folded into it, even though the
+    /// static, un-panned case *could* be one multiplication: `gain` is the
+    /// TRACK's fader, this is the CLIP's own level, they compose by
+    /// multiplication, and either can be keyframed or panned independently of
+    /// the other. Collapsing them here would make the mixer unable to say
+    /// which of the two a level came from — and would silently lose the pan,
+    /// which is not a scalar at all.
+    ///
+    /// Clip-local seconds, like `fade`, and for the same reason: turning a
+    /// clip's keyframe *frames* into seconds needs a `chroma_timeline::Clip`
+    /// and its probed rate, which this crate deliberately cannot see. The
+    /// caller converts, in `app/src-tauri`'s `chroma::audio::level_for_clip`.
+    pub level: Option<LevelEnvelope>,
 }
 
 /// One clip's fade envelope, in **seconds** (D-147).
@@ -1176,6 +1196,157 @@ fn decay(from: f64, target: f64, elapsed: f64, tau: f64) -> f64 {
     target + (from - target) * (-elapsed / tau).exp()
 }
 
+/// One per-clip audio-level parameter over the clip's own timeline (D-223) —
+/// either a single value for its whole length, or authored automation keys.
+///
+/// **Keys are in CLIP-LOCAL seconds** (0.0 = the clip's own in-point), like
+/// every other number [`LevelEnvelope`] carries and for [`FadeEnvelope`]'s
+/// stated reason: the envelope is built before the output device is open, so it
+/// cannot be in sample-frames, and the clip's own keyframe *frames* are a
+/// timeline fact this crate deliberately cannot resolve. `app/src-tauri`'s
+/// `chroma::audio::level_for_clip` does that conversion.
+///
+/// [`Self::value_at`] mirrors `chroma::keyframes::interpolate_param` (D-034/
+/// D-208 — the one interpolator the authoring UI, the compositor and the
+/// exporter all already agree on): **linear between the two bracketing keys,
+/// held flat outside them.** Not the bezier [`FadeCurve`] model — a fade is a
+/// shaped ramp with no keys, an automation curve is keys with no shape, and
+/// conflating them would mean a keyframed volume interpolating differently in
+/// the mixer than the same keys do in the Inspector's own readout.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LevelCurve {
+    /// One value for the clip's whole length — the un-keyframed case, and the
+    /// one every clip is in until someone animates it.
+    Const(f64),
+    /// `(clip_secs, value)` keys, **ascending by time** (the constructor's
+    /// caller sorts; [`Self::value_at`] relies on it). An empty list behaves
+    /// as though it were absent — see [`LevelEnvelope::new`], which never
+    /// builds one.
+    Keys(Vec<(f64, f64)>),
+}
+
+impl LevelCurve {
+    /// This curve's value at `clip_secs` (clip-local seconds). Held flat before
+    /// the first key and after the last — no extrapolation, exactly as
+    /// `interpolate_param` and `piecewiseLinearExpr` (the exporter) both do.
+    pub fn value_at(&self, clip_secs: f64) -> f64 {
+        match self {
+            Self::Const(v) => *v,
+            Self::Keys(keys) => {
+                let Some(first) = keys.first() else {
+                    // Unreachable via `LevelEnvelope::new` (it never stores an
+                    // empty key list); `0.0` rather than a panic if some future
+                    // caller constructs one directly — but 0.0 is silence, so
+                    // the branch is written to be reached by nobody.
+                    return 0.0;
+                };
+                if clip_secs <= first.0 {
+                    return first.1;
+                }
+                let last = keys[keys.len() - 1];
+                if clip_secs >= last.0 {
+                    return last.1;
+                }
+                // Strictly between the ends, so `hi` is in `1..keys.len()` and
+                // both indexes below are in range by construction.
+                // `partition_point` (a binary search on an ascending slice) —
+                // this runs once per output sample-frame, i.e. 48 000 times a
+                // second per source, which is precisely where a linear scan
+                // over a long automation curve would start costing something.
+                let hi = keys.partition_point(|k| k.0 <= clip_secs);
+                let (t0, v0) = keys[hi - 1];
+                let (t1, v1) = keys[hi];
+                let span = t1 - t0;
+                if span <= 0.0 {
+                    return v1;
+                }
+                v0 + (v1 - v0) * ((clip_secs - t0) / span)
+            }
+        }
+    }
+
+    /// Is this curve exactly `identity` everywhere — i.e. does applying it
+    /// change nothing at all? The test [`LevelEnvelope::new`] uses to answer
+    /// "does this clip need a level envelope", so an un-touched clip keeps the
+    /// mixer on the arithmetic it ran before D-223 existed.
+    fn is_exactly(&self, identity: f64) -> bool {
+        match self {
+            Self::Const(v) => *v == identity,
+            Self::Keys(keys) => keys.iter().all(|&(_, v)| v == identity),
+        }
+    }
+}
+
+/// One clip's own volume + stereo pan, as the mixer applies it (D-223).
+///
+/// **The same interface [`FadeEnvelope`] established and [`DuckEnvelope`]
+/// reused** — "give me the gain at position N", evaluated per output
+/// sample-frame and multiplied into the source's own buffer before
+/// [`mix_sources`] sees it — with one deliberate difference: this one returns
+/// a **per-channel pair**, because a pan is the one gain stage in this chain
+/// that is not the same number on both channels. That is the whole reason it
+/// is a distinct type rather than a second `FadeEnvelope`.
+///
+/// **Where it sits in the chain:** `track.gain × clip.volume × fade × duck`,
+/// then the pan law splits the result per channel. `track.gain` stays in
+/// [`mix_sources`]' own `gains` slice (untouched, D-057), the fade and duck
+/// stay in [`SourceEnvelopes`] beside this — so all four multiply, and no
+/// stage can silently override another.
+///
+/// `pub` with `pub` fields for [`AudioSourceSpec`]'s own reason: the caller
+/// that builds one is `app/src-tauri`, because building one means reading a
+/// `chroma_timeline::Clip` and its keyframes, which this crate deliberately
+/// cannot do.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelEnvelope {
+    /// Seconds from the CLIP's own in-point to the first sample this session
+    /// produces — non-zero whenever playback starts mid-clip, exactly as
+    /// [`FadeEnvelope::offset_secs`] is, and for the same reason: pressing
+    /// Play halfway through a volume ramp must start halfway up it.
+    pub offset_secs: f64,
+    /// Linear volume multiplier. `1.0` is unity.
+    pub volume: LevelCurve,
+    /// Normalised pan, `-1.0` hard left … `1.0` hard right. `0.0` is centre.
+    pub pan: LevelCurve,
+}
+
+impl LevelEnvelope {
+    /// An envelope for this clip, or `None` when it would do **nothing** —
+    /// volume exactly unity and pan exactly centre, everywhere, which is every
+    /// clip in every pre-D-223 project and the overwhelmingly common case now.
+    ///
+    /// `None` is not "an envelope that returns 1.0": with it, and no fade and
+    /// no duck, [`SourceEnvelopes::apply`] skips the per-sample pass entirely,
+    /// so that mix runs bit-for-bit the arithmetic it always did. Exactly the
+    /// contract [`FadeEnvelope`] and [`DuckEnvelope`] already state.
+    pub fn new(offset_secs: f64, volume: LevelCurve, pan: LevelCurve) -> Option<Self> {
+        if volume.is_exactly(1.0) && pan.is_exactly(0.0) {
+            return None;
+        }
+        Some(Self {
+            offset_secs,
+            volume,
+            pan,
+        })
+    }
+
+    /// `(volume, left, right)` at `session_secs` into this playback session:
+    /// the clip's own linear volume, and the pan law's two channel
+    /// multipliers. The caller multiplies `volume` into every channel and the
+    /// pair into the first two — see [`SourceEnvelopes::apply`], which is the
+    /// only caller and does exactly that.
+    ///
+    /// The guards live in `chroma_types` (`clip_volume` floors a negative or
+    /// non-finite multiplier, `pan_gains` clamps and centres one) rather than
+    /// here, so the exporter's own mirror of this math cannot drift from it.
+    pub fn gains_at(&self, session_secs: f64) -> (f32, f32, f32) {
+        let t = self.offset_secs + session_secs;
+        let volume = chroma_types::clip_volume(self.volume.value_at(t));
+        let (left, right) = chroma_types::pan_gains(self.pan.value_at(t));
+        (volume as f32, left as f32, right as f32)
+    }
+}
+
 /// Apply a source's gain envelopes to one interleaved chunk in place —
 /// **one pass, both envelopes** (D-147's fade and D-149's duck), for ONE source.
 ///
@@ -1192,6 +1363,10 @@ fn decay(from: f64, target: f64, elapsed: f64, tau: f64) -> f64 {
 struct SourceEnvelopes {
     fade: Option<FadeEnvelope>,
     duck: Option<DuckEnvelope>,
+    /// D-223 — this clip's own volume/pan. The third envelope, joining the
+    /// same one-pass loop for the same reason the duck did rather than getting
+    /// a second pass over the buffer.
+    level: Option<LevelEnvelope>,
 }
 
 impl SourceEnvelopes {
@@ -1210,11 +1385,29 @@ impl SourceEnvelopes {
     /// the product of both, which is what an editor expects and what a real
     /// mixer does with two gain stages in series.
     ///
-    /// **Both absent is an early return, not a loop of `× 1.0`** — that is what
-    /// keeps a project with neither feature configured on exactly the arithmetic
-    /// it ran before either existed.
+    /// **All absent is an early return, not a loop of `× 1.0`** — that is what
+    /// keeps a project with none of these features configured on exactly the
+    /// arithmetic it ran before any of them existed.
+    ///
+    /// **D-223 — pan is the one stage that is not the same number on both
+    /// channels**, so this is where the loop stops being "one gain per
+    /// sample-frame". The rules, stated because they are choices rather than
+    /// consequences:
+    /// - **Channel 0 is left, channel 1 is right**, and only those two are
+    ///   panned. Every further channel of a surround device gets the volume
+    ///   alone — a real surround panner is a 2-D position, not this one number,
+    ///   and quietly reusing the stereo pair's gains for the rears would be
+    ///   inventing a panning law nobody asked for.
+    /// - **A MONO output device ignores pan entirely** (volume still applies).
+    ///   With one channel there is nowhere to move the source to, and applying
+    ///   only the left multiplier would turn a hard-right pan into silence on a
+    ///   mono device — losing the audio rather than positioning it.
+    /// - A **mono source** is already duplicated across the output's channels
+    ///   by [`adapt_channels`] long before this runs, so panning one works
+    ///   without a special case: it becomes stereo-positioned mono, which is
+    ///   what an editor means by panning a mono clip.
     fn apply(&self, buf: &mut [f32], out_channels: usize, session_frame: u64, out_rate: u32) {
-        if self.fade.is_none() && self.duck.is_none() {
+        if self.fade.is_none() && self.duck.is_none() && self.level.is_none() {
             return;
         }
         let ch = out_channels.max(1);
@@ -1228,8 +1421,27 @@ impl SourceEnvelopes {
             if let Some(env) = &self.duck {
                 g *= env.gain_at(t);
             }
-            for s in frame.iter_mut() {
-                *s *= g;
+            match &self.level {
+                None => {
+                    for s in frame.iter_mut() {
+                        *s *= g;
+                    }
+                }
+                Some(env) => {
+                    let (volume, left, right) = env.gains_at(t);
+                    let g = g * volume;
+                    if ch >= 2 {
+                        frame[0] *= g * left;
+                        frame[1] *= g * right;
+                        for s in frame[2..].iter_mut() {
+                            *s *= g;
+                        }
+                    } else {
+                        for s in frame.iter_mut() {
+                            *s *= g;
+                        }
+                    }
+                }
             }
         }
     }
@@ -2145,6 +2357,7 @@ fn run_session(
                 envelopes.push(SourceEnvelopes {
                     fade: spec.fade.clone(),
                     duck: spec.duck.clone(),
+                    level: spec.level.clone(),
                 });
             }
             Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
@@ -2491,6 +2704,7 @@ mod tests {
         SourceEnvelopes {
             fade: Some(env),
             duck: None,
+            level: None,
         }
         .apply(&mut buf, 2, 0, 8);
         for f in 0..8 {
@@ -2519,6 +2733,7 @@ mod tests {
         SourceEnvelopes {
             fade: Some(env),
             duck: None,
+            level: None,
         }
         .apply(&mut second, 1, 4, 8);
         for (i, v) in second.iter().enumerate() {
@@ -2751,6 +2966,7 @@ mod tests {
         SourceEnvelopes {
             fade: Some(fade),
             duck: Some(duck.clone()),
+            level: None,
         }
         .apply(&mut buf, 1, 0, 8);
         let expected = 0.5 * ducked; // the fade at t = 0.5 is 0.5
@@ -2764,6 +2980,7 @@ mod tests {
         SourceEnvelopes {
             fade: None,
             duck: Some(duck.clone()),
+            level: None,
         }
         .apply(&mut plain, 1, 0, 8);
         assert!((plain[4] as f64 - ducked).abs() < 1e-6);
@@ -2784,6 +3001,7 @@ mod tests {
         let envs = SourceEnvelopes {
             fade: None,
             duck: Some(duck),
+            level: None,
         };
         envs.apply(&mut first, 1, 0, 8);
         let mut second = vec![1.0f32; 8];
@@ -2796,6 +3014,188 @@ mod tests {
             second[0]
         );
         assert!(second[7] < second[0]);
+    }
+
+    // -------------------------------------------------------------------
+    // D-223 — per-clip volume + pan
+    // -------------------------------------------------------------------
+
+    /// The migration contract, checked at the constructor rather than asserted
+    /// in prose: an untouched clip gets NO envelope, which is what keeps
+    /// [`SourceEnvelopes::apply`]'s early return (and therefore the pre-D-223
+    /// mix, bit for bit) on the common path.
+    #[test]
+    fn an_unset_level_builds_no_envelope_at_all() {
+        assert!(LevelEnvelope::new(0.0, LevelCurve::Const(1.0), LevelCurve::Const(0.0)).is_none());
+        // …and a keyframed curve whose every key IS the identity is the same
+        // thing — an agent that keyed volume at 1.0 everywhere changed nothing.
+        assert!(
+            LevelEnvelope::new(
+                0.0,
+                LevelCurve::Keys(vec![(0.0, 1.0), (2.0, 1.0)]),
+                LevelCurve::Const(0.0)
+            )
+            .is_none()
+        );
+        // A real value, on either field alone, does build one.
+        assert!(LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(0.0)).is_some());
+        assert!(LevelEnvelope::new(0.0, LevelCurve::Const(1.0), LevelCurve::Const(-1.0)).is_some());
+    }
+
+    /// Automation keys interpolate linearly between the bracketing pair and
+    /// **hold flat outside** them — the exact contract
+    /// `chroma::keyframes::interpolate_param` (the authoring/preview side) and
+    /// `piecewiseLinearExpr` (the exporter) both implement, so one keyframed
+    /// volume means one thing in all three.
+    #[test]
+    fn a_keyed_level_curve_interpolates_linearly_and_holds_outside() {
+        let c = LevelCurve::Keys(vec![(1.0, 0.0), (3.0, 1.0)]);
+        assert_eq!(c.value_at(0.0), 0.0, "held before the first key");
+        assert_eq!(c.value_at(1.0), 0.0);
+        assert!((c.value_at(2.0) - 0.5).abs() < 1e-12, "midpoint");
+        assert_eq!(c.value_at(3.0), 1.0);
+        assert_eq!(c.value_at(9.0), 1.0, "held after the last key");
+    }
+
+    /// A pan really moves signal BETWEEN channels — the property that
+    /// separates a real pan from "a second volume control". Hard left leaves
+    /// the right channel at exactly zero and the left one ABOVE unity (the
+    /// 0 dB-centre normalisation `chroma_types::pan` documents), and the two
+    /// channels of one sample-frame get different numbers, which nothing else
+    /// in this mixer does.
+    #[test]
+    fn a_hard_left_pan_silences_the_right_channel_and_boosts_the_left() {
+        // 4 stereo sample-frames, every sample at 1.0.
+        let mut buf = vec![1.0f32; 8];
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: LevelEnvelope::new(0.0, LevelCurve::Const(1.0), LevelCurve::Const(-1.0)),
+        }
+        .apply(&mut buf, 2, 0, 8);
+        for f in 0..4 {
+            assert!(
+                (buf[f * 2] - std::f32::consts::SQRT_2).abs() < 1e-6,
+                "left {}",
+                buf[f * 2]
+            );
+            assert_eq!(buf[f * 2 + 1], 0.0, "right");
+        }
+    }
+
+    /// Centre + unity is a **bit-exact** no-op even when the envelope is built
+    /// (it can be, if the other field is non-identity) — `pan_gains(0.0)` is
+    /// exactly `(1.0, 1.0)`, not something that rounds to it.
+    #[test]
+    fn a_centred_half_volume_scales_both_channels_identically() {
+        let mut buf = vec![1.0f32; 8];
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(0.0)),
+        }
+        .apply(&mut buf, 2, 0, 8);
+        assert!(buf.iter().all(|&s| s == 0.5), "{buf:?}");
+    }
+
+    /// The composition order this feature is defined by:
+    /// `fade × duck × clip volume`, then the pan law per channel. Checked as
+    /// arithmetic against the individually-evaluated stages, so a future
+    /// reordering that changed the result would fail here rather than sound
+    /// subtly wrong.
+    #[test]
+    fn clip_volume_and_pan_multiply_with_the_fade_and_the_duck() {
+        let fade = whole_clip_fade_in(); // linear over 1 s, so gain == t
+        let duck = DuckEnvelope::new(&[(-1.0, 10.0)], -6.0, 1.0, 1.0).expect("duck");
+        let ducked = duck.gain_at(0.5) as f64;
+        let level = LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(-0.5))
+            .expect("a real level");
+        let (vol, l, r) = level.gains_at(0.5);
+
+        let mut buf = vec![1.0f32; 16]; // 8 stereo frames at 8 Hz = 1 s
+        SourceEnvelopes {
+            fade: Some(fade),
+            duck: Some(duck),
+            level: Some(level),
+        }
+        .apply(&mut buf, 2, 0, 8);
+
+        let common = 0.5 * ducked * vol as f64; // fade at t=0.5 is 0.5
+        assert!(
+            (buf[8] as f64 - common * l as f64).abs() < 1e-6,
+            "left {} vs {}",
+            buf[8],
+            common * l as f64
+        );
+        assert!(
+            (buf[9] as f64 - common * r as f64).abs() < 1e-6,
+            "right {} vs {}",
+            buf[9],
+            common * r as f64
+        );
+    }
+
+    /// A **mono output device** ignores pan and keeps the volume — see
+    /// [`SourceEnvelopes::apply`]'s own doc for why losing the audio (which
+    /// applying the left multiplier alone would do to a hard-right pan) is the
+    /// wrong answer.
+    #[test]
+    fn a_mono_output_device_ignores_pan_but_still_honours_volume() {
+        let mut buf = vec![1.0f32; 4];
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(1.0)),
+        }
+        .apply(&mut buf, 1, 0, 8);
+        assert!(buf.iter().all(|&s| s == 0.5), "{buf:?}");
+    }
+
+    /// A keyframed volume really ramps *within* a chunk and continues across
+    /// chunk boundaries — the same per-sample-frame property the fade and the
+    /// duck have, and the reason automation cannot be a per-chunk step (that
+    /// would be zipper noise).
+    #[test]
+    fn a_keyframed_volume_ramps_within_and_across_chunks() {
+        // 0 → 1 over two seconds; at 8 Hz that is 16 sample-frames.
+        let level = LevelEnvelope::new(
+            0.0,
+            LevelCurve::Keys(vec![(0.0, 0.0), (2.0, 1.0)]),
+            LevelCurve::Const(0.0),
+        )
+        .expect("a real level");
+        let envs = SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: Some(level),
+        };
+        let mut first = vec![1.0f32; 8];
+        envs.apply(&mut first, 1, 0, 8);
+        let mut second = vec![1.0f32; 8];
+        envs.apply(&mut second, 1, 8, 8);
+        for f in 0..8 {
+            assert!((first[f] - f as f32 / 16.0).abs() < 1e-6, "first[{f}]");
+            assert!(
+                (second[f] - (8 + f) as f32 / 16.0).abs() < 1e-6,
+                "second[{f}]"
+            );
+        }
+    }
+
+    /// `offset_secs` is what makes pressing Play *inside* an automation ramp
+    /// start part-way up it rather than at its beginning — the same property
+    /// `a_mid_fade_play_starts_part_way_down_the_ramp` pins for a fade.
+    #[test]
+    fn a_mid_ramp_play_starts_part_way_up_the_automation() {
+        let level = LevelEnvelope::new(
+            1.0, // playback starts 1 s into the clip
+            LevelCurve::Keys(vec![(0.0, 0.0), (2.0, 1.0)]),
+            LevelCurve::Const(0.0),
+        )
+        .expect("a real level");
+        let (vol, l, r) = level.gains_at(0.0);
+        assert!((vol - 0.5).abs() < 1e-6, "{vol}");
+        assert_eq!((l, r), (1.0, 1.0));
     }
 
     #[test]

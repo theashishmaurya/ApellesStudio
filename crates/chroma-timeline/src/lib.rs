@@ -932,6 +932,63 @@ pub struct Clip {
     #[serde(default)]
     pub fade_out_curve: FadeCurve,
 
+    // --- Per-clip audio level (D-223) ------------------------------------- //
+    // This clip's OWN contribution to the mix, independent of the track it
+    // sits on. `Track::gain` (D-057) is a fader for a whole track and cannot
+    // express "this one line of dialogue is too loud"; these two can, and are
+    // what Resolve's Inspector calls Clip Volume / Clip Pan
+    // (`scratch/resolve-reference/soundtrack.jpg`, feature 9).
+    //
+    // **They compose by MULTIPLICATION with everything else**, in the one
+    // order both the live mixer and the exporter implement:
+    // `track.gain × clip.volume × fade × duck`, then the pan law splits that
+    // per channel. Multiplication is the only composition under which no stage
+    // silently overrides another — the same argument `SourceEnvelopes::apply`
+    // already makes for a fade against a duck, and `resolve_clip_transform`
+    // for a fade against keyframed opacity.
+    //
+    // Both are **keyframeable** through the same `chroma_keyframes` array
+    // below, under the names `"volume"` and `"pan"` — the D-034 interpolator is
+    // generic over the param name, so an automation ramp on either is the same
+    // per-property keyframing every transform field already has (D-208), not a
+    // second mechanism.
+    /// This clip's own **linear** volume multiplier. `1.0` = unity.
+    ///
+    /// Linear, not decibels, and deliberately the same unit as
+    /// [`Track::gain`]: two level controls in the same signal chain that
+    /// disagree about their unit is a trap ("is 0.5 half or is it −0.5 dB?"),
+    /// and `gain` was here first. (`Track::duck_db` is the one dB number in
+    /// the audio path, for its own stated reason — a duck *amount* is what
+    /// editors state in dB; a fader level is not.)
+    ///
+    /// `#[serde(default = "default_volume")]`, NOT a bare `#[serde(default)]`:
+    /// `f64::default() == 0.0`, which would render every pre-D-223 clip
+    /// **silent** — precisely the migration hazard `opacity` documents above,
+    /// and the reason both use a named default rather than the type's zero.
+    /// Negative/non-finite values are floored at the point of use
+    /// (`chroma_types::clip_volume`); there is deliberately no ceiling, exactly
+    /// as `Track::gain` has none.
+    #[serde(default = "default_volume")]
+    pub volume: f64,
+    /// This clip's own stereo position: `-1.0` hard left · `0.0` centre ·
+    /// `1.0` hard right. The **first** pan-like field in the model — there was
+    /// no prior convention on `Track` or anywhere else to match, so this
+    /// establishes the one a track-level or master pan should later follow.
+    ///
+    /// A bare `#[serde(default)]` is correct here (and, unlike `volume` above,
+    /// genuinely rather than lazily): `f64::default() == 0.0` and **0.0 is
+    /// centre**, which the pan law returns exactly `(1.0, 1.0)` for — so a
+    /// pre-D-223 clip mixes bit-identically. Same reasoning `Track::duck_db`'s
+    /// own bare default records for 0 dB being unity.
+    ///
+    /// The law itself is `chroma_types::pan_gains` (constant power, 0 dB
+    /// centre) — see that module for what the choice costs at the extremes.
+    /// Out-of-range values are clamped there, not here, following `crop_left`'s
+    /// "the model stores what the UI wrote, the consumer decides what it
+    /// means" rule.
+    #[serde(default)]
+    pub pan: f64,
+
     // --- Text / title layer (D-211) --------------------------------------- //
     /// `Some` = this clip is a **generated text layer**, not a windowed
     /// reference into a media file: its picture is rasterised from
@@ -971,6 +1028,14 @@ fn default_opacity() -> f64 {
 }
 
 fn default_scale() -> f64 {
+    1.0
+}
+
+/// D-223 — unity, for exactly [`default_opacity`]'s reason: a bare
+/// `#[serde(default)]` would deserialise a pre-D-223 clip to `0.0`, i.e.
+/// silence, which is a silent regression rather than "the sane default for an
+/// unset field."
+fn default_volume() -> f64 {
     1.0
 }
 
@@ -1019,6 +1084,11 @@ impl Default for Clip {
             // derived one got exactly this class of thing wrong.
             fade_in_curve: FadeCurve::LINEAR,
             fade_out_curve: FadeCurve::LINEAR,
+            // D-223 — `volume` needs the non-zero default for `opacity`'s own
+            // reason (the type's zero is silence); `pan`'s zero really IS
+            // centre, so it takes the type's own.
+            volume: default_volume(),
+            pan: 0.0,
             // D-211 — `None` is genuinely "an ordinary media clip", the only
             // sane default, so this one needs no non-zero migration value.
             text: None,
@@ -3735,6 +3805,71 @@ mod tests {
         for i in [1usize, 2] {
             assert_eq!(t.tracks[0].clips[i].crop_left, 0.3);
             assert_eq!(t.tracks[0].clips[i].crop_bottom, 0.2);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // D-223: per-clip audio level (`volume` linear, `pan` normalised).
+    // -----------------------------------------------------------------
+
+    /// The migration case, and the reason `volume` gets a NAMED serde default
+    /// while `pan` gets the bare one: a pre-D-223 `project.json` clip has
+    /// neither key, and must load at **unity, centred** — `f64::default()` for
+    /// `volume` would be `0.0`, i.e. every existing project silently muted.
+    #[test]
+    fn clip_json_without_audio_fields_loads_at_unity_centre() {
+        let json = r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,"source_len":10,"start_frame":0,"opacity":1.0,"position_x":0.0,"position_y":0.0,"scale":1.0,"rotation":0.0}"#;
+        let c: Clip = serde_json::from_str(json).unwrap();
+        assert_eq!((c.volume, c.pan), (1.0, 0.0));
+        // …and that pair really is the audible identity, not merely the
+        // documented one (the property the whole migration rests on).
+        assert_eq!(chroma_types::pan_gains(c.pan), (1.0, 1.0));
+        assert_eq!(chroma_types::clip_volume(c.volume), 1.0);
+    }
+
+    /// `Clip::default()` — the manual impl, which serde's own defaults do NOT
+    /// cover (the same separate-mechanism point `clip_default_is_uncropped`
+    /// makes, and the exact way `opacity`/`scale` were nearly shipped at 0).
+    #[test]
+    fn clip_default_is_unity_volume_and_centred() {
+        let c = Clip::default();
+        assert_eq!((c.volume, c.pan), (1.0, 0.0));
+        assert!(
+            Timeline::from_shots(&shots()).tracks[0]
+                .clips
+                .iter()
+                .all(|c| c.volume == 1.0 && c.pan == 0.0)
+        );
+    }
+
+    /// A real level survives a full `Timeline` → JSON → `Timeline` round trip
+    /// — what `chroma_timeline_set` (verbatim storage) then
+    /// `chroma_timeline_get` does to every Inspector edit.
+    #[test]
+    fn clip_volume_and_pan_round_trip_through_a_whole_timeline() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[0].volume = 0.5;
+        t.tracks[0].clips[0].pan = -1.0;
+        let json = serde_json::to_string(&t).unwrap();
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        let c = &back.tracks[0].clips[0];
+        assert_eq!((c.volume, c.pan), (0.5, -1.0));
+        let untouched = &back.tracks[0].clips[1];
+        assert_eq!((untouched.volume, untouched.pan), (1.0, 0.0));
+    }
+
+    /// Per-clip level is an *appearance*-class value like crop, not a timing
+    /// one: `split` hands both halves the same volume and pan. Guards against
+    /// a future op that rebuilds a `Clip` field-by-field and quietly drops it.
+    #[test]
+    fn split_preserves_clip_volume_and_pan_on_both_halves() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[1].volume = 0.25;
+        t.tracks[0].clips[1].pan = 0.75;
+        t.split(0, 1, 120).unwrap();
+        for i in [1usize, 2] {
+            assert_eq!(t.tracks[0].clips[i].volume, 0.25);
+            assert_eq!(t.tracks[0].clips[i].pan, 0.75);
         }
     }
 
