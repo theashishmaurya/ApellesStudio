@@ -11,6 +11,15 @@
 > pivot (it named editing/motion-graphics as explicitly out-of-scope, "that's the editor's
 > job — Palmier/Resolve/Premiere" — the trigger for D-039 was Palmier closing).
 
+> **2026-09-08 reconciliation (D-231).** The D-039 correction above is unchanged and still
+> right. What was stale six days later was **feature status**: the Edit tab's section still
+> described D-041's single-track MVP and listed multi-track/audio/transitions/MCP as out of
+> scope (all shipped), and the Motion tab's section listed the entire tab as out of scope
+> (it has been a real tab since D-047 and a real *authoring* tab since D-151–D-182). Both
+> sections are rewritten below against `docs/04-roadmap.md` and the code. Two Colorist
+> items were also stale and are corrected in place: the live scopes panel and relight, both
+> of which are built.
+
 Legend: ✅ shipped · 🔨 planned, not yet built · 🧪 AI sidecar · 🔌 MCP surface
 
 ---
@@ -60,8 +69,9 @@ by D-039** — it's still the Colorist tab's own v1, and per `docs/notes/product
   the nudge approach proves insufficient
 
 ### MCP server
-- ✅ 38 tools across shot/session, grade, masks, tracking, depth, scopes,
+- ✅ **42 tools** across shot/session, grade, masks, tracking, depth, relight, scopes,
   `match_to_reference`, `apply_haze`, export, project, agent activity/`request_human`
+  (re-counted from `mcp/server.py` 2026-09-08 — the "38" here was the 2026-09-02 number)
 - ✅ every mutating tool returns `{ rendered_frame, scopes }` for the agent loop (D-021)
 
 ### GUI (forked from RapidRAW, adapted to video)
@@ -70,56 +80,137 @@ by D-039** — it's still the Colorist tab's own v1, and per `docs/notes/product
   an edit timeline
 - ✅ "agent activity" surface — every agent change, undoable, with a diff (D-032)
 - ✅ all the adjustment/mask panels (inherited + extended)
-- 🔨 a dedicated live scopes panel (waveform/vectorscope) in the GUI — the scopes
-  *computation* is done and agent-facing (D-021, `inspect_color`/`sample`/`sample_region`);
-  a persistent on-screen panel showing them live while grading isn't confirmed built
+- ✅ a dedicated live scopes panel in the GUI — **confirmed built** (2026-09-08, D-231): a
+  resizable panel in `ControlsPanel.tsx` rendering `Waveform.tsx` with five display modes
+  (luma / RGB / parade / **vectorscope** / histogram). The scopes *computation* is separately
+  agent-facing (D-021, `inspect_color`/`sample`/`sample_region`)
+- ✅ **interactive relight** — draggable depth-driven light pucks, deterministic and
+  real-time (`RelightPanel.tsx` + `RelightPuckLayer.tsx`; D-048, made physically real by
+  D-077/D-078/D-079's surface normals + 3D falloff), with 4 MCP tools
 
 ### Explicitly OUT of the Colorist tab's v1
 Node graph · ACES/HDR · planar tracker · other footage types tuned · Windows/Linux ·
-audio · conform/EDL of a full timeline · film-emulation chain · relight (deterministic
-puck relight moved up, see `docs/notes/relight-research.md`; photoreal diffusion bake
-stays v3) · collaboration.
+audio · conform/EDL of a full timeline · film-emulation chain · collaboration.
+**Relight is no longer on this list** — the deterministic depth-driven puck relight
+shipped (D-048/D-077/D-078/D-079, see the GUI section above and
+`docs/notes/relight-research.md`); only the photoreal diffusion bake stays v3 (D-013).
 
 ---
 
-## Edit tab — MVP scope (D-041, new since D-039)
+## Edit tab — a real multi-track NLE (D-041 origin; scope reconciled 2026-09-08, D-231)
 
-What's built:
-- ✅ a single video track assembled from a project's shots, back to back
-- ✅ scrub + play preview via a standalone lightweight decode→jpeg path (independent of
-  the Colorist's grade/wgpu path)
-- ✅ reorder, trim (head/tail), split, remove — each a unit-tested `chroma-timeline` op
-- ✅ the timeline persists in the `.chroma` project (`timelines[]` + `active_timeline`,
-  D-045 — supports multiple named timelines per project, model + commands only, no
-  switcher UI yet)
+> This section was written on 2026-09-02 against D-041's single-track MVP. Nearly every
+> 🔨 in it shipped within the following week. Rewritten against the real roadmap and code.
 
-Explicitly OUT of the Edit tab's current scope (`docs/04-roadmap.md` tracks these as
-Next-queue items, not abandoned):
-- Multi-track, transitions
-- Audio (the preview is currently silent — flagged live by the owner as a real gap, not
-  cosmetic)
-- Transcript-driven cutting (whisper word-timestamps exist elsewhere in the repo,
-  `videoAgent`'s `/palmier-recut` workflow proved the approach — not yet ported here)
-- GPU compositing / grade-in-preview (needs `chroma-compositor`, not yet built)
-- OTIO export, MCP tools for the timeline
-- A mature multi-track NLE interaction model (zoom-on-scroll, edge-drag trim cursor,
-  waveform-on-clip, snapping) — today's embed is functional but minimal
+### Timeline model + editing
+- ✅ **Multi-track** — video, audio and (D-229) subtitle tracks (`TrackKind`), stacked with
+  a real alpha-over compositor (D-086/D-088), not opaque top-wins
+- ✅ track lock / hide / mute / gain / reorder (D-088, D-214), and an emptied track
+  auto-decommissions (D-123)
+- ✅ reorder, trim (head/tail), split, remove, **ripple**, **roll**, **slip** (D-195),
+  slide, **swap media** (D-195) — unit-tested `chroma-timeline` ops
+- ✅ gap select + ripple-close (D-105), **multi-select** + marquee (D-107/D-137),
+  **cross-track ripple / sync-lock** (D-107), **real A/V linking** (D-138)
+- ✅ **timeline markers** — colour-coded, titled, frame-anchored, undoable, persisted (D-222)
+- ✅ **transitions** — `cross_dissolve` + `dip_to_color`, dragged onto an edit point from a
+  palette; a transition *bridges* the cut and reads handle media, clips never overlap (D-226/D-227)
+- ✅ multiple named timelines per project + a `TimelineSwitcher` (D-045/D-046)
 
-## Motion tab — engine complete, tab scope not started
+### Compositing + animation
+- ✅ per-clip transform: position, uniform `scale`, **independent width/height** (D-193),
+  rotation, opacity, **crop** (D-132) — all as fractions of the output composition
+- ✅ **per-property keyframes** + per-property reset (D-208/D-209)
+- ✅ **on-canvas transform handles** (D-136), **click the picture to select** (D-204),
+  a real output-canvas boundary overlay + canvas-size control (D-199), preview zoom/pan (D-218)
+- ✅ **text/title clips** — an ordinary clip on an ordinary video track, burned into both
+  the live preview and the export (D-211/D-212/D-213)
+- ✅ fades with real bezier `FadeCurve`s + on-clip drag handles (D-147/D-207)
 
-What's built (as `packages/motion-engine/`, standalone, pre-dates the 3-tab pivot):
-- ✅ 7 primitives (`text`, `emphasis`, `matrix`, `graph`, `layers`, `scene3d`,
-  `particleflow`)
-- ✅ a JSON scene-manifest compiler + CLI render path (`npx remotion render`)
+### Audio
+- ✅ real device playback during Play (`symphonia`→`rubato`→`dasp_sample`→`cpal`, D-050)
+- ✅ **per-clip volume + pan** (constant-power law, D-223) and **track gain** + **ducking** (D-149)
+- ✅ **per-clip 4-band parametric EQ** — real Audio EQ Cookbook biquads, identical
+  coefficients in the live mixer and the ffmpeg export (D-224). Static by design, not
+  keyframeable: ffmpeg's biquads parse their parameters once
+- ✅ the export **mixes real audio** — gain/duck/fade/volume/pan/EQ replicated in the
+  filtergraph, not reinvented (D-197)
+
+### Preview, export, interchange
+- ✅ scrub + play preview through a CPU compositor, independent of the Colorist's
+  grade/wgpu path (D-217 — binary IPC payload, not base64)
+- ✅ **video export** of the whole multi-track timeline, plus a real GUI Export button /
+  dialog / sequential queue wired through the same code path as the MCP tool (D-198)
+- ✅ **FCPXML 1.7** interchange export, DTD-verified (D-196)
+- ✅ **media understanding** — word-level transcript + ffmpeg-scene-detect visual analysis
+  via the `ai-media/` sidecar (D-189). 🔌 **agent-facing only** — 4 MCP tools and a store;
+  no GUI surface consumes it yet
+- 🔌 **41 Edit-tab MCP tools** + the 4 above (D-183 and successors) — an agent can drive
+  essentially the whole tab
+
+### Explicitly OUT of the Edit tab's current scope
+Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
+- 🔨 **GPU compositing** — the compositor is CPU today; `chroma-compositor` is unbuilt
+- 🔨 **grade-in-preview** — Edit and Colorist are still two separate passes over two
+  separate models (roadmap item 8 is where they'd meet)
+- 🔨 **OTIO export** — FCPXML shipped instead (D-196); XMEML/Premiere also unbuilt
+- ✅ **subtitles / captions** — landed on `main` as **D-229** while this reconciliation pass
+  was in flight: their own `TrackKind`, with multi-line layout owned by us so it renders
+  identically in the preview and the export
+- 🔨 **adjustment clips** — one effect applied top-down over every clip beneath it. Still
+  ⬜ in item 27 as of 2026-09-08
+- 🔨 **transcript-driven cutting** — the transcript exists (above); nothing turns it into edits
+- 🔨 timeline **curve editor**, **context-sensitive trim tool**, **speed-ramp curves** (a
+  flat export-time speed override exists, a ramp does not), the **seven edit types on
+  drop**, **dynamic zoom**, **audio scrubbing**
+- 🔨 the **EQ response-curve UI** — deliberately scoped out of D-224; the model, both
+  engines and the exact dB curve function are already in place, only the interactive plot
+  is missing
+
+## Motion tab — a real authoring tab (MVP D-047; scope reconciled 2026-09-08, D-231)
+
+> This section claimed "engine complete, tab scope not started" and listed the entire tab
+> as out of scope. That has been wrong since D-047 (2026-09-02) and is very wrong after
+> D-151–D-182. Rewritten.
+
+### The engine (`packages/motion-engine/`, Remotion)
+- ✅ **8 layer primitives** — `text`, `emphasis`, `matrix`, `graph`, `layers`,
+  `particleflow`, `labelbox`, `layerstack` (counted from the engine's own `zod` `use` enum;
+  the "7 primitives" list in older docs wrongly counted `scene3d`, which is a *scene*
+  container, not a layer `use`)
+- ✅ a **multi-scene** JSON manifest (`scenes: [...]`, each optionally 3D) + compiler, and
+  the CLI render path
 - ✅ the locked dark-Excalidraw visual design system
 
-Explicitly OUT of the Motion tab's current scope (all of it — this is the least-built
-tab):
-- Any embedded player (`@remotion/player`) inside the app
-- A manifest editor of any kind (JSON-in by hand is the only authoring path today)
-- A `chroma-motion` crate / render bridge from the app into the engine
-- Using a Motion composition as a pool item inside an Edit timeline (nested sequences) —
-  flagged as an open question, not designed (`docs/notes/product-direction.md` §9)
+### The tab
+- ✅ a `@remotion/player` **live preview** + transport (D-047)
+- ✅ **scene management** — `+ Add scene` (D-179), selecting a scene previews/scrubs it as
+  its own 0:00-start clip (D-181), and Render exports **every scene as its own video
+  file** (D-180)
+- ✅ a **layer list** with drag-to-reorder and real per-layer thumbnails (D-177)
+- ✅ a browsable primitive **Catalog** that actually creates layers (D-151 — before it, the
+  tab could edit everything and create nothing)
+- ✅ a typed property **Inspector** bound to a real selection model (D-081/D-099/D-103)
+- ✅ **on-canvas** select / drag / resize / marquee / group-move, in world coordinates
+  (D-155–D-158)
+- ✅ a per-row **keyframe timeline** — drag keys, box-select, nudge, and a real **bezier
+  ease-curve editor** (D-160–D-164)
+- ✅ a `zod`-validated JSON manifest editor, collapsed behind a `</>` toggle by default
+  (D-153/D-173)
+- ✅ Save (project-scoped `<project>.chroma/motion/manifest.json`) and Render via the
+  `chroma-motion` crate → `npx remotion render`, **auto-imported into Sources** afterwards
+  (D-047, D-062)
+
+### Explicitly OUT of the Motion tab's current scope
+- 🔌 **MCP tools — 0, and this is the tab's sharpest gap.** The 18 `motion_*` ops exist and
+  were live-verified on the in-app control-server bridge (D-167–D-171), but the Python
+  `mcp/server.py` wrappers were never written, so no MCP client can call them. Recorded in
+  D-170's own closing note and in `docs/notes/mcp-tool-coverage.md`
+- 🔨 undo/redo inside the tab (D-052 deferred it; the discrete named ops that make it
+  possible now exist — roadmap item 16.4)
+- 🔨 multi-manifest per project (one per project by choice, D-046 — waiting on a real need)
+- 🔨 a Motion composition as a **nested sequence** inside an Edit timeline; render-and-import
+  is the path today (D-062)
+- 🔨 a packaged-build story for the engine (render shells out to `npx` in the repo)
 
 ---
 
@@ -143,10 +234,10 @@ tab):
   Colorist
 - 🔨 OFX / plugin export (grade node usable in Resolve/Fusion/After Effects) — the
   gyroflow model
-- 🧪 **AI relight** — interactive depth-driven puck relight ships earlier than originally
-  planned (deterministic, real-time — `docs/notes/relight-research.md`); a photoreal
-  diffusion bake (IC-Light-style) stays v3, image-first, video temporal consistency
-  unsolved (D-013)
+- 🧪 **AI relight** — the interactive depth-driven puck relight ✅ **shipped in v1**
+  (deterministic, real-time — D-048, D-077/D-078/D-079, `docs/notes/relight-research.md`).
+  What remains v3 is only the photoreal diffusion bake (IC-Light-style): image-first, video
+  temporal consistency unsolved (D-013)
 - 🧪 face-region grading, auto-balance from a colour chart, auto-shot-detection
 - 🔨 Batch / headless render farm mode
 - 🔨 Web viewer for review + comment

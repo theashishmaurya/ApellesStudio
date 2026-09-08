@@ -1,9 +1,17 @@
 # 03 — Architecture
 
-Status: **current** (rewritten 2026-09-02, docs-reconciliation pass, superseding the stale
-Phase-0 4-component version). Describes the system **as it actually is** today, per
-`CLAUDE.md`'s hard rule — not the aspirational end state. Where something is planned but not
-built, it's marked **future** and pointed at `docs/04-roadmap.md`, not described as live.
+Status: **current** (rewritten 2026-09-02; feature-status and crate-graph reconciliation
+2026-09-08, **D-231**). Describes the system **as it actually is** today, per `CLAUDE.md`'s
+hard rule — not the aspirational end state. Where something is planned but not built, it's
+marked **future** and pointed at `docs/04-roadmap.md`, not described as live.
+
+> **What the 2026-09-08 pass changed, and why you should trust the numbers below.** The
+> 2026-09-02 version of this file was structurally right and factually six days out of
+> date: it said only 3 crates existed (8 do), that the Editor was a single-track MVP (it's a
+> multi-track NLE), that Motion was a placeholder tab with no UI (it's a real authoring tab
+> with a keyframe timeline), and that there were 38 MCP tools (there are 95). Every count
+> and status claim in this file was re-derived on 2026-09-08 from `crates/*/README.md`,
+> `packages/*/README.md`, `mcp/server.py` and `docs/04-roadmap.md` — not carried forward.
 
 The full reasoning behind this shape lives in `docs/08-decisions.md` **D-039** (the pivot
 itself) and `docs/notes/architecture-lock.md` (the crate/package lock this file mirrors) —
@@ -35,31 +43,37 @@ supersedes `docs/00-vision.md`'s old "not an NLE" clause.
 │    │  Edit    │          │   Motion    │              │   Colorist    │        │
 │    │@chroma/  │          │ @chroma/    │              │  app/src/     │        │
 │    │ editor   │          │  motion     │              │  (RapidRAW    │        │
-│    │  MVP     │          │ placeholder │              │  fork, grade  │        │
-│    │          │          │  tab —      │              │  editor only, │        │
-│    │          │          │  engine     │              │  D-043)       │        │
-│    │          │          │  ready,     │              │               │        │
-│    │          │          │  not wired  │              │               │        │
+│    │multi-trk │          │ authoring   │              │  fork, grade  │        │
+│    │   NLE    │          │    tab      │              │  editor only, │        │
+│    │          │          │             │              │  D-043)       │        │
 │    └────┬─────┘          └──────┬──────┘              └──────┬────────┘        │
 │         │                       │                            │                │
-│  decode→jpeg               packages/motion-engine       wgpu native surface    │
-│  preview, own                (Remotion, 7               (D-006) + the         │
-│  timeline model               primitives, JSON           grade renderer,      │
-│  (chroma-timeline)             manifest compiler)         AI masks/tracking    │
-│                                                                                │
+│  CPU compositor →          packages/motion-engine       wgpu native surface    │
+│  binary IPC preview          (Remotion, 8 layer         (D-006) + the         │
+│  (chroma-timeline +           primitives, multi-scene    grade renderer,      │
+│   chroma-media)               JSON manifest compiler)    AI masks/tracking    │
+│                                    │                                           │
+│                              chroma-motion crate → npx remotion render         │
 └──────────────────┬───────────────────────────────────────┬────────────────────┘
                     │                                       │ local HTTP :19788
                     │ subprocess (ffmpeg)                   │ (chroma/control.rs, D-020)
           ┌─────────▼─────────┐                    ┌────────▼──────────┐   ┌──────────────┐
           │  ffmpeg / ffprobe │                    │  mcp/server.py    │   │  ai/ sidecar │
           │  decode·probe·    │                    │  (Python stdio    │◄─►│  FastAPI     │
-          │  encode, spawned  │                    │  MCP, 38 tools)   │   │  :8765, SAM2/│
+          │  encode, spawned  │                    │  MCP, 95 tools)   │   │  :8765, SAM2/│
           │  as a subprocess  │                    └────────┬───────────┘   │  ViTMatte/   │
           └───────────────────┘                             │               │  VDA depth,  │
                                                     ┌────────▼──────────┐    │  Rust-       │
                                                     │  Claude Code /    │    │  supervised  │
                                                     │  any MCP client   │    │  (D-028)     │
-                                                    └───────────────────┘    └──────────────┘
+                                                    └───────────────────┘    └──────┬───────┘
+                                                                                    │
+                                                                        ┌───────────▼──────┐
+                                                                        │ ai-media/ sidecar│
+                                                                        │ transcript +     │
+                                                                        │ video analysis   │
+                                                                        │ (D-189, 2nd one) │
+                                                                        └──────────────────┘
 
 Per project: ~/Movies/Chroma/<name>.chroma/  (project.json + thumb.jpg + grades/*.grade.json)
 ```
@@ -82,10 +96,14 @@ chroma/
                             is a later step), src/chroma/ holds every Chroma-original module
   crates/               ← Chroma's own layered Rust crates — see table below
   packages/             ← Chroma's frontend workspace — see table below
-  ai/                    ← the Python AI sidecar (SAM2, ViTMatte, Video Depth Anything)
-  mcp/                    ← the Python MCP server exposing the Colorist's grade ops
+  ai/                    ← the Python AI sidecar (SAM2, ViTMatte, Video Depth Anything, relight)
+  ai-media/               ← the SECOND supervised sidecar (D-189) — transcript (mlx-whisper)
+                             + video understanding (Qwen3-VL). A separate process on purpose:
+                             D-189 rejected bolting these onto `ai/` (different model stack,
+                             different failure modes, different memory profile)
+  mcp/                    ← the Python MCP server — 95 tools across Colorist, Edit and debug
   eval/                   ← the agent grading eval harness (D-035) — offline, CI-able
-  docs/
+  docs/  scratch/
 ```
 
 Rules for the fork at `app/` (unchanged from D-003, narrowed by D-043):
@@ -107,53 +125,69 @@ a library, domain models are pure Rust (no `wgpu`, no `ffmpeg`). The dependency 
 one-way and is the law (`CLAUDE.md`): **`app → tabs → services → domain → media/gpu →
 types`**. No cycles, no cross-layer reaching.
 
+**8 of the ~11 planned crates now exist, and 6 of those are real, load-bearing code**
+(waves 1–3 of the extraction landed 2026-09-05, D-143 through D-148). `crates/README.md` is
+the authoritative per-crate table with deps and module lists; this is the summary.
+
 | layer | crate | exists? | responsibility |
 |---|---|---|---|
-| L0 | `chroma-types` | **yes (stub)** | `Frame`/`Rational`/`Resolution`/`ColorSpace`/`TimeRange`, typed IDs, error enums. Zero heavy deps. |
-| L0 | `chroma-gpu` | future | wgpu context (no surface), texture pool, `render_core` (D-014) extracted out of `app/` |
-| L1 | `chroma-media` | future | decode/probe/encode — VideoToolbox→texture, ffmpeg-CLI fallback (D-015), decode pipe (D-030), export encode pipe (D-022) |
+| L0 | `chroma-types` | **yes, real** | `Resolution`, `Rational`, `ChromaError`, the `fade` bezier model (D-147), the `pan` law (D-223), the `eq` band model + cookbook biquads (D-224). `Frame`/`ColorSpace`/`TimeRange`/typed IDs stay undesigned — the audit found no real duplicate to unify. Zero heavy deps. |
+| L0 | `chroma-gpu` | **yes, partial** (D-144) | headless wgpu device/queue/limits (`init_gpu_context`). **No display surface** — `WgpuDisplay` is a GUI concept and stays app-side; `GpuContext` really did split into two structs. No `render()` (that's `chroma-grade`'s). |
+| L1 | `chroma-media` | **yes, real** (D-146) | ~3,900 lines: `conform` (the *single* definition of "source frame N", D-228), `video` (ffprobe + ffmpeg decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (persistent disk cache, D-128), `probe`, `filmstrip` (D-134), `audio` (symphonia→rubato→cpal engine + waveforms). Export encode still app-side. |
 | L1 | `chroma-grade` | future | the grade **renderer** — wraps the `app/` shader + adjustments↔uniform bridge + masks + scopes (D-021) |
-| L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — the Edit tab's real engine, not yet built |
-| L2 | `chroma-timeline` | **yes, real** (D-041) | OTIO-shaped edit model: tracks/clips/gaps, ripple/roll/split/trim ops. **Pure** — no probing, callers pass frame counts. |
-| L2 | `chroma-grade-model` | **yes (stub)** | mirrors `grade.json` (D-025) — the real document still lives as JSON handled by `app/src-tauri/src/chroma/grade.rs`, not this crate, pending extraction |
-| L2 | `chroma-project` | future | the `.chroma` project (D-037) + settings (D-038) — currently `app/src-tauri/src/chroma/project.rs` |
-| L2 | `chroma-motion` | future | manifest → Remotion render bridge — **not built**; the Motion tab has no Rust side yet |
-| L3 | `chroma-ai` | future | sidecar client — currently `app/src-tauri/src/chroma/{sidecar,mask,depth}.rs` |
-| L3 | `chroma-agent` | future | control server + MCP op registry — currently `app/src-tauri/src/chroma/control.rs` + `mcp/` |
-| L4 | `chroma-app` (`app/src-tauri`) | **yes** — the vendored fork, all Chroma logic currently lives here as a `chroma/` module tree | the Tauri binary; today, everything not yet extracted |
+| L1 | `chroma-compositor` | future | multi-layer **wgpu** blend + transitions, then `chroma-grade` per output frame. **Not built — the Edit tab composites on the CPU today** (D-217). This is the single largest remaining architectural gap. |
+| L2 | `chroma-timeline` | **yes, real** (D-041 → D-229) | the OTIO-*shaped* edit model: tracks / clips / gaps / markers / transitions, ripple / roll / slip / slide / split / trim, per-clip transform + crop + fades + volume/pan/EQ fields, fps conversion. **Pure** — no probing, no I/O; callers pass frame counts. |
+| L2 | `chroma-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, the schema-migration gate, matte/track/depth-ref externalization. **Pure**, and deliberately untyped past the envelope (the canonical shape is the frontend store's). |
+| L2 | `chroma-project` | **yes, real** (D-148) | the `.chroma` project (D-037) + settings (D-038): `ProjectManifest`/`MediaItem` (+ the legacy read-only `ProjectShot`, D-070), atomic save, every schema migration, the media pool + bins, timeline lifecycle. Depends on `chroma-media` (probe/thumbnail) — an edge the lock doc's table had been missing. |
+| L2 | `chroma-motion` | **yes, real** (D-046) | manifest → Remotion render bridge: shells out to `npx remotion render` inside `packages/motion-engine/`. The one deliberate "the fat core is not Rust" exception in the whole architecture. |
+| L3 | `chroma-ai` | **yes, real** (D-145) | the `ai/` sidecar client: `sidecar` (spawn/health/backoff/respawn + the D-101 content-hash staleness check), `mask` (SAM2/ViTMatte HTTP + per-frame matte lookup), `depth` (VDA track). Generalized by D-190 to supervise **N** sidecars, which is how `ai-media/` got supervised without a copy-paste. |
+| L3 | `chroma-agent` | **rescoped out** (D-141) | *not* a future crate on the current plan: `control.rs` has no Tauri-free core and its op registry lives in the frontend. Left in `app/src-tauri` + `packages/*` deliberately. |
+| L4 | `chroma-app` (`app/src-tauri`) | **yes** | the Tauri binary: every `#[tauri::command]` (a real `tauri-macros` constraint keeps them here, D-141), plus whatever isn't extracted yet. |
 
-**Read this table literally: only 3 crates exist, and 2 of the 3 (`chroma-types`,
-`chroma-grade-model`) are still stubs.** `chroma-timeline` is the one real extraction so
-far (D-041 made it load-bearing for the Edit tab). Every other capability — the grade
-renderer, media I/O, the project model, the AI sidecar client, the control/MCP bridge —
-still lives as Rust modules under `app/src-tauri/src/chroma/` (see file list below), not
-in its own crate. The migration is **incremental by design** (`architecture-lock.md`
-"Migration strategy"): the workspace skeleton, the dependency law, and the pure-leaf
-crates landed first; extracting the GPU/media/project/AI/agent layers out of `app/` is
-the queued "Then — the deeper migration" work in `docs/04-roadmap.md`, not yet started.
+**Why commands stayed in the app** (D-141, and it is the rule that shapes every extraction):
+a Tauri command's macros are exported at its *defining* crate's root, so a crate hosting one
+needs a real `tauri` dependency — and any command taking `tauri::State<AppState>` would
+create a crate → app cycle. So the pattern is always **the logic moves down, the
+`#[tauri::command]` wrapper stays up**.
 
-`app/src-tauri/src/chroma/` today (all Chroma-original, none of it RapidRAW's):
-`commands.rs`, `control.rs` (D-020), `decode_pipe.rs` (D-030), `depth.rs` (D-036),
-`edit.rs` (D-041), `export.rs` (D-022), `grade.rs` (D-025), `keyframes.rs` (D-034),
-`load.rs`, `mask.rs` (D-012/016/018), `mod.rs`, `playback.rs` (D-031), `project.rs`
-(D-037/038/044/045), `session.rs` (D-033), `sidecar.rs` (D-028), `state.rs`, `video.rs`.
+`app/src-tauri/src/chroma/` today — what has *not* been extracted, plus the command
+wrappers over what has: `commands.rs`, `control.rs` (D-020), `debug_capture.rs` (D-210),
+`edit.rs` (D-041, timeline resolution — a layer above media), `export.rs` (D-022),
+`ffmpeg_run.rs`, `grade.rs`, `keyframes.rs` (D-034), `load.rs`, `media_understanding.rs`
+(D-189), `mod.rs`, `motion.rs` (D-047), `playback.rs` (D-031), `relight.rs` (D-048),
+`session.rs` (D-033), `state.rs`, `text.rs` (D-212), `write_text_file.rs`. Several files
+Five more files here are now **pure re-export shims** over the crates and nothing else —
+`video.rs`, `media_cache.rs`, `decode_pipe.rs`, `filmstrip.rs`, `sidecar.rs` (9–34 lines
+each, verified 2026-09-08). Deleting them and retargeting every call site at
+`chroma_media::` / `chroma_project::` is **"wave 4,"** the only remaining mechanical
+migration step (`docs/04-roadmap.md`, "Then — the deeper migration"). Four others are
+*partial*: `project.rs` (~1.7k lines) and `audio.rs` (~1.4k) keep a real app-side half each
+(the Tauri command wrappers, and the timeline-resolution logic D-146 deliberately left
+above the media layer), while `mask.rs` and `depth.rs` keep a thin app-side remainder over
+`chroma-ai`.
 
 ## Frontend workspace — `packages/`
 
 npm workspaces, mirroring the Rust split. `app/` (`@chroma/app`, the vendored RapidRAW
 frontend) is also a workspace member — it's still where the Colorist tab's real UI lives.
 
+**11 packages exist**, up from 6 on 2026-09-02 — `debug`, `history`, `inspector` and
+`player` are all new since. Per-package detail is in each `packages/*/README.md`.
+
 | package | exists? | what it holds today |
 |---|---|---|
-| `@chroma/tokens` | stub | not yet extracted — theming still lives in `app/src/styles.css` |
-| `@chroma/ui` | **yes, real** (D-042) | shadcn/ui on Base UI — 18 structural components (Button, Dialog, DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, ScrollArea, Separator, Input, Label, Sonner) + 5 rebuilt RapidRAW primitives (Text, LabeledSwitch, CollapsibleSection, Button, Input), themed onto RapidRAW's existing `--color-*` CSS vars |
-| `@chroma/bridge` | stub, first real content (D-044) | `useMediaPoolStore` (media-pool zustand store). The control-bridge hook (`useChromaControl`, D-020) is still `app/src/hooks/useChromaControl.ts`, not extracted here yet |
-| `@chroma/shell` | **yes, real** | window chrome (`WindowChrome.tsx` — traffic lights / Win-Linux controls / drag region), the 3-tab switcher, the project-launcher entry-screen routing (D-037 step 6c) |
-| `@chroma/editor` | **yes, real** (D-041) | the Edit tab — `react-timeline-editor` strip, `useEditorTimelineStore`, the preview pane |
-| `@chroma/player` | **yes, real** | `<Player>` — shared viewport + title strip + transport bar, presentational only. Each tab supplies its own frame surface; Editor is the only consumer so far, Colorist/Motion adoption is open |
-| `@chroma/motion` | stub | the Motion tab is a placeholder component — no `@remotion/player` embed yet |
-| `@chroma/motion-engine` | **yes** | the Remotion project itself, moved in from `videoAgent/engine/motion/` — 7 primitives + the JSON scene-manifest compiler (`src/engine/build.ts`). Fully functional standalone, **not wired to `@chroma/motion`'s tab UI yet** |
-| `@chroma/colorist` | future | the Colorist tab's adjustment panels / scopes / mask editor still live in `app/src/`, not extracted |
+| `@chroma/tokens` | **stub** | still a placeholder export — theming really does still live in `app/src/styles.css`. The one package that has not moved since D-039 |
+| `@chroma/ui` | **yes, real** (D-042) | shadcn/ui on Base UI — ~18 structural components (Button, Dialog, DropdownMenu, ContextMenu, Tooltip, Popover, Tabs, Select, Command, Resizable, Sheet, Slider, Switch, ScrollArea, Separator, Input, Label, Sonner) + 5 rebuilt RapidRAW primitives, themed onto the existing `--app-*`/`--color-*` vars. Craft-specific grading controls (ColorWheel, LUTControl, DepthRangePicker) stay in `app/` |
+| `@chroma/bridge` | **partial** | the frontend↔backend seam. Real content: `useMediaPoolStore` (D-044/045/046) and local-only telemetry (D-093). `useChromaControl` (D-020) is *still* `app/src/hooks/useChromaControl.ts`, not extracted — the longest-standing item on this table |
+| `@chroma/shell` | **yes, real** | window chrome (traffic lights / Win-Linux controls / drag region), the 3-tab switcher, the project-launcher entry-screen routing, and the docked Sources panel (D-046, moved left + made resizable by D-116) |
+| `@chroma/editor` | **yes, real** (D-041 → D-228) | the whole Edit tab: `TimelinePane` (the `react-timeline-editor` strip + `@dnd-kit` drag layer, markers, transitions, fade handles, marquee), `PreviewPane` (+ transform overlay, canvas boundary, click-to-select, zoom), the Inspector panels, `useEditorTimelineStore`, the pure edit-op model (`timeline.ts`), the ffmpeg **export compiler** (`timelineExport*.ts`), the FCPXML compiler (`timelineInterchange.ts`), and `useEditorControl.ts` (the `editor_*` MCP op registry) |
+| `@chroma/player` | **yes, real** | `<Player>` — the shared viewport + title strip + transport bar. **Presentational only**: no `invoke`, no zustand, no decode. Each tab supplies its own frame surface; Editor is still the main consumer |
+| `@chroma/motion` | **yes, real** (D-047 → D-182) | the whole Motion tab: `@remotion/player` embed, `MotionCanvasOverlay` (select/drag/resize/marquee), `KeyframeTimeline` + `EaseCurveEditor`, `LayerList` (+ thumbnails, drag-reorder), `CatalogPanel`, `InspectorPanel`, the manifest editor, and `useMotionControl.ts` (the `motion_*` op registry) |
+| `@chroma/motion-engine` | **yes, real** | the Remotion project, moved in from `videoAgent/engine/motion/` — **8 layer primitives** + the multi-scene JSON manifest compiler (`src/engine/build.ts`) + its `zod` schema, which is the single source of truth for manifest shape (the `chroma-motion` crate deliberately does not re-validate) |
+| `@chroma/inspector` | **yes** (D-103) | *only* the two genuinely shared Inspector chrome components (`InspectorEmptyState`, `InspectorSection`). Deliberately **not** a unified Inspector — D-103 explains why forcing one polymorphic panel across tabs was rejected |
+| `@chroma/history` | **yes** (D-052) | shell-level global undo/redo: a generic `{tab, label, undo, redo, ts}` stack shared by all 3 tabs. Knows nothing about grades or timelines. **Motion does not push to it yet** (roadmap item 16.4) |
+| `@chroma/debug` | **yes** (D-219) | the `debug_*` control-server op registry — drive real UI state, dump the real DOM, time the preview. **Dev-only by construction**: `import.meta.env.DEV` + a dynamic import, so it is dropped from a production bundle |
+| `@chroma/colorist` | future | the Colorist tab's adjustment panels / scopes / mask editor still live in `app/src/`, not extracted. The largest un-extracted frontend surface |
 | `apps/desktop` | future | `app/` plays this role today (the Vite entry `src-tauri` serves) |
 
 Run it: `npm run tauri:dev` from the repo root.
@@ -167,10 +201,12 @@ photo-DAM shell around it): primary/curves/wheels/LUT, masks (shape + AI subject
 composable via Add/Subtract/Intersect — D-023, keyframeable — D-034) — SAM 2 + ViTMatte
 subject tracking (D-012/016/018), a per-frame temporal depth track via Video Depth
 Anything-Small (D-036, Apache-2.0 checkpoint only), scopes + `match_to_reference`
-(D-021/026), a depth-haze preset (D-024), export to ProRes/H.264 + a `.cube` bake (D-022),
-`grade.json` (D-025), an agent activity feed with jump-to-here undo + `request_human`
-(D-032), and an eval harness scoring the grading agent offline (D-035). MCP surface: 38
-tools (`mcp/server.py`).
+(D-021/026), a depth-haze preset (D-024), a live scopes panel (luma/RGB/parade/vectorscope/
+histogram, `ControlsPanel.tsx` → `Waveform.tsx`), **interactive depth-driven relight pucks**
+(D-048, made physically real by D-077/D-078/D-079's MoGe-2 surface normals + 3D falloff),
+export to ProRes/H.264 + a `.cube` bake (D-022), `grade.json` (D-025), an agent activity
+feed with jump-to-here undo + `request_human` (D-032), and an eval harness scoring the
+grading agent offline (D-035). MCP surface: **42 tools** (`mcp/server.py`).
 
 **Video presentation.** wgpu renders straight to a native surface positioned under the
 webview (D-006) — the webview only holds UI chrome, so a full-4K graded frame never
@@ -193,32 +229,74 @@ frontend state churn — the alternative (swapping matte data into `adjustments`
 seek) was tried first and rejected for exactly the desync/render-storm bugs D-019
 documents.
 
-### Editor — MVP, real but small
+### Editor — a real multi-track NLE
 
-`chroma-timeline` (the one real crate extraction) backs a single-video-track timeline
-built from the open project's shots. Scrub/play preview is **independent of the
-Colorist's wgpu/grade path** — a standalone lightweight decode→jpeg pipeline
-(`chroma::edit` + the D-030 decode pipe → `image` crate JPEG q80 → a `data:` URL),
-because the Editor preview just needs "give me timeline frame N fast," not a graded
-composite. Reorder, trim (head/tail), split, and remove are implemented and unit-tested;
-the timeline persists inside the `.chroma` project (`ProjectManifest.timelines: Vec<Timeline>`
-+ `active_timeline: usize`, D-045 — migrated losslessly from D-041's original singular
-field). The `@xzdarcy/react-timeline-editor` strip is a pure control surface — no video
-frames flow through it. **Not yet built:** multi-track, audio (silent preview — flagged
-live by the owner as a real gap, roadmap Next item 2), transitions, transcript-driven
-cutting, GPU compositing, grade-in-preview, OTIO export, MCP tools. The eventual
-multi-track engine (`chroma-compositor`) doesn't exist yet — today's Editor is
-single-track only.
+`chroma-timeline` backs a **multi-track** timeline (video *and* audio tracks) that persists
+inside the `.chroma` project (`ProjectManifest.timelines: Vec<Timeline>` + `active_timeline`,
+D-045). The `@xzdarcy/react-timeline-editor` strip is still a pure control surface — no
+video frames flow through it — with `@dnd-kit` layered over it for every drag (D-100
+unified same-track, cross-track, track-reorder and transition-palette drags onto one
+mechanism after two rounds of racing drag systems).
 
-### Motion — placeholder tab, engine ready and waiting
+**The compositor is CPU, not GPU, and that is the defining architectural fact of this tab.**
+Frames are composited in Rust (alpha-over, real z-ordered stacking — D-086/D-088), then
+handed to the webview as a **binary IPC payload**, not base64 (D-217). `chroma-compositor`
+(the wgpu engine in the crate table above) does not exist yet; when it does, this is the
+path it replaces. The preview stays **independent of the Colorist's wgpu/grade path** — the
+Edit tab needs "give me composited timeline frame N fast," not a graded frame, and the two
+tabs remain two separate passes over two separate models.
 
-`packages/motion-engine/` (moved in from `videoAgent/engine/motion/`, D-039 step 1) is
-complete and independently functional: 7 primitives (`text`, `emphasis`, `matrix`,
-`graph`, `layers`, `scene3d`, `particleflow`), a JSON scene-manifest compiler, rendered via
-`npx remotion render`. **None of that is wired to a tab UI yet** — `@chroma/motion` is
-still a placeholder component, there's no `@remotion/player` embed, no manifest editor,
-and no `chroma-motion` crate to bridge a render into the app. This is the largest gap
-between "engine exists" and "tab works" of the three — tracked as roadmap Next item 5.
+Real, verified capabilities (see `docs/02-scope.md` for the itemised list with `D-NNN`s):
+ripple/roll/slip/slide/split/trim, multi-select + marquee, cross-track ripple + sync-lock,
+A/V linking, per-clip transform + crop + independent width/height, per-property keyframes,
+on-canvas transform handles + click-to-select, fades with bezier curves, transitions
+(bridging a cut, never overlapping — D-226), markers, text/title clips, a real audio path
+(device playback, per-clip volume/pan, 4-band EQ, track gain, ducking), and export either to
+a real video file (with its audio mixed in, D-197) or to FCPXML 1.7 for interchange (D-196).
+
+**One model, two engines — the constraint that shapes most of this tab's bugs.** The live
+preview is Rust; the export is a TypeScript compiler that emits an ffmpeg filtergraph
+(`packages/editor/src/timelineExport*.ts`). Every visual or audible feature must therefore
+be implemented *twice*, and the two must agree — which is why features here land with
+measured cross-engine verification (D-224's shared EQ response table, D-226's mid-dissolve
+pixel measurement, D-223's `volumedetect` on real exported files) rather than a unit test
+alone. A drift between the two is a real defect class, not a theoretical one.
+
+**Not built:** GPU compositing, grade-in-preview, OTIO export, adjustment clips, speed
+*ramps* (a flat export-time override exists), a transcript-driven cut. Roadmap item 27
+tracks the list. (Subtitles/captions were on this list and landed as D-229 while this pass
+was being written — a fair illustration of why these docs drift.)
+
+### Motion — a real authoring tab
+
+`packages/motion-engine/` (moved in from `videoAgent/engine/motion/`, D-039 step 1) is the
+Remotion project: **8 layer primitives** (`text`, `emphasis`, `matrix`, `graph`, `layers`,
+`particleflow`, `labelbox`, `layerstack`), a **multi-scene** JSON manifest + compiler, and a
+`zod` schema that is the single source of truth for manifest shape.
+
+`@chroma/motion` is now a full authoring surface over it, in four resizable panes (preview /
+sidebar / Inspector / manifest editor), with the preview pane itself split vertically over a
+per-row **keyframe timeline** — deliberately mirroring `@chroma/editor`'s own
+preview-over-timeline stack. Built: scene management (add, preview one scene as its own
+0:00-start clip, render each scene to its own file — D-179/D-180/D-181), a layer list with
+drag-reorder + real thumbnails (D-177), a **Catalog** that creates layers (D-151 — before
+it the tab could edit everything and create nothing), a typed Inspector, on-canvas
+select/drag/resize/marquee in world coordinates (D-155–D-158), and a bezier ease-curve
+editor (D-164). Rendering goes through the `chroma-motion` crate → `npx remotion render`,
+and the output auto-imports into Sources (D-062).
+
+**Why Rust wraps Node here, and nowhere else.** The Remotion engine *is* the fat core for
+motion graphics — reimplementing it in Rust would throw away real, working, non-trivial code
+to satisfy an architectural preference. `chroma-motion` is the one deliberate exception to
+"the fat core is Rust" in this whole architecture (D-046).
+
+**The gap: 0 MCP tools.** The 18 `motion_*` ops are real, live-verified, and sit in
+`useMotionControl.ts` on the same control-server bridge everything else uses (D-167–D-171) —
+but the Python `@mcp.tool()` wrappers in `mcp/server.py` were never written, so an MCP
+client cannot call any of them. Motion is the one tab an agent cannot drive. Recorded in
+D-170's own closing note and `docs/notes/mcp-tool-coverage.md`; it is the tab's sharpest
+remaining gap and the one place the "every feature is for a human AND an AI" rule
+(`CLAUDE.md`) is currently unmet on shipped functionality.
 
 ### Shell — the app chrome
 
@@ -226,9 +304,15 @@ between "engine exists" and "tab works" of the three — tracked as roadmap Next
 the window title bar (traffic lights, drag region, Win/Linux controls), and routing. The
 project launcher (D-037) is the app's **entry screen**, not a view inside a tab — the app
 opens on a grid of saved `<name>.chroma` projects; opening/creating one flips the shell
-into the 3-tab layout. All 3 tab panels stay mounted (hidden) under the launcher so the
-Colorist's MCP control bridge keeps running even before a project is opened from the GUI.
-`@chroma/ui` (D-042, shadcn/Base UI) is the shared component kit new UI is built on.
+into the 3-tab layout. All 3 tab panels stay mounted (hidden) under the launcher, so *every*
+tab's MCP control bridge keeps running even before a project is opened from the GUI (B-007).
+The shell also owns the **docked Sources/Library panel** — the one genuinely shell-level
+panel, since it is shared by all three tabs (D-046; moved to the left edge and made a real
+resizable panel by D-116, matching the media-bin-left convention Premiere/Resolve/Final Cut
+all share). Each tab's own Inspector deliberately stays tab-local instead (D-118), so
+`Shell.tsx` never learns what a clip or a layer is. Global undo/redo is shell-level too
+(`@chroma/history`, D-052). `@chroma/ui` (D-042, shadcn/Base UI) is the shared component kit
+new UI is built on.
 
 ## Data model
 
@@ -240,14 +324,18 @@ project's existing bias toward inspectable, `rsync`-able files:
 ```
 ~/Movies/Chroma/<name>.chroma/
   project.json    schema "chroma.project/1" — { name, created, modified,
-                  shots: [{id, sourcePath, frame, name}],   ← Colorist shots
-                  media: [{id, sourcePath, name, folder?, video?}],  ← pool (D-044/045, additive)
-                  timelines: [{id, name, tracks: [...]}], activeTimeline: usize,  ← Edit (D-045)
-                  activeShot, settings: {width?, height?, fps?, colorSpace?} }  ← D-038
-  thumb.jpg       a frame from the active/first shot — the launcher card
+                  media: [{id, sourcePath, name, folder?, video?}],  ← the pool (D-044/045)
+                  timelines: [{id, name, tracks: [...], markers, transitions}],
+                  activeTimeline: usize,                             ← Edit (D-045)
+                  activeClipId,                    ← which clip Colorist grades (D-070)
+                  settings: {width?, height?, fps?, colorSpace?},    ← D-038
+                  shots: [...], activeShot: usize } ← LEGACY, read-only since D-070;
+                                   kept only so a pre-D-070 project still opens
+  thumb.jpg       a frame from the active/first clip — the launcher card
+  motion/manifest.json   the Motion tab's scene manifest (D-047, one per project)
   grades/
-    <shotId>.grade.json    each shot's grade, chroma.grade/1 (D-025), verbatim
-    <shotId>.mattes/       externalized static mask PNGs ($matte refs)
+    <clipId>.grade.json    each clip's grade, chroma.grade/1 (D-025), verbatim
+    <clipId>.mattes/       externalized static mask PNGs ($matte refs)
 ```
 
 Media is **referenced in place** by absolute path, never copied — a missing file flags
@@ -258,11 +346,19 @@ caches (`chromaTrackDir`/`chromaDepthDir`) stay *next to the source clip* at
 `<clip>/.chroma/{mattes,depth}/` since they're per-clip precomputes, reusable across
 projects.
 
-**`shots` (Colorist) and `media` (the pool) are still two separate, un-unified lists**
-(D-044 explicitly deferred this — "sprawling refactor" the pass-1/2 scope warned off). A
-Colorist "shot" and an Editor timeline clip both currently reference source paths
-independently; the roadmap's "Media pool" item (Next #1, pass 3) is where they become one
-model.
+**Clip identity is now unified — this is no longer the two-list gap the 2026-09-02 version
+of this file described.** D-044 deferred it, D-046 then made `ProjectShot` reference a
+`MediaItem` by id, and **D-070** finished the job: `chroma_timeline::Clip` replaced
+`ProjectShot` outright, grades key off the clip, and the Colorist's "active clip" routes
+through the same top-wins resolver (`resolve_active_clip_index` / `top_wins_clip_index` in
+`chroma-project`). The trigger was a real repro — a clip dragged onto the Edit timeline
+didn't appear in the Colorist at all — and the investigation found a **four**-way identity
+split, not the two-list one it looked like (`docs/notes/unified-clip-model.md`).
+
+What is still *not* unified is the **render path**, not the identity: Edit composites and
+Colorist grades in two separate passes over two separate engines, and there is no
+grade-in-preview on the Edit timeline. That is roadmap item 8, and it is a different problem
+from the one this paragraph used to describe.
 
 ### `grade.json` (D-025)
 
@@ -311,17 +407,46 @@ reads it from, and moving it would be invasive. So AI grading works through an *
 control server**, not headless `render_core` (that stays reserved for export/batch):
 
 ```
-mcp/server.py (Python stdio, 38 tools)
+mcp/server.py (Python stdio, 95 tools)
    │  HTTP POST /op {op, args}
    ▼
 app/src-tauri/src/chroma/control.rs (tiny_http, :19788, spawned in .setup())
-   │  emit("chroma://request", ...) → await response event
-   ▼
-app/src/hooks/useChromaControl.ts (mounted once, app-level)
-   │  calls the SAME setter a slider drag calls (setAdjustments, useAiMasking handlers, chroma_seek)
-   ▼
-useEditorStore (the one grade doc) → the canvas re-renders → undo/history/save all work
+   │  a fully GENERIC dispatcher — zero op-name knowledge. Two ways out:
+   │
+   ├── native_op(...)  — answered in Rust itself (D-210's screenshot/pixel probe only)
+   │
+   └── emit("chroma://request", ...) → await response event
+          ▼
+       one of three frontend OPS registries, disambiguated by op PREFIX so two
+       listeners never race for one response slot (D-183 / mcp-architecture.md):
+         · app/src/hooks/useChromaControl.ts   — Colorist   (unprefixed)
+         · @chroma/editor  useEditorControl.ts — Edit       (`editor_*`)
+         · @chroma/motion  useMotionControl.ts — Motion     (`motion_*`)
+         · @chroma/debug   registry            — debug      (`debug_*`, dev builds only)
+          ▼
+       each calls the SAME store action / Tauri command the GUI's own click calls
+          ▼
+       useEditorStore (grade doc) · useEditorTimelineStore (timeline) · the manifest
+          → the canvas re-renders → undo/history/save all work
 ```
+
+**Every registry is mounted from boot, on every tab, whether or not that tab is visible** —
+`Shell.tsx` keeps all three tab bodies mounted and merely hides the inactive ones, so an
+agent can drive a tab the human isn't looking at. `CHROMA_CONTROL_PORT` overrides the fixed
+`19788` — required when two Chroma instances run at once, and its absence fails *silently*
+(a bind error logs and the app keeps running with no control server at all), which has
+produced at least one false-positive verification (D-167).
+
+**Tool counts, by surface** (counted from `mcp/server.py`, 2026-09-08):
+
+| surface | MCP tools | registry |
+|---|---|---|
+| Colorist + session/project | 42 | `useChromaControl.ts` |
+| Edit — timeline/editing | 41 | `useEditorControl.ts` |
+| Edit — media understanding | 4 | `useEditorControl.ts` → `ai-media/` (start-then-poll: the bridge's 20 s ceiling can't hold a minutes-long job) |
+| Debug / UI verification | 8 | `@chroma/debug` + `native_op` — **dev builds only** |
+| **Motion** | **0** | `useMotionControl.ts` has 18 real ops; no Python wrappers exist |
+| **total** | **95** | |
 
 One shared state, no divergence: `get_state` reads the live store, so it reflects manual
 edits too, and every mutating tool returns `{rendered_frame, scopes}` so the agent can see
@@ -332,8 +457,12 @@ also where the **agent activity feed** (D-032) records a before/after snapshot f
 jump-to-here undo, and where `request_human(reason, roi?)` posts a non-blocking banner +
 highlighted region for the human to take over.
 
-This bridge is Colorist-only today — the Editor tab has no MCP tools yet, and Motion has
-neither a tab UI nor a bridge.
+**The rule every op follows** (D-140): a mutating op goes through the *same store action a
+human's click goes through*, so an agent's edit lands on the same undo stack. The
+deliberate exceptions are named and reasoned, not accidental — `editor_set_selection` and
+`editor_set_preview_zoom` push nothing (they write store-only view state that no human path
+undoes either, D-216/D-218), and the media-understanding tools mutate nothing at all
+(D-189).
 
 ## Render determinism & the project invariants
 
@@ -351,20 +480,35 @@ both mutate and the renderer only reads.
 | GPU | wgpu / WGSL | inherited from RapidRAW |
 | Video I/O | ffmpeg CLI subprocess (not linked) | D-015; persistent rawvideo pipes for decode (D-030) and export (D-022), not per-frame spawns |
 | Colour mgmt | display-referred Rec.709 only | v1 scope, D-004; OpenColorIO/ACES/HDR deferred to v2 |
-| AI models | SAM 2.1 + ViTMatte (sidecar), Video Depth Anything-vits (sidecar), Depth Anything V2 (in-process ONNX) | D-009/D-012/D-016/D-018/D-036 |
+| AI models | SAM 2.1 + ViTMatte + MoGe-2 normals (sidecar), Video Depth Anything-vits (sidecar), Depth Anything V2 (in-process ONNX), mlx-whisper + Qwen3-VL (`ai-media/` sidecar) | D-009/D-012/D-016/D-018/D-036/D-078/D-189 |
 | Grade doc | JSON, git-tracked, versioned (`chroma.grade/1`) | D-025 |
 | Project format | a `<name>.chroma` directory of plain JSON | D-037 |
-| Agent bridge | in-app HTTP control server ⇄ frontend store ⇄ Python MCP (stdio) | D-020, 38 tools |
+| Agent bridge | in-app HTTP control server ⇄ 4 prefixed frontend op registries ⇄ Python MCP (stdio) | D-020/D-183, **95 tools** |
 | Frontend UI kit | shadcn/ui on Base UI (`@base-ui/react`) | D-042 |
-| Edit-tab timeline UI | `@xzdarcy/react-timeline-editor` (control surface only, no video through it) | D-041 |
-| Motion engine | Remotion (`packages/motion-engine/`) | pre-existing, moved in D-039 step 1 |
-| Editor round-trip | `.cube` (primary bake) + ProRes/H.264 export | D-022; OTIO export still open |
+| Edit-tab timeline UI | `@xzdarcy/react-timeline-editor` (control surface only, no video through it) + `@dnd-kit` for every drag | D-041, D-100 |
+| Edit-tab audio | `symphonia` → `rubato` → `dasp_sample` → `cpal`; cookbook biquads for EQ | D-050, D-224 |
+| Edit-tab export | a TypeScript ffmpeg-filtergraph compiler, mirroring the Rust preview engine | D-183/D-197 |
+| Motion engine | Remotion (`packages/motion-engine/`), orchestrated by the `chroma-motion` crate | moved in D-039 step 1; bridge D-046 |
+| Undo/redo | one shell-level stack (`@chroma/history`) shared across tabs | D-052; Motion not yet wired in |
+| Interchange out | `.cube` (primary bake) + ProRes/H.264 + **FCPXML 1.7** | D-022, D-196; OTIO + XMEML still open |
 
 ## What isn't built yet
 
-Not duplicated here in full — `docs/04-roadmap.md`'s "Next"/"Later" sections are the
-live, maintained list. The headline gaps as of this doc: the media-pool/`shots`-`media`
-unification (pass 3), Editor audio, a mature multi-track timeline UI, a real Export
-dialog, the Motion tab MVP, shell-level undo/redo, and the deeper crate extraction
-(`chroma-gpu`/`chroma-media`/`chroma-project`/`chroma-ai`/`chroma-agent`/`chroma-grade`/
-`chroma-compositor` — all still "future" in the crate table above).
+Not duplicated here in full — `docs/04-roadmap.md`'s "Next"/"Later" sections are the live,
+maintained list. **Every gap the 2026-09-02 version of this section named has since been
+closed** (media-pool unification, Editor audio, the multi-track timeline UI, the Export
+dialog, the Motion tab, shell-level undo/redo, and waves 1–3 of the crate extraction). The
+real headline gaps as of 2026-09-08, in rough order of how much they shape the architecture:
+
+1. **`chroma-compositor` — the GPU compositor.** The Edit tab composites on the CPU today.
+   This is the biggest single piece of the architecture that is still drawn and not built.
+2. **Motion's missing MCP wrappers.** 18 real ops, zero reachable tools — see above.
+3. **`chroma-grade`** — the grade renderer is still `app/`-side, so `chroma-app` cannot go
+   thin and the fork cannot shrink to "grade shader + mask raster" the way D-039 intends.
+4. **Wave 4 of the migration** — delete the five re-export shims, retarget the call sites.
+   Mechanical, one commit, no behaviour change.
+5. **Edit ↔ Colorist are still two models** (roadmap item 8): no grade-in-preview, and a
+   clip's identity in the Edit tab and a shot's in the Colorist are only partly unified.
+6. **`@chroma/tokens` and `@chroma/colorist`** — the two frontend packages that have not
+   moved: theming still lives in `app/src/styles.css`, and the entire Colorist UI is still
+   un-extracted `app/src/`.
