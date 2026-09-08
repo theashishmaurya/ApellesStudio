@@ -22310,3 +22310,123 @@ and no Rust consumer ever sees an edit type. `tsc --noEmit -p packages/editor`
 introduces zero new errors. `cargo fmt --check` reports one diff, in
 `app/src-tauri/src/ai_commands.rs` — byte-identical to `main`, last touched by
 D-077, untouched here, and deliberately not folded into this commit.
+## D-240 — Italic/bold caption/title rendering: no new font, a toggle that composes existing catalogue keys
+
+**Context.** Roadmap item 27's last open sub-item: `chroma::text`'s catalogue
+(D-212) had eight keys, none italic, and "bold" existed only as separate,
+independently-picked family entries (`sans-bold`, `serif-bold`, …) rather than a
+toggle — so a caption or title could not be made bold/italic without the author
+already knowing which literal catalogue string meant that. D-229's caption
+styling and D-211's titles both inherit `chroma::text`'s catalogue, so both
+consumers needed this at once.
+
+**Font choice: no new font, no new licence question.** The task framing assumed
+a new bundled font family might be needed. It is not. D-212's existing four
+families with a bold sibling (`sans`/Arial, `condensed`/Arial Narrow,
+`serif`/Georgia+Times, `mono`/Courier New) are all **macOS system fonts already
+referenced by absolute path, never vendored into the repo** — and macOS ships
+the full regular/bold/italic/bold-italic quartet for every one of them
+(confirmed on disk: `/System/Library/Fonts/Supplemental/Arial Italic.ttf`,
+`Arial Bold Italic.ttf`, `Arial Narrow Italic.ttf`, `Arial Narrow Bold
+Italic.ttf`, `Georgia Italic.ttf`, `Georgia Bold Italic.ttf`, `Times New Roman
+Italic.ttf`, `Times New Roman Bold Italic.ttf`, `Courier New Italic.ttf`,
+`Courier New Bold.ttf`, `Courier New Bold Italic.ttf`). D-212's own license
+reasoning (referenced, not shipped — no file in this repo, no distribution
+question) covers these new candidate paths unchanged; there is nothing to add a
+crate/asset `D-NNN` for. `impact` and `sans-black` stay standalone: neither
+ships an italic face on macOS, and both are already a design's own maximum
+weight, so a Bold toggle has nothing to switch to for either. `chroma::text`'s
+catalogue grew from 8 to 18 entries (10 new: `sans-italic`, `sans-bold-italic`,
+`condensed` (a plain-weight entry did not previously exist), `condensed-italic`,
+`condensed-bold-italic`, `serif-italic`, `serif-bold-italic`, `mono-bold`,
+`mono-italic`, `mono-bold-italic`).
+
+**The model: `font` stays the ONE stored key — Bold/Italic are a toggle that
+composes it, not two new fields.** The obvious-looking alternative (add
+`bold: bool`/`italic: bool` to `TextLayer`/`CaptionStyle`) was rejected: it
+would create two ways to express the same look (`font: "sans-bold"` vs.
+`font: "sans", bold: true`), forcing every consumer — the Rust rasteriser, the
+export compiler, a hand-authored project file — to reconcile two sources of
+truth for one visual property. Instead each `FontFamily`/`ResolvedFont` entry
+now carries `group`/`bold`/`italic` metadata (`Some("sans")`/`true`/`false` for
+`sans-bold`, `None` for `impact`), and `@chroma/editor`'s
+`textFonts.ts::composeFontStyleKey(fonts, font, bold, italic)` is the ONE place
+that turns "the group `font` belongs to, plus two booleans" into the flat key
+that actually gets written — used identically by the Inspector's own Bold/Italic
+buttons and by every `bold`/`italic` MCP parameter (`editor_add_text_clip`,
+`editor_set_text_clip`, `editor_import_subtitles`, `editor_set_caption_style`),
+which route through the same `useEditorControl.ts` op handlers the GUI does. No
+duplicate composition logic exists in Rust or in the MCP layer — `chroma::text`
+gained data (the metadata fields), never a second implementation of the rule.
+Degrades rather than fails when the exact combination is unavailable (drops
+italic, then bold, in that order, before falling back to the unchanged key) —
+the same "the model stores what was written, the consumer decides what it
+means" contract `TextLayer::rgb` already follows.
+
+**UI: Bold/Italic toggle buttons beside the Font picker, not a combined
+dropdown row per style** — the universal text-editor convention (Word's
+toolbar, Resolve's Text+ Font section, Premiere's Essential Graphics panel,
+Final Cut's Titles inspector all put "B"/"I" buttons next to the family picker
+rather than listing "Arial", "Arial Bold", "Arial Italic", "Arial Bold Italic"
+as four separate rows) — cross-checked against this repo's own
+`scratch/resolve-reference/captioning.jpg` (D-229's reference) and general
+knowledge of the reference NLEs above, per CLAUDE.md's "research the real
+pattern first" rule; no new scrape was needed for a control this
+well-established. Landed identically in `TextClipInspectorPanel.tsx` (titles)
+and `CaptionInspectorPanel.tsx` (captions): a Family `Select` (one row per
+`group`, plus each standalone entry) plus two `Button`s reading their
+pressed state off the CURRENT font's own `bold`/`italic` metadata — disabled
+together when the current family has no `group` (Impact, Sans Black).
+
+**Export parity — measured, not assumed (per D-212/D-224/D-236's own
+practice).** The real risk this item was filed against: does
+`freetype_equivalent_scale` (D-212's em-vs-hhea size correction, computed from
+each face's OWN `units_per_em`/`height_unscaled`) actually generalise to a face
+it was never calibrated against, or does it silently only work for the Arial
+Bold it was measured on? Measured this session, both sides, same content
+("AFTER"), same canvas (640×360), same default size (0.12):
+
+```
+ab_glyph (preview)     drawtext (export, ffmpeg 7.1)
+sans-bold        w=144   sans-bold        w=142   ratio 0.986
+sans-italic      w=143   sans-italic      w=142   ratio 0.993
+sans-bold-italic w=146   sans-bold-italic w=144   ratio 0.986
+```
+
+(`chroma::text::tests::italic_and_bold_italic_faces_render_visible_ink`/
+`text_is_drawn_centred_on_its_own_ink_box` for the `ab_glyph` numbers, run with
+`--nocapture`; `textItalicBold.ffmpeg.test.ts`'s own real-ffmpeg render,
+instrumented once for this measurement, for the `drawtext` numbers.) All three
+ratios sit within 1.5% — antialiasing noise at a 30 px cap height, not a
+systematic drift — which is the same order of agreement D-212 designed the
+correction to produce, now confirmed for two faces (`sans-italic`,
+`sans-bold-italic`) the correction was never tuned against. Cap-height ratio
+between `sans` and `sans-italic` measured exactly `1.000` on the `ab_glyph`
+side (`italic_cap_height_is_close_to_its_upright_sibling`). The conversion
+reads each face's own metrics at render time — the D-212 code was already
+written generically; this is the empirical confirmation that generality holds,
+not a code change to `freetype_equivalent_scale` itself.
+
+**Both interfaces, same pass (CLAUDE.md).** GUI: the toggle buttons above.
+MCP: `bold`/`italic` booleans on `editor_add_text_clip`, `editor_set_text_clip`,
+`editor_import_subtitles`, `editor_set_caption_style` — the existing tools that
+already owned `font`, extended rather than a new tool invented, per the task's
+own instruction to check first. `editor_text_fonts`'s reported catalogue also
+carries `group`/`bold`/`italic` per entry for the rare caller that wants to
+enumerate siblings directly, though the normal path never needs to.
+
+**Deferred, deliberately:** a combined "styled caption preset library" (roadmap
+item 28, the owner's own follow-up) is out of scope here — this item was
+specifically the catalogue + toggle, not the broader panel redesign item 28
+describes.
+
+**Verification.** New Rust tests: `every_group_has_a_sibling_and_no_duplicate_
+style_pair`, `italic_and_bold_italic_faces_render_visible_ink`,
+`italic_cap_height_is_close_to_its_upright_sibling`,
+`resolved_catalogue_carries_group_bold_italic_metadata`, plus the existing
+`every_catalogue_family_resolves_on_this_machine` now covering all 18 entries —
+11/11 in `chroma::text::tests`, `cargo fmt`/`clippy` clean. New TS:
+`textFonts.test.ts` (8 tests, pure), `TextClipInspectorPanel.dom.test.tsx` (5),
+`CaptionInspectorPanel.dom.test.tsx` (3), `textItalicBold.ffmpeg.test.ts` (5
+real-ffmpeg, real macOS Arial family) — 21/21. `tsc --noEmit -p packages/editor`
+zero new errors.

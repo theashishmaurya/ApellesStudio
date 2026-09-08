@@ -152,14 +152,20 @@ one-line-per-row follow-up. Tracked in roadmap item 24.
 
 `app/src-tauri/src/chroma/text.rs`:
 
-- **`TEXT_FONTS`** — a fixed catalogue of eight families, each a stable `key`,
-  a `label`, and an ordered list of candidate absolute paths (first existing
-  wins). **Single-face `.ttf` files only, never a `.ttc` collection** — and
-  that is load-bearing: `drawtext` takes a `fontfile=` with no face index and
-  uses face 0, so a single-face file is the only shape where "both renderers
-  read the same file" also means "both read the same *face*". That is why the
+- **`TEXT_FONTS`** — a fixed catalogue, each entry a stable `key`, a `label`,
+  and an ordered list of candidate absolute paths (first existing wins).
+  **Single-face `.ttf` files only, never a `.ttc` collection** — and that is
+  load-bearing: `drawtext` takes a `fontfile=` with no face index and uses
+  face 0, so a single-face file is the only shape where "both renderers read
+  the same file" also means "both read the same *face*". That is why the
   obvious macOS picks (Helvetica, Avenir, SF) are absent — they ship only as
-  `.ttc`.
+  `.ttc`. **D-240** grew the catalogue from 8 to 18 entries — every family
+  with a real italic/bold-italic sibling on disk (`sans`/`condensed`/
+  `serif`/`mono`) now lists all four, each also carrying `group`/`bold`/
+  `italic` metadata that `@chroma/editor`'s `composeFontStyleKey` uses to turn
+  a Bold/Italic TOGGLE into the right flat key — `impact`/`sans-black` stay
+  standalone (no italic face ships for either on macOS, and both are already
+  a design's own maximum weight).
 - **`chroma_text_fonts`** (Tauri command) — the catalogue resolved against
   this machine. **One source of truth for both renderers**: the Inspector's
   picker lists it, and `editorExport.ts` passes the same resolved paths into

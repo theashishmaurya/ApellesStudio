@@ -1164,6 +1164,20 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   formatting only the new code was not possible without leaving those files
   non-conformant; no other file was reformatted.
 
+- **2026-09-08** — **Italic/bold faces + a Bold/Italic style toggle (D-240)**
+  · **zero upstream-file edits.** Everything lands inside the same
+  already-Chroma-owned `app/src-tauri/src/chroma/text.rs` D-212 created (10 new
+  `TEXT_FONTS` entries + `group`/`bold`/`italic` metadata on `FontFamily`/
+  `ResolvedFont`), `packages/editor/*` (`textFonts.ts`'s new
+  `composeFontStyleKey`/`fontStyleOf`/`baseFontFamilies`,
+  `TextClipInspectorPanel.tsx`/`CaptionInspectorPanel.tsx`'s toggle buttons,
+  `useEditorControl.ts`'s `bold`/`italic` op-arg handling) and `mcp/server.py`.
+  No `generate_handler!` change — `chroma_text_fonts` was already registered
+  by D-212, only its return payload grew fields. No new dependency: the 10 new
+  candidate paths are the SAME macOS system font families D-212 already
+  references (Arial/Arial Narrow/Georgia/Times New Roman/Courier New), never a
+  file vendored into the repo, so `Cargo.toml` and the lock are untouched.
+
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

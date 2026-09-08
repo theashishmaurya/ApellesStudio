@@ -1431,7 +1431,14 @@ def editor_text_fonts() -> str:
     disagree with the one you previewed.
 
     Also returns `defaultTitle`, the exact text layer a title gets when you
-    omit `font`/`size`/`color`."""
+    omit `font`/`size`/`color`.
+
+    You normally do NOT need to read `group`/`bold`/`italic` off individual
+    entries yourself (D-240): `editor_add_text_clip`/`editor_set_text_clip`/
+    `editor_import_subtitles`/`editor_set_caption_style` all take `bold`/
+    `italic` booleans directly and resolve the right catalogue key for you.
+    They are here for the rare case you want to enumerate exactly which keys
+    are siblings of which."""
     import json
 
     return json.dumps(_op("editor_text_fonts"), indent=2, default=str)
@@ -1444,6 +1451,8 @@ def editor_add_text_clip(
     start_frame: int | None = None,
     duration: int | None = None,
     font: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
     size: float | None = None,
     color: str | None = None,
     ripple: bool = False,
@@ -1485,6 +1494,14 @@ def editor_add_text_clip(
     fraction, so the same title renders identically at every preview quality
     and at full export resolution. `color` is `#RGB` or `#RRGGBB`.
 
+    `bold`/`italic` toggle weight/slant WITHOUT you having to know which raw
+    catalogue key is which (D-240) — pass either on top of any `font`
+    ("sans", "serif", "condensed", "mono" all have real bold/italic/bold-italic
+    faces; omitting `font` composes against the current/default family). A
+    family with no such face on this machine (`impact`, `sans-black` — neither
+    ships an italic, and both are already at their own maximum weight) just
+    ignores whichever toggle it cannot honour rather than erroring.
+
     **What else you can do to a title:** its OPACITY and POSITION are
     ordinary clip properties — `editor_set_clip_transform` with
     `position_x`/`position_y` (fractions of the frame, 0,0 = centred) and
@@ -1504,6 +1521,8 @@ def editor_add_text_clip(
         ("startFrame", start_frame),
         ("duration", duration),
         ("font", font),
+        ("bold", bold),
+        ("italic", italic),
         ("size", size),
         ("color", color),
         ("name", name),
@@ -1519,6 +1538,8 @@ def editor_set_text_clip(
     clip: int,
     content: str | None = None,
     font: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
     size: float | None = None,
     color: str | None = None,
 ) -> str:
@@ -1531,6 +1552,11 @@ def editor_set_text_clip(
     contains a newline (single-line only for now), or if `font` names a
     family this machine has no font file for (see `editor_text_fonts`).
 
+    `bold`/`italic` (D-240) toggle weight/slant against whatever `font` ends
+    up being — pass `font` in the SAME call to change family and weight/slant
+    together, or omit `font` to toggle bold/italic on the clip's CURRENT
+    family without restating it (a bold-only call never resets the family).
+
     `size` is a fraction of the output frame's HEIGHT, `color` is
     `#RGB`/`#RRGGBB`. For a title's POSITION, OPACITY, fade or keyframes use
     the ordinary clip tools (`editor_set_clip_transform`,
@@ -1539,7 +1565,14 @@ def editor_set_text_clip(
     import json
 
     args: dict = {"track": track, "clip": clip}
-    for key, val in (("content", content), ("font", font), ("size", size), ("color", color)):
+    for key, val in (
+        ("content", content),
+        ("font", font),
+        ("bold", bold),
+        ("italic", italic),
+        ("size", size),
+        ("color", color),
+    ):
         if val is not None:
             args[key] = val
     return json.dumps(_op("editor_set_text_clip", **args), indent=2, default=str)
@@ -1550,6 +1583,8 @@ def editor_import_subtitles(
     path: str,
     offset_frames: int | None = None,
     font: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
     size: float | None = None,
     color: str | None = None,
     box_enabled: bool | None = None,
@@ -1583,6 +1618,10 @@ def editor_import_subtitles(
     `editor_set_caption_style` afterwards to change it, or to override one
     single cue.
 
+    `bold`/`italic` (D-240) toggle weight/slant against `font` (or the
+    catalogue default if `font` is omitted) — the same composition
+    `editor_set_caption_style`'s own `bold`/`italic` use.
+
     A caption is positioned entirely by its style — `position_x`/`position_y`
     are normalised 0–1 anchors, `size` is a fraction of the frame HEIGHT.
     `editor_set_clip_transform` does NOT apply to captions."""
@@ -1593,6 +1632,8 @@ def editor_import_subtitles(
         args["offsetFrames"] = offset_frames
     for key, val in (
         ("font", font),
+        ("bold", bold),
+        ("italic", italic),
         ("size", size),
         ("color", color),
         ("boxEnabled", box_enabled),
@@ -1765,6 +1806,8 @@ def editor_set_caption_style(
     clip: int | None = None,
     use_track_style: bool | None = None,
     font: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
     size: float | None = None,
     color: str | None = None,
     box_enabled: bool | None = None,
@@ -1791,6 +1834,13 @@ def editor_set_caption_style(
       system font name. A family this machine has no file for is refused here
       rather than failing the export, because the preview and the export must
       read the same file.
+    - `bold` / `italic` (D-240) — toggle weight/slant against whatever `font`
+      ends up being: pass `font` in the SAME call to change family and
+      weight/slant together, or omit `font` to toggle bold/italic on the
+      CURRENT style's family (the cue's own if it has an override, else the
+      track's) without restating it. A family with no such face on this
+      machine (`impact`, `sans-black`) ignores whichever toggle it cannot
+      honour rather than erroring.
     - `size` — fraction of the frame HEIGHT (0.055 ≈ a normal subtitle).
     - `color` / `box_color` — `#RGB` or `#RRGGBB`.
     - `box_opacity` — 0–1. `box_enabled=False` removes the background entirely.
@@ -1815,6 +1865,8 @@ def editor_set_caption_style(
         args["useTrackStyle"] = use_track_style
     for key, val in (
         ("font", font),
+        ("bold", bold),
+        ("italic", italic),
         ("size", size),
         ("color", color),
         ("boxEnabled", box_enabled),

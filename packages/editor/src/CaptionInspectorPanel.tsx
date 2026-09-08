@@ -37,6 +37,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Button,
   Input,
   ScrollArea,
   Select,
@@ -61,7 +62,7 @@ import {
   type CaptionStyle,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
-import { useTextFonts } from './textFonts';
+import { baseFontFamilies, composeFontStyleKey, fontStyleOf, useTextFonts } from './textFonts';
 
 /** `size`, `box_padding` and `line_spacing` are stored as fractions and shown
  *  as percentages — the number a human reasons about ("5.5% of frame height").
@@ -226,27 +227,70 @@ export function CaptionInspectorPanel() {
           <div className="flex flex-col gap-2 text-xs">
             <div className={row}>
               <span className="text-text-secondary">Font</span>
-              <Select
-                value={style.font}
-                disabled={trackLocked || fonts.length === 0}
-                onValueChange={(v: string | null) => {
-                  if (v) patchStyle({ font: v });
-                }}
-              >
-                <SelectTrigger className="h-7 w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {fonts.map((f) => (
-                    // A family with no font file on this machine is listed but
-                    // not selectable — substituting a face would make the
-                    // export disagree with the preview (D-212).
-                    <SelectItem key={f.key} value={f.key} disabled={!f.path}>
-                      {f.path ? f.label : `${f.label} (unavailable)`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <span className="flex items-center gap-1">
+                <Select
+                  value={fontStyleOf(fonts, style.font).group ?? style.font}
+                  disabled={trackLocked || fonts.length === 0}
+                  // Changing FAMILY keeps whatever Bold/Italic is currently on
+                  // (D-240), composed via the family's own `group`.
+                  onValueChange={(v: string | null) => {
+                    if (!v) return;
+                    const cur = fontStyleOf(fonts, style.font);
+                    patchStyle({ font: composeFontStyleKey(fonts, v, cur.bold, cur.italic) });
+                  }}
+                >
+                  <SelectTrigger className="h-7 w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {baseFontFamilies(fonts).map((f) => (
+                      // A family with no font file on this machine is listed
+                      // but not selectable — substituting a face would make
+                      // the export disagree with the preview (D-212).
+                      <SelectItem key={f.key} value={f.group ?? f.key} disabled={!f.path}>
+                        {f.path ? f.label : `${f.label} (unavailable)`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* D-240 — the same Bold/Italic toggle pair as the Title
+                    Inspector's Font row; see `TextClipInspectorPanel.tsx` for
+                    why buttons rather than a combined dropdown. */}
+                {(() => {
+                  const s = fontStyleOf(fonts, style.font);
+                  const disabled = trackLocked || s.group === null;
+                  return (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        disabled={disabled}
+                        className={`font-bold ${s.bold ? 'text-accent' : 'text-text-secondary/50'}`}
+                        aria-pressed={s.bold}
+                        title="Bold"
+                        onClick={() =>
+                          patchStyle({ font: composeFontStyleKey(fonts, style.font, !s.bold, s.italic) })
+                        }
+                      >
+                        B
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        disabled={disabled}
+                        className={`italic ${s.italic ? 'text-accent' : 'text-text-secondary/50'}`}
+                        aria-pressed={s.italic}
+                        title="Italic"
+                        onClick={() =>
+                          patchStyle({ font: composeFontStyleKey(fonts, style.font, s.bold, !s.italic) })
+                        }
+                      >
+                        I
+                      </Button>
+                    </>
+                  );
+                })()}
+              </span>
             </div>
 
             <label className={row}>

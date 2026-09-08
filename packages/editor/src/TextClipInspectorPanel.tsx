@@ -35,12 +35,12 @@
  * validation — one op and one validator under both interfaces, per CLAUDE.md.
  */
 import { useEffect, useState } from 'react';
-import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@chroma/ui';
+import { Button, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@chroma/ui';
 import { InspectorSection } from '@chroma/inspector';
 
 import { findClip, newTextLayer, type TextLayer } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
-import { useTextFonts } from './textFonts';
+import { baseFontFamilies, composeFontStyleKey, fontStyleOf, useTextFonts } from './textFonts';
 
 /** `TextLayer.size` is a fraction of the composition height; the field shows
  *  it as a percentage, which is the number a human actually reasons about
@@ -138,30 +138,79 @@ export function TextClipInspectorPanel() {
 
           <div className={row}>
             <span className="text-text-secondary">Font</span>
-            <Select
-              value={layer.font}
-              disabled={trackLocked || fonts.length === 0}
-              // Base UI's `Select` can hand back `null` (a cleared value);
-              // this one has no clear affordance, so ignore it rather than
-              // writing an empty font key.
-              onValueChange={(v: string | null) => {
-                if (v) patch({ font: v });
-              }}
-            >
-              <SelectTrigger className="h-7 w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {fonts.map((f) => (
-                  // A family this machine has no file for is listed but not
-                  // selectable — see `textFonts.ts`: substituting a different
-                  // face would make the export disagree with the preview.
-                  <SelectItem key={f.key} value={f.key} disabled={!f.path}>
-                    {f.path ? f.label : `${f.label} (unavailable)`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <span className="flex items-center gap-1">
+              <Select
+                value={fontStyleOf(fonts, layer.font).group ?? layer.font}
+                disabled={trackLocked || fonts.length === 0}
+                // Base UI's `Select` can hand back `null` (a cleared value);
+                // this one has no clear affordance, so ignore it rather than
+                // writing an empty font key. Changing FAMILY keeps whatever
+                // Bold/Italic is currently on (D-240) — composed via the
+                // family's own `group`, from a base row keyed by group.
+                onValueChange={(v: string | null) => {
+                  if (!v) return;
+                  const cur = fontStyleOf(fonts, layer.font);
+                  patch({ font: composeFontStyleKey(fonts, v, cur.bold, cur.italic) });
+                }}
+              >
+                <SelectTrigger className="h-7 w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {baseFontFamilies(fonts).map((f) => (
+                    // A family this machine has no file for is listed but not
+                    // selectable — see `textFonts.ts`: substituting a
+                    // different face would make the export disagree with the
+                    // preview.
+                    <SelectItem key={f.key} value={f.group ?? f.key} disabled={!f.path}>
+                      {f.path ? f.label : `${f.label} (unavailable)`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* D-240 — Bold/Italic toggle buttons next to the family picker,
+                  the universal text-editor convention (Word, Resolve's Text+,
+                  Premiere's Essential Graphics, Final Cut's Titles all put
+                  B/I buttons beside the font family rather than a combined
+                  "Family Bold Italic" dropdown row per style). Disabled when
+                  the current family has no `group` (Impact, Sans Black —
+                  neither ships an italic face, and both are already at their
+                  own maximum weight) since there is no sibling to toggle to. */}
+              {(() => {
+                const style = fontStyleOf(fonts, layer.font);
+                const disabled = trackLocked || style.group === null;
+                return (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      disabled={disabled}
+                      className={`font-bold ${style.bold ? 'text-accent' : 'text-text-secondary/50'}`}
+                      aria-pressed={style.bold}
+                      title="Bold"
+                      onClick={() =>
+                        patch({ font: composeFontStyleKey(fonts, layer.font, !style.bold, style.italic) })
+                      }
+                    >
+                      B
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      disabled={disabled}
+                      className={`italic ${style.italic ? 'text-accent' : 'text-text-secondary/50'}`}
+                      aria-pressed={style.italic}
+                      title="Italic"
+                      onClick={() =>
+                        patch({ font: composeFontStyleKey(fonts, layer.font, style.bold, !style.italic) })
+                      }
+                    >
+                      I
+                    </Button>
+                  </>
+                );
+              })()}
+            </span>
           </div>
 
           <label className={row}>
