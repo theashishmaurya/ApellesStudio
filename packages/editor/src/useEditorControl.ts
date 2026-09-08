@@ -67,6 +67,18 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
+// D-243 — the caption preset library and the one action that applies it,
+// shared verbatim with `CaptionPanel.tsx` so the agent and the human cannot
+// drift apart.
+import { CAPTION_PRESETS } from './captionPresets';
+import { applyCaptionPreset } from './captionPresetAction';
+import { resolveCaptionStyle } from './caption';
+import {
+  captionAnimationOf,
+  resolveCaptionAnimation,
+  type CaptionAnimation,
+  type CaptionAnimKind,
+} from './captionAnim';
 // D-233 — the curve editor's own model helpers, shared verbatim with the GUI
 // (`ClipCurveEditor.tsx` / `EditorInspectorPanel.tsx`) rather than reimplemented
 // here: one write path for the human and the agent, per CLAUDE.md.
@@ -567,8 +579,14 @@ interface ImportedCaption {
 /** `currentFont` is the style's font BEFORE this patch — the track's own for
  *  a new import, or the resolved (cue-or-track) font for an existing style —
  *  so `bold`/`italic` alone (no `font`) composes against what is already
- *  there rather than against nothing. See D-240's `composeFontStyleKey`. */
-function captionStylePatch(a: any, currentFont: string): Partial<CaptionStyle> {
+ *  there rather than against nothing. See D-240's `composeFontStyleKey`.
+ *  `baseAnim` is the caller's CURRENT resolved animation (D-243), merged onto
+ *  rather than overwritten for the same reason. */
+function captionStylePatch(
+  a: any,
+  currentFont: string,
+  baseAnim?: CaptionAnimation | null,
+): Partial<CaptionStyle> {
   const patch: Partial<CaptionStyle> = {};
   if (a?.font !== undefined) patch.font = String(a.font);
   if (a?.size !== undefined) patch.size = Number(a.size);
@@ -599,7 +617,76 @@ function captionStylePatch(a: any, currentFont: string): Partial<CaptionStyle> {
     const italic = a?.italic !== undefined ? !!a.italic : cur.italic;
     patch.font = composeFontStyleKey(fonts, baseFont, bold, italic);
   }
+  // D-243 — the ANIMATION half. Merged onto the caller's CURRENT resolved
+  // animation (passed in as `baseAnim`) rather than written as a fragment, for
+  // the same reason the Inspector's own `patchAnim` does it: a partial write
+  // onto a style that carries no animation key would leave the other fields
+  // implicitly tracking future default changes.
+  const animPatch = captionAnimationPatch(a, baseAnim);
+  if (animPatch) patch.animation = animPatch;
   return patch;
+}
+
+/** The animation fields of an `editor_set_caption_style` call, or `null` when
+ *  the caller named none.
+ *
+ *  `baseAnim` is the animation currently in effect, so a caller changing one knob
+ *  keeps the rest — the same merge the Inspector performs. A colour explicitly
+ *  passed as `null` clears back to "use the caption colour", which is the only
+ *  way to undo an accent through this tool. */
+function captionAnimationPatch(a: any, baseAnim?: CaptionAnimation | null): CaptionAnimation | null {
+  const base = resolveCaptionAnimation(baseAnim ?? null);
+  let touched = false;
+  const next: CaptionAnimation = { ...base };
+  const kindOf = (v: unknown): CaptionAnimKind | null => {
+    const s = String(v);
+    return s === 'none' || s === 'highlight' || s === 'karaoke' || s === 'slam' || s === 'build'
+      ? s
+      : null;
+  };
+  if (a?.animation !== undefined) {
+    const k = kindOf(a.animation);
+    // Anything else is DROPPED rather than stored, the same rule `align`
+    // above follows: a kind neither renderer knows would silently render as
+    // static — an invisible wrong answer.
+    if (k) {
+      next.kind = k;
+      touched = true;
+    }
+  }
+  const colour = (key: 'active_color' | 'spoken_color' | 'upcoming_color' | 'active_box_color', v: unknown) => {
+    next[key] = v === null ? null : String(v);
+    touched = true;
+  };
+  if (a?.activeColor !== undefined) colour('active_color', a.activeColor);
+  if (a?.spokenColor !== undefined) colour('spoken_color', a.spokenColor);
+  if (a?.upcomingColor !== undefined) colour('upcoming_color', a.upcomingColor);
+  if (a?.highlightColor !== undefined) colour('active_box_color', a.highlightColor);
+  if (a?.highlightOpacity !== undefined) {
+    next.active_box_opacity = Number(a.highlightOpacity);
+    touched = true;
+  }
+  if (a?.highlightPadX !== undefined) {
+    next.active_box_pad_x = Number(a.highlightPadX);
+    touched = true;
+  }
+  if (a?.highlightPadY !== undefined) {
+    next.active_box_pad_y = Number(a.highlightPadY);
+    touched = true;
+  }
+  if (a?.enterSecs !== undefined) {
+    next.enter_secs = Number(a.enterSecs);
+    touched = true;
+  }
+  if (a?.enterRise !== undefined) {
+    next.enter_rise = Number(a.enterRise);
+    touched = true;
+  }
+  if (a?.wordGap !== undefined) {
+    next.word_gap = Number(a.wordGap);
+    touched = true;
+  }
+  return touched ? next : null;
 }
 
 function noTimeline(): { error: string } {
@@ -1534,6 +1621,42 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, caption: after?.caption ?? null };
       },
 
+      // D-243 — the preset library, as the agent sees it. The GUI half is
+      // `CaptionPanel.tsx`'s Styles tab; both read the SAME `captionPresets.ts`
+      // and both place through the SAME `applyCaptionPreset`, so an agent can
+      // reach every look a human can (CLAUDE.md).
+      editor_list_caption_presets: () => ({
+        ok: true,
+        presets: CAPTION_PRESETS.map((p) => ({
+          id: p.id,
+          label: p.label,
+          group: p.group,
+          description: p.description,
+          note: p.note,
+          animation: captionAnimationOf(p.style).kind,
+          style: p.style,
+        })),
+      }),
+
+      editor_add_caption_preset: (a) =>
+        applyCaptionPreset({
+          presetId: String(a?.preset ?? ''),
+          track: a?.track !== undefined && a.track !== null ? Math.round(Number(a.track)) : undefined,
+          text: typeof a?.text === 'string' ? a.text : undefined,
+          startFrame:
+            a?.startFrame !== undefined && a.startFrame !== null
+              ? Math.round(Number(a.startFrame))
+              : undefined,
+          durationFrames:
+            a?.duration !== undefined && a.duration !== null
+              ? Math.round(Number(a.duration))
+              : undefined,
+          // An agent asking for a preset almost always wants to SEE it, the
+          // same as a click in the library does. `placeCaption: false` is the
+          // explicit way to restyle a track that already has cues on it.
+          placeCaption: a?.placeCaption !== undefined ? !!a.placeCaption : true,
+        }),
+
       editor_set_caption_style: (a) => {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
@@ -1555,18 +1678,21 @@ export function useEditorControl(): void {
           return { ok: true, track, clip: cueIndex, usingTrackStyle: true };
         }
 
-        // The font `bold`/`italic` composes against: the cue's own resolved
-        // style if `clip` names one (falling through to the track's, exactly
-        // as the Inspector's `resolveCaptionStyle` does), else the track's.
-        const currentFont = resolveCaptionStyle(
+        // The base this patch composes against: the cue's own resolved style
+        // if `clip` names one (falling through to the track's, exactly as the
+        // Inspector's `resolveCaptionStyle` does), else the track's. Both
+        // `bold`/`italic` (D-240) and the animation fields (D-243) read from
+        // the same resolved base, so a caller changing one knob keeps the
+        // rest of the font composition and the rest of the animation intact.
+        const baseStyle = resolveCaptionStyle(
           cueIndex !== null ? tr.clips[cueIndex]?.caption?.style : null,
           tr.caption_style,
-        ).font;
-        const patch = captionStylePatch(a, currentFont);
+        );
+        const patch = captionStylePatch(a, baseStyle.font, baseStyle.animation);
         if (Object.keys(patch).length === 0) {
           return {
             error:
-              'nothing to change — pass at least one of font / size / color / box_enabled / box_color / box_opacity / box_padding / line_spacing / align / position_x / position_y (or useTrackStyle:true with a clip)',
+              'nothing to change — pass at least one of font / size / color / box_enabled / box_color / box_opacity / box_padding / line_spacing / align / position_x / position_y / animation / activeColor / spokenColor / upcomingColor / highlightColor / highlightOpacity / highlightPadX / highlightPadY / enterSecs / enterRise / wordGap (or useTrackStyle:true with a clip)',
           };
         }
         // A font key the backend has no file for would compile to a

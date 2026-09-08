@@ -22675,3 +22675,237 @@ checked against a hand-written three-line oracle rather than a second copy of
 the ramp code — `chroma-media` sits *below* `chroma-timeline` in the D-039
 layering and must not depend on it, and an independent oracle is the stronger
 check anyway.
+---
+
+## D-243 — Animated caption presets extend the native `CaptionStyle`; the Motion engine cannot host them, and was not asked to
+
+**Context.** Roadmap item 28: the "Subtitles" button is import-only (D-229), and
+the owner wants a real panel — Import plus a library of styled presets you can
+drop, with every property of a placed caption editable. The roadmap flagged the
+architecture as a genuine open question: model each preset as a **Motion
+scene/manifest** (`packages/motion-engine/`, D-047+, which already has real
+primitives and a JSON-manifest compiler) rendered into the Edit timeline, or
+extend D-229's **native `TrackKind::Subtitle`/`CaptionStyle`** model. The owner
+suggested trying Motion ("lets use motion :) for building couple of them").
+
+**Reference.** HyperFrames' own caption catalogue — `hyperframes.heygen.com/catalog`
+and the real sources in the `heygen-com/hyperframes` repository — read directly,
+not paraphrased, per CLAUDE.md's "research the real pattern first" rule. Kept in
+`scratch/heygen-caption-reference/`. Provenance and licence: **D-244**.
+
+### Decision 1 — a native `CaptionStyle` extension, not a Motion manifest
+
+Investigated for real, and the Motion option is **disqualified by two facts
+about the code as it actually is today**, not by preference:
+
+1. **The Motion engine has no render-to-file path at all.** It is Remotion, and
+   the Motion tab previews it with `@remotion/player` in the webview DOM.
+   `@remotion/renderer` is not a dependency anywhere in this repo — only
+   `@remotion/cli` (the dev studio). There is no code that turns a manifest
+   into frames outside a browser.
+2. **Neither Edit renderer is a browser.** The Edit preview is composited in
+   **Rust** (`chroma::edit`, with `caption_render.rs` rasterising captions
+   through `ab_glyph`); the Edit export is an **ffmpeg filtergraph**
+   (`timelineExport.ts`). Hosting a Motion clip in the Edit timeline therefore
+   needs a headless-Chromium frame server on BOTH paths — a new Node +
+   Chromium runtime in a Rust/Tauri app, in the interactive preview's hot path.
+
+That is a large new subsystem, it is squarely against "prefer boring,
+well-maintained deps", and it trades away the preview responsiveness CLAUDE.md
+ranks first. **The owner independently reached the same conclusion mid-build
+and made it explicit** — "keeps things local, fast, no new heavy runtime
+dependency chroma only :)" — which also closed the third option that had been
+raised (adapting HyperFrames' own HTML+GSAP renderer; same Chromium problem,
+plus its compositions fetch GSAP from a CDN and fonts from Google Fonts at
+render time, which would put **network calls in the render path** and break
+this repo's local-first invariant outright).
+
+So: `CaptionStyle` gains an `animation` field, and a new
+`chroma_timeline::caption_anim` module carries the per-word model. This keeps
+**one** caption pipeline, extends the two-engine parity contract D-229 already
+established rather than opening a third rasteriser, and makes a preset pure
+data.
+
+**The cost, stated plainly:** several looks in the reference catalogue are not
+expressible this way at all (see "what did NOT ship"). Motion remains the right
+answer for those *if* a Remotion render path is ever built — this decision is
+"not now, and here is exactly what it would take", not "never".
+
+### Decision 2 — a preset is DATA: a `CaptionStyle` + `CaptionAnimation`, nothing more
+
+There is no preset object in the model, nothing stores a preset id, and nothing
+downstream knows a preset existed. Picking one writes its style through the
+**existing** `set_caption_style` op.
+
+That falls straight out of the owner's other directive — "keep the style
+configurable as much as possible" — because a preset that is a *reference* to a
+named look would have to be broken to edit one of its values, whereas a preset
+that IS the style is editable field by field the moment it lands. It also means
+undo, persistence and history labels work on a preset for free, and adding a
+preset is a data change, not a code change.
+
+### Decision 3 — the animation vocabulary is closed, and deliberately excludes scale
+
+Every kind is implemented **twice** (Rust `ab_glyph`, ffmpeg `drawtext`), so
+the vocabulary is restricted to what ffmpeg can evaluate per frame, per node,
+*without changing its own text layout*. Verified against this machine's ffmpeg:
+`drawtext`'s `x`, `y` and `alpha` are real expression options; `fontcolor` is
+not, and `drawbox`'s `color` is not.
+
+| property | how | in v1? |
+|---|---|---|
+| alpha | `alpha=` expression | yes |
+| dx / dy | `x=` / `y=` expressions | yes |
+| per-word fill colour | one `drawtext` node per phase, `enable`d over its window (adjacent phases of equal colour collapse, so a preset that recolours nothing emits one node per word, not three) | yes |
+| highlight box | `drawbox`, **binary** (on for the active word's window) | yes |
+| **per-word scale** | — | **no** |
+
+**Scale is the one an author reaches for first, and it is excluded on purpose.**
+`fontsize` is the input to the very glyph measurement that makes the two
+engines agree (D-212), so animating it re-opens the divergence D-229 closed. A
+word that pops by *moving and fading* is reproducible in both engines; one that
+pops by scaling is not. The same reasoning retires two smaller things: the
+highlight box is **square** (`drawbox` has no corner radius) and **does not
+sweep or fade in** (`drawbox`'s colour is not a per-frame expression). This is
+the D-211/D-229 scope line applied a third time — do not offer a preview the
+export cannot reproduce.
+
+**Word timings are derived**, not transcribed: a `.srt` cue carries only its own
+in/out, so each word takes a share of the cue proportional to its character
+count. It is integer arithmetic both engines hold, so both derive identical
+windows. Wiring the real transcript word timings is a named follow-up; the model
+already fits it (`CaptionWord.start`/`end` are just numbers).
+
+### Decision 4 — per-word layout is OURS, which needs one new measurement command
+
+An animated caption positions each **word** itself — D-229's "make the layout
+ours" one level down, for the identical reason: it is the only way `ab_glyph`
+and `drawtext` put a word in the same place. But a word's x depends on the
+advances of the words before it, and an advance is a glyph measurement only the
+Rust side can make.
+
+So `chroma_measure_caption_words` measures a batch with the same advance-and-kern
+walk the preview rasterises with, and `captionMetrics.ts` caches it for the
+**synchronous** export compiler — the same "the compiler stays pure, the caller
+supplies what only it can know" split `fontFiles` already uses (D-197), warmed
+in `runEditorExport` right where `loadTextFonts()` is. A word with no
+measurement **refuses the export** (`captionClipsMissingMetrics`) rather than
+compiling a line stacked at x=0.
+
+`slam` needs no cross-word measurement (one centred word at a time), which is
+why it is the one kind that would survive if this plumbing were ever removed.
+
+### What shipped, and what did NOT
+
+**Shipped:** the Captions panel (Import tab keeping D-229's flow verbatim, plus
+a Styles library with a live CSS thumbnail per preset), the full property editor
+including every animation knob, per-word rendering in **both** engines,
+`editor_list_caption_presets` / `editor_add_caption_preset` / an
+animation-extended `editor_set_caption_style`, and **8 presets**:
+`plain-subtitle`, `plain-clean` (Chroma's own), and `caption-highlight`,
+`caption-kinetic-slam`, `caption-pill-karaoke`, `caption-neon-accent`,
+`caption-clip-wipe`, `caption-editorial-build` (adapted — D-244).
+
+**NOT built, each named so the next agent needs no re-scraping.** The owner's
+target was all 19 catalogue looks; these are the ones the native vocabulary
+genuinely cannot express yet, with the specific blocker:
+
+- `caption-gradient-fill` — an animated gradient masked to the glyphs. Needs a
+  shader or a per-glyph mask; `drawtext` fills flat colour only.
+- `caption-neon-glow` — real bloom. Needs a blur in both engines.
+- `caption-glitch-rgb` — per-channel offset draws composited additively.
+- `caption-matrix-decode` — per-CHARACTER text substitution per frame.
+  Expressible in principle as many `enable`d nodes; a real node-count problem.
+- `caption-texture` / `texture-mask-text` — image-filled type (their lava /
+  marble / metal / wood / concrete / rock maps). Needs glyph-shaped masking.
+- `caption-parallax-layers` — depth-offset duplicate layers.
+- `caption-camera-follow` — a camera pull-back plus radial motion blur.
+- `caption-particle-burst` — particles.
+- `caption-emoji-pop` — colour-emoji rasterisation, which the single-face
+  `.ttf` catalogue (D-212) has no path for, plus a scale pop.
+- `caption-blend-difference` — a per-pixel blend mode against the picture.
+- `caption-weight-shift` — animating font WEIGHT, i.e. swapping face per word
+  mid-cue; the model carries one font per style.
+- `morph-text` — gooey glyph morphing.
+
+Two further honest gaps, both named on the roadmap:
+
+- **Typography.** The reference sets these in Montserrat, Anton, Poppins,
+  Outfit, Space Grotesk and Gabarito; Chroma's catalogue is system faces only,
+  because both renderers must read the same single-face `.ttf` (D-212). Each
+  preset names the nearest catalogue face and says so. All six are SIL OFL 1.1
+  and freely bundleable — bundling them is a mechanical follow-up.
+- **Filtergraph size.** A long subtitle track with per-word animation emits
+  roughly one node per word. Fine for a normal cue; a 400-cue `.srt` set to
+  animate would be a very large graph. Not hit in practice yet, not optimised.
+
+**Verification.** `chroma-timeline` **238/238** (17 new `caption_anim` tests);
+the app crate's own caption tests **20/20** (8 new, covering the preview side of
+every animation kind, the animated cache key, and determinism);
+`@chroma/editor` **1256/1256** across 58 files (was 1216 — 40 new), including
+**5 real-ffmpeg pixel tests** that render an animated caption and prove it
+actually animates (a build really accumulates words, a slam really slides, a
+highlight box really travels word to word) and that a static caption still
+compiles to D-229's own filtergraph unchanged; 6 panel DOM tests; 10
+preset-invariant tests. `cargo test --workspace` otherwise green — the one
+failure is the pre-existing B-097
+(`track_resolution_opaque_top_wins_across_two_video_tracks`), untouched here.
+`tsc` zero new errors; `cargo fmt`/`clippy` clean on new code.
+
+Two premises this pass got wrong and had to fix, both caught by the tests
+themselves rather than by review, and both worth knowing before extending this:
+a slam's alpha and its offset are driven by the SAME easing, so any moment the
+word has visibly moved it is also still faint (an opaque-pixel bounds helper
+finds nothing); and with synthetic advances only the FIRST word's pen is
+exactly predictable, because ffmpeg still draws each word at its real glyph
+width.
+
+---
+
+## D-244 — HyperFrames' caption catalogue is the design reference, vendored as design only, under Apache-2.0
+
+**Context.** D-243 needed real reference for "exact design" looks. The owner
+named `hyperframes.heygen.com/catalog` and asked for fidelity ("we want all of
+them exact design and then highly customizable").
+
+**What was checked, first-hand.** The `heygen-com/hyperframes` repository
+carries a real `LICENSE` — Apache License 2.0, "Copyright 2026 HeyGen, Inc." —
+confirmed by fetching the file and the GitHub API's own `spdx_id`
+(`Apache-2.0`); the repo is active (pushed 2026-09-08). The catalogue sources
+are real files at `docs/public/catalog/components/caption-*.json`.
+**Apache-2.0 is one-way compatible with AGPL-3.0**, so incorporating it here is
+fine and the combined work stays AGPL-3.0.
+
+An earlier reading of this — that the catalogue was unlicensed proprietary
+documentation — was **wrong**, and is recorded here because it briefly changed
+the plan mid-build.
+
+**Decision: take the DESIGN, ship none of the code.** No HyperFrames source is
+in this repo. Their compositions are HTML + CSS + GSAP rendered in a browser;
+Chroma renders captions natively, twice (D-243 Decision 1). What is reused is
+the design read off their real sources — colour values, type treatment, layout,
+per-word timing feel — re-expressed in `CaptionStyle`/`CaptionAnimation` terms.
+This is the same relationship the repo already has with
+`scratch/resolve-reference/`: a real reference, a native reimplementation.
+
+**How the attribution obligation is met**, since Apache-2.0 has real terms even
+though nothing is copied verbatim:
+
+- `captionPresets.ts`'s module header names the project, the URL, the licence
+  and the copyright line, and states exactly what was taken and what changed.
+- Every adapted preset carries a per-preset `note` naming its source component
+  AND its specific divergence (a `clipPath` wipe that became a rise, a rounded
+  box that became square, a glow that is not reproduced).
+  `captionPresets.test.ts` **enforces** that every preset whose id is a
+  catalogue slug says both "HyperFrames" and "Apache-2.0" — attribution that a
+  test protects, not a comment that can rot.
+- The note is shown in the panel's own tooltip, so the divergence is visible
+  where the choice is made rather than buried in a doc.
+
+**Rejected: embedding HyperFrames as a runtime dependency** (its `add` CLI
+pulling components into the app). Legally fine, architecturally wrong — see
+D-243 Decision 1; the owner also ruled it out directly.
+
+**No new package dependency was added.** This is vendored design, not a dep, so
+there is nothing in `package.json` to audit — which is itself why this entry
+exists rather than a one-line dependency note.

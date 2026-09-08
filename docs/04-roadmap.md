@@ -1791,64 +1791,74 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 
-28. **A real caption panel + styled, Motion-built caption presets** (owner,
-    2026-09-08). Current state (D-229) is import-only: clicking "Subtitles"
-    just prompts for an `.srt`/`.vtt` file. The owner wants a proper panel
-    instead — opens on click, offers Import (`.srt`/`.vtt`, existing D-229
-    path) **and** a library of styled caption presets to drop straight onto
-    the timeline, plus a real editor for every property of a caption once
-    placed (font, size, color, background, position, animation-in/out, etc.
-    — "edit everything about caption like font this that").
-    - **Reference, explicit (open both before designing anything, per
-      CLAUDE.md's "research the real pattern first" rule — do not build from
-      this bullet's paraphrase):**
-      - The owner's own pasted screenshot in this session (2026-09-08,
-        message shown when this item was filed) — a CapCut-style panel: a
-        library grid of caption style thumbnails on one side, a live-editable
-        instance with a full property inspector (font family, size, weight,
-        color, outline/background, position) on the other. Re-derive the
-        exact layout from the real screenshot if it is still in this
-        session's own transcript; otherwise treat the URL below as
-        authoritative and scrape it fresh.
-      - **https://hyperframes.heygen.com/catalog/components/caption-camera-follow**
-        and the rest of that catalog ("look at ALL the caption components
-        there") — a real, live component library of animated caption styles
-        (word-by-word reveal, karaoke-highlight, camera-follow, etc.). Visit
-        the actual site (a live page, not a static image — use the browser
-        tools, the same way this session scraped DaVinci Resolve's own Edit
-        page into `scratch/resolve-reference/` before building the Inspector)
-        and catalogue what's actually there before picking which presets to
-        build first. The owner's own words: **"we want all of them exact
-        design and then highly customizable."**
-    - **Owner's own explicit build suggestion: use the Motion tab /
-      `packages/motion-engine/` for this** — "lets use motion :) for building
-      couple of them." The motion engine already has real primitives
-      (`text`, `emphasis`, `matrix`, `graph`, `layers`, `scene3d`,
-      `particleflow`) and a JSON-manifest compiler (D-047+) that is
-      exactly the shape a word-reveal/karaoke-highlight caption animation
-      needs. Whoever picks this up should evaluate seriously whether each
-      caption PRESET is best modelled as a Motion scene/manifest rendered
-      into the Edit timeline (reusing the existing engine, keeping one
-      animation system in the app rather than two) versus a native
-      `TrackKind::Subtitle`/`CaptionStyle` extension (D-229's existing model,
-      simpler for STATIC styling but with no real animation timeline of its
-      own today) — this is a real architectural decision, not a coin flip,
-      and deserves its own `D-NNN` either way. If Motion-authored captions
-      win, the cross-tab question D-229's own predecessor work flagged as
-      open ("using a Motion composition as a pool item inside an Edit
-      timeline") stops being hypothetical — this feature is exactly the
-      forcing function for it.
-    - **Whatever the model, preview and export must still agree** — this
-      repo's standing bar (B-090/B-094/B-095/B-098's family) applies here
-      exactly as it did to D-229's own static captions, and doubles in
-      difficulty the moment the captions actually ANIMATE (a word-reveal
-      timed to speech is exactly the kind of thing that's easy to get right
-      in a live JS-driven preview and very easy to get subtly wrong once
-      compiled to a static ffmpeg filtergraph).
-    - Not scoped further than this — the next agent to pick this up should
-      do the reference research first (both the screenshot and the live
-      HeyGen catalog), then come back and write the real spec / `D-NNN`
-      before implementing.
+28. **A real caption panel + styled caption presets** (owner, 2026-09-08).
+    **Largely shipped — D-243/D-244**, `docs/notes/caption-presets.md`. The
+    architecture question this item raised is answered and closed; what
+    remains is a named list of individual presets, not a design problem.
+    - ✅ **The panel.** `CaptionPanel.tsx` replaces D-229's straight-to-file-
+      picker button: a **Styles** tab (the preset library, grouped by tone,
+      each tile a live CSS thumbnail of that preset's own style) and an
+      **Import** tab carrying D-229's `.srt`/`.vtt` flow verbatim.
+    - ✅ **The property editor.** `CaptionInspectorPanel.tsx` now edits every
+      animation knob (kind, the three per-word colours, the highlight box and
+      its opacity/padding, animate-in duration, rise, word gap) alongside the
+      static ones. A preset is pure DATA — a `CaptionStyle` — so everything it
+      sets stays editable (owner: "keep the style configurable as much as
+      possible").
+    - ✅ **The architecture decision (D-243).** Native `CaptionStyle`
+      extension, NOT a Motion manifest. Investigated for real and disqualified
+      on facts: the Motion engine has no render-to-file path at all
+      (`@remotion/renderer` is not a dependency anywhere — only the dev CLI),
+      and neither Edit renderer is a browser (the preview composites in Rust,
+      the export is an ffmpeg filtergraph), so hosting a Motion clip needs a
+      headless-Chromium frame server on BOTH paths. The owner independently
+      confirmed the same call mid-build ("no new heavy runtime dependency
+      chroma only"). Full reasoning, including why the HyperFrames renderer
+      itself was rejected (network in the render path), in D-243.
+    - ✅ **Per-word animation in BOTH engines**, with the vocabulary
+      deliberately closed to what ffmpeg can evaluate per frame without
+      changing its own text layout — alpha, dx/dy, discrete per-word colour, a
+      binary highlight box. **Per-word scale is excluded on purpose** (D-243
+      Decision 3): `fontsize` is the input to the measurement that makes the
+      two engines agree (D-212).
+    - ✅ **MCP**: `editor_list_caption_presets`, `editor_add_caption_preset`,
+      and `editor_set_caption_style` extended with the animation fields — the
+      same `applyCaptionPreset` the panel calls.
+    - ✅ **8 presets shipped**: `plain-subtitle`, `plain-clean` (Chroma's own),
+      `caption-highlight`, `caption-kinetic-slam`, `caption-pill-karaoke`,
+      `caption-neon-accent`, `caption-clip-wipe`, `caption-editorial-build`
+      (adapted from HyperFrames' catalogue, Apache-2.0 — D-244).
+    - ⬜ **11 catalogue presets NOT built**, each blocked on a real capability
+      the native vocabulary lacks rather than on time. Named individually with
+      their blockers in D-243 so a follow-up needs no re-scraping:
+      `caption-gradient-fill`, `caption-neon-glow`, `caption-glitch-rgb`,
+      `caption-matrix-decode`, `caption-texture`, `texture-mask-text`,
+      `caption-parallax-layers`, `caption-camera-follow`,
+      `caption-particle-burst`, `caption-emoji-pop`,
+      `caption-blend-difference`, `caption-weight-shift`, `morph-text`.
+      Most need a real effect capability in both renderers (a blur, a
+      glyph-shaped mask, a blend mode, particles) — which is the point at
+      which the Motion/Remotion route deserves re-opening, per D-243.
+    - ⬜ **Bundle the reference typefaces.** The looks are set in Montserrat,
+      Anton, Poppins, Outfit, Space Grotesk and Gabarito; Chroma's catalogue is
+      system faces only (D-212 requires both renderers read the same
+      single-face `.ttf`), so each preset names the nearest one and says so.
+      All six are SIL OFL 1.1 and freely bundleable — a mechanical follow-up
+      that would visibly raise fidelity across every adapted preset.
+    - ⬜ **Word timings from the transcript.** Windows are currently DERIVED
+      from each word's character count across the cue. D-189's transcript
+      already has real timed words; substituting them changes no renderer
+      (`CaptionWord.start`/`end` are just numbers) and is the single biggest
+      quality win available to karaoke/highlight presets. **Pairs directly with
+      D-238's auto-captioning**, which already groups those same timed words
+      into cues — this is the same data taken one level finer (per word inside
+      a cue, rather than per cue), so the two should be done by the same hand.
+    - ⬜ **Rounded / sweeping highlight boxes.** Both are square and binary
+      because `drawbox` has neither a corner radius nor a per-frame alpha
+      expression. Needs a real rounded-rect primitive in both engines.
+    - ⬜ **Filtergraph size.** Per-word animation emits roughly one node per
+      word; a 400-cue `.srt` set to animate would build a very large graph.
+      Not hit in practice, not optimised.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

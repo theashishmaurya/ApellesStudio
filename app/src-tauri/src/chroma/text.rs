@@ -381,6 +381,57 @@ pub fn chroma_text_fonts() -> Vec<ResolvedFont> {
         .collect()
 }
 
+/// Measure a batch of caption words for the export compiler (D-243).
+///
+/// **Why this command exists at all.** An animated caption positions each WORD
+/// itself rather than letting either engine lay out a line — the same move
+/// D-229 made for lines, one level down, and for the same reason: it is the
+/// only way the `ab_glyph` preview and the ffmpeg export can put a word in the
+/// same place. But a word's x depends on the advance of every word before it,
+/// and an advance is a glyph measurement only this side can make. So the
+/// export compiler is *given* the measurements, exactly as it is already given
+/// `fontFiles` — "the compiler stays pure, the caller supplies what only it
+/// can know" (D-197).
+///
+/// Returns one advance per entry of `words`, in the same order. A batch rather
+/// than one call per word because a 400-cue `.srt` is thousands of words and
+/// the per-call IPC would dominate the actual measuring.
+///
+/// The measurement is **the same advance-and-kern walk [`rasterise`] performs**,
+/// and the same one FreeType (and so ffmpeg's `drawtext`) performs — no shaping
+/// beyond kerning, by design (see the module doc). Whitespace and glyphless
+/// characters still contribute their advance, which is what makes this the
+/// width `drawtext` would lay out for the same string.
+#[tauri::command]
+pub fn chroma_measure_caption_words(
+    font: String,
+    font_px: u32,
+    words: Vec<String>,
+) -> Result<Vec<f64>, String> {
+    // Resolve and load the face ONCE for the whole batch rather than per word
+    // — `load_font` is cached, but `resolve_font_path` still walks the
+    // catalogue, and this runs over every word of every caption on export.
+    let face = load_font(&resolve_font_path(&font)?)?;
+    let scale = freetype_equivalent_scale(&face, font_px.max(1) as f32);
+    let scaled = face.as_scaled(scale);
+    Ok(words
+        .iter()
+        .map(|text| {
+            let mut pen_x = 0.0f32;
+            let mut prev: Option<GlyphId> = None;
+            for ch in text.chars() {
+                let id = face.glyph_id(ch);
+                if let Some(p) = prev {
+                    pen_x += scaled.kern(p, id);
+                }
+                pen_x += scaled.h_advance(id);
+                prev = Some(id);
+            }
+            pen_x as f64
+        })
+        .collect())
+}
+
 fn first_existing(candidates: &[&str]) -> Option<PathBuf> {
     candidates
         .iter()

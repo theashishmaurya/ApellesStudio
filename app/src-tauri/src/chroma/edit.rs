@@ -890,8 +890,22 @@ fn draw_captions_onto(
     }
     let (w, h) = (frame.width(), frame.height());
     let mut canvas = frame.to_rgba8();
+    // D-243 — an animated caption needs to know where in its OWN clip this
+    // frame falls. Clip-local, not session-relative, so a cue that is moved or
+    // rippled animates identically (the same rule its word windows follow).
+    let fps = timeline.fps();
     for cap in captions {
-        let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h)?;
+        let time = if fps > 0.0 {
+            caption_render::CaptionTime {
+                t_secs: (pos - cap.clip.start_frame) as f64 / fps,
+                dur_secs: cap.clip.duration as f64 / fps,
+            }
+        } else {
+            // A timeline with no usable frame rate has no time axis to animate
+            // along; drawing the static first frame is the honest degradation.
+            caption_render::CaptionTime::STATIC
+        };
+        let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h, time)?;
         // Full opacity: a caption has no `opacity`/fade of its own (see
         // `Clip::caption`'s doc) — its only transparency is the background
         // box's, which is already baked into the layer's own alpha.

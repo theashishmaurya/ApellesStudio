@@ -2269,6 +2269,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_unlink_clip,
             chroma::edit::chroma_timeline_link_clips,
             chroma::text::chroma_text_fonts,
+            chroma::text::chroma_measure_caption_words,
             chroma::subtitles::chroma_import_subtitles,
             chroma::subtitles::chroma_export_subtitles,
             chroma::filmstrip::chroma_clip_thumbnails,

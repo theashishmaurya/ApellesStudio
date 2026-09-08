@@ -28,10 +28,16 @@ import { timelineFps, transitionClipIndices, type Timeline } from './timeline';
 import {
   buildExportFfmpegArgs,
   captionClipsMissingFonts,
+  captionClipsMissingMetrics,
+  captionsForExport,
   textClipsMissingFonts,
   type TimelineExportOptions,
 } from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
+// D-243 — the per-word advances an animated caption is laid out from.
+import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
+import { captionLayout, captionLines } from './caption';
+import { captionAnimationOf, isPerWordAnim, isSingleWordAnim } from './captionAnim';
 // D-236 — a clip's own persisted speed ramp, which clashes with a transition
 // for exactly the reason an export-time flat override does.
 import { hasSpeedRamp } from './speedRamp';
@@ -229,6 +235,22 @@ export function compileEditorExportArgs(a: {
     }
   }
 
+  // D-243 — the measured per-word advances an ANIMATED caption is laid out
+  // from, read synchronously from the module cache `runEditorExport` warms,
+  // exactly as `fontFiles` is read from its own. Static captions need none.
+  const captionMetrics = captionMetricsSnapshot();
+  const missingMetrics = captionClipsMissingMetrics(tl, captionMetrics, fps, width, height);
+  if (missingMetrics.length > 0) {
+    // Refused for the same reason a missing font is: without a word's advance
+    // the compiler would place it at x=0, stacking the line on itself — an
+    // export that silently disagrees with the preview, which is the exact
+    // defect class this repo keeps closing.
+    const words = [...new Set(missingMetrics.map((m) => m.word))].slice(0, 8).join(', ');
+    return {
+      error: `no measured width for ${missingMetrics.length} word(s) of an animated caption (${words}) — the caption metrics cache is cold. This is warmed automatically by runEditorExport; if you are calling compileEditorExportArgs directly, await warmCaptionMetrics first.`,
+    };
+  }
+
   const opts: TimelineExportOptions = {
     fps,
     width,
@@ -238,9 +260,57 @@ export function compileEditorExportArgs(a: {
     freezeOverrides,
     hasAudioOverrides: resolveHasAudioOverrides(tl),
     fontFiles,
+    captionMetrics,
   };
   const args = buildExportFfmpegArgs(tl, outPath, opts);
   return { ok: true, outPath, args };
+}
+
+/**
+ * D-243 — measure every word of every ANIMATED caption on the current
+ * timeline, so the synchronous compiler can read them out of the module cache.
+ *
+ * **Why the composition size is a parameter.** A word's measurement is taken
+ * at the caption's RESOLVED font size in pixels, and that resolves against the
+ * output height (`size` is a fraction of it). Exporting the same timeline at
+ * 1080p and at 720p therefore needs two different measurements of the same
+ * word, which is exactly why `captionMetricKey` includes `fontPx`. Passing the
+ * dimensions in rather than assuming the timeline's own is what keeps the
+ * warmed cache correct for the export actually about to run.
+ *
+ * A no-op for a timeline whose captions are all static — they carry no
+ * per-word layout, and ffmpeg measures a whole line itself.
+ */
+export async function warmAnimatedCaptionMetrics(
+  width: number,
+  height: number,
+  fps: number,
+): Promise<void> {
+  const tl = useEditorTimelineStore.getState().timeline;
+  if (!tl || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return;
+  }
+  const requests: Array<{ font: string; fontPx: number; text: string; durSecs: number }> = [];
+  for (const c of captionsForExport(tl, fps)) {
+    const anim = captionAnimationOf(c.style);
+    if (!isPerWordAnim(anim.kind)) continue;
+    const lines = captionLines(c.cue.text);
+    if (lines.length === 0) continue;
+    const layout = captionLayout(
+      c.style,
+      width,
+      height,
+      isSingleWordAnim(anim.kind) ? 1 : lines.length,
+    );
+    requests.push({
+      font: c.style.font,
+      fontPx: layout.font_px,
+      text: c.cue.text,
+      durSecs: Math.max(0, c.endSec - c.startSec),
+    });
+  }
+  if (requests.length === 0) return;
+  await warmCaptionMetrics(requests);
 }
 
 export interface EditorExportResult {
@@ -262,6 +332,18 @@ export async function runEditorExport(
   // Inspector has ever rendered a font picker. Idempotent and a no-op once
   // loaded (see `textFonts.ts`), so this costs nothing on every later call.
   await loadTextFonts();
+  // D-243 — and the per-word advances every ANIMATED caption needs, for the
+  // identical reason: the compiler below is synchronous, so anything it needs
+  // from the backend has to already be in memory. Derived from the timeline
+  // the compiler is about to read, and a no-op for a timeline whose captions
+  // are all static.
+  {
+    const tl = useEditorTimelineStore.getState().timeline;
+    const w = Math.round(Number(a?.width));
+    const h = Math.round(Number(a?.height));
+    const fps = a?.fps !== undefined ? Number(a.fps) : tl ? timelineFps(tl) : NaN;
+    await warmAnimatedCaptionMetrics(w, h, fps);
+  }
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;
   const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args: compiled.args });

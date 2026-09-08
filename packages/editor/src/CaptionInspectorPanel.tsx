@@ -61,6 +61,14 @@ import {
   type CaptionAlign,
   type CaptionStyle,
 } from './timeline';
+// D-243 — the animation half of a caption's style.
+import {
+  captionAnimationOf,
+  isPerWordAnim,
+  isSingleWordAnim,
+  type CaptionAnimation,
+  type CaptionAnimKind,
+} from './captionAnim';
 import { useEditorTimelineStore } from './timelineStore';
 import { baseFontFamilies, composeFontStyleKey, fontStyleOf, useTextFonts } from './textFonts';
 
@@ -78,6 +86,22 @@ const ALIGNMENTS: Array<{ value: CaptionAlign; label: string }> = [
   { value: 'center', label: 'Centre' },
   { value: 'right', label: 'Right' },
 ];
+
+/** D-243 — the animation kinds, labelled for the picker. Deliberately the
+ *  whole closed set from `captionAnim.ts`: an author can reach any look the
+ *  renderers implement from here, not only the ones a preset happens to use. */
+const ANIM_KINDS: Array<{ value: CaptionAnimKind; label: string }> = [
+  { value: 'none', label: 'None (static)' },
+  { value: 'highlight', label: 'Highlight' },
+  { value: 'karaoke', label: 'Karaoke' },
+  { value: 'slam', label: 'Kinetic slam' },
+  { value: 'build', label: 'Word build' },
+];
+
+/** The colour the Highlight-box switch turns on with — a visible red rather
+ *  than an empty string, so flipping the switch always produces a box the user
+ *  can see and then recolour. Matches the Highlight preset's own accent. */
+const DEFAULT_HIGHLIGHT_BOX = '#FF1745';
 
 /** Frames → `HH:MM:SS:FF`, the timecode form the reference's own Time In/Out
  *  column uses. Frame-accurate rather than seconds, because a caption's in and
@@ -162,6 +186,23 @@ export function CaptionInspectorPanel() {
     } else {
       applyOp({ kind: 'set_caption_cue_style', track: primary.track, clip: clipIndex, patch: p });
     }
+  };
+
+  /** D-243 — the resolved animation of whatever style is in effect. Read
+   *  through `captionAnimationOf` rather than off the field, so an absent key
+   *  and an explicit `kind: 'none'` are the same thing here too. */
+  const anim = captionAnimationOf(style);
+
+  /** Write one animation field.
+   *
+   *  Merges onto the RESOLVED animation rather than the stored one, so editing
+   *  a single knob on a style that carries no `animation` key at all writes a
+   *  complete, self-describing animation instead of a fragment whose other
+   *  fields would then silently follow any future change to the defaults.
+   *  Goes through `patchStyle`, so it lands at the same level (cue override or
+   *  track) as every other control here. */
+  const patchAnim = (p: Partial<CaptionAnimation>) => {
+    patchStyle({ animation: { ...anim, ...p } });
   };
 
   return (
@@ -440,6 +481,239 @@ export function CaptionInspectorPanel() {
               Position Y sets where the last line sits; extra lines stack upward. Scale, rotation,
               crop, opacity and fades don’t apply to a caption — its look is entirely this style.
             </p>
+
+            {/* D-243 — the ANIMATION half of the style.
+                Every knob a preset sets is editable here, deliberately: a
+                preset is data applied through this same style, not a baked-in
+                look (owner, 2026-09-08: "keep the style configurable as much
+                as possible"). The rows below are gated on the animation kind
+                only where a field genuinely does nothing — the same rule the
+                background rows above already follow. */}
+            <div className="mt-1 border-t border-border-color pt-2" data-testid="caption-animation">
+              <div className={row}>
+                <span className="text-text-secondary">Animation</span>
+                <Select
+                  value={anim.kind}
+                  disabled={trackLocked}
+                  onValueChange={(v: string | null) => {
+                    if (!v) return;
+                    if (ANIM_KINDS.some((k) => k.value === v)) {
+                      patchAnim({ kind: v as CaptionAnimKind });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-7 w-32" data-testid="caption-anim-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ANIM_KINDS.map((k) => (
+                      <SelectItem key={k.value} value={k.value}>
+                        {k.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {isPerWordAnim(anim.kind) && (
+                <div className="mt-2 flex flex-col gap-2">
+                  {/* Per-word colours. `null` means "use the caption colour",
+                      which is why each is a nullable swatch with a clear
+                      button rather than a plain colour input. */}
+                  {(
+                    [
+                      ['active_color', 'Active word'],
+                      ['spoken_color', 'Spoken'],
+                      ['upcoming_color', 'Upcoming'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label className={row} key={key}>
+                      <span className="text-text-secondary">{label}</span>
+                      <span className="flex items-center gap-1.5">
+                        <Input
+                          disabled={trackLocked}
+                          placeholder="default"
+                          className="h-7 w-20 text-right font-mono"
+                          value={anim[key] ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value.trim();
+                            patchAnim({ [key]: v === '' ? null : v });
+                          }}
+                        />
+                        <input
+                          type="color"
+                          disabled={trackLocked}
+                          aria-label={`${label} colour`}
+                          className="h-7 w-7 shrink-0 cursor-pointer rounded border border-border-color bg-transparent p-0.5"
+                          value={
+                            /^#[0-9a-fA-F]{6}$/.test(anim[key] ?? '')
+                              ? (anim[key] as string)
+                              : style.color
+                          }
+                          onChange={(e) => patchAnim({ [key]: e.target.value })}
+                        />
+                      </span>
+                    </label>
+                  ))}
+
+                  <label className={row}>
+                    <span className="text-text-secondary">Highlight box</span>
+                    <Switch
+                      checked={anim.active_box_color !== null}
+                      disabled={trackLocked}
+                      onCheckedChange={(on: boolean) =>
+                        // Turning it on picks a visible default rather than an
+                        // empty string, so the switch always produces a box a
+                        // user can actually see and then recolour.
+                        patchAnim({ active_box_color: on ? DEFAULT_HIGHLIGHT_BOX : null })
+                      }
+                    />
+                  </label>
+
+                  {anim.active_box_color !== null && (
+                    <>
+                      <label className={row}>
+                        <span className="text-text-secondary pl-2">Colour</span>
+                        <span className="flex items-center gap-1.5">
+                          <Input
+                            disabled={trackLocked}
+                            className="h-7 w-20 text-right font-mono"
+                            value={anim.active_box_color}
+                            onChange={(e) => patchAnim({ active_box_color: e.target.value })}
+                          />
+                          <input
+                            type="color"
+                            disabled={trackLocked}
+                            aria-label="Highlight box colour"
+                            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-border-color bg-transparent p-0.5"
+                            value={
+                              /^#[0-9a-fA-F]{6}$/.test(anim.active_box_color)
+                                ? anim.active_box_color
+                                : DEFAULT_HIGHLIGHT_BOX
+                            }
+                            onChange={(e) => patchAnim({ active_box_color: e.target.value })}
+                          />
+                        </span>
+                      </label>
+                      <label className={row}>
+                        <span className="text-text-secondary pl-2">Opacity</span>
+                        <span className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            step={1}
+                            min={0}
+                            max={100}
+                            disabled={trackLocked}
+                            className={numInput}
+                            value={Math.round(anim.active_box_opacity * PERCENT)}
+                            onChange={(e) => {
+                              const pct = Number(e.target.value);
+                              if (!Number.isFinite(pct)) return;
+                              patchAnim({
+                                active_box_opacity: Math.min(1, Math.max(0, pct / PERCENT)),
+                              });
+                            }}
+                          />
+                          <span className="text-text-secondary/60">%</span>
+                        </span>
+                      </label>
+                      {(
+                        [
+                          ['active_box_pad_x', 'Pad X'],
+                          ['active_box_pad_y', 'Pad Y'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label className={row} key={key}>
+                          <span className="text-text-secondary pl-2">{label}</span>
+                          <Input
+                            type="number"
+                            step={0.01}
+                            min={0}
+                            max={2}
+                            disabled={trackLocked}
+                            className={numInput}
+                            value={Number(anim[key].toFixed(3))}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (Number.isFinite(v) && v >= 0) patchAnim({ [key]: v });
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </>
+                  )}
+
+                  <label className={row}>
+                    <span className="text-text-secondary">Animate in</span>
+                    <span className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        step={0.01}
+                        min={0}
+                        max={5}
+                        disabled={trackLocked}
+                        className={numInput}
+                        value={Number(anim.enter_secs.toFixed(3))}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v) && v >= 0) patchAnim({ enter_secs: v });
+                        }}
+                      />
+                      <span className="text-text-secondary/60">s</span>
+                    </span>
+                  </label>
+
+                  {/* `Rise` only moves anything for the kinds whose words
+                      actually travel vertically; `slam` moves horizontally and
+                      the line-held kinds do not move at all. */}
+                  {anim.kind === 'build' && (
+                    <label className={row}>
+                      <span className="text-text-secondary">Rise</span>
+                      <Input
+                        type="number"
+                        step={0.01}
+                        min={0}
+                        max={2}
+                        disabled={trackLocked}
+                        className={numInput}
+                        value={Number(anim.enter_rise.toFixed(3))}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v) && v >= 0) patchAnim({ enter_rise: v });
+                        }}
+                      />
+                    </label>
+                  )}
+
+                  {/* The word gap is what stands in for a space, so it only
+                      exists for the kinds that lay out a whole line. */}
+                  {!isSingleWordAnim(anim.kind) && (
+                    <label className={row}>
+                      <span className="text-text-secondary">Word gap</span>
+                      <Input
+                        type="number"
+                        step={0.01}
+                        min={0}
+                        max={2}
+                        disabled={trackLocked}
+                        className={numInput}
+                        value={Number(anim.word_gap.toFixed(3))}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v) && v >= 0) patchAnim({ word_gap: v });
+                        }}
+                      />
+                    </label>
+                  )}
+
+                  <p className="text-[10px] leading-snug text-text-secondary/60">
+                    Word timings are derived from each word’s length across the cue. The highlight
+                    box is square and switches on and off per word — ffmpeg can’t round or fade one,
+                    so a preview that did wouldn’t export (D-243).
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </InspectorSection>
       </div>
