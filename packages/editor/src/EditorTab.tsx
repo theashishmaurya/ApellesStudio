@@ -217,7 +217,7 @@ export function EditorTab() {
                 selected. */}
             <div className="flex h-full flex-col min-h-0">
               <TextClipInspectorPanel />
-              {/* D-229 — the same stacking, for the same reasons, for an
+              {/* D-230 — the same stacking, for the same reasons, for an
                   adjustment clip's correction. The two are mutually exclusive
                   by construction (a clip cannot be both), so only ever one of
                   them renders anything. */}

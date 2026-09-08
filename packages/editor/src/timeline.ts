@@ -294,19 +294,19 @@ export interface Clip {
    *  compiling to `drawtext`, which has no scale/rotate/crop at all). See
    *  `docs/notes/text-title-clips.md`. */
   text?: TextLayer | null;
-  /** Adjustment layer (D-229) — mirrors `chroma_timeline::Clip::adjustment`.
+  /** Adjustment layer (D-230) — mirrors `chroma_timeline::Clip::adjustment`.
    *  Present (non-null) = this clip is an ADJUSTMENT CLIP: it contributes no
    *  picture of its own and instead applies a primary colour correction to
    *  everything composited BENEATH it, for the span it covers. `source_path`
    *  is empty on such a clip, as on a text clip. Absent/`null` = an ordinary
-   *  clip, which is every clip in every pre-D-229 project.
+   *  clip, which is every clip in every pre-D-230 project.
    *
    *  A `Clip` variant rather than a new `Track.kind`, following `text`'s own
    *  precedent: Resolve puts an adjustment clip on an ordinary video track
    *  above the clips it affects, and track-index z-order already means
    *  "beneath". The genuinely new part is the compositing MODEL — an operator
    *  on the canvas so far, rather than a layer with pixels — see the Rust
-   *  field's doc and D-229.
+   *  field's doc and D-230.
    *
    *  **Only `opacity` applies, and only statically.** It is the correction's
    *  mix amount (`0` = no effect, `1` = full). It is NOT keyframeable and NOT
@@ -318,14 +318,14 @@ export interface Clip {
   adjustment?: AdjustmentLayer | null;
 }
 
-/** The five-parameter primary correction an adjustment clip carries (D-229) —
+/** The five-parameter primary correction an adjustment clip carries (D-230) —
  *  mirrors `chroma_types::adjustment::AdjustmentLayer` field for field.
  *
  *  Named in the Colorist's own vocabulary on purpose: an adjustment clip is
  *  emphatically NOT a second, parallel effects language. It is also not the
  *  Colorist grade itself, which is structurally unavailable here — that blob is
  *  untyped in Rust (D-020/D-025) and applied only by a wgpu shader the Edit
- *  tab's CPU preview does not run and ffmpeg could not reproduce. See D-229.
+ *  tab's CPU preview does not run and ffmpeg could not reproduce. See D-230.
  *
  *  Every field is `0` at identity, so a freshly added adjustment clip changes
  *  nothing until something moves. All five are clamped to `-1..=1`. */
@@ -401,7 +401,7 @@ export function isIdentityAdjustment(layer: AdjustmentLayer): boolean {
   });
 }
 
-/** The `NewClipFields` for an adjustment clip (D-229), ready to hand to the
+/** The `NewClipFields` for an adjustment clip (D-230), ready to hand to the
  *  ordinary `add_clip` op — placed by exactly the same op a media or text clip
  *  is, so ripple / explicit `startFrame` / track creation all come for free and
  *  there is no second placement path to keep in step. Mirrors
@@ -474,7 +474,7 @@ export const DEFAULT_TEXT_COLOR = '#FFFFFF';
  *  4s; 3s reads better for the short-form work this editor is built for) —
  *  a named constant rather than a magic number, per CLAUDE.md.
  *
- *  **Also the default span of a new ADJUSTMENT clip (D-229)**, deliberately
+ *  **Also the default span of a new ADJUSTMENT clip (D-230)**, deliberately
  *  sharing this constant rather than declaring a second one: both are
  *  generator clips with no source media to take a length from, which is
  *  exactly the case this number was chosen for (see "still/generator" above).
@@ -488,7 +488,7 @@ export function isTextClip(c: Pick<Clip, 'text'> | null | undefined): boolean {
   return c?.text != null;
 }
 
-/** D-229 — whether a clip is an ADJUSTMENT clip (an operator on the layers
+/** D-230 — whether a clip is an ADJUSTMENT clip (an operator on the layers
  *  beneath it, with no picture of its own). [`isTextClip`]'s counterpart, and
  *  the one predicate every consumer branches on, mirroring
  *  `Clip::is_adjustment` in Rust. */
@@ -496,7 +496,7 @@ export function isAdjustmentClip(c: Pick<Clip, 'adjustment'> | null | undefined)
   return c?.adjustment != null;
 }
 
-/** D-229 — whether a clip contributes no decoded picture of its own, i.e. it is
+/** D-230 — whether a clip contributes no decoded picture of its own, i.e. it is
  *  a text clip or an adjustment clip. The predicate for "don't ask the media
  *  layer about this clip": it has no `source_path` to probe, decode, filmstrip
  *  or open an ffmpeg input for. */
@@ -2437,7 +2437,7 @@ export type EditOp =
    *  colour) is a no-op — the caller is expected to have run `newTextLayer`
    *  itself to get the real error message. */
   | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> }
-  /** D-229 — patch an ADJUSTMENT clip's colour correction. A `patch`, not the
+  /** D-230 — patch an ADJUSTMENT clip's colour correction. A `patch`, not the
    *  full set, for exactly `set_text_clip`'s reason: the reducer merges
    *  against the clip's existing layer via [`newAdjustmentLayer`], so an
    *  omitted parameter provably keeps its value, and requiring all five would
@@ -2643,7 +2643,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.patch.content !== undefined
         ? `Set title text to "${op.patch.content}"`
         : `Edit ${clipLabel(before, op.track, op.clip)} title`;
-    // D-229 — name the parameter when exactly one changed, which is what a
+    // D-230 — name the parameter when exactly one changed, which is what a
     // slider drag or a single MCP call produces: "Adjust exposure" is a useful
     // undo entry, "Edit adjustment clip" three times over is not.
     case 'set_adjustment_clip': {

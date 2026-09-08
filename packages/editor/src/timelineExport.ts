@@ -39,7 +39,7 @@
  * to colour compiles to a `color` filter SOURCE with no `-i` at all, the same
  * shape `[base]` already uses. `docs/notes/transitions.md` §6.
  *
- * **D-229 — adjustment clips.** A `Clip.adjustment` compiles to two colour
+ * **D-230 — adjustment clips.** A `Clip.adjustment` compiles to two colour
  * filter nodes (`lutrgb` then `colorchannelmixer`, see `./adjustment.ts`)
  * spliced into the overlay chain at exactly the position that clip's `overlay`
  * would have occupied — so the stream they operate on is, by construction,
@@ -1097,7 +1097,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // z-order both have to count it. `label` is derived from its clip id
       // rather than an input index, since it has none; `t` prefixed so a text
       // label can never collide with a `v<N>` input label.
-      // D-229 — an ADJUSTMENT clip takes the exact same "no `-i`, no input
+      // D-230 — an ADJUSTMENT clip takes the exact same "no `-i`, no input
       // index, real slot in the paint order" branch, and for the same reason:
       // it occupies real timeline space and its position in the chain is what
       // decides which layers it reaches. It differs only in what gets spliced
@@ -1324,7 +1324,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       return;
     }
     if (chain.clip === null) return; // only a plate has no clip, handled above
-    // D-229 — an ADJUSTMENT clip applies its correction to the stream built so
+    // D-230 — an ADJUSTMENT clip applies its correction to the stream built so
     // far, at exactly the position in the chain its `overlay` would have taken.
     // `lastLabel` at this point is precisely "every layer below this clip
     // composited", so "applies to everything beneath it, for its own span"

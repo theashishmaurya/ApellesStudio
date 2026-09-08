@@ -123,7 +123,7 @@ pub use eq::{
 };
 
 /// The adjustment-clip primary correction + the two-stage colour operator it
-/// resolves to (D-229). Here for [`eq`]'s reason in its strongest form: the
+/// resolves to (D-230). Here for [`eq`]'s reason in its strongest form: the
 /// live-preview compositor and the ffmpeg export compiler both consume the
 /// OPERATOR this produces rather than each re-deriving the correction, which is
 /// what makes an adjustment clip's preview and its export the same maths by

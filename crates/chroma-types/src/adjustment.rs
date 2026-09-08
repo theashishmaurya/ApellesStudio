@@ -1,5 +1,5 @@
 //! **Adjustment layers** — the five-parameter primary correction an
-//! *adjustment clip* carries, and the colour operator behind it (D-229).
+//! *adjustment clip* carries, and the colour operator behind it (D-230).
 //!
 //! **What it is:** [`AdjustmentLayer`] (the stored shape of
 //! `chroma_timeline::Clip::adjustment`) plus the pure maths that turns those
@@ -15,7 +15,7 @@
 //! reason: the operator is a property of the *values*, not of the timeline, so
 //! a future L1 compositor crate can reach it without depending on L2's `Clip`.
 //!
-//! ## Why this is not the Colorist grade (D-229)
+//! ## Why this is not the Colorist grade (D-230)
 //!
 //! The obvious "effect" for an adjustment clip would be Chroma's real grading
 //! stack. It cannot be, and the reason is structural rather than a matter of
@@ -33,7 +33,7 @@
 //! So the effect is a small primary correction that **both** engines can run
 //! *identically*, named in the Colorist's own vocabulary (`exposure`,
 //! `contrast`, `saturation`, `temperature`, `tint`) so nothing here reads as a
-//! second, parallel effects language. See D-229 for the options weighed.
+//! second, parallel effects language. See D-230 for the options weighed.
 //!
 //! ## The operator — two stages, and why exactly two
 //!
@@ -72,7 +72,7 @@
 //!
 //! Per this repo's own B-098 discipline ("checked empirically instead of
 //! assumed"), every claim above was verified against real ffmpeg before any of
-//! it was written (D-229 records the runs):
+//! it was written (D-230 records the runs):
 //!
 //! - **8-bit rounding differs between the two filters.** `lutrgb` **truncates**
 //!   (`val*0.5+20` at `val=3` gives `21`, not `22`); `colorchannelmixer`
@@ -119,7 +119,7 @@ const _: () = assert!(SAT_COEFF_MAX < 2.0);
 const WB_STRENGTH: f64 = 0.3;
 
 /// The five-parameter primary correction an adjustment clip applies to
-/// everything composited beneath it (D-229).
+/// everything composited beneath it (D-230).
 ///
 /// Every field is `0.0` at identity, so a freshly-added adjustment clip is a
 /// guaranteed no-op until the user (or an MCP call) moves something — the same
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn contrast_pivot_holds_with_saturation_also_in_play() {
-        // This is the case that killed the single-matrix design (D-229): the
+        // This is the case that killed the single-matrix design (D-230): the
         // folded matrix hit `colorchannelmixer`'s ±2 cap here and crushed
         // mid-grey to 0.196. With the gain split out into its own uncapped
         // stage, mid-grey stays exactly where the pivot says it should.
@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(ops.apply_rgb8([200, 255, 250]), [255, 255, 255]);
     }
 
-    /// D-229 — the numbers below were produced by running **real ffmpeg**
+    /// D-230 — the numbers below were produced by running **real ffmpeg**
     /// (`lutrgb` → `colorchannelmixer`, fed the coefficients this module
     /// builds) over a swatch image, and are pasted here verbatim. This is the
     /// unit-level half of the preview/export parity claim: if someone changes

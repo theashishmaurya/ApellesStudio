@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the adjustment-clip colour operator (D-229).
+ * @chroma/editor — the adjustment-clip colour operator (D-230).
  *
  * **What it is:** the TypeScript mirror of `chroma_types::adjustment` — it
  * turns a `Clip.adjustment`'s five parameters into the same two-stage operator
@@ -36,7 +36,7 @@
  * settings (contrast 0.6 + saturation 0.8 already clamps, crushing mid-grey).
  * `geq` would run the whole operator verbatim with no cap at all, and was
  * rejected on measurement: **~39× slower** (76.9 s vs 1.95 s for 6 s of
- * 1080p30). See D-229.
+ * 1080p30). See D-230.
  */
 
 import type { AdjustmentLayer } from './timeline';
@@ -186,7 +186,7 @@ function coeff(v: number): string {
  * (the same trick D-213's `drawtext` uses).
  *
  * **`format=rgba` is not optional and not cosmetic.** Verified against real
- * ffmpeg (D-229): without it the graph can settle on a format with no alpha
+ * ffmpeg (D-230): without it the graph can settle on a format with no alpha
  * plane, and `colorchannelmixer` then silently drops the whole stage — the
  * filter still runs, still reports success, and simply does less than it says.
  * That is precisely the invisible-failure shape of B-090/B-095, so the format

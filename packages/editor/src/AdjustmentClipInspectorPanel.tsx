@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the Inspector's **Adjustment** section: an adjustment
- * clip's five-parameter primary correction (D-229,
+ * clip's five-parameter primary correction (D-230,
  * `docs/notes/adjustment-clips.md`).
  *
  * **Its own component, rendered ABOVE `EditorInspectorPanel`**, exactly as

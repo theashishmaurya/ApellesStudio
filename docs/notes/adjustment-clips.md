@@ -1,4 +1,4 @@
-# Adjustment clips in the Edit tab (D-229)
+# Adjustment clips in the Edit tab (D-230)
 
 Roadmap item 27 ("Organization & finishing"). Built 2026-09-08. Reference:
 DaVinci Resolve's own Edit page, `scratch/resolve-reference/adjustments.jpg`,
@@ -68,7 +68,7 @@ rather than inventing one.
 titles on the same track, hidden and locked tracks, and moving / trimming /
 splitting / deleting the adjustment clip like any other clip.
 
-### Options weighed (full writeup in D-229)
+### Options weighed (full writeup in D-230)
 
 - **`TrackKind::Adjustment`** — rejected. Contradicts D-211's precedent and
   Resolve itself; needs its own resolver, ordering rule and export pass, all

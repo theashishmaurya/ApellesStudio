@@ -8,12 +8,12 @@ One or two lines per session. Detail lives in the decision it references.
   `current_video()`.** `chroma::state`'s thumb-cache test set a current video
   and never restored it; `chroma::relight`'s "no video loaded" test asserts the
   opposite, so whichever ran first decided the result. Latent for as long as
-  both existed — D-229's slower, real-ffmpeg preview tests just widened the
+  both existed — D-230's slower, real-ffmpeg preview tests just widened the
   window enough to make it deterministic. Both halves fixed (the mutator takes
   `PROJECT_STATE_LOCK` and restores the baseline; the dependent test asserts its
   own precondition). `cargo test -p RapidRAW --lib` is now 189 passed / 1 failed
   across three runs, that one being the documented pre-existing B-097.
-- **2026-09-08** — **Adjustment clips (D-229, roadmap 27).** A clip that
+- **2026-09-08** — **Adjustment clips (D-230, roadmap 27).** A clip that
   contributes no picture of its own and instead applies one colour correction
   to every clip composited *beneath* it, for the span it covers. The
   compositing model is the new part: both renderers already paint

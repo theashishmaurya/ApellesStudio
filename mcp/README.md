@@ -47,7 +47,7 @@ The table below is the **Colorist** surface (grading, masks, relight, scopes,
 export). The Edit tab's own 44 `editor_*` tools — read/seek/**selection**
 (D-216), preview zoom (D-218), media import/removal, clip placement/split/trim/
 slip/swap/move/remove, gap removal, text/title clips (D-211), **adjustment
-clips (D-229)**, track management
+clips (D-230)**, track management
 + reorder (D-214), **markers (D-222)**, per-clip level and **parametric EQ
 (D-223/D-224)**, **transitions (D-226/D-227)**, transform + keyframes,
 multi-track

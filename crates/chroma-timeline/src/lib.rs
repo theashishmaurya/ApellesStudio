@@ -118,7 +118,7 @@
 //! pixels, exactly the division of labour every other compositing field here
 //! already has.
 //!
-//! **Adjustment clips (D-229, roadmap item 27, `docs/notes/adjustment-clips.md`):**
+//! **Adjustment clips (D-230, roadmap item 27, `docs/notes/adjustment-clips.md`):**
 //! [`Clip::adjustment`] — `Some(AdjustmentLayer)` makes a clip an operator on
 //! everything composited *beneath* it rather than a layer with pixels of its
 //! own. A third `Clip` variant beside [`Clip::text`], for D-211's reason: an
@@ -136,7 +136,7 @@
 //! reaches it — z-order needs no second rule. This crate, as ever, renders
 //! nothing: it carries the values and resolves the operator
 //! ([`Clip::adjustment_ops`]); `chroma::edit`'s compositor and
-//! `@chroma/editor`'s ffmpeg compiler turn that into pixels. See D-229 for why
+//! `@chroma/editor`'s ffmpeg compiler turn that into pixels. See D-230 for why
 //! the effect is a five-parameter primary correction rather than the Colorist
 //! grade, and why it is two filter stages.
 //!
@@ -175,7 +175,7 @@ pub use chroma_types::fade::{self, FadeCurve, fade_gain};
 // measurement behind that.)
 pub use chroma_types::eq::{self, EqBand, EqBandKind};
 
-// D-229 — same shape again: an adjustment clip's five-parameter correction and
+// D-230 — same shape again: an adjustment clip's five-parameter correction and
 // the two-stage colour operator it resolves to live in `chroma-types` (L0)
 // because the operator is a property of the VALUES, not of the timeline, and a
 // future L1 compositor crate must be able to reach it without depending on this
@@ -1334,12 +1334,12 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextLayer>,
 
-    /// `Some` = this clip is an **adjustment clip** (D-229, roadmap item 27):
+    /// `Some` = this clip is an **adjustment clip** (D-230, roadmap item 27):
     /// it contributes no picture of its own and instead applies
     /// [`AdjustmentLayer`]'s primary correction to whatever is already
     /// composited **beneath** it, for the span it covers. `source_path` is
     /// empty, exactly as for a [`Self::text`] clip. `None` (every clip in every
-    /// pre-D-229 project) is unaffected in every way.
+    /// pre-D-230 project) is unaffected in every way.
     ///
     /// **A third `Clip` variant, following [`Self::text`]'s precedent (D-211)
     /// rather than inventing a `TrackKind::Adjustment`.** Resolve puts an
@@ -1355,7 +1355,7 @@ pub struct Clip {
     /// An ordinary clip contributes its own pixels; a transition blends two
     /// named clips. This one is neither — it is an *operator on the canvas so
     /// far*. Both renderers already walk layers back-to-front, so each applies
-    /// it when the walk reaches it and z-order needs no new rule; see D-229.
+    /// it when the walk reaches it and z-order needs no new rule; see D-230.
     ///
     /// **Which of this clip's other fields apply** is deliberately narrow, and
     /// narrow *identically in both renderers* (the B-053/B-095 rule): only
@@ -1367,7 +1367,7 @@ pub struct Clip {
     /// is always full-frame. See `docs/notes/adjustment-clips.md`.
     ///
     /// `#[serde(default, skip_serializing_if = "Option::is_none")]` — a
-    /// pre-D-229 clip has no key and deserialises to `None`, no migration and
+    /// pre-D-230 clip has no key and deserialises to `None`, no migration and
     /// no sentinel needed, exactly [`Self::text`]'s own precedent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjustment: Option<AdjustmentLayer>,
@@ -1445,7 +1445,7 @@ impl Default for Clip {
             // D-211 — `None` is genuinely "an ordinary media clip", the only
             // sane default, so this one needs no non-zero migration value.
             text: None,
-            // D-229 — same, for the same reason.
+            // D-230 — same, for the same reason.
             adjustment: None,
         }
     }
@@ -1460,7 +1460,7 @@ impl Clip {
         self.text.is_some()
     }
 
-    /// D-229 — whether this clip is an **adjustment clip**: an operator applied
+    /// D-230 — whether this clip is an **adjustment clip**: an operator applied
     /// to everything composited beneath it, rather than a layer with pixels of
     /// its own. [`Self::is_text`]'s counterpart, and the one predicate every
     /// consumer branches on.
@@ -1468,7 +1468,7 @@ impl Clip {
         self.adjustment.is_some()
     }
 
-    /// D-229 — this clip's adjustment as a resolved [`AdjustmentOps`], or
+    /// D-230 — this clip's adjustment as a resolved [`AdjustmentOps`], or
     /// `None` when it is not an adjustment clip or its correction provably does
     /// nothing (so a consumer can skip the work entirely: the preview skips a
     /// per-pixel pass, the export emits no filter node).

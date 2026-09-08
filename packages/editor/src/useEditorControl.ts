@@ -967,7 +967,7 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, text: after?.text ?? null };
       },
 
-      // ---- adjustment clips (D-229) ----------------------------------------
+      // ---- adjustment clips (D-230) ----------------------------------------
       // The AI half of the Edit tab's own "Adjust" button, both through the
       // SAME `newAdjustmentClipFields` + `add_clip` / `set_adjustment_clip`
       // ops. No new placement path, exactly as for a title: an adjustment
@@ -1296,7 +1296,7 @@ export function useEditorControl(): void {
             };
           }
         }
-        // D-229 — the same refusal for an ADJUSTMENT clip, and a wider one:
+        // D-230 — the same refusal for an ADJUSTMENT clip, and a wider one:
         // its correction is always FULL-FRAME, so neither geometry field nor
         // the crop insets nor `position_*` mean anything in either renderer.
         // Only `opacity` does (as the correction's mix amount). Refusing is
@@ -1366,7 +1366,7 @@ export function useEditorControl(): void {
             return { error: 'each keyframe needs a numeric frame and a params object' };
           }
         }
-        // D-229 — an ADJUSTMENT clip has nothing keyframeable. Its correction
+        // D-230 — an ADJUSTMENT clip has nothing keyframeable. Its correction
         // is compiled to ffmpeg filter coefficients that are fixed at filter
         // init, so even its `opacity` (the correction's mix amount, the one
         // transform field it honours at all) is read statically by BOTH

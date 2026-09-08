@@ -1522,10 +1522,10 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`).
     - ~~**Adjustment clips** — one effect, applied top-down over every clip
-      beneath it (ref: `adjustments.jpg`)~~ — **DONE, 2026-09-08 (D-229).**
+      beneath it (ref: `adjustments.jpg`)~~ — **DONE, 2026-09-08 (D-230).**
       A third `Clip` variant (`Clip.adjustment`, following D-211's text-clip
       precedent), on an ordinary video track, resolved as an ordinary layer.
-      The compositing model is the new part and is what D-229 is for: it
+      The compositing model is the new part and is what D-230 is for: it
       contributes no pixels and instead **operates on the canvas built so
       far**, which — since both renderers already paint back-to-front — *is*
       "every layer beneath it", so the whole scoping rule falls out of the

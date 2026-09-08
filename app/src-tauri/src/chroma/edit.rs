@@ -732,7 +732,7 @@ pub(crate) fn timeline_frame_image(
     // applies to it; the filter below only ever discards an EMPTY-source media
     // clip, which is what it was always for.
     //
-    // D-229 — an ADJUSTMENT clip has no `source_path` either, and decodes
+    // D-230 — an ADJUSTMENT clip has no `source_path` either, and decodes
     // nothing at all: it is an operator on the layers below it, not a layer
     // with pixels. Same exception, third time.
     let layers: Vec<VisibleLayer<'_>> = timeline
@@ -786,7 +786,7 @@ pub(crate) fn timeline_frame_image(
         // there is no source to decode, and its whole picture comes from the
         // compositor's own rasterise-and-blend step.
         [l] if l.alpha < 1.0 => false,
-        // D-229 — nor does a lone ADJUSTMENT clip: it decodes nothing, and the
+        // D-230 — nor does a lone ADJUSTMENT clip: it decodes nothing, and the
         // picture it produces (its correction applied to the black canvas
         // beneath it) only exists once the compositor has run. Taking the fast
         // path here would have tried to probe its empty `source_path`.
@@ -867,7 +867,7 @@ fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
 }
 
 /// D-226 — the slot a layer will decode through, or `None` for one that decodes
-/// nothing (a generated text clip, a dip-to-colour plate, or — D-229 — an
+/// nothing (a generated text clip, a dip-to-colour plate, or — D-230 — an
 /// adjustment clip). Drives the per-frame `retain_pipe_slots` release so a slot
 /// whose layer went away frees its `ffmpeg` process the same frame.
 fn layer_pipe_slot(layer: &VisibleLayer<'_>) -> Option<decode_pipe::PipeSlot> {
@@ -939,7 +939,7 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
     // so the Inspector's own geometry fetch works for a title the same way it
     // does for a media clip.
     //
-    // D-229 — an adjustment clip is the same answer for a different reason: it
+    // D-230 — an adjustment clip is the same answer for a different reason: it
     // draws nothing, but its correction covers the whole frame, so "the whole
     // composition" is the honest footprint. Grouped with the text case rather
     // than left to fall through to the `source_path.is_empty()` error below,
@@ -1323,7 +1323,7 @@ fn composite_video_frame(
     comp: (u32, u32),
 ) -> Result<DynamicImage, String> {
     /// One step of the paint walk. Was a plain struct (a layer always had
-    /// pixels) until D-229 introduced a layer that has none and instead
+    /// pixels) until D-230 introduced a layer that has none and instead
     /// *operates on the canvas*, which is a different kind of step rather than
     /// a differently-configured one — so it is an enum now.
     enum Step {
@@ -1343,7 +1343,7 @@ fn composite_video_frame(
             /// through the composition.
             natural: (f64, f64),
         },
-        /// D-229 — an **adjustment clip**: apply this colour operator to the
+        /// D-230 — an **adjustment clip**: apply this colour operator to the
         /// canvas as it stands, which is precisely every layer below this one,
         /// since the paint walk runs back-to-front. Nothing is drawn.
         Adjust(chroma_timeline::AdjustmentOps),
@@ -1389,7 +1389,7 @@ fn composite_video_frame(
             unreachable!("the Color arm returns above");
         };
         let track = layer.track;
-        // D-229 — an ADJUSTMENT clip contributes no picture. It becomes a
+        // D-230 — an ADJUSTMENT clip contributes no picture. It becomes a
         // `Step::Adjust` in the same ordered list, so the reverse walk below
         // reaches it at exactly its own z-position and applies it to the canvas
         // built from every layer below — no separate ordering rule, the same
@@ -1464,7 +1464,7 @@ fn composite_video_frame(
                 transform,
                 natural,
             } => composite_layer_onto(&mut canvas, img, transform, *natural),
-            // D-229 — the whole adjustment-clip compositing model, in one line:
+            // D-230 — the whole adjustment-clip compositing model, in one line:
             // the canvas at this point in the reverse walk IS "every layer
             // beneath this clip", so applying the operator to it is exactly the
             // documented behaviour, with no scoping logic of its own.
@@ -1475,7 +1475,7 @@ fn composite_video_frame(
     Ok(DynamicImage::ImageRgba8(canvas))
 }
 
-/// D-229 — apply an adjustment clip's colour operator to the whole canvas.
+/// D-230 — apply an adjustment clip's colour operator to the whole canvas.
 ///
 /// **Whole canvas, deliberately.** The correction is full-frame: it reaches
 /// letterboxed/empty regions (which are the black backdrop) exactly as it
@@ -3714,7 +3714,7 @@ mod preview_throughput_tests {
     }
 }
 
-/// **D-229 — real, end-to-end preview pixels for an adjustment clip.**
+/// **D-230 — real, end-to-end preview pixels for an adjustment clip.**
 ///
 /// The feature's whole claim is that a clip which draws nothing nonetheless
 /// changes the colour of *other* clips, on *other* tracks, only *inside its own

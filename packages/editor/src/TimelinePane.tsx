@@ -244,7 +244,7 @@ import {
   // both references use for a text/title generator, and nothing else in this
   // toolbar has claimed it.
   Type,
-  // D-229 — the Add-adjustment action's own icon, and the badge on an
+  // D-230 — the Add-adjustment action's own icon, and the badge on an
   // adjustment clip's body. `Wand2` is the closest match to the wand Resolve
   // itself puts on its Effects tab (`scratch/resolve-reference/adjustments.jpg`)
   // and nothing else in this toolbar has claimed it.
@@ -1868,7 +1868,7 @@ export function TimelinePane() {
               </span>
             </div>
           )}
-          {/* D-229 — an ADJUSTMENT clip. Drawn from the real Resolve
+          {/* D-230 — an ADJUSTMENT clip. Drawn from the real Resolve
               reference (`scratch/resolve-reference/adjustments.jpg`), which
               shows it as a flat, saturated, thumbnail-free bar carrying an
               `fx` badge and the words "Adjustment Clip" — deliberately unlike
@@ -2173,7 +2173,7 @@ export function TimelinePane() {
     }
   };
 
-  /** D-229 — drop an ADJUSTMENT CLIP at the playhead, on the topmost video
+  /** D-230 — drop an ADJUSTMENT CLIP at the playhead, on the topmost video
    *  track.
    *
    *  **The topmost track is the meaningful default here, not a convention
@@ -2855,7 +2855,7 @@ export function TimelinePane() {
               and colour in the Inspector
             </TooltipContent>
           </Tooltip>
-          {/* D-229 — Add adjustment clip. Sits beside Title because the two are
+          {/* D-230 — Add adjustment clip. Sits beside Title because the two are
               the same kind of gesture (add a generated clip at the playhead,
               not selection-dependent) and because both references group them
               together as things you drop onto a track above your picture. */}

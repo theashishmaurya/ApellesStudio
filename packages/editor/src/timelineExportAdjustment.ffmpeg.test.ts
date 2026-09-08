@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution pixel tests for D-229's adjustment
+// @chroma/editor — REAL ffmpeg-execution pixel tests for D-230's adjustment
 // clips.
 //
 // Its own file, mirroring `timelineExportTransitions.ffmpeg.test.ts`'s
@@ -12,7 +12,7 @@
 // moved). An adjustment clip has a worse version of that failure mode: a
 // correction that silently does nothing produces a completely valid video file
 // of exactly the right length showing exactly the right clips, and is simply
-// ungraded. Two specific traps found while building this (D-229) are invisible
+// ungraded. Two specific traps found while building this (D-230) are invisible
 // to any string match:
 //   - `colorchannelmixer` given an alpha-channel offset on a stream with no
 //     alpha plane runs, succeeds, and drops the offset entirely;
@@ -89,7 +89,7 @@ function expectNear(actual: number, expected: number, what: string) {
   expect(Math.abs(actual - expected), `${what}: got ${actual}, expected ~${expected}`).toBeLessThanOrEqual(TOL);
 }
 
-describe.skipIf(!FFMPEG_AVAILABLE)('D-229 adjustment clips — real ffmpeg pixels', () => {
+describe.skipIf(!FFMPEG_AVAILABLE)('D-230 adjustment clips — real ffmpeg pixels', () => {
   let dir: string;
   let src: string;
 
@@ -307,7 +307,7 @@ describe.skipIf(!FFMPEG_AVAILABLE)('D-229 adjustment clips — real ffmpeg pixel
 /** Apply a resolved operator to an 8-bit RGB triple, mirroring
  *  `AdjustmentOps::apply_rgb8` in Rust exactly — including the intermediate
  *  8-bit quantisation between the two stages, and `lutrgb`'s measured
- *  truncation vs `colorchannelmixer`'s rounding (D-229). Local to the test:
+ *  truncation vs `colorchannelmixer`'s rounding (D-230). Local to the test:
  *  production code never needs to apply the operator in TypeScript, it only
  *  compiles it to filter arguments. */
 function applyOps(

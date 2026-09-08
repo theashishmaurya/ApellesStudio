@@ -48,7 +48,7 @@ audit, see below.
   pinned to one shared response table that each measures through its own
   engine.
 
-- **`src/adjustment.rs` (D-229)** is the fourth, and the only one that is not
+- **`src/adjustment.rs` (D-230)** is the fourth, and the only one that is not
   audio: `AdjustmentLayer` (an adjustment clip's five-parameter primary
   correction — `Clip::adjustment`'s own element type) plus the two-stage colour
   operator it resolves to. Here for `eq.rs`'s reason in its strongest form —
@@ -64,7 +64,7 @@ audit, see below.
   at all. `apply_rgb8` deliberately mirrors ffmpeg's own 8-bit behaviour —
   `lutrgb` truncates, `colorchannelmixer` rounds, and there is a real
   quantisation between them — because being *more* accurate than the exporter
-  would mean disagreeing with it. Measured agreement: ≤ 1/255. See D-229 and
+  would mean disagreeing with it. Measured agreement: ≤ 1/255. See D-230 and
   `docs/notes/adjustment-clips.md`.
 
 ## Status

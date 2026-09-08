@@ -178,7 +178,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // nothing ever reads, so the handles for it are hidden entirely rather
   // than left to fail mid-gesture.
   const isText = !!clip?.text;
-  // D-229 — an ADJUSTMENT clip gets no transform overlay at all, not just
+  // D-230 — an ADJUSTMENT clip gets no transform overlay at all, not just
   // reduced handles. Its correction is full-frame and it draws nothing, so
   // every gesture this overlay offers (move, scale, crop) would write a value
   // neither renderer reads — the same reasoning that hides a title's scale

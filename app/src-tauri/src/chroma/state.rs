@@ -399,7 +399,7 @@ mod tests {
         // `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
         // — whose whole premise is that no video is loaded — pass or fail purely
         // on which of the two ran first. Latent for as long as both have
-        // existed; surfaced deterministically by D-229's slower preview tests
+        // existed; surfaced deterministically by D-230's slower preview tests
         // shifting the schedule. See B-105.
         let _guard = super::super::PROJECT_STATE_LOCK
             .lock()

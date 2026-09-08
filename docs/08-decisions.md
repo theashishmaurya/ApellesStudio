@@ -20473,7 +20473,7 @@ integer halving. `editor_list_transitions` also reports each video track's real
 `cuts` — "where CAN one go" is the question an agent has first, and it is not
 derivable from the clip list without re-implementing the end==start match.
 
-## D-229 — Adjustment clips are an OPERATOR in the existing paint order, carrying a five-parameter primary correction (not the Colorist grade)
+## D-230 — Adjustment clips are an OPERATOR in the existing paint order, carrying a five-parameter primary correction (not the Colorist grade)
 
 Roadmap item 27 ("Organization & finishing"). Reference: DaVinci Resolve's own
 Edit page, `scratch/resolve-reference/adjustments.jpg` — opened and read before

@@ -1,4 +1,4 @@
-// @chroma/editor — the adjustment-clip MODEL and OP layer (D-229).
+// @chroma/editor — the adjustment-clip MODEL and OP layer (D-230).
 //
 // The pixel-level claims live in the two real-render suites
 // (`timelineExportAdjustment.ffmpeg.test.ts` and `chroma::edit`'s
@@ -172,7 +172,7 @@ describe('buildAdjustmentSteps — the emitted filtergraph', () => {
     expect(steps[1]).toContain('[ov2]');
   });
 
-  // Verified empirically against real ffmpeg (D-229): without an explicit alpha
+  // Verified empirically against real ffmpeg (D-230): without an explicit alpha
   // format the graph can settle on a format with no alpha plane and the colour
   // stage silently does less than it says. Pinned here so a refactor cannot
   // quietly drop it.
