@@ -691,6 +691,13 @@ export function useEditorControl(): void {
             sourceSecs: source.sourceSecs,
             track: source.track,
             clipId: source.clip.id,
+            // B-110 — the level this source is MONITORED at, which is also the
+            // level playback mixes it at (`track.gain × clip.volume`). An agent
+            // cannot hear that a scrub is 8 dB hot, so it gets the number: this
+            // is the same "the envelope as numbers" reasoning D-232 used to
+            // justify shipping no `editor_scrub` at all. Note the `peaks` below
+            // are the SOURCE's own, unscaled — this is what they are heard at.
+            gain: source.gain,
           },
           window: {
             startSecs: win.startSecs,

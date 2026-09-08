@@ -979,18 +979,26 @@ def editor_get_waveform(
     - `buckets` — how many `[min, max]` amplitude pairs to reduce it to
       (default 64, max 2000). More buckets = finer time resolution.
 
-    Returns the resolved `source` (`path`, `sourceSecs`, `track`, `clipId`),
-    the `window` it covered (including `clipStartFraction`/`clipEndFraction` —
-    the part of the window that is actually this clip's own trimmed material,
-    outside which the source exists but is not on your timeline), and `peaks`:
-    one `[min, max]` pair per bucket, each in `-1..1`. An all-zero pair is
-    silence.
+    Returns the resolved `source` (`path`, `sourceSecs`, `track`, `clipId`,
+    `gain`), the `window` it covered (including `clipStartFraction`/
+    `clipEndFraction` — the part of the window that is actually this clip's own
+    trimmed material, outside which the source exists but is not on your
+    timeline), and `peaks`: one `[min, max]` pair per bucket, each in `-1..1`.
+    An all-zero pair is silence.
+
+    `gain` (B-110) is the linear level this source is actually heard at —
+    `track.gain × clip.volume`. The `peaks` are the SOURCE's own and are NOT
+    scaled by it, so multiply if you want what reaches the speakers: a bed at
+    `gain: 0.4` whose peaks read `0.8` is heard at `0.32`. Compare two clips'
+    loudness by their peaks AND their gains, never by peaks alone.
 
     `source: null` is a normal answer, not an error: a gap, a title/adjustment
     clip, a muted audio track, or past the end of the timeline. It resolves the
     one audible source the way playback does — a real audio track first
     (topmost wins), otherwise the video clip's own embedded audio unless that
-    clip is A/V-linked (D-129)."""
+    clip is A/V-linked (D-129). **One source, not the mix** — where several
+    clips overlap this frame, playback sums all of them and this reports only
+    the winner (see D-232; the mix is a roadmap follow-up)."""
     import json
 
     args: dict = {}

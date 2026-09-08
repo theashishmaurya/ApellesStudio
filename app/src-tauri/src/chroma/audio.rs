@@ -106,7 +106,7 @@ pub async fn chroma_audio_waveform(
 /// rather than a convenience: `@chroma/editor`'s `clipAt` is already the
 /// pointwise mirror of `chroma_timeline::Track::clip_at` and is already what
 /// every other Edit-tab UI decision resolves through.
-fn scrub_source(source_path: Option<String>, source_secs: f64) -> Option<ScrubSource> {
+fn scrub_source(source_path: Option<String>, source_secs: f64, gain: f32) -> Option<ScrubSource> {
     let path = source_path.filter(|p| !p.is_empty())?;
     if !source_secs.is_finite() {
         return None;
@@ -114,6 +114,11 @@ fn scrub_source(source_path: Option<String>, source_secs: f64) -> Option<ScrubSo
     Some(ScrubSource {
         path: PathBuf::from(path),
         source_secs: source_secs.max(0.0),
+        // B-110 — the frontend resolves this the same way it resolves the path
+        // and the second (`ScrubSource.gain`); a malformed value is normalised
+        // to unity by `chroma_media::scrub::apply_gain` rather than here, so
+        // there is one rule for it and not two.
+        gain,
     })
 }
 
@@ -132,6 +137,7 @@ fn scrub_source(source_path: Option<String>, source_secs: f64) -> Option<ScrubSo
 pub fn chroma_audio_scrub_begin(
     source_path: Option<String>,
     source_secs: f64,
+    gain: f32,
     seq: u64,
 ) -> Result<(), String> {
     let Some(session) = chroma_media::scrub::begin(seq) else {
@@ -139,7 +145,7 @@ pub fn chroma_audio_scrub_begin(
         // thread — same drop the play path makes, for the same reason.
         return Ok(());
     };
-    chroma_media::scrub::start(session, scrub_source(source_path, source_secs))
+    chroma_media::scrub::start(session, scrub_source(source_path, source_secs, gain))
 }
 
 /// Move the scrub read head — called for every pointer move of the drag.
@@ -151,8 +157,8 @@ pub fn chroma_audio_scrub_begin(
 /// around it cannot. A position is a level, not an edge — last writer wins is
 /// exactly what a scrub wants. See `chroma_media::scrub::update`.
 #[tauri::command]
-pub fn chroma_audio_scrub_update(source_path: Option<String>, source_secs: f64) {
-    chroma_media::scrub::update(scrub_source(source_path, source_secs));
+pub fn chroma_audio_scrub_update(source_path: Option<String>, source_secs: f64, gain: f32) {
+    chroma_media::scrub::update(scrub_source(source_path, source_secs, gain));
 }
 
 /// End the scrub gesture (pointer up, or the component unmounting mid-drag).
@@ -1430,6 +1436,33 @@ mod tests {
     // in `scrub.rs`; what lives here is the command surface.
     // ------------------------------------------------------------------ //
 
+    /// **B-110 — the level the frontend resolved must survive the command
+    /// boundary.** Before this, `chroma_audio_scrub_*` took only a path and a
+    /// source second, so every monitored source reached the engine at unity
+    /// while `chroma_audio_play` mixed the same clip at its real `gain`. Pure —
+    /// this is the conversion, not the device.
+    #[test]
+    fn a_scrub_source_carries_the_level_the_frontend_resolved() {
+        let resolved =
+            scrub_source(Some("/media/music.mp3".into()), 12.5, 0.4).expect("a real source");
+        assert_eq!(resolved.path, PathBuf::from("/media/music.mp3"));
+        assert_eq!(resolved.source_secs, 12.5);
+        assert_eq!(resolved.gain, 0.4);
+    }
+
+    /// "Nothing audible here" is a `None`, not a source at gain zero — the two
+    /// are different states to the engine (`None` clears the read head; a real
+    /// source at zero keeps a decoded window open for silence).
+    #[test]
+    fn a_scrub_source_with_no_path_is_none_whatever_its_level() {
+        assert!(scrub_source(None, 1.0, 0.4).is_none());
+        assert!(scrub_source(Some(String::new()), 1.0, 0.4).is_none());
+        assert!(
+            scrub_source(Some("/a.mp3".into()), f64::NAN, 1.0).is_none(),
+            "a non-finite position is not a position"
+        );
+    }
+
     /// **A scrub and playback cannot sound at once.** Starting a scrub claims
     /// the same generation a play would, so the running play session's thread
     /// sees itself superseded and exits — no second protocol, no new invariant.
@@ -1437,7 +1470,7 @@ mod tests {
     fn starting_a_scrub_supersedes_a_running_play_session() {
         let _guard = session_test_guard();
         let gen_after_play = begin_request(next_test_seq()).expect("accepted");
-        chroma_audio_scrub_begin(None, 0.0, next_test_seq()).expect("scrub begin");
+        chroma_audio_scrub_begin(None, 0.0, 1.0, next_test_seq()).expect("scrub begin");
         assert!(
             !is_current(gen_after_play),
             "a scrub must tear down the play session it started over"
@@ -1455,7 +1488,7 @@ mod tests {
         let older = newer - 1; // issued first, reaches the runtime second
 
         let gen_after_newer = begin_request(newer).expect("the newer request is accepted");
-        let stale = chroma_audio_scrub_begin(None, 0.0, older);
+        let stale = chroma_audio_scrub_begin(None, 0.0, 1.0, older);
 
         assert!(stale.is_ok(), "a dropped stale scrub is not an error");
         let (generation, last_seq) = session_snapshot();
@@ -1475,7 +1508,7 @@ mod tests {
         let _guard = session_test_guard();
         let mine = begin_request(next_test_seq()).expect("accepted");
         for secs in [0.0, 1.0, 2.5] {
-            chroma_audio_scrub_update(Some("/fixture.m4a".into()), secs);
+            chroma_audio_scrub_update(Some("/fixture.m4a".into()), secs, 1.0);
         }
         assert!(
             is_current(mine),
@@ -1500,7 +1533,7 @@ mod tests {
             return;
         };
 
-        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, next_test_seq())
+        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, 1.0, next_test_seq())
             .expect("chroma_audio_scrub_begin");
         // Drag the read head forward the way a real pointer would, so the run
         // covers both the in-window fast path and at least one re-anchor
@@ -1514,7 +1547,7 @@ mod tests {
         // assertion has to fail because there is no sound, never because the
         // meter had not ticked yet.
         for step in 0..40 {
-            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25);
+            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25, 1.0);
             thread::sleep(Duration::from_millis(60));
         }
         let (rms, peak) = chroma_audio_level();
@@ -1542,10 +1575,10 @@ mod tests {
             return;
         };
 
-        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, next_test_seq())
+        chroma_audio_scrub_begin(Some(video_path.clone()), 0.5, 1.0, next_test_seq())
             .expect("a scrub over silent media is not an error");
         for step in 0..5 {
-            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25);
+            chroma_audio_scrub_update(Some(video_path.clone()), 0.5 + step as f64 * 0.25, 1.0);
             thread::sleep(Duration::from_millis(60));
         }
         let (rms, peak) = chroma_audio_level();

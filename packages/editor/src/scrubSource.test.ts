@@ -18,6 +18,7 @@ import {
   waveformWindowAt,
   WAVEFORM_TILE_SECS,
   WAVEFORM_WINDOW_SECS,
+  type ScrubSource,
 } from './scrubSource';
 import { newAdjustmentLayer, newTextLayer, type Clip, type Timeline, type Track } from './timeline';
 
@@ -113,6 +114,57 @@ describe('scrubSourceAt', () => {
     expect(scrubSourceAt(null, 0)).toBeNull();
   });
 
+  // --- the monitored LEVEL (B-110) --------------------------------------- //
+
+  /**
+   * **The bug the owner heard.** Their own reel has a music bed on a track
+   * faded to `gain: 0.4`; `chroma_audio_play` mixes it at 0.4, but a scrub used
+   * to monitor every source at unity — the same clip, 8 dB hot, which is
+   * exactly "it plays the audio which is not the right one". The resolver now
+   * carries the level, so both paths agree.
+   */
+  it('carries the track\'s own gain, not unity', () => {
+    const tl = timeline([
+      track('video', [clip({ source_path: '/media/v.mp4' })]),
+      track('audio', [clip({ id: 'a', source_path: '/media/music.mp3' })], { gain: 0.4 }),
+    ]);
+    expect(scrubSourceAt(tl, 50)).toMatchObject({ path: '/media/music.mp3', gain: 0.4 });
+  });
+
+  /** The static half of `Clip.volume`'s own documented chain
+   *  (`track.gain × clip.volume × fade × …`) — both factors, multiplied. */
+  it('multiplies the track gain by the clip\'s own volume', () => {
+    const tl = timeline([
+      track('audio', [clip({ id: 'a', source_path: '/media/m.mp3', volume: 0.5 })], { gain: 0.4 }),
+    ]);
+    expect(scrubSourceAt(tl, 50)?.gain).toBeCloseTo(0.2, 10);
+  });
+
+  /** A track and a clip that say nothing about level are unity — the common
+   *  case, and the one that must not become `NaN` or `undefined`. */
+  it('is unity when neither the track nor the clip sets a level', () => {
+    const tl = timeline([track('video', [clip({ source_path: '/media/v.mp4' })])]);
+    expect(scrubSourceAt(tl, 50)?.gain).toBe(1);
+  });
+
+  /** A video track's embedded audio is levelled the same way — `chroma_audio_play`
+   *  gives it `gain: 1.0` from the track, and a clip volume on top of that. */
+  it('levels a video clip\'s embedded audio by its own volume too', () => {
+    const tl = timeline([
+      track('video', [clip({ source_path: '/media/v.mp4', volume: 0.25 })]),
+    ]);
+    expect(scrubSourceAt(tl, 50)).toMatchObject({ path: '/media/v.mp4', gain: 0.25 });
+  });
+
+  /** A negative level in a hand-edited manifest must not phase-invert the
+   *  monitor — clamped here rather than left for the audio thread to trip on. */
+  it('never resolves a negative level', () => {
+    const tl = timeline([
+      track('audio', [clip({ id: 'a', source_path: '/media/m.mp3', volume: -2 })], { gain: 0.5 }),
+    ]);
+    expect(scrubSourceAt(tl, 50)?.gain).toBe(0);
+  });
+
   /** A title / adjustment / caption clip has no media to decode at all —
    *  handing one to `symphonia` is a guaranteed open failure. */
   it('is null over a generated clip that has no media', () => {
@@ -161,11 +213,15 @@ describe('scrubSourceAt', () => {
 });
 
 describe('waveformWindowAt', () => {
-  const source = {
+  const source: ScrubSource = {
     path: '/a.m4a',
     sourceSecs: 10,
     track: 0,
     clip: clip({ source_path: '/a.m4a', source_start: 0, duration: 250 }), // 0..10 s at 25 fps
+    // The strip's geometry is a function of TIME, not level — `gain` (B-110)
+    // is carried by the same resolved source but changes none of the window
+    // arithmetic below, which is why every case here can share one value.
+    gain: 1,
   };
 
   /** The playhead sits dead centre and the picture scrolls under it — the

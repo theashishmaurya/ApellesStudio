@@ -36,12 +36,20 @@ let scrubbing = false;
 
 /** The Rust command args for the source under `frame`, or the "nothing audible
  *  here" shape — a `null` path, which `chroma_audio_scrub_*` reads as silence
- *  rather than as an error. */
-function argsAt(frame: number): { sourcePath: string | null; sourceSecs: number } {
+ *  rather than as an error.
+ *
+ *  `gain` (B-110) is the resolved source's own static level — see
+ *  `ScrubSource.gain`. Without it every monitored source played at unity, which
+ *  is a different loudness from the one the timeline actually has. */
+function argsAt(frame: number): {
+  sourcePath: string | null;
+  sourceSecs: number;
+  gain: number;
+} {
   const source = scrubSourceAt(useEditorTimelineStore.getState().timeline, Math.round(frame));
   return source
-    ? { sourcePath: source.path, sourceSecs: source.sourceSecs }
-    : { sourcePath: null, sourceSecs: 0 };
+    ? { sourcePath: source.path, sourceSecs: source.sourceSecs, gain: source.gain }
+    : { sourcePath: null, sourceSecs: 0, gain: 1 };
 }
 
 /**

@@ -45,6 +45,32 @@ export interface ScrubSource {
   clip: Clip;
   /** the track it lives on, for the same reason */
   track: number;
+  /**
+   * The linear level this source is heard at — `track.gain × clip.volume`,
+   * the STATIC half of the chain `Clip.volume`'s own doc spells out
+   * (`track.gain × clip.volume × fade × …`).
+   *
+   * **B-110.** Before this, a scrub carried no level at all: `gain` was read
+   * only to *skip* a track muted to exactly zero, so every monitored source
+   * played at unity while playback played it at whatever the mixer's `gain`
+   * said. On the owner's own reel that is a music bed set to `0.4` monitored
+   * 8 dB hot — the same clip, at a level the timeline does not have.
+   *
+   * Deliberately the static level only. A fade, a duck, a pan, an EQ band and
+   * a KEYFRAMED `volume` are all envelope/DSP the scrub engine does not run
+   * (see `chroma_media::scrub`'s module doc) — this is the one scalar that
+   * makes "the same clip" mean "at the same loudness".
+   */
+  gain: number;
+}
+
+/** `track.gain × clip.volume`, both defaulting to unity — see
+ *  {@link ScrubSource.gain}. Clamped at zero so a nonsense negative in a hand-
+ *  edited manifest cannot phase-invert the monitor. */
+function levelFor(track: Track, clip: Clip): number {
+  const trackGain = track.gain ?? 1;
+  const clipVolume = clip.volume ?? 1;
+  return Math.max(0, trackGain * clipVolume);
 }
 
 /** A clip carries real, decodable audio only if it points at a real file: a
@@ -102,6 +128,7 @@ export function scrubSourceAt(tl: Timeline | null, frame: number): ScrubSource |
       sourceSecs: sourceSecsAt(at.clip, at.sourceFrame, fps),
       clip: at.clip,
       track: i,
+      gain: levelFor(tr, at.clip),
     };
   }
 
@@ -121,6 +148,7 @@ export function scrubSourceAt(tl: Timeline | null, frame: number): ScrubSource |
       sourceSecs: sourceSecsAt(at.clip, at.sourceFrame, fps),
       clip: at.clip,
       track: i,
+      gain: levelFor(tr, at.clip),
     };
   }
 
