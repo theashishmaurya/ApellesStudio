@@ -245,6 +245,19 @@ pub struct CaptionStyle {
     /// D-229).
     #[serde(default = "default_caption_position_y")]
     pub position_y: f64,
+    /// D-241 — how this caption ANIMATES, or `None` for D-229's original
+    /// static rendering.
+    ///
+    /// An `Option` rather than a defaulted
+    /// [`crate::caption_anim::CaptionAnimation`] so a project saved before
+    /// D-241 round-trips byte-identically (the field is skipped when absent),
+    /// and so "no animation" is representable without writing eleven default
+    /// keys onto every one of a 400-cue `.srt`'s styles. Read it through
+    /// [`CaptionStyle::animation_or_default`], never directly — that is what
+    /// makes an absent key and an explicit `kind: none` provably the same
+    /// render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<crate::caption_anim::CaptionAnimation>,
 }
 
 impl Default for CaptionStyle {
@@ -267,6 +280,7 @@ impl Default for CaptionStyle {
             align: CaptionAlign::default(),
             position_x: default_caption_position_x(),
             position_y: default_caption_position_y(),
+            animation: None,
         }
     }
 }
@@ -520,6 +534,14 @@ mod tests {
             align: CaptionAlign::Left,
             position_x: 0.1,
             position_y: 0.9,
+            // D-241 — a style carrying a real animation, so this round trip
+            // also covers the nested `CaptionAnimation`, not just the static
+            // fields it had before.
+            animation: Some(crate::caption_anim::CaptionAnimation {
+                kind: crate::caption_anim::CaptionAnimKind::Highlight,
+                active_box_color: Some("#FF1745".into()),
+                ..Default::default()
+            }),
         };
         let json = serde_json::to_string(&style).expect("serialize");
         let back: CaptionStyle = serde_json::from_str(&json).expect("deserialize");

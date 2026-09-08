@@ -22,6 +22,12 @@
 // `captionLayout matches the Rust fixture exactly` in `caption.test.ts`. If
 // one side's rounding ever drifts, those two tests disagree.
 
+// A TYPE-ONLY import, deliberately: `captionAnim.ts` imports this module's
+// `CaptionStyle` back, and a value import either way would be a real runtime
+// cycle. The two are one model split across two files (see either header), so
+// the mutual reference is intended.
+import type { CaptionAnimation } from './captionAnim';
+
 /** Font family KEY from the backend's own catalogue (`chroma_text_fonts`) —
  *  see `TextLayer.font` for why a key rather than a path. */
 export const DEFAULT_CAPTION_FONT = 'sans-bold';
@@ -69,6 +75,13 @@ export interface CaptionStyle {
    *  the **last** line's font line box. Extra lines stack *upward*, so a cue
    *  growing from one line to two keeps its bottom line in place. */
   position_y?: number;
+  /** D-241 — how this caption ANIMATES, or absent for D-229's original static
+   *  rendering. Mirrors `CaptionStyle::animation`.
+   *
+   *  Read it through `captionAnimationOf` (`captionAnim.ts`), never off this
+   *  field directly — that is what makes an absent key and an explicit
+   *  `kind: 'none'` provably the same render. */
+  animation?: CaptionAnimation | null;
 }
 
 /** One caption — mirrors `chroma_timeline::caption::CaptionCue`.
@@ -112,6 +125,12 @@ export function resolveCaptionStyle(
     align: s.align ?? 'center',
     position_x: num(s.position_x, DEFAULT_CAPTION_POSITION_X),
     position_y: num(s.position_y, DEFAULT_CAPTION_POSITION_Y),
+    // Carried through as-is rather than defaulted here: the animation has its
+    // own resolver (`resolveCaptionAnimation`), and filling in eleven
+    // animation defaults on every resolved style would make "this caption is
+    // static" indistinguishable from "this caption animates with every default
+    // value". `null` is the honest resolved value for a style with none.
+    animation: s.animation ?? null,
   };
 }
 

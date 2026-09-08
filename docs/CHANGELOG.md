@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **A real Captions panel + animated caption presets
+  (D-241/D-242, roadmap item 28).** "Subtitles" now opens a panel instead of a
+  file picker: a **Styles** library of caption looks, each tile a live
+  thumbnail of its own style, that drop onto the timeline in one click, plus an
+  **Import** tab carrying D-229's `.srt`/`.vtt` flow verbatim. Captions can now
+  ANIMATE per word — highlight, karaoke, kinetic slam and word build — rendered
+  identically by the Rust preview and the ffmpeg export, with every knob
+  editable in the Inspector because a preset is pure data, not a baked-in look.
+  The architecture question the roadmap raised is answered and closed in D-241:
+  **native `CaptionStyle` extension, not a Motion manifest**, because the
+  Motion engine has no render-to-file path at all and neither Edit renderer is
+  a browser. 8 presets shipped, 11 more named individually with their real
+  blockers; looks adapted from HyperFrames' catalogue (Apache-2.0, D-242) as
+  design only — no third-party code ships here. Verified with 5 real-ffmpeg
+  pixel tests that prove the export actually animates.
+
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge

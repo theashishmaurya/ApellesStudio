@@ -361,6 +361,33 @@ export function installResizeObserverStub(): () => void {
   };
 }
 
+/** jsdom implements no Web Animations API, so `Element.getAnimations` is
+ *  simply absent (D-241).
+ *
+ *  Base UI's `ScrollAreaViewport` calls it from a timer to decide whether a
+ *  scroll is still animating. With it missing, the call throws AFTER the test
+ *  body has finished — an uncaught exception vitest attributes to whichever
+ *  test happened to be running, which is both noise and a real CI failure
+ *  waiting to happen, and it is entirely an artefact of the environment rather
+ *  than of the component.
+ *
+ *  A no-op returning "no animations in flight" is the honest stub: jsdom never
+ *  animates anything, so the true answer is always the empty list. Returns a
+ *  restore function, like every other stub here.
+ *
+ *  Needed by any test mounting a component that contains a `ScrollArea` —
+ *  `CaptionPanel.dom.test.tsx` is the first. */
+export function installElementAnimationsStub(): () => void {
+  const proto = (globalThis as any).Element?.prototype;
+  if (!proto || typeof proto.getAnimations === 'function') return () => {};
+  proto.getAnimations = function getAnimations(): unknown[] {
+    return [];
+  };
+  return () => {
+    delete proto.getAnimations;
+  };
+}
+
 /** What an installed object-URL stub gives a test back (D-217). */
 export interface ObjectUrlStub {
   /** The `Blob` a given `blob:` URL was minted from, or `undefined` if that

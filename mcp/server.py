@@ -876,6 +876,26 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
         ),
     },
     "known_gaps_and_landmines": {
+        "animated_captions_D241": (
+            "An ANIMATED caption (editor_add_caption_preset, or "
+            "editor_set_caption_style with animation != 'none') is drawn WORD "
+            "BY WORD, and two things about that are not guessable. (1) There "
+            "is deliberately NO per-word scale, no rounded highlight box and "
+            "no fading/sweeping box: ffmpeg's fontsize is the input to the "
+            "very glyph measurement that makes the live preview and the "
+            "export agree (D-212), and drawbox has neither a corner radius "
+            "nor a per-frame alpha expression — so any of them would be a "
+            "preview the export cannot reproduce. Asking for a 'pop' or a "
+            "'pill' gets a slide and a square box, on purpose. (2) Word "
+            "timings are DERIVED from each word's character count across the "
+            "cue, not from speech — a .srt carries no word timings — so a "
+            "karaoke preset is only as tight as that approximation until the "
+            "transcript-driven follow-up lands. Also note an animated caption "
+            "emits roughly one filtergraph node per word, so setting a "
+            "several-hundred-cue imported .srt to animate builds a very large "
+            "graph; that path is not optimised. See D-241 and "
+            "docs/notes/caption-presets.md."
+        ),
         "media_pool_stuck_item_B073": (
             "A media-pool item whose FIRST probe failed (e.g. a transient "
             "file-access race) never gets re-probed and is invisible to "
@@ -968,8 +988,9 @@ def editor_get_capabilities() -> str:
     export's real v1 scope (video only), and known rough edges worth testing
     for before trusting a real edit (a stuck media-pool entry, a one-time
     flake right after an app restart, a macOS screen-recording filename trap
-    that will silently break ANY tool given a hand-typed path, and a
-    now-fixed control-server wedge worth knowing the shape of).
+    that will silently break ANY tool given a hand-typed path, an animated
+    caption's two non-guessable rules, and a now-fixed control-server wedge
+    worth knowing the shape of).
 
     Returns a structured dict, not prose to scan — read the `known_gaps_and_
     landmines` and `compositing` keys first."""
@@ -1523,9 +1544,28 @@ def editor_import_subtitles(
         ("align", align),
         ("positionX", position_x),
         ("positionY", position_y),
+        ("animation", animation),
+        ("highlightOpacity", highlight_opacity),
+        ("highlightPadX", highlight_pad_x),
+        ("highlightPadY", highlight_pad_y),
+        ("enterSecs", enter_secs),
+        ("enterRise", enter_rise),
+        ("wordGap", word_gap),
     ):
         if val is not None:
             args[key] = val
+    # The per-word colours need a way to be CLEARED, not just set — "no accent
+    # on the spoken words" is a real style, and an omitted argument cannot mean
+    # it (omitted means "leave alone"). The literal string "default" is that
+    # clear token, sent down as JSON null.
+    for key, val in (
+        ("activeColor", active_color),
+        ("spokenColor", spoken_color),
+        ("upcomingColor", upcoming_color),
+        ("highlightColor", highlight_color),
+    ):
+        if val is not None:
+            args[key] = None if val == "default" else val
     return json.dumps(_op("editor_import_subtitles", **args), indent=2, default=str)
 
 
@@ -1596,6 +1636,72 @@ def editor_set_caption(track: int, clip: int, text: str) -> str:
 
 
 @mcp.tool()
+def editor_list_caption_presets() -> str:
+    """List the styled caption looks the Styles library offers (D-241).
+
+    Each entry carries its `id` (what `editor_add_caption_preset` takes), a
+    label and group, a one-line description, the animation kind it uses, its
+    provenance `note`, and the full `style` it would apply.
+
+    This is the SAME list the Edit tab's Captions panel shows, read from the
+    same place — an agent can reach every look a human can.
+
+    Static data, but read through the app so it can never drift from what the
+    panel is actually offering in this build."""
+    import json
+
+    return json.dumps(_op("editor_list_caption_presets"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_caption_preset(
+    preset: str,
+    track: int | None = None,
+    text: str | None = None,
+    start_frame: int | None = None,
+    duration: int | None = None,
+    place_caption: bool = True,
+) -> str:
+    """Apply a styled caption preset, creating what it needs (D-241).
+
+    The one-call way to get a good-looking caption onto the timeline: it styles
+    a subtitle track with the preset and, by default, drops a caption on it so
+    the look is immediately visible.
+
+    - `preset` — an id from `editor_list_caption_presets`. An unknown id is
+      refused with the valid ids listed.
+    - `track` — an existing SUBTITLE track to style. Omitted: the first
+      subtitle track is reused, or a new one is created if there is none.
+    - `text` — the caption to place. Omitted, a readable sample line is used,
+      chosen so a per-word animation actually reads as animated.
+    - `start_frame` — where to place it. Omitted: the playhead.
+    - `duration` — TIMELINE frames. Omitted: 3 seconds, which is long enough
+      that an animated preset resolves rather than flickering.
+    - `place_caption` — pass False to restyle a track that already has cues on
+      it without adding another.
+
+    A preset is nothing but a style: everything it sets stays editable
+    afterwards with `editor_set_caption_style`, and the whole thing is one
+    undo step.
+
+    Presets adapted from HyperFrames' caption catalogue (Apache-2.0,
+    github.com/heygen-com/hyperframes) are reimplemented natively — see each
+    preset's `note` for what differs and why (D-242)."""
+    import json
+
+    args: dict = {"preset": preset, "placeCaption": place_caption}
+    if track is not None:
+        args["track"] = track
+    if text is not None:
+        args["text"] = text
+    if start_frame is not None:
+        args["startFrame"] = start_frame
+    if duration is not None:
+        args["duration"] = duration
+    return json.dumps(_op("editor_add_caption_preset", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_caption_style(
     track: int,
     clip: int | None = None,
@@ -1611,9 +1717,20 @@ def editor_set_caption_style(
     align: str | None = None,
     position_x: float | None = None,
     position_y: float | None = None,
+    animation: str | None = None,
+    active_color: str | None = None,
+    spoken_color: str | None = None,
+    upcoming_color: str | None = None,
+    highlight_color: str | None = None,
+    highlight_opacity: float | None = None,
+    highlight_pad_x: float | None = None,
+    highlight_pad_y: float | None = None,
+    enter_secs: float | None = None,
+    enter_rise: float | None = None,
+    word_gap: float | None = None,
 ) -> str:
-    """Style a subtitle track — font, size, colour, background box and position
-    — or override the style of ONE caption on it.
+    """Style a subtitle track — font, size, colour, background box, position
+    and ANIMATION — or override the style of ONE caption on it.
 
     With `clip` omitted this sets the TRACK's style, which every caption on it
     uses. That is almost always what you want: a whole imported file is styled
@@ -1641,7 +1758,42 @@ def editor_set_caption_style(
     fades and opacity keyframes do NOT apply to a caption (D-228 — the export
     draws it with ffmpeg's `drawtext`, which cannot scale, rotate or crop a
     text box, so offering those would let the preview show something the export
-    cannot reproduce)."""
+    cannot reproduce).
+
+    ## Animation (D-241)
+
+    An animated caption is drawn WORD BY WORD. Word timings are derived from
+    each word's length across the cue — a `.srt` carries no word timings — so
+    they need no extra input.
+
+    - `animation` — "none" (D-229's static caption, the default) | "highlight"
+      (line stays up, the live word gets a filled box) | "karaoke" (line stays
+      up, words recolour as they are spoken) | "slam" (one word at a time,
+      sliding in from alternating sides) | "build" (the line assembles word by
+      word). An unknown value is ignored rather than stored.
+    - `active_color` / `spoken_color` / `upcoming_color` — per-word fills.
+      Pass the literal string "default" to clear one back to the caption's own
+      `color` (omitting it leaves it alone, which is a different thing).
+    - `highlight_color` — the box behind the live word; "default" removes the
+      box entirely, which is what separates a plain karaoke recolour from a
+      highlight.
+      `highlight_opacity` 0–1, `highlight_pad_x`/`highlight_pad_y` as fractions
+      of the font size.
+    - `enter_secs` — how long one word's entrance takes.
+    - `enter_rise` — how far a word rises into place ("build" only), as a
+      fraction of the font size.
+    - `word_gap` — tracking between words, as a fraction of the font size. An
+      animated caption positions each word itself, so this stands in for a
+      space.
+
+    **Deliberately absent: per-word SCALE.** ffmpeg's `fontsize` is the input
+    to the very measurement that makes the preview and the export agree
+    (D-212), so animating it would re-open a divergence D-229 closed. The
+    highlight box is square and switches on/off per word for the same class of
+    reason — `drawbox` has neither a corner radius nor an alpha expression.
+
+    Every one of these is a plain style field, so a preset applied with
+    `editor_add_caption_preset` can be adjusted afterwards with this tool."""
     import json
 
     args: dict = {"track": track}
@@ -1661,9 +1813,28 @@ def editor_set_caption_style(
         ("align", align),
         ("positionX", position_x),
         ("positionY", position_y),
+        ("animation", animation),
+        ("highlightOpacity", highlight_opacity),
+        ("highlightPadX", highlight_pad_x),
+        ("highlightPadY", highlight_pad_y),
+        ("enterSecs", enter_secs),
+        ("enterRise", enter_rise),
+        ("wordGap", word_gap),
     ):
         if val is not None:
             args[key] = val
+    # The per-word colours need a way to be CLEARED, not just set — "no accent
+    # on the spoken words" is a real style, and an omitted argument cannot mean
+    # it (omitted means "leave alone"). The literal string "default" is that
+    # clear token, sent down as JSON null.
+    for key, val in (
+        ("activeColor", active_color),
+        ("spokenColor", spoken_color),
+        ("upcomingColor", upcoming_color),
+        ("highlightColor", highlight_color),
+    ):
+        if val is not None:
+            args[key] = None if val == "default" else val
     return json.dumps(_op("editor_set_caption_style", **args), indent=2, default=str)
 
 

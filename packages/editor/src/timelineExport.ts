@@ -73,6 +73,14 @@ import {
   type CaptionCue,
   type CaptionStyle,
 } from './caption';
+import {
+  captionAnimationOf,
+  captionWordColor,
+  captionWords,
+  isPerWordAnim,
+  isSingleWordAnim,
+} from './captionAnim';
+import { captionMetricKey, type CaptionMetrics } from './captionMetrics';
 import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 // D-236 — one definition of a clip's time remap, shared with the live
@@ -439,9 +447,29 @@ export function buildCaptionDrawtextSteps(
   startSec: number,
   endSec: number,
   fontFile: string,
+  metrics?: CaptionMetrics,
 ): string[] {
   const lines = captionLines(cue.text);
   if (lines.length === 0) return [];
+  // D-241 — an animated caption is drawn per WORD, not per line. Branching
+  // here rather than inside the loop keeps D-229's static path byte-identical:
+  // a caption with no animation compiles to exactly the filtergraph it
+  // compiled to before this decision existed.
+  const anim = captionAnimationOf(style);
+  if (isPerWordAnim(anim.kind)) {
+    return buildAnimatedCaptionSteps(
+      lines,
+      style,
+      anim,
+      inLabel,
+      outLabelFor,
+      opts,
+      startSec,
+      endSec,
+      fontFile,
+      metrics ?? {},
+    );
+  }
   const layout = captionLayout(style, opts.width, opts.height, lines.length);
 
   const steps: string[] = [];
@@ -497,6 +525,232 @@ function clampUnit(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
 
+/** A number as a filtergraph literal — fixed to 4 decimals so a compiled argv
+ *  is stable for a given timeline rather than carrying a float's full printed
+ *  precision (the same reason `boxcolor`'s alpha is `toFixed(3)`). */
+function num(v: number): string {
+  return (Number.isFinite(v) ? v : 0).toFixed(4).replace(/\.?0+$/, '') || '0';
+}
+
+/** The ffmpeg expression for `easeOutCubic` over a word's own entrance —
+ *  `1-pow(1-clip((t-t0)/e,0,1),3)`.
+ *
+ *  **The same closed-form polynomial `easeOutCubic` evaluates**, which is the
+ *  entire reason that function is written out as a polynomial rather than
+ *  pulled from a curve library: it has to be the same function in Rust, in
+ *  TypeScript, and here as a string. A zero-length entrance degrades to the
+ *  constant `1`, matching both mirrors' `enter <= 0` branch exactly. */
+export function captionEnterExpr(t0: number, enterSecs: number): string {
+  if (!Number.isFinite(enterSecs) || enterSecs <= 0) return '1';
+  return `1-pow(1-clip((t-${num(t0)})/${num(enterSecs)}\\,0\\,1)\\,3)`;
+}
+
+/**
+ * The `drawtext`/`drawbox` nodes for one ANIMATED caption cue (D-241) — one
+ * chain per word, over the whole cue.
+ *
+ * **Why per word.** The static path hands a whole line to one `drawtext` and
+ * lets ffmpeg's own advance decide its width. An animated caption cannot: a
+ * word has to be independently faded, moved and recoloured, so each word is
+ * its own node at an x computed HERE, from the backend's measured advances.
+ * That is D-229's "make the layout ours" one level further down, and for the
+ * identical reason — it is the only way `ab_glyph` and `drawtext` put a word
+ * in the same place.
+ *
+ * **What is expression-driven and what is not.** `alpha`, `x` and `y` are real
+ * per-frame `drawtext` expressions (verified against this machine's ffmpeg:
+ * all three are declared `<string>` expression options). `fontcolor` is NOT,
+ * so a word that changes colour is emitted as up to three nodes, each
+ * `enable`d over the window of one phase — and phases that resolve to the SAME
+ * colour are collapsed into one node, which is what keeps a long subtitle
+ * track's filtergraph from growing three nodes per word for no visual reason.
+ * `drawbox`'s colour is not an expression either, which is why the highlight
+ * box is binary rather than swept (see `caption_anim`'s own doc).
+ */
+function buildAnimatedCaptionSteps(
+  lines: string[],
+  style: Required<CaptionStyle>,
+  anim: ReturnType<typeof captionAnimationOf>,
+  inLabel: string,
+  outLabelFor: (nodeIndex: number) => string,
+  opts: Pick<TimelineExportOptions, 'width' | 'height'>,
+  startSec: number,
+  endSec: number,
+  fontFile: string,
+  metrics: CaptionMetrics,
+): string[] {
+  const durSecs = Math.max(0, endSec - startSec);
+  const words = captionWords(lines, durSecs);
+  if (words.length === 0) return [];
+
+  // `Slam` shows one word alone, so it lays out as a SINGLE line regardless of
+  // how the cue is broken — the identical rule the preview applies.
+  const singleWord = isSingleWordAnim(anim.kind);
+  const layout = captionLayout(style, opts.width, opts.height, singleWord ? 1 : lines.length);
+  const fontPx = layout.font_px;
+  const advanceOf = (w: string): number =>
+    metrics[captionMetricKey(style.font, fontPx, w)] ?? 0;
+  const gapPx = Math.max(0, anim.word_gap) * fontPx;
+  // `drawtext` draws a word's glyphs from its own line box top under
+  // `y_align=font`, exactly as the static path does.
+  const lineTopOf = (lineIndex: number): number =>
+    layout.lines[Math.min(lineIndex, layout.lines.length - 1)].line_top;
+
+  /** One word, placed — the export's mirror of the preview's `PlacedWord`. */
+  const placed: Array<{ index: number; x: number; lineTop: number; advance: number }> = [];
+
+  if (singleWord) {
+    // Every word is centred on the anchor in turn, so each node's x needs no
+    // cross-word measurement at all — `text_w` alone would do, but our own
+    // advance is used so the two engines agree even when they disagree about
+    // a glyph's last fractional pixel.
+    const geom = layout.lines[layout.lines.length - 1];
+    words.forEach((w, i) => {
+      const advance = advanceOf(w.text);
+      const x =
+        style.align === 'left'
+          ? geom.x_anchor
+          : style.align === 'right'
+            ? geom.x_anchor - advance
+            : geom.x_anchor - advance / 2;
+      placed.push({ index: i, x, lineTop: geom.line_top, advance });
+    });
+  } else {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const onLine = words
+        .map((w, i) => ({ w, i }))
+        .filter(({ w }) => w.line === lineIndex);
+      if (onLine.length === 0) continue;
+      const total =
+        onLine.reduce((n, { w }) => n + advanceOf(w.text), 0) + gapPx * (onLine.length - 1);
+      const anchor = layout.lines[lineIndex].x_anchor;
+      let cursor =
+        style.align === 'left' ? anchor : style.align === 'right' ? anchor - total : anchor - total / 2;
+      for (const { w, i } of onLine) {
+        const advance = advanceOf(w.text);
+        placed.push({ index: i, x: cursor, lineTop: lineTopOf(lineIndex), advance });
+        cursor += advance + gapPx;
+      }
+    }
+  }
+
+  const steps: string[] = [];
+  let last = inLabel;
+  let node = 0;
+  const push = (filter: string) => {
+    const out = outLabelFor(node);
+    steps.push(`[${last}]${filter}[${out}]`);
+    last = out;
+    node += 1;
+  };
+
+  // Pass 1 — the highlight box behind the active word, under every glyph, for
+  // the same reason the preview paints its boxes first.
+  if (anim.active_box_color) {
+    const padX = Math.max(0, anim.active_box_pad_x) * fontPx;
+    const padY = Math.max(0, anim.active_box_pad_y) * fontPx;
+    // The box spans the font's own line box, whose height `drawtext` derives
+    // from the face under `y_align=font`. `captionLayout` has no font metric in
+    // it by design, so the height used here is the same `line_step`-free
+    // quantity the preview computes from `ascent`/`line_gap`: approximated for
+    // the box alone as the font size plus both paddings, which is what makes
+    // the two boxes the same rectangle for the catalogue's faces.
+    const boxH = fontPx + padY * 2;
+    const alpha = clampUnit(anim.active_box_opacity);
+    for (const p of placed) {
+      const w = words[p.index];
+      const t0 = startSec + w.start;
+      const t1 = startSec + w.end;
+      push(
+        `drawbox=x=${Math.round(p.x - padX)}:y=${Math.round(p.lineTop - padY)}:` +
+          `w=${Math.round(p.advance + padX * 2)}:h=${Math.round(boxH)}:` +
+          `color=${ffmpegColorLiteral(anim.active_box_color)}@${alpha.toFixed(3)}:t=fill:` +
+          `enable='between(t,${num(t0)},${num(t1)})'`,
+      );
+    }
+  }
+
+  // Pass 2 — the words themselves.
+  for (const p of placed) {
+    const w = words[p.index];
+    const t0 = startSec + w.start;
+    const t1 = startSec + w.end;
+    const enterExpr = captionEnterExpr(t0, anim.enter_secs);
+
+    // The window this word is on screen for, and how it moves while it is.
+    let visFrom: number;
+    let visTo: number;
+    let alphaExpr: string;
+    let xExpr: string;
+    let yExpr: string;
+    if (anim.kind === 'slam') {
+      visFrom = t0;
+      visTo = t1;
+      alphaExpr = enterExpr;
+      // dx = side * (1 - entered) * 0.6, in fractions of the font size.
+      const side = p.index % 2 === 0 ? -1 : 1;
+      xExpr = `${num(p.x)}+(${side})*(1-(${enterExpr}))*0.6*${fontPx}`;
+      yExpr = `${p.lineTop}`;
+    } else if (anim.kind === 'build') {
+      visFrom = t0;
+      visTo = endSec;
+      alphaExpr = enterExpr;
+      xExpr = `${num(p.x)}`;
+      // dy = (1 - entered) * enter_rise, positive is DOWN.
+      yExpr = `${num(p.lineTop)}+(1-(${enterExpr}))*${num(anim.enter_rise)}*${fontPx}`;
+    } else {
+      // Highlight / karaoke: the whole line is up for the whole cue, unmoved.
+      visFrom = startSec;
+      visTo = endSec;
+      alphaExpr = '1';
+      xExpr = `${num(p.x)}`;
+      yExpr = `${p.lineTop}`;
+    }
+
+    // The colour phases this word actually passes through, as [from, to,
+    // colour] windows clipped to the word's visible span — then collapsed
+    // wherever two adjacent phases resolve to the same colour, so a preset
+    // that recolours nothing emits ONE node per word rather than three.
+    const phases: Array<{ from: number; to: number; color: string }> = [
+      { from: visFrom, to: Math.min(t0, visTo), color: captionWordColor('upcoming', anim, style.color) },
+      {
+        from: Math.max(visFrom, t0),
+        to: Math.min(t1, visTo),
+        color: captionWordColor('active', anim, style.color),
+      },
+      {
+        from: Math.max(visFrom, t1),
+        to: visTo,
+        color: captionWordColor('spoken', anim, style.color),
+      },
+    ].filter((p2) => p2.to > p2.from);
+    const merged: Array<{ from: number; to: number; color: string }> = [];
+    for (const ph of phases) {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.color === ph.color && Math.abs(prev.to - ph.from) < 1e-9) prev.to = ph.to;
+      else merged.push({ ...ph });
+    }
+
+    for (const ph of merged) {
+      const optsList = [
+        `fontfile=${quoteFiltergraphValue(fontFile)}`,
+        `text=${quoteFiltergraphValue(w.text)}`,
+        `fontcolor=${ffmpegColorLiteral(ph.color)}`,
+        `fontsize=${fontPx}`,
+        'expansion=none',
+        'y_align=font',
+        `y='${yExpr}'`,
+        `x='${xExpr}'`,
+        `alpha='${alphaExpr}'`,
+        `enable='between(t,${num(ph.from)},${num(ph.to)})'`,
+      ];
+      push(`drawtext=${optsList.join(':')}`);
+    }
+  }
+
+  return steps;
+}
+
 /** Every caption showing anywhere on `timeline`, in the order they must be
  *  drawn — the export-side mirror of `Timeline::resolve_visible_captions_at`.
  *
@@ -546,6 +800,44 @@ export function captionClipsMissingFonts(
   for (const c of captionsForExport(timeline, fps)) {
     if (fontFiles?.[c.style.font]) continue;
     missing.push({ clipId: c.clip.id, font: c.style.font });
+  }
+  return missing;
+}
+
+/** D-241 — every animated caption on `timeline` with a word this export has no
+ *  measured advance for, so the caller can refuse with a real reason instead
+ *  of compiling a line whose words all stack at x=0.
+ *
+ *  The animated counterpart of `captionClipsMissingFonts`, and refused for the
+ *  same reason that one is: an export that silently disagrees with the preview
+ *  is the exact defect class this repo keeps closing.
+ *
+ *  Static captions are never listed — they carry no per-word layout and ffmpeg
+ *  measures them itself. */
+export function captionClipsMissingMetrics(
+  timeline: Timeline,
+  metrics: CaptionMetrics | undefined,
+  fps: number,
+  width: number,
+  height: number,
+): Array<{ clipId: string; word: string }> {
+  const missing: Array<{ clipId: string; word: string }> = [];
+  for (const c of captionsForExport(timeline, fps)) {
+    const anim = captionAnimationOf(c.style);
+    if (!isPerWordAnim(anim.kind)) continue;
+    const lines = captionLines(c.cue.text);
+    if (lines.length === 0) continue;
+    const layout = captionLayout(
+      c.style,
+      width,
+      height,
+      isSingleWordAnim(anim.kind) ? 1 : lines.length,
+    );
+    for (const w of captionWords(lines, Math.max(0, c.endSec - c.startSec))) {
+      if (metrics?.[captionMetricKey(c.style.font, layout.font_px, w.text)] === undefined) {
+        missing.push({ clipId: c.clip.id, word: w.text });
+      }
+    }
   }
   return missing;
 }
@@ -644,6 +936,23 @@ export interface TimelineExportOptions {
    *  export that silently disagrees with the preview. See
    *  `buildExportFfmpegArgs`' return value. */
   fontFiles?: Record<string, string>;
+  /** D-241 — the measured advance width of every word of every ANIMATED
+   *  caption on the timeline, keyed by `captionMetricKey`.
+   *
+   *  The same split as `fontFiles` directly above, for the same reason: an
+   *  animated caption positions each word itself (it is the only way the
+   *  `ab_glyph` preview and ffmpeg put a word in the same place), a word's x
+   *  depends on the advances before it, and an advance is a glyph measurement
+   *  only the backend can make. `captionMetrics.ts` warms these; this compiler
+   *  only reads them.
+   *
+   *  A word with no measurement here compiles at advance `0`, which stacks the
+   *  line's words on top of each other — visible, not subtle. That is why
+   *  `compileEditorExportArgs` refuses the export up front via
+   *  `captionClipsMissingMetrics` rather than relying on this fallback; the
+   *  fallback exists only so a missing measurement cannot throw mid-compile.
+   *  Unused by a static (D-229) caption, which ffmpeg measures itself. */
+  captionMetrics?: CaptionMetrics;
 }
 
 // --------------------------------------------------------------------------- //
@@ -1741,6 +2050,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       cap.startSec,
       cap.endSec,
       fontFile,
+      opts.captionMetrics,
     );
     if (steps.length === 0) return;
     captionSteps.push(...steps);
