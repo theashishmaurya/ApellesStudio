@@ -132,6 +132,7 @@ import { Player, useContentBox } from '@chroma/player';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
+import { DynamicZoomOverlay } from './DynamicZoomOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { CanvasSettingsPopover } from './CanvasSettingsPopover';
@@ -675,7 +676,14 @@ export function PreviewPane() {
                 style={{ transform: imageTransform }}
               />
               <CanvasBoundary container={surfaceEl} size={compSize} />
+              {/* D-234 — the two overlays are mutually exclusive by
+                  construction: each renders `null` when the other owns the
+                  picture (`TransformOverlay` stands aside for the armed clip,
+                  `DynamicZoomOverlay` draws only for it), so both can be
+                  mounted unconditionally and neither needs this pane to know
+                  which mode is active. */}
               <TransformOverlay container={surfaceEl} />
+              <DynamicZoomOverlay container={surfaceEl} />
             </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">

@@ -21340,5 +21340,175 @@ to easing (which warps the rate along whichever arc each side picks, so it
 neither causes nor worsens it) and a real change to the export compiler's
 per-param genericity, wanting its own ffmpeg test. Filed rather than folded in.
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+---
+
+## D-234 — Dynamic zoom BAKES ordinary keyframes, and its two boxes mean what every other box in the viewer means
+
+**Context.** Roadmap item 27's "dynamic zoom — drag a start/end box in the
+viewer instead of hand-authoring keyframes." The infrastructure was already
+complete: per-clip keyframeable `position_x`/`position_y`/`scale` (D-208/D-209),
+an on-canvas box with drag/resize handles (D-136/D-204/D-209), and
+`set_clip_keyframes` written by both the GUI and MCP. So this is a UX shortcut
+over a finished model, and the only real questions are what the gesture is and
+what it leaves behind.
+
+**Reference, checked not recalled** (`scratch/resolve-reference/`, per
+CLAUDE.md's research-the-real-pattern rule). `dynamic.jpg` is Blackmagic's
+3-panel marketing strip — one aerial shot at three progressively wider framings;
+it establishes the *effect* but is too small to resolve the controls. The
+controls come from the same scrape's `resolve-edit-features.json`, section
+`edit-dynamic`, which is Blackmagic's own copy and is explicit: *"select a clip
+in the timeline, then turn on dynamic zoom in the inspector… green and red boxes
+will appear in the viewer over your image. The green box shows where the shot
+will be framed at the beginning of the clip and the red box shows where it will
+be framed at the end. Simply drag and resize the boxes to your desired start and
+end positions."* That answers all four open questions: **two** boxes not one,
+green = start / red = end, armed from the **Inspector** (not a viewer toolbar),
+spanning the **whole clip**. Chroma takes all four.
+
+### Decision 1 — bake keyframes; do NOT add a persistent dynamic-zoom stage
+
+Resolve's Dynamic Zoom is a separate, re-editable transform stage evaluated at
+render time, with its own stored start/end rects and its own enable flag. Chroma
+instead **writes ordinary `position_x`/`position_y`/`scale` keyframes** across
+the clip's source span and keeps nothing else.
+
+**Rejected: a real `Clip::dynamic_zoom` field** (Resolve's own model). It is the
+higher-fidelity answer and it is the wrong trade here. It would need a new
+`Clip` field, a new stage in the Rust compositor, a matching stage in
+`timelineExport.ts`'s ffmpeg compiler, a migration, and MCP surface — and it
+would create a *second* way for a clip to be animated, which every existing
+consumer (the Inspector's diamonds, `<`/`>` nav, the curve editor on the
+roadmap, `resolveClipBoxTransform`, `editor_get_state`) would then have to learn
+about or silently be wrong about. Baking costs one pure module and **zero**
+renderer changes.
+
+**What baking buys, concretely:** preview and export agree because there is
+nothing new for them to agree *about*; undo works because it is one ordinary op;
+the Inspector shows the animation; the timeline curve editor (roadmap 27) will
+re-shape it for free. Pinned by a test that asserts the baked list is
+byte-identical to the hand-authored equivalent, and that `keyframeExprAt` (the
+export side) emits the identical ffmpeg expression for both.
+
+**What baking costs, stated plainly:** the start/end framings and the ease are
+not stored. The framings are re-derived exactly on the way back in (they *are*
+the first and last keys); the ease is not recoverable at all, so re-arming the
+mode always shows `linear`. Accepted: the keys are the truth, and a stored ease
+that could disagree with them would be the second source of truth this whole
+decision is avoiding.
+
+### Decision 2 — the boxes are the LAYER FOOTPRINT, not Resolve's framing rect
+
+This is the one deliberate divergence from the reference. Resolve's rectangles
+are a *framing* rect — the part of the image you end up seeing, so a **smaller**
+box means more zoomed in. Chroma's boxes are the clip's own footprint on the
+canvas, the same rectangle `TransformOverlay` has drawn since D-136, where a
+**bigger** box means more zoomed in.
+
+**Rejected: matching Resolve's inverse semantic.** It would put two opposite
+meanings for "the box you drag" in one viewer, switched by a mode the user may
+have forgotten is on — and it would need a second geometry space alongside
+composition-fraction space, which is exactly the parallel system this feature
+was scoped not to build. One consistent meaning beats per-mode fidelity. The
+colours (green/red) and the count (two) are Resolve's; the semantic is ours.
+
+### Decision 3 — ease is baked as sampled keys, because the model has no easing
+
+The Edit tab's keyframe model interpolates **strictly linearly** between
+bracketing keys on both sides of the wire (`chroma::keyframes::interpolate_param`
+in Rust, `keyframeExprAt` for ffmpeg). Resolve offers Linear / Ease In / Ease Out
+/ Ease In and Out. Since a per-key easing field does not exist, a non-linear ease
+is baked into `DYNAMIC_ZOOM_EASE_SAMPLES` (20) piecewise-linear segments —
+the same density, and the same trade, `timelineExportAudio.ts` already makes to
+approximate a `FadeCurve` for ffmpeg. **`linear` bakes to exactly two keys**, so
+the common case leaves a clean, human-readable start/end pair rather than 21 keys.
+
+The curve type is the existing `FadeCurve` and the four existing `FADE_PRESETS`
+(D-147) — which happen to be exactly Resolve's four options — **not** a new ease
+vocabulary, and not `@chroma/motion`'s bezier editor (a sibling tab; the D-039
+layer direction forbids reaching across). `fadeCurveEval` moved from
+`timelineExportAudio.ts` to `timeline.ts` beside the type it evaluates, once it
+had a second consumer — the same call, and the same reasoning, `panGains` records
+for itself in that file.
+
+**Known interaction with D-233, the timeline curve editor — real, not
+hypothetical.** These two were built concurrently and landed the same day (this
+entry took D-234 because D-233 was claimed first). D-233 introduces exactly the
+thing whose absence forced the bake above: *per-segment bezier easing for any
+keyframed property*. So the sampling here is **superseded in principle the
+moment D-233 merges**, and the follow-up is concrete rather than speculative:
+
+- The two are **compatible as they stand** — a bake writes plain keys with no
+  easing field, and linear is the default, so nothing breaks in either
+  direction. This is a redundancy to collapse, not a conflict to fix.
+- The collapse: `dynamicZoomKeyframes` should write **two** keys plus D-233's
+  own per-segment ease on the segment between them, for *every* ease, deleting
+  `DYNAMIC_ZOOM_EASE_SAMPLES` and the sampling loop entirely. That is strictly
+  better on every axis — 2 keys instead of 21, an exactly-correct curve instead
+  of a 20-segment approximation, and an ease that is then re-editable in the
+  curve lane and *recoverable*, which kills this decision's one stated cost
+  (that re-arming the mode forgets the ease).
+- Until then the bake stands, because it is the only ease that renders correctly
+  on **both** engines with the model as it exists on `main` today.
+
+Whoever merges these two branches should do that collapse rather than leaving
+two easing mechanisms in one tab.
+
+### Decision 4 — the gesture REPLACES the three properties it owns, and warns first
+
+A dynamic zoom spans the clip's entire source window, so leaving pre-existing
+`position_x`/`position_y`/`scale` keys in place would interleave two animations
+of the same three properties. Committing therefore drops those keys first.
+**Every other property's keys survive untouched** (`opacity`, `rotation`, the
+four crop insets, `volume`, `pan`) — which falls straight out of D-208's
+per-property model and is what makes the gesture safe on an already-animated
+clip. The Inspector states this before the drag rather than after
+(`dynamicZoomWouldReplace`), because a control that silently destroys work is
+B-067's exact shape; and it is one op, so one Cmd+Z undoes it.
+
+Arming and disarming the mode write **nothing**. On a clip with no zoom yet both
+boxes sit exactly on top of each other (the end box is dashed so the pair still
+reads as two), and the first drag is what creates the animation.
+
+### Decision 5 — one `TransformBox`, two consumers
+
+The rectangle, its four corner handles and all the pointer wiring were extracted
+from `TransformOverlay.tsx` into `TransformBox.tsx`. Dynamic zoom needs two
+boxes with the same drag behaviour; copy-pasting ~120 lines of pointer handling
+is what this repo's "if two places need it, extract it" rule forbids, and is how
+the two would have drifted (a fix to pointer capture, the Escape cancel, or the
+handle hit-slop landing in one and not the other). `TransformOverlay` keeps only
+what is actually its own — which clip, resolved at which frame, and what a
+released gesture *means*. The two overlays are mutually exclusive by
+construction: each renders `null` when the other owns the picture, so
+`PreviewPane` mounts both unconditionally and needs to know nothing about modes.
+
+### The MCP tool: yes, and why
+
+`editor_set_dynamic_zoom(track, clip, start, end, ease)` — per CLAUDE.md's
+human+AI parity rule, and it earns its place rather than merely satisfying it:
+the box→keyframe math is completely well-defined, so "punch in on this clip" is
+a genuine one-call operation instead of an agent computing and posting a
+keyframe list. It runs the **same** `applyDynamicZoom` the drag commits through
+and writes the **same** op, so the two interfaces are one code path with the
+framings arriving from different places — not two implementations to keep in
+step. Both framings and each of their three fields are optional, defaulting to
+the clip's current framing and a 1.2× push-in. It refuses a text clip and an
+adjustment clip for B-053's reason (a transform silently dropped is worse than
+one refused), and it arms the viewer's boxes on the same clip so a human sees
+what the agent authored, on the surface they would have used themselves.
+
+**Verified.** 27 unit tests on the box→keyframe math (span, bake, ease shape read
+back through the real interpolator, replace-vs-preserve, idempotence,
+round-trip); 9 real-DOM drag tests mounting the actual `PreviewPane` and reading
+the boxes' CSS geometry back, with zero console errors under StrictMode
+double-invoke; the pre-existing `TransformOverlay` drag suites pass unchanged,
+which is the evidence the `TransformBox` extraction changed no behaviour. Full
+`@chroma/editor` suite 1015/1015. `cargo test --workspace` 712 pass with only the
+known B-097 failing. `tsc` introduces **zero** new errors (verified by diffing
+the error set against a clean HEAD worktree: byte-identical, 64 pre-existing
+`app/src` errors before and after).
+
+**Not built, deliberately:** dragging a box does not re-time anything (the zoom
+always spans the whole clip, as in Resolve); there is no anchor point; and the
+ease is not persisted — see Decision 3's follow-up note.

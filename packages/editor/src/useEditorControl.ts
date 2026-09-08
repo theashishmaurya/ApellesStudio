@@ -127,6 +127,14 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import {
+  applyDynamicZoom,
+  defaultDynamicZoomEnd,
+  dynamicZoomFramings,
+  dynamicZoomIsStatic,
+  dynamicZoomSpan,
+  type DynamicZoomFraming,
+} from './dynamicZoom';
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
@@ -1849,6 +1857,143 @@ export function useEditorControl(): void {
         return { ok: true, open: true, track: found.track, clip: found.clip, param };
       },
 
+      /**
+       * D-234 — dynamic zoom, the agent half of the same feature the viewer's
+       * green/red boxes are (CLAUDE.md's human+AI parity rule). The box→
+       * keyframe math is entirely well-defined, so there is a real agent
+       * equivalent of the gesture: name the two framings, get the animation.
+       *
+       * Everything it does goes through `dynamicZoom.ts`'s own
+       * `applyDynamicZoom` — the SAME pure function the on-canvas drag commits
+       * through, writing the SAME `set_clip_keyframes` op — so an agent's
+       * dynamic zoom and a human's are not merely equivalent, they are
+       * literally the same code path with the framings arriving from a
+       * different place.
+       *
+       * Both framings are optional, and the defaults are the useful ones: an
+       * omitted `start` is the clip's CURRENT framing at its first frame (so
+       * "punch in on this clip" is one argument), and an omitted `end` is that
+       * pushed in by `DYNAMIC_ZOOM_DEFAULT_PUSH`. Each framing's own three
+       * fields are individually optional too, defaulting to the corresponding
+       * end's resolved value, so `{scale: 1.4}` means "same position, zoomed to
+       * 1.4" rather than silently recentring the shot.
+       */
+      editor_set_dynamic_zoom: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        const c = found.c;
+        // The same two refusals `editor_set_clip_transform`/`_keyframes` make,
+        // and for B-053's reason: a title's `scale` is pinned server-side and
+        // an adjustment clip's correction is full-frame, so a dynamic zoom on
+        // either would store a real animation that no frame of any render
+        // reflects. Refused, not silently ignored.
+        if (isTextClip(c)) {
+          return {
+            error:
+              "a text clip's scale is pinned to 1 by both renderers, so a dynamic zoom would animate nothing. Use editor_set_text_clip's `size`, or put the title over a video clip and zoom that.",
+          };
+        }
+        if (isAdjustmentClip(c)) {
+          return {
+            error:
+              "an adjustment clip's correction is always full-frame — it has no geometry to zoom. Apply the dynamic zoom to the video clip underneath it instead.",
+          };
+        }
+
+        const curveName = a?.ease === undefined || a?.ease === null ? 'linear' : String(a.ease);
+        const preset = EASE_PRESETS.find((p) => p.name === curveName);
+        if (!preset) {
+          return { error: `ease must be one of ${EASE_PRESETS.map((p) => p.name).join(', ')}` };
+        }
+
+        const current = dynamicZoomFramings(c);
+        // Same shape every other handler here spells locally: an absent field
+        // means "leave it", not "zero it".
+        const num = (v: unknown, fallback: number) => (v === undefined || v === null ? fallback : Number(v));
+        // A partial framing object fills its missing fields from the end it is
+        // replacing — never from zero, which would silently recentre a shot an
+        // agent only meant to scale.
+        const framing = (raw: unknown, base: DynamicZoomFraming): DynamicZoomFraming | { error: string } => {
+          if (raw === undefined || raw === null) return base;
+          if (typeof raw !== 'object') return { error: 'start/end must be objects of {position_x, position_y, scale}' };
+          const o = raw as Record<string, unknown>;
+          const out = {
+            position_x: num(o.position_x, base.position_x),
+            position_y: num(o.position_y, base.position_y),
+            scale: num(o.scale, base.scale),
+          };
+          if (!Number.isFinite(out.position_x) || !Number.isFinite(out.position_y) || !Number.isFinite(out.scale)) {
+            return { error: 'start/end fields must be finite numbers' };
+          }
+          if (out.scale <= 0) return { error: 'scale must be greater than 0' };
+          return out;
+        };
+
+        const start = framing(a?.start, current.start);
+        if ('error' in start) return start;
+        // An omitted `end` on a clip with no zoom yet is the default push-in;
+        // on a clip that already has one it is that clip's own end framing, so
+        // re-easing or re-starting a zoom does not silently reset the other
+        // end.
+        const endBase = dynamicZoomIsStatic(current.start, current.end)
+          ? defaultDynamicZoomEnd(start)
+          : current.end;
+        const end = framing(a?.end, endBase);
+        if ('error' in end) return end;
+
+        // D-193 — an independent box-size override beats `scale` outright in
+        // the compositor, so clear it or the animation animates nothing. The
+        // same extra op the on-canvas commit emits.
+        if ((c.box_width ?? null) !== null || (c.box_height ?? null) !== null) {
+          useEditorTimelineStore.getState().applyOp({
+            kind: 'set_clip_transform',
+            track: found.track,
+            clip: found.clip,
+            opacity: c.opacity ?? 1,
+            position_x: c.position_x ?? 0,
+            position_y: c.position_y ?? 0,
+            scale: c.scale ?? 1,
+            box_width: null,
+            box_height: null,
+            rotation: c.rotation ?? 0,
+            crop_left: c.crop_left ?? 0,
+            crop_top: c.crop_top ?? 0,
+            crop_right: c.crop_right ?? 0,
+            crop_bottom: c.crop_bottom ?? 0,
+          });
+        }
+
+        const span = dynamicZoomSpan(c);
+        const keyframes = applyDynamicZoom(c.chroma_keyframes, start, end, span.first, span.last, preset.curve);
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_keyframes',
+          track: found.track,
+          clip: found.clip,
+          keyframes,
+        });
+        // Arm the viewer's own boxes on the same clip, so a human looking at
+        // the app sees exactly what the agent just authored, on the surface
+        // they would have authored it on themselves.
+        useEditorTimelineStore.getState().setDynamicZoom({ clipId: c.id, curve: preset.curve });
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          start,
+          end,
+          ease: preset.name,
+          first_frame: span.first,
+          last_frame: span.last,
+          keyframe_count: keyframes.length,
+          // Stated rather than left to be inferred: two identical framings are
+          // a legal write that animates nothing, and an agent that asked for a
+          // zoom should be told it got a hold.
+          animates: !dynamicZoomIsStatic(start, end),
+        };
+      },
       // ---- export (Phase 2/3, D-183; D-201 real audio mixing; D-198
       // extracted the real body into `editorExport.ts` so the Edit tab's own
       // GUI Export dialog + queue can call the EXACT same compile+run logic

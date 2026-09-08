@@ -340,6 +340,12 @@ export function ClipInspectorPanel({
   onUpsertKeyframe,
   onRemoveKeyframeHere,
   onClearKeyframes,
+  dynamicZoomArmed,
+  dynamicZoomEasePreset,
+  dynamicZoomWouldReplace,
+  onDynamicZoomArm,
+  onDynamicZoomEase,
+  onDynamicZoomSwap,
 }: {
   clip: Clip | null;
   trackLocked: boolean;
@@ -385,6 +391,27 @@ export function ClipInspectorPanel({
   onUpsertKeyframe: () => void;
   onRemoveKeyframeHere: () => void;
   onClearKeyframes: () => void;
+  /** D-234 — is the viewer showing THIS clip's start/end boxes? Store state
+   *  (`timelineStore.dynamicZoom`), resolved against the selection by
+   *  `EditorInspectorPanel`, so this panel stays pure presentation. */
+  dynamicZoomArmed: boolean;
+  /** The `EASE_PRESETS` name of the ease the next bake will use. A name rather
+   *  than a `EaseCurve` because the `<select>` speaks names, and unlike the
+   *  Fade section's own curve picker there is no "custom" case to represent:
+   *  the ease here is authoring state this panel itself sets, never something
+   *  read back off a clip. */
+  dynamicZoomEasePreset: string;
+  /** Does the clip already carry `position_x`/`position_y`/`scale` keys that a
+   *  dynamic zoom would replace? Drives the warning line, not the controls —
+   *  the gesture is offered either way, it is just stated first. */
+  dynamicZoomWouldReplace: boolean;
+  onDynamicZoomArm: (armed: boolean) => void;
+  onDynamicZoomEase: (curve: EaseCurve) => void;
+  /** Swap the start and end framings — Resolve's own Swap button, which turns
+   *  a push-in into a pull-out without re-dragging either box. Writes
+   *  keyframes (unlike the arm toggle), so it is a real edit and a real undo
+   *  step. */
+  onDynamicZoomSwap: () => void;
 }) {
   // D-193 — locked by default for a clip with no independent-axis override
   // yet (the common "just scale it" case); a clip an MCP agent or a prior
@@ -599,6 +626,99 @@ export function ClipInspectorPanel({
                 curveOpen={openCurveParam === key}
               />
             ))}
+          </InspectorSection>
+        )}
+
+        {/* D-234 — Dynamic Zoom. **In the Inspector because that is where
+            Resolve puts it** — its own Edit-page copy is explicit ("select a
+            clip in the timeline, then turn on dynamic zoom in the inspector"),
+            and it sits next to Crop for the same reason Crop sits where it
+            does: both are viewer MODES that replace the on-canvas controls,
+            which is exactly how Resolve's own viewer mode selector groups
+            them. See `DynamicZoomOverlay.tsx` for the reference itself.
+
+            The toggle arms the two boxes and writes NOTHING. The keyframes are
+            written by dragging a box (or by `editor_set_dynamic_zoom`), so
+            arming and disarming are both free and the section never has a
+            pending, unapplied state to reconcile.
+
+            Hidden for a text clip and an adjustment clip, matching Crop above
+            and the overlay's own guards: a title's `scale` is pinned
+            server-side and an adjustment clip's correction is full-frame, so
+            for both the animation this section writes would be one neither
+            renderer reads. */}
+        {!clip.text && !clip.adjustment && (
+          <InspectorSection label="Dynamic Zoom">
+            <label className={row}>
+              <span className="text-text-secondary">Show start/end boxes</span>
+              <Button
+                type="button"
+                size="sm"
+                variant={dynamicZoomArmed ? 'default' : 'outline'}
+                className="h-7 px-2 text-xs"
+                disabled={trackLocked}
+                aria-pressed={dynamicZoomArmed}
+                onClick={() => onDynamicZoomArm(!dynamicZoomArmed)}
+                data-dynamic-zoom-toggle
+              >
+                {dynamicZoomArmed ? 'On' : 'Off'}
+              </Button>
+            </label>
+            <label className={row}>
+              <span className="text-text-secondary/70 pl-2 text-[11px]">Ease</span>
+              <Select
+                value={dynamicZoomEasePreset}
+                onValueChange={(v) => {
+                  const hit = EASE_PRESETS.find((p) => p.name === v);
+                  if (hit) onDynamicZoomEase(hit.curve);
+                }}
+                disabled={trackLocked || !dynamicZoomArmed}
+              >
+                <SelectTrigger className="h-7 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EASE_PRESETS.map((p) => (
+                    <SelectItem key={p.name} value={p.name}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            {dynamicZoomArmed && (
+              <div className="flex justify-end pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={trackLocked}
+                  onClick={onDynamicZoomSwap}
+                  title="Swap the start and end framings — turns a push-in into a pull-out"
+                  data-dynamic-zoom-swap
+                >
+                  Swap start / end
+                </Button>
+              </div>
+            )}
+            <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
+              {dynamicZoomArmed
+                ? 'Drag the green (start) and red (end) boxes in the viewer. Releasing either one writes the clip’s position and scale keyframes across its whole length.'
+                : 'Animate a push-in or pull-out by dragging two boxes in the viewer instead of keying by hand.'}
+            </p>
+            {/* Not decoration: a dynamic zoom spans the WHOLE clip, so it
+                replaces any position/scale animation already there. Saying so
+                before the drag is the difference between an informed
+                replacement and B-067's shape (a field that silently destroys
+                work). Everything else the clip has keyed — opacity, rotation,
+                crop, volume, pan — survives untouched. */}
+            {dynamicZoomArmed && dynamicZoomWouldReplace && (
+              <p className="pt-1 text-[10px] leading-snug text-red-400">
+                This clip already has position or scale keyframes. Dragging a box replaces them
+                (one undo step); its other animated properties are left alone.
+              </p>
+            )}
           </InspectorSection>
         )}
 

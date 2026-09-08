@@ -72,17 +72,27 @@ import {
   type ClipKeyframe,
 } from './clipKeyframes';
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
+import {
+  applyDynamicZoom,
+  dynamicZoomFramings,
+  dynamicZoomIsStatic,
+  dynamicZoomSpan,
+  dynamicZoomWouldReplace,
+} from './dynamicZoom';
 import type { PropertyState } from './PropertyRow';
 import {
   CLIP_KEYFRAME_DEFAULTS,
   CLIP_TRANSFORM_DEFAULTS,
   DEFAULT_EASE_CURVE,
+  EASE_PRESETS,
+  easePresetName,
   findClip,
   isClipAudioParam,
   timelineFps,
   type ClipAudioParam,
   type ClipKeyframeParam,
   type ClipTransformParam,
+  type EaseCurve,
   type EqBand,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
@@ -97,6 +107,10 @@ export function EditorInspectorPanel() {
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   const curveEditor = useEditorTimelineStore((s) => s.curveEditor);
   const setCurveEditor = useEditorTimelineStore((s) => s.setCurveEditor);
+  // D-234 — the dynamic-zoom authoring mode, armed from this panel and drawn
+  // by `DynamicZoomOverlay`. Store state, never persisted — see its field doc.
+  const dynamicZoom = useEditorTimelineStore((s) => s.dynamicZoom);
+  const setDynamicZoom = useEditorTimelineStore((s) => s.setDynamicZoom);
 
   // Same Phase 1 multi-select fallback `TimelinePane.tsx` already uses for
   // every single-clip-only consumer (docs/notes/multi-select.md): a
@@ -383,6 +397,51 @@ export function EditorInspectorPanel() {
   const openCurveParam =
     selectedClip && curveEditor?.id === selectedClip.id ? curveEditor.param : null;
 
+  // ---- D-234: dynamic zoom -------------------------------------------------
+  //
+  // The MODE (which clip's boxes the viewer shows, and the ease the next bake
+  // uses) is store state; the KEYFRAMES it bakes are the only thing persisted.
+  // Arming and disarming therefore write nothing at all — see
+  // `dynamicZoom.ts`'s module doc for why this feature is a shortcut on top of
+  // the existing keyframe model rather than a new one.
+  const dynamicZoomArmed = !!dynamicZoom && !!selectedClip && dynamicZoom.clipId === selectedClip.id;
+  // `?? EASE_PRESETS[0].name` covers the disarmed case (nothing to name) and
+  // the theoretical custom curve an MCP caller could arm with; `linear` is
+  // what both mean to this picker.
+  const dynamicZoomEasePreset = (dynamicZoomArmed ? easePresetName(dynamicZoom?.curve) : null) ?? EASE_PRESETS[0].name;
+
+  const armDynamicZoom = (armed: boolean) => {
+    if (!selectedClip) return;
+    setDynamicZoom(armed ? { clipId: selectedClip.id, curve: dynamicZoom?.curve ?? DEFAULT_EASE_CURVE } : null);
+  };
+
+  /** Changing the ease RE-BAKES immediately, rather than waiting for the next
+   *  drag. The boxes are already on screen at their real framings, so "ease
+   *  in" has an unambiguous meaning right now — and re-baking is exactly what
+   *  a drag would do anyway, with the same one-op/one-undo cost. On a clip
+   *  with no zoom authored yet (both framings identical) it writes nothing:
+   *  there is no animation to re-shape, and keying a static hold would be an
+   *  edit the user did not ask for. */
+  const setDynamicZoomEase = (curve: EaseCurve) => {
+    if (!selectedClip) return;
+    setDynamicZoom({ clipId: selectedClip.id, curve });
+    const { start, end } = dynamicZoomFramings(selectedClip);
+    if (dynamicZoomIsStatic(start, end)) return;
+    const span = dynamicZoomSpan(selectedClip);
+    applyKeyframes(applyDynamicZoom(clipKeyframes, start, end, span.first, span.last, curve));
+  };
+
+  /** Resolve's own Swap button: the start framing becomes the end and vice
+   *  versa, turning a push-in into a pull-out. A no-op on a clip with no zoom
+   *  yet, for the same reason the ease change is. */
+  const swapDynamicZoom = () => {
+    if (!selectedClip || !dynamicZoom) return;
+    const { start, end } = dynamicZoomFramings(selectedClip);
+    if (dynamicZoomIsStatic(start, end)) return;
+    const span = dynamicZoomSpan(selectedClip);
+    applyKeyframes(applyDynamicZoom(clipKeyframes, end, start, span.first, span.last, dynamicZoom.curve));
+  };
+
   return (
     <ClipInspectorPanel
       // D-193 — remounts `ClipInspectorPanel` on every new clip selection,
@@ -410,6 +469,12 @@ export function EditorInspectorPanel() {
       onUpsertKeyframe={doUpsertKeyframe}
       onRemoveKeyframeHere={doRemoveKeyframeHere}
       onClearKeyframes={doClearKeyframes}
+      dynamicZoomArmed={dynamicZoomArmed}
+      dynamicZoomEasePreset={dynamicZoomEasePreset}
+      dynamicZoomWouldReplace={dynamicZoomWouldReplace(clipKeyframes)}
+      onDynamicZoomArm={armDynamicZoom}
+      onDynamicZoomEase={setDynamicZoomEase}
+      onDynamicZoomSwap={swapDynamicZoom}
     />
   );
 }

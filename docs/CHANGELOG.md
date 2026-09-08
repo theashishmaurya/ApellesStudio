@@ -4,6 +4,28 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Dynamic zoom: drag two boxes in the viewer instead of
+  keying by hand (D-234, roadmap item 27).** Arm it from the Inspector and the
+  preview shows a green START box and a dashed red END box over the selected
+  clip — Resolve's own convention, read off its own Edit-page copy in
+  `scratch/resolve-reference/`. Drag either one and the clip's
+  `position_x`/`position_y`/`scale` keyframes are written across its whole
+  length, plus a Swap button and the four `FADE_PRESETS` eases. The load-bearing
+  call is that it **bakes ordinary keyframes** rather than adding a persistent
+  dynamic-zoom stage the way Resolve does: no new `Clip` field, no renderer
+  change on either side, so preview/export agreement, undo, the Inspector's
+  diamonds and the coming curve editor all work on it for free — pinned by a
+  test asserting the baked list is byte-identical to the hand-authored
+  equivalent. One deliberate divergence, argued in D-234: the boxes are the
+  clip's LAYER FOOTPRINT (bigger = more zoomed in), not Resolve's inverse
+  framing rect, so "the box" means one thing everywhere in the viewer. A
+  non-linear ease is baked as 20 sampled segments because the keyframe model has
+  no per-key easing on either side of the wire. Replaces (never interleaves
+  with) existing position/scale keys and says so before the drag; every other
+  animated property is left alone. `TransformBox` extracted so the single
+  transform box and this pair are one component, not two that drift. MCP:
+  `editor_set_dynamic_zoom`, running the same math and the same op as the drag.
+
 - **2026-09-08** — **Tape-style audio scrubbing + the viewer waveform strip
   (D-232, roadmap item 27).** Dragging the playhead — on the timeline cursor or
   the player's position bar — now makes sound: a new `chroma_media::scrub`
