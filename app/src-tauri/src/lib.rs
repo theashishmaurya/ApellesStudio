@@ -1431,6 +1431,72 @@ async fn generate_preview_for_path(
     .map_err(|e| format!("Task execution failed: {}", e))?
 }
 
+/// The real logging back end, installed by [`setup_logging`] once there is an
+/// `AppHandle` to resolve `app_log_dir()` with. `None` until then.
+static LOG_SINK: std::sync::OnceLock<Box<dyn log::Log>> = std::sync::OnceLock::new();
+
+/// The `log` implementation this process installs — a thin forwarder to
+/// [`LOG_SINK`], which is empty until [`setup_logging`] fills it in.
+///
+/// **Why a forwarder rather than installing `fern` directly (B-109).** `log`
+/// allows exactly one `set_logger` per process, first writer wins, and
+/// `tauri-plugin-wdio` (D-104, registered unconditionally) calls
+/// `log::set_boxed_logger` from its own plugin `setup`, which Tauri runs
+/// *before* this crate's `.setup()`. So `setup_logging`'s
+/// `fern::Dispatch::apply()` always lost — "attempted to set a logger after the
+/// logging system was already initialized" — and every `log::*` in the entire
+/// app (including `chroma::audio`'s rms/peak meter and every one of its failure
+/// paths) went nowhere, with `app.log` truncated to 0 bytes on every launch.
+///
+/// [`setup_logging`] cannot simply run earlier: the log *directory* is
+/// `app_log_dir()`, which needs an `AppHandle` that does not exist yet. So the
+/// process claims the slot at the top of [`run`] with this forwarder, and the
+/// real `fern` chain is dropped in behind it once the path is known. Records
+/// emitted in the gap are dropped, which is exactly what happened before.
+struct DeferredLogger;
+
+impl log::Log for DeferredLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        LOG_SINK.get().is_some_and(|sink| sink.enabled(metadata))
+    }
+
+    fn log(&self, record: &log::Record) {
+        if let Some(sink) = LOG_SINK.get() {
+            sink.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        if let Some(sink) = LOG_SINK.get() {
+            sink.flush();
+        }
+    }
+}
+
+/// Claim the process-global `log` slot for [`DeferredLogger`]. Called at the
+/// very top of [`run`], before `tauri::Builder` exists and therefore before any
+/// plugin's `setup` can take it (B-109).
+///
+/// The max level is set from `RUST_LOG` here too, so the gap before
+/// [`setup_logging`] filters the same way the real chain will; that call resets
+/// it from the dispatch's own level anyway.
+fn claim_logger() {
+    if log::set_logger(&DeferredLogger).is_err() {
+        eprintln!("chroma: the log slot was already taken — app logging is disabled");
+        return;
+    }
+    log::set_max_level(log_level_from_env());
+}
+
+/// `RUST_LOG` as a level filter, defaulting to `info` — one place, so
+/// [`claim_logger`] and [`setup_logging`] cannot disagree.
+fn log_level_from_env() -> log::LevelFilter {
+    std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(log::LevelFilter::Info)
+}
+
 fn setup_logging(app_handle: &tauri::AppHandle) {
     let log_dir = match app_handle.path().app_log_dir() {
         Ok(dir) => dir,
@@ -1453,8 +1519,7 @@ fn setup_logging(app_handle: &tauri::AppHandle) {
         .open(&log_file_path)
         .ok();
 
-    let var = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-    let level: log::LevelFilter = var.parse().unwrap_or(log::LevelFilter::Info);
+    let level = log_level_from_env();
 
     let mut dispatch = fern::Dispatch::new()
         .format(|out, message, record| {
@@ -1477,8 +1542,16 @@ fn setup_logging(app_handle: &tauri::AppHandle) {
         );
     }
 
-    if let Err(e) = dispatch.apply() {
-        eprintln!("Failed to apply logger configuration: {}", e);
+    // B-109 — install the chain BEHIND `DeferredLogger` rather than calling
+    // `dispatch.apply()`, which would try to `set_logger` a second time and
+    // always fail (a plugin, and now this process's own `claim_logger`, got
+    // there first). `into_log` hands back exactly what `apply` would have
+    // installed, so the chain, format and level are unchanged.
+    let (level, logger) = dispatch.into_log();
+    if LOG_SINK.set(logger).is_err() {
+        eprintln!("chroma: the log sink is already configured — keeping the first one");
+    } else {
+        log::set_max_level(level);
     }
 
     panic::set_hook(Box::new(|info| {
@@ -1697,6 +1770,12 @@ fn frontend_ready(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // B-109 — claim the global `log` slot before ANY plugin can. See
+    // `claim_logger`'s own doc: `setup_logging` cannot do this itself, because
+    // it needs an `AppHandle` for the log directory and by then a plugin has
+    // already taken the slot.
+    claim_logger();
+
     let _ = rayon::ThreadPoolBuilder::new()
         .stack_size(8 * 1024 * 1024)
         .build_global();

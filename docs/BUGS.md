@@ -1487,6 +1487,104 @@ status: fixed (2026-09-08) · severity: low (a test-suite isolation defect — n
 
 - **not fixed here, deliberately:** the underlying design smell — a process-global `current_video()` that a pure-parsing helper three modules away reads — is untouched. `PROJECT_STATE_LOCK` is the existing, documented mitigation for exactly this class across `chroma::*` tests, and widening its use is the fix that matches the codebase as it is. Making `interpolated_parameters` take the frame as an argument instead of reaching for a global is the real repair and is a much wider change than a test-isolation bug warrants; noted here so it is on the record.
 
+## B-109 — the app's logger has never written a single byte: a plugin takes `log::set_logger` before `setup_logging` runs, so every `log::*` in the whole app goes nowhere
+
+status: fixed (2026-09-08) · severity: high (not a wrong pixel — a blind spot. Every diagnostic the audio subsystem has, including the D-049 rms/peak verification hook and every one of its silent failure paths, was unreachable in the running app; three separate investigations of B-111 in one night were slowed by reading a log that could not contain anything) · area: `app/src-tauri/src/lib.rs` (`setup_logging`, `run`)
+
+- **found:** 2026-09-08, while root-causing B-111. Looking for the once-per-second `chroma audio: rms=… peak=…` line that `chroma_media::audio`'s output callback emits, and finding no trace of it, led to `app_log_dir()`: **every `app.log` on this machine was 0 bytes** — `io.github.CyberTimon.RapidRAW`, `…RapidRAWWt`, `…dev-d214`, `…dev-motion-mcp-*`, `io.chroma.debugtools.worktree`, `io.github.chroma.perfagent` — across a week of builds and every worktree. `setup_logging` opens the file with `truncate(true)`, so each one had been created and emptied at that build's last launch and never written to again.
+
+  B-102 had already brushed against this ("`run_session` errors only ever reach a `log::warn!` with no logger backend installed") but read it as a property of the *test* binary. It is true of the shipped app.
+
+- **repro:** launch the app and look at `~/Library/Logs/<bundle identifier>/app.log`, or at `tauri dev`'s own stderr. Nothing — not even `setup_logging`'s own closing `log::info!("Logger initialized successfully…")`.
+
+- **expected:** `fern` writes to stderr and to `app.log`, filtered by `RUST_LOG` (default `info`), as `setup_logging` plainly intends.
+
+- **actual:** nothing, ever. Confirmed by instrumenting the failing branch directly and running the real app:
+
+  ```
+  DBG Failed to apply logger configuration: attempted to set a logger after the
+  logging system was already initialized
+  ```
+
+- **cause:** `log` permits exactly one `set_logger` per process, first writer wins. `tauri-plugin-wdio` 1.3.0 — registered **unconditionally** at `lib.rs` L1743 by D-104, since it is "the backend-access/mocking side" of the E2E setup — calls `log::set_boxed_logger` from inside its own plugin `setup`, and Tauri runs every plugin's `setup` before this crate's `.setup()` closure. So by the time `setup_logging` reaches `dispatch.apply()`, the slot is gone and `apply()` returns `SetLoggerError`. The existing code did notice (`if let Err(e) = … { eprintln!(…) }`) but the message went to a stderr nobody reads in a windowed app, and the file had already been truncated to zero on the way past.
+
+  `setup_logging` cannot simply run earlier: it needs `app_handle.path().app_log_dir()` for the log directory, and there is no `AppHandle` before the builder runs.
+
+- **fix:** split *claiming the slot* from *configuring the sink*. `run()` now calls `claim_logger()` as its first statement — before `tauri::Builder` exists, so before any plugin's `setup` can run — installing a `DeferredLogger` that forwards to a `OnceLock<Box<dyn log::Log>>`. `setup_logging` then builds the same `fern::Dispatch` it always did but ends with `dispatch.into_log()` (exactly what `apply()` would have installed) and drops the result into that cell, plus `log::set_max_level`. The plugin's own `set_boxed_logger` now loses instead of winning, which it already tolerates — it logs a note and moves on. `RUST_LOG` parsing is factored into one `log_level_from_env()` so the pre-`setup_logging` window filters the same way the real chain does.
+
+- **verification:** the real app, launched from this worktree on isolated ports. `app.log` went from 0 bytes to real content on the first run after the fix:
+
+  ```
+  2026-09-08 16:53:29 [INFO] Logger initialized successfully. Log file at: "…/app.log"
+  2026-09-08 16:53:29 [INFO] [sidecar/ai-media] already running (external) on :8766 — monitoring only…
+  2026-09-08 16:53:31 [WARN] [chroma::control] op 'get_state' timed out waiting for the frontend
+  2026-09-08 16:53:34 [WARN] Frontend failed to report ready within timeout. Forcing window visibility.
+  ```
+
+  Those `[WARN]`s are real conditions the app has presumably been reporting into the void for as long as the plugin has been registered. No unit test: `log::set_logger` is process-global and one-shot, so a test asserting on it would have to fight every other test in the binary for the same slot — the live app is the only place this is really testable, which is where it was tested.
+
+- **worth noting for next time:** a `log::warn!` in this codebase is not a diagnostic anyone will see unless someone checks that this stays fixed. Anything that must reach a human on a real failure should be surfaced through the frontend or an `eprintln!`, not only through `log`.
+
+## B-110 — a tape scrub monitors every source at unity gain, so a track the user faded down is audibly louder under the playhead than it is in playback
+
+status: fixed (2026-09-08) · severity: medium (the scrub tells the user something the timeline does not say — the same clip at a different loudness; on the owner's own reel a music bed set to 0.4 was monitored ~8 dB hot) · area: `packages/editor/src/scrubSource.ts`, `packages/editor/src/scrubAudio.ts`, `app/src-tauri/src/chroma/audio.rs`, `crates/chroma-media/src/scrub.rs`
+
+- **found:** 2026-09-08, owner-reported live against D-232's new scrub: *"when i have paused but move the playhead it plays the audio which is not the right one I guess"*.
+
+- **repro (the owner's own `perf-comparison-reel-v3`):** put a music bed on an audio track and pull that track's fader to `gain: 0.4`. Play — it mixes at 0.4. Now pause and drag the playhead across the same stretch — the scrub monitors the same file at 1.0.
+
+- **expected:** scrubbing a clip sounds like playing that clip. It is a monitoring aid; if its level does not match, it cannot be used to judge one.
+
+- **actual:** every scrubbed source played at unity. `ScrubSource` carried a path and a source second and nothing else; `chroma_audio_scrub_begin`/`_update` took the same two arguments; `run_scrub` pushed each grain into the ring untouched.
+
+- **cause:** `scrubSourceAt` read `Track::gain` only to *skip* a track muted to exactly zero (`(tr.gain ?? 1) > 0`), and then discarded it. That test exists because a scrub picks one source where the mixer sums many, so a fully-muted track had to be excluded explicitly — but "is this audible at all" was mistaken for the whole of what `gain` means, and the *degree* was dropped on the floor. `Clip::volume` (D-223) was never consulted at all, even though its own doc states the chain (`track.gain × clip.volume × fade × …`) that `chroma_audio_play` applies.
+
+- **fix:** the resolver now carries the static level — `ScrubSource.gain = max(0, track.gain × clip.volume)` — `scrubAudio.ts` sends it with every claim and every steer, the two Tauri commands take it, and `chroma_media::scrub::run_scrub` applies it per grain via a new pure `apply_gain` (unity is a bit-exact no-op; a negative or non-finite value from a hand-edited manifest falls back to unity rather than inverting the phase or NaN-ing the device). Per grain rather than baked into the decoded window, because a drag can cross a cut into a clip on a quieter track while the window it is reading from stays valid.
+
+  MCP half, per this repo's standing "a human AND an AI" rule: `editor_get_waveform` now reports `gain` on its resolved `source`. An agent cannot hear that a monitor is hot, so it gets the number — the same reasoning D-232 used to justify shipping the envelope-as-numbers instead of an `editor_scrub` tool. The tool doc states explicitly that `peaks` are the source's own and are **not** scaled by it.
+
+- **regression tests:** 6 in `packages/editor/src/scrubSource.test.ts` (track gain carried; track × clip multiplied; unity default; a video clip's embedded audio levelled by its own volume; a negative level clamped), 4 in `crates/chroma-media/src/scrub.rs` (`apply_gain`: scaling, bit-exact unity, real zero, nonsense→unity), 2 in `app/src-tauri/src/chroma/audio.rs` (the command→engine conversion), and the real-DOM `PreviewPane.transport.dom.test.tsx` asserting the level actually crosses the IPC boundary on both `scrub_begin` and `scrub_update`. Every one of them fails against the pre-fix code, which had no `gain` field to assert on.
+
+- **still divergent, deliberately, and NOT what was reported:** a scrub still monitors **one** source where playback mixes all of them (D-232's own stated trade, a roadmap follow-up), and still applies no fade, duck, pan, EQ or keyframed volume — those are per-sample-frame envelopes evaluated against a session clock a position-driven mode does not have. The static level was the part that was simply wrong.
+
+## B-111 — the audio session's source set is frozen at the moment Play is pressed, so every clip that starts later in the timeline is silent for that whole session
+
+status: **open** (root cause confirmed, fix scoped and not yet built — see below) · severity: blocker (on the owner's own reel, 10 of its 11 audio clips can never sound on a play from the head; reported live as "for the first play audio does not come at all") · area: `crates/chroma-media/src/audio.rs` (`run_session`), `app/src-tauri/src/chroma/audio.rs` (`chroma_audio_play`)
+
+- **found:** 2026-09-08, owner-reported live, in the same breath as B-110: *"for the first play audio does not come at all, then stop and play does give me audio"*. Reported right after D-232 landed, but this is **not** a D-232 regression — the behaviour dates from D-050, and that commit's diff against `crates/chroma-media/src/audio.rs` is visibility keywords plus one rustfmt hunk, touching no play-path logic.
+
+- **repro (the owner's own `perf-comparison-reel-v3`):** open the project, leave the playhead at 0, press Play. The reel's clicks, whooshes and chimes never fire, at any point in the session. Press Stop, then Play again from wherever playback reached, and the clips live at *that* frame play.
+
+- **expected:** playing from frame 0 plays the timeline — every audio clip sounds as the playhead reaches it, the way it does in the exported file and in every NLE.
+
+- **actual:** only the clips overlapping the frame Play was pressed at ever sound. Captured directly from the running app, against the owner's real project, with temporary `eprintln!` instrumentation in `chroma_audio_play`:
+
+  ```
+  chroma_audio_play(start_frame=0, seq=…) -> 1 source(s):
+      [("…/reel-sfx-v4/music.mp3", 0.0, Some(47.875), 0.4)]
+  run_session gen=3: warm-up 293ms (compensated 293ms), prefill target 14400 samples, starting stream
+  cpal out: rms=0.0228 peak=0.2952   (…rising to 0.1170 over the next seconds)
+  ```
+
+  **One source, for a timeline with eleven audio clips.** That project's own `project.json`: track 2 holds `click.mp3` at frames 12/310/522, track 3 `whoosh.flac` at 12/199/310/522/627, track 4 `chime.mp3` at 199/627, track 5 `music.mp3` at 0 (gain 0.4) — and both video tracks are screen recordings with **no audio stream at all** (`ffprobe` reports one `h264` video stream and nothing else). So at frame 0 the only overlapping clip is the music bed, and it is the only thing that can be heard for the entire session no matter how far playback runs.
+
+- **cause:** `chroma_audio_play` resolves its `Vec<AudioSourceSpec>` **once**, from `resolve_video_position(start_frame)` + `resolve_audio_track_positions(start_frame)`, and hands that fixed list to `chroma_media::audio::start`. `run_session` opens exactly those sources and mixes exactly those sources until the generation is superseded. Nothing re-resolves. This is documented — `audio.rs`'s module doc lists *"re-resolving which sources are active mid-session"* in its "does NOT do" list, and D-050 accepted it deliberately on the reasoning that a clip beginning mid-session "won't be picked up until the next Play/seek". That reasoning held for a single-clip preview; it does not hold for a real cut, where **most** clips begin after the playhead.
+
+  Two consequences, and the second is the reported one:
+  1. Press Play anywhere and the SFX that start later never fire — the session is deaf to them.
+  2. Press Play at a frame no audio clip overlaps at all and `sources` is **empty**, so `start` returns `Ok(())` having spawned no thread and opened no device: total silence, no error, and (until B-109) no log line either. On this reel, frames 1149–2113 — roughly 40 seconds, nearly half the piece — have no audio source on any track, so a play started there is silent by construction. "Stop and play" then resolves a fresh set at the new playhead, which is exactly why the second press appears to fix it.
+
+- **what was ruled out first, with evidence, so it is not re-derived:**
+  - *A stray scrub claiming the transport off the Play button* (D-232 wired the position bar immediately above it to `beginScrub`/`endScrub`). Refuted in real DOM: a genuine `click()` on Play issues exactly one `chroma_audio_play` and no `chroma_audio_scrub_*`. Pinned permanently by `packages/editor/src/PreviewPane.transport.dom.test.tsx`.
+  - *Transport request ordering (B-047/D-130).* Refuted: every command's `seq` is strictly above the one before it across mount → play → stop → play, so `begin_request` drops none of them. Also pinned in that same test file.
+  - *The Rust play path being silent on a genuinely cold first call.* Refuted: replaying the exact frontend cold-start command sequence (`set_volume`, three `stop`s, `play`) in a fresh process against real media gives `rms=0.0883 peak=0.1252` on the first play and the identical figure on the second.
+
+- **fix (scoped, NOT built):** the session must be handed the timeline's audio *schedule*, not a snapshot of one frame. The shape that fits the existing D-146 layer boundary — `chroma-media` is handed files and seconds, never timeline frames — is to give `AudioSourceSpec` a **lead-in**: `chroma_audio_play` resolves every audio clip from `start_frame` to the end of the timeline and states, per source, how many seconds after session start it begins; `run_session` opens each source lazily as `pos_frames` reaches it (a mid-session `open_source` is the same ~20–40 ms stall a scrub re-anchor already absorbs) and the mixer holds it silent until then. `sources.is_empty()` must also stop meaning "open no device": a session that starts in a gap has to keep running so the clip after the gap can sound.
+
+- **deliberately not attempted in the pass that found it, and why:** this is a real change to the mixer's per-source state, and its only honest verification is the `cpal` rms/peak proxy plus an ear — the owner asked for no audible test runs on this machine while it was being worked on. Landing an unverifiable rewrite of the audio engine is exactly what this repo's "don't claim it works until it renders / builds / passes" rule forbids. It wants its own `D-NNN` and a session that can make sound.
+
+- **one alternative not fully ruled out:** the owner said "no audio *at all*", and at frame 0 the music bed measurably does play (rms 0.02→0.12 at its 0.4 gain). Either their playhead was in the 1149–2113 gap (silent by construction, as above), or "no audio" meant "none of the reel's audio" — the SFX. Both are this same defect; which one they saw is not established.
+
 ## B-106 — the three live-device audio playback tests read a once-per-second meter after 1.5 s, so they could fail for having nothing to read rather than nothing to hear
 
 status: fixed (2026-09-08) · severity: low (a test-robustness defect — no shipped behaviour is wrong; the cost is an env-gated audio test that fails intermittently for a reason unrelated to what it verifies, which is exactly how a real audio regression gets waved through) · area: `app/src-tauri/src/chroma/audio.rs` (`chroma_audio_play_produces_non_silent_pcm_end_to_end`, `chroma_audio_play_mixes_a_genuine_audio_track_with_the_video_track`, `chroma_audio_play_with_a_muted_audio_track_still_plays_the_video`)

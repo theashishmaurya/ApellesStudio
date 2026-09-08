@@ -4,6 +4,37 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Two owner-reported audio bugs, and the reason neither could
+  be seen.** **B-109:** the app's logger has never written a byte — every
+  `app.log` on the machine was 0 bytes, across six bundle identifiers and a
+  week of builds, because `tauri-plugin-wdio` (registered unconditionally by
+  D-104) takes `log::set_boxed_logger` from its plugin `setup`, which Tauri runs
+  before this crate's own `.setup()`, so `fern`'s `apply()` always lost the
+  race. That silently disabled the entire audio subsystem's only diagnostics,
+  including the D-049 rms/peak verification hook. `run()` now claims the global
+  slot first with a forwarding `DeferredLogger`, and `setup_logging` drops the
+  real `fern` chain in behind it once `app_log_dir()` is resolvable; verified in
+  the real app (0 bytes → real `[INFO]`/`[WARN]` lines, several of which the app
+  had been reporting into the void). **B-110:** a tape scrub monitored every
+  source at unity — `scrubSourceAt` read `Track::gain` only to skip a fully
+  muted track and then threw the value away, and never consulted `Clip::volume`
+  at all — so a music bed faded to 0.4 was heard ~8 dB hot under the playhead
+  versus in playback ("it plays the audio which is not the right one"). The
+  resolved source now carries `track.gain × clip.volume` through both scrub
+  commands into `run_scrub`'s per-grain `apply_gain`, and `editor_get_waveform`
+  reports it so an agent, which cannot hear a hot monitor, gets the number.
+  **B-111 filed, open:** "the first play has no audio, stop and play fixes it"
+  is *not* a D-232 regression and not a transport-ordering race — both were
+  ruled out with real-DOM and live-app evidence (a real click on Play issues one
+  `chroma_audio_play` and no scrub; the first play in a fresh process measures
+  `rms=0.0883`). It is that `chroma_audio_play` resolves its sources **once**,
+  at the frame Play was pressed, and never again: on the owner's own reel that
+  is 1 source out of 11 audio clips, so every SFX that starts later is silent
+  for the whole session, and a play started in the reel's 40-second audio gap
+  opens no device at all. Root cause confirmed and the fix scoped in B-111; not
+  built here, because its only honest verification is an audible one and the
+  machine had to stay quiet.
+
 - **2026-09-08** — **Tape-style audio scrubbing + the viewer waveform strip
   (D-232, roadmap item 27).** Dragging the playhead — on the timeline cursor or
   the player's position bar — now makes sound: a new `chroma_media::scrub`

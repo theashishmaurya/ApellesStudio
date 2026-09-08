@@ -30,7 +30,13 @@
 //!   resolved under the playhead — where [`crate::audio::start`] mixes every
 //!   active source. Re-anchoring N decoders on every window crossing is N times
 //!   the stall, for a monitoring aid whose job is "what is at this frame".
-//!   Roadmap follow-up, not a hidden gap.
+//!   Roadmap follow-up, not a hidden gap. It does now monitor that one source at
+//!   the LEVEL the mix would give it ([`ScrubSource::gain`], B-110) — "one
+//!   source" was always the deliberate part; "at the wrong loudness" was not.
+//! - **No envelopes.** The static level above is the whole of it: fades,
+//!   ducking, pan, EQ and keyframed volume are all things [`crate::audio`]'s
+//!   mixer runs per sample-frame against a session clock a scrub does not have
+//!   (its position comes from the pointer, not from elapsed time).
 //! - **No timeline resolution.** Same boundary the whole crate keeps (D-146):
 //!   it is handed a path and a source second, never a timeline frame. The
 //!   frontend resolves — see D-232 for why that is the right side of the line
@@ -158,6 +164,19 @@ pub(crate) fn apply_grain_envelope(grain: &mut [f32], channels: usize, fade: usi
     }
 }
 
+/// Scale one grain by its source's linear level, in place (B-110). A `gain` of
+/// exactly 1.0 is the common case and skips the pass entirely; a non-finite or
+/// negative value is treated as unity rather than silencing or phase-inverting
+/// the monitor, since it can only come from a malformed manifest. Pure — no I/O.
+pub(crate) fn apply_gain(grain: &mut [f32], gain: f32) {
+    if !gain.is_finite() || gain < 0.0 || gain == 1.0 {
+        return;
+    }
+    for s in grain.iter_mut() {
+        *s *= gain;
+    }
+}
+
 /// One decoded stretch of a source, interleaved at the output device's own
 /// `(rate, channels)` — the thing a scrub actually reads its grains out of.
 ///
@@ -278,6 +297,17 @@ impl ScrubWindow {
 pub struct ScrubSource {
     pub path: PathBuf,
     pub source_secs: f64,
+    /// The linear level this source is heard at — the same `gain` the mixer
+    /// applies to the matching [`crate::audio::AudioSourceSpec`] during
+    /// playback, resolved by the frontend as `track.gain × clip.volume`.
+    ///
+    /// **B-110.** A scrub used to carry no level at all and every grain went
+    /// out at unity, so monitoring a track the user had faded down was audibly
+    /// louder than playing it — the same clip, at a loudness the timeline does
+    /// not have. Only the STATIC level: fades, ducking, pan, EQ and keyframed
+    /// volume are envelope/DSP this mode still does not run (see the module
+    /// doc's "does NOT do" list).
+    pub gain: f32,
 }
 
 /// The newest position the frontend has asked for, or `None` when the playhead
@@ -470,6 +500,11 @@ fn run_scrub(my_gen: u64) -> Result<(), String> {
         let Some(w) = window.as_ref() else { continue };
         let mut buf = w.read(at.source_secs, grain);
         apply_grain_envelope(&mut buf, out_channels, fade);
+        // B-110 — the source's own level, applied per grain rather than baked
+        // into the window, because the frontend can change it mid-gesture
+        // (dragging across a cut into a clip on a quieter track) and a decoded
+        // window outlives many grains.
+        apply_gain(&mut buf, at.gain);
         ring.lock().unwrap_or_else(|e| e.into_inner()).extend(buf);
     }
 
@@ -573,6 +608,53 @@ mod tests {
         let mut grain = vec![0.5f32; 20];
         apply_grain_envelope(&mut grain, 1, 0);
         assert!(grain.iter().all(|g| *g == 0.5));
+    }
+
+    // --- per-grain level (B-110) ------------------------------------------- //
+
+    /// The whole point of B-110: a source the timeline plays at 0.4 must be
+    /// MONITORED at 0.4, not at unity. Before the fix a scrub carried no level
+    /// at all, so a faded-down music bed was audibly hotter under the playhead
+    /// than it was in playback.
+    #[test]
+    fn a_grain_is_scaled_by_its_source_level() {
+        let mut grain = vec![1.0f32, -0.5, 0.25, -1.0];
+        apply_gain(&mut grain, 0.4);
+        assert_eq!(grain, vec![0.4, -0.2, 0.1, -0.4]);
+    }
+
+    /// Unity is the common case and must be bit-exact, not "multiplied by a
+    /// 1.0 we computed" — the same no-op-rather-than-a-pass rule
+    /// `FadeEnvelope`'s `None` case follows in `crate::audio`.
+    #[test]
+    fn a_unity_level_leaves_the_grain_bit_identical() {
+        let original = vec![0.3f32, -0.7, 0.0, 1.0];
+        let mut grain = original.clone();
+        apply_gain(&mut grain, 1.0);
+        assert_eq!(grain, original);
+    }
+
+    /// A level of exactly zero is a real state (a clip whose own `volume` is 0
+    /// on an unmuted track) and must be silence, not a skipped pass.
+    #[test]
+    fn a_zero_level_is_real_silence() {
+        let mut grain = vec![1.0f32, -1.0, 0.5];
+        apply_gain(&mut grain, 0.0);
+        assert!(grain.iter().all(|s| *s == 0.0));
+    }
+
+    /// **A malformed level can only come from a hand-edited manifest, and must
+    /// not be able to invert the monitor's phase or NaN the output device.**
+    /// Both fall back to unity rather than to silence: losing the level is a
+    /// far smaller fault than losing the sound.
+    #[test]
+    fn a_nonsense_level_falls_back_to_unity_rather_than_inverting_or_nan() {
+        for bad in [-1.0f32, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let original = vec![0.5f32, -0.25];
+            let mut grain = original.clone();
+            apply_gain(&mut grain, bad);
+            assert_eq!(grain, original, "level {bad} must be treated as unity");
+        }
     }
 
     // --- window anchoring -------------------------------------------------- //
@@ -731,10 +813,12 @@ mod tests {
         update(Some(ScrubSource {
             path: PathBuf::from("/a.m4a"),
             source_secs: 1.0,
+            gain: 1.0,
         }));
         update(Some(ScrubSource {
             path: PathBuf::from("/a.m4a"),
             source_secs: 2.0,
+            gain: 1.0,
         }));
         assert_eq!(target().map(|t| t.source_secs), Some(2.0));
         update(None);

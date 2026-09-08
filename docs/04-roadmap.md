@@ -247,13 +247,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    mute/volume controls, audio scrubbing while
    paused, and long-play-session drift correction between the audio/video
    clocks (open-loop by design this pass — see D-050's sync-model note).
-   - **Re-resolve the active sources at a clip boundary mid-session** — D-050's
-     "a source's set is fixed at the moment `chroma_audio_play` is called" is
-     still true, and since D-130 a source correctly falls **silent** at its
-     clip's out-point instead of playing the rest of its file underneath the
-     next clip's picture (B-048). Correct, but it means a multi-clip timeline
-     goes quiet after the first clip until the next Play/seek. The real fix is
-     for the audio thread to re-resolve as the playhead crosses a boundary.
+   - **Re-resolve the active sources at a clip boundary mid-session** —
+     **now B-111, and no longer theoretical: the owner hit it live (2026-09-08)
+     and it is a blocker.** D-050's "a source's set is fixed at the moment
+     `chroma_audio_play` is called" is still true, and since D-130 a source
+     correctly falls **silent** at its clip's out-point instead of playing the
+     rest of its file underneath the next clip's picture (B-048). Correct, but
+     it means a multi-clip timeline goes quiet after the first clip until the
+     next Play/seek — and the mirror of that is worse: a clip that *starts*
+     after the playhead never sounds at all. Measured on the owner's own reel,
+     a play from frame 0 resolves **1 source out of 11 audio clips**, and a play
+     started in that reel's 40-second audio gap resolves none and so opens no
+     device at all (`sources.is_empty()` returns `Ok(())` having spawned no
+     thread). That is the "first play has no audio, stop and play fixes it"
+     report. The real fix is for the session to be handed the timeline's audio
+     **schedule** rather than a snapshot: every source from `start_frame`
+     onward, each with a lead-in, opened lazily as the mix clock reaches it —
+     full scoping in B-111. Needs an audible verification pass, so it wants its
+     own `D-NNN`.
    - ~~**A backend volume/mute primitive**~~ — **done, D-126.** Noted as
      missing while fixing D-130; landed independently by the concurrent
      player-controls pass as `chroma_audio_set_volume`, a lock-free
