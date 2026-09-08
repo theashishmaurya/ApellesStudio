@@ -65,6 +65,29 @@ dragging a pool item in from the shell's Sources panel.
   `SpeedRampEditor.tsx` is the Inspector section around it. **Does not** do
   reverse speed, smoothed S-curve transitions, or frame interpolation — see
   D-236's own "not built" list.
+- `editTypes.ts` + `EditOverlay.tsx` (D-239, roadmap item 27) — **the seven
+  edit types on drop**: Insert / Overwrite / Replace / Fit to Fill / Place on
+  Top / Append at End / Ripple Overwrite. `editTypes.ts` is pure metadata — the
+  seven names, Blackmagic's own one-line description of each, their order (which
+  IS the overlay's hit-test geometry), and `editTargetIndexAt`, the pointer→row
+  resolution. It deliberately imports **nothing** from `timeline.ts`, which is
+  what lets `timeline.ts` import `DropEditType` from it without a cycle.
+  `EditOverlay.tsx` is the GUI: a strip of seven labelled targets down the right
+  of the preview, raised by a Sources drag, taken from Resolve's own edit
+  overlay (`scratch/resolve-reference/timeline.jpg`, the file the roadmap line
+  names). The semantics are ONE `edit_in` `EditOp` in `timeline.ts` with the
+  rest — one op per edit, so one undo entry, named for the type (the D-129
+  precedent: a chained two-op Insert would take two Undos and leave its razor
+  cut behind after the first). The precondition check is deliberately in two
+  halves, both in `timeline.ts`: `checkEditTarget` answers everything that does
+  not need the incoming source (track locked, is there a target under the
+  playhead, B-033's straddle guard) and is what the overlay can ask *mid-drag*,
+  when the HTML5 payload is still unreadable; `checkEditIn` is that plus the two
+  source-length questions, and is what `applyOp` and `editor_edit_in` run — the
+  `checkTransition`/`checkLink` shape again. The timeline's own
+  positional drop (D-095/D-100) is untouched: two gestures, two questions.
+  **Does not** do per-A/V destination-track patching, keyboard shortcuts or the
+  toolbar buttons — see D-239's own "not built" list.
 - `eq.ts` (D-224, roadmap item 27) — the per-clip parametric EQ's model and
   math: the `EqBand` type `Clip.eq_bands` is a list of, the Resolve-shaped
   four-band strip the Inspector authors (`defaultEqBands`), the stored-value

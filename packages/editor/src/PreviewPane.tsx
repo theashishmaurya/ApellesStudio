@@ -136,6 +136,7 @@ import { DynamicZoomOverlay } from './DynamicZoomOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { CanvasSettingsPopover } from './CanvasSettingsPopover';
+import { EditOverlay } from './EditOverlay';
 import { useCompositionSize } from './useCompositionSize';
 import {
   fitPointAt,
@@ -618,6 +619,13 @@ export function PreviewPane() {
           wrapper one level up. Rendered here (not `EditorTab.tsx`) because
           only this component owns `useCompositionSize`. */}
       <CanvasSettingsPopover />
+      {/* D-239 — the seven edit types' drop overlay. Mounted here, over the
+          WHOLE pane rather than inside `surface` below, deliberately: it has to
+          be reachable while the preview is still showing its spinner or "no
+          frame", which is exactly the state a first drop onto an empty timeline
+          happens in. It arms itself off a media drag and renders nothing
+          otherwise, so it costs an unmounted component the rest of the time. */}
+      <EditOverlay />
       <Player
         title="Timeline"
         muted={muted}

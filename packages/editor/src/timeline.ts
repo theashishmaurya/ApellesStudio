@@ -75,11 +75,17 @@
 // working in the edit model should not have to know which file it came from —
 // exactly what `chroma-timeline` does with `chroma_types::eq` on the Rust side.
 import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
+// D-239 — the seven edit types' NAMES and display copy live in their own
+// module, which imports nothing back from here (see its own doc), so this stays
+// a one-way dependency exactly as `speedRamp.ts` below is.
+import { dropEditTypeInfo, type DropEditType } from './editTypes';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
 // D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
 // dependency stays one-way: `timeline.ts` -> `speedRamp.ts`, never a cycle.
 import {
+  MAX_SPEED,
+  MIN_SPEED,
   normalizeSpeedPoints,
   outputAtSourceFrame,
   rampOutputSourceFrames,
@@ -97,6 +103,11 @@ export type {
 // have to know which file the caption types came from, exactly as the EQ types
 // above are.
 export type { CaptionAlign, CaptionCue, CaptionStyle } from './caption';
+// D-239 — same re-export courtesy as the caption/EQ types below: a consumer
+// working in the edit model reaches for `DropEditType` alongside `EditOp`, and
+// should not have to know it is defined one file over.
+export type { DropEditType, DropEditTypeInfo } from './editTypes';
+export { DROP_EDIT_TYPES, dropEditTypeInfo, editTargetIndexAt, isDropEditType } from './editTypes';
 export {
   captionCharCount,
   captionCps,
@@ -2502,6 +2513,92 @@ export type EditOp =
       ripple?: boolean;
       linkedAudio?: NewClipFields;
     }
+  /** D-239 (roadmap item 27) — **the seven edit types on drop**: Insert,
+   *  Overwrite, Replace, Fit to Fill, Place on Top, Append at End, Ripple
+   *  Overwrite. One op carrying an `editType` rather than seven ops, and
+   *  emphatically not a client-side sequence of existing ops — see D-239, but
+   *  the short version is the same reason D-129 folded a dropped source's audio
+   *  half into `add_clip` instead of chaining two ops: this store pushes **one
+   *  history entry per applied op**, so a two-op Insert (split, then rippled
+   *  `add_clip`) would take two Undos and leave the razor cut behind after the
+   *  first. Every one of the seven is atomic here.
+   *
+   *  `clip` is the incoming source, exactly as `add_clip` takes it (built by
+   *  `linkedClipsFromDraggedMedia` for a GUI drop, by `editor_edit_in`'s own
+   *  media-pool lookup for an agent). `atFrame` is the **playhead** — the
+   *  position every one of these edits is defined against in the reference
+   *  ("at the location of the playhead"); `append` ignores it by definition.
+   *  `track` is the DESTINATION video track.
+   *
+   *  The three target-taking types (`replace`, `fit_to_fill`,
+   *  `ripple_overwrite`) act on **the clip covering `atFrame` on `track`**, and
+   *  are refused when there isn't one. That is one rule, matching this model's
+   *  existing position-is-truth contract (D-054) rather than introducing a
+   *  second, selection-shaped one — the GUI honours a selection by passing that
+   *  clip's own track and `start_frame`, so "replace the selected clip" and
+   *  "replace what's under the playhead" are the same call.
+   *
+   *  Per type, in Blackmagic's own words (`scratch/resolve-reference/`,
+   *  `edit-seven-ways`), and what each does here:
+   *
+   *  - **`insert`** — "pushes everything else down to make room for it. If the
+   *    playhead is in the middle of a clip, it will split the clip." Splits the
+   *    straddling clip at `atFrame` first (the same split arithmetic and the
+   *    same `id`/`link_group` derivation the `split` op uses), then rippled
+   *    exactly like `add_clip`'s own ripple — `shiftClipsAtOrAfter` plus
+   *    `propagateSyncLockRipple`, behind B-033's reject-on-straddle guard.
+   *  - **`overwrite`** — "place a new clip on the timeline at the location of
+   *    the playhead, writing over whatever clip or clips were there before."
+   *    Clears `[atFrame, atFrame + duration)` on the destination track
+   *    ([`clearWindow`]) and places into the hole. **Nothing ripples**, which is
+   *    the whole distinction from `insert`.
+   *  - **`replace`** — "Replaces a single clip on the timeline with one of the
+   *    exact same length. The out point of the clip you are editing in will be
+   *    changed so it fits perfectly." The target's `start_frame` and its exact
+   *    timeline footprint are preserved; the incoming source's `duration` is
+   *    re-cut to fill it. Refused when the source is too short to cover it —
+   *    silently placing something shorter would leave a gap the editor did not
+   *    ask for, and Resolve refuses this case too.
+   *  - **`fit_to_fill`** — "adds a speed change to speed it up or slow it down.
+   *    The speed change is automatically calculated so it fits into the space
+   *    you have selected." Same slot as `replace`, but the source keeps its full
+   *    marked length and gets a **flat one-point D-236 speed ramp** instead —
+   *    which is why this needed no new retiming concept at all. Refused when the
+   *    required speed falls outside `[MIN_SPEED, MAX_SPEED]`.
+   *  - **`place_on_top`** — "puts the clip on the next available video track at
+   *    the location of the playhead. Great for titles, graphics or picture in
+   *    picture." Walks UP the z-order (a LOWER index paints on top, D-086) from
+   *    `track` for the first video track with room at `[atFrame, atFrame+dur)`,
+   *    and inserts a brand-new video track at index 0 when none has any. Nothing
+   *    on the track it came from is disturbed.
+   *  - **`append`** — "places the source clip after the last edit on your
+   *    timeline, regardless of where the playhead is located." `nextAppendFrame`
+   *    on the destination track — byte-for-byte what a plain `add_clip` with no
+   *    `startFrame` already did, kept as one of the seven so the overlay and the
+   *    MCP tool can name it.
+   *  - **`ripple_overwrite`** — "replaces a shot of one length with a shot of a
+   *    different length. Longer clips … push everything down to make room, while
+   *    shorter clips pull things in so there are no gaps." The target is removed
+   *    outright, the incoming clip takes its `start_frame` at its OWN full
+   *    length, and everything at/after the target's old end shifts by the
+   *    difference (sync-locked tracks included, same B-033 guard).
+   *
+   *  **`linkedAudio` rides along by exactly the `add_clip` rule** — placed at
+   *  the same start frame on the first audio track with room, else a fresh one
+   *  (`ensureAudioTrackWithRoom`). It is deliberately NOT given its own
+   *  overwrite/ripple treatment: these seven all target ONE destination track,
+   *  and Resolve's own per-A/V destination patching is a separate feature (named
+   *  as a follow-up in `docs/04-roadmap.md`). The consequence, stated plainly:
+   *  an `overwrite` clears the picture track but its audio half lands wherever
+   *  there is room rather than overwriting an audio track too. */
+  | {
+      kind: 'edit_in';
+      editType: DropEditType;
+      track: number;
+      clip: NewClipFields;
+      atFrame: number;
+      linkedAudio?: NewClipFields;
+    }
   /** D-058/D-080 — reposition a clip in time, and optionally onto a
    *  different track (`fromTrack !== toTrack`) — the drag handle / "move to
    *  another track" affordance in the panel. Mirrors
@@ -3062,6 +3159,12 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Close gap on track ${op.track + 1}`;
     case 'add_clip':
       return op.linkedAudio ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
+    // D-239 — named for the EDIT TYPE, not just the clip: "Insert" and
+    // "Overwrite" of the same source are two entirely different edits to undo
+    // back past, and an entry saying only `Add "clip"` for both would make the
+    // history stack unreadable exactly where it matters most.
+    case 'edit_in':
+      return `${dropEditTypeInfo(op.editType).label} "${op.clip.name}"`;
     case 'unlink':
       return `Unlink ${clipLabel(before, op.track, op.clip)}`;
     case 'link':
@@ -3257,6 +3360,272 @@ function applyRippleTrim(
   return next;
 }
 
+// --------------------------------------------------------------------------- //
+// D-239 — the seven edit types. The `edit_in` op's own machinery: the shared
+// precondition check (`checkEditIn`, the `checkTransition`/`checkLink` pattern
+// again — one answer for the overlay's greyed-out row, the MCP tool's error
+// string and `applyOp`'s own refusal) plus the three primitives its branches
+// need. Everything here is pure and mutates only a `clone()`d timeline.
+// --------------------------------------------------------------------------- //
+
+/** The TIMELINE-frame footprint an about-to-be-placed clip will occupy —
+ *  `endFrame` minus `start_frame`, for a clip that does not have a
+ *  `start_frame` yet. Goes through `clipOutputSourceFrames`, so a clip carrying
+ *  a D-236 speed ramp (which is exactly what `fit_to_fill` builds) measures its
+ *  RETIMED length here, not its raw `duration`. */
+function newClipFootprint(c: NewClipFields, fps: number): number {
+  return sourceFramesToTimeline(c, Math.round(clipOutputSourceFrames(c)), fps);
+}
+
+/** Index of the clip covering `frame` on `tr`, or `-1`. By real position
+ *  (D-054), never by Vec order — same contract as [`clipAt`], which returns the
+ *  clip itself; the three target-taking edit types need the INDEX. */
+function clipIndexAt(tr: Track, frame: number, fps: number): number {
+  return tr.clips.findIndex((c) => frame >= c.start_frame && frame < endFrame(c, fps));
+}
+
+/** Cut the clip straddling `frame` on `tr` in two, in place — `insert`'s "if
+ *  the playhead is in the middle of a clip, it will split the clip" half.
+ *
+ *  Deliberately the SAME arithmetic and the same derived `id`/`link_group`
+ *  (`${id}·${frame}`) as the `split` op's own reducer, so an Insert's cut is
+ *  indistinguishable from a razor cut at the same frame — including to the
+ *  ripple-flash diff in `TimelinePane`, which keys off exactly that id. It does
+ *  NOT lock-step across a link group the way `split` does: `insert` only ever
+ *  cuts its own destination track, and the partner track is rippled (or not) by
+ *  the sync-lock rules, which is a different question from where a razor lands.
+ *  No-op when nothing straddles `frame`. */
+function splitStraddlingClip(tr: Track, frame: number, fps: number): void {
+  const i = tr.clips.findIndex((c) => c.start_frame < frame && endFrame(c, fps) > frame);
+  if (i < 0) return;
+  const left = tr.clips[i];
+  const off = frame - left.start_frame;
+  const offSource = timelineFramesToSource(left, off, fps);
+  if (offSource <= 0 || offSource >= left.duration) return;
+  const right: Clip = {
+    ...left,
+    id: `${left.id}·${frame}`,
+    link_group: left.link_group ? `${left.link_group}·${frame}` : left.link_group,
+    start_frame: frame,
+    source_start: left.source_start + offSource,
+    duration: left.duration - offSource,
+  };
+  left.duration = offSource;
+  tr.clips.splice(i + 1, 0, right);
+}
+
+/** Empty `[winStart, winEnd)` on `tr`, in place — `overwrite`'s "writing over
+ *  whatever clip or clips were there before".
+ *
+ *  Each overlapping clip is resolved by which of its ends survive: fully inside
+ *  the window it is dropped, overhanging one end it is trimmed back to the
+ *  window's edge, and spanning the whole window it becomes two clips (the right
+ *  half taking `split`'s own derived id, since that is exactly what it is).
+ *  Nothing's `start_frame` moves except a right half's, which moves to `winEnd`
+ *  by construction — an overwrite ripples nothing.
+ *
+ *  **A dropped clip's `link_group` partners on OTHER tracks are left alone**
+ *  (see the `edit_in` op's own doc on single-destination targeting). A group
+ *  with one surviving member behaves exactly like an unlinked clip for every op
+ *  in this file — `linkGroupMembers` simply returns fewer members — so this is
+ *  a benign state, not a dangling reference.
+ *
+ *  Retiming caveat, stated because it is a real one: the trim arithmetic uses
+ *  `timelineFramesToSource`, which is linear and therefore approximate for a
+ *  clip carrying a D-236 speed ramp. That is not new behaviour introduced here
+ *  — the `split` op has always cut a ramped clip the same way — and keeping the
+ *  two identical is worth more than making one of them cleverer alone. */
+function clearWindow(tr: Track, winStart: number, winEnd: number, fps: number): void {
+  const out: Clip[] = [];
+  for (const c of tr.clips) {
+    const s = c.start_frame;
+    const e = endFrame(c, fps);
+    if (e <= winStart || s >= winEnd) {
+      out.push(c);
+      continue;
+    }
+    const keepsHead = s < winStart;
+    const keepsTail = e > winEnd;
+    if (keepsHead) {
+      const headSource = timelineFramesToSource(c, winStart - s, fps);
+      if (headSource > 0) out.push({ ...c, duration: headSource });
+    }
+    if (keepsTail) {
+      const tailOffset = timelineFramesToSource(c, winEnd - s, fps);
+      const remaining = c.duration - tailOffset;
+      if (remaining > 0) {
+        out.push({
+          ...c,
+          // Only a clip cut on BOTH sides produces a second, genuinely new
+          // clip needing its own id; one merely trimmed at its head is still
+          // itself, and renaming it would break selection and the Inspector.
+          id: keepsHead ? `${c.id}·${winEnd}` : c.id,
+          link_group: keepsHead && c.link_group ? `${c.link_group}·${winEnd}` : c.link_group,
+          start_frame: winEnd,
+          source_start: c.source_start + tailOffset,
+          duration: remaining,
+        });
+      }
+    }
+  }
+  tr.clips = out;
+}
+
+/** D-239 — which track `place_on_top` really lands on: "the next available
+ *  video track at the location of the playhead."
+ *
+ *  **"Above" is a LOWER index** — track index order IS compositing z-order in
+ *  this model and a lower index paints on top (D-086, and `move_track`'s own
+ *  doc), which is the same reason D-211 puts a title on track 0. So this walks
+ *  DOWN from `from - 1` looking for the first unlocked video track with real
+ *  room at `[start, start+dur)`, and when none has any, inserts a brand-new
+ *  video track at index 0 — the new topmost layer, empty and therefore always
+ *  free, so this has no failure branch. Mutates `tl.tracks`; the caller already
+ *  holds a `clone()`. */
+function resolvePlaceOnTopTrack(tl: Timeline, from: number, start: number, dur: number, fps: number): number {
+  const end = start + dur;
+  for (let i = from - 1; i >= 0; i--) {
+    const t = tl.tracks[i];
+    if (t.kind !== 'video' || t.locked) continue;
+    if (!t.clips.some((c) => start < endFrame(c, fps) && end > c.start_frame)) return i;
+  }
+  tl.tracks.unshift({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+  return 0;
+}
+
+/** D-239 — the flat speed `fit_to_fill` needs so `clip` exactly fills
+ *  `targetFootprint` timeline frames, or `null` when that is outside the D-236
+ *  ramp's own `[MIN_SPEED, MAX_SPEED]` range.
+ *
+ *  A speed is "source frames consumed per output frame", so filling a slot that
+ *  wants `wanted` of the clip's OWN source frames with a source run of
+ *  `clip.duration` frames is exactly `duration / wanted` — no search, no
+ *  iteration, and exact by the same rounding `endFrame` uses, which is what
+ *  makes the placed clip land on the target's own end frame rather than one off
+ *  it. */
+function fitToFillSpeed(clip: NewClipFields, targetFootprint: number, fps: number): number | null {
+  const wanted = timelineFramesToSource(clip, targetFootprint, fps);
+  if (wanted <= 0 || clip.duration <= 0) return null;
+  const speed = clip.duration / wanted;
+  if (speed < MIN_SPEED || speed > MAX_SPEED) return null;
+  return speed;
+}
+
+/** D-239 — same shape and same reason as [`TransitionCheck`]/[`LinkCheck`]: the
+ *  edit overlay greys a row out with this `reason`, `editor_edit_in` returns it
+ *  verbatim as its error, and `applyOp` refuses on exactly the same call. */
+export interface EditInCheck {
+  ok: boolean;
+  /** Present only when `ok` is false — a real sentence naming what is missing. */
+  reason?: string;
+}
+
+/** Which track index an `edit_in` really lands on. Mirrors `add_clip`'s own
+ *  fallback (out of range collapses to 0, an empty timeline gets a video track
+ *  made for it), so a drop onto a brand-new project behaves identically
+ *  whichever of the two ops the caller reached for. */
+function editInTrackIndex(tl: Timeline, track: number): number {
+  if (tl.tracks.length === 0) return 0;
+  return track >= 0 && track < tl.tracks.length ? track : 0;
+}
+
+/** D-239 — everything about an edit's legality that does NOT depend on the
+ *  incoming source: the destination track exists and is unlocked, `atFrame` is
+ *  real, a target-taking type has a target under it, and neither rippling type
+ *  is blocked by B-033's straddling sync-locked clip.
+ *
+ *  **Its own function because the GUI cannot ask the fuller question.** The
+ *  HTML5 spec keeps `dataTransfer.getData` unreadable during `dragover` (see
+ *  `EditOverlay.tsx`), so while a drag is in flight the overlay knows the edit
+ *  type and the timeline but genuinely nothing about the source — not even its
+ *  length. Feeding [`checkEditIn`] a stand-in clip instead would be worse than
+ *  useless: a placeholder length makes the two length-dependent refusals below
+ *  fire every time, so Replace and Fit to Fill would sit permanently greyed
+ *  out and never accept a drop at all. This is exactly the answer the overlay
+ *  can act on, and [`checkEditIn`] is this plus the two questions that need the
+ *  real source. */
+export function checkEditTarget(
+  tl: Timeline,
+  editType: DropEditType,
+  track: number,
+  atFrame: number,
+): EditInCheck {
+  const fps = timelineFps(tl);
+  const trackIdx = editInTrackIndex(tl, track);
+  const tr: Track | undefined = tl.tracks[trackIdx];
+  if (tr && tr.locked) return { ok: false, reason: `track ${trackIdx + 1} is locked` };
+  // Only `append` genuinely ignores the playhead; the other six are defined
+  // against it, so a negative one is a caller bug rather than something to
+  // silently clamp into a different edit.
+  const at = Math.round(atFrame);
+  if (editType !== 'append' && (!Number.isFinite(at) || at < 0)) {
+    return { ok: false, reason: 'atFrame must be a frame at or after 0' };
+  }
+
+  const info = dropEditTypeInfo(editType);
+  if (info.needsTarget) {
+    if (!tr) return { ok: false, reason: 'there is no clip under the playhead to act on' };
+    if (clipIndexAt(tr, at, fps) < 0) {
+      return { ok: false, reason: `${info.label} needs a clip under the playhead on track ${trackIdx + 1}` };
+    }
+  }
+
+  // B-033 — the two rippling types refuse rather than auto-split when a
+  // sync-locked track has a clip straddling the frame they would ripple from.
+  // Same guard, same threshold convention, as `add_clip`/`move`/`remove_gap`.
+  if (editType === 'insert' && findStraddlingSyncLockedTrack(tl.tracks, trackIdx, at, fps) !== null) {
+    return { ok: false, reason: 'a sync-locked track has a clip straddling the playhead — that ripple is refused' };
+  }
+  if (editType === 'ripple_overwrite' && tr) {
+    const ti = clipIndexAt(tr, at, fps);
+    const oldEnd = ti >= 0 ? endFrame(tr.clips[ti], fps) : at;
+    if (findStraddlingSyncLockedTrack(tl.tracks, trackIdx, oldEnd, fps) !== null) {
+      return { ok: false, reason: 'a sync-locked track has a clip straddling that edit point — that ripple is refused' };
+    }
+  }
+  return { ok: true };
+}
+
+/** D-239 — the full precondition check: [`checkEditTarget`] plus the two
+ *  questions that can only be answered once the real incoming source is known.
+ *  `applyOp`'s `edit_in` and `editor_edit_in` both run this; the overlay runs
+ *  the narrower one during the drag and this one on drop. */
+export function checkEditIn(
+  tl: Timeline,
+  op: Extract<EditOp, { kind: 'edit_in' }>,
+): EditInCheck {
+  const fps = timelineFps(tl);
+  const dur = newClipFootprint(op.clip, fps);
+  if (!(dur > 0)) return { ok: false, reason: 'that source has no usable length to place' };
+
+  const structural = checkEditTarget(tl, op.editType, op.track, op.atFrame);
+  if (!structural.ok) return structural;
+
+  if (op.editType === 'replace' || op.editType === 'fit_to_fill') {
+    const trackIdx = editInTrackIndex(tl, op.track);
+    const tr = tl.tracks[trackIdx];
+    // Non-negative by `checkEditTarget`, which has already refused a
+    // target-taking type with nothing under the playhead.
+    const target = tr.clips[clipIndexAt(tr, Math.round(op.atFrame), fps)];
+    const slot = endFrame(target, fps) - target.start_frame;
+    if (op.editType === 'replace') {
+      const needed = timelineFramesToSource(op.clip, slot, fps);
+      if (op.clip.source_start + needed > op.clip.source_len) {
+        return {
+          ok: false,
+          reason: `that source is too short to replace "${target.name}" at its own length — Fit to Fill retimes it instead`,
+        };
+      }
+    } else if (fitToFillSpeed(op.clip, slot, fps) === null) {
+      return {
+        ok: false,
+        reason: `filling "${target.name}" would need a speed outside ${MIN_SPEED}x–${MAX_SPEED}x`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // B-077 — the project's own timeline-frame rate, needed by every op below
   // that combines a `start_frame`-space position with a `duration`/
@@ -3318,6 +3687,108 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const audioClip: Clip = { ...op.linkedAudio, start_frame: startFrame };
       const audioAt = audioTrack.clips.filter((c) => c.start_frame < startFrame).length;
       audioTrack.clips.splice(audioAt, 0, audioClip);
+    }
+    return next;
+  }
+
+  if (op.kind === 'edit_in') {
+    // D-239 — the seven edit types. `checkEditIn` is the ONLY gate: the
+    // overlay's greyed row, `editor_edit_in`'s error string and this refusal
+    // are the same call, so a target the UI offers is always one that applies.
+    if (!checkEditIn(tl, op).ok) return tl;
+    const next = clone(tl);
+    if (next.tracks.length === 0)
+      next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+    const trackIdx = editInTrackIndex(next, op.track);
+    const at = Math.max(0, Math.round(op.atFrame));
+    const incomingDur = newClipFootprint(op.clip, fps);
+
+    // Resolved by the switch below: which track the clip lands on, where, and
+    // (for the two retiming/re-cutting types) what the clip itself becomes.
+    let placeTrack = trackIdx;
+    let startFrame = at;
+    let fields: NewClipFields = op.clip;
+
+    switch (op.editType) {
+      case 'append':
+        startFrame = nextAppendFrame(next.tracks[trackIdx], fps);
+        break;
+      case 'insert': {
+        const tr = next.tracks[trackIdx];
+        // Split first, THEN ripple: the right half created here starts exactly
+        // at `at`, so it is caught by the `>= threshold` shift and moves with
+        // everything downstream — which is what "pushes everything else down to
+        // make room" means when the playhead is mid-clip.
+        splitStraddlingClip(tr, at, fps);
+        shiftClipsAtOrAfter(tr, at, incomingDur);
+        propagateSyncLockRipple(next.tracks, trackIdx, at, incomingDur);
+        break;
+      }
+      case 'overwrite':
+        clearWindow(next.tracks[trackIdx], at, at + incomingDur, fps);
+        break;
+      case 'place_on_top':
+        placeTrack = resolvePlaceOnTopTrack(next, trackIdx, at, incomingDur, fps);
+        break;
+      case 'replace':
+      case 'fit_to_fill': {
+        const tr = next.tracks[trackIdx];
+        const ti = clipIndexAt(tr, at, fps);
+        const target = tr.clips[ti];
+        const slot = endFrame(target, fps) - target.start_frame;
+        startFrame = target.start_frame;
+        if (op.editType === 'replace') {
+          // "The out point … will be changed so it fits perfectly." The source
+          // is re-cut, never retimed — and any ramp the caller happened to send
+          // is dropped, because a ramp is exactly what makes a `duration` stop
+          // meaning the clip's own footprint.
+          fields = { ...op.clip, duration: timelineFramesToSource(op.clip, slot, fps), speed_points: undefined };
+        } else {
+          // Non-null by `checkEditIn`, which refuses an out-of-range speed with
+          // a real message rather than letting it be clamped into a wrong fit.
+          const speed = fitToFillSpeed(op.clip, slot, fps);
+          if (speed === null) return tl;
+          fields = { ...op.clip, speed_points: [{ source_frame: op.clip.source_start, speed }] };
+        }
+        tr.clips.splice(ti, 1);
+        break;
+      }
+      case 'ripple_overwrite': {
+        const tr = next.tracks[trackIdx];
+        const ti = clipIndexAt(tr, at, fps);
+        const target = tr.clips[ti];
+        const oldStart = target.start_frame;
+        const oldEnd = endFrame(target, fps);
+        startFrame = oldStart;
+        tr.clips.splice(ti, 1);
+        // "Longer clips … push everything down …, while shorter clips pull
+        // things in so there are no gaps" — one signed shift of the difference,
+        // from the OLD clip's own end, so the incoming clip's new end lands
+        // exactly where the next clip now begins either way.
+        const delta = incomingDur - (oldEnd - oldStart);
+        if (delta !== 0) {
+          shiftClipsAtOrAfter(tr, oldEnd, delta);
+          propagateSyncLockRipple(next.tracks, trackIdx, oldEnd, delta);
+        }
+        break;
+      }
+    }
+
+    const dest = next.tracks[placeTrack];
+    const clip: Clip = { ...fields, start_frame: startFrame };
+    dest.clips.splice(dest.clips.filter((c) => c.start_frame < startFrame).length, 0, clip);
+    // The dropped source's audio half, by exactly `add_clip`'s rule — see the
+    // op's own doc for why it is deliberately not given its own overwrite/
+    // ripple treatment.
+    if (op.linkedAudio) {
+      const linkedDur = sourceFramesToTimeline(op.linkedAudio, op.linkedAudio.duration, fps);
+      const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, linkedDur);
+      const audioTrack = next.tracks[audioTrackIdx];
+      audioTrack.clips.splice(
+        audioTrack.clips.filter((c) => c.start_frame < startFrame).length,
+        0,
+        { ...op.linkedAudio, start_frame: startFrame },
+      );
     }
     return next;
   }

@@ -1563,9 +1563,44 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         blending — source frames currently repeat); and **live-preview AUDIO
         retiming**, since the picture previews a ramp but the live mixer does
         not resample.
-    - ⬜ Seven edit types on drop — Insert / Overwrite / Replace /
+    - ~~Seven edit types on drop — Insert / Overwrite / Replace /
       Fit-to-Fill / Place on Top / Append / Ripple-Overwrite (ref:
-      `timeline.jpg`).
+      `timeline.jpg`)~~ — **DONE, 2026-09-08 (D-239).** All seven, as ONE
+      `edit_in` `EditOp` carrying an `editType` rather than seven ops or a
+      client-side sequence of existing ones — the D-129 precedent, and for the
+      same reason: this store pushes one history entry per op, so a two-op
+      Insert (split, then rippled `add_clip`) would take two Undos and leave
+      the razor cut behind after the first. The audit found only Append
+      genuinely free (`add_clip`'s own no-`startFrame` branch) and Insert
+      nearly so (`add_clip`'s ripple does not split a straddling clip);
+      Overwrite needed real window-clearing, and Replace is deliberately NOT
+      D-195's `swap_media` (that preserves the clip and swaps its file, this
+      is a new clip taking an old one's slot). **Fit to Fill needed no new
+      retiming concept at all** — a flat D-236 `speed_points` ramp, at the
+      closed-form `duration / wantedOutputFrames`. GUI is Blackmagic's own
+      edit overlay, taken off the `timeline.jpg` the line above names: drag a
+      Sources item and a strip of seven labelled targets appears down the
+      right of the preview, the row under the pointer highlighted, its own
+      one-line description below. The timeline's positional drop (D-095/D-100)
+      is untouched — two gestures, two questions. `editor_edit_in` is the MCP
+      half, running the same op, and `checkEditIn` is the one precondition
+      check the greyed row, the tool's error and `applyOp`'s refusal all
+      share. Fixed a latent index-remap bug in `timelineStore` on the way
+      (`place_on_top` inserts a track at index 0, which the shrink-only guard
+      did not cover) and a real counting bug in
+      `docs/notes/mcp-tool-coverage.md` (`set_clip_speed` escaped its own
+      counting grep; Edit-tab tools re-verified at 57).
+      - ⬜ **Seven-edit-types follow-ups** (D-239's own "not built" list):
+        **per-A/V destination-track patching** — Resolve's source/destination
+        patch panel, with independent V and A targeting. Today all seven target
+        ONE video track and a dropped source's linked audio half rides along by
+        `add_clip`'s existing find-a-track-with-room rule, so an `overwrite`
+        clears the picture track but not an audio one. **Keyboard shortcuts
+        (F9–F12) and the seven toolbar buttons** — both want a real **source
+        viewer with in/out marking** first, which this app does not have, or a
+        shortcut has nothing to edit *from* but a whole pool item. **Swap /
+        shuffle** (`edit-timeline`'s own last sentence) — rearranging clips
+        already on the timeline, not a way of getting one in.
     - ~~**Dynamic zoom** — drag a start/end box in the viewer instead of
       hand-authoring keyframes~~ — **DONE, 2026-09-08 (D-234).** Two boxes,
       green start / dashed red end, armed from the Inspector and spanning the

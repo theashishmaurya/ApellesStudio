@@ -553,14 +553,26 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     // it's simply cleared — a gap selection is transient and trivially
     // re-made, and a silently-wrong track index is far worse than none.
     //
-    // Gated on the track list SHRINKING, not merely changing: every
-    // track-ADDING path appends (`add_track`, and D-129's
-    // `ensureAudioTrackWithRoom` for a dropped clip's audio half), so a
-    // growing list renumbers nothing and neither selection needs touching.
-    if (after.tracks.length < before.tracks.length) {
+    // Gated on the track list CHANGING LENGTH at all. This used to be
+    // "shrinking", on the reasoning that every track-ADDING path appends
+    // (`add_track`, and D-129's `ensureAudioTrackWithRoom` for a dropped clip's
+    // audio half) so a growing list renumbers nothing — true until D-239, whose
+    // `place_on_top` inserts a brand-new video track at index 0 (a LOWER index
+    // is on top, D-086) and therefore renumbers every track below it. Remapping
+    // by stable clip id is already index-agnostic, so widening the guard is
+    // strictly safer than the old one and a genuine no-op for every appending
+    // path: an unchanged index resolves back to itself.
+    if (after.tracks.length !== before.tracks.length) {
       const locate = (id: string): number => after.tracks.findIndex((t) => t.clips.some((c) => c.id === id));
       set((s) => ({
         selection: s.selection.map((sel) => ({ ...sel, track: locate(sel.id) })).filter((sel) => sel.track >= 0),
+        // A gap selection has no id to follow, so it is simply cleared: a
+        // silently-wrong track index is far worse than none, and that applies
+        // to an INSERTED track (D-239's `place_on_top` at index 0) exactly as
+        // it does to a pruned one. A gap selection is transient and trivially
+        // re-made; the alternative — deciding case by case whether this
+        // particular length change renumbered this particular track — is more
+        // machinery than the state is worth.
         selectedGap: null,
         // D-233 — the curve editor follows its clip by id through a prune,
         // exactly as `selection` does above, and closes if that clip is gone.

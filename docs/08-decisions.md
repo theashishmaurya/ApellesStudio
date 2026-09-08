@@ -21837,3 +21837,204 @@ none needs a schema change):
 tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
 `chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
 introduces zero new errors.
+
+## D-239 — The seven edit types are ONE `edit_in` op, and the GUI is Resolve's own edit overlay
+
+**Context.** Roadmap item 27's last open line: *"Seven edit types on drop —
+Insert / Overwrite / Replace / Fit-to-Fill / Place on Top / Append /
+Ripple-Overwrite (ref: `timeline.jpg`)."* Before this, dragging a Sources item
+onto the timeline had exactly one meaning: `add_clip`, placed at a snapped
+insertion point (D-095/D-100). That is a *placement*, not an *edit* — it answers
+"put it here," and every one of the seven answers a different question.
+
+**The real reference, read not recalled** (`scratch/resolve-reference/`, per
+CLAUDE.md's research-the-real-pattern rule — and it is the file the roadmap line
+itself names). Two entries carry it. `edit-timeline` ("Edit Clips Into the
+Timeline", `timeline.jpg`) is the UI: *"You can drag and drop clips directly
+into the timeline or the timeline viewer on the right, where you will see an
+overlay with editing options. The edit overlay gives you instant access to the
+most popular types of edits, letting you quickly choose between insert,
+overwrite, replace, fit to fill, place on top, append at end, and ripple
+overwrite without having to remember shortcut commands."* The screenshot shows
+exactly that: a dragged thumbnail over the timeline viewer, and a vertical strip
+of seven labelled, icon'd rows down the viewer's right-hand side with the one
+under the pointer highlighted. `edit-seven-ways` is the semantics — a paragraph
+per type, quoted verbatim into the `edit_in` op's own doc comment so the code
+and the reference cannot drift.
+
+**The audit first — which of the seven were already free.** Honest answer: one
+and a bit.
+
+- **Append** was already exactly `add_clip` with no `startFrame` (D-058's own
+  "always an append" branch). Free.
+- **Insert** was *nearly* free — `add_clip` with `startFrame` + `ripple: true`
+  already shifts and already propagates sync-lock ripple behind B-033's guard —
+  but it does **not** split a clip the playhead is inside, and
+  `shiftClipsAtOrAfter` only moves clips whose `start_frame >= threshold`, so a
+  straddling clip would have been overlapped rather than opened.
+- **Overwrite** was not free at all: `add_clip` with `ripple: false` splices
+  without any overlap check, so it would have produced a silent overlap rather
+  than writing over anything. Clearing a window (trim / split / remove, by which
+  ends survive) is genuinely new.
+- **Replace** is **not** `swap_media` (D-195), despite the surface similarity —
+  that op deliberately preserves the existing clip's `source_start`, transform,
+  keyframes and grade and only changes which file it points at. Replace is a new
+  clip taking an old one's slot. Both are worth having; they are now
+  cross-referenced in each other's docs and in the MCP docstring so nobody
+  reaches for the wrong one.
+- **Fit to Fill** turned out to need **no new retiming concept whatsoever**,
+  which is the single nicest finding of this pass: D-236 landed `speed_points`
+  the same week, a flat speed is a one-point ramp, and the speed that fills a
+  slot is closed-form (`duration / wantedOutputFrames`). It is Replace plus one
+  arithmetic line.
+- **Place on Top** and **Ripple Overwrite** are both new, though each reuses an
+  existing primitive (`ensureAudioTrackWithRoom`'s track-creation shape; the one
+  `shiftClipsAtOrAfter` + `propagateSyncLockRipple` ripple pair).
+
+### Decision 1 — ONE `edit_in` op with an `editType`, not seven ops and not a client-side sequence
+
+The tempting shape is a planner: turn each type into a list of existing ops
+(`split` then rippled `add_clip` for Insert, etc.) and let `applyOp` stay
+untouched. It is wrong here for a concrete, already-decided reason:
+`timelineStore.applyOp` pushes **one history entry per op**, so a two-op Insert
+would take two Undos and leave the razor cut behind after the first — and a
+sequence can be interrupted half-applied. D-129 hit exactly this and folded a
+dropped source's audio half into `add_clip` rather than chaining, with the same
+words: *"deliberately ONE op rather than two chained ones so the pair is atomic:
+one history entry, one undo, and never a half-linked timeline in between."* This
+follows that precedent. Seven separate ops were rejected for the opposite
+reason: they are one edit with a discriminator in the reference itself, and
+seven near-identical reducers, seven `labelForOp` cases and seven MCP docstrings
+is seven things to keep in sync.
+
+`checkEditIn` is a separate exported function, matching `checkTransition`
+(D-226) and `checkLink` (D-138): the overlay greys a row out with its `reason`,
+`editor_edit_in` returns that same sentence as its error, and `applyOp` refuses
+on the same call — so a target the UI offers is always one that applies, and a
+tooltip can never drift from what is enforced.
+
+### Decision 2 — the three target-taking types act on the clip UNDER THE PLAYHEAD, not on "the selection"
+
+Replace / Fit to Fill / Ripple Overwrite need something to act on. Resolve
+defines all three against the playhead on the destination track, and so does
+this model — which keeps one rule rather than adding a second, selection-shaped
+one to a model whose whole contract is that position is truth (D-054). Selection
+is still honoured, at the UI layer where it belongs: the overlay's destination
+track is the selected clip's track when there is a selection. So "replace the
+selected clip" and "replace what's under the playhead" are the same call.
+
+### Decision 3 — the GUI is the reference's overlay, on the PREVIEW, alongside (not instead of) the timeline drop
+
+Two gestures now exist and they answer different questions. Dragging onto the
+**timeline** is unchanged — "put it HERE," snapped to a real insertion point.
+Dragging onto the **preview** raises the seven-target strip — "do THIS edit at
+the playhead." The reference offers both, for the same reason.
+
+Alternatives considered and rejected: a **modifier-key scheme** like D-235's
+Alt-armed trim (seven modifiers is not learnable, and the reference explicitly
+sells the overlay as the thing that means you do *not* have to memorise
+commands); a **toolbar of seven buttons** (Resolve has those too, but as the
+*expert* path once you already know the seven — its own copy: *"Once you're
+familiar with the different types of edits, you can use the buttons"* — so it is
+the wrong one to build first); a **context menu on drop** (a second click to
+finish a drag, and it hides the options until after you have committed).
+
+The overlay arms itself from a document-level `dragenter` on the media MIME
+type, because the HTML5 spec makes `dataTransfer.getData` unreadable during
+`dragover` (the same constraint `TimelinePane`'s drop handler already documents)
+and because the strip has to be reachable over a preview showing a spinner or
+"no frame" — dropping onto an empty timeline being the most common first use.
+The consequence, stated because it is a real one: a row's disabled state during
+a drag can only use what is knowable without the payload (track locked, is there
+a clip under the playhead). A refusal that depends on the source's own length —
+Replace with too short a source, Fit to Fill past the 0.05x–20x range — can only
+be reported *after* the drop, which the overlay does, in words, with
+`checkEditIn`'s own sentence rather than as a silent no-op.
+
+### Decision 4 — the seven target ONE destination track; a linked audio half rides along by `add_clip`'s existing rule
+
+`linkedAudio` is placed at the same start frame on the first audio track with
+room, else a fresh one — `ensureAudioTrackWithRoom`, unchanged. It is
+deliberately **not** given its own overwrite/ripple treatment. Stated plainly so
+it is not discovered later: an `overwrite` clears the picture track, but its
+audio half lands wherever there is room rather than overwriting an audio track
+too. (An `insert` is fine by construction — the sync-lock ripple has already
+made the room.) Resolve's answer to this is a source/destination patch panel
+with independent V and A targeting, which is a real feature in its own right and
+is named as a follow-up in `docs/04-roadmap.md`; inventing half of it here would
+have been worse than not having it.
+
+Related, and also deliberate: `clearWindow` does not chase a removed clip's
+`link_group` partners onto other tracks. A group left with one member behaves
+exactly like an unlinked clip for every op in `timeline.ts` — `linkGroupMembers`
+simply returns fewer members — so it is a benign state, not a dangling
+reference.
+
+**One real defect found and fixed on the way through** (latent and unreachable
+before this feature, so it is fixed in the same commit rather than filed as a
+`B-NNN`): `timelineStore.applyOp` remapped selection/curve-editor track indices
+only when the track list **shrank**, on the then-true reasoning that every
+track-adding path appends. `place_on_top` inserts at index 0 (a lower index is
+on top, D-086), which renumbers everything below it. The guard is now "length
+changed at all"; remapping is by stable clip id, so this is a strict improvement
+and a genuine no-op for every appending path.
+
+**And a real counting bug in `docs/notes/mcp-tool-coverage.md`**, found while
+updating it: that note counts Edit-tab tools with a grep whose exception list
+holds the non-`editor_`-prefixed ones, and D-236's `set_clip_speed` was never
+added to it — so the count had been one short since that day, which is why the
+heading and its own verification paragraph disagreed (54 vs. 53). Grep fixed,
+count re-verified at 57.
+
+**Not built, deliberately** (named as follow-ups in `docs/04-roadmap.md`):
+per-A/V destination-track patching (above); Resolve's F9–F12 keyboard shortcuts
+and the seven toolbar buttons, both of which want a **source viewer with real
+in/out marking** to be worth much — this app has no source viewer yet, so a
+shortcut would have nothing to edit *from* but a whole pool item; and swap /
+shuffle (`edit-timeline`'s own last sentence), which are rearrangement of
+already-placed clips, not ways of getting one in.
+
+**A second real bug, found by self-review before commit and worth recording
+because the tests did not catch it.** The overlay must decide a row's
+enabled/disabled state *during* a drag, when the HTML5 payload is unreadable —
+so the first version handed the full `checkEditIn` a one-frame stand-in clip.
+That is not an approximation, it is wrong in a specific direction: *any*
+placeholder length trips Replace's "source too short" and Fit to Fill's
+speed-range refusal, so both rows greyed themselves out permanently and no
+browser would ever have delivered a drop to them. The DOM tests missed it
+because a test dispatches its own synthetic `drop`, which fires whether or not
+the component ever called `preventDefault` — the thing that actually makes an
+element a drop target. Fixed by splitting the check in two:
+**`checkEditTarget`** answers everything independent of the source (track
+locked, `atFrame` real, is there a target under the playhead, B-033's straddle
+guard) and is what the overlay asks mid-drag; `checkEditIn` is that plus the two
+source-dependent questions, and is what `applyOp` and `editor_edit_in` run. The
+two length-dependent refusals are reported after the drop instead, in words.
+`dropOn` in the DOM tests now returns `defaultPrevented`, and two new tests
+assert acceptance/refusal directly — verified to fail against the old code and
+pass against the new, rather than assumed.
+
+**Verification.** `@chroma/editor` **56 files / 1266 tests, all green** — 51 of
+them new here: 36 op-semantics/geometry tests in `editTypes.test.ts` (every one
+of the seven as a real before/after timeline, every refusal, the two-way split
+of the check above, and an assertion that seven drops of the same source at the
+same frame produce seven *different* whole timelines — compared as whole
+timelines rather than positions, because Replace and Fit to Fill land the same
+clip in the same slot on purpose and differ only in *how*), plus 15 real-DOM
+drag tests in `EditOverlay.dom.test.tsx` driving real HTML5 drag events against
+the real store, with zero console errors/warnings asserted. That count is
+measured on this branch, cut from `main` before the concurrent D-237 (EQ
+response curve) landed its own; expect the merged total to be higher.
+
+`cargo check --workspace` clean (only the 6 pre-existing `RapidRAW` dead-code
+warnings) and `cargo test --workspace` unchanged — the one failure is
+`chroma::project::tests::track_resolution_opaque_top_wins_across_two_video_tracks`,
+the known pre-existing B-097. **This feature touches no Rust at all**, which is
+worth stating rather than assuming, since most Edit-tab ops here do have a
+`chroma-timeline` mirror. `edit_in` needs none: `chroma_timeline_set` stores
+whatever the frontend sends verbatim (its own documented contract), the op is
+fully resolved into ordinary `Clip`/`Track` state before it is ever persisted,
+and no Rust consumer ever sees an edit type. `tsc --noEmit -p packages/editor`
+introduces zero new errors. `cargo fmt --check` reports one diff, in
+`app/src-tauri/src/ai_commands.rs` — byte-identical to `main`, last touched by
+D-077, untouched here, and deliberately not folded into this commit.

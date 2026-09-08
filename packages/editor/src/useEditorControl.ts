@@ -86,8 +86,14 @@ import {
   eqKindUsesGain,
   eqResponseDb,
   easePresetName,
+  endFrame,
   hasActiveEq,
   gapAt,
+  // D-239 — the seven edit types, shared with the GUI's own edit overlay.
+  checkEditIn,
+  isDropEditType,
+  videoTrackIndex,
+  DROP_EDIT_TYPES,
   isAdjustmentClip,
   isCaptionClip,
   isTextClip,
@@ -1010,6 +1016,104 @@ export function useEditorControl(): void {
         const placed = tl?.tracks[track]?.clips.find((c) => c.id === clip.id);
         if (!placed) return { error: 'add_clip did not place the clip — check track index / project state' };
         return { ok: true, track, clipId: placed.id, startFrame: placed.start_frame, duration: placed.duration };
+      },
+
+      // D-239 (roadmap item 27) — the AI half of the seven edit types, running
+      // the SAME `edit_in` `EditOp` the preview's edit overlay applies (see
+      // `EditOverlay.tsx`), so the human's drop and the agent's call cannot
+      // diverge in semantics. Deliberately NOT seven tools: they are one edit
+      // with a `editType` discriminator in the reference itself ("the edit
+      // overlay … letting you quickly choose between …"), and seven near-
+      // identical tools would be seven docstrings to keep in sync.
+      //
+      // The media lookup is `editor_add_clip`'s, verbatim in shape — an agent
+      // identifies a source the one way it always has, by `mediaId` or
+      // `sourcePath` against the pool. And like `editor_add_clip`, it places
+      // the PICTURE only: the D-129 linked-audio half is built by
+      // `linkedClipsFromDraggedMedia` at drop time and is a property of the
+      // GUI drag, not of the op. Inherited asymmetry, not a new one — an agent
+      // that wants the sound as its own clip places it explicitly and links it.
+      editor_edit_in: (a) => {
+        if (!isDropEditType(a?.editType)) {
+          return { error: `editType must be one of: ${DROP_EDIT_TYPES.map((t) => t.type).join(', ')}` };
+        }
+        const items = useMediaPoolStore.getState().items;
+        const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
+        if (!media) return { error: `no pool item matching mediaId/sourcePath — call editor_import_media first` };
+        const frames = media.video?.frameCount;
+        if (!frames || frames <= 0) {
+          return { error: `${media.name} has no known frame count (offline, or not a probeable video)` };
+        }
+
+        const store = useEditorTimelineStore.getState();
+        const timeline = store.timeline;
+        if (!timeline) return { error: 'no timeline is open' };
+
+        const sourceStart = a?.sourceStart !== undefined ? Math.round(Number(a.sourceStart)) : 0;
+        const duration = a?.duration !== undefined ? Math.round(Number(a.duration)) : frames - sourceStart;
+        if (!Number.isFinite(sourceStart) || sourceStart < 0 || sourceStart >= frames) {
+          return { error: `sourceStart must be within [0, ${frames}) frames of the source` };
+        }
+        if (!Number.isFinite(duration) || duration <= 0 || sourceStart + duration > frames) {
+          return { error: `duration must be > 0 and sourceStart+duration must be <= ${frames} (the source's own length)` };
+        }
+
+        const track = a?.track !== undefined ? Math.round(Number(a.track)) : videoTrackIndex(timeline);
+        // The playhead is the default on purpose: every one of the seven is
+        // defined against it in the reference, and an agent that has just
+        // called `editor_set_playhead` should not have to restate the number.
+        const atFrame = a?.atFrame !== undefined ? Math.round(Number(a.atFrame)) : store.playhead;
+
+        const clipId = `${media.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        const clip: NewClipFields = {
+          id: clipId,
+          shot_id: null,
+          media_id: media.id,
+          link_group: null,
+          name: a?.name || media.name,
+          source_path: media.sourcePath,
+          source_start: sourceStart,
+          duration,
+          source_len: frames,
+          source_fps: media.video?.fps ?? undefined,
+        };
+        const op = { kind: 'edit_in' as const, editType: a.editType, track, clip, atFrame };
+
+        // The FULL check (the overlay can only run its `checkEditTarget` half
+        // mid-drag — see that function's own doc), reported here as the real
+        // error string rather than an opaque no-op, which is the whole reason
+        // it is a separate function from the reducer.
+        const check = checkEditIn(timeline, op);
+        if (!check.ok) return { error: check.reason ?? 'that edit is not possible here' };
+
+        store.applyOp(op);
+
+        const after = useEditorTimelineStore.getState().timeline;
+        let placedTrack = -1;
+        let placed: Clip | undefined;
+        after?.tracks.forEach((tr, i) => {
+          const hit = tr.clips.find((c) => c.id === clipId);
+          if (hit) {
+            placedTrack = i;
+            placed = hit;
+          }
+        });
+        if (!placed) return { error: `${a.editType} did not place the clip — check the track index / project state` };
+        const fps = timelineFps(after);
+        return {
+          ok: true,
+          editType: a.editType,
+          // The track it REALLY landed on, which `place_on_top` may have
+          // created — an agent that assumes its own `track` came back would be
+          // addressing the wrong one on the very next call.
+          track: placedTrack,
+          clipId: placed.id,
+          startFrame: placed.start_frame,
+          endFrame: endFrame(placed, fps),
+          duration: placed.duration,
+          speedPoints: placed.speed_points ?? null,
+          trackCount: after?.tracks.length ?? 0,
+        };
       },
 
       // ---- text / title clips (D-211) --------------------------------------
