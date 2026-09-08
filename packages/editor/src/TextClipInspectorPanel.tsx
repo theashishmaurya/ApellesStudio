@@ -35,7 +35,16 @@
  * validation — one op and one validator under both interfaces, per CLAUDE.md.
  */
 import { useEffect, useState } from 'react';
-import { Button, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@chroma/ui';
+import {
+  Button,
+  Input,
+  ScrubbableNumberInput,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@chroma/ui';
 import { InspectorSection } from '@chroma/inspector';
 
 import { findClip, newTextLayer, type TextLayer } from './timeline';
@@ -216,17 +225,15 @@ export function TextClipInspectorPanel() {
           <label className={row}>
             <span className="text-text-secondary">Size</span>
             <span className="flex items-center gap-1">
-              <Input
-                type="number"
+              <ScrubbableNumberInput
                 step={0.5}
                 min={MIN_SIZE_PERCENT}
                 max={MAX_SIZE_PERCENT}
                 disabled={trackLocked}
                 className={numInput}
                 value={Number((layer.size * SIZE_PERCENT).toFixed(2))}
-                onChange={(e) => {
-                  const pct = Number(e.target.value);
-                  if (!Number.isFinite(pct) || pct <= 0) return;
+                onValueChange={(pct) => {
+                  if (pct <= 0) return;
                   patch({ size: pct / SIZE_PERCENT });
                 }}
               />

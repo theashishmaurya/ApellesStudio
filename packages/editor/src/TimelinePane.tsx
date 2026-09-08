@@ -321,13 +321,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Input,
   Popover,
   PopoverContent,
   PopoverTrigger,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
+  ScrubbableNumberInput,
   Select,
   SelectContent,
   SelectItem,
@@ -754,35 +754,32 @@ function TrackDuckControl({
             {/* Negative — a duck is a reduction. Not clamped: a positive value
                 boosts, which is unusual but well-defined, the same latitude
                 `gain > 1` already has. */}
-            <Input
-              type="number"
+            <ScrubbableNumberInput
               step={1}
               max={0}
               className={num}
               value={duckDb}
-              onChange={(e) => onChange({ duckDb: Number(e.target.value) })}
+              onValueChange={(duckDb) => onChange({ duckDb })}
             />
           </label>
           <label className={row}>
             <span className="text-text-secondary">Attack (ms)</span>
-            <Input
-              type="number"
+            <ScrubbableNumberInput
               step={5}
               min={0}
               className={num}
               value={attackMs}
-              onChange={(e) => onChange({ attackMs: Number(e.target.value) })}
+              onValueChange={(attackMs) => onChange({ attackMs })}
             />
           </label>
           <label className={row}>
             <span className="text-text-secondary">Release (ms)</span>
-            <Input
-              type="number"
+            <ScrubbableNumberInput
               step={10}
               min={0}
               className={num}
               value={releaseMs}
-              onChange={(e) => onChange({ releaseMs: Number(e.target.value) })}
+              onValueChange={(releaseMs) => onChange({ releaseMs })}
             />
           </label>
           {/* Not decoration: these are the two numbers that ARE the feel of a

@@ -95,6 +95,14 @@
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
+// D-253 — the SUBPATH, never `@chroma/ui`'s barrel: that barrel exports
+// `Text`, whose polymorphic `as`-prop typing breaks once
+// `@react-three/fiber`'s global JSX augmentation (pulled in transitively via
+// `@chroma/motion-engine`) sits in the same `tsc` program (see `Button.tsx`).
+// `@chroma/ui/number-scrub` imports nothing but React, so the conflict cannot
+// reach here — and this tab's number fields get the app's one real numeric-
+// field behaviour instead of a second hand-written copy of it.
+import { useNumberField } from '@chroma/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
 import { layerLabel, type Selection } from './LayerList';
 import {
@@ -141,6 +149,58 @@ const GROUP_ORDER: FieldSpec['group'][] = ['content', 'source', 'layout', 'fill'
 const label = 'block text-[10px] font-medium text-text-secondary mb-1';
 const inputBase =
   'w-full h-7 px-2 rounded bg-surface border border-border-color text-[11px] text-text-primary focus:outline-none focus:border-accent';
+/** B-113 / D-253 — the same treatment `@chroma/ui`'s `Input` gives every
+ *  `type="number"` in the app. Restated rather than imported because this tab
+ *  cannot use that component (see the `useNumberField` import above), and a
+ *  number field that still paints WebKit's spin buttons over its own digits is
+ *  the exact defect B-113 was filed for. The scrub gesture below is what
+ *  replaces them. */
+const numberInputBase = [
+  inputBase,
+  'tabular-nums cursor-ew-resize [appearance:textfield]',
+  '[&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+].join(' ');
+
+/** D-253 — this tab's numeric field: `inputBase`, no spin buttons, and the
+ *  shared drag-to-scrub/typing-draft behaviour from `@chroma/ui`.
+ *
+ *  `value` is `null` for a manifest property that is simply not set — the
+ *  field shows its placeholder rather than a guessed default, and clearing it
+ *  goes back to unset through `onClear`, which is the distinction this panel
+ *  has always drawn (see `FieldControl`'s own doc). */
+function MotionNumberField({
+  value,
+  step = 1,
+  className,
+  placeholder,
+  onCommit,
+  onClear,
+}: {
+  value: number | null;
+  step?: number;
+  className?: string;
+  placeholder?: string;
+  onCommit: (value: number) => void;
+  onClear?: () => void;
+}) {
+  const { inputProps } = useNumberField({
+    value,
+    step,
+    onValueChange: onCommit,
+    onClear,
+    // These fields declare no per-property step (`FieldSpec` has none), so the
+    // default step's precision says nothing about theirs — and they are full
+    // width, so unlike the Edit tab's 80px rows there is nothing to round for.
+    roundDisplay: false,
+  });
+  return (
+    <input
+      {...inputProps}
+      className={className ? [numberInputBase, className].join(' ') : numberInputBase}
+      placeholder={placeholder}
+    />
+  );
+}
 const row = 'flex flex-col gap-1';
 
 /** one scalar field's control, dispatching on `FieldSpec['kind']`. `value`
@@ -231,12 +291,11 @@ function FieldControl({
     return (
       <div className={row}>
         <span className={label}>{spec.label}</span>
-        <input
-          type="number"
-          className={inputBase}
-          value={typeof value === 'number' ? value : ''}
+        <MotionNumberField
+          value={typeof value === 'number' ? value : null}
           placeholder="(default)"
-          onChange={(e) => onCommit(e.target.value === '' ? undefined : Number(e.target.value))}
+          onCommit={onCommit}
+          onClear={() => onCommit(undefined)}
         />
       </div>
     );
@@ -331,12 +390,12 @@ function VecFieldControl({ spec, value, onCommit }: { spec: FieldSpec; value: un
         {components.map((c, i) => (
           <div key={c} className="flex-1 flex flex-col gap-0.5">
             <span className="text-[9px] text-text-secondary/70 text-center">{c}</span>
-            <input
-              type="number"
-              className={[inputBase, 'text-center px-1'].join(' ')}
-              value={typeof arr[i] === 'number' ? arr[i] : ''}
+            <MotionNumberField
+              className="text-center px-1"
+              value={typeof arr[i] === 'number' ? (arr[i] as number) : null}
               placeholder="0"
-              onChange={(e) => commitAt(i, e.target.value === '' ? 0 : Number(e.target.value))}
+              onCommit={(n) => commitAt(i, n)}
+              onClear={() => commitAt(i, 0)}
             />
           </div>
         ))}

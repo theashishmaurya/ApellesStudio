@@ -1,16 +1,22 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — B-113: a crop value is readable, and the spinner arrows are
- * not sitting on top of it.
+ * @chroma/editor — B-113: a crop value is readable, and no spinner arrows sit
+ * on top of it.
  *
  * **The defect.** The owner, working a real project, screenshotted the Crop
  * section reading `0.0` with the up/down arrows drawn over the missing digits;
  * the stored value was `0.052212` (what an on-canvas crop drag writes). Two
- * causes, both real, both fixed: the field was `w-16` with `px-3` and NO space
- * reserved for WebKit's `::-webkit-inner-spin-button` (which is painted inside
- * the right edge without taking layout space, so a `text-right` value runs
- * underneath it), and the raw float was rendered at full precision, which no
- * field this narrow can show.
+ * causes, both real: the field was `w-16` with `px-3` and WebKit's
+ * `::-webkit-inner-spin-button` painted over its right edge, and the raw float
+ * was rendered at full precision, which no field this narrow can show.
+ *
+ * **B-113's first fix was wrong about the first cause, and this file's
+ * assertions moved with it (D-253).** It reserved a `pr-5` strip for the
+ * spinner — but WebKit lays the spin button out INSIDE the padding box, so the
+ * padding moved the digits and the arrows left together and the overlap
+ * survived intact; the owner's screenshot showed Transform and Crop still
+ * broken after that landed. The spinner is now suppressed outright for every
+ * `type="number"` in the app, which is what the class assertion below checks.
  *
  * **What this test can and cannot prove — stated rather than implied.** jsdom
  * has no layout engine: every `getBoundingClientRect()` here is zeros, so a
@@ -48,7 +54,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
-import { NUMBER_INPUT_SPINNER_RESERVE } from '@chroma/ui';
+import { NUMBER_INPUT_SPINNER_SUPPRESSION } from '@chroma/ui';
 import {
   NUM_FIELD,
   numericFieldCapacityChars,
@@ -147,24 +153,24 @@ describe('the Inspector’s numeric field clears its own spinner (B-113)', () =>
     expect(Number(shown)).toBeCloseTo(REAL_CROP_VALUE, 3);
   });
 
-  it('reserves the spinner’s strip on the rendered element, not just in theory', async () => {
+  it('suppresses the spinner on the rendered element, not just in theory', async () => {
     await render();
     const input = field('Left');
-    // The reserve comes from `@chroma/ui`'s Input for every `type="number"`,
-    // which is where the defect actually lived — one class, applied once,
-    // rather than per call site.
+    // The suppression comes from `@chroma/ui`'s Input for every
+    // `type="number"`, which is where the defect actually lived — one class
+    // set, applied once, rather than per call site.
     expect(input.type).toBe('number');
-    expect(input.className.split(/\s+/)).toContain(NUMBER_INPUT_SPINNER_RESERVE.className);
-    // The field cannot be squeezed narrower than the width that budget was
+    for (const cls of NUMBER_INPUT_SPINNER_SUPPRESSION.split(/\s+/)) {
+      expect(input.className.split(/\s+/)).toContain(cls);
+    }
+    // The field cannot be squeezed narrower than the width the fit budget was
     // computed against, however narrow the Inspector is dragged.
     expect(input.className.split(/\s+/)).toContain('shrink-0');
     expect(input.className.split(/\s+/)).toContain('w-20');
-    // Nothing in the merge took the reserve back off the right side. The
-    // shadcn base still carries `px-3`, and that is fine rather than a
-    // conflict: Tailwind emits the per-side utilities AFTER the axis ones, so
-    // `pl-2`/`pr-5` win the cascade over it. What would break the reserve is a
-    // SECOND `pr-*` or `pl-*`, so that is what is asserted.
-    expect(input.className.match(/\bpr-[\w.[\]-]+/g)).toEqual([NUMBER_INPUT_SPINNER_RESERVE.className]);
+    // No call site adds its own horizontal padding on top of the `px-3` the
+    // shadcn base carries and `NUM_FIELD.padRightPx` records — a second
+    // `pr-*`/`pl-*` is what would make that budget a lie.
+    expect(input.className.match(/\bpr-[\w.[\]-]+/g)).toBe(null);
     expect(input.className.match(/\bpl-[\w.[\]-]+/g)).toEqual(['pl-2']);
   });
 

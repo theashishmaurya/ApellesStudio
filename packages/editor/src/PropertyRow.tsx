@@ -35,25 +35,25 @@
  * — TypeScript infers `TParam` from the `state`/callbacks passed in, so
  * nothing at either existing call site changed shape.
  *
- * **B-113 — the field's own geometry and display precision moved out** to
- * `numericField.ts`, and the row no longer renders a raw stored float. The
- * crop rows showed values like `0.0` with the spinner arrows painted over the
- * digits that did not fit; the field was `w-16` with no reserve for WebKit's
- * inner-spin-button, and `0.052212` (a real value from an on-canvas crop
- * drag) is eight characters. The row is now one step wider, `shrink-0` so a
- * narrow Inspector cannot squeeze it back, and shows a `step`-derived
- * rounding while at rest — the exact value returns on focus, so editing is
- * unchanged. The spinner's own strip is reserved by `@chroma/ui`'s `Input`
- * for every `type="number"`, not by this row.
+ * **B-113 / D-253 — the field itself is `@chroma/ui`'s
+ * `ScrubbableNumberInput`.** The crop rows showed values like `0.0` with the
+ * spinner arrows painted over the digits that did not fit; the field was
+ * `w-16` with no room for WebKit's inner-spin-button, and `0.052212` (a real
+ * value from an on-canvas crop drag) is eight characters. B-113 widened the
+ * row to `w-20` with `shrink-0` so a narrow Inspector cannot squeeze it back,
+ * and rounded what is shown at rest — both still true, and both now the shared
+ * component's job. D-253 finished the other half: the spinner is gone app-wide
+ * (padding could never have cleared it) and the field is dragged horizontally
+ * to change its value, Resolve-style. The row's own geometry stays in
+ * `numericField.ts`.
  *
  * Pure presentation, like the panel it came from: no store access, no
  * `Clip` knowledge, nothing beyond the props below.
  */
-import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, Spline } from 'lucide-react';
-import { Button, Input } from '@chroma/ui';
+import { Button, ScrubbableNumberInput, displayNumber } from '@chroma/ui';
 
-import { NUM_FIELD, displayNumber } from './numericField';
+import { NUM_FIELD } from './numericField';
 
 const row = 'flex items-center justify-between gap-2';
 
@@ -156,18 +156,10 @@ export function PropertyRow<TParam extends string>({
   // one render decision rather than three independent ones.
   const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
 
-  /** B-113 — a focused field shows the EXACT stored value; a resting one shows
-   *  it rounded to what the row can actually display (`numericField.ts`).
-   *
-   *  The focus split is what makes the rounding free of behavioural cost:
-   *  while the user is in the field they see and edit the real number, so
-   *  typing a fourth decimal, stepping with the spinner and arrow keys, and
-   *  every `onChange` this row emits are byte-for-byte what they were before
-   *  the rounding existed. Rounding an unfocused value instead of widening
-   *  the field is what stops an on-canvas crop drag's `0.052212` from
-   *  overflowing a field no Inspector width can make eight characters wide. */
-  const [focused, setFocused] = useState(false);
-  const shown = focused ? state.value : displayNumber(state.value, step);
+  /** B-113 — what the row shows at rest, which is what the `title` below is
+   *  comparing against. The focused/exact half of that split lives in
+   *  `ScrubbableNumberInput`. */
+  const shown = displayNumber(state.value, step);
   return (
     <div className={row}>
       {/* The label still really labels the input (clicking it focuses the
@@ -176,22 +168,19 @@ export function PropertyRow<TParam extends string>({
           input. */}
       <label className="flex min-w-0 flex-1 items-center justify-between gap-2">
         <span className="text-text-secondary truncate">{label}</span>
-        <Input
-          type="number"
+        <ScrubbableNumberInput
           step={step}
           min={min}
           max={max}
           disabled={disabled}
           className={NUM_FIELD.className}
-          value={shown}
+          value={state.value}
           // Nothing is hidden by the rounding: the full-precision value is one
           // hover (or one click into the field) away, and the attribute is
           // omitted entirely when the two already agree so the tooltip only
           // ever appears when it has something to add.
           title={shown === state.value ? undefined : `${label}: ${state.value}`}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onChange={(e) => onChange(Number(e.target.value))}
+          onValueChange={onChange}
         />
       </label>
       <div className="flex shrink-0 items-center">

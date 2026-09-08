@@ -1706,6 +1706,38 @@ is the rendered value string against the field's own declared geometry, which
 is the same thing one step earlier. The visual confirmation on the running app
 is the owner's.
 
+### Follow-up, 2026-09-09 — fault 1's fix was wrong, and could never have worked (closed by D-253)
+
+Not a new bug; this finishes the same one. The owner screenshotted **Transform
+and Crop still broken** after the above landed — and both render through
+`PropertyRow`, which was already applying the `pr-5` reserve. So the reserve
+was in place and the arrows were still on the digits.
+
+**Why `padding-right` could not have fixed it, at any value.** WebKit lays
+`::-webkit-inner-spin-button` out **inside** the input's padding box, not over
+its border box. Increasing `padding-right` therefore moves the text *and* the
+spin button left by the same amount: the gap between them is unchanged and the
+overlap survives exactly, for a value of any length. The original diagnosis
+("painted inside the right edge WITHOUT giving it layout space") got the
+symptom right and the box model wrong, and the `pr-5` fix followed from the
+wrong half. It also explains why the first pass looked like it had worked at
+all — the *second* fault's fix (display rounding) genuinely did shorten the
+values, so the field read `0.052` instead of `0.0`; the arrows were still
+sitting on it.
+
+**The real fix (D-253).** Remove the spinner rather than pad around it —
+`NUMBER_INPUT_SPINNER_SUPPRESSION` in `@chroma/ui`'s `Input`, applied to every
+`type="number"` in the app, including the vendored fork's via its shim. The
+pointer affordance the arrows were (badly) providing is replaced by
+drag-to-scrub on the field itself, which is what Resolve, Premiere/AE and
+Blender all do instead of a spinner. Arrow-key stepping is untouched:
+suppressing the spin *button* does not disable a number input's keyboard
+stepping. Everything about fault 2 stands as written above.
+
+Fault 1's fix is therefore now the *absence* of a reserve:
+`NUM_FIELD.spinnerReservePx` is gone and `numericField.ts`'s fit budget counts
+the field's own `px-3` instead, which gives the digits 60px rather than 52px.
+
 ## B-114 — a placed marker had a Delete, but the only way to reach it was double-clicking a 9px flag: the list the user actually looks at offered jump and nothing else
 
 status: fixed (2026-09-08) · severity: low (nothing is lost or corrupted — but a marker is a *write into the edit*, and an edit you cannot undo by hand is a real dead end) · area: `packages/editor/src/TimelineMarkers.tsx` (`MarkerListMenu`)

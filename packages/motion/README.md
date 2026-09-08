@@ -103,7 +103,15 @@ per-row lane timeline).
   section headings with the Edit tab via `@chroma/inspector` (D-103). For a
   2+ multi-selection (D-158), renders `MultiLayerInspector` instead —
   align/distribute + lockstep Transform/field editing; see its own module
-  doc comment for the full design reasoning.
+  doc comment for the full design reasoning. Since D-253 its `number` and
+  `vec` fields have no native spin buttons and are dragged horizontally to
+  change their value, the same gesture the Edit tab's Inspector uses — via
+  `useNumberField` from the **`@chroma/ui/number-scrub` subpath**, which is
+  this package's ONLY permitted reach into `@chroma/ui` (never the barrel; see
+  `Button.tsx`'s doc comment for the `@react-three/fiber` JSX conflict that
+  makes the barrel unusable here). They opt out of the Edit tab's display
+  rounding, since `propCatalog.ts`'s `FieldSpec` declares no per-property
+  `step`.
 - `propCatalog.ts` — *what fields the Inspector shows* for each `use`,
   transcribed from each primitive's own prop type + `registry.ts`'s adapter.
 - `CatalogPanel.tsx` — *what primitives exist and how to add one* (D-151):
