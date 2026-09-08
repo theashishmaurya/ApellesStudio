@@ -14,6 +14,22 @@ One or two lines per session. Detail lives in the decision it references.
   with). New `packages/shell` DOM test suite (first one the package has had)
   proves the real dialog opens from the chrome bar and hides on other tabs.
 
+- **2026-09-08** — **D-252: a generic `debug_set_popover_open(id, open)` debug op**,
+  backed by one shared `openPanels` map (`useEditorTimelineStore`) and
+  `@chroma/editor`'s new `panelRegistry.ts`, so an agent can open/close any
+  registered Edit-tab popover/dialog by name without a working
+  Accessibility/Screen-Recording permission to click it — built because the
+  coordinating session needed to screenshot `CaptionPanel`'s caption-preset
+  popover and hit exactly that wall. Migrated `CaptionPanel`,
+  `CanvasSettingsPopover` and `EditorExportDialog` off local `useState` onto
+  it; `EditLibraryRail`'s uncontrolled rail popovers and `MarkerStrip`'s
+  `editingId`-keyed marker editor are found and deliberately left for a
+  follow-on pass (see D-252). New real-DOM test
+  (`packages/debug/src/debugOps.popover.dom.test.tsx`) proves the op opens
+  the real `CaptionPanel` popover with no synthesised click.
+  `@chroma/editor` 1507/1507, `@chroma/debug` 32/32, production `vite build`
+  re-verified debug-only (0 occurrences of the new op name in the bundle).
+
 - **2026-09-08** — **B-122 fixed: dragging a clip onto a track HEADER crashed
   the whole app, because two different dnd-kit droppables both called
   themselves `type: 'track'`.** Caught in the dev-server log while the owner

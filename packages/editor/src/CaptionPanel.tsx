@@ -49,6 +49,7 @@ import { resolveCaptionStyle } from './caption';
 import { captionAnimationOf } from './captionAnim';
 import { captionPresetGroups, type CaptionPreset } from './captionPresets';
 import { applyCaptionPreset } from './captionPresetAction';
+import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 
 /** One cue as `chroma_import_subtitles` returns it — already parsed and on the
@@ -176,7 +177,12 @@ export function CaptionPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const playhead = useEditorTimelineStore((s) => s.playhead);
-  const [open_, setOpen] = useState(false);
+  // D-252 — lifted out of local `useState` into the shared `openPanels` map
+  // so `debug_set_popover_open('caption-panel', ...)` can drive the SAME flag
+  // this trigger's own click drives, rather than simulate a click on it. See
+  // `panelRegistry.ts`'s module doc for why a shared map rather than a
+  // bespoke store field.
+  const [open_, setOpen] = usePanelOpen('caption-panel');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

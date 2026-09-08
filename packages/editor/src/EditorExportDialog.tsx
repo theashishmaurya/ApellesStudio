@@ -53,6 +53,7 @@ import {
   TooltipTrigger,
 } from '@chroma/ui';
 
+import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, type Clip, type Timeline } from './timeline';
 import { useExportQueueStore, type ExportJobStatus } from './exportQueueStore';
@@ -126,7 +127,10 @@ export function EditorExportDialog() {
   const jobs = useExportQueueStore((s) => s.jobs);
   const clearFinished = useExportQueueStore((s) => s.clearFinished);
 
-  const [open, setOpen] = useState(false);
+  // D-252 — lifted out of local `useState` so `debug_set_popover_open
+  // ('export-dialog', ...)` can drive this same flag; see
+  // `panelRegistry.ts`'s module doc.
+  const [open, setOpen] = usePanelOpen('export-dialog');
   const [outPath, setOutPath] = useState<string | null>(null);
   const [width, setWidth] = useState(String(FALLBACK_WIDTH));
   const [height, setHeight] = useState(String(FALLBACK_HEIGHT));

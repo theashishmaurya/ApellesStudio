@@ -274,6 +274,25 @@ interface EditorTimelineState {
    *  clip: the baked keys ARE the curve (see `dynamicZoom.ts`'s module doc),
    *  so re-arming the mode always starts at `linear`. */
   dynamicZoom: { clipId: string; curve: EaseCurve } | null;
+  /** D-252 — which popovers/dialogs from `panelRegistry.ts`'s `PANEL_IDS` are
+   *  currently open, keyed by panel id. A panel with no entry reads as closed
+   *  via `usePanelOpen`'s `?? false`, so this map only ever needs writing,
+   *  never pre-seeding.
+   *
+   *  Generalises `inspectorOpen` (D-219) to any number of popovers instead of
+   *  one bespoke boolean field per popover: `usePanelOpen(id)` is the one
+   *  writer for both a human's click on that popover's own trigger and the
+   *  debug op `debug_set_popover_open`, exactly the "same store action under
+   *  both interfaces" pairing `inspectorOpen`/`debug_set_editor_inspector`
+   *  already established — see `panelRegistry.ts`'s module doc for why a map
+   *  rather than one field per popover.
+   *
+   *  Session chrome, not project data: never persisted, never undoable
+   *  (D-216's rule) and, like `inspectorOpen`/`waveformView`, deliberately NOT
+   *  cleared by `setOpenProject` — closing a popover on a project switch would
+   *  be a surprise mid-edit, and none of today's registered panels hold data
+   *  that belongs to one project over another. */
+  openPanels: Record<string, boolean>;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -337,6 +356,9 @@ interface EditorTimelineState {
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
    *  is always an explicit `applyOp` by whoever committed a box. */
   setDynamicZoom: (mode: { clipId: string; curve: EaseCurve } | null) => void;
+  /** D-252 — open/close one registered popover/dialog by id. The one writer
+   *  for both that popover's own trigger and `debug_set_popover_open`. */
+  setPanelOpen: (id: string, open: boolean) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -420,6 +442,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   waveformView: false,
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
+  // D-252 — nothing open by default; see the field's own doc.
+  openPanels: {},
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -557,6 +581,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   setWaveformView: (open) => set({ waveformView: open }),
 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
+
+  setPanelOpen: (id, open) => set((s) => ({ openPanels: { ...s.openPanels, [id]: open } })),
 
   applyOp: (op) => {
     const before = get().timeline;

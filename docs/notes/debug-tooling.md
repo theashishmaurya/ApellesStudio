@@ -61,13 +61,35 @@ several rounds of the owner's own screenshots before an agent could even confirm
    full reasoning and the one refactor it forced (the Edit Inspector's flag lifted
    out of `EditorTab.tsx`'s `useState` into `useEditorTimelineStore`, so one piece of
    state sits under both the human's button and the op).
+   **Extended (D-252, 2026-09-08): `debug_set_popover_open({id, open})`** — one
+   generic op for any registered Edit-tab popover/dialog, backed by
+   `useEditorTimelineStore`'s `openPanels: Record<string, boolean>` map and
+   `@chroma/editor`'s `panelRegistry.ts` (`PANEL_IDS`, `parsePanelId`,
+   `usePanelOpen`). Landed because a repo sweep found the D-219 bespoke-field
+   shape (one store field + one op + one snapshot line per popover) does not
+   scale: `CaptionPanel`'s caption-preset-library popover (the case that
+   forced this — needed screenshotting for the owner with no working
+   Accessibility/Screen-Recording access to the native window),
+   `CanvasSettingsPopover` and `EditorExportDialog` all had the identical
+   local-`useState`-gated-open problem, with a fourth uncontrolled one
+   (`EditLibraryRail`'s rail popovers) and a fifth keyed one (`MarkerStrip`'s
+   marker editor, `editingId: string | null`) also found and deliberately
+   left for later — see D-252 and `panelRegistry.ts`'s own module doc for
+   why. `debug_get_ui_state`'s `editor` section now also reports
+   `openPanels` (the live map) and `panelIds` (`PANEL_IDS`, the reference
+   list of what can appear there).
+   Registered today: `caption-panel`, `canvas-settings`, `export-dialog`. Add
+   a new one by adding its id to `PANEL_IDS` and swapping its component's
+   `useState(false)` for `usePanelOpen(id)` — no new op, no new store field.
    **Remaining gap, deliberately:** the **Colorist tab's** own panel/visibility/
    settings state (`app/src/store/useUIStore.ts` — `setPanel`, `uiVisibility`,
    `isSettingsOpen`). It lives in the vendored fork, i.e. the *app* layer, and
    `@chroma/debug` is a package; reaching up would invert D-039's dependency
    direction. Closing it properly means either moving that UI state into a package or
    having the app register its own named ops into the registry — a real design call,
-   not a line of code, so it is stated here rather than half-done.
+   not a line of code, so it is stated here rather than half-done. Also still open:
+   `EditLibraryRail`'s uncontrolled rail popovers and `MarkerStrip`'s
+   `editingId`-keyed marker editor (see D-252).
 3. **Pixel/color inspection** — **DONE, in D-210** (it shipped alongside the
    screenshot tool, not after it). `debug_sample_pixel(path, x, y)` reads the exact
    RGBA + hex out of **any** saved PNG, including one written long before the app's
@@ -142,6 +164,7 @@ debug_ui_state()                             # what's open right now
 debug_set_active_tab("edit")                 # → useShellStore.setActiveTab
 debug_set_editor_inspector(open=True)        # → useEditorTimelineStore.setInspectorOpen
 debug_set_inspector_tab("audio")             # → useEditorTimelineStore.setInspectorTab
+debug_set_popover_open("caption-panel", True)  # → useEditorTimelineStore.setPanelOpen
 debug_screenshot()                           # → a real PNG path; Read it, look at it
 debug_dom_tree('[data-chroma-panel="editor-inspector"]', max_depth=3)
                                              # → its REAL rect + computed styles
@@ -253,6 +276,13 @@ checked is how B-100 happened in the first place.
   the human's tab button calls, exactly as `setInspectorOpen` (**2**) is. The op name
   being absent while the action it calls is present is precisely the shape this gate is
   supposed to have.
+  Re-run again 2026-09-08 for D-252's new op: `debug_set_popover_open` — **0**
+  occurrences. Its own store action `setPanelOpen` — the function `usePanelOpen`
+  calls, which is what `CaptionPanel`'s/`CanvasSettingsPopover`'s/
+  `EditorExportDialog`'s own triggers now call instead of a local `useState`
+  setter — is present (**2**), the same absent-op/present-action shape as
+  every check above. Still one `index-*.js` chunk, no separate `debugOps` or
+  `panelRegistry` chunk.
 - **Rust.** `cargo check -p RapidRAW --release --lib` compiles clean with the whole
   `debug_capture` module and both commands cfg'd out (release turns `debug_assertions`
   off), which also proves nothing outside the gate still references them.
@@ -260,9 +290,10 @@ checked is how B-100 happened in the first place.
 ## Status
 
 Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
-for the gate). The one stated remaining gap is the **Colorist tab's** own panel /
-visibility / settings state — see piece 2 above for why it is a real design call rather
-than a missing line of code.
+for the gate; D-252 extending piece 2 with `debug_set_popover_open`). Stated remaining
+gaps: the **Colorist tab's** own panel/visibility/settings state, `EditLibraryRail`'s
+uncontrolled rail popovers, and `MarkerStrip`'s `editingId`-keyed marker editor — see
+piece 2 above for why each is a real design call rather than a missing line of code.
 
 Check `docs/CHANGELOG.md` (search "debug" or the date) for what has actually landed —
 this file is the scope/tracker, not a live status board.

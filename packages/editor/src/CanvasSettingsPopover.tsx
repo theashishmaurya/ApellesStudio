@@ -34,6 +34,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { Settings2 } from 'lucide-react';
 import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@chroma/ui';
 
+import { usePanelOpen } from './panelRegistry';
+
 const RES_PRESETS: { label: string; w: number; h: number }[] = [
   { label: '3840×2160', w: 3840, h: 2160 },
   { label: '1920×1080', w: 1920, h: 1080 },
@@ -49,7 +51,10 @@ interface ProjectSettingsWH {
 }
 
 export function CanvasSettingsPopover() {
-  const [open, setOpen] = useState(false);
+  // D-252 — lifted out of local `useState` so `debug_set_popover_open
+  // ('canvas-settings', ...)` can drive this same flag; see
+  // `panelRegistry.ts`'s module doc.
+  const [open, setOpen] = usePanelOpen('canvas-settings');
   const [loaded, setLoaded] = useState(false);
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
