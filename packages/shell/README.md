@@ -31,13 +31,26 @@ Platform logic (`WindowChrome.tsx`) is ported from RapidRAW's
 
 ```ts
 interface ShellProps {
-  tabs: ShellTab[];             // { id, label, icon?, element } per tab
+  tabs: ShellTab[];             // { id, label, icon?, element, headerAction? } per tab
   projectOpen: boolean;         // false → launcher full-window, no tab buttons
   launcher: ReactNode;          // the D-037 ProjectLauncher, injected by the app
   onCloseProject?: () => void;  // "‹ Projects" — back to the launcher
   sourcesPanel?: ReactNode;     // the D-046 Sources panel, injected by the app
 }
 ```
+
+**Per-tab chrome-bar action (D-251).** A `ShellTab` may set `headerAction`
+(a `ReactNode`), rendered in the chrome bar's own right-hand cluster — left
+of the window controls — **only while that tab is the active one**. Today
+only the `edit` entry (`app/src/Root.tsx`) sets it, to the real
+`EditorExportDialog` from `@chroma/editor` — the owner asked, live, for
+Export to sit beside the tab switcher rather than inside the Edit tab's own
+top strip (D-249's placement). This is a deliberate, narrow reversal of
+D-118's "`Shell` stays tab-agnostic" rule for this one slot: `Shell` now acts
+on which tab is active to decide chrome-bar content, not just tab-body
+content. It does NOT reopen the dependency boundary below — `Shell.tsx`
+still never imports `@chroma/editor`; the node is injected by the
+composition root exactly like `launcher`/`sourcesPanel`.
 
 **Project gating (D-039 step 6c).** The shell is the app's entry screen. While
 `projectOpen` is `false` the chrome bar shows only traffic lights + `CHROMA` +
@@ -98,7 +111,25 @@ reason.
 D-039 — the 3-tab layout + window chrome + the project-launcher entry screen
 (step 6c) are live. D-046 added the docked Sources-panel slot. D-051 added
 global undo/redo. D-116 moved the Sources panel to the left and made it a
-real resizable panel instead of a fixed width. Follow-up: move
+real resizable panel instead of a fixed width. D-251 added the per-tab
+`headerAction` chrome-bar slot (Edit's Export today). Follow-up: move
 `ProjectLauncher` + the session store into `@chroma/bridge` / a
 `@chroma/project` fe package so the shell can own the launcher outright
 instead of taking it as a prop.
+
+## Testing
+
+`vitest run` (`vitest.config.ts`: `environment: 'node'` default, per-file
+`// @vitest-environment jsdom` for real-DOM coverage — mirrors
+`packages/editor`'s convention). `Shell.exportAction.dom.test.tsx` (D-251,
+added with this package's first test suite) mounts the real `Shell` with the
+real `EditorExportDialog` from `@chroma/editor` as a tab's `headerAction` and
+proves it renders in the chrome bar, opens the same dialog, and hides/shows
+per active tab. `@chroma/editor` is a **devDependency only** here — this
+package's runtime `dependencies` are unchanged (still just
+react + zustand + Tauri, see "Deps" above); only the test crosses into
+editor's source, to exercise the exact wiring `Root.tsx` uses in production
+rather than a stand-in. `packages/shell/tsconfig.json` needs
+`"types": ["vite/client"]` for the same reason `packages/editor/tsconfig.json`
+does — with no TS project references between packages, checking this
+package's program also type-checks the editor source the test reaches.

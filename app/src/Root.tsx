@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab } from '@chroma/shell';
-import { EditorTab, useEditorTimelineStore } from '@chroma/editor';
+import { EditorExportDialog, EditorTab, useEditorTimelineStore } from '@chroma/editor';
 import { MotionTab, useMotionProjectStore } from '@chroma/motion';
 import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
 import App from './App';
@@ -186,7 +186,16 @@ export function Root() {
         void useSessionStore.getState().closeProject();
       }}
       tabs={[
-        { id: 'edit', label: 'Edit', element: <EditorTab /> },
+        // D-251 — Export moved from the Edit tab's own top strip (D-249) to
+        // the shell's chrome bar, beside the tab switcher, per the owner's
+        // live request. `headerAction` is `@chroma/shell`'s injection slot
+        // for exactly this: `Root` (the composition root) supplies the real
+        // `EditorExportDialog`, `Shell` only renders whatever node the active
+        // tab registered — same `app → shell`/`app → editor` dependency
+        // direction as `element` below, `Shell` itself still never imports
+        // `@chroma/editor`. Motion/Colorist have no export action of their
+        // own yet, so their entries omit it.
+        { id: 'edit', label: 'Edit', element: <EditorTab />, headerAction: <EditorExportDialog /> },
         { id: 'motion', label: 'Motion', element: <MotionTab onRendered={onMotionRendered} /> },
         { id: 'colorist', label: 'Colorist', element: <App /> },
       ]}

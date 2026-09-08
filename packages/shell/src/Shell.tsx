@@ -67,6 +67,34 @@
  * (verified: no `SOURCES_PANEL_WIDTH`/`sourcesPanelOpen` reference exists
  * outside this package), so they naturally read as "on the right" once
  * Sources vacates that slot.
+ *
+ * Per-tab chrome-bar action (D-251): each `ShellTab` may carry a
+ * `headerAction` node, rendered in the top bar's own right-hand cluster
+ * (left of the window controls) ONLY while that tab is the active one. This
+ * is a deliberate, owner-directed narrowing of D-118's "`Shell` stays
+ * tab-agnostic" rule, not a silent reversal of it — the owner asked, live,
+ * for Export to sit at the very top, beside the tab switcher, after seeing
+ * D-249 land it in the Edit tab's own top strip instead. D-118 kept the
+ * Inspector toggle tab-local specifically because making it shell-level
+ * would need `Shell` to know which tab is active just to decide whether to
+ * render it; `Shell` already has to know that regardless (it is exactly how
+ * the tab **content** below is switched, `tabs.map` + `hidden` below), so
+ * this is `Shell` finally acting on information it already held, for the
+ * one case the owner explicitly asked to see there. The injected node itself
+ * is still owned entirely by whichever package built it (`@chroma/editor`'s
+ * `EditorExportDialog` today) and supplied by the composition root
+ * (`Root.tsx`) exactly like `launcher`/`sourcesPanel` above — `Shell` never
+ * imports `@chroma/editor` itself, so the "shell depends only on
+ * react + zustand + Tauri" boundary this package's own `package.json`
+ * describes is unchanged; only the *behavioral* tab-agnostic rule narrows,
+ * and only for this one slot. Colorist and Motion have no export action of
+ * their own today (checked directly: no "Export" UI anywhere in `app/src`
+ * outside Colorist's own per-image `ExportDialog`/`ExportPanel`, which are
+ * unrelated, differently-scoped actions triggered from Colorist's own
+ * toolbar/BottomBar — and none at all in `packages/motion`), so only the
+ * `edit` tab entry populates `headerAction` for now; the field stays generic
+ * (keyed by whichever tab is active) so Motion/Colorist can grow their own
+ * later without another `Shell` change.
  */
 
 import { useEffect, type ReactNode } from 'react';
@@ -81,6 +109,12 @@ export interface ShellTab {
   label: string;
   icon?: ReactNode;
   element: ReactNode;
+  /** D-251 — rendered in the chrome bar's own right-hand cluster, beside the
+   *  window controls, ONLY while this tab is active. See this file's own
+   *  module doc ("Per-tab chrome-bar action") for why this exists and why it
+   *  doesn't reopen `@chroma/shell`'s "never imports the tab packages" rule.
+   *  Omit for a tab with no such action (Motion/Colorist today). */
+  headerAction?: ReactNode;
 }
 
 export interface ShellProps {
@@ -116,6 +150,10 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
 
   // If persisted/default tab isn't in the registry, fall back to the first tab.
   const active = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
+  // D-251 — the active tab's own chrome-bar action, if it registered one.
+  // `undefined` renders nothing (Motion/Colorist today), and switching tabs
+  // switches which node (if any) shows here, same as the tab content below.
+  const activeHeaderAction = projectOpen ? tabs.find((t) => t.id === active)?.headerAction : undefined;
 
   useEffect(() => {
     if (!projectOpen) return;
@@ -232,15 +270,17 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
           </div>
         )}
 
-        {/* right: win/linux controls / mac spacer. The Sources toggle used to
-            live here too, but D-116 moved the panel itself to the left
-            without moving its opener — leaving it stranded on the opposite
-            side from the panel it controls (owner: "the opener should be
-            with the source pane"). It's now rendered below, in the same
-            top-left corner of the content area the panel actually occupies,
-            matching the spatial pattern D-118 established for the
+        {/* right: the active tab's own header action (D-251, e.g. Edit's
+            Export), then win/linux controls / mac spacer. The Sources toggle
+            used to live here too, but D-116 moved the panel itself to the
+            left without moving its opener — leaving it stranded on the
+            opposite side from the panel it controls (owner: "the opener
+            should be with the source pane"). It's now rendered below, in the
+            same top-left corner of the content area the panel actually
+            occupies, matching the spatial pattern D-118 established for the
             Inspector's own toggle (opposite corner, same idea). */}
-        <div className="ml-auto flex items-center h-full gap-0.5">
+        <div className="ml-auto flex items-center h-full gap-1">
+          {activeHeaderAction}
           <WindowControls chrome={chrome} />
         </div>
       </div>

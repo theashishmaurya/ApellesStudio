@@ -8,7 +8,18 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": []
+    // D-251 — `Shell.exportAction.dom.test.tsx` imports `@chroma/editor`'s
+    // `EditorExportDialog` (a devDependency-only, test-only crossing — see
+    // that test file's own doc). With no TS project references between
+    // packages, `tsc -p packages/shell` type-checks editor's reachable
+    // source too, under THIS tsconfig's own compiler options — which then
+    // needs the same ambient types editor's own tsconfig declares for the
+    // same reason (`import.meta.env.DEV`, and `vite/client`'s CSS
+    // side-effect-import module declarations `TimelinePane.tsx` relies on).
+    // Empty `types: []` used to be correct because this package's own source
+    // needs no ambient globals; it no longer is, now that its program
+    // transitively includes a file that does.
+    "types": ["vite/client"]
   },
   "include": ["src"]
 }
