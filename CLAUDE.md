@@ -3,7 +3,7 @@
 AI-native, local, open-source video tool — **3 tabs: Edit / Motion / Colorist**
 (D-039, 2026-09-02; supersedes the old "grading only, not an editor" framing —
 `docs/00`/`01`/`02`/`03` all rewritten for it, and feature-status-reconciled
-2026-09-08 by D-230). Read `docs/` before doing anything. Start every
+2026-09-08 by D-231). Read `docs/` before doing anything. Start every
 session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
 `docs/08-decisions.md`, `docs/notes/architecture-lock.md`.
 
@@ -70,20 +70,20 @@ Every change, before you commit:
 A subagent's work is **not done** until its docs are written and committed. Verify the doc
 set is consistent before reporting done — no "docs pending."
 
-**Known drift to reconcile (do not let this grow).** Reconciled 2026-09-08 by **D-230**;
+**Known drift to reconcile (do not let this grow).** Reconciled 2026-09-08 by **D-231**;
 this note now records what that pass found and what it deliberately left.
 
 - ~~`docs/03-architecture.md` is stale (has a banner, needs the full D-039 rewrite)~~ —
   **this was itself wrong.** The file had already been fully rewritten for D-039 on
   2026-09-02; it had no banner and no missing rewrite. What it actually had was six days of
   feature-status drift (3 crates vs. 8, a "placeholder" Motion tab, 38 MCP tools vs. 95).
-  Fixed in D-230.
+  Fixed in D-231.
 - ~~`00-vision.md` / `01-prd.md` / `02-scope.md` still say "grading only, not an editor"~~ —
   **also wrong, and had been since 2026-09-02.** All three were corrected to the 3-tab
   framing in that same pass. Their real problem was feature status: `01-prd.md` called Edit
   a single-track MVP and Motion a placeholder; `02-scope.md` listed shipped features as
-  out-of-scope. Fixed in D-230. `00-vision.md` was re-checked and found accurate.
-- **Still open, deliberately left by D-230:** `docs/BUGS.md`'s "Known engine constraints"
+  out-of-scope. Fixed in D-231. `00-vision.md` was re-checked and found accurate.
+- **Still open, deliberately left by D-231:** `docs/BUGS.md`'s "Known engine constraints"
   still lists items since solved (D-014/D-034/D-036) — out of that pass's scope, not
   re-verified. `docs/04-roadmap.md`'s **"Now — what's live, by tab"** section is itself now
   stale (it still says the Editor has "no multi-track") and its "In flight right now"

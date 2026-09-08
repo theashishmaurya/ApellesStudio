@@ -5,7 +5,7 @@
 > the local-first, agent-native, colour-science-depth argument is unchanged and still the
 > differentiator (`docs/notes/product-direction.md` §7).
 >
-> **Re-checked 2026-09-08 (D-230) and left substantially as-written.** Unlike `01-prd.md`
+> **Re-checked 2026-09-08 (D-231) and left substantially as-written.** Unlike `01-prd.md`
 > and `02-scope.md`, which had gone badly stale on feature status, this file is pitched
 > above the feature layer and none of its claims had drifted. One factual detail was
 > corrected (the interchange format under "what success looks like"). The thesis holds:

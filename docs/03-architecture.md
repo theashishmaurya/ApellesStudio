@@ -1,7 +1,7 @@
 # 03 — Architecture
 
 Status: **current** (rewritten 2026-09-02; feature-status and crate-graph reconciliation
-2026-09-08, **D-230**). Describes the system **as it actually is** today, per `CLAUDE.md`'s
+2026-09-08, **D-231**). Describes the system **as it actually is** today, per `CLAUDE.md`'s
 hard rule — not the aspirational end state. Where something is planned but not built, it's
 marked **future** and pointed at `docs/04-roadmap.md`, not described as live.
 

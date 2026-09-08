@@ -20581,7 +20581,7 @@ See B-104.
 
 ---
 
-## D-230 — Docs reconciliation, round 2: the product docs had drifted on FEATURE STATUS, not on framing — and `CLAUDE.md`'s own drift note was itself wrong
+## D-231 — Docs reconciliation, round 2: the product docs had drifted on FEATURE STATUS, not on framing — and `CLAUDE.md`'s own drift note was itself wrong
 
 **decided + done (2026-09-08).** A docs-only pass over `docs/00-vision.md`,
 `docs/01-prd.md`, `docs/02-scope.md`, `docs/03-architecture.md` and `CLAUDE.md`'s

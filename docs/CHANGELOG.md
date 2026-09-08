@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Docs reconciliation, round 2 (D-230).** Docs-only. The product
+- **2026-09-08** — **Docs reconciliation, round 2 (D-231).** Docs-only. The product
   docs had drifted on *feature status*, not framing: `01-prd.md` still called Edit a
   single-track MVP and Motion a placeholder tab, `02-scope.md` listed shipped features
   as out-of-scope, and `03-architecture.md` said 3 crates existed (8 do) and 38 MCP

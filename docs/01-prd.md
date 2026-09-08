@@ -1,7 +1,7 @@
 # 01 — PRD
 
 Status: **draft**. Owner: Ashish. Last updated: 2026-09-08 (feature-status reconciliation,
-D-230 — see note below).
+D-231 — see note below).
 
 > **2026-09-02 correction.** This PRD was written for a grading-only product. D-039
 > (`docs/08-decisions.md`) repointed Chroma at a 3-tab app — Edit / Motion / Colorist. The
@@ -9,7 +9,7 @@ D-230 — see note below).
 > goals and success criteria are kept close to as-written** because they describe what's
 > actually built and shipping.
 >
-> **2026-09-08 reconciliation (D-230).** The 3-tab framing above was right and is unchanged.
+> **2026-09-08 reconciliation (D-231).** The 3-tab framing above was right and is unchanged.
 > What was wrong six days later was the *feature status*: this file still called Edit a
 > "single-video-track timeline… no multi-track, audio, transitions" and Motion a
 > "placeholder tab… isn't wired into a tab UI yet." Both were badly out of date — Edit is a

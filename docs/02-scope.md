@@ -11,7 +11,7 @@
 > pivot (it named editing/motion-graphics as explicitly out-of-scope, "that's the editor's
 > job — Palmier/Resolve/Premiere" — the trigger for D-039 was Palmier closing).
 
-> **2026-09-08 reconciliation (D-230).** The D-039 correction above is unchanged and still
+> **2026-09-08 reconciliation (D-231).** The D-039 correction above is unchanged and still
 > right. What was stale six days later was **feature status**: the Edit tab's section still
 > described D-041's single-track MVP and listed multi-track/audio/transitions/MCP as out of
 > scope (all shipped), and the Motion tab's section listed the entire tab as out of scope
@@ -80,7 +80,7 @@ by D-039** — it's still the Colorist tab's own v1, and per `docs/notes/product
   an edit timeline
 - ✅ "agent activity" surface — every agent change, undoable, with a diff (D-032)
 - ✅ all the adjustment/mask panels (inherited + extended)
-- ✅ a dedicated live scopes panel in the GUI — **confirmed built** (2026-09-08, D-230): a
+- ✅ a dedicated live scopes panel in the GUI — **confirmed built** (2026-09-08, D-231): a
   resizable panel in `ControlsPanel.tsx` rendering `Waveform.tsx` with five display modes
   (luma / RGB / parade / **vectorscope** / histogram). The scopes *computation* is separately
   agent-facing (D-021, `inspect_color`/`sample`/`sample_region`)
@@ -97,7 +97,7 @@ shipped (D-048/D-077/D-078/D-079, see the GUI section above and
 
 ---
 
-## Edit tab — a real multi-track NLE (D-041 origin; scope reconciled 2026-09-08, D-230)
+## Edit tab — a real multi-track NLE (D-041 origin; scope reconciled 2026-09-08, D-231)
 
 > This section was written on 2026-09-02 against D-041's single-track MVP. Nearly every
 > 🔨 in it shipped within the following week. Rewritten against the real roadmap and code.
@@ -166,7 +166,7 @@ Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
   engines and the exact dB curve function are already in place, only the interactive plot
   is missing
 
-## Motion tab — a real authoring tab (MVP D-047; scope reconciled 2026-09-08, D-230)
+## Motion tab — a real authoring tab (MVP D-047; scope reconciled 2026-09-08, D-231)
 
 > This section claimed "engine complete, tab scope not started" and listed the entire tab
 > as out of scope. That has been wrong since D-047 (2026-09-02) and is very wrong after
