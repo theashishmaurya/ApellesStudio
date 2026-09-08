@@ -201,6 +201,10 @@ export function TransitionBadges({
               render={
                 <button
                   type="button"
+                  // The DOM hook `TimelinePane.transitions.dom.test.tsx` finds
+                  // a badge by, mirroring `data-chroma-marker`'s own role for
+                  // the marker strip.
+                  data-chroma-transition={transition.id}
                   aria-label={`Transition at frame ${transition.at_frame}`}
                   className="absolute z-30 cursor-pointer rounded-sm border border-accent bg-accent/25 hover:bg-accent/40"
                   style={{
