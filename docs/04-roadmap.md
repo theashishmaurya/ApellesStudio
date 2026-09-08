@@ -1534,7 +1534,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **Deferred, deliberately:** marker DURATION (Resolve's range marker)
       and its Keyword field — see D-222 for why neither is needed to flag a
       frame and what a duration would cost the model.
-    - ✅ Subtitles / captions — **D-228**, `docs/notes/subtitles.md`.
+    - ✅ Subtitles / captions — **D-229**, `docs/notes/subtitles.md`.
       `TrackKind::Subtitle` (a track kind, deliberately the opposite call from
       D-211's title-as-a-clip-variant — a caption composites over the finished
       picture whatever its index, and its style belongs to the track);
@@ -1544,7 +1544,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       line layout is ours, not either engine's — `y_align=font` plus one
       `drawtext` per line, proven by a real-ffmpeg pixel test.
       - ⬜ **TTML / XML / embedded-MXF import is deliberately NOT built** — see
-        D-228 §4: TTML timings depend on `ttp:timeBase`/`ttp:frameRate` and a
+        D-229 §4: TTML timings depend on `ttp:timeBase`/`ttp:frameRate` and a
         subset parser would import real files with silently wrong times. Do it
         properly (full timebase + region/style resolution) or not at all.
       - ⬜ Auto-captioning from the D-189 transcript — the timed words already

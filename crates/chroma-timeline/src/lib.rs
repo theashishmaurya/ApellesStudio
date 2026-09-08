@@ -130,7 +130,7 @@
 //! actually runs (`chroma_timeline_set` stores what the frontend sends
 //! verbatim — D-058's own note above).
 
-//! **Subtitles / captions (D-228, roadmap item 27):** [`TrackKind::Subtitle`]
+//! **Subtitles / captions (D-229, roadmap item 27):** [`TrackKind::Subtitle`]
 //! — captions get their own track kind, and one caption is an ordinary
 //! [`Clip`] on such a track carrying a [`caption::CaptionCue`]. This is the
 //! **opposite** call from D-211's text/title clip, deliberately and on
@@ -148,7 +148,7 @@
 //! [`Timeline::resolve_visible_video_layers_at`]; the style they draw with
 //! hangs off the *track* ([`Track::caption_style`]) with a per-cue override,
 //! mirroring the reference Inspector's "Track Style" tab and its per-caption
-//! "Use Track Style" checkbox. See D-228 for the full comparison, and
+//! "Use Track Style" checkbox. See D-229 for the full comparison, and
 //! [`caption`]'s own module doc for the layout spec that makes a **multi-line**
 //! cue render identically in the live preview and the export.
 
@@ -442,7 +442,7 @@ pub struct Track {
     /// exactly right — no migration, no behaviour change.
     #[serde(default)]
     pub transitions: Vec<Transition>,
-    /// **The style every caption on this track draws with (D-228).** Only
+    /// **The style every caption on this track draws with (D-229).** Only
     /// meaningful on a [`TrackKind::Subtitle`] track; `None` everywhere else,
     /// and `None` on a subtitle track means
     /// [`caption::CaptionStyle::default()`].
@@ -692,7 +692,7 @@ impl Default for Track {
             duck_attack_ms: default_duck_attack_ms(),
             duck_release_ms: default_duck_release_ms(),
             transitions: Vec::new(),
-            // D-228 — `None` is genuinely "this track has no caption style of
+            // D-229 — `None` is genuinely "this track has no caption style of
             // its own", which is right for every video and audio track and
             // means "the defaults" on a subtitle track. No migration value
             // needed, exactly `Clip::caption`'s own reasoning.
@@ -707,7 +707,7 @@ pub enum TrackKind {
     #[default]
     Video,
     Audio,
-    /// D-228 — a subtitle/caption lane. Its clips carry a
+    /// D-229 — a subtitle/caption lane. Its clips carry a
     /// [`caption::CaptionCue`] and are drawn over the finished picture by
     /// [`Timeline::resolve_visible_captions_at`], never through the video
     /// z-order; it contributes nothing to the audio mix. See the crate doc
@@ -1364,10 +1364,10 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextLayer>,
 
-    // --- Caption cue (D-228) ------------------------------------------------ //
+    // --- Caption cue (D-229) ------------------------------------------------ //
     /// `Some` = this clip is one **caption** on a [`TrackKind::Subtitle`]
     /// track: its picture is the cue's text, drawn over the finished frame,
-    /// and its `source_path` is empty. `None` (every clip in every pre-D-228
+    /// and its `source_path` is empty. `None` (every clip in every pre-D-229
     /// project) is unchanged in every way.
     ///
     /// **The cue's timing IS the clip's timing** — `start_frame` and
@@ -1386,7 +1386,7 @@ pub struct Clip {
     /// D-211's reason one step further: the export draws a caption with
     /// `drawtext`, which cannot scale, rotate or crop a text box, and a
     /// preview offering controls the export silently ignores is the B-053
-    /// class of defect this repo keeps closing. See D-228.
+    /// class of defect this repo keeps closing. See D-229.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption: Option<CaptionCue>,
 }
@@ -1463,7 +1463,7 @@ impl Default for Clip {
             // D-211 — `None` is genuinely "an ordinary media clip", the only
             // sane default, so this one needs no non-zero migration value.
             text: None,
-            // D-228 — same reasoning again: `None` is "not a caption".
+            // D-229 — same reasoning again: `None` is "not a caption".
             caption: None,
         }
     }
@@ -1478,7 +1478,7 @@ impl Clip {
         self.text.is_some()
     }
 
-    /// D-228 — whether this clip is a caption cue rather than a windowed
+    /// D-229 — whether this clip is a caption cue rather than a windowed
     /// reference into a media file. The caption counterpart of
     /// [`Self::is_text`], and asked the same way everywhere for the same
     /// reason.
@@ -1486,7 +1486,7 @@ impl Clip {
         self.caption.is_some()
     }
 
-    /// D-228 — whether this clip's picture is **generated** rather than
+    /// D-229 — whether this clip's picture is **generated** rather than
     /// decoded from `source_path`: a title or a caption.
     ///
     /// The predicate every "do I need to open a media file for this clip"
@@ -1676,7 +1676,7 @@ pub struct VisibleLayer<'a> {
     pub alpha: f64,
 }
 
-/// One caption showing at a position (D-228) — what
+/// One caption showing at a position (D-229) — what
 /// [`Timeline::resolve_visible_captions_at`] returns.
 ///
 /// Carries its **resolved** style rather than a reference to the track's, so
@@ -2067,7 +2067,7 @@ impl Timeline {
         out
     }
 
-    /// D-228 — every caption showing at timeline position `pos`, in paint
+    /// D-229 — every caption showing at timeline position `pos`, in paint
     /// order (**index-ascending, painted in the order returned**: the
     /// lowest-index subtitle track is drawn first, so a higher-index one lands
     /// on top of it).
@@ -2120,7 +2120,7 @@ impl Timeline {
         out
     }
 
-    /// D-228 — the indices of every [`TrackKind::Subtitle`] track, in track
+    /// D-229 — the indices of every [`TrackKind::Subtitle`] track, in track
     /// order. What the export compiler and the `.srt` writer walk.
     pub fn subtitle_track_indices(&self) -> Vec<usize> {
         self.tracks
@@ -6345,7 +6345,7 @@ mod text_layer_tests {
     }
 }
 
-/// D-228 — the subtitle track kind and its own resolver.
+/// D-229 — the subtitle track kind and its own resolver.
 ///
 /// These assert the two properties that made a track kind the right call over
 /// D-211's clip-variant shape: a subtitle track takes **no part in the video
@@ -6388,7 +6388,7 @@ mod caption_tests {
     #[test]
     fn a_subtitle_track_takes_no_part_in_the_video_z_order() {
         // THE property that made this a track kind rather than a `Clip`
-        // variant (D-228). A subtitle track between two video tracks must not
+        // variant (D-229). A subtitle track between two video tracks must not
         // shift, occlude or otherwise appear in the video compositing stack.
         let tl = Timeline {
             tracks: vec![
@@ -6565,14 +6565,14 @@ mod caption_tests {
         let clip: Clip = serde_json::from_str(
             r#"{"id":"a","name":"a","start_frame":0,"duration":10,"source_len":10,"source_start":0,"source_path":"/x.mp4"}"#,
         )
-        .expect("pre-D-228 clip");
+        .expect("pre-D-229 clip");
         assert!(!clip.is_caption());
         assert!(!clip.is_generated());
         let json = serde_json::to_string(&clip).expect("serialize");
         assert!(!json.contains("caption"), "no caption key should appear");
 
         let tr: Track =
-            serde_json::from_str(r#"{"kind":"video","clips":[]}"#).expect("pre-D-228 track");
+            serde_json::from_str(r#"{"kind":"video","clips":[]}"#).expect("pre-D-229 track");
         assert!(tr.caption_style.is_none());
         assert!(
             !serde_json::to_string(&tr)

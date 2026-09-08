@@ -183,7 +183,7 @@ export function EditorTab() {
             minSize={TIMELINE_MIN_HEIGHT}
             className="shrink-0 border-t border-border-color flex flex-col min-h-0"
           >
-            {/* D-228 — the timeline's own toolbar strip: the timeline
+            {/* D-229 — the timeline's own toolbar strip: the timeline
                 switcher, plus the Import-subtitles action (which creates a
                 whole TRACK, so it belongs here beside the switcher rather
                 than in the Sources media pool — see
@@ -226,7 +226,7 @@ export function EditorTab() {
                 selected. */}
             <div className="flex h-full flex-col min-h-0">
               <TextClipInspectorPanel />
-              {/* D-228 — mounted unconditionally; renders null unless the
+              {/* D-229 — mounted unconditionally; renders null unless the
                   selection is exactly one caption, exactly like the title
                   panel above it. */}
               <CaptionInspectorPanel />

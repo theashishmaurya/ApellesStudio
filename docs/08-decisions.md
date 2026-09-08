@@ -20475,7 +20475,7 @@ derivable from the clip list without re-implementing the end==start match.
 
 ---
 
-## D-228 — Subtitles get their own `TrackKind`, and multi-line renders identically in both engines because the line layout is OURS
+## D-229 — Subtitles get their own `TrackKind`, and multi-line renders identically in both engines because the line layout is OURS
 
 **Context.** Roadmap item 27's subtitles/captions line: import SRT/TTML, give
 captions their own track type, make them styleable. Reference:

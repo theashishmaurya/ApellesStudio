@@ -1,4 +1,4 @@
-// @chroma/editor — the caption model and the shared layout arithmetic (D-228).
+// @chroma/editor — the caption model and the shared layout arithmetic (D-229).
 //
 // **The point of this file is the mirror.** `captionLayout` here and
 // `CaptionLayout::resolve` in `crates/chroma-timeline/src/caption.rs` are two

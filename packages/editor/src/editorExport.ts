@@ -183,7 +183,7 @@ export function compileEditorExportArgs(a: {
   // Read synchronously from the module cache `useEditorControl` warms at
   // mount — see `textFonts.ts`'s own doc for why the cache exists.
   const fontFiles = textFontPaths();
-  // D-228 — captions resolve fonts through the SAME catalogue, so they are
+  // D-229 — captions resolve fonts through the SAME catalogue, so they are
   // checked in the same place and refused for the same reason. Concatenated
   // rather than checked separately so the user gets one message naming every
   // unrenderable font, not one error per kind of clip.

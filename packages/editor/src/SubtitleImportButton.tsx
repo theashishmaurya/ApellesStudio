@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's **Import subtitles** action (D-228,
+ * @chroma/editor — the Edit tab's **Import subtitles** action (D-229,
  * `docs/notes/subtitles.md`).
  *
  * **Why this exists as its own button rather than falling out of the media
@@ -45,7 +45,7 @@ export function SubtitleImportButton() {
     setError(null);
     // The filter names only what the backend will actually accept — offering
     // `.ttml` here and refusing it after the picker would be a worse
-    // experience than not offering it (D-228 §4 on why TTML is refused).
+    // experience than not offering it (D-229 §4 on why TTML is refused).
     const picked = await open({
       multiple: false,
       filters: [{ name: 'Subtitles', extensions: ['srt', 'vtt'] }],

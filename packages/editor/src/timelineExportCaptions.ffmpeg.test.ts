@@ -1,5 +1,5 @@
 // @chroma/editor — REAL ffmpeg-execution, PIXEL-level tests for the
-// subtitle/caption export path (D-228, `docs/notes/subtitles.md`).
+// subtitle/caption export path (D-229, `docs/notes/subtitles.md`).
 //
 // `timelineExport.test.ts` asserts on the compiled argv STRINGS. That is
 // exactly how B-075 (an unquoted expression ffmpeg rejects outright) and B-090

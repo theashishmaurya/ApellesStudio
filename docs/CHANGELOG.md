@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Subtitles / captions (D-228, roadmap 27).** `.srt`/`.vtt`
+- **2026-09-08** — **Subtitles / captions (D-229, roadmap 27).** `.srt`/`.vtt`
   import as a real `TrackKind::Subtitle` track, per-track style with a per-cue
   "use track style" override, an Inspector section with a CPS cue list, sidecar
   `.srt`/`.vtt` export, and 5 `editor_*` MCP tools. A track kind rather than a

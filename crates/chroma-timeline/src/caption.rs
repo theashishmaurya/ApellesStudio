@@ -1,4 +1,4 @@
-//! # Subtitles / captions — the model and the layout spec (D-228)
+//! # Subtitles / captions — the model and the layout spec (D-229)
 //!
 //! **What it is:** the data a caption carries ([`CaptionCue`]), the style a
 //! subtitle track (or one overriding cue) draws it with ([`CaptionStyle`]),
@@ -43,7 +43,7 @@
 //!    produced an identical box), which is what makes a per-line `y` mean the
 //!    same thing in both engines no matter which glyphs a line happens to have.
 //!
-//! ## The measured fact underneath (D-228)
+//! ## The measured fact underneath (D-229)
 //!
 //! `drawtext` renders at **em = `fontsize` pixels**, and derives its
 //! `y_align=font` line box from the face's own `hhea` table:
@@ -75,7 +75,7 @@
 //! from its resolved [`CaptionStyle`]. That is a deliberate scope line, for
 //! the same reason D-211 drew one: `drawtext` can place and colour a text box
 //! but cannot scale, rotate or crop one, so a preview offering any of those
-//! would render something the export cannot reproduce. See D-228.
+//! would render something the export cannot reproduce. See D-229.
 
 use serde::{Deserialize, Serialize};
 
@@ -193,7 +193,7 @@ fn default_box_enabled() -> bool {
 /// How a caption is drawn — font, size, colour, the background box, and where
 /// on the frame it sits.
 ///
-/// **Lives on the TRACK, and optionally on one cue** (D-228). A subtitle track
+/// **Lives on the TRACK, and optionally on one cue** (D-229). A subtitle track
 /// carries the style every one of its cues uses
 /// ([`crate::Track::caption_style`]); a cue that needs to differ carries its
 /// own ([`CaptionCue::style`]). That is Resolve's own split — its Inspector has
@@ -242,7 +242,7 @@ pub struct CaptionStyle {
     /// stack *upward* from it, so a cue growing from one line to two keeps its
     /// bottom line in place. That is the subtitle convention (and why this is
     /// a single normalised number rather than a top/middle/bottom enum — see
-    /// D-228).
+    /// D-229).
     #[serde(default = "default_caption_position_y")]
     pub position_y: f64,
 }
@@ -305,7 +305,7 @@ impl CaptionStyle {
 /// One caption — the text shown for the span of the [`crate::Clip`] carrying
 /// it.
 ///
-/// **A `Clip` on a [`crate::TrackKind::Subtitle`] track** (D-228). The cue's
+/// **A `Clip` on a [`crate::TrackKind::Subtitle`] track** (D-229). The cue's
 /// timing is the clip's own `start_frame`/`duration`, so a caption moves and
 /// trims through the exact same ops as any other clip — which is what
 /// Blackmagic's own copy promises ("can be moved and trimmed like any other
@@ -405,7 +405,7 @@ pub struct CaptionLine {
 }
 
 /// The resolved, font-independent geometry of one cue on one composition
-/// (D-228) — the numbers **both** renderers are handed.
+/// (D-229) — the numbers **both** renderers are handed.
 ///
 /// Every value here is plain arithmetic over the composition size and the
 /// style's own fields, with **no font metric in it**. That is the point: the

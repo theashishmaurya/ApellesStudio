@@ -1,4 +1,4 @@
-//! Caption rasterisation for the Edit tab (D-228, `docs/notes/subtitles.md`).
+//! Caption rasterisation for the Edit tab (D-229, `docs/notes/subtitles.md`).
 //!
 //! **What it is:** the media-layer half of the subtitle/caption primitive —
 //! the rasteriser that turns one [`CaptionCue`] plus its resolved

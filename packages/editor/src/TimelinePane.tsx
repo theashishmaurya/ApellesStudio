@@ -486,7 +486,7 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
 
 /** A clip body's fill, per its track's kind.
  *
- *  D-228 gave the subtitle lane its own entry and, in doing so, replaced the
+ *  D-229 gave the subtitle lane its own entry and, in doing so, replaced the
  *  inline `kind === 'audio' ? … : …` ternary this file used in two places —
  *  a two-way ternary cannot express a third kind without silently colouring
  *  it as video, which is the bug a lookup avoids by construction.
@@ -506,7 +506,7 @@ const CLIP_BODY_BACKGROUND: Record<'video' | 'audio' | 'subtitle', string> = {
 
 /** "Video 1" / "Audio 1" / "Subtitle 1" … — numbered per kind, matching the
  *  label this file always showed for the single video track before D-080.
- *  D-228 added the subtitle lane, named the way the reference names it
+ *  D-229 added the subtitle lane, named the way the reference names it
  *  (`scratch/resolve-reference/captioning.jpg` shows "Subtitle 1"). */
 function trackLabels(tl: Timeline): string[] {
   let videoN = 0;
@@ -1555,7 +1555,7 @@ export function TimelinePane() {
    *  source has audio (its audio half gets its own track via
    *  `ensureAudioTrackWithRoom`, not this boundary). Drop context remains
    *  the right signal for this specific question. */
-  /*  D-228 — a **subtitle** neighbour is deliberately not inferable. This
+  /*  D-229 — a **subtitle** neighbour is deliberately not inferable. This
    *  function answers "what track should a dropped MEDIA item get", and the
    *  answer is never a subtitle track: captions come from a subtitle file or
    *  the Add-caption action, never from dropping footage, and a media clip
@@ -1901,7 +1901,7 @@ export function TimelinePane() {
               </span>
             </div>
           )}
-          {/* D-228 — a CAPTION clip, like a title, has no picture and no
+          {/* D-229 — a CAPTION clip, like a title, has no picture and no
               audio: its cue text IS its visual, which is exactly what the
               reference frame shows (a tinted block with the caption written
               across it). Same placement and same reasoning as the title

@@ -842,12 +842,12 @@ pub(crate) fn timeline_frame_image(
         _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
 
-    // D-228 — captions go on last, over the finished picture, whatever the
+    // D-229 — captions go on last, over the finished picture, whatever the
     // video z-order turned out to be. That includes over the single-layer fast
     // path above: a caption must not be the reason a plain one-clip frame
     // stops taking it, so this is a separate pass rather than another arm of
     // the match. `draw_captions_onto` returns the frame untouched when there
-    // are none, which is every pre-D-228 project and every frame of a project
+    // are none, which is every pre-D-229 project and every frame of a project
     // with no subtitle track — so the common case pays one `Vec` allocation
     // that comes back empty.
     let img = draw_captions_onto(img, &timeline, pos as i64)?;
@@ -855,7 +855,7 @@ pub(crate) fn timeline_frame_image(
     Ok(Some(img))
 }
 
-/// D-228 — alpha-composite every caption showing at `pos` onto `frame`.
+/// D-229 — alpha-composite every caption showing at `pos` onto `frame`.
 ///
 /// **A separate pass over the finished picture, deliberately** (see
 /// `Timeline::resolve_visible_captions_at`): a caption is not a video layer,

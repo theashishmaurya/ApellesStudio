@@ -299,14 +299,14 @@ export function buildTextDrawtextStep(
 }
 
 // --------------------------------------------------------------------------- //
-// Subtitles / captions (D-228) — one `drawtext` per LINE, over everything
+// Subtitles / captions (D-229) — one `drawtext` per LINE, over everything
 // --------------------------------------------------------------------------- //
 
 /**
  * The `drawtext` nodes for one caption cue — **one per line**, chained.
  *
  * **Why one node per line, rather than a `\n` in a single `drawtext`**
- * (D-228). `drawtext` can render multi-line text itself, and doing so would be
+ * (D-229). `drawtext` can render multi-line text itself, and doing so would be
  * shorter. It is not used, deliberately: its inter-line layout (line height,
  * per-line alignment) is libfreetype's, and the live preview's is `ab_glyph`'s,
  * and those two genuinely disagree — which is precisely why D-211 forbade
@@ -435,7 +435,7 @@ export function captionsForExport(
   return out;
 }
 
-/** D-228/D-212 — every distinct caption font key on `timeline` that
+/** D-229/D-212 — every distinct caption font key on `timeline` that
  *  `fontFiles` cannot resolve, so the caller can refuse the export with a real
  *  reason instead of handing ffmpeg a `drawtext` with no `fontfile=` (a hard
  *  failure with an opaque message). The caption counterpart of
@@ -1444,7 +1444,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   const bg = `color=black:size=${opts.width}x${opts.height}:rate=${opts.fps}[base]`;
   filterSteps.push(bg);
 
-  // D-228 — captions are drawn over the FINISHED picture, after every video
+  // D-229 — captions are drawn over the FINISHED picture, after every video
   // overlay, in subtitle-track order. Resolved up front because it decides
   // which node gets to be `[outv]`: with captions present the last overlay is
   // no longer the end of the video chain.
@@ -1515,7 +1515,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     lastLabel = outLabel;
   });
 
-  // D-228 — now the captions, on top of everything the loop above built.
+  // D-229 — now the captions, on top of everything the loop above built.
   //
   // The video stream is `-map`ped by whatever `lastLabel` ends up being (see
   // the `-map` below), so appending here needs no label surgery: each cue's

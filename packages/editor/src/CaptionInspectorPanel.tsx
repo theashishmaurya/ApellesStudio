@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the Inspector's **Caption** and **Subtitle Track Style**
- * sections (D-228, `docs/notes/subtitles.md`).
+ * sections (D-229, `docs/notes/subtitles.md`).
  *
  * **Built from the real reference**, `scratch/resolve-reference/captioning.jpg`
  * (opened and read, not paraphrased — CLAUDE.md's "research the real pattern

@@ -1,4 +1,4 @@
-//! # Subtitle file parsing — SubRip (`.srt`) and WebVTT (`.vtt`) (D-228)
+//! # Subtitle file parsing — SubRip (`.srt`) and WebVTT (`.vtt`) (D-229)
 //!
 //! **What it is:** a parser from the *text* of a subtitle file to a list of
 //! [`ImportedCue`]s — a start time, an end time, and the cue's lines.
@@ -23,7 +23,7 @@
 //! files do, constantly: plenty of `.srt` in the wild uses `.` as its decimal
 //! separator, and rejecting those would be pedantry, not correctness.
 //!
-//! **TTML is deliberately NOT parsed** (D-228, roadmap item 27). It is not the
+//! **TTML is deliberately NOT parsed** (D-229, roadmap item 27). It is not the
 //! same shape of job: a TTML document's cue times are only meaningful once
 //! `ttp:timeBase`, `ttp:frameRate` and `ttp:frameRateMultiplier` are resolved
 //! (an offset time of `120f` means different wall-clock instants under

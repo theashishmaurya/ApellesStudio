@@ -473,7 +473,7 @@ const thrownMessage = (e: any): string => String(e?.message || e);
  *  grading tools hold to. */
 const EQ_REPORT_FREQS = [60, 120, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
 
-/** D-228 — how long a caption added with no explicit `duration` lasts.
+/** D-229 — how long a caption added with no explicit `duration` lasts.
  *
  *  Two seconds, not `DEFAULT_TITLE_SECONDS`: a caption is a line of speech,
  *  and two seconds is the middle of the broadcast-standard range for one
@@ -482,7 +482,7 @@ const EQ_REPORT_FREQS = [60, 120, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000] 
  *  rather than a reuse. */
 const DEFAULT_CAPTION_SECONDS = 2;
 
-/** D-228 — one cue as `chroma_import_subtitles` returns it: already parsed
+/** D-229 — one cue as `chroma_import_subtitles` returns it: already parsed
  *  and already converted to the project's own timebase by the Rust side. */
 interface ImportedCaption {
   id: string;
@@ -491,7 +491,7 @@ interface ImportedCaption {
   text: string;
 }
 
-/** D-228 — the `CaptionStyle` fields present in a control-op's arguments, and
+/** D-229 — the `CaptionStyle` fields present in a control-op's arguments, and
  *  only those.
  *
  *  **Only what was actually passed** — an absent key must not become a
@@ -1013,7 +1013,7 @@ export function useEditorControl(): void {
         return { ok: true, track: found.track, clip: found.clip, text: after?.text ?? null };
       },
 
-      // --- Subtitles / captions (D-228) ---------------------------------- //
+      // --- Subtitles / captions (D-229) ---------------------------------- //
       //
       // (`captionStylePatch` and `DEFAULT_CAPTION_SECONDS` live just below
       // this hook, next to the other module-level helpers.)
@@ -1324,7 +1324,7 @@ export function useEditorControl(): void {
 
       // ---- tracks ----------------------------------------------------------
       editor_add_track: (a) => {
-        // D-228 — an explicit three-way match, not `=== 'audio' ? … : 'video'`.
+        // D-229 — an explicit three-way match, not `=== 'audio' ? … : 'video'`.
         // That two-way ternary silently coerced every unrecognised value to
         // 'video', so a caller asking for a subtitle track would have got a
         // video one and no error — and then every caption placed on it would

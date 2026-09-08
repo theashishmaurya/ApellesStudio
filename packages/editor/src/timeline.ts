@@ -82,7 +82,7 @@ export type {
   EqBand,
   EqBandKind,
 } from './eq';
-// D-228 — re-exported here so a consumer working with the edit model does not
+// D-229 — re-exported here so a consumer working with the edit model does not
 // have to know which file the caption types came from, exactly as the EQ types
 // above are.
 export type { CaptionAlign, CaptionCue, CaptionStyle } from './caption';
@@ -308,7 +308,7 @@ export interface Clip {
    *  compiling to `drawtext`, which has no scale/rotate/crop at all). See
    *  `docs/notes/text-title-clips.md`. */
   text?: TextLayer | null;
-  /** D-228 — present = this clip is one CAPTION on a `'subtitle'` track.
+  /** D-229 — present = this clip is one CAPTION on a `'subtitle'` track.
    *  Mirrors `chroma_timeline::Clip::caption`.
    *
    *  The cue's timing is this clip's own `start_frame`/`duration`, which is
@@ -317,7 +317,7 @@ export interface Clip {
    *  apply** — `position_*`, `scale`, `rotation`, the crop insets, `opacity`
    *  and the fades are all ignored by BOTH renderers; a caption is positioned
    *  and sized entirely by its resolved `CaptionStyle`. See the Rust field's
-   *  own doc and D-228 for why that line is drawn there. */
+   *  own doc and D-229 for why that line is drawn there. */
   caption?: CaptionCue | null;
 }
 
@@ -450,13 +450,13 @@ export function newTextClipFields(
   };
 }
 
-/** D-228 — whether `c` is a caption cue. The counterpart of [`isTextClip`],
+/** D-229 — whether `c` is a caption cue. The counterpart of [`isTextClip`],
  *  asked the same way everywhere for the same reason. */
 export function isCaptionClip(c: Pick<Clip, 'caption'> | null | undefined): boolean {
   return c?.caption != null;
 }
 
-/** D-228 — whether `c`'s picture is GENERATED rather than decoded from
+/** D-229 — whether `c`'s picture is GENERATED rather than decoded from
  *  `source_path`: a title or a caption. Mirrors `Clip::is_generated`.
  *
  *  The predicate every "do I need to open a media file for this clip" site
@@ -722,7 +722,7 @@ export function endFrame(c: Clip, fps: number): number {
 }
 
 export interface Track {
-  /** D-228 added `'subtitle'` — mirrors `chroma_timeline::TrackKind`. A
+  /** D-229 added `'subtitle'` — mirrors `chroma_timeline::TrackKind`. A
    *  subtitle track's clips carry a `CaptionCue` and are drawn OVER the
    *  finished picture by their own resolver; it is neither composited in the
    *  video z-order nor mixed into the audio. Every existing
@@ -791,7 +791,7 @@ export interface Track {
    *  this is optional here: a `project.json` written before transitions existed
    *  has no key at all, and every read below treats absent and `[]` the same. */
   transitions?: Transition[];
-  /** D-228 — the style every caption on this track draws with. Mirrors
+  /** D-229 — the style every caption on this track draws with. Mirrors
    *  `chroma_timeline::Track::caption_style`. Only meaningful when
    *  `kind === 'subtitle'`; absent means the caption defaults (see
    *  `resolveCaptionStyle`). A whole imported `.srt` is styled once here, not
@@ -2363,12 +2363,12 @@ export type EditOp =
    *  colour) is a no-op — the caller is expected to have run `newTextLayer`
    *  itself to get the real error message. */
   | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> }
-  /** D-228 — replace one caption cue's text. Multi-line is legal (that is the
+  /** D-229 — replace one caption cue's text. Multi-line is legal (that is the
    *  whole point of a caption), so unlike `set_text_clip` there is nothing to
    *  reject; the reducer only refuses a clip that is not a caption, for the
    *  same reason `set_text_clip` refuses one that is not a title. */
   | { kind: 'set_caption_text'; track: number; clip: number; text: string }
-  /** D-228 — patch the TRACK's caption style: the reference Inspector's
+  /** D-229 — patch the TRACK's caption style: the reference Inspector's
    *  "Track Style" tab, and how a whole imported `.srt` is styled in one
    *  action.
    *
@@ -2377,13 +2377,13 @@ export type EditOp =
    *  omitted field provably keeps its value rather than silently resetting to
    *  a default. Refused on a track that is not a subtitle track. */
   | { kind: 'set_caption_style'; track: number; patch: Partial<CaptionStyle> }
-  /** D-228 — the per-caption "Use Track Style" checkbox. A `patch` gives this
+  /** D-229 — the per-caption "Use Track Style" checkbox. A `patch` gives this
    *  cue its own style (unticking the box, merged over whatever it resolves to
    *  now, so the override starts from what the user can currently see rather
    *  than from the bare defaults); `null` clears it back to the track's
    *  (ticking the box). */
   | { kind: 'set_caption_cue_style'; track: number; clip: number; patch: Partial<CaptionStyle> | null }
-  /** D-228 — import a whole subtitle file as a NEW subtitle track, in one
+  /** D-229 — import a whole subtitle file as a NEW subtitle track, in one
    *  undoable step.
    *
    *  **One op for the whole file, not N `add_clip`s.** A 400-cue `.srt` would
@@ -2593,7 +2593,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.patch.content !== undefined
         ? `Set title text to "${op.patch.content}"`
         : `Edit ${clipLabel(before, op.track, op.clip)} title`;
-    // D-228 — same reasoning as the title label above: the text is the one
+    // D-229 — same reasoning as the title label above: the text is the one
     // thing worth naming, since "Edit caption" says nothing when a timeline
     // holds four hundred of them.
     case 'set_caption_text':

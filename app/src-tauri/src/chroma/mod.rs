@@ -48,12 +48,12 @@
 //!   `control.rs` native ops that reach it. Internal debug tooling is never
 //!   shipped (CLAUDE.md)
 //! - `caption_render` — rasterise a subtitle cue into an RGBA layer the
-//!   compositor draws OVER the finished frame (D-228). Multi-line, and
+//!   compositor draws OVER the finished frame (D-229). Multi-line, and
 //!   line-for-line identical to what the ffmpeg export's `drawtext` draws;
 //!   see `docs/notes/subtitles.md` for the measurement that makes that true
 //! - `subtitles` — read a `.srt`/`.vtt` file into cues already on the
 //!   project's own timebase, and write a subtitle track back out as one
-//!   (D-228). The parsing itself is `chroma_timeline::subtitle_import`
+//!   (D-229). The parsing itself is `chroma_timeline::subtitle_import`
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
 //!   used by the Edit-tab timeline exporter (`packages/editor/src/

@@ -48,7 +48,7 @@ export). The Edit tab's own 47 `editor_*` tools — read/seek/**selection**
 (D-216), preview zoom (D-218), media import/removal, clip placement/split/trim/
 slip/swap/move/remove, gap removal, text/title clips (D-211), track management
 + reorder (D-214), **markers (D-222)**, per-clip level and **parametric EQ
-(D-223/D-224)**, **subtitles/captions (D-228)**, transform + keyframes, multi-track
+(D-223/D-224)**, **subtitles/captions (D-229)**, transform + keyframes, multi-track
 export, FCPXML interchange, and 4 media-understanding tools from D-189 (listed
 at the end of this table) — are documented with their behaviour in
 `../docs/notes/mcp-tool-coverage.md`, which is the authoritative per-tab

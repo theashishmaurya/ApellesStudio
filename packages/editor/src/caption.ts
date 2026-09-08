@@ -1,5 +1,5 @@
 // @chroma/editor — subtitles / captions: the types and the shared layout
-// arithmetic (D-228, `docs/notes/subtitles.md`).
+// arithmetic (D-229, `docs/notes/subtitles.md`).
 //
 // **What it is:** the TypeScript mirror of `chroma_timeline::caption` — the
 // caption cue and style types the store and the Inspector work with, plus

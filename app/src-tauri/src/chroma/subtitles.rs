@@ -1,4 +1,4 @@
-//! Subtitle file I/O for the Edit tab (D-228, `docs/notes/subtitles.md`).
+//! Subtitle file I/O for the Edit tab (D-229, `docs/notes/subtitles.md`).
 //!
 //! **What it is:** the thin shell around
 //! [`chroma_timeline::subtitle_import`] — read a `.srt`/`.vtt` file off disk,
@@ -57,7 +57,7 @@ pub struct SubtitleImport {
 /// from the same list rather than hardcoded twice.
 ///
 /// **TTML is deliberately absent** — see
-/// [`chroma_timeline::subtitle_import`]'s module doc and D-228 for why a
+/// [`chroma_timeline::subtitle_import`]'s module doc and D-229 for why a
 /// subset parser was refused rather than shipped.
 pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 
@@ -168,7 +168,7 @@ pub fn chroma_export_subtitles(track: usize, path: String) -> Result<usize, Stri
 /// SubRip grammar produces "no subtitle cues found", which reads like a
 /// corrupt file and sends the user looking in the wrong place. TTML is a
 /// format we deliberately do not support (see
-/// [`chroma_timeline::subtitle_import`]'s module doc and D-228), and saying so
+/// [`chroma_timeline::subtitle_import`]'s module doc and D-229), and saying so
 /// is the difference between a limitation and a bug.
 ///
 /// A file with no extension at all is allowed through to the parser: the

@@ -1,4 +1,4 @@
-# Subtitles / captions (D-228, roadmap item 27)
+# Subtitles / captions (D-229, roadmap item 27)
 
 The Edit tab's subtitle primitive: import a `.srt`/`.vtt` file, get a real
 subtitle track, style it, see it in the preview, get it burnt into the export
@@ -46,11 +46,11 @@ exported as separate TTMLs, SRT or VTT files."*
 ## 2. The data model, and why it is the opposite call from D-211
 
 D-211 made a title a **`Clip` variant** (`Clip::text`) rather than a track kind,
-and argued the case well. D-228 makes a caption a **track kind**
+and argued the case well. D-229 makes a caption a **track kind**
 (`TrackKind::Subtitle`) with a `Clip::caption` cue on it. Both are right, for
 different reasons, and the difference is worth stating precisely:
 
-| | Title (D-211) | Caption (D-228) |
+| | Title (D-211) | Caption (D-229) |
 |---|---|---|
 | Where the reference puts it | on an ordinary video track | on its own track type |
 | Compositing rule | ordinary video z-order — an opaque title occludes what is under it | always over the finished picture, whatever its index; never occludes |
