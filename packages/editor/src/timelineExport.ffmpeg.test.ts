@@ -24,8 +24,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildExportFfmpegArgs } from './timelineExport';
-import { DEFAULT_FADE_CURVE, applyOp } from './timeline';
-import type { Clip, Timeline, Track } from './timeline';
+import { DEFAULT_FADE_CURVE, applyOp, eqResponseDb } from './timeline';
+import type { Clip, EqBand, Timeline, Track } from './timeline';
+import { eqFilterChain } from './timelineExportAudio';
 import { pxToFadeFrames } from './clipFade';
 
 function hasBinary(name: string): boolean {
@@ -795,4 +796,220 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     const tail = volumeStats(out, 3.4, 0.5).mean;
     expect(tail - head).toBeGreaterThan(10);
   });
+});
+
+// D-224 — per-clip parametric EQ. The proof this suite owes the feature is a
+// real FREQUENCY RESPONSE, not "ffmpeg didn't error": an EQ compiled with a
+// swapped coefficient, a wrong sign, or ffmpeg's own (measurably different)
+// shelf parameterisation would still produce a perfectly valid file at a
+// perfectly plausible overall level. So the numbers below are the SAME table
+// `chroma_types::eq`'s own tests assert against the live mixer's cascade —
+// measured here through real ffmpeg instead. If either engine drifts, one of
+// the two fails.
+describe.skipIf(!FFMPEG_AVAILABLE)('per-clip parametric EQ — real frequency response (D-224)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chroma-eq-export-test-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The band set both engines measure — mirrors `chroma_types::eq::tests::
+   *  reference_band_set` and `chroma_media::audio::tests::reference_eq_bands`
+   *  exactly. One of each interesting kind, at deliberately awkward numbers
+   *  (nothing at a default, nothing round) so an accidental identity or a
+   *  swapped argument cannot pass, plus a DISABLED band loud enough (+18 dB)
+   *  that an engine ignoring `enabled` would miss the table by a mile. */
+  const REFERENCE_EQ_BANDS: EqBand[] = [
+    { kind: 'high_pass', freq_hz: 90, gain_db: 0, q: 0.71, enabled: true },
+    { kind: 'peak', freq_hz: 950, gain_db: -6.5, q: 1.8, enabled: true },
+    { kind: 'high_shelf', freq_hz: 6200, gain_db: 5.5, q: 0.62, enabled: true },
+    { kind: 'low_shelf', freq_hz: 400, gain_db: 18, q: 0.9, enabled: false },
+  ];
+
+  /** The exact same table `chroma_types::eq::tests::REFERENCE_RESPONSE_DB` and
+   *  `chroma_media::audio::tests` carry. Three engines, one set of numbers. */
+  const REFERENCE_RESPONSE_DB: Array<[number, number]> = [
+    [50, -10.5923],
+    [120, -1.1989],
+    [300, -0.2824],
+    [1000, -6.2239],
+    [3000, 0.2774],
+    [8000, 3.8671],
+    [15000, 5.3278],
+  ];
+
+  /** The measured gain, in dB, that `chain` applies to a pure sine at `freqHz`
+   *  — real ffmpeg, real samples.
+   *
+   *  Deliberately measured on the FILTER CHAIN rather than on a fully exported
+   *  .mp4: the export's AAC encoder is psychoacoustic and rolls off near
+   *  Nyquist, so a lossless measurement is the only way to assert a response
+   *  to hundredths of a dB. That the chain really reaches a real export is the
+   *  separate end-to-end test below; the two together are the whole proof. */
+  function measuredResponseDb(chain: string, freqHz: number): number {
+    const tone = `sine=frequency=${freqHz}:sample_rate=48000:duration=3`;
+    const meanOf = (af: string): number => {
+      const res = spawnSync('ffmpeg', ['-f', 'lavfi', '-i', tone, '-af', af, '-f', 'null', '-'], {
+        encoding: 'utf8',
+      });
+      const out = `${res.stderr ?? ''}${res.stdout ?? ''}`;
+      const mean = /mean_volume:\s*(-?[\d.]+)\s*dB/.exec(out);
+      if (!mean) throw new Error(`volumedetect produced no readable output:\n${out}`);
+      return Number(mean[1]);
+    };
+    // `atrim=start=1` on BOTH sides, so the filter's own start-up transient is
+    // excluded and the two measurements cover the identical window.
+    return meanOf(`${chain},atrim=start=1,volumedetect`) - meanOf('atrim=start=1,volumedetect');
+  }
+
+  it('the compiled chain measures the SAME response the live mixer does — the cross-engine bridge', () => {
+    const chain = eqFilterChain(REFERENCE_EQ_BANDS);
+    expect(chain).not.toBeNull();
+    for (const [freq, expected] of REFERENCE_RESPONSE_DB) {
+      const measured = measuredResponseDb(chain as string, freq);
+      // 0.05 dB. Wide enough for `volumedetect`'s own quantisation, far too
+      // narrow for the 0.25-0.37 dB ffmpeg's own `bass`/`treble` shelves would
+      // land at — which is exactly the drift this window exists to catch.
+      expect(Math.abs(measured - expected), `${freq} Hz measured ${measured}`).toBeLessThan(0.05);
+      // …and the TS-side analytic prediction agrees with the measurement too,
+      // so `eqResponseDb` (what a response-curve readout would draw) is pinned
+      // to the real filter rather than only to the table.
+      expect(Math.abs(eqResponseDb(REFERENCE_EQ_BANDS, freq) - measured)).toBeLessThan(0.05);
+    }
+  }, 60000);
+
+  it('every band KIND measures its own textbook response through real ffmpeg', () => {
+    // One probe per kind, at the frequency where that kind's answer is exactly
+    // known: a bell IS its gain at centre, a shelf is HALF its gain at its
+    // corner, a Butterworth pass filter is -3.01 dB at its corner.
+    const cases: Array<{ band: EqBand; probe: number; expected: number }> = [
+      { band: { kind: 'peak', freq_hz: 1000, gain_db: 6, q: 1, enabled: true }, probe: 1000, expected: 6 },
+      { band: { kind: 'peak', freq_hz: 400, gain_db: -12, q: 3, enabled: true }, probe: 400, expected: -12 },
+      {
+        band: { kind: 'low_shelf', freq_hz: 200, gain_db: 8, q: Math.SQRT1_2, enabled: true },
+        probe: 200,
+        expected: 4,
+      },
+      {
+        band: { kind: 'high_shelf', freq_hz: 4000, gain_db: -6, q: Math.SQRT1_2, enabled: true },
+        probe: 4000,
+        expected: -3,
+      },
+      {
+        band: { kind: 'high_pass', freq_hz: 500, gain_db: 0, q: Math.SQRT1_2, enabled: true },
+        probe: 500,
+        expected: -3.0103,
+      },
+      {
+        band: { kind: 'low_pass', freq_hz: 2000, gain_db: 0, q: Math.SQRT1_2, enabled: true },
+        probe: 2000,
+        expected: -3.0103,
+      },
+    ];
+    for (const { band, probe, expected } of cases) {
+      const chain = eqFilterChain([band]);
+      expect(chain, `${band.kind} must compile a chain`).not.toBeNull();
+      const measured = measuredResponseDb(chain as string, probe);
+      expect(
+        Math.abs(measured - expected),
+        `${band.kind} at ${probe} Hz measured ${measured}`,
+      ).toBeLessThan(0.05);
+    }
+  }, 60000);
+
+  it('a clip with no EQ — and one carrying an untouched default strip — compiles NO filter at all', () => {
+    // The byte-identical-when-unused contract, at the compiler rather than at
+    // the mixer: materialising the Inspector's four-band strip must not change
+    // a single argument of the export.
+    expect(eqFilterChain(undefined)).toBeNull();
+    expect(eqFilterChain([])).toBeNull();
+    const untouchedStrip: EqBand[] = [
+      { kind: 'low_shelf', freq_hz: 120, gain_db: 0, q: Math.SQRT1_2, enabled: true },
+      { kind: 'peak', freq_hz: 500, gain_db: 0, q: 1, enabled: true },
+      { kind: 'peak', freq_hz: 2500, gain_db: 0, q: 1, enabled: true },
+      { kind: 'high_shelf', freq_hz: 8000, gain_db: 0, q: Math.SQRT1_2, enabled: true },
+    ];
+    expect(eqFilterChain(untouchedStrip)).toBeNull();
+    // …and a disabled band contributes nothing even with a real gain on it.
+    expect(eqFilterChain([{ kind: 'peak', freq_hz: 1000, gain_db: 12, q: 1, enabled: false }])).toBeNull();
+
+    const plain = clip('p', { source_path: '/x.wav', duration: 96, source_fps: 24 });
+    const stripped = clip('p', {
+      source_path: '/x.wav',
+      duration: 96,
+      source_fps: 24,
+      eq_bands: untouchedStrip,
+    });
+    const opts = { fps: 30, width: 320, height: 240 };
+    expect(buildExportFfmpegArgs(timeline([track('audio', [stripped])]), '/out.mp4', opts)).toEqual(
+      buildExportFfmpegArgs(timeline([track('audio', [plain])]), '/out.mp4', opts),
+    );
+  });
+
+  it('the EQ really reaches a REAL exported file — a deep notch on the tone’s own frequency drops its level', () => {
+    // End to end through `buildExportFfmpegArgs`, the encoder included. Not a
+    // hundredths-of-a-dB assertion (AAC is not that kind of measurement) — it
+    // is the half the lossless chain test above cannot make: that the chain is
+    // wired into the real export at all, and onto the right stream.
+    const tone = join(dir, 'tone1k.wav');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'sine=frequency=1000:duration=4:sample_rate=48000', '-ac', '2', tone,
+    ]);
+    const opts = { fps: 30, width: 320, height: 240 };
+
+    const plain = clip('a', { source_path: tone, duration: 96, source_fps: 24 });
+    const notched = clip('a', {
+      source_path: tone,
+      duration: 96,
+      source_fps: 24,
+      // A deep, narrow cut sitting exactly on the tone.
+      eq_bands: [{ kind: 'peak', freq_hz: 1000, gain_db: -24, q: 2, enabled: true }],
+    });
+    const outPlain = join(dir, 'eq_plain.mp4');
+    const outNotched = join(dir, 'eq_notched.mp4');
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [plain])]), outPlain, opts)], { stdio: 'pipe' });
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [notched])]), outNotched, opts)], { stdio: 'pipe' });
+
+    const dropDb = volumeStats(outPlain).mean - volumeStats(outNotched).mean;
+    // -24 dB requested; the encoder and the filter's own settling at the head
+    // of the file cost a few, so this asserts the cut is real and deep rather
+    // than its exact depth (the exact depth is the lossless test above).
+    expect(dropDb).toBeGreaterThan(15);
+  }, 60000);
+
+  it('a high-pass really removes the LOW tone from a real export and leaves a high one alone', () => {
+    // The single most common real move on a dialogue clip, checked as the
+    // thing it actually is: rumble gone, voice untouched. Two tones, one band,
+    // one exported file each — which a whole-file level check on ONE tone
+    // could not tell apart from "everything got quieter".
+    const low = join(dir, 'tone60.wav');
+    const high = join(dir, 'tone2k.wav');
+    execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'sine=frequency=60:duration=4:sample_rate=48000', '-ac', '2', low]);
+    execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'sine=frequency=2000:duration=4:sample_rate=48000', '-ac', '2', high]);
+    const hp: EqBand[] = [{ kind: 'high_pass', freq_hz: 250, gain_db: 0, q: Math.SQRT1_2, enabled: true }];
+    const opts = { fps: 30, width: 320, height: 240 };
+
+    const measure = (src: string, bands: EqBand[] | undefined, name: string): number => {
+      const c = clip('c', {
+        source_path: src,
+        duration: 96,
+        source_fps: 24,
+        ...(bands ? { eq_bands: bands } : {}),
+      });
+      const out = join(dir, name);
+      execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [c])]), out, opts)], { stdio: 'pipe' });
+      return volumeStats(out).mean;
+    };
+
+    const lowDrop = measure(low, undefined, 'hp_low_off.mp4') - measure(low, hp, 'hp_low_on.mp4');
+    const highDrop = measure(high, undefined, 'hp_high_off.mp4') - measure(high, hp, 'hp_high_on.mp4');
+    // 60 Hz is more than two octaves under a 250 Hz 2-pole corner: ~-25 dB.
+    expect(lowDrop).toBeGreaterThan(15);
+    // 2 kHz is three octaves ABOVE it, and must be essentially untouched.
+    expect(Math.abs(highDrop)).toBeLessThan(1.5);
+  }, 90000);
 });

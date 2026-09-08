@@ -258,7 +258,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chroma_types::FadeCurve;
+use chroma_types::{Biquad, BiquadCoeffs, EqBand, FadeCurve};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use dasp_sample::FromSample;
 use once_cell::sync::Lazy;
@@ -887,6 +887,24 @@ pub struct AudioSourceSpec {
     /// and its probed rate, which this crate deliberately cannot see. The
     /// caller converts, in `app/src-tauri`'s `chroma::audio::level_for_clip`.
     pub level: Option<LevelEnvelope>,
+    /// D-224 — this clip's own parametric-EQ bands, or **empty** when it has
+    /// none (every clip in every pre-D-224 project, and the common case now).
+    /// Empty is not "a band set that does nothing": with it, and no fade, duck
+    /// or level, [`mix_chunk`] skips the per-sample pass entirely, so that mix
+    /// runs exactly the arithmetic it always did.
+    ///
+    /// **The BANDS, not a built filter**, unlike the three envelopes above:
+    /// biquad coefficients depend on the sample rate, and this struct is
+    /// constructed by `app/src-tauri`'s `chroma_audio_play` before
+    /// [`run_session`] has opened the device and learned it. [`EqFilter`] is
+    /// therefore built inside `run_session`, at the real `out_rate` and with
+    /// one cascade per real output channel.
+    ///
+    /// Carried verbatim from `chroma_timeline::Clip::eq_bands` — no conversion
+    /// at all, which is why there is no `eq_for_clip` beside `fade_for_clip`
+    /// and `level_for_clip`: a band is already in the only units it has
+    /// (hertz, decibels, Q), none of which are frames.
+    pub eq_bands: Vec<chroma_types::EqBand>,
 }
 
 /// One clip's fade envelope, in **seconds** (D-147).
@@ -1347,8 +1365,84 @@ impl LevelEnvelope {
     }
 }
 
-/// Apply a source's gain envelopes to one interleaved chunk in place —
-/// **one pass, both envelopes** (D-147's fade and D-149's duck), for ONE source.
+/// One clip's parametric EQ, realised as a real cascade of stateful biquads —
+/// **one cascade per output channel** (D-224).
+///
+/// **Per channel, because a biquad's state is its recent history**, and the
+/// left channel's history is not the right channel's: sharing one filter
+/// across channels would cross-feed them into each other, which is a stereo
+/// image collapsing, not an equaliser. Every channel gets the same
+/// coefficients and its own two state variables per band.
+///
+/// **Built here, from bands, rather than handed in ready-made** — see
+/// [`AudioSourceSpec::eq_bands`]: coefficients depend on the sample rate, which
+/// only [`run_session`] knows.
+///
+/// The math is entirely [`chroma_types::eq`]'s — this type owns the plumbing
+/// (which cascade belongs to which channel, and when to skip) and nothing else,
+/// exactly as [`FadeEnvelope`] owns no bezier arithmetic of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EqFilter {
+    /// `channels[c]` is channel `c`'s cascade, one [`Biquad`] per ACTIVE band,
+    /// in the band list's own order. (Order is irrelevant to the response — a
+    /// cascade of LTI sections commutes — but keeping it stable keeps the
+    /// filter's float rounding deterministic, which the repo's own
+    /// same-doc-same-output rule asks for.)
+    channels: Vec<Vec<Biquad>>,
+}
+
+impl EqFilter {
+    /// A filter for these bands at `sample_rate`, or `None` when **no** band is
+    /// active — a clip with no EQ, or with a materialised strip nobody has
+    /// touched (every band a gain-using kind at exactly 0 dB).
+    ///
+    /// `None` is not "a filter that passes samples through": with it, and no
+    /// fade/duck/level, [`SourceEnvelopes::apply`] returns without touching the
+    /// buffer at all. Same contract the three envelopes state.
+    pub fn new(bands: &[EqBand], sample_rate: u32, out_channels: usize) -> Option<Self> {
+        let coeffs: Vec<BiquadCoeffs> = bands
+            .iter()
+            .filter_map(|b| b.coefficients(sample_rate as f64))
+            .collect();
+        if coeffs.is_empty() {
+            return None;
+        }
+        let ch = out_channels.max(1);
+        Some(Self {
+            channels: (0..ch)
+                .map(|_| coeffs.iter().copied().map(Biquad::new).collect())
+                .collect(),
+        })
+    }
+
+    /// Filter one interleaved sample-frame in place, each channel through its
+    /// own cascade.
+    ///
+    /// A frame with MORE channels than this filter was built for (which
+    /// [`SourceEnvelopes::apply`] cannot produce, since both are built from the
+    /// same `out_channels`) leaves the extras untouched rather than reusing
+    /// another channel's state — the same "do nothing rather than invent
+    /// something" rule the pan law follows for a surround device's rear
+    /// channels.
+    fn process_frame(&mut self, frame: &mut [f32]) {
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            let Some(cascade) = self.channels.get_mut(channel) else {
+                continue;
+            };
+            // `f64` through the cascade — see `Biquad::process` for why an IIR
+            // filter is the one place in this mixer worth the extra precision.
+            let mut x = *sample as f64;
+            for section in cascade.iter_mut() {
+                x = section.process(x);
+            }
+            *sample = x as f32;
+        }
+    }
+}
+
+/// Apply a source's EQ and gain envelopes to one interleaved chunk in place —
+/// **one pass, every stage** (D-147's fade, D-149's duck, D-223's level and
+/// D-224's EQ), for ONE source.
 ///
 /// One struct rather than two index-parallel `Option` slices threaded through
 /// [`mix_chunk`]: they are always built, indexed and applied together, and
@@ -1367,6 +1461,13 @@ struct SourceEnvelopes {
     /// same one-pass loop for the same reason the duck did rather than getting
     /// a second pass over the buffer.
     level: Option<LevelEnvelope>,
+    /// D-224 — this clip's parametric EQ. Joins the same loop, ahead of the
+    /// three gain stages (see [`Self::apply`] for why that order and not the
+    /// other one). Unlike the three, it is **stateful**, which is what makes
+    /// [`Self::apply`] take `&mut self`: a biquad carries its own recent
+    /// history across chunk boundaries, and a filter restarted every 1024
+    /// samples is a buzz, not an equaliser.
+    eq: Option<EqFilter>,
 }
 
 impl SourceEnvelopes {
@@ -1406,13 +1507,27 @@ impl SourceEnvelopes {
     ///   by [`adapt_channels`] long before this runs, so panning one works
     ///   without a special case: it becomes stereo-positioned mono, which is
     ///   what an editor means by panning a mono clip.
-    fn apply(&self, buf: &mut [f32], out_channels: usize, session_frame: u64, out_rate: u32) {
-        if self.fade.is_none() && self.duck.is_none() && self.level.is_none() {
+    fn apply(&mut self, buf: &mut [f32], out_channels: usize, session_frame: u64, out_rate: u32) {
+        if self.fade.is_none() && self.duck.is_none() && self.level.is_none() && self.eq.is_none() {
             return;
         }
         let ch = out_channels.max(1);
         let rate = out_rate.max(1) as f64;
         for (f, frame) in buf.chunks_mut(ch).enumerate() {
+            // D-224 — EQ runs FIRST, on the source as decoded, before any of
+            // the gain stages below. Two reasons, and the second is the one
+            // that matters: (1) it is the standard "insert before the fader"
+            // topology every mixer uses, and (2) a biquad is linear but
+            // TIME-INVARIANT, so filtering a signal a fade has already
+            // time-varied is not the same operation as fading a filtered one —
+            // the two orders genuinely differ, and only this one matches the
+            // export's own filter chain (`eq → volume`, see
+            // `timelineExportAudio.ts`'s `buildAudioSourceChain`). Getting
+            // that backwards would make the preview and the render differ in a
+            // way no test that measured only one of them would catch.
+            if let Some(eq) = &mut self.eq {
+                eq.process_frame(frame);
+            }
             let t = (session_frame as f64 + f as f64) / rate;
             let mut g = 1.0f32;
             if let Some(env) = &self.fade {
@@ -2235,20 +2350,24 @@ const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 fn mix_chunk(
     decoded: &mut [DecodedSource],
     gains: &[f32],
-    envelopes: &[SourceEnvelopes],
+    // D-224 — `&mut`, because an EQ carries state across chunks (a biquad's
+    // own history) where the three gain envelopes are pure functions of time.
+    envelopes: &mut [SourceEnvelopes],
     chunk_len: usize,
     out_channels: usize,
     pos_frames: u64,
     out_rate: u32,
 ) -> Result<Vec<f32>, String> {
     let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
-    let none = SourceEnvelopes::default();
+    let mut none = SourceEnvelopes::default();
     for (i, ds) in decoded.iter_mut().enumerate() {
         let mut buf = ds.take(chunk_len, out_channels)?;
-        envelopes
-            .get(i)
-            .unwrap_or(&none)
-            .apply(&mut buf, out_channels, pos_frames, out_rate);
+        envelopes.get_mut(i).unwrap_or(&mut none).apply(
+            &mut buf,
+            out_channels,
+            pos_frames,
+            out_rate,
+        );
         bufs.push(buf);
     }
     Ok(mix_sources(&bufs, gains, chunk_len))
@@ -2358,6 +2477,12 @@ fn run_session(
                     fade: spec.fade.clone(),
                     duck: spec.duck.clone(),
                     level: spec.level.clone(),
+                    // D-224 — built HERE rather than by the caller, because a
+                    // biquad's coefficients are a function of the sample rate
+                    // and `out_rate` is not known until the device is open a
+                    // few lines above. Per output channel, for the same
+                    // reason (see `EqFilter`).
+                    eq: EqFilter::new(&spec.eq_bands, out_rate, out_channels),
                 });
             }
             Err(e) if i == 0 => return Err(e), // the baseline source failing is a real error
@@ -2441,7 +2566,7 @@ fn run_session(
         let mixed = mix_chunk(
             &mut decoded,
             &gains,
-            &envelopes,
+            &mut envelopes,
             chunk_len,
             out_channels,
             pos_frames,
@@ -2478,7 +2603,7 @@ fn run_session(
         let mixed = mix_chunk(
             &mut decoded,
             &gains,
-            &envelopes,
+            &mut envelopes,
             chunk_len,
             out_channels,
             pos_frames,
@@ -2705,6 +2830,7 @@ mod tests {
             fade: Some(env),
             duck: None,
             level: None,
+            eq: None,
         }
         .apply(&mut buf, 2, 0, 8);
         for f in 0..8 {
@@ -2734,6 +2860,7 @@ mod tests {
             fade: Some(env),
             duck: None,
             level: None,
+            eq: None,
         }
         .apply(&mut second, 1, 4, 8);
         for (i, v) in second.iter().enumerate() {
@@ -2967,6 +3094,7 @@ mod tests {
             fade: Some(fade),
             duck: Some(duck.clone()),
             level: None,
+            eq: None,
         }
         .apply(&mut buf, 1, 0, 8);
         let expected = 0.5 * ducked; // the fade at t = 0.5 is 0.5
@@ -2981,6 +3109,7 @@ mod tests {
             fade: None,
             duck: Some(duck.clone()),
             level: None,
+            eq: None,
         }
         .apply(&mut plain, 1, 0, 8);
         assert!((plain[4] as f64 - ducked).abs() < 1e-6);
@@ -2998,10 +3127,11 @@ mod tests {
         // than being already settled at the session's first sample.
         let duck = DuckEnvelope::new(&[(0.5, 10.0)], -12.0, 500.0, 500.0).expect("duck");
         let mut first = vec![1.0f32; 8];
-        let envs = SourceEnvelopes {
+        let mut envs = SourceEnvelopes {
             fade: None,
             duck: Some(duck),
             level: None,
+            eq: None,
         };
         envs.apply(&mut first, 1, 0, 8);
         let mut second = vec![1.0f32; 8];
@@ -3071,6 +3201,7 @@ mod tests {
             fade: None,
             duck: None,
             level: LevelEnvelope::new(0.0, LevelCurve::Const(1.0), LevelCurve::Const(-1.0)),
+            eq: None,
         }
         .apply(&mut buf, 2, 0, 8);
         for f in 0..4 {
@@ -3093,6 +3224,7 @@ mod tests {
             fade: None,
             duck: None,
             level: LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(0.0)),
+            eq: None,
         }
         .apply(&mut buf, 2, 0, 8);
         assert!(buf.iter().all(|&s| s == 0.5), "{buf:?}");
@@ -3117,6 +3249,7 @@ mod tests {
             fade: Some(fade),
             duck: Some(duck),
             level: Some(level),
+            eq: None,
         }
         .apply(&mut buf, 2, 0, 8);
 
@@ -3146,6 +3279,7 @@ mod tests {
             fade: None,
             duck: None,
             level: LevelEnvelope::new(0.0, LevelCurve::Const(0.5), LevelCurve::Const(1.0)),
+            eq: None,
         }
         .apply(&mut buf, 1, 0, 8);
         assert!(buf.iter().all(|&s| s == 0.5), "{buf:?}");
@@ -3164,10 +3298,11 @@ mod tests {
             LevelCurve::Const(0.0),
         )
         .expect("a real level");
-        let envs = SourceEnvelopes {
+        let mut envs = SourceEnvelopes {
             fade: None,
             duck: None,
             level: Some(level),
+            eq: None,
         };
         let mut first = vec![1.0f32; 8];
         envs.apply(&mut first, 1, 0, 8);
@@ -3196,6 +3331,359 @@ mod tests {
         let (vol, l, r) = level.gains_at(0.0);
         assert!((vol - 0.5).abs() < 1e-6, "{vol}");
         assert_eq!((l, r), (1.0, 1.0));
+    }
+
+    // --- D-224: per-clip parametric EQ ------------------------------------ //
+    //
+    // The cookbook coefficients and the analytic response are `chroma_types::
+    // eq`'s own tests. What lives here is everything the MIXER adds on top of
+    // them: per-channel state, state that survives a chunk boundary, the
+    // stage's position in the chain, and the "no active band ⇒ no arithmetic"
+    // contract every other envelope in this file also holds to.
+
+    /// The reference band set both engines measure, mirroring
+    /// `chroma_types::eq`'s own `reference_band_set` and
+    /// `timelineExport.ffmpeg.test.ts`'s `REFERENCE_EQ_BANDS` exactly.
+    fn reference_eq_bands() -> Vec<EqBand> {
+        use chroma_types::EqBandKind;
+        vec![
+            EqBand {
+                kind: EqBandKind::HighPass,
+                freq_hz: 90.0,
+                gain_db: 0.0,
+                q: 0.71,
+                enabled: true,
+            },
+            EqBand {
+                kind: EqBandKind::Peak,
+                freq_hz: 950.0,
+                gain_db: -6.5,
+                q: 1.8,
+                enabled: true,
+            },
+            EqBand {
+                kind: EqBandKind::HighShelf,
+                freq_hz: 6_200.0,
+                gain_db: 5.5,
+                q: 0.62,
+                enabled: true,
+            },
+            EqBand {
+                kind: EqBandKind::LowShelf,
+                freq_hz: 400.0,
+                gain_db: 18.0,
+                q: 0.9,
+                enabled: false,
+            },
+        ]
+    }
+
+    /// **The real proof at the mixer, not at the math.** A sine goes through
+    /// `SourceEnvelopes::apply` — the same code path a playing clip's samples
+    /// take, in the same 1024-frame chunks — and the measured RMS gain matches
+    /// the table `packages/editor/src/timelineExport.ffmpeg.test.ts` asserts
+    /// against a REAL exported file for the same bands.
+    ///
+    /// Chunked deliberately: doing it in one buffer would pass even if the
+    /// filter state were rebuilt per chunk, which is the exact defect this
+    /// arrangement is here to catch.
+    #[test]
+    fn the_mixer_applies_the_response_the_export_measures_on_a_real_file() {
+        const RATE: u32 = 48_000;
+        // The same table `chroma_types::eq::tests::REFERENCE_RESPONSE_DB` and
+        // the ffmpeg export test both carry. Kept literal here rather than
+        // imported so that a change to any one of the three fails loudly in
+        // the other two.
+        for (freq, expected) in [
+            (50.0f64, -10.5923f64),
+            (120.0, -1.1989),
+            (300.0, -0.2824),
+            (1_000.0, -6.2239),
+            (3_000.0, 0.2774),
+            (8_000.0, 3.8671),
+            (15_000.0, 5.3278),
+        ] {
+            let mut envs = SourceEnvelopes {
+                fade: None,
+                duck: None,
+                level: None,
+                eq: EqFilter::new(&reference_eq_bands(), RATE, 1),
+            };
+            assert!(envs.eq.is_some(), "the reference set must build a filter");
+
+            let total = RATE as usize * 2; // two seconds
+            let settle = total / 2;
+            let chunk = 1024;
+            let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
+            let mut pos = 0usize;
+            while pos < total {
+                let n = chunk.min(total - pos);
+                let mut buf: Vec<f32> = (0..n)
+                    .map(|i| {
+                        (2.0 * std::f64::consts::PI * freq * (pos + i) as f64 / RATE as f64).sin()
+                            as f32
+                    })
+                    .collect();
+                let input = buf.clone();
+                envs.apply(&mut buf, 1, pos as u64, RATE);
+                for i in 0..n {
+                    if pos + i >= settle {
+                        in_sq += (input[i] as f64).powi(2);
+                        out_sq += (buf[i] as f64).powi(2);
+                    }
+                }
+                pos += n;
+            }
+            let measured = 10.0 * (out_sq / in_sq).log10();
+            assert!(
+                (measured - expected).abs() < 0.05,
+                "{freq} Hz: the mixer measured {measured:.4} dB, the shared table says {expected:.4} dB"
+            );
+        }
+    }
+
+    /// **The backward-compatibility case, again at the mixer.** A clip with no
+    /// bands, and a clip carrying the Inspector's materialised-but-untouched
+    /// strip, both leave the buffer bit-identical — because neither builds a
+    /// filter at all, so `apply` returns before touching it.
+    #[test]
+    fn a_clip_with_no_active_band_is_left_exactly_alone() {
+        use chroma_types::EqBandKind;
+        assert!(EqFilter::new(&[], 48_000, 2).is_none());
+        // The default strip the Inspector authors: every band a gain-using
+        // kind at exactly 0 dB.
+        let untouched_strip = [
+            EqBand {
+                kind: EqBandKind::LowShelf,
+                freq_hz: 120.0,
+                gain_db: 0.0,
+                q: 0.707,
+                enabled: true,
+            },
+            EqBand {
+                kind: EqBandKind::Peak,
+                freq_hz: 2_500.0,
+                gain_db: 0.0,
+                q: 1.0,
+                enabled: true,
+            },
+        ];
+        assert!(EqFilter::new(&untouched_strip, 48_000, 2).is_none());
+
+        let original = vec![0.3f32, -0.7, 0.9, -0.1];
+        let mut buf = original.clone();
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&untouched_strip, 48_000, 2),
+        }
+        .apply(&mut buf, 2, 0, 48_000);
+        assert_eq!(
+            buf, original,
+            "an inert strip must mean no arithmetic at all"
+        );
+    }
+
+    /// Each channel gets its OWN filter state. Without that, the left
+    /// channel's history would feed the right channel's output and the stereo
+    /// image would collapse — so this feeds two channels completely different
+    /// signals and checks each comes out as if it had been filtered alone.
+    #[test]
+    fn each_channel_is_filtered_through_its_own_state() {
+        use chroma_types::EqBandKind;
+        let bands = [EqBand {
+            kind: EqBandKind::LowPass,
+            freq_hz: 500.0,
+            gain_db: 0.0,
+            q: 0.707,
+            enabled: true,
+        }];
+        // Left is an impulse, right is silence. If the two shared one filter,
+        // the right channel would carry the left's ringing.
+        let frames = 64;
+        let mut stereo = vec![0.0f32; frames * 2];
+        stereo[0] = 1.0;
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 48_000, 2),
+        }
+        .apply(&mut stereo, 2, 0, 48_000);
+
+        // The same impulse alone through a mono filter — the reference.
+        let mut mono = vec![0.0f32; frames];
+        mono[0] = 1.0;
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 48_000, 1),
+        }
+        .apply(&mut mono, 1, 0, 48_000);
+
+        for f in 0..frames {
+            assert!(
+                (stereo[f * 2] - mono[f]).abs() < 1e-7,
+                "frame {f}: left {} vs mono {}",
+                stereo[f * 2],
+                mono[f]
+            );
+            assert_eq!(
+                stereo[f * 2 + 1],
+                0.0,
+                "frame {f}: silence picked up the other channel's ringing"
+            );
+        }
+    }
+
+    /// Filter state survives a chunk boundary. A biquad rebuilt every chunk
+    /// would restart its ringing at each edge — an audible ~47 Hz buzz at the
+    /// real 1024-frame chunk size — so the two-chunk result must equal the
+    /// one-buffer result exactly.
+    #[test]
+    fn filter_state_carries_across_chunk_boundaries() {
+        use chroma_types::EqBandKind;
+        let bands = [EqBand {
+            kind: EqBandKind::HighPass,
+            freq_hz: 300.0,
+            gain_db: 0.0,
+            q: 0.707,
+            enabled: true,
+        }];
+        let signal: Vec<f32> = (0..32)
+            .map(|i| (2.0 * std::f64::consts::PI * 100.0 * i as f64 / 48_000.0).sin() as f32)
+            .collect();
+
+        let mut whole = signal.clone();
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 48_000, 1),
+        }
+        .apply(&mut whole, 1, 0, 48_000);
+
+        let mut envs = SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 48_000, 1),
+        };
+        let mut first = signal[..16].to_vec();
+        envs.apply(&mut first, 1, 0, 48_000);
+        let mut second = signal[16..].to_vec();
+        envs.apply(&mut second, 1, 16, 48_000);
+
+        assert_eq!(first, whole[..16], "first chunk");
+        assert_eq!(second, whole[16..], "second chunk — state did not carry");
+    }
+
+    /// **Order matters, and this pins it.** EQ runs on the source as decoded,
+    /// BEFORE the gain stages — the same order `buildAudioSourceChain` emits
+    /// (`eq → volume`). A biquad is linear but time-INVARIANT, so filtering a
+    /// signal that a fade has already time-varied is a different operation
+    /// from fading a filtered one; getting it backwards would make the preview
+    /// and the render differ.
+    #[test]
+    fn the_eq_runs_before_the_gain_stages_not_after() {
+        use chroma_types::EqBandKind;
+        let bands = [EqBand {
+            kind: EqBandKind::LowPass,
+            freq_hz: 400.0,
+            gain_db: 0.0,
+            q: 0.707,
+            enabled: true,
+        }];
+        // A fade-in over the whole buffer: a genuinely time-varying gain, so
+        // the two orders give measurably different numbers.
+        let fade = FadeEnvelope {
+            offset_secs: 0.0,
+            len_secs: 1.0,
+            fade_in_secs: 1.0,
+            fade_out_secs: 0.0,
+            in_curve: FadeCurve::LINEAR,
+            out_curve: FadeCurve::LINEAR,
+        };
+        let signal = vec![1.0f32; 8];
+
+        let mut got = signal.clone();
+        SourceEnvelopes {
+            fade: Some(fade.clone()),
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 8, 1),
+        }
+        .apply(&mut got, 1, 0, 8);
+
+        // Expected: filter FIRST, then scale by the fade — computed here the
+        // long way round rather than by re-running the code under test.
+        let mut eq_only = signal.clone();
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 8, 1),
+        }
+        .apply(&mut eq_only, 1, 0, 8);
+        let expected: Vec<f32> = eq_only
+            .iter()
+            .enumerate()
+            .map(|(f, v)| v * fade.gain_at(f as f64 / 8.0))
+            .collect();
+        for f in 0..8 {
+            assert!(
+                (got[f] - expected[f]).abs() < 1e-6,
+                "frame {f}: {} vs eq-then-fade {}",
+                got[f],
+                expected[f]
+            );
+        }
+
+        // …and the other order really is different, so this test is not
+        // asserting a coincidence.
+        let faded_first: Vec<f32> = signal
+            .iter()
+            .enumerate()
+            .map(|(f, v)| v * fade.gain_at(f as f64 / 8.0))
+            .collect();
+        let mut then_eq = faded_first;
+        SourceEnvelopes {
+            fade: None,
+            duck: None,
+            level: None,
+            eq: EqFilter::new(&bands, 8, 1),
+        }
+        .apply(&mut then_eq, 1, 0, 8);
+        assert!(
+            got.iter().zip(&then_eq).any(|(a, b)| (a - b).abs() > 1e-6),
+            "the two orders are indistinguishable here — pick a signal where they are not"
+        );
+    }
+
+    /// A surround device gets more channels than a stereo clip's filter was
+    /// built for only if something upstream disagreed about `out_channels` —
+    /// but the guard is real, and silently reusing another channel's state
+    /// would be worse than leaving the extra alone.
+    #[test]
+    fn a_frame_wider_than_the_filter_leaves_the_extra_channels_untouched() {
+        use chroma_types::EqBandKind;
+        let mut eq = EqFilter::new(
+            &[EqBand {
+                kind: EqBandKind::LowPass,
+                freq_hz: 500.0,
+                gain_db: 0.0,
+                q: 0.707,
+                enabled: true,
+            }],
+            48_000,
+            2,
+        )
+        .expect("active");
+        let mut frame = [1.0f32, 1.0, 0.25, -0.5];
+        eq.process_frame(&mut frame);
+        assert_eq!((frame[2], frame[3]), (0.25, -0.5));
     }
 
     #[test]

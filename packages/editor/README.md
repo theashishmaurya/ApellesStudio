@@ -47,6 +47,19 @@ dragging a pool item in from the shell's Sources panel.
   that is `chroma_types::fade_gain` and its one mirror,
   `timelineExportAudio.ts`'s `fadeGainAt`. `ClipFadeOverlay.tsx` is the
   DOM/pointer wiring around it. See **On-clip fade handles** below.
+- `eq.ts` (D-224, roadmap item 27) — the per-clip parametric EQ's model and
+  math: the `EqBand` type `Clip.eq_bands` is a list of, the Resolve-shaped
+  four-band strip the Inspector authors (`defaultEqBands`), the stored-value
+  clamps, and the Audio EQ Cookbook biquad coefficients + magnitude response
+  (`eqBandCoeffs` / `eqResponseDb`). An exact mirror of the Rust
+  `chroma_types::eq` — mirrored here for `panGains`' own reason (the export
+  compiler is TypeScript and its unit tests must be able to compute what it
+  should emit with no app process at all), but load-bearing in a way that one
+  is not: `timelineExportAudio.ts`'s `eqFilterChain` ships these very numbers
+  to ffmpeg's generic `biquad` filter, so a drift from the Rust would be a real
+  preview-vs-render divergence. The two are pinned by one shared response table
+  that each side measures through its own engine. `timeline.ts` re-exports the
+  type and the helpers, so nothing else has to know which file they came from.
 - `TimelineMarkers.tsx` (D-222, roadmap item 27) — timeline markers: the flag
   strip drawn in the band between the ruler's ticks and track 0 (Resolve's own
   placement), the marker editor popover, the jump-to dropdown and the toolbar's

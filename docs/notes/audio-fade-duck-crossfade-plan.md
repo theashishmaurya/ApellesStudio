@@ -712,3 +712,181 @@ to the law rather than to each other's current output.
    playback runs into it from clip 1, because clip 2 is not a source in that
    session. Pre-existing, not introduced here, but it is the most likely way a
    user first sees a clip volume "not work".
+
+---
+
+## 10. Per-clip parametric EQ (**BUILT, D-224**, 2026-09-08)
+
+> §9 closed §1's opening finding — that the only level control was a static
+> whole-track scalar — by giving a CLIP its own level. This section is the next
+> thing in that same chain, and the one §9's own gap 4 named: a clip could be
+> made quieter and placed in the stereo field, but nothing could be done about
+> its **tone**. No way to take rumble out of dialogue, notch a hum, or cut the
+> boxiness out of a room recording without leaving the app.
+
+### 10a. What landed
+
+One new `chroma_timeline::Clip` field, and it is the first per-clip audio
+control that is **not** a gain:
+
+| field | shape | default | migration |
+|---|---|---|---|
+| `eq_bands` | `Vec<EqBand>`, each `{kind, freq_hz, gain_db, q, enabled}` | `[]` (no EQ) | bare `#[serde(default, skip_serializing_if = "Vec::is_empty")]` — empty really IS "no EQ", so unlike `volume` this needs no named default and carries none of its hazard |
+
+**Four bands are AUTHORED, but the model stores a list.** Four is exactly
+Resolve's own Clip Equalizer (`scratch/resolve-reference/soundtrack.jpg`, read
+as an image: `Band 1`…`Band 4`, each a name button that doubles as that band's
+enable, over a shape dropdown, under a ±24 dB response graph), and the strip the
+Inspector materialises is Resolve's own reading of it — low shelf 120 Hz, bell
+500 Hz, bell 2.5 kHz, high shelf 8 kHz. The stored field is a `Vec` anyway
+because every band carries its own `kind`, so a fixed index→role mapping would
+be a second source of truth for the same fact; because `Vec::default()` is a
+free, correct migration default where a fixed array would be a hard
+deserialisation wall on any future band-count change; and because every
+consumer is length-agnostic already. D-224 has the full argument.
+
+**"No EQ" is the empty list — and a materialised strip nobody touched is also
+inert**, because `EqBand::is_active` is false for a gain-using kind sitting at
+exactly 0 dB. That is what lets the Inspector show four real bands from the
+first moment without the panel's presence costing the mix anything: selecting a
+clip writes nothing, and the first real edit materialises the whole strip rather
+than a lone orphan band.
+
+Five kinds, all available on every band: `low_shelf`, `peak` (bell), `high_shelf`,
+`high_pass`, `low_pass`. A **notch is not a kind** — it is a bell with a deep
+negative gain at a high Q, which is what Resolve's own notch icon draws.
+
+### 10b. The math is the Audio EQ Cookbook's, and it lives in L0
+
+`chroma_types::eq` — beside §5b's `fade.rs` and §9b's `pan.rs`, for those
+sections' exact reason: the mixer that runs the filters is L1 `chroma-media` and
+cannot reach up to L2's `Clip`. It holds the band type, the five cookbook forms
+(peaking, low/high shelf, 2-pole low/high-pass) with
+`A = 10^(gain_db/40)`, `w0 = 2π·f0/fs`, `α = sin(w0)/(2Q)` normalised by `a0`,
+the magnitude response `20·log10|H(e^jω)|`, and a transposed-direct-form-II
+`Biquad` with its own state.
+
+The one design choice inside the math is to parameterise **every** kind by Q
+(the cookbook permits it for the shelves too, alongside bandwidth and slope S),
+so one field set — frequency / gain / Q — covers all five shapes and the
+Inspector never swaps a control out per band kind.
+
+### 10c. Composition — one more stage, and this one does NOT commute
+
+```
+eq  →  track.gain × clip.volume × fade × duck  →  pan splits per channel
+```
+
+The standard "insert before the fader" topology. §9c's four gain stages commute
+with each other because they all multiply; **this one does not**, and that is
+worth stating: a biquad is linear but time-INVARIANT, so filtering a signal a
+fade has already time-varied is genuinely a different operation from fading a
+filtered one. Both engines implement the same order — `SourceEnvelopes::apply`
+runs the cascade at the top of its existing single per-sample-frame pass (not a
+second pass, for §4c's reason), and `buildAudioSourceChain` emits the band nodes
+before its `volume` node — and a `chroma-media` test computes the other order
+and asserts the two differ, so the order is pinned rather than assumed.
+
+Three rules the mixer makes explicit, because they are choices:
+- **one cascade per output CHANNEL**, with its own state — sharing one across
+  channels would cross-feed them, which is a stereo image collapsing rather than
+  an equaliser;
+- **state persists across chunk boundaries**, which is what makes
+  `SourceEnvelopes::apply` take `&mut self`: a filter restarted every
+  1024-sample chunk is an audible ~47 Hz buzz;
+- **coefficients are built in `run_session`, not by the caller**, because they
+  depend on the output device's sample rate, which nothing knows until the
+  device is open. `AudioSourceSpec` therefore carries the *bands* — and there is
+  deliberately no `eq_for_clip` beside §6b's `fade_for_clip` and §9d's
+  `level_for_clip`, because hertz, decibels and Q are not frames and there is
+  nothing to convert.
+
+### 10d. Static, not keyframeable — and the reason is the export
+
+The opposite call from §9d's, made on evidence. `volume`/`pan` are keyframeable
+because ffmpeg's `volume` filter takes a real per-frame expression (§9e).
+ffmpeg's biquad filters do not: `equalizer`, `bass`, `treble`, `highpass`,
+`lowpass` and the generic `biquad` all parse their parameters **once, as
+numbers**. `sendcmd` can step them at named instants, but a stepped biquad is a
+staircase of coefficient jumps — clicks, not a sweep — and the live mixer would
+then have to reproduce that exact staircase for "same doc ⇒ same sound" to hold.
+
+So an animated EQ is not renderable, and a preview the export cannot match is
+the defect class this repo keeps closing. One EQ per clip; split the clip if it
+must change part-way. Said in the field's own doc, in the Inspector (which
+renders **no** keyframe diamond on an EQ row rather than three dead buttons),
+and in the MCP tool text.
+
+### 10e. Export — ffmpeg's `biquad`, fed OUR coefficients
+
+The measured finding that drove it. Feeding a unit impulse through each filter
+and reading the response off it:
+
+- `equalizer`, `highpass`, `lowpass` at `width_type=q` reproduce the cookbook
+  **exactly** — matching this module's analytic response to **< 0.0001 dB**.
+- `bass`/`treble` do **not**. `bass=f=120:t=q:w=0.707:g=6` realises a biquad
+  whose **implied Q is 0.993**, not 0.707, and whose response **overshoots to
+  +6.29 dB at 40 Hz** and dips to −0.33 dB at 200 Hz where the cookbook's shelf
+  is monotone — 0.25–0.37 dB from the same band in the live mixer.
+
+So `timelineExportAudio.ts`'s `eqFilterChain` compiles every band to ffmpeg's
+**generic `biquad`** filter with the coefficients `eq.ts` computes (the exact
+mirror of `chroma_types::eq`) rather than naming one of ffmpeg's own EQ filters.
+Agreement between the two engines then becomes structural rather than hoped for,
+and nothing depends on one ffmpeg build's shelf conventions. Measured back:
+**< 0.0001 dB** of the analytic response, for all five kinds.
+
+One consequence, stated rather than hidden: `biquad` takes literal coefficients,
+so they must be computed for a KNOWN rate, and this compiler never probes a
+source. The chain is therefore preceded by `aresample=48000`
+(`EQ_DESIGN_SAMPLE_RATE`), emitted **only** for a clip that actually has an
+active band, so a project not using the feature compiles to byte-identical
+argv. The live mixer designs at the output DEVICE's rate instead; on the usual
+48 kHz device the two are identical, and at 44.1 kHz they differ by the bilinear
+warping alone — measured **≤ 0.036 dB across 50 Hz–15 kHz**, asserted as a test.
+Standard for any biquad EQ, not a divergence between our two paths.
+
+### 10f. How it was verified
+
+**A frequency response, measured in both engines against one shared table.**
+`chroma_types::eq::tests::REFERENCE_RESPONSE_DB` and
+`timelineExport.ffmpeg.test.ts`'s own copy carry the same seven `(Hz, dB)` pairs
+for the same deliberately-awkward four-band set: a high-pass at 90 Hz, a −6.5 dB
+bell at 950 Hz, a +5.5 dB shelf at 6.2 kHz, and a **disabled** +18 dB low shelf
+that would break the table by a mile if either engine stopped honouring
+`enabled`. The Rust side measures them by pushing a real sine through the real
+mixer path in real 1024-frame chunks; the TS side by running the real compiled
+filter chain through real ffmpeg and reading `volumedetect`. Both agree to
+**< 0.05 dB**. Each of the five kinds separately measures its own textbook value
+through real ffmpeg (a bell IS its gain at centre; a shelf is half-gain at its
+corner; a Butterworth pass filter is −3.01 dB at its corner), and two further
+tests prove the chain reaches a real encoded file.
+
+`cargo test`: `chroma-types` 46, `chroma-timeline` 155, `chroma-media` 114, all
+green. `npm test --workspace @chroma/editor` 859/859, including 25 new tests (8
+real-DOM Inspector, 12 model/reducer, 5 real-ffmpeg).
+
+### 10g. Honest gaps
+
+1. **Not heard.** Same sandbox constraint §8 gap 2 and §9g gap 1 record: this
+   environment cannot launch the Tauri window, so the live mixer's half is
+   `cargo test` evidence and the export's half is real measured ffmpeg output.
+   Neither is a demonstration that it *sounds* right.
+2. **No response CURVE in the Inspector** — the one thing deliberately scoped
+   out. Resolve's ±24 dB / log-frequency graph with four draggable, hit-tested
+   points is a real UI project of its own, and half a curve renderer is worse
+   than none. Everything it needs already exists and is already pinned by
+   measurement: `eq_response_db` (Rust) and `eqResponseDb` (TS) give the exact
+   dB curve at any frequency, and the MCP tool already reports it at nine
+   standard frequencies. Tracked in `docs/04-roadmap.md` item 27.
+3. **No frequency-log drag.** The Freq field steps linearly by 10 Hz, which is a
+   useful nudge in the low-mids and a poor one at 8 kHz. A log-scaled drag
+   belongs with the curve UI above, not before it.
+4. **No pitch control.** The same Resolve Inspector shows Clip Pitch
+   (semitones + cents) between Pan and the Equalizer. Not built, not started —
+   it needs real time-domain pitch shifting in the live mixer, which is a
+   different kind of problem from a biquad.
+5. **The mid-session re-resolve gap is unchanged** (§8 gap 6, §9g gap 5): an EQ
+   set on clip 2 is heard when playback starts inside clip 2 and not at all when
+   playback runs into it from clip 1, because clip 2 is not a source in that
+   session. Pre-existing, not introduced here.

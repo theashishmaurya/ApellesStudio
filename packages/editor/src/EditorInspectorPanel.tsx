@@ -50,6 +50,14 @@
  * rest ([`staticWrite`] below) — because a level is not geometry and does not
  * belong in a transform write (see the ops' own docs). "Key all properties"
  * deliberately stays transform+crop only; see `doUpsertKeyframe`.
+ *
+ * D-224 — the per-clip EQ deliberately does NOT join that model, and the
+ * reason is worth stating rather than inferring from its absence: an EQ band
+ * here is STATIC (ffmpeg's biquad filters parse their parameters once, so an
+ * animated EQ cannot be exported at all — see D-224), so it has no
+ * `PropertyState`, no diamond and no place in `paramStates`. What it gets
+ * instead is its own pair of handlers below (`applyEqBand`/`clearEq`) writing
+ * its own `set_clip_eq` op, exactly as the level pair writes `set_clip_audio`.
  */
 import {
   adjacentParamKeyframeFrame,
@@ -75,6 +83,7 @@ import {
   type ClipAudioParam,
   type ClipKeyframeParam,
   type ClipTransformParam,
+  type EqBand,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
@@ -165,6 +174,21 @@ export function EditorInspectorPanel() {
   const applyAudio = (patch: Partial<Record<ClipAudioParam, number>>) => {
     if (!primary || !selectedClip || selectedIdx < 0) return;
     applyOp({ kind: 'set_clip_audio', track: primary.track, clip: selectedIdx, ...patch });
+  };
+
+  // D-224 — per-clip EQ gets its own op too, for `set_clip_audio`'s own
+  // reasons (an EQ is not geometry and not a level). One BAND per call, and
+  // partial by field, so a Gain nudge cannot restate a frequency it never
+  // looked at — the reducer materialises the default four-band strip for a
+  // clip that has no EQ yet, so the panel never has to.
+  const applyEqBand = (band: number, patch: Partial<EqBand>) => {
+    if (!primary || !selectedClip || selectedIdx < 0) return;
+    applyOp({ kind: 'set_clip_eq', track: primary.track, clip: selectedIdx, band, patch });
+  };
+
+  const clearEq = () => {
+    if (!primary || !selectedClip || selectedIdx < 0) return;
+    applyOp({ kind: 'set_clip_eq', track: primary.track, clip: selectedIdx, clear: true });
   };
 
   // D-208 — every keyframeable property's static (un-animated) value, read
@@ -351,6 +375,8 @@ export function EditorInspectorPanel() {
       paramStates={paramStates}
       onTransformChange={applyTransform}
       onFadeChange={applyFade}
+      onEqBandChange={applyEqBand}
+      onEqClear={clearEq}
       onParamChange={applyParam}
       onKeyframeToggle={toggleParamKeyframes}
       onKeyframeNav={goToParamKeyframe}

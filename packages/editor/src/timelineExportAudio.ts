@@ -44,6 +44,16 @@
  *   `pan` filter cannot be used (it takes no expressions, so it cannot express
  *   a keyframed pan).
  *
+ * - `eqFilterChain` (D-224) is the one stage that does NOT mirror a Rust
+ *   implementation — it *consumes* one. A clip's EQ bands become ffmpeg's own
+ *   generic `biquad` filter fed with the coefficients `eq.ts` computes, which
+ *   are themselves the exact mirror of `chroma_types::eq`, so the exporter and
+ *   the live mixer run the same numbers rather than two parameterisations that
+ *   have to be checked against each other. That is a measured choice, not a
+ *   stylistic one: ffmpeg's `equalizer`/`highpass`/`lowpass` do reproduce the
+ *   Audio EQ Cookbook exactly, but its `bass`/`treble` shelves do not — see
+ *   `eqFilterChain`'s own doc for the identified numbers.
+ *
  * What it does NOT do: decide WHICH clips contribute audio at all (that is
  * `timelineExport.ts`'s `hasAudioOverrides`-driven walk — this module never
  * sees a `Timeline`'s tracks directly except inside `resolveDuckForTrack`,
@@ -58,11 +68,14 @@ import {
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_FADE_CURVE,
+  EQ_DESIGN_SAMPLE_RATE,
   clampClipPan,
   clampClipVolume,
   endFrame,
+  eqBandCoeffs,
   panGains,
 } from './timeline';
+import type { EqBand } from './eq';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 
 // --------------------------------------------------------------------------- //
@@ -459,6 +472,82 @@ export function panGainExprs(panExpr: string): [string, string] {
 }
 
 // --------------------------------------------------------------------------- //
+// D-224 — per-clip parametric EQ, as ffmpeg's own generic `biquad` filter fed
+// with OUR coefficients
+// --------------------------------------------------------------------------- //
+
+/**
+ * One biquad coefficient, formatted for an ffmpeg filter option.
+ *
+ * **Fixed notation, never an exponent.** ffmpeg parses a `<double>` option
+ * through `av_strtod`, which also accepts SI suffixes (`k`, `M`, `i`, `B`), so
+ * an exponent form is one parser quirk away from being misread — and a
+ * normalised biquad coefficient is never large or small enough to need one
+ * (every one of them is within an order of magnitude or two of 1). Twelve
+ * decimal places is ~1e-12 of absolute error on a value of order 1, which is
+ * ten orders below the 0.05 dB the cross-engine response test asserts to.
+ */
+export function ffmpegCoeff(v: number): string {
+  return v
+    .toFixed(12)
+    .replace(/(\.\d*?)0+$/, '$1')
+    .replace(/\.$/, '');
+}
+
+/**
+ * The filter-chain fragment that applies `bands` — one `biquad` node per ACTIVE
+ * band, behind an `aresample` that pins the rate they were designed for — or
+ * `null` when no band is active (a clip with no EQ, or one carrying a
+ * materialised-but-untouched strip). The caller then emits no node at all for
+ * it, the same byte-identical-when-unused contract every other filter here
+ * follows.
+ *
+ * **Why ffmpeg's generic `biquad` and not its own `equalizer`/`bass`/`treble`.**
+ * Measured, not assumed (D-224). `equalizer`, `highpass` and `lowpass` at
+ * `width_type=q` DO reproduce the Audio EQ Cookbook exactly — an impulse
+ * response measured through them matches the analytic response to < 0.0001 dB.
+ * `bass`/`treble` do NOT: identified from their own impulse response,
+ * `bass=f=120:t=q:w=0.707:g=6` realises a biquad whose implied Q is 0.993 and
+ * whose response overshoots to +6.29 dB at 40 Hz where the cookbook's is
+ * monotone — 0.25–0.37 dB from the same band in the live mixer. Using the
+ * parametric filters for three kinds and something else for the other two would
+ * make the export's fidelity depend on which band a user happened to pick;
+ * feeding `biquad` the coefficients from `eq.ts` (the exact mirror of
+ * `chroma_types::eq`, which is what the mixer runs) makes all five kinds agree
+ * by construction, and measures back to < 0.0001 dB for every one of them.
+ *
+ * **Why the `aresample`.** `biquad` takes literal coefficients, so they have to
+ * be computed for a KNOWN rate — and this compiler cannot know what rate a
+ * given source decodes at. Pinning `EQ_DESIGN_SAMPLE_RATE` (48 kHz, at or above
+ * every consumer source rate, so never a downsample) is what makes the export
+ * deterministic for a given band set instead of source-dependent. It is emitted
+ * only for a clip that actually has an active band, so nothing else in the
+ * export changes. See `chroma_types::eq`'s module doc for the measured cost of
+ * the live mixer designing at a device rate of 44.1 kHz instead (≤ 0.036 dB).
+ */
+export function eqFilterChain(
+  bands: readonly EqBand[] | undefined | null,
+  sampleRate: number = EQ_DESIGN_SAMPLE_RATE,
+): string | null {
+  if (!bands || bands.length === 0) return null;
+  const nodes: string[] = [];
+  for (const band of bands) {
+    const c = eqBandCoeffs(band, sampleRate);
+    if (!c) continue;
+    // `a0=1` explicitly: the coefficients are already normalised, and ffmpeg's
+    // own default for `a0` happens to be 1 — but stating it keeps the emitted
+    // filter readable as the difference equation it is, rather than relying on
+    // a default matching our normalisation by luck.
+    nodes.push(
+      `biquad=b0=${ffmpegCoeff(c.b0)}:b1=${ffmpegCoeff(c.b1)}:b2=${ffmpegCoeff(c.b2)}` +
+        `:a0=1:a1=${ffmpegCoeff(c.a1)}:a2=${ffmpegCoeff(c.a2)}`,
+    );
+  }
+  if (nodes.length === 0) return null;
+  return [`aresample=${sampleRate}`, ...nodes].join(',');
+}
+
+// --------------------------------------------------------------------------- //
 // atempo — keep a speed-overridden clip's embedded/attached audio in sync
 // --------------------------------------------------------------------------- //
 
@@ -555,7 +644,8 @@ export interface AudioSourceChainArgs {
 }
 
 /**
- * Build one audio source's real filter chain: `atempo` (if sped) → `volume`
+ * Build one audio source's real filter chain: `atempo` (if sped) → the EQ's
+ * `biquad` cascade (D-224, if any band is active) → `volume`
  * (gain × fade × duck, whichever apply — folded into ONE expression/filter,
  * mirroring `chroma_media::audio::SourceEnvelopes::apply`'s own "they
  * multiply, and they share the pass" contract) → `adelay` (placing it at its
@@ -585,6 +675,25 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   if (speed !== 1 && speed > 0) {
     const label = `at${idLabel}`;
     steps.push(`${ref}${atempoFilterChain(speed)}[${label}]`);
+    ref = `[${label}]`;
+    hasFilter = true;
+  }
+
+  // D-224 — the EQ, before every gain stage below, mirroring
+  // `SourceEnvelopes::apply`'s own order (`eq → fade × duck × volume`, then
+  // pan). Not cosmetic: a biquad is linear but time-INVARIANT, so filtering a
+  // signal a fade has already time-varied is a different operation from fading
+  // a filtered one — the two orders genuinely differ, and only this one matches
+  // what the preview plays.
+  //
+  // After `atempo` rather than before it, deliberately: `atempo` preserves
+  // pitch, so a band's frequency means the same thing on either side of it, and
+  // running the EQ afterwards keeps this fragment's own `aresample` the last
+  // word on the rate its coefficients were designed for.
+  const eqChain = eqFilterChain(clip.eq_bands);
+  if (eqChain) {
+    const label = `q${idLabel}`;
+    steps.push(`${ref}${eqChain}[${label}]`);
     ref = `[${label}]`;
     hasFilter = true;
   }

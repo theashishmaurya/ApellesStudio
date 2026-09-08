@@ -8,6 +8,15 @@ import { describe, expect, it } from 'vitest';
 import {
   applyOp,
   audioTrackWithRoom,
+  defaultEqBands,
+  eqBandsForDisplay,
+  eqResponseDb,
+  EQ_BAND_COUNT,
+  EQ_MAX_FREQ_HZ,
+  EQ_MAX_GAIN_DB,
+  EQ_MIN_Q,
+  hasActiveEq,
+  isEqBandActive,
   checkLink,
   clipAt,
   clipFromDraggedMedia,
@@ -34,10 +43,12 @@ import {
   trackDuration,
   trackIndexAfterMove,
   type Clip,
+  type EqBand,
   type Marker,
   type Timeline,
   type Track,
 } from './timeline';
+import { eqFilterChain } from './timelineExportAudio';
 
 function clip(id: string, name: string, overrides: Partial<Clip> = {}): Clip {
   return {
@@ -2571,5 +2582,177 @@ describe('add_marker / remove_marker / set_marker ops (D-222)', () => {
     expect(labelForOp({ kind: 'add_marker', marker: mk('c', 5) }, before)).toBe('Add marker at 5');
     expect(labelForOp({ kind: 'remove_marker', id: 'a' }, before)).toBe('Remove marker "sync"');
     expect(labelForOp({ kind: 'set_marker', id: 'b', patch: { color: 'red' } }, before)).toBe('Edit marker at 90');
+  });
+});
+
+// D-224 — per-clip parametric EQ: the model half (the band type, the clamps,
+// the default strip and the `set_clip_eq` reducer). The DSP itself has its own
+// real-measurement tests in `chroma_types::eq` and, through real ffmpeg, in
+// `timelineExport.ffmpeg.test.ts` — what lives here is everything the EDIT
+// MODEL adds on top: materialisation, partial writes, clamping, and the
+// no-op/identity short-circuits that keep an untouched EQ free.
+describe('per-clip parametric EQ — the model (D-224)', () => {
+  const eqTl = () => tl([clip('a', 'Intro'), clip('b', 'B-roll 1')]);
+
+  it('the default strip is Resolve’s four bands, and every one of them is inert', () => {
+    const bands = defaultEqBands();
+    expect(bands).toHaveLength(EQ_BAND_COUNT);
+    expect(bands.map((b) => b.kind)).toEqual(['low_shelf', 'peak', 'peak', 'high_shelf']);
+    // The property the whole "materialise on first edit" design rests on:
+    // showing (and storing) the strip must change nothing about the sound.
+    expect(bands.every((b) => b.gain_db === 0)).toBe(true);
+    expect(bands.some(isEqBandActive)).toBe(false);
+    expect(hasActiveEq(bands)).toBe(false);
+    expect(eqFilterChain(bands)).toBeNull();
+  });
+
+  it('hands out a fresh copy each time, so one clip’s edit cannot rewrite another’s defaults', () => {
+    const first = defaultEqBands();
+    first[0].gain_db = 12;
+    expect(defaultEqBands()[0].gain_db).toBe(0);
+  });
+
+  it('a clip with no EQ displays the default strip without storing it', () => {
+    const before = eqTl();
+    expect(eqBandsForDisplay(before.tracks[0].clips[0].eq_bands)).toHaveLength(EQ_BAND_COUNT);
+    // …and the clip itself is untouched: opening the Inspector never dirties
+    // the project.
+    expect(before.tracks[0].clips[0].eq_bands).toBeUndefined();
+  });
+
+  it('the first edit MATERIALISES the whole strip, not a lone orphan band', () => {
+    const after = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 2,
+      patch: { gain_db: -6 },
+    });
+    const bands = after.tracks[0].clips[0].eq_bands;
+    expect(bands).toHaveLength(EQ_BAND_COUNT);
+    expect(bands?.[2].gain_db).toBe(-6);
+    // The band it edited kept its own default frequency and kind — a partial
+    // write must not restate anything it was not given.
+    expect(bands?.[2].kind).toBe('peak');
+    expect(bands?.[2].freq_hz).toBe(2500);
+    // …and the other three are still the untouched defaults.
+    expect(bands?.filter((b) => b.gain_db !== 0)).toHaveLength(1);
+    // The neighbouring clip is completely unaffected.
+    expect(after.tracks[0].clips[1].eq_bands).toBeUndefined();
+  });
+
+  it('patches ONE field at a time, leaving every other field on that band alone', () => {
+    let t = applyOp(eqTl(), { kind: 'set_clip_eq', track: 0, clip: 0, band: 0, patch: { kind: 'high_pass' } });
+    t = applyOp(t, { kind: 'set_clip_eq', track: 0, clip: 0, band: 0, patch: { freq_hz: 85 } });
+    t = applyOp(t, { kind: 'set_clip_eq', track: 0, clip: 0, band: 0, patch: { q: 1.2 } });
+    const band = t.tracks[0].clips[0].eq_bands?.[0];
+    expect(band).toEqual({ kind: 'high_pass', freq_hz: 85, gain_db: 0, q: 1.2, enabled: true });
+    // A high-pass has no gain to zero, so it IS active at 0 dB — the whole
+    // reason `is_active` asks the kind rather than just the gain.
+    expect(isEqBandActive(band as EqBand)).toBe(true);
+    expect(hasActiveEq(t.tracks[0].clips[0].eq_bands)).toBe(true);
+  });
+
+  it('clamps every field into its documented range on the way in', () => {
+    const t = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 1,
+      patch: { freq_hz: 99_999, gain_db: 900, q: -3 },
+    });
+    const band = t.tracks[0].clips[0].eq_bands?.[1];
+    expect(band?.freq_hz).toBe(EQ_MAX_FREQ_HZ);
+    expect(band?.gain_db).toBe(EQ_MAX_GAIN_DB);
+    expect(band?.q).toBe(EQ_MIN_Q);
+    // NaN (a cleared numeric input) falls back to the field's default rather
+    // than reaching a filter, where one NaN sample poisons every sample after.
+    const nan = applyOp(t, {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 1,
+      patch: { freq_hz: Number.NaN },
+    });
+    expect(nan.tracks[0].clips[0].eq_bands?.[1].freq_hz).toBe(1000);
+  });
+
+  it('a disabled band keeps its settings and stops doing anything', () => {
+    let t = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 1,
+      patch: { gain_db: 9, freq_hz: 700 },
+    });
+    expect(hasActiveEq(t.tracks[0].clips[0].eq_bands)).toBe(true);
+    t = applyOp(t, { kind: 'set_clip_eq', track: 0, clip: 0, band: 1, patch: { enabled: false } });
+    expect(hasActiveEq(t.tracks[0].clips[0].eq_bands)).toBe(false);
+    expect(t.tracks[0].clips[0].eq_bands?.[1].gain_db).toBe(9);
+    expect(t.tracks[0].clips[0].eq_bands?.[1].freq_hz).toBe(700);
+  });
+
+  it('clear removes the key entirely, so the clip serialises as it did pre-D-224', () => {
+    const withEq = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 0,
+      patch: { gain_db: 6 },
+    });
+    const cleared = applyOp(withEq, { kind: 'set_clip_eq', track: 0, clip: 0, clear: true });
+    // Not `[]` — an empty array would serialise as a real `"eq_bands": []`
+    // where the Rust field's own `skip_serializing_if` writes nothing at all.
+    expect('eq_bands' in cleared.tracks[0].clips[0]).toBe(false);
+    expect(JSON.stringify(cleared)).not.toContain('eq_bands');
+  });
+
+  it('a no-op edit returns the SAME timeline, so it pushes no undo entry', () => {
+    const withEq = applyOp(eqTl(), {
+      kind: 'set_clip_eq',
+      track: 0,
+      clip: 0,
+      band: 0,
+      patch: { gain_db: 6 },
+    });
+    // Re-typing the value it already has.
+    expect(applyOp(withEq, { kind: 'set_clip_eq', track: 0, clip: 0, band: 0, patch: { gain_db: 6 } })).toBe(
+      withEq,
+    );
+    // …and clearing a clip that already has no EQ.
+    const plain = eqTl();
+    expect(applyOp(plain, { kind: 'set_clip_eq', track: 0, clip: 0, clear: true })).toBe(plain);
+  });
+
+  it('refuses an out-of-range band, a missing band, and a locked track', () => {
+    const plain = eqTl();
+    expect(applyOp(plain, { kind: 'set_clip_eq', track: 0, clip: 0, band: 9, patch: { gain_db: 3 } })).toBe(plain);
+    expect(applyOp(plain, { kind: 'set_clip_eq', track: 0, clip: 0, band: -1, patch: { gain_db: 3 } })).toBe(plain);
+    expect(applyOp(plain, { kind: 'set_clip_eq', track: 0, clip: 0, patch: { gain_db: 3 } })).toBe(plain);
+    const locked: Timeline = { ...plain, tracks: [{ ...plain.tracks[0], locked: true }] };
+    expect(applyOp(locked, { kind: 'set_clip_eq', track: 0, clip: 0, band: 0, patch: { gain_db: 3 } })).toBe(locked);
+  });
+
+  it('names the band (and the clear) in its undo label', () => {
+    const before = eqTl();
+    expect(labelForOp({ kind: 'set_clip_eq', track: 0, clip: 1, band: 2, patch: { gain_db: 3 } }, before)).toBe(
+      'EQ band 3 on "B-roll 1"',
+    );
+    expect(labelForOp({ kind: 'set_clip_eq', track: 0, clip: 0, clear: true }, before)).toBe('Clear "Intro" EQ');
+  });
+
+  it('the response curve is the dB SUM of the active bands, and ignores the inactive ones', () => {
+    const bands: EqBand[] = [
+      { kind: 'peak', freq_hz: 1000, gain_db: 6, q: 1, enabled: true },
+      { kind: 'peak', freq_hz: 1000, gain_db: -2, q: 1, enabled: true },
+      // Loud, and switched off — must contribute exactly nothing.
+      { kind: 'peak', freq_hz: 1000, gain_db: 18, q: 1, enabled: false },
+    ];
+    expect(eqResponseDb(bands, 1000)).toBeCloseTo(4, 9);
+    // A bell IS its gain at its own centre, and flat far away — the cookbook's
+    // own defining property, mirrored here from `chroma_types::eq`.
+    expect(eqResponseDb([bands[0]], 1000)).toBeCloseTo(6, 9);
+    expect(Math.abs(eqResponseDb([bands[0]], 20))).toBeLessThan(0.05);
+    expect(eqResponseDb(undefined, 1000)).toBe(0);
   });
 });
