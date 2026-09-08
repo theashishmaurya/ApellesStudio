@@ -23022,7 +23022,7 @@ signature is unchanged, so `useEditorControl.ts` needed nothing).
 
 ---
 
-## D-247 — Where the smart trim tool announces itself: at the pointer, on the clip, and only where the reference actually puts it
+## D-250 — Where the smart trim tool announces itself: at the pointer, on the clip, and only where the reference actually puts it
 
 **decided (2026-09-08)**
 

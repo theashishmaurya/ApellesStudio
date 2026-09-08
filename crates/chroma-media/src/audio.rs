@@ -453,7 +453,7 @@ pub(crate) fn peaks_from_samples(samples: &[f32], bucket_count: usize) -> Vec<(f
 }
 
 /// [`peaks_from_samples`], but over a fixed SPAN OF TIME rather than over
-/// whatever samples happened to decode — the difference B-115 was (D-232).
+/// whatever samples happened to decode — the difference B-120 was (D-232).
 ///
 /// **The defect this exists to prevent.** `peaks_from_samples` divides the
 /// samples it is given into `bucket_count` equal groups, so it maps sample 0 to
@@ -2045,7 +2045,7 @@ pub async fn waveform(
 /// enough samples per bucket to be representative, not a fixed output rate.
 /// Returns `(samples, that native rate)`; **the returned span can be shorter
 /// than `duration_secs`** when the source ends first, which is why the rate
-/// comes back with it — see [`envelope_over`] (B-115).
+/// comes back with it — see [`envelope_over`] (B-120).
 /// A one-shot batch read for [`waveform`]; **not** shared with
 /// [`run_session`] despite overlapping symphonia setup (open → probe → find
 /// audio track → make decoder → seek) — deliberately duplicated rather than
@@ -2163,7 +2163,7 @@ fn decode_mono_range(
         }
     }
 
-    // The rate comes back with the samples (B-115): `mono.len()` alone cannot
+    // The rate comes back with the samples (B-120): `mono.len()` alone cannot
     // say how many SECONDS decoded, and how many seconds decoded is exactly
     // what `envelope_over` needs to know in order not to stretch a short read
     // across the whole requested window.
@@ -4721,7 +4721,7 @@ mod tests {
         assert_eq!(peaks_from_samples(&[0.1, 0.2], 0), Vec::new());
     }
 
-    // --- B-115 — a short read must not be time-stretched -------------------
+    // --- B-120 — a short read must not be time-stretched -------------------
 
     /// The unit statement of the defect: 1 s of audio asked for as a 4 s window
     /// must occupy the FIRST quarter of the buckets and leave the rest silent.
@@ -4846,7 +4846,7 @@ mod tests {
             "the tone is at source seconds 1..2, so the loud band must run from \
              bucket ~10 to ~20 of an 8 s / {buckets}-bucket window — got {first}..{last} \
              ({:.2}s..{:.2}s). A band ending near bucket 40 is the short read stretched \
-             to fill the window (B-115).",
+             to fill the window (B-120).",
             at(first),
             at(last),
         );

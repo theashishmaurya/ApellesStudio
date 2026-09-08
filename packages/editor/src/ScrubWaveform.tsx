@@ -33,7 +33,7 @@
  * content pane, so the resizable-panes rule (CLAUDE.md) does not apply to it —
  * there is nothing more of it to show.
  *
- * **It says WHY it is empty (B-115).** The owner opened this on a reel of
+ * **It says WHY it is empty (B-120).** The owner opened this on a reel of
  * screen recordings that genuinely have no audio stream and reported it as
  * "idk what is this audio waveform but it seems broken" — and they were right
  * to: a flat centre line is what this drew for "silent here", for "still
@@ -76,7 +76,7 @@ export function ScrubWaveform() {
   const window_ = source ? waveformWindowAt(source, fps) : null;
 
   // Why the strip is empty, in the user's words — or `null` while peaks are
-  // still in flight, which must NOT claim silence (B-115). `peaks` is `null`
+  // still in flight, which must NOT claim silence (B-120). `peaks` is `null`
   // until a fetch resolves and `[]` when the backend really had nothing:
   // `waveform_peaks` returns an empty envelope for a source whose
   // `VideoInfo::has_audio` is false, which is exactly the "this screen

@@ -87,7 +87,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     chroma_audio_scrub_end: () => undefined,
     chroma_audio_waveform: (args: Record<string, unknown> | undefined) => {
       invoked.waveform.push(args ?? {});
-      // B-115 — a source with no audio stream comes back as an EMPTY envelope,
+      // B-120 — a source with no audio stream comes back as an EMPTY envelope,
       // not as an error and not as zeroes: that is `waveform_peaks`'s real
       // contract for `!VideoInfo::has_audio`. One fixture path opts into it so
       // the strip's "why am I empty" branch is driven by the real shape.
@@ -214,7 +214,7 @@ function strip(): HTMLElement | null {
   return (mounted?.container.querySelector('[data-scrub-waveform]') as HTMLElement | null) ?? null;
 }
 
-/** B-115 — the strip's own explanation of why it is empty, or `null` when it
+/** B-120 — the strip's own explanation of why it is empty, or `null` when it
  *  is drawing real peaks (or still fetching them). */
 function emptyLabel(): string | null {
   const el = mounted?.container.querySelector('[data-scrub-waveform-empty]');
@@ -297,7 +297,7 @@ describe('the viewer waveform strip (D-232)', () => {
     expect(strip()).toBeNull();
   });
 
-  /** **B-115 — "idk what is this audio waveform but it seems broken."**
+  /** **B-120 — "idk what is this audio waveform but it seems broken."**
    *
    *  The owner opened this strip on a reel of screen recordings that genuinely
    *  have no audio stream, and read the flat centre line as a bug. They were

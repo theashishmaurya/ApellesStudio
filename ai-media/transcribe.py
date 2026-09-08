@@ -90,7 +90,7 @@ def extract_audio(video_path: str) -> str:
     """16 kHz mono WAV in a temp file — whisper's own native input rate, so the
     model never has to resample.
 
-    **Raises [`UserFacingError`] rather than `CalledProcessError`** (B-114).
+    **Raises [`UserFacingError`] rather than `CalledProcessError`** (B-119).
     A source with no audio stream is not an exceptional condition — a screen
     recording captured without audio is an ordinary file to drop on a timeline —
     but `ffmpeg` can only report it as a failed run, and before this the

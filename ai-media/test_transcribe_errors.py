@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""B-114 — a source with no audio must fail with a SENTENCE, not a subprocess dump.
+"""B-119 — a source with no audio must fail with a SENTENCE, not a subprocess dump.
 
 What this checks, on a real file synthesized with `ffmpeg` at run time (the same
 "generate the fixture, don't commit a binary" convention `chroma-media`'s own
@@ -139,7 +139,7 @@ def main() -> int:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    print("all B-114 transcript-error checks passed")
+    print("all B-119 transcript-error checks passed")
     return 0
 
 

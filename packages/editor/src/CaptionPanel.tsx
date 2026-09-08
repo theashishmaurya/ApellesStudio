@@ -238,7 +238,7 @@ export function CaptionPanel() {
 
   return (
     <Popover open={open_} onOpenChange={setOpen}>
-      {/* B-116 — labelled "Captions", not "Subtitles", and it says it opens
+      {/* B-121 — labelled "Captions", not "Subtitles", and it says it opens
           something. D-243 replaced D-229's straight-to-a-file-picker
           "Subtitles" button with this panel but kept that button's exact
           label, icon and flat styling, so from the toolbar the styled preset

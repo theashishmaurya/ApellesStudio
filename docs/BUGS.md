@@ -1646,7 +1646,7 @@ status: fixed (2026-09-08, in D-236) · severity: medium (a real, visible export
 
 - **why it is a real bug and not just a D-236 design note:** it is wrong today, on the pre-D-236 flat `speedOverrides` path, in a shipped export, with no ramp involved. D-236 is what surfaced it, not what caused it.
 
-## B-114 — "Captions from Transcript" on a clip with no audio showed the raw `CalledProcessError` from an ffmpeg subprocess, argv and temp path and all
+## B-119 — "Captions from Transcript" on a clip with no audio showed the raw `CalledProcessError` from an ffmpeg subprocess, argv and temp path and all
 
 status: fixed (2026-09-08) · severity: medium (not a wrong pixel — an unusable error. The one thing the message did not say is the one thing that was wrong, and it names a `/tmp` path the user has never seen) · area: `app/src-tauri/src/chroma/media_understanding.rs`, `ai-media/transcribe.py`, `ai-media/server.py`, `ai-media/errors.py`
 
@@ -1672,7 +1672,7 @@ status: fixed (2026-09-08) · severity: medium (not a wrong pixel — an unusabl
 
 - **regression tests:** 3 in `app/src-tauri/src/chroma/media_understanding.rs` against real ffmpeg-synthesized files (a video-only `-an` clip is refused, in words, with no `CalledProcessError` / `exit status` / `ffmpeg` / `/tmp` anywhere in the message; a clip with a real `sine` audio stream is *not* refused; an unprobeable path is not refused), and `ai-media/test_transcribe_errors.py`, a runnable script in `ai/test_depth_track.py`'s convention which additionally proves the message survives `_run_job` **verbatim** and that an ordinary `KeyError` still keeps its class name. All synthesize their own fixtures via `ffmpeg` and skip cleanly when it is absent.
 
-## B-115 — the waveform envelope was time-stretched whenever the peaks request ran past the end of the file, so the viewer's scrub strip drew the sound in the wrong place
+## B-120 — the waveform envelope was time-stretched whenever the peaks request ran past the end of the file, so the viewer's scrub strip drew the sound in the wrong place
 
 status: fixed (2026-09-08) · severity: high (the waveform is a *positioning* aid; one that points at the wrong second is worse than none. On any source shorter than 12 s — which the owner's whole reel is — the scrub strip was wrong everywhere, and on every source it was wrong in its final tile) · area: `crates/chroma-media/src/audio.rs` (`cached_peaks`, `decode_mono_range`, new `envelope_over`)
 
@@ -1692,11 +1692,11 @@ status: fixed (2026-09-08) · severity: high (the waveform is a *positioning* ai
 
 - **regression tests:** 3 in `crates/chroma-media/src/audio.rs`. The real-media one above fails against the pre-fix code with exactly the 20..40 measurement quoted here (verified by reverting the one call and re-running), plus two unit tests for `envelope_over`'s head-and-pad behaviour and its degenerate cases (empty samples, zero buckets, unknown rate → falls back rather than inventing a coverage number).
 
-- **the other half of what the owner saw, which was NOT this bug.** Their reel's sources genuinely have no audio stream (the same fact behind B-114), and for those the strip drew a flat centre line — correctly. But it drew the *same* flat line for "still fetching" and for "no source resolved here", so the one state a user must be able to tell apart from a defect was indistinguishable from one. `ScrubWaveform` now labels it: "This clip has no audio" / "No audio at the playhead", and **no label at all** while peaks are in flight, so a slow fetch can never claim silence. Pinned by a real-DOM test that drives all three states.
+- **the other half of what the owner saw, which was NOT this bug.** Their reel's sources genuinely have no audio stream (the same fact behind B-119), and for those the strip drew a flat centre line — correctly. But it drew the *same* flat line for "still fetching" and for "no source resolved here", so the one state a user must be able to tell apart from a defect was indistinguishable from one. `ScrubWaveform` now labels it: "This clip has no audio" / "No audio at the playhead", and **no label at all** while peaks are in flight, so a slow fetch can never claim silence. Pinned by a real-DOM test that drives all three states.
 
 - **honest limit:** the owner's exact screenshot could not be reproduced without the running app, which an agent does not have. What is claimed here is what was measured: a real, provable positioning error in the envelope, fixed, plus an ambiguity in how emptiness was drawn, removed. Whether the strip now reads correctly to their eye on that project is theirs to confirm.
 
-## B-116 — the Captions panel was correctly wired, correctly rendering, and unfindable: its button still said "Subtitles", exactly like the file-picker it had replaced
+## B-121 — the Captions panel was correctly wired, correctly rendering, and unfindable: its button still said "Subtitles", exactly like the file-picker it had replaced
 
 status: fixed (2026-09-08) · severity: low (nothing is broken — a shipped feature is simply unreachable in practice, which is the same outcome) · area: `packages/editor/src/CaptionPanel.tsx`
 

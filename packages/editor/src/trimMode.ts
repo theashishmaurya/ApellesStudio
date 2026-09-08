@@ -276,7 +276,7 @@ export function trimModeLabel(mode: TrimMode): string | null {
 
 /**
  * What the mode about to fire actually DOES to the timeline, in one clause
- * (D-247). `null` for the two unarmed modes, exactly as [`trimModeLabel`].
+ * (D-250). `null` for the two unarmed modes, exactly as [`trimModeLabel`].
  *
  * A name alone is not an affordance for someone who does not already know
  * these four edits apart — "Slide" and "Slip" in particular are a pair whose
@@ -306,7 +306,7 @@ export function trimModeHint(mode: TrimMode): string | null {
 }
 
 /**
- * The `cursor` a clip shows while armed (D-247) — the half of Resolve's own
+ * The `cursor` a clip shows while armed (D-250) — the half of Resolve's own
  * affordance that Chroma CAN reproduce.
  *
  * The reference's rule is that the signal lives at the pointer: "You'll see the
@@ -336,7 +336,7 @@ export function trimModeCursor(mode: TrimMode): string {
   }
 }
 
-/** The one sentence that teaches the arm key exists at all (D-247).
+/** The one sentence that teaches the arm key exists at all (D-250).
  *
  *  D-235 shipped four real edits reachable ONLY by already knowing to hold
  *  Alt/Option, with no on-screen sign anywhere that the key does anything —

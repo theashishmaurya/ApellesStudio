@@ -416,7 +416,7 @@ const ZOOM_STEP = 1.2;
 const ROW_HEIGHT = 52;
 /** how long a rippled clip's highlight stays visible (ms) */
 const RIPPLE_FLASH_MS = 550;
-/** D-247 — how far below-right of the pointer the armed trim-mode badge sits.
+/** D-250 — how far below-right of the pointer the armed trim-mode badge sits.
  *  Clear of a standard macOS cursor's own ~16px glyph, so the badge never
  *  covers the thing it is annotating. */
 const TRIM_BADGE_OFFSET_PX = 16;
@@ -1000,7 +1000,7 @@ function ClipBody({
       // same pair, but it is not exposed on the DOM node in any documented way.
       data-chroma-track={track}
       data-chroma-clip-id={clipId}
-      // D-247 — where the smart trim tool is announced when it is NOT armed.
+      // D-250 — where the smart trim tool is announced when it is NOT armed.
       // D-235's four edits are reachable only by already knowing to hold
       // Alt/Option, and its readout appears only once that key is down, so
       // nothing on this surface ever said the key does anything — the owner
@@ -1306,7 +1306,7 @@ export function TimelinePane() {
     // only dispatch on a real change — D-083's per-tick discipline applies to
     // key repeat exactly as it does to pointer moves.
     //
-    // D-247 — disarming clears the resolved mode too, not just the arm.
+    // D-250 — disarming clears the resolved mode too, not just the arm.
     // Caught by that pass's own test 16, on real DOM: the mode is only ever
     // recomputed by a pointer MOVE, so a stale one survived a keyup, and once
     // the mode drove a `cursor` (rather than only a readout that hid itself
@@ -1402,7 +1402,7 @@ export function TimelinePane() {
   // handler returns on a boolean before touching the DOM unless Alt is
   // actually held, and `setHoverTrimMode` is change-gated so a pointer
   // sweeping a clip's body dispatches once, not once per pixel.
-  // D-247 — the badge that follows the pointer. Its POSITION is written
+  // D-250 — the badge that follows the pointer. Its POSITION is written
   // straight to the node, never through state: this runs on every pointermove
   // of an armed hover, and a `setState` per pixel would re-render a component
   // that renders every clip, every filmstrip and every waveform on the
@@ -3636,7 +3636,7 @@ export function TimelinePane() {
             ref={editAreaRef}
             data-bench-id="timeline-edit-area"
             className="relative h-full overflow-hidden"
-            // D-247 — the cursor half of Resolve's own context-sensitive trim
+            // D-250 — the cursor half of Resolve's own context-sensitive trim
             // affordance ("You'll see the cursor change to different types of
             // trim tools as you move your mouse"), with the standard keywords
             // rather than the four bitmaps `trim.jpg` shows. On the AREA, not
@@ -3744,7 +3744,7 @@ export function TimelinePane() {
               onChange={() => false}
               onActionResizeEnd={onActionResizeEndCb}
             />
-            {/* D-247 — the armed trim mode, named AT THE POINTER. Resolve's own
+            {/* D-250 — the armed trim mode, named AT THE POINTER. Resolve's own
                 copy for this feature is explicit that the signal belongs there
                 ("You'll see the cursor change to different types of trim tools
                 as you move your mouse"); D-235 could not ship its four cursor

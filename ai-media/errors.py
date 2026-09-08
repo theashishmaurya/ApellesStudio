@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Errors whose message is already written for a human (B-114).
+"""Errors whose message is already written for a human (B-119).
 
 **What it is:** one exception base class, shared by this sidecar's two
 capability modules and understood by `server.py`'s job runner.

@@ -5,21 +5,21 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-08** — **A pass over four things the owner hit editing live:
-  B-114, B-115, B-116 and D-247.** *B-114* — "Captions from Transcript" on a
+  B-119, B-120, B-121 and D-250.** *B-119* — "Captions from Transcript" on a
   source with no audio showed the raw `CalledProcessError` argv from the
   sidecar's ffmpeg call; `chroma_transcribe` now refuses up front through the
   same `VideoInfo::has_audio` probe the rest of the app uses, and `ai-media/`
   grew a `UserFacingError` so a predicted failure reaches the UI as its
-  sentence instead of its exception class. *B-115* — a real defect behind "idk
+  sentence instead of its exception class. *B-120* — a real defect behind "idk
   what is this audio waveform but it seems broken": a peaks request that
   overran the end of a file had its envelope **time-stretched** to fill the
   requested window (a tone at source seconds 1–2 drawn at 2–4), which hit every
   source shorter than one 12 s scrub tile; `envelope_over` now buckets only
   what decoded and pads the rest with silence, and the strip says *why* it is
   empty instead of drawing one flat line for silence, loading and no-source
-  alike. *B-116* — the D-243 Captions panel was wired and rendering and still
+  alike. *B-121* — the D-243 Captions panel was wired and rendering and still
   unfindable, because its button kept the old "Subtitles" label of the file
-  picker it replaced. *D-247* — D-235's four trim modes are announced at the
+  picker it replaced. *D-250* — D-235's four trim modes are announced at the
   POINTER now (a mode badge with a gloss, plus a standard-keyword cursor swap)
   where Resolve's own copy says the signal belongs, and every clip's tooltip
   finally says the Alt/Option arm key exists at all.

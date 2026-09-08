@@ -109,7 +109,7 @@ function q(selector: string): HTMLElement | null {
 }
 
 describe('the Captions panel', () => {
-  /** B-116 — the panel was correctly wired into the toolbar and correctly
+  /** B-121 — the panel was correctly wired into the toolbar and correctly
    *  rendering, and the owner still could not find the caption styles: its
    *  trigger was labelled "Subtitles", exactly like the D-229 button that went
    *  straight to a file picker and which D-243 replaced. Nothing on the control

@@ -142,7 +142,7 @@ def _run_job(job_id: str, fn) -> None:
     is recorded on the job (so the poller sees a real message) rather than
     raised into a daemon thread where nothing would ever read it.
 
-    B-114 — a `UserFacingError` is recorded as its message ALONE. This string
+    B-119 — a `UserFacingError` is recorded as its message ALONE. This string
     is what the Edit tab's own error line displays verbatim, so the class-name
     prefix below (right for an unexpected `KeyError`, where it is real
     diagnostic information) is exactly wrong for a fault we predicted and wrote

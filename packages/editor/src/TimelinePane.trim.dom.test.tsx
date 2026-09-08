@@ -388,7 +388,7 @@ describe('mode readout — what the editor sees before pressing (D-235)', () => 
 });
 
 // --------------------------------------------------------------------------- //
-// D-247 — the affordance AT THE POINTER, and the unarmed hint that teaches
+// D-250 — the affordance AT THE POINTER, and the unarmed hint that teaches
 // the arm key exists at all
 // --------------------------------------------------------------------------- //
 
@@ -404,7 +404,7 @@ function editArea(): HTMLElement {
   return mounted!.container.querySelector('[data-bench-id="timeline-edit-area"]') as HTMLElement;
 }
 
-describe('pointer-adjacent mode badge (D-247)', () => {
+describe('pointer-adjacent mode badge (D-250)', () => {
   it('13. does not show until the tool is armed AND the pointer is over a clip', async () => {
     const action = bodies()[1].closest('.timeline-editor-action') as HTMLElement;
 
@@ -501,7 +501,7 @@ describe('pointer-adjacent mode badge (D-247)', () => {
     ).not.toBe(near);
 
     // The cursor half of the same affordance: a body mode gets a move cursor,
-    // an edge mode a horizontal resize (D-247 — Resolve's own signal IS the
+    // an edge mode a horizontal resize (D-250 — Resolve's own signal IS the
     // cursor; these are the standard keywords standing in for its bitmaps).
     expect(editArea().style.cursor).toBe('grabbing');
     const right = action.querySelector('.timeline-editor-action-right-stretch') as HTMLElement;

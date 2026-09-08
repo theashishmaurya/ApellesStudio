@@ -19,13 +19,13 @@
 //! which are not necessarily the Colorist's currently-loaded clip.
 //!
 //! The ONE piece of judgement that is not pass-through is [`no_audio_message`]
-//! — B-114's pre-flight refusal for a source that has no audio stream at all.
+//! — B-119's pre-flight refusal for a source that has no audio stream at all.
 //! See its own doc for why the check belongs here and not in the sidecar.
 
 use std::path::Path;
 
 /// `Some(a message written for a human)` when `path` definitely has NO audio
-/// stream, `None` when it has one **or when we could not tell** (B-114).
+/// stream, `None` when it has one **or when we could not tell** (B-119).
 ///
 /// **What this is for.** `ai-media/transcribe.py` extracts a 16 kHz mono WAV
 /// with `ffmpeg` before it hands anything to whisper. On a source with no audio
@@ -74,7 +74,7 @@ pub(crate) fn no_audio_message(path: &str) -> Option<String> {
 /// segment-level timings only, which is not enough to cut to an exact word.
 ///
 /// Refuses up front, with a readable message, when the source has no audio
-/// stream at all — see [`no_audio_message`] (B-114).
+/// stream at all — see [`no_audio_message`] (B-119).
 #[tauri::command]
 pub async fn chroma_transcribe(
     path: String,
@@ -158,7 +158,7 @@ mod tests {
         (status.success() && out.exists()).then_some(out)
     }
 
-    /// B-114 — the whole point: a real file with a real video stream and NO
+    /// B-119 — the whole point: a real file with a real video stream and NO
     /// audio stream must be refused with a sentence, not with the sidecar's
     /// `CalledProcessError: Command ['ffmpeg', …] returned non-zero exit status
     /// 234.` that the owner actually saw in the Edit tab.
