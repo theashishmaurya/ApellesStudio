@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Per-clip parametric EQ (D-224, roadmap 27).** A clip now
+  carries its own multi-band EQ — `Clip::eq_bands`, five real shapes (low/high
+  shelf, bell, high/low pass) with frequency/gain/Q per band, and Resolve's own
+  four-band strip in a new Inspector "EQ" section, built from its own
+  screenshot. The filters are real Audio EQ Cookbook biquads
+  (`chroma_types::eq`), applied per channel with state that survives a chunk
+  boundary in the live mixer, and compiled to ffmpeg's GENERIC `biquad` filter
+  fed the same coefficients in the export — because its own `bass`/`treble`
+  measurably do not implement the cookbook's Q (0.25-0.37 dB off, identified
+  from their impulse response), so agreement is structural rather than hoped
+  for. Applied before the volume/fade/duck gain stages in both engines, an
+  order that genuinely matters because a biquad is time-invariant and a fade is
+  not. **Static, not keyframeable**, and that is the stated decision rather
+  than a gap: ffmpeg's biquad filters parse their parameters once, so an
+  animated EQ cannot be rendered at all. `editor_set_clip_eq` returns the
+  resulting curve, not just what it stored. Proved by a real frequency response
+  measured in BOTH engines against one shared table — a real sine through the
+  real mixer, and real ffmpeg output read with `volumedetect`. The response
+  CURVE UI is explicitly deferred (roadmap 27), not half-built.
 - **2026-09-08** — **Per-clip audio: volume + pan (D-223, roadmap 27).** A clip
   now carries its OWN level and stereo position, independent of its track's
   fader — `Clip::volume` (linear, matching `Track::gain`'s unit) and

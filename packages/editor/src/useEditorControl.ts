@@ -62,7 +62,13 @@ import {
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
   DEFAULT_TITLE_SECONDS,
+  EQ_BAND_KINDS,
+  describeEqBand,
+  eqBandsForDisplay,
+  eqKindUsesGain,
+  eqResponseDb,
   fadePresetName,
+  hasActiveEq,
   gapAt,
   isTextClip,
   MARKER_COLORS,
@@ -76,6 +82,8 @@ import {
   trackIndexAfterMove,
   type FadeCurve,
   type Clip,
+  type EqBand,
+  type EqBandKind,
   type Marker,
   type NewClipFields,
   type TextLayer,
@@ -302,6 +310,13 @@ function timelineDto(tl: Timeline) {
         // above is: a pre-D-223 clip carries neither key.
         volume: c.volume ?? 1,
         pan: c.pan ?? 0,
+        // D-224 — this clip's EQ bands, so an agent can read what is there
+        // before deciding what to change, and `eqActive` so it can tell a
+        // materialised-but-flat four-band strip (which does NOTHING) from a
+        // real filter without re-deriving `is_active` itself. `[]` for a clip
+        // with no EQ, defaulted here the same way every field above is.
+        eqBands: c.eq_bands ?? [],
+        eqActive: hasActiveEq(c.eq_bands),
         // D-211 — `null` for an ordinary media clip; the whole text layer for
         // a title, so a caller can read back what it wrote without a second
         // round trip and can tell the two kinds of clip apart from this one
@@ -379,6 +394,18 @@ const thrownMessage = (e: any): string => String(e?.message || e);
  *  brief reload a project *switch* triggers: telling it to open the project
  *  it just opened. The store already distinguishes the three real cases
  *  (`openProjectKey`/`status`), so say which one it is. */
+/** D-224 — the frequencies `editor_set_clip_eq` reports its resulting curve
+ *  at: the standard decade/half-decade grid an EQ is actually read on, and the
+ *  same axis labels Resolve's own Clip Equalizer graph carries
+ *  (`scratch/resolve-reference/soundtrack.jpg`: 62 · 250 · 1K · 4K · 16K),
+ *  extended at the bottom so a high-pass's own effect is visible.
+ *
+ *  Reported because an agent cannot otherwise tell what it did: "I set band 2
+ *  to −6 dB at 950 Hz" says nothing about the CURVE, which is the sum of every
+ *  band. This is the same "return the measurement, for free" contract the
+ *  grading tools hold to. */
+const EQ_REPORT_FREQS = [60, 120, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000] as const;
+
 function noTimeline(): { error: string } {
   const s = useEditorTimelineStore.getState();
   if (s.openProjectKey === null) return { error: 'no timeline — open a project first' };
@@ -1315,6 +1342,121 @@ export function useEditorControl(): void {
           trackGain: found.tr.gain ?? 1,
           note: 'clip volume multiplies with the track gain, the clip fade and any duck — it does not replace them',
         };
+      },
+
+      // ---- per-clip parametric EQ (D-224) -------------------------------- //
+      //
+      // Its own op rather than more fields on `editor_set_clip_audio`, for
+      // that tool's own reason applied one level further: an EQ is not a
+      // level, it is four bands × four controls, and folding sixteen optional
+      // parameters into a two-parameter level tool would make BOTH unreadable.
+      // One BAND per call, every field independently optional, exactly the
+      // partial-write shape `editor_set_clip_audio` established.
+      editor_set_clip_eq: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+
+        const report = (note: string) => {
+          const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+          const bands = after?.eq_bands ?? [];
+          return {
+            ok: true,
+            track: found.track,
+            clip: found.clip,
+            name: after?.name ?? found.c.name,
+            // What was actually STORED — every field is clamped on the way in
+            // (20 Hz…20 kHz, ±24 dB, Q 0.1…20), so a caller should read these
+            // rather than assume its request landed verbatim.
+            bands,
+            summary: bands.map(describeEqBand),
+            // Whether ANY band is doing something. A four-band strip whose
+            // gains are all 0 dB is completely inert, and an agent that could
+            // not tell that apart from a real filter would happily report
+            // "EQ applied" for a no-op.
+            eqActive: hasActiveEq(bands),
+            // The real curve at the frequencies an editor actually reasons
+            // about, so a caller can check its own move landed without
+            // re-implementing a biquad. dB, at the export's own design rate.
+            responseDb: EQ_REPORT_FREQS.map((f) => ({
+              hz: f,
+              db: Number(eqResponseDb(bands, f).toFixed(3)),
+            })),
+            note,
+          };
+        };
+
+        if (a?.clear === true) {
+          useEditorTimelineStore.getState().applyOp({
+            kind: 'set_clip_eq',
+            track: found.track,
+            clip: found.clip,
+            clear: true,
+          });
+          return report('EQ removed — this clip is unfiltered again');
+        }
+
+        const band = Math.round(Number(a?.band));
+        if (!Number.isFinite(band) || band < 0) {
+          return { error: 'band must be a 0-based band index (or pass clear: true to remove the EQ)' };
+        }
+        // The strip a clip with no EQ yet is ABOUT to get, so an out-of-range
+        // index is reported against the real band count rather than against 0.
+        const bandCount = eqBandsForDisplay(found.c.eq_bands).length;
+        if (band >= bandCount) {
+          return { error: `no band ${band} (0..${bandCount - 1})` };
+        }
+
+        const patch: Partial<EqBand> = {};
+        if (a?.kind != null) {
+          const kind = String(a.kind) as EqBandKind;
+          if (!EQ_BAND_KINDS.includes(kind)) {
+            return { error: `kind must be one of ${EQ_BAND_KINDS.join(', ')}, got ${String(a.kind)}` };
+          }
+          patch.kind = kind;
+        }
+        // Rejected rather than coerced when present and unusable, so a typo is
+        // reported instead of silently becoming a 0 Hz corner.
+        for (const [key, raw] of [
+          ['freq_hz', a?.freq_hz],
+          ['gain_db', a?.gain_db],
+          ['q', a?.q],
+        ] as const) {
+          if (raw == null) continue;
+          const n = Number(raw);
+          if (!Number.isFinite(n)) {
+            return { error: `${key} must be a finite number, got ${String(raw)}` };
+          }
+          patch[key] = n;
+        }
+        if (a?.enabled != null) patch.enabled = a.enabled !== false;
+        if (Object.keys(patch).length === 0) {
+          return { error: 'set at least one of kind, freq_hz, gain_db, q, enabled — or pass clear: true' };
+        }
+
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_eq',
+          track: found.track,
+          clip: found.clip,
+          band,
+          patch,
+        });
+
+        const stored = useEditorTimelineStore
+          .getState()
+          .timeline?.tracks[found.track]?.clips[found.clip]?.eq_bands?.[band];
+        // A band whose kind has no gain (high/low pass) ignores `gain_db`
+        // entirely — said here rather than left for the caller to notice that
+        // its requested boost changed nothing.
+        const gainIgnored =
+          stored != null && patch.gain_db !== undefined && !eqKindUsesGain(stored.kind);
+        return report(
+          gainIgnored
+            ? `band ${band + 1} is a ${stored?.kind} — it has no gain, so gain_db was stored but does nothing`
+            : 'the EQ applies before this clip’s volume, fade and duck, in the preview and the render alike',
+        );
       },
 
       editor_set_track_duck: (a) => {

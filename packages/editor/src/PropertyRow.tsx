@@ -70,13 +70,38 @@ export interface PropertyState {
   nextFrame: number | null;
 }
 
+/** A [`PropertyState`] for a property this app deliberately does NOT keyframe
+ *  — D-224's EQ band fields, whose static-only-ness is a stated design call
+ *  (ffmpeg's biquad filters parse their parameters once, so an animated EQ is
+ *  not expressible in the export at all, and a preview that did what the
+ *  export cannot is the defect class this repo keeps closing). The value, and
+ *  every keyframe flag at rest.
+ *
+ *  Paired with **omitting** `onKeyframeToggle`/`onKeyframeNav`, which is what
+ *  makes the row render with no diamond and no nav arrows rather than with
+ *  three dead ones. A static row still wants everything else this component
+ *  already gets right — the label/field layout, the disabled handling, and its
+ *  own reset — which is precisely why it reuses this row instead of growing a
+ *  second near-identical one, this file's own reason for existing. */
+export function staticPropertyState(value: number): PropertyState {
+  return { value, animated: false, keyedHere: false, prevFrame: null, nextFrame: null };
+}
+
 /** One Transform/Crop-shaped row: label, value field, that property's own
  *  keyframe nav + stopwatch diamond, and its own reset (D-208).
  *
  *  `TParam` is whatever the caller's own property-name type is
- *  (`ClipTransformParam` for `ClipInspectorPanel.tsx` today) — this
- *  component never inspects the value, only passes it back to the three
- *  callbacks, so it stays correct for a param type it has never seen. */
+ *  (`ClipTransformParam` for the Transform/Crop/Audio rows, an EQ band's own
+ *  field name for D-224's) — this component never inspects the value, only
+ *  passes it back to the callbacks, so it stays correct for a param type it
+ *  has never seen.
+ *
+ *  **The keyframe controls are optional** (D-224): pass neither
+ *  `onKeyframeToggle` nor `onKeyframeNav` and the `<`/diamond/`>` trio is not
+ *  rendered at all, leaving a plain label + field + reset row. That is for a
+ *  property that genuinely cannot be animated — three permanently-disabled
+ *  buttons would advertise an affordance that does not exist. `onReset` stays
+ *  required either way: every property here has a rest value. */
 export function PropertyRow<TParam extends string>({
   label,
   param,
@@ -98,10 +123,14 @@ export function PropertyRow<TParam extends string>({
   max?: number;
   disabled: boolean;
   onChange: (value: number) => void;
-  onKeyframeToggle: (param: TParam) => void;
-  onKeyframeNav: (param: TParam, dir: -1 | 1) => void;
+  onKeyframeToggle?: (param: TParam) => void;
+  onKeyframeNav?: (param: TParam, dir: -1 | 1) => void;
   onReset: (param: TParam) => void;
 }) {
+  // Both together or neither — a row with nav arrows but no diamond (or the
+  // reverse) is not a state any caller wants, and this keeps the three buttons
+  // one render decision rather than three independent ones.
+  const keyframeable = !!onKeyframeToggle && !!onKeyframeNav;
   return (
     <div className={row}>
       {/* The label still really labels the input (clicking it focuses the
@@ -122,53 +151,57 @@ export function PropertyRow<TParam extends string>({
         />
       </label>
       <div className="flex shrink-0 items-center">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled || state.prevFrame === null}
-          onClick={() => onKeyframeNav(param, -1)}
-          title={`Go to the previous ${label} keyframe`}
-          aria-label={`Previous ${label} keyframe`}
-        >
-          <ChevronLeft size={12} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled}
-          // Animated AND a key right here reads at full strength; animated
-          // but between keys is dimmed. That is the whole reason `<`/`>`
-          // mean anything — without it there is no way to tell, from the
-          // row, whether the playhead is sitting on one of this property's
-          // keys or between two of them.
-          className={
-            state.animated ? (state.keyedHere ? 'text-accent' : 'text-accent/50') : 'text-text-secondary'
-          }
-          onClick={() => onKeyframeToggle(param)}
-          title={
-            state.animated
-              ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
-                (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
-              : `Animate ${label} (keyframes it at the playhead)`
-          }
-          aria-label={`Toggle ${label} keyframes`}
-          aria-pressed={state.animated}
-        >
-          {/* Filled = this property is animated, hollow = static — the same
-              Diamond-plus-fill convention `RelightPanel.tsx` and this
-              panel's own Keyframes section already use. */}
-          <Diamond size={11} fill={state.animated ? 'currentColor' : 'none'} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={disabled || state.nextFrame === null}
-          onClick={() => onKeyframeNav(param, 1)}
-          title={`Go to the next ${label} keyframe`}
-          aria-label={`Next ${label} keyframe`}
-        >
-          <ChevronRight size={12} />
-        </Button>
+        {keyframeable && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={disabled || state.prevFrame === null}
+              onClick={() => onKeyframeNav?.(param, -1)}
+              title={`Go to the previous ${label} keyframe`}
+              aria-label={`Previous ${label} keyframe`}
+            >
+              <ChevronLeft size={12} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={disabled}
+              // Animated AND a key right here reads at full strength; animated
+              // but between keys is dimmed. That is the whole reason `<`/`>`
+              // mean anything — without it there is no way to tell, from the
+              // row, whether the playhead is sitting on one of this property's
+              // keys or between two of them.
+              className={
+                state.animated ? (state.keyedHere ? 'text-accent' : 'text-accent/50') : 'text-text-secondary'
+              }
+              onClick={() => onKeyframeToggle?.(param)}
+              title={
+                state.animated
+                  ? `Stop animating ${label} (removes its keyframes, holds its current value)` +
+                    (state.keyedHere ? ' — keyframed at the playhead' : ' — no keyframe at the playhead')
+                  : `Animate ${label} (keyframes it at the playhead)`
+              }
+              aria-label={`Toggle ${label} keyframes`}
+              aria-pressed={state.animated}
+            >
+              {/* Filled = this property is animated, hollow = static — the same
+                  Diamond-plus-fill convention `RelightPanel.tsx` and this
+                  panel's own Keyframes section already use. */}
+              <Diamond size={11} fill={state.animated ? 'currentColor' : 'none'} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              disabled={disabled || state.nextFrame === null}
+              onClick={() => onKeyframeNav?.(param, 1)}
+              title={`Go to the next ${label} keyframe`}
+              aria-label={`Next ${label} keyframe`}
+            >
+              <ChevronRight size={12} />
+            </Button>
+          </>
+        )}
         <Button
           variant="ghost"
           size="icon-xs"

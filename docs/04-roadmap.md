@@ -1472,12 +1472,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `timeline.jpg`).
     - ⬜ Dynamic zoom — drag a start/end box in the viewer instead of
       hand-authoring keyframes.
-    - ⬜ Per-clip parametric EQ — multi-band, visual curve (ref:
-      `soundtrack.jpg`). **Now unblocked**: the per-clip audio item above
-      landed (D-223), so the `Clip`-level audio fields the bands hang off of
-      exist, along with the pattern to follow (a new field pair + its own
-      `set_clip_*` op + a `LevelEnvelope`-shaped mixer stage + the matching
-      ffmpeg filter in `timelineExportAudio.ts`).
+    - ~~**Per-clip parametric EQ — multi-band** (ref: `soundtrack.jpg`)~~ —
+      **DONE, 2026-09-08 (D-224), except the visual curve.** `Clip::eq_bands`
+      (a list; the Inspector authors Resolve's own four-band strip), each band
+      `{kind, freq_hz, gain_db, q, enabled}` across five shapes (low/high
+      shelf, bell, high/low pass). Real Audio EQ Cookbook biquads in
+      `chroma_types::eq`, applied per channel with persistent state in the live
+      mixer and as ffmpeg's generic `biquad` filter fed the SAME coefficients
+      in the export (its own `bass`/`treble` measurably do not implement the
+      cookbook's Q — see D-224). Applied before the volume/fade/duck gain
+      stages in both. **Static, not keyframeable** — a stated decision, not a
+      gap: ffmpeg's biquad filters parse their parameters once, so an animated
+      EQ cannot be exported at all. Inspector "EQ" section (four band blocks,
+      each an enable toggle + shape select + Freq/Gain/Q `PropertyRow`s) +
+      `editor_set_clip_eq` MCP tool. Verified by a real frequency-response
+      measurement in BOTH engines against one shared table. Design detail:
+      `docs/notes/audio-fade-duck-crossfade-plan.md` §10.
+    - ⬜ **EQ response curve UI** — the one half of the item above that was
+      deliberately scoped out (D-224): Resolve's ±24 dB / log-frequency graph
+      with a draggable, hit-tested point per band. The model, both engines and
+      the exact dB curve function (`eq_response_db` / `eqResponseDb`, already
+      pinned by measurement, already reported by `editor_set_clip_eq`) are all
+      in place for it — what is missing is only the interactive plot. A
+      log-scaled frequency drag on the band's own Freq field belongs with it.
     - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`).
     - ⬜ Adjustment clips — one effect, applied top-down over every clip

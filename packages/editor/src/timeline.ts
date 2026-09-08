@@ -53,6 +53,44 @@
  * both go through.
  */
 
+// D-224 — the EQ band type and its Audio EQ Cookbook math live in `eq.ts`,
+// one directory over rather than inline here, for the reason `PropertyRow`'s
+// own extraction records: it is a self-contained body of DSP with three
+// consumers (this model, the Inspector, the export compiler) and no dependency
+// on the timeline at all, so the dependency runs `timeline.ts → eq.ts` and
+// never back. Re-exported because `Clip.eq_bands` is typed by it and a caller
+// working in the edit model should not have to know which file it came from —
+// exactly what `chroma-timeline` does with `chroma_types::eq` on the Rust side.
+import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
+
+export type {
+  BiquadCoeffs,
+  EqBand,
+  EqBandKind,
+} from './eq';
+export {
+  EQ_BAND_COUNT,
+  EQ_BAND_KIND_LABELS,
+  EQ_BAND_KINDS,
+  EQ_DEFAULT_Q,
+  EQ_DESIGN_SAMPLE_RATE,
+  EQ_MAX_FREQ_HZ,
+  EQ_MAX_GAIN_DB,
+  EQ_MAX_Q,
+  EQ_MIN_FREQ_HZ,
+  EQ_MIN_Q,
+  biquadResponseDb,
+  clampEqBand,
+  defaultEqBands,
+  describeEqBand,
+  eqBandCoeffs,
+  eqBandsForDisplay,
+  eqKindUsesGain,
+  eqResponseDb,
+  hasActiveEq,
+  isEqBandActive,
+} from './eq';
+
 export interface Rational {
   num: number;
   den: number;
@@ -205,6 +243,25 @@ export interface Clip {
    *  on the next `chroma_timeline_get`. */
   volume?: number;
   pan?: number;
+  /** Per-clip parametric EQ (D-224) — mirrors `chroma_timeline::Clip::eq_bands`,
+   *  the next stage in the same per-clip audio chain `volume`/`pan` opened, and
+   *  what Resolve's Inspector calls the Clip Equalizer.
+   *
+   *  A **list**, and absent/empty means no EQ. Not a fixed four even though
+   *  the Inspector authors exactly Resolve's four-band strip
+   *  ([`EQ_BAND_COUNT`]/`defaultEqBands`): each band carries its own `kind`, so
+   *  a fixed index→role mapping would be a second source of truth for the same
+   *  fact — see `chroma_timeline::Clip::eq_bands`' own doc for the full
+   *  argument and for why an empty list needs no migration default where
+   *  `volume` did.
+   *
+   *  **Static, not keyframeable**, unlike `volume`/`pan` — a stated decision,
+   *  not an omission: ffmpeg's biquad filters parse their parameters once, as
+   *  numbers, so an animated EQ is not expressible in the export at all. See
+   *  D-224.
+   *
+   *  Sound only, exactly like `volume`/`pan`. */
+  eq_bands?: EqBand[];
   /** Text/title layer (D-211) — mirrors `chroma_timeline::Clip::text`.
    *  Present (non-null) = this clip is a GENERATED text layer: its picture is
    *  rasterised from these properties rather than decoded from `source_path`
@@ -1782,6 +1839,39 @@ export type EditOp =
       volume?: number;
       pan?: number;
     }
+  /** D-224 — edit ONE band of a clip's parametric EQ, or clear the whole set.
+   *
+   *  **Its own op, for `set_clip_audio`'s and `set_clip_fade`'s reasons
+   *  exactly**: an EQ is not geometry and not a level, it applies to
+   *  audio-track clips with no transform at all, and it is what an MCP agent
+   *  reaches for without touching anything else on the clip.
+   *
+   *  **One band per op, and every field independently optional.** A band is
+   *  four independent controls edited one at a time (a frequency drag, a gain
+   *  nudge, a kind change) — the same partial-write shape `set_clip_audio` has
+   *  and for the same reason, so a gain nudge can never restate a frequency it
+   *  never looked at. Values are clamped on the way in (`clampEqBand`).
+   *
+   *  **`band` may address a band the clip does not have yet.** A clip with no
+   *  stored EQ MATERIALISES `defaultEqBands()` — Resolve's own four-band strip,
+   *  every band inert at 0 dB — before the patch lands, so the Inspector's
+   *  first edit writes a whole coherent strip rather than a lone orphan band
+   *  at index 2. An index outside that strip is a no-op, not a grow: the band
+   *  count is an authoring decision (see `EQ_BAND_COUNT`), and a reducer that
+   *  silently extended the list on a typo'd index would make a 40-band EQ
+   *  reachable by accident.
+   *
+   *  `clear: true` drops the whole set back to no EQ — the section-level reset,
+   *  and the only way back to a clip that serialises no `eq_bands` key at all.
+   *  It ignores `band`/the patch fields. */
+  | {
+      kind: 'set_clip_eq';
+      track: number;
+      clip: number;
+      band?: number;
+      patch?: Partial<EqBand>;
+      clear?: boolean;
+    }
   /** D-195 — Task 2, `docs/notes/timeline-editing-feature-gap-analysis.md`
    *  item 2: replace a clip's underlying source media (`source_path`/
    *  `media_id`) IN PLACE — every other field (`start_frame`, the full
@@ -1965,6 +2055,14 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       // pan, and an undo entry that named only one of them would be wrong
       // half the time.
       return `Set ${clipLabel(before, op.track, op.clip)} level`;
+    case 'set_clip_eq':
+      // D-224 — the BAND is what an editor is undoing ("that was band 2, not
+      // band 3"), and a label naming only the clip would be three identical
+      // entries deep in a strip edit. The clear is its own sentence for the
+      // same reason `set_track_duck`'s off-case is.
+      return op.clear
+        ? `Clear ${clipLabel(before, op.track, op.clip)} EQ`
+        : `EQ band ${(op.band ?? 0) + 1} on ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_transform':
       return `Adjust ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_keyframes':
@@ -2352,6 +2450,51 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // rest, not merely survivable.
     if (op.volume !== undefined) nc.volume = clampClipVolume(op.volume);
     if (op.pan !== undefined) nc.pan = clampClipPan(op.pan);
+    return next;
+  }
+  if (op.kind === 'set_clip_eq') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c) return tl;
+    if (op.clear) {
+      // Already EQ-less — return the SAME timeline object, so a redundant
+      // reset does not push an undo entry or re-render every consumer.
+      if (!c.eq_bands || c.eq_bands.length === 0) return tl;
+      const next = clone(tl);
+      // `delete` rather than `= []`: an empty array would serialise as a real
+      // `"eq_bands": []` key where the Rust field's own
+      // `skip_serializing_if = "Vec::is_empty"` writes nothing at all, and
+      // "back to no EQ" should leave the clip exactly as it was before the
+      // feature was ever touched.
+      delete next.tracks[op.track].clips[op.clip].eq_bands;
+      return next;
+    }
+    const band = op.band;
+    if (band === undefined || !Number.isInteger(band) || band < 0) return tl;
+    // Materialise the default strip on the first real edit — see the op's own
+    // doc. Read off the CURRENT clip, so a clip that already has bands keeps
+    // every one of them.
+    const bands = eqBandsForDisplay(c.eq_bands);
+    if (band >= bands.length) return tl;
+    const patched = clampEqBand({ ...bands[band], ...(op.patch ?? {}) });
+    // Nothing actually changed (a re-typed identical value, a no-op MCP call)
+    // — same identity short-circuit as the clear branch above.
+    const before = c.eq_bands?.[band];
+    if (
+      before &&
+      c.eq_bands?.length === bands.length &&
+      before.kind === patched.kind &&
+      before.freq_hz === patched.freq_hz &&
+      before.gain_db === patched.gain_db &&
+      before.q === patched.q &&
+      before.enabled === patched.enabled
+    ) {
+      return tl;
+    }
+    bands[band] = patched;
+    const next = clone(tl);
+    next.tracks[op.track].clips[op.clip].eq_bands = bands;
     return next;
   }
   if (op.kind === 'swap_media') {

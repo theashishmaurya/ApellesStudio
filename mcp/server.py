@@ -336,11 +336,18 @@ def get_timeline() -> str:
     gain, locked, hidden, duckFrom, duckDb, duckAttackMs, duckReleaseMs,
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
-    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan}]}]}.
+    fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,
+    eqActive}]}]}.
 
     `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which
     MULTIPLY with the track's own `gain` rather than replacing it — see
     editor_set_clip_audio.
+
+    `eqBands` (D-224) is that clip's own parametric EQ, `[]` when it has none;
+    `eqActive` says whether ANY of those bands actually changes the sound. Read
+    it: a four-band strip whose gains are all 0 dB is completely inert, and
+    `eqBands` being non-empty is NOT the same as the clip being filtered. See
+    editor_set_clip_eq.
 
     All positions and durations are in FRAMES, not seconds — the unit every
     Edit-tab number is in. `index` is what set_clip_fade and set_track_duck
@@ -669,6 +676,27 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "mixer duplicates the channel at unity, so an exported panned "
             "MONO clip sits 3 dB below what the preview played. Stereo "
             "sources — the normal case — are unaffected. See B-101."
+        ),
+        "per_clip_eq": (
+            "D-224: a clip's own parametric EQ (editor_set_clip_eq) exports "
+            "exactly as it plays. Both engines run the SAME Audio EQ Cookbook "
+            "biquad coefficients — the exporter compiles each band to "
+            "ffmpeg's generic `biquad` filter fed those numbers, rather than "
+            "naming ffmpeg's own `equalizer`/`bass`/`treble`, because its "
+            "shelves measurably do NOT implement the cookbook's Q "
+            "parameterisation (0.25-0.37 dB off, measured). Verified by a "
+            "real frequency-response measurement of real ffmpeg output "
+            "against the same table the live mixer's own cascade measures. "
+            "The EQ is applied BEFORE the volume/fade/duck gain stages, in "
+            "both engines. It is STATIC, not keyframeable: ffmpeg's biquad "
+            "filters parse their parameters once as numbers, so an animated "
+            "EQ is not expressible in an export at all, and this app does "
+            "not offer a preview it cannot render. One inherent, measured "
+            "detail: the exporter designs its coefficients at 48 kHz while "
+            "the live mixer designs at the output device's own rate, so on a "
+            "44.1 kHz device the two curves differ by the bilinear warping "
+            "alone (<= 0.036 dB across 50 Hz-15 kHz) — the standard property "
+            "of any biquad EQ, not a divergence between the two paths."
         ),
         "speed_overrides": (
             "speed_overrides is export-time ONLY — it does not touch the "
@@ -1620,6 +1648,100 @@ def editor_set_clip_audio(
 
 
 @mcp.tool()
+def editor_set_clip_eq(
+    track: int,
+    clip: int,
+    band: int | None = None,
+    kind: str | None = None,
+    freq_hz: float | None = None,
+    gain_db: float | None = None,
+    q: float | None = None,
+    enabled: bool | None = None,
+    clear: bool = False,
+) -> str:
+    """Set ONE BAND of one clip's parametric EQ (D-224). `track` and `clip` are
+    the 0-based indices from get_timeline; `band` is 0..3.
+
+    This is the tool for shaping a clip's TONE, as distinct from its LEVEL
+    (editor_set_clip_audio) and its track's fader (editor_set_track_gain). The
+    real moves it exists for: cut rumble and handling noise out of dialogue
+    (`kind="high_pass", freq_hz=80`), take the boxiness out of a room recording
+    (`kind="peak", freq_hz=300, gain_db=-4, q=1.5`), add air to a voice
+    (`kind="high_shelf", freq_hz=8000, gain_db=3`), or notch a hum
+    (`kind="peak", freq_hz=60, gain_db=-18, q=8`).
+
+    FOUR BANDS, matching DaVinci Resolve's own Clip Equalizer. A clip with no
+    EQ yet gets the default strip on the first call -- low shelf 120 Hz, bell
+    500 Hz, bell 2.5 kHz, high shelf 8 kHz, ALL AT 0 dB, i.e. completely inert
+    until you give one a real gain or switch it to a pass filter.
+
+    `kind` -- one of:
+      - "peak"       a bell centred on freq_hz. The default, and how you make a
+                     notch too (deep negative gain_db at a high q).
+      - "low_shelf"  boost/cut everything BELOW freq_hz, flat above.
+      - "high_shelf" boost/cut everything ABOVE freq_hz, flat below.
+      - "high_pass"  2-pole roll-off below freq_hz. IGNORES gain_db.
+      - "low_pass"   2-pole roll-off above freq_hz. IGNORES gain_db.
+    `freq_hz` -- 20 .. 20000, clamped. Centre frequency for a bell, corner for
+      a shelf or a pass filter (a shelf reaches HALF its gain at its corner and
+      the full gain well past it; a Butterworth pass filter is -3 dB there).
+    `gain_db` -- -24 .. +24, clamped. Ignored by the two pass kinds.
+    `q` -- 0.1 .. 20, clamped. Higher is narrower. 0.707 (Butterworth) is the
+      right default for a shelf or a pass filter; 1-2 is a musical bell, 6+ is
+      a surgical notch.
+    `enabled` -- per-band bypass. False keeps the band's settings but takes it
+      out of the chain -- the only way to bypass a pass filter, which has no
+      gain to zero.
+    `clear=True` -- remove the clip's EQ entirely, back to unfiltered. Ignores
+      every other field.
+
+    Omitting a field leaves it exactly as it was, like editor_set_clip_audio
+    and unlike editor_set_clip_transform. Set up a full EQ with one call per
+    band.
+
+    HOW IT COMPOSES: the EQ runs FIRST, on the clip's own audio as decoded,
+    BEFORE `track gain x clip volume x clip fade x track duck` and before the
+    pan. So a boost here really does make the clip louder, and the way to
+    compensate is editor_set_clip_audio's `volume`.
+
+    STATIC, NOT KEYFRAMEABLE -- deliberately, and this is the one real
+    limitation to know about. ffmpeg's biquad filters parse their parameters
+    once, as numbers, so a swept/animated EQ cannot be rendered at all; rather
+    than offer a preview the export cannot reproduce, an EQ here is one setting
+    for the whole clip. Split the clip if you need it to change part-way.
+    (`volume` and `pan` ARE keyframeable -- see editor_set_clip_keyframes.)
+
+    WHAT IT AFFECTS: sound only, exactly like editor_set_clip_audio. On an
+    audio-track clip that is the whole clip; on a video clip it is that clip's
+    EMBEDDED audio, and nothing at all once that audio has been unlinked into
+    its own clip (D-129). A title/text clip has no audio and ignores it.
+
+    Returns what was actually STORED (every field is clamped on the way in),
+    a one-line summary of each band, `eqActive` (whether the EQ does anything
+    at all -- an all-flat strip does not), and `responseDb`: the resulting
+    curve in dB at nine standard frequencies, so you can check the move landed
+    without re-deriving a biquad. Reason from `responseDb`, not from what you
+    asked for.
+
+    Undoable: same store action and same undo stack the GUI's own Inspector EQ
+    section writes to, so a human can Cmd+Z it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if clear:
+        args["clear"] = True
+        return json.dumps(_op("editor_set_clip_eq", **args), indent=2, default=str)
+    if band is not None:
+        args["band"] = band
+    for key, val in (("kind", kind), ("freq_hz", freq_hz), ("gain_db", gain_db), ("q", q)):
+        if val is not None:
+            args[key] = val
+    if enabled is not None:
+        args["enabled"] = enabled
+    return json.dumps(_op("editor_set_clip_eq", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> str:
     """Animate a SINGLE clip's own transform over time — e.g. a zoom-in at
     the moment of a click. Keyframes are scoped to this one clip only (its
@@ -1637,7 +1759,8 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
 
     `volume` and `pan` (D-223) are this clip's own AUDIO level and stereo
     position — the same two properties `editor_set_clip_audio` sets
-    statically, keyed here for a real automation ramp. They are applied per
+    statically, keyed here for a real automation ramp. (A clip's EQ is NOT in
+    that list and cannot be keyed — see editor_set_clip_eq for why.) They are applied per
     output SAMPLE (not per video frame) in both the live mixer and
     `editor_export`, so a ramp is smooth rather than stepped.
 

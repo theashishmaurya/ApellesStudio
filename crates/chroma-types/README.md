@@ -1,8 +1,8 @@
 # chroma-types
 
 **Layer 0 (foundation).** Shared value types for the whole Chroma workspace:
-`Resolution`, `Rational`, `ChromaError`, the `fade` curve model and the `pan`
-law (all real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
+`Resolution`, `Rational`, `ChromaError`, the `fade` curve model, the `pan` law
+and the `eq` band model + biquad math (all real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
 undesigned — no real duplicate of any of them turned up in the `app/src-tauri`
 audit, see below.
 
@@ -32,6 +32,20 @@ audit, see below.
   `Clip::volume` (floored at silence, no ceiling — it is a fader).
   `@chroma/editor`'s `panGains` mirrors this function for the ffmpeg exporter;
   both are pinned to the same constant-power invariant by their own tests.
+- **`src/eq.rs` (D-224)** is the third, and the largest: `EqBand`
+  (`Clip::eq_bands`' own element type) plus the Audio EQ Cookbook's five biquad
+  forms — peaking, low/high shelf, 2-pole low/high-pass — their magnitude
+  response, and a stateful transposed-direct-form-II `Biquad`. Here for
+  `fade.rs`'s reason (the mixer that runs the filters is L1), with one
+  difference that makes it more load-bearing than the other two: the ffmpeg
+  **exporter consumes the coefficients this produces directly**, via ffmpeg's
+  generic `biquad` filter, rather than naming one of ffmpeg's own EQ filters —
+  because its `bass`/`treble` shelves measurably do not implement the
+  cookbook's Q parameterisation (0.25–0.37 dB off, identified from their own
+  impulse response). So this module is the single definition of what a band
+  means in BOTH engines. `@chroma/editor`'s `eq.ts` mirrors it; the two are
+  pinned to one shared response table that each measures through its own
+  engine.
 
 ## Status
 

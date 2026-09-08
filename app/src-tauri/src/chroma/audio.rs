@@ -193,6 +193,14 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
                 // the mix. (They have no picture meaning at all, unlike the
                 // fade above — see `Clip::volume`.)
                 level: level_for_clip(&clip, &info, start_frame as i64 - clip.start_frame),
+                // D-224 — and so does its EQ, for the same reason and on the
+                // same stream. Handed over verbatim: unlike the three above,
+                // an EQ band needs no frames→seconds conversion (hertz,
+                // decibels and Q are not timeline quantities), so there is no
+                // `eq_for_clip` beside `fade_for_clip`/`level_for_clip` — the
+                // filter itself is built by `chroma_media`, at the output
+                // device's real sample rate, which only it knows.
+                eq_bands: clip.eq_bands.clone(),
             });
         } else {
             log::debug!(
@@ -229,6 +237,9 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
             // D-223 — the everyday case: this clip's own level and stereo
             // position, independent of its track's fader.
             level: level_for_clip(&clip, &info, elapsed_frames),
+            // D-224 — and its own EQ, verbatim (see the video-track source
+            // above for why there is no conversion step for these).
+            eq_bands: clip.eq_bands.clone(),
         });
     }
 
@@ -1214,7 +1225,6 @@ mod tests {
             "a source with no audio stream must not produce any device output"
         );
     }
-
 
     /// End-to-end through the real command surface (D-057): a genuine
     /// two-track `Timeline` — the video's embedded audio on the video track,

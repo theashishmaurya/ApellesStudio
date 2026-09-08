@@ -102,6 +102,25 @@
  * a hard pan applies (the real, documented cost of this app's 0 dB-centre pan
  * law — `chroma_types::pan`).
  *
+ * **D-224 — an EQ section: this clip's own multi-band parametric equaliser.**
+ * FOUR bands, which is exactly what the same reference screenshot shows under
+ * its response graph (`Band 1`…`Band 4`, each a name button that doubles as
+ * that band's enable toggle, plus a shape dropdown). Each band renders that
+ * header row plus three `PropertyRow`s — Freq, Gain, Q — so the numbers are
+ * all real and every row inherits the field layout and per-field reset the
+ * Transform rows already have.
+ *
+ * Two deliberate differences from those rows, both stated in D-224 rather than
+ * accidents. (1) **No keyframe diamond**: an EQ here is static, because
+ * ffmpeg's biquad filters parse their parameters once as numbers, so an
+ * animated EQ is not expressible in the export at all — and `PropertyRow` now
+ * renders no keyframe controls when handed none rather than three dead
+ * buttons. (2) **No response CURVE**: the reference's ±24 dB graph with four
+ * draggable points is a real UI project of its own (log frequency axis,
+ * hit-testing, drag-to-shape) and is explicitly deferred — the model, the
+ * math (`eqResponseDb`) and both engines are already in place for it. Hidden
+ * for a text clip, exactly as Audio and Crop are.
+ *
  * **Roadmap 25 — `PropertyRow`/`PropertyState` now live in their own file**
  * (`PropertyRow.tsx`), generalised over any param-name type rather than
  * pinned to `ClipTransformParam` — see that file's own doc for why this was
@@ -110,7 +129,7 @@
  * rendering are unchanged; only where the row itself is defined moved.
  */
 import { useState } from 'react';
-import { Diamond, Lock, Unlock, X } from 'lucide-react';
+import { Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
 import {
   Button,
   Input,
@@ -122,17 +141,30 @@ import {
 } from '@chroma/ui';
 import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
 import {
+  EQ_BAND_KINDS,
+  EQ_BAND_KIND_LABELS,
+  EQ_DEFAULT_Q,
+  EQ_MAX_FREQ_HZ,
+  EQ_MAX_GAIN_DB,
+  EQ_MAX_Q,
+  EQ_MIN_FREQ_HZ,
+  EQ_MIN_Q,
   FADE_PRESETS,
+  eqBandsForDisplay,
+  eqKindUsesGain,
   fadePresetName,
+  hasActiveEq,
   type Clip,
   type ClipAudioParam,
   type ClipKeyframeParam,
   type ClipTransformParam,
+  type EqBand,
+  type EqBandKind,
   type FadeCurve,
 } from './timeline';
 import type { ClipKeyframe } from './clipKeyframes';
 import type { ClipGeometry } from './useClipGeometry';
-import { PropertyRow, type PropertyState } from './PropertyRow';
+import { PropertyRow, staticPropertyState, type PropertyState } from './PropertyRow';
 
 export type TransformPatch = Partial<{
   opacity: number;
@@ -251,6 +283,43 @@ const AUDIO_FIELDS: Array<{
  *  worse, that a human edits and then can't work out why nothing moved). */
 const TEXT_CLIP_TRANSFORM_PARAMS = new Set<ClipTransformParam>(['opacity', 'position_x', 'position_y']);
 
+/** D-224 — one EQ band's three numeric rows, in Resolve's own order
+ *  (Frequency, Gain, Q). Same `PropertyRow`-shaped record `TRANSFORM_FIELDS`
+ *  and `AUDIO_FIELDS` are, so all four sections render through one component.
+ *
+ *  **Steps and bounds are the stored units**, as everywhere else on this
+ *  panel. Frequency steps by 10 Hz — a useful nudge in the low-mids where
+ *  problems actually live, and coarse enough that the spinner is not useless
+ *  up at 8 kHz (a log-scaled drag is what the response-curve UI would bring;
+ *  see D-224's deferred half). Gain steps by 0.5 dB, the finest step an editor
+ *  can hear on a broad band. Q steps by 0.1 across `0.1..20`.
+ *
+ *  `key` is the `EqBand` field these write, so the row's `param` really is the
+ *  name of the thing it edits — the same property `TRANSFORM_FIELDS` has. */
+const EQ_BAND_FIELDS: Array<{
+  key: 'freq_hz' | 'gain_db' | 'q';
+  label: string;
+  step: number;
+  min: number;
+  max: number;
+}> = [
+  { key: 'freq_hz', label: 'Freq', step: 10, min: EQ_MIN_FREQ_HZ, max: EQ_MAX_FREQ_HZ },
+  { key: 'gain_db', label: 'Gain', step: 0.5, min: -EQ_MAX_GAIN_DB, max: EQ_MAX_GAIN_DB },
+  { key: 'q', label: 'Q', step: 0.1, min: EQ_MIN_Q, max: EQ_MAX_Q },
+];
+
+/** D-224 — each EQ field's own rest value, for its `PropertyRow`'s reset.
+ *  The same one-source-of-truth role `CLIP_TRANSFORM_DEFAULTS` plays, and
+ *  matching `chroma_types::EqBand`'s own serde defaults exactly (`1 kHz`,
+ *  flat, Butterworth) so a reset writes the value the backend would also treat
+ *  as unset. Deliberately per FIELD rather than per band: resetting Gain must
+ *  not also move a frequency the user placed. */
+const DEFAULT_EQ_BAND_VALUES: Readonly<Record<'freq_hz' | 'gain_db' | 'q', number>> = {
+  freq_hz: 1_000,
+  gain_db: 0,
+  q: EQ_DEFAULT_Q,
+};
+
 export function ClipInspectorPanel({
   clip,
   trackLocked,
@@ -260,6 +329,8 @@ export function ClipInspectorPanel({
   paramStates,
   onTransformChange,
   onFadeChange,
+  onEqBandChange,
+  onEqClear,
   onParamChange,
   onKeyframeToggle,
   onKeyframeNav,
@@ -285,6 +356,14 @@ export function ClipInspectorPanel({
   paramStates: Record<ClipKeyframeParam, PropertyState>;
   onTransformChange: (patch: TransformPatch) => void;
   onFadeChange: (patch: FadePatch) => void;
+  /** D-224 — patch ONE band of this clip's EQ. Partial by field, exactly as
+   *  `set_clip_eq` itself is: the panel edits one control at a time and must
+   *  never restate a frequency it did not touch. */
+  onEqBandChange: (band: number, patch: Partial<EqBand>) => void;
+  /** D-224 — drop the whole band set back to "no EQ" (the section's own reset
+   *  button). Distinct from resetting each field: it is the only way back to a
+   *  clip that stores no `eq_bands` key at all. */
+  onEqClear: () => void;
   /** D-208 — edit ONE property's value. Distinct from `onTransformChange`
    *  because an animated property's edit must land on its keyframe at the
    *  playhead, not (only) on its static field — the caller decides, this
@@ -313,6 +392,17 @@ export function ClipInspectorPanel({
   const transformFields = clip.text
     ? TRANSFORM_FIELDS.filter((f) => TEXT_CLIP_TRANSFORM_PARAMS.has(f.param))
     : TRANSFORM_FIELDS;
+
+  // D-224 — what the EQ section RENDERS: this clip's own bands, or the default
+  // four-band strip when it has none. Read-only — nothing is written until a
+  // real edit, so merely selecting a clip never dirties the project (the
+  // reducer materialises the same strip on the first patch, so what a user
+  // sees and what their first edit stores are the same four bands).
+  const eqBands = eqBandsForDisplay(clip.eq_bands);
+  // …and whether any of it is doing anything, which is what the section's own
+  // note tells the user. An untouched strip is completely inert, and saying so
+  // is what stops "I set up four bands and nothing happened" reading as a bug.
+  const eqActive = hasActiveEq(clip.eq_bands);
 
   // D-193 — the box's CURRENT effective size, in composition fractions:
   // the override when the clip has one, else `scale`'s own natural-footprint
@@ -614,6 +704,115 @@ export function ClipInspectorPanel({
               Hard panning boosts the destination channel by 3 dB, so lower Volume if the source is
               already close to full scale.
             </p>
+          </InspectorSection>
+        )}
+
+        {/* D-224 — this clip's own multi-band parametric EQ. Its own section
+            under Audio, matching where Resolve puts its Clip Equalizer
+            (`scratch/resolve-reference/soundtrack.jpg`: Clip Volume, Clip Pan,
+            Clip Pitch, then Clip Equalizer, in that order down the Inspector's
+            Audio tab).
+
+            **Four bands, laid out as Resolve lays them out**: that reference
+            shows `Band 1`…`Band 4`, each a name button that doubles as the
+            band's enable toggle plus a shape dropdown, over a ±24 dB response
+            graph. The four bands and the ±24 dB range are matched exactly; the
+            graph is deliberately NOT built in this pass (D-224 — an
+            interactive, log-scaled, drag-the-point curve is a real UI project
+            of its own, and half a curve renderer is worse than none). Each
+            band's Freq/Gain/Q are real `PropertyRow`s instead, so the numbers
+            are all authorable and every row gets the same field layout and
+            reset the Transform rows have.
+
+            The rows carry NO keyframe diamond, and that is a decision rather
+            than an oversight: an EQ here is static (see `Clip.eq_bands` and
+            D-224 — ffmpeg's biquad filters parse their parameters once, so an
+            animated EQ cannot be exported at all). `PropertyRow` renders no
+            keyframe controls when it is handed none, rather than three dead
+            buttons.
+
+            Hidden for a TEXT clip, exactly as Audio and Crop are. */}
+        {!clip.text && (
+          <InspectorSection label="EQ">
+            {eqBands.map((band, index) => (
+              <div className="flex flex-col gap-1.5 border-l border-border-color pl-2" key={index}>
+                <div className={row}>
+                  {/* The band number IS the enable toggle — Resolve's own
+                      affordance, where `Band N` reads coloured when on. Accent
+                      when enabled, muted when bypassed, so a band that has
+                      been switched off is visibly off rather than silently
+                      inert. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={trackLocked}
+                    className={`h-7 px-1.5 text-[11px] ${band.enabled ? 'text-accent' : 'text-text-secondary/50'}`}
+                    onClick={() => onEqBandChange(index, { enabled: !band.enabled })}
+                    title={
+                      band.enabled
+                        ? `Bypass band ${index + 1} (keeps its settings)`
+                        : `Enable band ${index + 1}`
+                    }
+                    aria-pressed={band.enabled}
+                  >
+                    Band {index + 1}
+                  </Button>
+                  <Select
+                    value={band.kind}
+                    onValueChange={(v) => onEqBandChange(index, { kind: v as EqBandKind })}
+                    disabled={trackLocked}
+                  >
+                    <SelectTrigger className="h-7 w-28 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EQ_BAND_KINDS.map((k) => (
+                        <SelectItem key={k} value={k}>
+                          {EQ_BAND_KIND_LABELS[k]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {EQ_BAND_FIELDS.map(({ key, label, step, min, max }) => (
+                  <PropertyRow
+                    key={key}
+                    label={label}
+                    param={key}
+                    // Static: no keyframe callbacks passed, so no diamond and
+                    // no nav arrows render at all (see `PropertyRow`).
+                    state={staticPropertyState(band[key])}
+                    step={step}
+                    min={min}
+                    max={max}
+                    // A pass filter has no gain — the row would be editable and
+                    // do nothing, so it is disabled rather than hidden (hiding
+                    // it would make the three bands' rows jump around as kinds
+                    // change).
+                    disabled={trackLocked || (key === 'gain_db' && !eqKindUsesGain(band.kind))}
+                    onChange={(v) => onEqBandChange(index, { [key]: v })}
+                    onReset={() => onEqBandChange(index, { [key]: DEFAULT_EQ_BAND_VALUES[key] })}
+                  />
+                ))}
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-0.5">
+              <p className="text-text-secondary/60 text-[10px] leading-snug">
+                {eqActive
+                  ? 'Applied before the clip’s volume, fade and duck — in the preview and the render alike.'
+                  : 'Every band is flat, so this clip is unfiltered. Set a Gain, or pick a High Pass, to hear it.'}
+              </p>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                disabled={trackLocked || !clip.eq_bands || clip.eq_bands.length === 0}
+                onClick={onEqClear}
+                title="Remove this clip's EQ entirely"
+                aria-label="Reset EQ"
+              >
+                <RotateCcw size={11} />
+              </Button>
+            </div>
           </InspectorSection>
         )}
 

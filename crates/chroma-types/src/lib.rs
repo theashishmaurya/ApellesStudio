@@ -108,6 +108,20 @@ pub mod pan;
 
 pub use pan::{clip_volume, pan_gains};
 
+/// The per-clip parametric-EQ band type + its Audio EQ Cookbook biquad math
+/// (D-224). Here rather than beside `chroma_timeline::Clip`'s own `eq_bands`
+/// for [`fade`]'s and [`pan`]'s reason — the mixer that runs the filters is L1
+/// and cannot reach up to L2 — and, unlike those two, the ffmpeg exporter
+/// consumes the COEFFICIENTS this produces directly rather than naming an
+/// ffmpeg filter, so this module is the single definition of what a band means
+/// in both engines. See its own doc for the measurement behind that choice.
+pub mod eq;
+
+pub use eq::{
+    Biquad, BiquadCoeffs, EQ_DESIGN_SAMPLE_RATE, EQ_MAX_FREQ_HZ, EQ_MAX_GAIN_DB, EQ_MAX_Q,
+    EQ_MIN_FREQ_HZ, EQ_MIN_Q, EqBand, EqBandKind, eq_response_db,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

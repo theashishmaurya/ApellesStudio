@@ -123,6 +123,15 @@ use chroma_types::Rational;
 // in the timeline model should not have to know which crate the type came from.
 pub use chroma_types::fade::{self, FadeCurve, fade_gain};
 
+// D-224 — same shape, same reason, one layer further: a clip's EQ band type
+// and the Audio EQ Cookbook biquad math behind it live in `chroma-types` (L0)
+// because the mixer that runs the filters is `chroma_media` (L1) and cannot
+// depend on this crate. Re-exported here because `Clip::eq_bands` is typed by
+// it. (The ffmpeg exporter consumes the same module's COEFFICIENTS rather than
+// naming an ffmpeg filter — see `chroma_types::eq`'s own doc for the
+// measurement behind that.)
+pub use chroma_types::eq::{self, EqBand, EqBandKind};
+
 /// B-079 — mirrors `@chroma/editor/timeline.ts`'s `DEFAULT_FPS`: the project
 /// timebase assumed when [`Timeline::rate`] is unset (or malformed — zero or
 /// negative `num`/`den`). Every pre-D-045 timeline, and every `Timeline`
@@ -989,6 +998,44 @@ pub struct Clip {
     #[serde(default)]
     pub pan: f64,
 
+    // --- Per-clip parametric EQ (D-224) ----------------------------------- //
+    /// This clip's own multi-band parametric equaliser — the next stage in the
+    /// same per-clip audio chain `volume`/`pan` opened (D-223), and what
+    /// Resolve's Inspector calls the Clip Equalizer
+    /// (`scratch/resolve-reference/soundtrack.jpg`, feature 9).
+    ///
+    /// **A `Vec`, and empty means no EQ.** Deliberately not a fixed-length
+    /// array of four, even though the Inspector authors exactly Resolve's
+    /// four-band strip (`DEFAULT_EQ_BANDS` in `@chroma/editor`'s `eq.ts`):
+    /// - every band already carries its own [`EqBandKind`], so a fixed
+    ///   index → role mapping would be a second source of truth for the same
+    ///   fact, free to disagree with the band it describes;
+    /// - `Vec::default()` is empty, which really IS "no EQ" — no named serde
+    ///   default and none of `volume`'s own migration hazard, and a pre-D-224
+    ///   clip carries no key at all and mixes byte-identically;
+    /// - a fixed `[EqBand; 4]` makes any future change to the band count a
+    ///   hard deserialisation wall for every existing project, whereas a list
+    ///   just gets longer.
+    ///
+    /// **Every consumer is length-agnostic and filters on
+    /// [`EqBand::is_active`]** — the mixer builds one biquad per active band
+    /// per channel, the exporter one `biquad` filter node per active band — so
+    /// a band set of any length, from any build, works. A clip whose bands are
+    /// all inactive (a materialised strip nobody has touched: gain-using kinds
+    /// at exactly 0 dB) gets no filter and no filtergraph node at all.
+    ///
+    /// **Static, not keyframeable** — unlike `volume`/`pan` above, and that is
+    /// a decision rather than an omission: ffmpeg's biquad filters take their
+    /// parameters as numbers parsed once, so an animated EQ is not expressible
+    /// in the export path at all, and a preview that did what the export
+    /// cannot is the defect class this repo keeps closing. See D-224.
+    ///
+    /// Sound only, exactly like `volume`/`pan`: the whole clip on an audio
+    /// track, the embedded audio on a video clip (and nothing once that audio
+    /// is unlinked — D-129), nothing on a title.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub eq_bands: Vec<EqBand>,
+
     // --- Text / title layer (D-211) --------------------------------------- //
     /// `Some` = this clip is a **generated text layer**, not a windowed
     /// reference into a media file: its picture is rasterised from
@@ -1089,6 +1136,9 @@ impl Default for Clip {
             // centre, so it takes the type's own.
             volume: default_volume(),
             pan: 0.0,
+            // D-224 — empty genuinely IS "no EQ" (see the field's own doc), so
+            // unlike `volume` this one needs no non-zero migration default.
+            eq_bands: Vec::new(),
             // D-211 — `None` is genuinely "an ordinary media clip", the only
             // sane default, so this one needs no non-zero migration value.
             text: None,
@@ -1103,6 +1153,19 @@ impl Clip {
     /// than as an `is_some()` at each site.
     pub fn is_text(&self) -> bool {
         self.text.is_some()
+    }
+
+    /// D-224 — does this clip's EQ actually change its sound? The one
+    /// predicate both audio consumers branch on, so "is the EQ doing
+    /// anything" is asked the same way in the mixer and the exporter rather
+    /// than each re-spelling the filter.
+    ///
+    /// `false` for a clip with no bands at all AND for one whose bands are
+    /// all inactive — a materialised four-band strip nobody has touched is
+    /// the second case, and it must cost the mix exactly nothing (see
+    /// [`EqBand::is_active`]).
+    pub fn has_active_eq(&self) -> bool {
+        self.eq_bands.iter().any(|b| b.is_active())
     }
 
     /// The exclusive upper bound for `source_start + duration`.
@@ -3870,6 +3933,99 @@ mod tests {
         for i in [1usize, 2] {
             assert_eq!(t.tracks[0].clips[i].volume, 0.25);
             assert_eq!(t.tracks[0].clips[i].pan, 0.75);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // D-224: per-clip parametric EQ (`eq_bands`).
+    // -----------------------------------------------------------------
+
+    /// The migration case, and the reason `eq_bands` needs no named default at
+    /// all where `volume` did: a pre-D-224 `project.json` clip has no key, and
+    /// `Vec::default()` — empty — genuinely IS "no EQ".
+    #[test]
+    fn clip_json_without_eq_loads_with_no_bands_and_no_filtering() {
+        let json = r#"{"id":"a","name":"A","source_path":"/a.mov","source_start":0,"duration":10,"source_len":10,"start_frame":0,"opacity":1.0,"position_x":0.0,"position_y":0.0,"scale":1.0,"rotation":0.0}"#;
+        let c: Clip = serde_json::from_str(json).unwrap();
+        assert!(c.eq_bands.is_empty());
+        assert!(!c.has_active_eq());
+        assert!(Clip::default().eq_bands.is_empty());
+    }
+
+    /// The other half of "free when unused": a clip carrying the Inspector's
+    /// materialised four-band strip, untouched, is still exactly as silent a
+    /// change as no EQ at all — because every band of that strip is a
+    /// gain-using kind sitting at 0 dB.
+    #[test]
+    fn a_materialised_but_untouched_band_strip_is_not_active_eq() {
+        let mut c = Clip {
+            eq_bands: vec![
+                EqBand {
+                    kind: EqBandKind::LowShelf,
+                    freq_hz: 120.0,
+                    gain_db: 0.0,
+                    q: 0.707,
+                    enabled: true,
+                },
+                EqBand {
+                    kind: EqBandKind::Peak,
+                    freq_hz: 2_500.0,
+                    gain_db: 0.0,
+                    q: 1.0,
+                    enabled: true,
+                },
+            ],
+            ..Clip::default()
+        };
+        assert!(!c.has_active_eq());
+        c.eq_bands[1].gain_db = -3.0;
+        assert!(c.has_active_eq());
+    }
+
+    /// A real band set survives a full `Timeline` → JSON → `Timeline` round
+    /// trip, and an EQ-less clip beside it still serialises no key at all
+    /// (`skip_serializing_if`), which is what keeps existing projects
+    /// byte-identical on the next save.
+    #[test]
+    fn clip_eq_bands_round_trip_and_an_empty_set_writes_no_key() {
+        let mut t = Timeline::from_shots(&shots());
+        t.tracks[0].clips[0].eq_bands = vec![EqBand {
+            kind: EqBandKind::HighPass,
+            freq_hz: 85.0,
+            gain_db: 0.0,
+            q: 0.9,
+            enabled: true,
+        }];
+        let json = serde_json::to_string(&t).unwrap();
+        assert_eq!(json.matches("eq_bands").count(), 1, "only the one clip");
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tracks[0].clips[0].eq_bands.len(), 1);
+        assert_eq!(
+            back.tracks[0].clips[0].eq_bands[0].kind,
+            EqBandKind::HighPass
+        );
+        assert_eq!(back.tracks[0].clips[0].eq_bands[0].freq_hz, 85.0);
+        assert!(back.tracks[0].clips[1].eq_bands.is_empty());
+    }
+
+    /// An EQ is an *appearance*-class value like crop and volume, not a timing
+    /// one: `split` hands both halves the same bands. Same guard
+    /// `split_preserves_clip_volume_and_pan_on_both_halves` sets, against a
+    /// future op that rebuilds a `Clip` field-by-field and drops this one.
+    #[test]
+    fn split_preserves_clip_eq_on_both_halves() {
+        let mut t = Timeline::from_shots(&shots());
+        let band = EqBand {
+            kind: EqBandKind::Peak,
+            freq_hz: 350.0,
+            gain_db: -4.5,
+            q: 2.2,
+            enabled: true,
+        };
+        t.tracks[0].clips[1].eq_bands = vec![band];
+        t.split(0, 1, 120).unwrap();
+        for i in [1usize, 2] {
+            assert_eq!(t.tracks[0].clips[i].eq_bands, vec![band]);
         }
     }
 
