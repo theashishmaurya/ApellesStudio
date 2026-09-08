@@ -51,4 +51,18 @@ op that actually runs. The fade is the one with an evaluator attached
 (`Clip::fade_multiplier_at`, over `chroma-types`' curve math — see above); the
 *result* is still applied up there, and for audio in `chroma-media`.
 
+**`Track::transitions` (D-226)** — a `Transition` per **edit point**: the cut it
+straddles (`at_frame`), a kind (`CrossDissolve` / `DipToColor`), a duration and
+an alignment. **This crate's "clips on one track never overlap" invariant is
+completely unchanged** — a transition *bridges* the cut rather than making the
+two clips overlap, which is the whole point of D-226's choice; what it costs
+instead is **handle media** (`Clip::source_frame_at` /
+`clamped_source_frame_at`, the extrapolated read outside a clip's own trim).
+The visible consequence here is that `Timeline::resolve_visible_video_layers_at`
+returns `VisibleLayer`s rather than bare `(track, &Clip, source_frame)` tuples:
+a track can now contribute two of them (a dissolve's two clips) or a generated
+colour plate with no clip at all (a dip). Same division of labour as every other
+field above — this crate resolves *which* layers, at what alpha, from what
+source frame, and renders none of them. Full design: `docs/notes/transitions.md`.
+
 Ripple-roll-slip-slide / transcript→EDL / OTIO export land in later, tracked steps.

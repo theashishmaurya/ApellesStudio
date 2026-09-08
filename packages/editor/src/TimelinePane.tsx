@@ -287,6 +287,15 @@ import {
   MarkerStrip,
   MARKER_STRIP_HEIGHT,
 } from './TimelineMarkers';
+import {
+  TransitionBadges,
+  TransitionsPaletteButton,
+  TRANSITION_SNAP_PX,
+  defaultTransitionFrames,
+  nearestCut,
+  type TransitionDragData,
+  type TransitionPatch,
+} from './TimelineTransitions';
 import { Waveform } from './Waveform';
 import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
@@ -307,9 +316,12 @@ import {
   DEFAULT_TITLE_SECONDS,
   DEFAULT_TRACK_GAIN,
   checkLink,
+  checkTransition,
   computeInsertion,
+  cutFrames,
   endFrame,
   gapAt,
+  newTransition,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
   newMarker,
@@ -1256,6 +1268,14 @@ export function TimelinePane() {
   const [insertPreview, setInsertPreview] = useState<
     { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
   >(null);
+
+  /** D-226 — why the last transition drop was refused, shown as a transient
+   *  toolbar note. A refusal is the NORMAL outcome of a near-miss drop (a
+   *  transition can only live on a cut, and a cross dissolve additionally needs
+   *  handle media), so it has to say WHY rather than silently doing nothing —
+   *  the same reason `checkLink`'s own reason string drives the Link button's
+   *  disabled tooltip. Cleared by the next successful drop or by dismissing it. */
+  const [transitionDropError, setTransitionDropError] = useState<string | null>(null);
 
   // D-100 — the equivalent safety net for the OTHER drag system in this
   // file, the native-HTML5 Sources-panel drag (`onDragOver`/`onDrop`
@@ -2442,10 +2462,66 @@ export function TimelinePane() {
       const data = event.active.data.current as
         | { type: 'track'; index: number }
         | { type: 'clip'; track: number; clipId: string }
+        | TransitionDragData
         | undefined;
       setActiveDrag(null);
       setClipDragPreview((prev) => (prev === null ? prev : null));
       if (!data) return;
+
+      // D-226 — a transition dragged out of the palette. Its only legal target
+      // is a real CUT on a video track, so the drop resolves to the nearest one
+      // within `TRANSITION_SNAP_PX` and is refused (with a real reason) rather
+      // than snapped to something arbitrary — a transition is not a clip, it
+      // cannot land "roughly there".
+      if (data.type === 'transition') {
+        const overData = event.over?.data.current as { type: 'track'; track: number } | undefined;
+        if (!overData || overData.type !== 'track' || !timeline) return;
+        const trackIdx = overData.track;
+        const tr = tracks[trackIdx];
+        if (!tr) return;
+        // The pointer's real x: `event.delta` is the whole drag's movement, and
+        // `activatorEvent` is the original pointer event it started from — the
+        // pair gives an absolute position without needing a rect measurement,
+        // the same relative-plus-origin approach the clip drag above uses.
+        const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
+        const rect = editAreaRef.current?.getBoundingClientRect();
+        if (!rect || typeof activator?.clientX !== 'number') return;
+        const contentX = activator.clientX + event.delta.x - rect.left + scrollLeft;
+        const frame = Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
+        const snapFrames = Math.max(1, Math.round((TRANSITION_SNAP_PX / pxPerSec) * fps));
+        const cuts = tr.kind === 'video' ? cutFrames(tr, fps) : [];
+        const cut = nearestCut(cuts, frame, snapFrames);
+        if (cut === null) {
+          setTransitionDropError(
+            tr.kind !== 'video'
+              ? 'Transitions apply to video tracks only.'
+              : cuts.length === 0
+                ? 'That track has no cut — a transition needs two clips touching end to start.'
+                : 'Drop a transition right on a cut between two clips.',
+          );
+          return;
+        }
+        const duration = defaultTransitionFrames(
+          timeline,
+          trackIdx,
+          cut,
+          fps,
+          (c) => endFrame(c, fps) - c.start_frame,
+        );
+        const built = newTransition(data.kind, cut, duration);
+        if ('error' in built) {
+          setTransitionDropError(built.error);
+          return;
+        }
+        const check = checkTransition(timeline, trackIdx, built, fps);
+        if (!check.ok) {
+          setTransitionDropError(check.reason ?? 'that transition cannot go there');
+          return;
+        }
+        setTransitionDropError(null);
+        applyOp({ kind: 'add_transition', track: trackIdx, transition: built });
+        return;
+      }
 
       if (data.type === 'track') {
         // `over` is another `SortableTrackHeader` (every sortable item is
@@ -2716,6 +2792,21 @@ export function TimelinePane() {
               jump to. */}
           <AddMarkerButton onAdd={doAddMarker} shortcut="M" />
           <MarkerListMenu timeline={timeline} fps={fps} onJump={setPlayhead} />
+          {/* D-226 — the transitions library. Beside Title/Marker for the same
+              reason those two sit together: all three are "bring something new
+              into the edit", none is scoped to the current selection. The drag
+              itself starts inside its popover — see `TimelineTransitions.tsx`. */}
+          <TransitionsPaletteButton />
+          {transitionDropError && (
+            <button
+              type="button"
+              onClick={() => setTransitionDropError(null)}
+              className="max-w-[26rem] truncate rounded border border-border-color bg-surface px-2 py-1 text-left text-[10px] text-text-secondary"
+              title={`${transitionDropError} (click to dismiss)`}
+            >
+              {transitionDropError}
+            </button>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -3096,6 +3187,27 @@ export function TimelinePane() {
                   />
                 );
               })()}
+            {/* D-226 — one badge per transition, spanning its own window and
+                centred on its cut. Rendered here, in the same overlay layer as
+                the gap highlight and the drag previews above, because a
+                transition belongs to the EDIT POINT between two clips and not to
+                either of them — drawing it inside a clip's own
+                `getActionRender` body would tie it to one of the two and make it
+                vanish when that clip is re-rendered. */}
+            <TransitionBadges
+              tracks={tracks}
+              fps={fps}
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              scrollTop={scrollTop}
+              startLeftPx={START_LEFT_PX}
+              rowHeight={ROW_HEIGHT}
+              rulerAndMarginPx={RULER_AND_MARGIN_PX}
+              onChange={(track, id, patch: TransitionPatch) =>
+                applyOp({ kind: 'set_transition', track, id, patch })
+              }
+              onRemove={(track, id) => applyOp({ kind: 'remove_transition', track, id })}
+            />
             {/* D-113 — owner, live: "have track horizontal lines as well."
                 The library's own bundled CSS draws no row separators at all
                 (checked, not assumed) — real, missing, not just faint. One

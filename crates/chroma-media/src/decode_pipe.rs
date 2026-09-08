@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use image::{DynamicImage, RgbImage};
 use once_cell::sync::Lazy;
 
@@ -160,7 +160,9 @@ impl FramePipe {
     ) -> Result<Self> {
         let fps = info.fps();
         if fps <= 0.0 || info.resolution.width == 0 || info.resolution.height == 0 {
-            return Err(anyhow!("decode pipe needs a probed CFR video (fps + dimensions)"));
+            return Err(anyhow!(
+                "decode pipe needs a probed CFR video (fps + dimensions)"
+            ));
         }
         let seek = ((start as f64 - 0.5) / fps).max(0.0);
         let (out_w, out_h) = scale.unwrap_or((info.resolution.width, info.resolution.height));
@@ -225,7 +227,8 @@ impl FramePipe {
             .read_exact(&mut buf)
             .context("reading a frame from the decode pipe")?;
         self.next_index += 1;
-        RgbImage::from_raw(self.w, self.h, buf).ok_or_else(|| anyhow!("rgb frame buffer size mismatch"))
+        RgbImage::from_raw(self.w, self.h, buf)
+            .ok_or_else(|| anyhow!("rgb frame buffer size mismatch"))
     }
 
     fn skip_raw(&mut self) -> Result<()> {
@@ -302,6 +305,17 @@ pub enum PipeSlot {
     /// legitimately hold the same file at different positions — the real
     /// project this was found on does exactly that.
     Track(usize),
+    /// D-226 — the SECOND clip a video track shows while a cross-dissolve
+    /// transition is running on it, keyed by that same track index.
+    ///
+    /// A transition is the one situation where a single track has two different
+    /// sources open at two different positions for the same displayed frame, so
+    /// it needs a second slot for exactly [`Self::Track`]'s own stated reason:
+    /// sharing one would make each of the two calls restart the other's
+    /// `ffmpeg` process, every frame, for the whole transition (B-040's measured
+    /// ~0.85 fps failure mode). Which of the two clips lands here is
+    /// deliberate — see `chroma_timeline::LayerRole`.
+    TrackTransition(usize),
 }
 
 static PIPES: Lazy<Mutex<HashMap<PipeSlot, FramePipe>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -369,19 +383,31 @@ pub fn playback_frame_scaled(
     }
 }
 
-/// Drop every pipe whose slot is a [`PipeSlot::Track`] not in `keep` — the
-/// Edit-tab preview calls this once per frame with the track indices actually
-/// visible there, so a track that goes hidden, is deleted, or simply has a gap
-/// under the playhead releases its `ffmpeg` process instead of holding one open
-/// for the rest of the session. Bounds the pool at "one pipe per currently
-/// visible video layer" without needing an arbitrary cap.
-pub fn retain_track_slots(keep: &[usize]) {
+/// Drop every timeline pipe whose slot is not in `keep` — the Edit-tab preview
+/// calls this once per frame with the slots actually visible there, so a track
+/// that goes hidden, is deleted, or simply has a gap under the playhead releases
+/// its `ffmpeg` process instead of holding one open for the rest of the session.
+/// Bounds the pool at "one pipe per currently visible video layer" without
+/// needing an arbitrary cap.
+///
+/// [`PipeSlot::Current`] is never dropped: it belongs to the Colorist tab's own
+/// session, not to the Edit tab's frame, and nothing here knows whether that tab
+/// still wants it.
+///
+/// **D-226 — takes real [`PipeSlot`]s, not bare track indices.** A cross
+/// dissolve gives one track two live slots ([`PipeSlot::Track`] and
+/// [`PipeSlot::TrackTransition`]) with genuinely different lifetimes: the
+/// partner slot must be released the moment the transition window ends, while
+/// the track's own slot keeps running. A track-index keep-list could not say
+/// that, so it would have leaked one `ffmpeg` process per transition for the
+/// rest of the session.
+pub fn retain_pipe_slots(keep: &[PipeSlot]) {
     PIPES
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|slot, _| match slot {
             PipeSlot::Current => true,
-            PipeSlot::Track(i) => keep.contains(i),
+            other => keep.contains(other),
         });
 }
 
@@ -435,16 +461,15 @@ mod tests {
 
         // ...must equal the independent per-frame decode path.
         for (n, piped) in [(300u64, &p300), (301, &p301), (302, &p302)] {
-            let one = crate::video::decode_frame(
-                &vid,
-                crate::video::FramePos::Index(n),
-                &info,
-            )
-            .expect("decode_frame")
-            .to_rgb8();
+            let one = crate::video::decode_frame(&vid, crate::video::FramePos::Index(n), &info)
+                .expect("decode_frame")
+                .to_rgb8();
             assert_eq!(piped.dimensions(), one.dimensions(), "frame {n} dims");
             let diff = mean_abs_diff(piped, &one);
-            assert!(diff < 1.0, "frame {n}: mean|Δ| {diff} between pipe and decode_frame");
+            assert!(
+                diff < 1.0,
+                "frame {n}: mean|Δ| {diff} between pipe and decode_frame"
+            );
         }
     }
 
@@ -457,8 +482,14 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         let mut pipe = FramePipe::open(&vid, &info, 0).expect("open");
 
-        let a = pipe.frame(&vid, &info, 10).expect("skip fwd to 10").to_rgb8();
-        let b = pipe.frame(&vid, &info, 2).expect("restart back to 2").to_rgb8();
+        let a = pipe
+            .frame(&vid, &info, 10)
+            .expect("skip fwd to 10")
+            .to_rgb8();
+        let b = pipe
+            .frame(&vid, &info, 2)
+            .expect("restart back to 2")
+            .to_rgb8();
 
         let a_ref = crate::video::decode_frame(&vid, crate::video::FramePos::Index(10), &info)
             .expect("d10")
@@ -467,7 +498,10 @@ mod tests {
             .expect("d2")
             .to_rgb8();
         assert!(mean_abs_diff(&a, &a_ref) < 1.0, "forward-skip landed wrong");
-        assert!(mean_abs_diff(&b, &b_ref) < 1.0, "backward-restart landed wrong");
+        assert!(
+            mean_abs_diff(&b, &b_ref) < 1.0,
+            "backward-restart landed wrong"
+        );
     }
 
     #[test]
@@ -497,12 +531,21 @@ mod tests {
         let mut pipe = FramePipe::open_scaled(&vid, &info, 200, scale).expect("open scaled");
         // three sequential scaled frames, correct dims, forward index advances
         for n in 200u64..203 {
-            let f = pipe.frame_scaled(&vid, &info, n, scale).expect("scaled frame").to_rgb8();
+            let f = pipe
+                .frame_scaled(&vid, &info, n, scale)
+                .expect("scaled frame")
+                .to_rgb8();
             assert_eq!(f.dimensions(), (sw, sh), "frame {n} not at scale target");
         }
         // a scale change forces a respawn (native size back)
-        let native = pipe.frame_scaled(&vid, &info, 203, None).expect("native frame").to_rgb8();
-        assert_eq!(native.dimensions(), (info.resolution.width, info.resolution.height));
+        let native = pipe
+            .frame_scaled(&vid, &info, 203, None)
+            .expect("native frame")
+            .to_rgb8();
+        assert_eq!(
+            native.dimensions(),
+            (info.resolution.width, info.resolution.height)
+        );
     }
 
     fn mean_abs_diff(a: &RgbImage, b: &RgbImage) -> f64 {
@@ -510,11 +553,9 @@ mod tests {
             .as_raw()
             .iter()
             .zip(b.as_raw())
-            .fold((0u64, 0u64), |(n, s), (x, y)| (n + 1, s + (*x as i64 - *y as i64).unsigned_abs()));
-        if n == 0 {
-            0.0
-        } else {
-            sum as f64 / n as f64
-        }
+            .fold((0u64, 0u64), |(n, s), (x, y)| {
+                (n + 1, s + (*x as i64 - *y as i64).unsigned_abs())
+            });
+        if n == 0 { 0.0 } else { sum as f64 / n as f64 }
     }
 }

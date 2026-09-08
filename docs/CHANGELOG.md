@@ -33,6 +33,26 @@ One or two lines per session. Detail lives in the decision it references.
   measured in BOTH engines against one shared table — a real sine through the
   real mixer, and real ffmpeg output read with `volumedetect`. The response
   CURVE UI is explicitly deferred (roadmap 27), not half-built.
+- **2026-09-08** — **Transitions library (D-226 + D-227, roadmap 27).** A
+  transition **bridges** an edit point: the two clips stay abutting and never
+  overlap, and it reads their handle media instead — D-226 weighs that against
+  real clip overlap (Premiere's shape) and records why the bridging model
+  composes with this codebase's own resolution/decode/landing machinery while
+  the other fights it. Two types: a cross dissolve (both clips visible at once,
+  needs handles) and a dip to colour (a generated plate, needs none, so it
+  always works) — the pair that proves both mechanisms. Real live-preview
+  compositing (a second decode slot per track, `PipeSlot::TrackTransition`),
+  real ffmpeg export via `fade=alpha=1` rather than `xfade` (which
+  concatenates, a different compiler shape entirely), a drag-onto-the-cut
+  palette with an on-track badge and its own popover, and four
+  `editor_*_transition` MCP tools. Proved by real decoded pixels on **both**
+  engines — a mid-dissolve preview frame measured `[125, 0, 126]` for a
+  red↔blue blend against `[255,0,0]`/`[0,0,255]` for a hard cut, and the export
+  sampled at 0/25/50/75/100% of the same window. **Found and fixed on the way:
+  B-103** — the export compiler had never placed a clip in TIME at all
+  (`overlay` pairs inputs by timestamp; only the audio half ever had its
+  `adelay`), so every clip at `start_frame > 0` exported its last frame frozen.
+  Design detail: `docs/notes/transitions.md`.
 - **2026-09-08** — **Per-clip audio: volume + pan (D-223, roadmap 27).** A clip
   now carries its OWN level and stereo position, independent of its track's
   fader — `Clip::volume` (linear, matching `Track::gain`'s unit) and

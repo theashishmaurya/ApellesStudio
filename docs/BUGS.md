@@ -1393,3 +1393,51 @@ status: fixed (2026-09-08) · severity: blocker (the owner's own real project ha
 - **cause:** `symphonia = { version = "0.6.1", features = [...] }` in both `app/src-tauri/Cargo.toml` and `crates/chroma-media/Cargo.toml` listed `["isomp4", "aac", "alac", "aiff"]` — covering exactly video-embedded audio (mp4/mov containers, AAC/ALAC codecs) — with **no `mp3` feature**. `symphonia`'s own `default` features (`flac`, `wav`, `vorbis`, `pcm`, `mkv`, `ogg`, `adpcm`, `all-meta`) are additive on top of an explicit `features = [...]` list (Cargo only drops defaults with `default-features = false`, which this dependency never set) — which is why `whoosh.flac` was NOT affected, and why this bug was invisible to anyone testing with FLAC/WAV/embedded-video-audio and not specifically MP3. `mp3` (like `mp1`/`mp2`) is the one common format symphonia deliberately keeps OUT of `default` (it ships behind its own `symphonia-bundle-mp3` dependency), so it needs the same explicit opt-in `isomp4`/`aac`/etc. already got — it was simply never added.
 - **fix:** added `"mp3"` to symphonia's feature list in both Cargo.toml files (kept in sync, as they already were). Verified via the real end-to-end test above: `peak=1.0267, rms=0.1889` against the project's own real `music.mp3` post-fix. Re-ran the FLAC case too (`whoosh.flac`, `peak=0.0790`) to confirm it was never actually broken, just already covered by `default`. Full `chroma::audio::` module (28 tests) still green.
 - **worth noting for next time:** the real-device integration tests in this file (`CHROMA_TEST_AUDIO_VIDEO`/`CHROMA_TEST_SILENT_VIDEO`-gated) are the ONLY tests that would ever catch a codec-support gap like this — the unconditional unit tests all operate on synthetic in-memory buffers, never through `symphonia::probe` at all. They should be run with a real fixture set (one file per format actually used in this project — mp3, flac, wav, mp4/aac) at least once per session that touches the audio stack, not left to whichever file a past session happened to have on hand.
+## B-103 — the ffmpeg export compiler never placed a clip in TIME: any clip at `start_frame > 0` rendered its last frame, frozen, for its whole window
+
+**Status: fixed, 2026-09-08 (found while building D-226's transitions).**
+
+**What was wrong.** `timelineExport.ts` gives every clip its own `-i` (with
+`-ss`/`-t`) and composites it with
+`overlay … enable='between(t, startSec, endSec)'` onto a shared `[base]`. Each
+input decodes to a stream whose own timestamps start at ~0, and `overlay` pairs
+its two inputs **by timestamp** (ffmpeg's `framesync`) — nothing ever shifted a
+clip's stream to where that clip actually sits on the timeline. So a clip at
+`start_frame > 0` had its real frames consumed against the base stream's opening
+seconds, where its own `enable` gate was still shut, and then — once the gate
+opened — showed nothing but its **last frame, repeated** for the rest of its
+window (`overlay`'s default `eof_action=repeat`).
+
+The second half of the same mistake: `overlay`'s `x`/`y` expressions run on the
+main stream's clock (timeline seconds), but a clip's position keyframes were
+emitted in **clip-relative** seconds, so a position animation on a clip at
+`start_frame > 0` ran `start_frame / fps` seconds early.
+
+**Why it survived this long.** The audio half of the same compiler always did
+place its sources (`timelineExportAudio.ts`'s `adelay`, D-197) — only video
+never grew the equivalent. And every existing real-ffmpeg test placed its clips
+at frame 0, or used a flat colour, or a single clip: with either, a frozen frame
+and the right frame are the same pixels. The pure argv tests string-match a
+filtergraph and cannot see it at all. Confirmed live before fixing, not reasoned
+about: a two-colour source (red for its first second, lime for its second)
+placed at t=2 rendered **lime, frozen, for its whole window**.
+
+**Fix.** `setpts=PTS[/speed]+<inputStart>/TB` at the **head** of every clip's
+filter chain — timestamps only, no frames generated, no decode cost, the video
+equivalent of `adelay`. Putting it first gives the whole chain one time base
+(timeline seconds), which is what the two-time-bases confusion caused in the
+first place; every expression authored against the clip's own in-point (its
+keyframes, its D-147 fade, `overlay`'s `x`/`y`) is now explicitly re-based
+through `(t − clipStartSec)` / `(T − clipStartSec)`, the exact re-basing
+`buildTextDrawtextStep` already did for a title.
+
+**Regression test.** `timelineExport.ffmpeg.test.ts` — "B-103: a clip at
+start_frame > 0 renders its OWN REAL FRAMES at its own position". It builds the
+two-colour source deliberately, because that is the only fixture shape that can
+see this: it asserts red in the clip's own first second, lime in its second, and
+black in the gap before it. The whole rest of the suite (856 TS tests) passes
+unchanged, and the compiled argv is byte-identical for a clip at frame 0.
+
+**Severity.** Real and silent for any sequential edit — which is the ordinary
+use of an NLE. Masked in practice because the exporter's heaviest real use so
+far has been stacked comparison reels, where both clips start at frame 0.

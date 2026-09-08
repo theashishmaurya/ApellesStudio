@@ -24,7 +24,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
-import { timelineFps, type Timeline } from './timeline';
+import { timelineFps, transitionClipIndices, type Timeline } from './timeline';
 import { buildExportFfmpegArgs, textClipsMissingFonts, type TimelineExportOptions } from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
 
@@ -67,6 +67,27 @@ function resolveHasAudioOverrides(tl: Timeline): Record<string, boolean> {
     }
   }
   return out;
+}
+
+/** D-226 — the names of every clip that both carries a `speedOverrides` entry
+ *  and is joined by a transition. See the refusal at the point of use for why
+ *  the combination is not compilable. */
+function transitionClipsWithSpeedOverride(
+  tl: Timeline,
+  speedOverrides: Record<string, number>,
+  fps: number,
+): string[] {
+  const names = new Set<string>();
+  for (const track of tl.tracks) {
+    for (const t of track.transitions ?? []) {
+      const { outgoing, incoming } = transitionClipIndices(track, t.at_frame, fps);
+      for (const idx of [outgoing, incoming]) {
+        const clip = idx >= 0 ? track.clips[idx] : undefined;
+        if (clip && (speedOverrides[clip.id] ?? 1) !== 1) names.add(clip.name || clip.id);
+      }
+    }
+  }
+  return [...names];
 }
 
 /** `{ ok: true; value }` / `{ ok: false; error }` rather than a bare
@@ -167,6 +188,23 @@ export function compileEditorExportArgs(a: {
     return {
       error: `no font file for ${names} — ${missingFonts.length} text clip(s) cannot be rendered. Pick a different font in the Inspector, or check chroma_text_fonts for which families this machine has.`,
     };
+  }
+
+  // D-226 — a speed override on a clip that a transition joins is refused
+  // outright rather than compiled into something wrong. `speedOverrides` is an
+  // export-time-only knob that changes a clip's on-timeline FOOTPRINT (see that
+  // option's own doc), so the cut a transition names is no longer where that
+  // clip's edge lands, and the blend would drift from it by exactly the speed
+  // factor. Named here, at compile time, for `textClipsMissingFonts`' own
+  // reason: this is where a real reason can be reported, and the compiler
+  // itself (`transitionPlansFor`) only skips such a transition defensively.
+  if (speedOverrides) {
+    const clashing = transitionClipsWithSpeedOverride(tl, speedOverrides, fps);
+    if (clashing.length > 0) {
+      return {
+        error: `speed overrides are not supported on a clip joined by a transition (${clashing.join(', ')}) — a speed change moves the clip's edge away from the cut the transition sits on. Remove the transition, or export that clip's speed change separately.`,
+      };
+    }
   }
 
   const opts: TimelineExportOptions = {

@@ -20356,3 +20356,119 @@ channel at unity. So an exported panned mono clip sits 3 dB below what the
 preview played. Stereo sources are unaffected (`aformat` is a verified no-op
 for them). Not fixed here because the fix belongs to the mono-adaptation layer,
 not to this feature — see B-101 for the two real options.
+
+## D-226 — Transitions bridge an edit point; clips never overlap. Handle media is the price, and it is the same one every real NLE pays
+
+**Context.** Roadmap item 27's transitions library. A transition needs **two
+clips visible at once** for its own duration. This codebase's clips on one track
+are strictly non-overlapping, and that invariant is load-bearing in six real
+places: `Track::clip_at`'s single-winner `find`, `resolve_visible_video_layers_at`'s
+one-layer-per-track, `decode_pipe::PipeSlot::Track(usize)` (**one live `ffmpeg`
+process per track**), `gap_at`/`clip_spans_from`, D-104's outright rejection of an
+overlapping drag, and `TimelinePane`'s own hit-testing/landing math.
+
+**Options.**
+1. **Real clip overlap** (the shape the drag gesture most directly suggests):
+   dropping a transition shortens each clip's on-timeline duration and lets the
+   two overlap; a `Transition` at the overlap names the type.
+2. **A `Transition` bridging two still-abutting clips**: the clips do not move;
+   the transition owns a cut, a duration and an alignment, and during its window
+   the compositor reads the outgoing clip's tail and the incoming clip's head —
+   frames outside each clip's own trim, i.e. **handle media**.
+
+**Choice: option 2.** Option 1 breaks all six rows above, and one of them is not
+a refactor but a measured cost: two clips decoding through one `PipeSlot::Track`
+is exactly B-040's ~0.85 fps failure mode, so option 1 needs the same second
+decode slot option 2 needs *plus* a rewrite of clip resolution, gap math, drag
+landing and D-104. Option 2 needs three purely additive changes —
+`Track::transitions` (`#[serde(default)]`, no migration), a richer
+`VisibleLayer` return from `resolve_visible_video_layers_at` (a track may now
+contribute two layers, or a generated colour plate), and
+`PipeSlot::TrackTransition(usize)`. Nothing about non-overlap, gaps, ripple,
+landing or hit-testing changes. This is the "prefer the option that composes
+with the existing resolution/keyframe/undo machinery" call, and it is also what
+Premiere and Resolve actually do — which is why Premiere warns *"Insufficient
+Media. This transition will contain repeated frames"* rather than silently
+moving your clips.
+
+**What follows from it.**
+- `at_frame` IS the cut; the covered window is **derived** from it plus the
+  duration and the alignment, so neither can ever detach the transition from the
+  cut it was dropped on. Integer halving floors (an odd duration puts the extra
+  frame after the cut) — stated, and mirrored byte-for-byte in `timeline.ts`.
+- **Alignment is a real field, not a cosmetic one**: it decides which clip pays.
+  Premiere's own three, under its own names (Center / Start / End at Cut, from
+  Adobe's *Align and reposition transitions* page). A cut where only one side is
+  trimmed still supports a dissolve, in the alignment that asks for media that
+  exists.
+- `progress_at = (pos − start) / duration`, exactly — chosen because ffmpeg's
+  `fade` filter is frame-index linear (`frame_index / nb_frames`), so the export
+  computes the identical number for the identical frame rather than
+  approximating it. Preview/export parity by construction.
+- Insufficient handles are **refused before the write** (`checkTransition`,
+  shared by the GUI drop, the popover and the MCP tools — the D-138 `checkLink`
+  shape), naming how many frames are missing and the alignment or the dip that
+  would work. `Clip::clamped_source_frame_at`'s freeze-on-the-nearest-frame is
+  the last line of defence for a hand-edited/dangling document, not the feature.
+- The **outgoing** clip keeps the track's own decode slot and the **incoming**
+  clip takes the partner slot, so a transition never stalls the stream already
+  playing; `retain_track_slots` became `retain_pipe_slots(&[PipeSlot])` because
+  a track-index keep-list cannot say "release the partner, keep the track" and
+  would have leaked an `ffmpeg` process per transition.
+- Export uses `fade=alpha=1` on the incoming layer, **not `xfade`**: `xfade`
+  concatenates two continuous streams, which is a different compiler shape from
+  this one's independent-`-i`-plus-`overlay`-`enable` model (the model that makes
+  N tracks and gaps work at all). Checked against `xfade`'s real semantics
+  before assuming, per the brief.
+
+Full worked design, the tables and the verification evidence:
+`docs/notes/transitions.md`. **This decision uncovered B-103** (the export
+compiler never placed a clip in time at all), which had to be fixed for any
+transition to render correctly.
+
+## D-227 — Transitions v1 ships two types and a drag-onto-the-cut palette; edge-drag re-timing is deferred
+
+**Context.** With D-226's model settled, what is the right first slice? Resolve
+ships 100+ transitions and lets you drag the placed transition's own edges to
+re-time it.
+
+**Choice — two types.** `cross_dissolve` and `dip_to_color`, and the pair is
+chosen rather than convenient: the dissolve is the one that needs TWO clips
+visible at once plus handle media, the dip is the one that needs **neither** (a
+generated plate over whichever clip `clip_at` already resolves). Between them
+they prove both mechanisms, and — because the dip needs no handles — every cut
+in every project has at least one transition that works. Wipes, slides and
+pushes are each another generated matte over the same two code paths, so more
+types are additive later rather than a redesign. A wipe was considered as the
+second type and rejected for exactly this reason: it exercises nothing the
+dissolve does not, and leaves the no-handles case with no answer.
+
+**Choice — UI.** A browsable palette popover in the timeline toolbar, dragged
+onto a cut (Resolve's own gesture, from its own copy: *"select the effect you
+want and drag it … onto the cut point between clips"*), a hatched X badge on the
+track spanning the transition's window, and a popover on that badge carrying
+type / duration / alignment / dip colour / Remove. The drop is a real
+`@dnd-kit` drag — a third kind sharing `TimelinePane`'s one `DndContext`
+alongside `track` and `clip`, disambiguated by `data.type` exactly as those two
+already are (D-098's convention, not a new mechanism) — and it snaps to the
+nearest real cut within a radius, refusing anything else with a real reason
+rather than landing "roughly there". A transition is not a clip; there is
+exactly one legal target per neighbourhood.
+
+**Deferred, deliberately: dragging the transition's own edges** to re-time it on
+the timeline. Resolve's own sentence offers both that and the Inspector field;
+the field is built and does the same job, and the drag is a second, independent
+gesture on the same op rather than something the feature is incomplete without.
+Also deferred and tracked in `docs/notes/transitions.md` §8: more types, audio
+transitions (a separate effect in both reference NLEs — `set_clip_fade` already
+gives a manual one), and combining a transition with an export-time speed
+override (refused at compile time with a named reason, since a speed change
+moves the clip's edge away from the cut).
+
+**MCP parity in the same pass** (CLAUDE.md's human+AI rule):
+`editor_list_transitions` / `_add_transition` / `_set_transition` /
+`_remove_transition`, driving the identical `EditOp`s the GUI does, with the
+derived window and handle split reported so an agent never has to re-derive the
+integer halving. `editor_list_transitions` also reports each video track's real
+`cuts` — "where CAN one go" is the question an agent has first, and it is not
+derivable from the clip list without re-implementing the end==start match.

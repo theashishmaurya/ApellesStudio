@@ -73,6 +73,22 @@ dragging a pool item in from the shell's Sources panel.
   document content, unlike the store-only `selection` (D-216) and `previewView`
   (D-218). The strip carries `data-chroma-no-marquee` — `marquee.ts`'s own
   documented escape hatch — so no gesture here can collide with the marquee.
+- `TimelineTransitions.tsx` (D-226/D-227, roadmap item 27) — the transitions
+  library: the toolbar's browsable palette (a real `@dnd-kit` drag source — a
+  third drag kind sharing `TimelinePane`'s one `DndContext` alongside `track`
+  and `clip`, disambiguated by `data.type` as those two already are), the
+  hatched badge drawn on a track across a transition's own window, and the
+  popover carrying its type / duration / alignment / dip colour / Remove. The
+  model and ops (`Transition`, `transitionWindow`, `transitionHandles`,
+  `cutFrames`, `checkTransition`, `newTransition`, and the
+  `add_transition`/`set_transition`/`remove_transition` `EditOp`s) are in
+  `timeline.ts` with everything else. A transition belongs to the EDIT POINT
+  between two clips, not to either of them, which is why its badge is drawn in
+  `TimelinePane`'s own overlay layer rather than inside a clip's
+  `getActionRender` body. `checkTransition` is the single precondition the drop
+  gesture, the popover and the `editor_*_transition` MCP tools all go through —
+  the `checkLink` (D-138) shape, so a refusal message can never drift from what
+  `applyOp` actually enforces. Design: `docs/notes/transitions.md`.
 
 **Marquee-select (D-137, roadmap item 12 Phase 2).** Click-drag on empty
 timeline canvas draws a rubber band; every clip whose bounding box the rect

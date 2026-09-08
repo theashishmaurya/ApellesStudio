@@ -706,7 +706,44 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "export's own placement math; nothing else needs adjusting for "
             "it to line up against unsped clips on other tracks. "
             "`fit_overrides` mirrors this exact shape (`{clip_id: value}`, "
-            "export-time-only) for the unrelated aspect-ratio knob above."
+            "export-time-only) for the unrelated aspect-ratio knob above. "
+            "D-224: a speed override on a clip a TRANSITION joins is refused "
+            "outright at compile time (a real named error, not a silent "
+            "skip) — a speed change moves that clip's edge away from the cut "
+            "the transition sits on, so the two cannot both be honoured."
+        ),
+    },
+    "transitions": {
+        "model": (
+            "D-224: a transition BRIDGES a cut — the two clips stay abutting "
+            "and never overlap. `editor_add_transition(track, at_frame=...)` "
+            "takes the TIMELINE frame where one clip ends and the next "
+            "begins (editor_list_transitions reports each video track's real "
+            "`cuts`); the covered window is DERIVED from that plus the "
+            "duration and the alignment, and is reported back as "
+            "`window_start_frame`/`window_end_frame`. Removing a transition "
+            "restores the plain cut and re-trims nothing, because nothing "
+            "moved to make room for it in the first place."
+        ),
+        "handles": (
+            "A CROSS DISSOLVE shows both clips at once, so one of them must "
+            "supply frames from OUTSIDE its own trim: `head_handle_frames` "
+            "before the incoming clip's in-point, `tail_handle_frames` past "
+            "the outgoing clip's out-point. A cut made by editor_split_clip "
+            "has plenty of both by construction; two whole files butted "
+            "together have neither, and the add is REFUSED with a reason "
+            "naming exactly how many frames are missing. Three fixes, in "
+            "order of least effort: change `alignment` ('start_at_cut' needs "
+            "no head handle, 'end_at_cut' needs no tail handle), shorten "
+            "`duration_frames`, or use kind='dip_to_color', which needs NO "
+            "handle media at all and therefore always works."
+        ),
+        "kinds": (
+            "Two in v1: 'cross_dissolve' (the incoming clip fades up over "
+            "the outgoing one) and 'dip_to_color' (both dip through a solid "
+            "colour, black unless you pass `color`). Both render identically "
+            "in the live preview and in editor_export — verified by real "
+            "pixel measurement on both sides, not by argv inspection."
         ),
     },
     "known_gaps_and_landmines": {
@@ -1495,6 +1532,135 @@ def editor_remove_marker(id: str) -> str:
     import json
 
     return json.dumps(_op("editor_remove_marker", id=id), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_list_transitions(track: int | None = None) -> str:
+    """Every transition on the timeline — and, just as usefully, every real
+    CUT a new one could go on.
+
+    A transition sits at an EDIT POINT: the timeline frame where one clip ends
+    and the next begins on the SAME video track (D-224). The clips themselves
+    never overlap; the transition bridges the cut and reads each clip's handle
+    media (see `editor_get_capabilities`'s `transitions` key). So this returns,
+    per video track: `cuts` (the frames a transition may be added at) and
+    `transitions` (what is already there).
+
+    Each transition reports its stored `kind`/`atFrame`/`duration`/`alignment`/
+    `color` AND its derived `windowStartFrame`/`windowEndFrame` (the frames it
+    actually covers) plus `headHandleFrames`/`tailHandleFrames` (how much media
+    outside its own trim each clip has to supply). Read the derived numbers
+    rather than recomputing them — the centre alignment's integer halving is
+    easy to get wrong by a frame.
+
+    Pass `track` to narrow to one; omit it for all. Also returns the `kinds`
+    this build supports, the legal `alignments`, and the default duration.
+    `editor_get_timeline` reports the same per-track list under its own
+    `transitions` key."""
+    import json
+
+    args: dict = {}
+    if track is not None:
+        args["track"] = track
+    return json.dumps(_op("editor_list_transitions", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_add_transition(
+    track: int,
+    kind: str = "cross_dissolve",
+    at_frame: int | None = None,
+    duration_frames: int | None = None,
+    alignment: str = "center_at_cut",
+    color: str | None = None,
+) -> str:
+    """Put a transition on a cut — the same action as dragging one out of the
+    timeline's Transitions palette onto that cut.
+
+    `kind` is `cross_dissolve` (the incoming clip fades up over the outgoing
+    one — needs handle media on both) or `dip_to_color` (both clips dip through
+    a solid colour — needs NO handle media, so it always works). `color` is a
+    palette name or `#RRGGBB` hex and applies to `dip_to_color` only; omitted
+    means black.
+
+    `at_frame` omitted means "the cut nearest the playhead", so
+    `editor_set_playhead(...)` then `editor_add_transition(track=0)` is the
+    natural pair — the response says which cut it actually landed on.
+    `at_frame` given must be an EXACT cut frame; `editor_list_transitions`
+    reports the real ones and an inexact frame is an error listing them.
+
+    `alignment` decides which clip pays for the transition, and it is not
+    cosmetic: `center_at_cut` (the default) takes half its length of handle
+    from each side, `start_at_cut` takes it all from the outgoing clip's tail
+    and none from the incoming clip's head, `end_at_cut` is the mirror.
+
+    Refused, with a real reason, rather than silently mangled: no cut there, a
+    locked or non-video track, a window that would swallow a neighbouring clip,
+    an overlap with another transition, or — for a cross dissolve —
+    insufficient handle media, in which case the message names how many frames
+    are missing and which alignment would fit. Returns the created transition
+    including its generated `id` and its derived window."""
+    import json
+
+    args: dict = {"track": track, "kind": kind, "alignment": alignment}
+    if at_frame is not None:
+        args["atFrame"] = at_frame
+    if duration_frames is not None:
+        args["durationFrames"] = duration_frames
+    if color is not None:
+        args["color"] = color
+    return json.dumps(_op("editor_add_transition", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_transition(
+    track: int,
+    id: str,
+    kind: str | None = None,
+    duration_frames: int | None = None,
+    alignment: str | None = None,
+    color: str | None = None,
+) -> str:
+    """Change a placed transition's type, length, alignment or dip colour.
+    `id` comes from `editor_list_transitions` (or from
+    `editor_add_transition`'s own response).
+
+    A PATCH: every argument you omit keeps its current value. `at_frame` is
+    deliberately NOT changeable — moving a transition to a different cut is
+    removing it from one and adding it to another, and a patch that silently
+    re-homed it would skip the placement checks the add path runs.
+
+    The MERGED result must still be legal, so shortening a dissolve always
+    works and lengthening one past its handle media is refused with the same
+    message `editor_add_transition` would have given. Pass `color=""` to clear
+    a dip back to black. Returns the transition as it now stands."""
+    import json
+
+    args: dict = {"track": track, "id": id}
+    if kind is not None:
+        args["kind"] = kind
+    if duration_frames is not None:
+        args["durationFrames"] = duration_frames
+    if alignment is not None:
+        args["alignment"] = alignment
+    if color is not None:
+        args["color"] = color
+    return json.dumps(_op("editor_set_transition", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_remove_transition(track: int, id: str) -> str:
+    """Delete one transition, restoring the plain cut. `id` comes from
+    `editor_list_transitions`. An unknown id is an error naming the ids that DO
+    exist, not a silent no-op.
+
+    Touches no clip: the two clips never moved to make room for the transition
+    (they stay abutting and non-overlapping — D-224), so removing it re-trims
+    nothing and ripples nothing. Undoable in the GUI like any other edit.
+    Returns the transition that was removed."""
+    import json
+
+    return json.dumps(_op("editor_remove_transition", track=track, id=id), indent=2, default=str)
 
 
 @mcp.tool()
