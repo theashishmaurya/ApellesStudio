@@ -177,7 +177,7 @@ export function CaptionPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const playhead = useEditorTimelineStore((s) => s.playhead);
-  // D-251 — lifted out of local `useState` into the shared `openPanels` map
+  // D-252 — lifted out of local `useState` into the shared `openPanels` map
   // so `debug_set_popover_open('caption-panel', ...)` can drive the SAME flag
   // this trigger's own click drives, rather than simulate a click on it. See
   // `panelRegistry.ts`'s module doc for why a shared map rather than a

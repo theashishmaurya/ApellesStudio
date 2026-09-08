@@ -75,7 +75,7 @@ beforeEach(() => {
     playing: false,
     selection: [],
     selectedGap: null,
-    // D-251 — the popover's open flag now lives in this shared store (was a
+    // D-252 — the popover's open flag now lives in this shared store (was a
     // per-mount `useState`), so it must be reset here the same way every
     // other piece of this fixture's state is, or a previous test's open
     // popover leaks into the next test's fresh mount as already-open.

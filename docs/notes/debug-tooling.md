@@ -61,7 +61,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    full reasoning and the one refactor it forced (the Edit Inspector's flag lifted
    out of `EditorTab.tsx`'s `useState` into `useEditorTimelineStore`, so one piece of
    state sits under both the human's button and the op).
-   **Extended (D-251, 2026-09-08): `debug_set_popover_open({id, open})`** — one
+   **Extended (D-252, 2026-09-08): `debug_set_popover_open({id, open})`** — one
    generic op for any registered Edit-tab popover/dialog, backed by
    `useEditorTimelineStore`'s `openPanels: Record<string, boolean>` map and
    `@chroma/editor`'s `panelRegistry.ts` (`PANEL_IDS`, `parsePanelId`,
@@ -74,7 +74,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    local-`useState`-gated-open problem, with a fourth uncontrolled one
    (`EditLibraryRail`'s rail popovers) and a fifth keyed one (`MarkerStrip`'s
    marker editor, `editingId: string | null`) also found and deliberately
-   left for later — see D-251 and `panelRegistry.ts`'s own module doc for
+   left for later — see D-252 and `panelRegistry.ts`'s own module doc for
    why. `debug_get_ui_state`'s `editor` section now also reports
    `openPanels` (the live map) and `panelIds` (`PANEL_IDS`, the reference
    list of what can appear there).
@@ -89,7 +89,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    having the app register its own named ops into the registry — a real design call,
    not a line of code, so it is stated here rather than half-done. Also still open:
    `EditLibraryRail`'s uncontrolled rail popovers and `MarkerStrip`'s
-   `editingId`-keyed marker editor (see D-251).
+   `editingId`-keyed marker editor (see D-252).
 3. **Pixel/color inspection** — **DONE, in D-210** (it shipped alongside the
    screenshot tool, not after it). `debug_sample_pixel(path, x, y)` reads the exact
    RGBA + hex out of **any** saved PNG, including one written long before the app's
@@ -276,7 +276,7 @@ checked is how B-100 happened in the first place.
   the human's tab button calls, exactly as `setInspectorOpen` (**2**) is. The op name
   being absent while the action it calls is present is precisely the shape this gate is
   supposed to have.
-  Re-run again 2026-09-08 for D-251's new op: `debug_set_popover_open` — **0**
+  Re-run again 2026-09-08 for D-252's new op: `debug_set_popover_open` — **0**
   occurrences. Its own store action `setPanelOpen` — the function `usePanelOpen`
   calls, which is what `CaptionPanel`'s/`CanvasSettingsPopover`'s/
   `EditorExportDialog`'s own triggers now call instead of a local `useState`
@@ -290,7 +290,7 @@ checked is how B-100 happened in the first place.
 ## Status
 
 Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
-for the gate; D-251 extending piece 2 with `debug_set_popover_open`). Stated remaining
+for the gate; D-252 extending piece 2 with `debug_set_popover_open`). Stated remaining
 gaps: the **Colorist tab's** own panel/visibility/settings state, `EditLibraryRail`'s
 uncontrolled rail popovers, and `MarkerStrip`'s `editingId`-keyed marker editor — see
 piece 2 above for why each is a real design call rather than a missing line of code.

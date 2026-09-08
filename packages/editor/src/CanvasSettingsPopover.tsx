@@ -51,7 +51,7 @@ interface ProjectSettingsWH {
 }
 
 export function CanvasSettingsPopover() {
-  // D-251 — lifted out of local `useState` so `debug_set_popover_open
+  // D-252 — lifted out of local `useState` so `debug_set_popover_open
   // ('canvas-settings', ...)` can drive this same flag; see
   // `panelRegistry.ts`'s module doc.
   const [open, setOpen] = usePanelOpen('canvas-settings');

@@ -33,7 +33,7 @@
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
- *                                   id (D-251, `@chroma/editor`'s
+ *                                   id (D-252, `@chroma/editor`'s
  *                                   `panelRegistry.ts`) — the caption preset
  *                                   library, the canvas-size popover, the
  *                                   export dialog, and whatever the next one
@@ -95,7 +95,7 @@ function uiStateSnapshot() {
       // `[data-chroma-panel="clip-inspector"]` is what answers the latter.
       inspectorTab: editor.inspectorTab,
       inspectorTabs: CLIP_INSPECTOR_TABS,
-      // D-251 — every registered popover/dialog's open flag; a panel with no
+      // D-252 — every registered popover/dialog's open flag; a panel with no
       // entry yet is closed (see `usePanelOpen`'s `?? false`), so this is
       // filled in lazily and `panelIds` is the reference for what CAN appear.
       openPanels: editor.openPanels,

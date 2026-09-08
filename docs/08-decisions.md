@@ -23416,7 +23416,7 @@ where these controls live: the left-icon-rail redesign the owner sketched on
 the same screenshot is a separate, concurrent pass, and this change is
 deliberately position-neutral so it survives whatever that lands.
 
-## D-251 — A generic `debug_set_popover_open(id, open)` op, backed by one shared `openPanels` map, instead of a bespoke op per popover
+## D-252 — A generic `debug_set_popover_open(id, open)` op, backed by one shared `openPanels` map, instead of a bespoke op per popover
 **decided (2026-09-08)**
 
 - **Context.** The coordinating session needed to screenshot `CaptionPanel`'s

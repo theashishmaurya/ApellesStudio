@@ -43,7 +43,7 @@ MCP as tools of the same name.
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_editor_inspector` | `{open: bool}` — the Edit tab's Inspector column |
 | `debug_set_inspector_tab` | `{tab: 'video'\|'audio'}` — that Inspector's own Video/Audio tab (D-246); only one is on screen at a time, so set it before screenshotting or dumping the panel |
-| `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-251, `@chroma/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-251 for why. |
+| `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-252, `@chroma/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-252 for why. |
 | `debug_dom_tree` | `{selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` → bounded JSON of the real DOM: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles |
 | `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@chroma/editor`'s `previewTiming.ts`) |
 
@@ -51,7 +51,7 @@ MCP as tools of the same name.
 `useShellStore.setActiveTab` is literally what the tab button's `onClick`
 invokes; `useEditorTimelineStore.setInspectorOpen` is what the Inspector
 toggle invokes; `useEditorTimelineStore.setPanelOpen` is what every
-registered popover's own trigger invokes via `usePanelOpen` (D-251). Nothing
+registered popover's own trigger invokes via `usePanelOpen` (D-252). Nothing
 here synthesises a click, a keypress or a pointer event. That is the design
 decision, not an implementation detail: a simulated click proves the
 simulation works, a store action proves the app works (D-219).

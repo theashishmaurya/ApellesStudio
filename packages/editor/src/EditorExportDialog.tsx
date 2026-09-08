@@ -127,7 +127,7 @@ export function EditorExportDialog() {
   const jobs = useExportQueueStore((s) => s.jobs);
   const clearFinished = useExportQueueStore((s) => s.clearFinished);
 
-  // D-251 — lifted out of local `useState` so `debug_set_popover_open
+  // D-252 — lifted out of local `useState` so `debug_set_popover_open
   // ('export-dialog', ...)` can drive this same flag; see
   // `panelRegistry.ts`'s module doc.
   const [open, setOpen] = usePanelOpen('export-dialog');

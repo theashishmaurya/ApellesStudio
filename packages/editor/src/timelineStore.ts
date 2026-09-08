@@ -274,7 +274,7 @@ interface EditorTimelineState {
    *  clip: the baked keys ARE the curve (see `dynamicZoom.ts`'s module doc),
    *  so re-arming the mode always starts at `linear`. */
   dynamicZoom: { clipId: string; curve: EaseCurve } | null;
-  /** D-251 — which popovers/dialogs from `panelRegistry.ts`'s `PANEL_IDS` are
+  /** D-252 — which popovers/dialogs from `panelRegistry.ts`'s `PANEL_IDS` are
    *  currently open, keyed by panel id. A panel with no entry reads as closed
    *  via `usePanelOpen`'s `?? false`, so this map only ever needs writing,
    *  never pre-seeding.
@@ -356,7 +356,7 @@ interface EditorTimelineState {
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
    *  is always an explicit `applyOp` by whoever committed a box. */
   setDynamicZoom: (mode: { clipId: string; curve: EaseCurve } | null) => void;
-  /** D-251 — open/close one registered popover/dialog by id. The one writer
+  /** D-252 — open/close one registered popover/dialog by id. The one writer
    *  for both that popover's own trigger and `debug_set_popover_open`. */
   setPanelOpen: (id: string, open: boolean) => void;
   applyOp: (op: EditOp) => void;
@@ -442,7 +442,7 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   waveformView: false,
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
-  // D-251 — nothing open by default; see the field's own doc.
+  // D-252 — nothing open by default; see the field's own doc.
   openPanels: {},
   savedVersion: 0,
 

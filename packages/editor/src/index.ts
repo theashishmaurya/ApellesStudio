@@ -46,14 +46,14 @@ export {
 } from './clipInspectorTabs';
 export type { ClipInspectorTab } from './clipInspectorTabs';
 export type { TimelineSummary } from './timelineStore';
-// D-251 — the popover/dialog panel registry. Exported for `@chroma/debug`'s
+// D-252 — the popover/dialog panel registry. Exported for `@chroma/debug`'s
 // `debug_set_popover_open`, which validates against the same id list the
 // panels themselves register with via `usePanelOpen` rather than restating
 // it. See `panelRegistry.ts`'s module doc for why a shared map + one op
 // generalises D-219/D-246's own bespoke-field pattern to N popovers.
 export { PANEL_IDS, parsePanelId, usePanelOpen } from './panelRegistry';
 export type { PanelId } from './panelRegistry';
-/** D-251 — otherwise internal (mounted only via `EditLibraryRail.tsx`'s own
+/** D-252 — otherwise internal (mounted only via `EditLibraryRail.tsx`'s own
  *  relative import). Exported here for `@chroma/debug`'s own DOM proof test,
  *  the same rationale `previewTimingReport` above is exported for: proving
  *  `debug_set_popover_open` really opens the real component's real popover,

@@ -1,6 +1,6 @@
 /**
  * @chroma/editor — the registry of Edit-tab popovers/dialogs a debug op can
- * open or close by name (D-251, `docs/notes/debug-tooling.md` piece 2).
+ * open or close by name (D-252, `docs/notes/debug-tooling.md` piece 2).
  *
  * **What it is.** The small, closed set of panel ids `useEditorTimelineStore`'s
  * `openPanels` map recognises, the parser that turns an untyped

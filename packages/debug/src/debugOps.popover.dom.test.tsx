@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * debugOps.popover.dom.test.tsx (D-251) — the real-DOM proof that
+ * debugOps.popover.dom.test.tsx (D-252) — the real-DOM proof that
  * `debug_set_popover_open` actually opens/closes a real popover, not just a
  * store flag nothing renders off of.
  *
@@ -135,7 +135,7 @@ beforeEach(() => {
     } as any,
     status: 'ready',
     error: null,
-    // D-251 — the popover's open flag lives here now; must start closed
+    // D-252 — the popover's open flag lives here now; must start closed
     // explicitly rather than inheriting whatever a previous test left.
     openPanels: {},
   });
